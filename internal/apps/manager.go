@@ -549,6 +549,9 @@ func appUpdateAvailable(installedVersion, latestVersion string) bool {
 	if installed == "" || latest == "" {
 		return false
 	}
+	if cmp, ok := compareVersionOrder(installed, latest); ok {
+		return cmp < 0
+	}
 	return installed != latest
 }
 
@@ -561,6 +564,59 @@ func comparableVersion(version string) string {
 		return strings.TrimPrefix(strings.ToLower(token), "v")
 	}
 	return strings.TrimPrefix(strings.ToLower(version), "v")
+}
+
+func compareVersionOrder(installed, latest string) (int, bool) {
+	installedParts, ok := versionNumberParts(installed)
+	if !ok {
+		return 0, false
+	}
+	latestParts, ok := versionNumberParts(latest)
+	if !ok {
+		return 0, false
+	}
+
+	maxLen := max(len(installedParts), len(latestParts))
+	for i := 0; i < maxLen; i++ {
+		installedPart := 0
+		if i < len(installedParts) {
+			installedPart = installedParts[i]
+		}
+		latestPart := 0
+		if i < len(latestParts) {
+			latestPart = latestParts[i]
+		}
+		if installedPart < latestPart {
+			return -1, true
+		}
+		if installedPart > latestPart {
+			return 1, true
+		}
+	}
+	return 0, true
+}
+
+func versionNumberParts(version string) ([]int, bool) {
+	version = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(version)), "v")
+	version = strings.FieldsFunc(version, func(r rune) bool {
+		return r == '-' || r == '+'
+	})[0]
+	rawParts := strings.Split(version, ".")
+	if len(rawParts) == 0 {
+		return nil, false
+	}
+	parts := make([]int, 0, len(rawParts))
+	for _, raw := range rawParts {
+		if raw == "" {
+			return nil, false
+		}
+		part, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, false
+		}
+		parts = append(parts, part)
+	}
+	return parts, true
 }
 
 func actionStatus(action string) string {

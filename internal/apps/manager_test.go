@@ -225,6 +225,54 @@ func TestEnrichLatestVersionIgnoresMatchingMirrorVersion(t *testing.T) {
 	}
 }
 
+func TestAppUpdateAvailableComparesVersionOrder(t *testing.T) {
+	tests := []struct {
+		name      string
+		installed string
+		latest    string
+		want      bool
+	}{
+		{
+			name:      "newer installed version is not an update",
+			installed: "2.1.132 (Claude Code)",
+			latest:    "2.1.126",
+			want:      false,
+		},
+		{
+			name:      "newer latest version is an update",
+			installed: "Claude Code 2.1.126",
+			latest:    "2.1.132",
+			want:      true,
+		},
+		{
+			name:      "matching normalized versions are not an update",
+			installed: "v1.2.3",
+			latest:    "1.2.3",
+			want:      false,
+		},
+		{
+			name:      "missing patch segment compares as zero",
+			installed: "1.2",
+			latest:    "1.2.1",
+			want:      true,
+		},
+		{
+			name:      "unparseable versions fall back to normalized equality",
+			installed: "dev-build",
+			latest:    "other-build",
+			want:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := appUpdateAvailable(tt.installed, tt.latest); got != tt.want {
+				t.Fatalf("appUpdateAvailable(%q, %q) = %v, want %v", tt.installed, tt.latest, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFetchLatestVersionParsesGitHubReleaseTag(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/OpenCSGs/csgclaw/releases/latest" {
