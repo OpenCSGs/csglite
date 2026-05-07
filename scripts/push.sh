@@ -35,6 +35,7 @@ Options:
   --skip-gitlab-git      Skip git push to GitLab (only upload packages + release links)
   --skip-converter-check Skip checking bundled llama.cpp converter consistency
   --skip-build           Skip make package (reuse existing dist/)
+  --notes-file FILE      Markdown release notes for newly created releases
   -h, --help             Show this help
 
 Environment variables:
@@ -52,6 +53,7 @@ SKIP_GITLAB=0
 SKIP_GITLAB_GIT=0
 SKIP_CONVERTER_CHECK=0
 SKIP_BUILD=0
+NOTES_FILE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -62,10 +64,23 @@ while [ $# -gt 0 ]; do
         --skip-gitlab-git) SKIP_GITLAB_GIT=1; shift ;;
         --skip-converter-check) SKIP_CONVERTER_CHECK=1; shift ;;
         --skip-build)   SKIP_BUILD=1; shift ;;
+        --notes-file)   NOTES_FILE="$2"; shift 2 ;;
         -h|--help)      usage; exit 0 ;;
         *)              die "Unknown option: $1" ;;
     esac
 done
+
+validate_notes_file() {
+    [ -n "$NOTES_FILE" ] || die "Release notes are required for new releases. Pass --notes-file FILE."
+    [ -f "$NOTES_FILE" ] || die "Release notes file not found: $NOTES_FILE"
+    [ -s "$NOTES_FILE" ] || die "Release notes file is empty: $NOTES_FILE"
+    if grep -q "Full Changelog" "$NOTES_FILE"; then
+        die "Release notes must describe user-facing changes, not only Full Changelog."
+    fi
+    if ! grep -q '^- ' "$NOTES_FILE"; then
+        die "Release notes must include explicit bullet points for user-facing changes."
+    fi
+}
 
 if [ -z "$TAG" ]; then
     TAG="$(git describe --tags --exact-match 2>/dev/null || true)"
@@ -111,10 +126,15 @@ if [ "$SKIP_GITHUB" -eq 0 ]; then
     command -v gh >/dev/null 2>&1 || die "gh CLI not found. Install: https://cli.github.com/"
     if gh release view "$TAG" >/dev/null 2>&1; then
         info "Uploading assets to existing GitHub release ${TAG}"
+        if [ -n "$NOTES_FILE" ]; then
+            validate_notes_file
+            gh release edit "$TAG" --notes-file "$NOTES_FILE"
+        fi
         gh release upload "$TAG" $ASSETS --clobber
     else
         info "Creating GitHub release ${TAG}"
-        gh release create "$TAG" $ASSETS --title "$TAG" --generate-notes
+        validate_notes_file
+        gh release create "$TAG" $ASSETS --title "$TAG" --notes-file "$NOTES_FILE"
     fi
     info "GitHub: https://github.com/${GITHUB_REPO}/releases/tag/${TAG}"
 fi
@@ -141,12 +161,21 @@ if [ "$SKIP_GITLAB" -eq 0 ]; then
     if ! curl -fsSL -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
         "${GITLAB_HOST}/api/v4/projects/${GITLAB_PROJECT_ID}/releases/${TAG}" >/dev/null 2>&1; then
         info "Creating GitLab release ${TAG}..."
+        validate_notes_file
         curl -fsSL -X POST \
             -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\"}" \
+            --data-urlencode "tag_name=${TAG}" \
+            --data-urlencode "name=${TAG}" \
+            --data-urlencode "description@${NOTES_FILE}" \
             "${GITLAB_HOST}/api/v4/projects/${GITLAB_PROJECT_ID}/releases" >/dev/null 2>&1 || \
             warn "Failed to create release (may already exist)"
+    elif [ -n "$NOTES_FILE" ]; then
+        info "Updating GitLab release notes for ${TAG}..."
+        validate_notes_file
+        curl -fsSL -X PUT \
+            -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+            --data-urlencode "description@${NOTES_FILE}" \
+            "${GITLAB_HOST}/api/v4/projects/${GITLAB_PROJECT_ID}/releases/${TAG}" >/dev/null
     fi
 
     # Get existing release links to avoid duplicates

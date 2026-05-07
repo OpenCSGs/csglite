@@ -56,12 +56,13 @@ make package
 ./scripts/update-homebrew-formula.sh --tag v0.1.0
 
 # 5. 上传 GitHub / GitLab release 资产
-./scripts/push.sh --skip-build --tag v0.1.0
+./scripts/push.sh --skip-build --tag v0.1.0 --notes-file /tmp/csghub-lite-v0.1.0-notes.md
 ```
 
 说明：
 
 - `scripts/push.sh` 会将本地 `dist/` 下的发布包上传到 GitHub Release 和 GitLab Generic Package/Release。
+- 新建 release 必须传入 `--notes-file`，且文件需要包含明确的用户可见变更 bullet，不能只写 `Full Changelog`。
 - GitLab 上传会自动从 `local/secrets.env` 读取 `GITLAB_TOKEN`（如果环境变量未设置）。
 - 如果你希望仓库中的 `Formula/csghub-lite.rb` 始终指向“最新正式版”，请在发布完成后提交该文件的更新。
 
