@@ -418,12 +418,12 @@ config = {
         ("win32-x64", "opencode-windows-x64-baseline.zip", "zip", "opencode.exe"),
     ],
     "codex": [
-        ("darwin-arm64", "codex-aarch64-apple-darwin.tar.gz", "tar.gz", "codex"),
-        ("darwin-x64", "codex-x86_64-apple-darwin.tar.gz", "tar.gz", "codex"),
-        ("linux-arm64", "codex-aarch64-unknown-linux-musl.tar.gz", "tar.gz", "codex"),
-        ("linux-x64", "codex-x86_64-unknown-linux-musl.tar.gz", "tar.gz", "codex"),
-        ("win32-arm64", "codex-aarch64-pc-windows-msvc.exe.zip", "zip", "codex.exe"),
-        ("win32-x64", "codex-x86_64-pc-windows-msvc.exe.zip", "zip", "codex.exe"),
+        ("darwin-arm64", "codex-aarch64-apple-darwin.tar.gz", "tar.gz", "codex-aarch64-apple-darwin"),
+        ("darwin-x64", "codex-x86_64-apple-darwin.tar.gz", "tar.gz", "codex-x86_64-apple-darwin"),
+        ("linux-arm64", "codex-aarch64-unknown-linux-musl.tar.gz", "tar.gz", "codex-aarch64-unknown-linux-musl"),
+        ("linux-x64", "codex-x86_64-unknown-linux-musl.tar.gz", "tar.gz", "codex-x86_64-unknown-linux-musl"),
+        ("win32-arm64", "codex-aarch64-pc-windows-msvc.exe.zip", "zip", "codex-aarch64-pc-windows-msvc.exe"),
+        ("win32-x64", "codex-x86_64-pc-windows-msvc.exe.zip", "zip", "codex-x86_64-pc-windows-msvc.exe"),
     ],
 }
 
