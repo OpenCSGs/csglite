@@ -541,7 +541,7 @@ func TestOpenAIAppShellURLReturnsShellPage(t *testing.T) {
 
 	s := New(cfg, "test")
 
-	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "", "")
+	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "", "", "")
 	if err != nil {
 		t.Fatalf("openAIAppShellURL returned error: %v", err)
 	}
@@ -590,7 +590,7 @@ func TestOpenAIAppShellURLUsesRequestedWorkDir(t *testing.T) {
 	workDir := t.TempDir()
 	s := New(cfg, "test")
 
-	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "", workDir)
+	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "", "", workDir)
 	if err != nil {
 		t.Fatalf("openAIAppShellURL returned error: %v", err)
 	}
@@ -659,7 +659,7 @@ func TestOpenAIAppShellURLRemembersRequestedModel(t *testing.T) {
 
 	s := New(cfg, "test")
 
-	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "Qwen/Qwen2.5-Coder-1.5B", "")
+	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "Qwen/Qwen2.5-Coder-1.5B", "", "")
 	if err != nil {
 		t.Fatalf("openAIAppShellURL returned error: %v", err)
 	}
@@ -730,7 +730,7 @@ func TestOpenAIAppShellURLUsesRememberedModelWhenRequestOmitted(t *testing.T) {
 
 	s := New(cfg, "test")
 
-	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "", "")
+	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "", "", "")
 	if err != nil {
 		t.Fatalf("openAIAppShellURL returned error: %v", err)
 	}
@@ -790,7 +790,7 @@ func TestResolveCSGClawLaunchModelsUsesRememberedModelWhenRequestOmitted(t *test
 	s := New(cfg, "test")
 	s.cloud = cloud.NewService(apiServer.URL)
 
-	modelID, modelIDs, err := s.resolveCSGClawLaunchModels(context.Background(), "")
+	modelID, modelIDs, err := s.resolveCSGClawLaunchModels(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("resolveCSGClawLaunchModels returned error: %v", err)
 	}
@@ -832,7 +832,7 @@ func TestOpenAIAppShellURLMissingCloudTokenShowsSettingsHint(t *testing.T) {
 
 	s := New(cfg, "test")
 
-	_, err := s.openAIAppShellURL(context.Background(), "claude-code", "afrideva/Qwen2-0.5B-Instruct-GGUF:fh23aijhzx8g", "")
+	_, err := s.openAIAppShellURL(context.Background(), "claude-code", "afrideva/Qwen2-0.5B-Instruct-GGUF:fh23aijhzx8g", "", "")
 	if err == nil {
 		t.Fatal("openAIAppShellURL returned nil error, want settings hint")
 	}
@@ -847,7 +847,7 @@ func TestOpenAIAppShellURLWithoutLocalModelsShowsOpenCSGLoginHint(t *testing.T) 
 		ListenAddr: ":11435",
 	}, "test")
 
-	_, err := s.openAIAppShellURL(context.Background(), "codex", "", "")
+	_, err := s.openAIAppShellURL(context.Background(), "codex", "", "", "")
 	if err == nil {
 		t.Fatal("openAIAppShellURL returned nil error, want OpenCSG login hint")
 	}

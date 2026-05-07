@@ -66,7 +66,7 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 		opts.Stop = req.Stop
 	}
 
-	eng, err := s.getChatEngine(r.Context(), req.Model, "", requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+	eng, err := s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
 	if err != nil {
 		if inference.HTTPStatusCode(err) != 0 {
 			writeOpenAIInferenceError(w, err)

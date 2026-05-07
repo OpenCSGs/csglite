@@ -5,6 +5,9 @@
 - For every commit, PR, and release note, describe the specific new feature, fix,
   or behavior change in this work.
 - Do not use `Full Changelog` style summaries by default.
+- GitHub release notes must include explicit user-facing feature and fix
+  bullets. Do not publish a GitHub release that only contains auto-generated
+  changelog text, commit lists, or a `Full Changelog` link.
 - Do not dump broad commit inventories when the user wants a concise release
   summary.
 - Prefer 1-3 concrete bullets that explain what was added, fixed, or changed for

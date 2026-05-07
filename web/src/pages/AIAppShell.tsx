@@ -70,15 +70,35 @@ function shellWebSocketURL(sessionId: string): string {
   return `${protocol}//${location.host}/api/apps/shell/${encodeURIComponent(sessionId)}/ws`;
 }
 
+function shellModelKey(model: Pick<ModelInfo, "model" | "source">): string {
+  return `${model.source || "local"}:${model.model}`;
+}
+
+function parseShellModelKey(key: string): { source: string; model: string } {
+  const providerPrefix = "provider:";
+  if (key.startsWith(providerPrefix)) {
+    const next = key.indexOf(":", providerPrefix.length);
+    if (next > providerPrefix.length) {
+      return { source: key.slice(0, next), model: key.slice(next + 1) };
+    }
+  }
+  const first = key.indexOf(":");
+  if (first > 0) {
+    return { source: key.slice(0, first), model: key.slice(first + 1) };
+  }
+  return { source: "", model: key };
+}
+
 function normalizeShellModels(models: ModelInfo[]): ModelInfo[] {
   const seen = new Set<string>();
   const out: ModelInfo[] = [];
   for (const model of models) {
     const modelId = model.model?.trim();
-    if (!modelId || seen.has(modelId)) {
+    const key = shellModelKey(model);
+    if (!modelId || seen.has(key)) {
       continue;
     }
-    seen.add(modelId);
+    seen.add(key);
     out.push(model);
   }
   return out;
@@ -388,12 +408,13 @@ export function AIAppShell() {
 
     setSelectedModel((current) => {
       if (modelId && models.some((item) => item.model === modelId)) {
-        return modelId;
+        const model = models.find((item) => item.model === modelId);
+        return model ? shellModelKey(model) : modelId;
       }
-      if (current && models.some((item) => item.model === current)) {
+      if (current && models.some((item) => shellModelKey(item) === current)) {
         return current;
       }
-      return models[0]?.model || "";
+      return models[0] ? shellModelKey(models[0]) : "";
     });
   }, [appId, modelId, models]);
 
@@ -415,7 +436,11 @@ export function AIAppShell() {
   const canSwitchShellModel = shellAppsWithModelSwitch.has(appId);
   const canSwitchShellWorkDir = shellAppsWithWorkDirSwitch.has(appId);
   const trimmedWorkDir = workDirInput.trim();
-  const modelChanged = canSwitchShellModel && selectedModel !== modelId;
+  const selectedModelParts = selectedModel ? parseShellModelKey(selectedModel) : null;
+  const currentModelKey = modelId
+    ? shellModelKey(models.find((item) => item.model === modelId) || { model: modelId, source: "local" })
+    : "";
+  const modelChanged = canSwitchShellModel && selectedModel !== currentModelKey;
   const workDirChanged = trimmedWorkDir !== workDir;
   const launchConfigChanged = modelChanged || workDirChanged;
   const canApplyLaunchConfig = canSwitchShellModel || canSwitchShellWorkDir;
@@ -434,9 +459,9 @@ export function AIAppShell() {
     setError("");
     try {
       const requestedModel = canSwitchShellModel
-        ? selectedModel
+        ? selectedModelParts?.model
         : modelId || undefined;
-      const { url } = await openAIApp(appId || claudeCodeAppId, requestedModel, trimmedWorkDir);
+      const { url } = await openAIApp(appId || claudeCodeAppId, requestedModel, trimmedWorkDir, selectedModelParts?.source);
       await closeShellSession(sessionId);
       location.replace(url);
       return;
@@ -497,7 +522,7 @@ export function AIAppShell() {
                       <option value="">{t("aiApps.modelDefault")}</option>
                     ) : (
                       models.map((model) => (
-                        <option key={model.model} value={model.model}>
+                        <option key={shellModelKey(model)} value={shellModelKey(model)}>
                           {formatShellModelLabel(model)}
                         </option>
                       ))

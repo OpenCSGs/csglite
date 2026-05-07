@@ -94,7 +94,7 @@ func (s *Server) handleAppModelSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.AppID) == "csgclaw" {
-		if err := s.saveCSGClawModel(r.Context(), req.ModelID); err != nil {
+		if err := s.saveCSGClawModel(r.Context(), req.ModelID, req.Source); err != nil {
 			log.Printf("AI APP csgclaw: model switch failed: %v", err)
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -117,8 +117,8 @@ func (s *Server) handleAppOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("AI APP %s: open requested model=%q work_dir=%q", req.AppID, req.ModelID, req.WorkDir)
-	url, err := s.openAIAppURL(r.Context(), req.AppID, req.ModelID, req.WorkDir)
+	log.Printf("AI APP %s: open requested model=%q source=%q work_dir=%q", req.AppID, req.ModelID, req.Source, req.WorkDir)
+	url, err := s.openAIAppURL(r.Context(), req.AppID, req.ModelID, req.Source, req.WorkDir)
 	if err != nil {
 		log.Printf("AI APP %s: open failed: %v", req.AppID, err)
 		if strings.Contains(err.Error(), "unknown app") {
@@ -153,15 +153,15 @@ func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 
 	switch info.ID {
 	case "claude-code", "open-code", "codex", "pi":
-		modelID, _, err = s.resolveAIAppShellLaunchModels(ctx, info.ID, "")
+		modelID, _, err = s.resolveAIAppShellLaunchModels(ctx, info.ID, "", "")
 	case "openclaw", "csgclaw":
 		preferred := s.preferredAIAppModel(info.ID)
-		modelID, _, err = s.resolveAIAppLaunchModels(ctx, preferred)
+		modelID, _, err = s.resolveAIAppLaunchModels(ctx, preferred, "")
 		if err != nil && preferred != "" {
 			// Don't clear preference on lookup failure - the model might be from
 			// a third-party provider whose API is temporarily unavailable.
 			// Fall back to default model without clearing the preference.
-			modelID, _, err = s.resolveAIAppLaunchModels(ctx, "")
+			modelID, _, err = s.resolveAIAppLaunchModels(ctx, "", "")
 		}
 	default:
 		return

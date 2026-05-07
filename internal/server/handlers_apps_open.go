@@ -32,7 +32,7 @@ const (
 	openClawDefaultRegistry = "https://registry.npmmirror.com"
 )
 
-func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, workDir string) (string, error) {
+func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, modelSource, workDir string) (string, error) {
 	info, err := s.appManager.Get(ctx, appID)
 	if err != nil {
 		return "", err
@@ -46,17 +46,17 @@ func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, workDir strin
 
 	switch appID {
 	case "openclaw":
-		return s.openClawChatURL(ctx, modelID)
+		return s.openClawChatURL(ctx, modelID, modelSource)
 	case "csgclaw":
-		return s.openCSGClawURL(ctx, modelID)
+		return s.openCSGClawURL(ctx, modelID, modelSource)
 	case "claude-code", "open-code", "codex", "pi":
-		return s.openAIAppShellURL(ctx, appID, modelID, workDir)
+		return s.openAIAppShellURL(ctx, appID, modelID, modelSource, workDir)
 	default:
 		return "", fmt.Errorf("%s does not provide a direct chat entry yet", appID)
 	}
 }
 
-func (s *Server) openClawChatURL(ctx context.Context, modelID string) (string, error) {
+func (s *Server) openClawChatURL(ctx context.Context, modelID, modelSource string) (string, error) {
 	s.openclawMu.Lock()
 	defer s.openclawMu.Unlock()
 
@@ -68,7 +68,7 @@ func (s *Server) openClawChatURL(ctx context.Context, modelID string) (string, e
 	log.Printf("AI APP openclaw: opening chat requested_model=%q", modelID)
 	s.refreshOpenClawModelCatalog(ctx)
 
-	if err := s.ensureOpenClawProfile(ctx, binary, modelID); err != nil {
+	if err := s.ensureOpenClawProfile(ctx, binary, modelID, modelSource); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(modelID) != "" {
@@ -106,8 +106,8 @@ func (s *Server) refreshOpenClawModelCatalog(ctx context.Context) {
 	}
 }
 
-func (s *Server) ensureOpenClawProfile(ctx context.Context, binary, requestedModelID string) error {
-	modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, requestedModelID)
+func (s *Server) ensureOpenClawProfile(ctx context.Context, binary, requestedModelID, requestedSource string) error {
+	modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, requestedModelID, requestedSource)
 	if err != nil {
 		return err
 	}

@@ -29,7 +29,7 @@ const (
 	csgclawManagerImage   = "opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/picoclaw:2026.4.26"
 )
 
-func (s *Server) openCSGClawURL(ctx context.Context, modelID string) (string, error) {
+func (s *Server) openCSGClawURL(ctx context.Context, modelID, modelSource string) (string, error) {
 	s.csgclawMu.Lock()
 	defer s.csgclawMu.Unlock()
 
@@ -39,7 +39,7 @@ func (s *Server) openCSGClawURL(ctx context.Context, modelID string) (string, er
 	}
 
 	requestedModel := strings.TrimSpace(modelID)
-	resolvedModel, modelIDs, err := s.resolveCSGClawLaunchModels(ctx, requestedModel)
+	resolvedModel, modelIDs, err := s.resolveCSGClawLaunchModels(ctx, requestedModel, modelSource)
 	if err != nil {
 		return "", err
 	}
@@ -65,7 +65,7 @@ func (s *Server) openCSGClawURL(ctx context.Context, modelID string) (string, er
 	return "http://" + csgclawDefaultAddr + "/", nil
 }
 
-func (s *Server) saveCSGClawModel(ctx context.Context, modelID string) error {
+func (s *Server) saveCSGClawModel(ctx context.Context, modelID, modelSource string) error {
 	s.csgclawMu.Lock()
 	defer s.csgclawMu.Unlock()
 
@@ -74,7 +74,7 @@ func (s *Server) saveCSGClawModel(ctx context.Context, modelID string) error {
 		return fmt.Errorf("CSGClaw is installed, but its launch command was not found on PATH")
 	}
 
-	resolvedModel, modelIDs, err := s.resolveCSGClawLaunchModels(ctx, modelID)
+	resolvedModel, modelIDs, err := s.resolveCSGClawLaunchModels(ctx, modelID, modelSource)
 	if err != nil {
 		return err
 	}
@@ -97,15 +97,15 @@ func (s *Server) saveCSGClawModel(ctx context.Context, modelID string) error {
 	return nil
 }
 
-func (s *Server) resolveCSGClawLaunchModels(ctx context.Context, requestedModel string) (string, []string, error) {
+func (s *Server) resolveCSGClawLaunchModels(ctx context.Context, requestedModel, requestedSource string) (string, []string, error) {
 	requestedModel = strings.TrimSpace(requestedModel)
 	if requestedModel != "" {
-		return s.resolveAIAppLaunchModels(ctx, requestedModel)
+		return s.resolveAIAppLaunchModels(ctx, requestedModel, requestedSource)
 	}
 
 	preferredModel := s.preferredAIAppModel("csgclaw")
 	if preferredModel != "" {
-		modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, preferredModel)
+		modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, preferredModel, "")
 		if err == nil {
 			return modelID, modelIDs, nil
 		}
@@ -116,7 +116,7 @@ func (s *Server) resolveCSGClawLaunchModels(ctx context.Context, requestedModel 
 		}
 	}
 
-	return s.resolveAIAppLaunchModels(ctx, "")
+	return s.resolveAIAppLaunchModels(ctx, "", "")
 }
 
 func (s *Server) onboardCSGClaw(ctx context.Context, binary, modelID string, modelIDs []string, forceRecreateManager bool) error {

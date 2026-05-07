@@ -917,23 +917,24 @@ export async function uninstallAIApp(appId: string): Promise<AIAppInfo> {
   });
 }
 
-export async function openAIApp(appId: string, modelId?: string, workDir?: string): Promise<AIAppOpenResponse> {
+export async function openAIApp(appId: string, modelId?: string, workDir?: string, source?: string): Promise<AIAppOpenResponse> {
   return fetchJSON<AIAppOpenResponse>("/api/apps/open", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       app_id: appId,
       model_id: modelId || undefined,
+      source: source || undefined,
       work_dir: workDir || undefined,
     }),
   });
 }
 
-export async function saveAIAppModel(appId: string, modelId: string): Promise<void> {
+export async function saveAIAppModel(appId: string, modelId: string, source?: string): Promise<void> {
   await fetch("/api/apps/model", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ app_id: appId, model_id: modelId }),
+    body: JSON.stringify({ app_id: appId, model_id: modelId, source: source || undefined }),
   });
 }
 

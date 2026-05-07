@@ -3852,6 +3852,10 @@
           "model_id": {
             "type": "string"
           },
+          "source": {
+            "type": "string",
+            "description": "Model source such as local, cloud, or provider:<id>."
+          },
           "work_dir": {
             "type": "string",
             "description": "Working directory used for shell-based AI App launches."
@@ -4349,6 +4353,10 @@
         "properties": {
           "model": {
             "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Model source such as local, cloud, or provider:<id>."
           },
           "messages": {
             "type": "array",

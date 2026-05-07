@@ -307,6 +307,7 @@ type DirectoryBrowseResponse struct {
 type AIAppActionRequest struct {
 	AppID   string `json:"app_id"`
 	ModelID string `json:"model_id,omitempty"`
+	Source  string `json:"source,omitempty"`
 	WorkDir string `json:"work_dir,omitempty"`
 }
 
@@ -349,6 +350,7 @@ type AIAppOpenResponse struct {
 
 type OpenAIChatRequest struct {
 	Model             string      `json:"model"`
+	Source            string      `json:"source,omitempty"`
 	Messages          []Message   `json:"messages"`
 	Tools             []Tool      `json:"tools,omitempty"`
 	ToolChoice        interface{} `json:"tool_choice,omitempty"`

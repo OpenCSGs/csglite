@@ -50,6 +50,25 @@ function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
   return status?.authenticated ?? status?.has_token ?? false;
 }
 
+function aiAppModelKey(model: Pick<ModelInfo, "model" | "source">): string {
+  return `${model.source || "local"}:${model.model}`;
+}
+
+function parseAIAppModelKey(key: string): { source: string; model: string } {
+  const providerPrefix = "provider:";
+  if (key.startsWith(providerPrefix)) {
+    const next = key.indexOf(":", providerPrefix.length);
+    if (next > providerPrefix.length) {
+      return { source: key.slice(0, next), model: key.slice(next + 1) };
+    }
+  }
+  const first = key.indexOf(":");
+  if (first > 0) {
+    return { source: key.slice(0, first), model: key.slice(first + 1) };
+  }
+  return { source: "", model: key };
+}
+
 const filteredApps = computed(() => {
   const currentLocale = locale.value;
   const query = searchQuery.value.trim().toLowerCase();
@@ -160,12 +179,12 @@ export function AIApps() {
     }
   };
 
-  const handleOpenApp = async (appId: string, modelId?: string) => {
+  const handleOpenApp = async (appId: string, modelId?: string, source?: string) => {
     pendingOpenId.value = appId;
     actionError.value = "";
     const popup = openAppPopup();
     try {
-      const { url } = await openAIApp(appId, modelId);
+      const { url } = await openAIApp(appId, modelId, undefined, source);
       if (popup) {
         popup.location.replace(url);
       } else {
@@ -291,7 +310,7 @@ export function AIApps() {
           pendingInstall={pendingInstallId.value === selectedApp.value.id}
           pendingUninstall={pendingUninstallId.value === selectedApp.value.id}
           pendingOpen={pendingOpenId.value === selectedApp.value.id}
-          onOpenChat={(modelId?: string) => handleOpenApp(selectedApp.value!.id, modelId)}
+          onOpenChat={(modelId?: string, source?: string) => handleOpenApp(selectedApp.value!.id, modelId, source)}
         />
       )}
     </div>
@@ -488,7 +507,7 @@ function LiveLogsDrawer({
   pendingInstall: boolean;
   pendingUninstall: boolean;
   pendingOpen: boolean;
-  onOpenChat: (modelId?: string) => void;
+  onOpenChat: (modelId?: string, source?: string) => void;
 }) {
   void locale.value;
 
@@ -511,8 +530,11 @@ function LiveLogsDrawer({
   const [cloudAuthError, setCloudAuthError] = useState("");
   const [cloudTokenInput, setCloudTokenInput] = useState("");
   const [isSavingCloudToken, setIsSavingCloudToken] = useState(false);
-  const currentModelID = selectedModel || state.modelID?.trim() || "";
-  const currentModelInfo = models.find((item) => item.model === currentModelID);
+  const selectedModelParts = selectedModel ? parseAIAppModelKey(selectedModel) : null;
+  const currentModelID = selectedModelParts?.model || state.modelID?.trim() || "";
+  const currentModelInfo = selectedModelParts
+    ? models.find((item) => aiAppModelKey(item) === selectedModel)
+    : models.find((item) => item.model === currentModelID);
   const launchPreview = cliLaunchPreview(app, currentModelID);
 
   useEffect(() => {
@@ -619,16 +641,17 @@ function LiveLogsDrawer({
     }
 
     setSelectedModel((current) => {
-      if (current && models.some((item) => item.model === current)) {
+      if (current && models.some((item) => aiAppModelKey(item) === current)) {
         return current;
       }
       if (state.modelID && models.some((item) => item.model === state.modelID)) {
-        return state.modelID;
+        const model = models.find((item) => item.model === state.modelID);
+        return model ? aiAppModelKey(model) : state.modelID;
       }
       if (state.modelID) {
         return state.modelID;
       }
-      return models[0]?.model || "";
+      return models[0] ? aiAppModelKey(models[0]) : "";
     });
   }, [app.id, canSelectModel, state.modelID, models]);
 
@@ -704,10 +727,10 @@ function LiveLogsDrawer({
 
   const handleModelChange = (value: string) => {
     setSelectedModel(value);
-    if (value) {
-      void saveAIAppModel(app.id, value);
+    const nextModel = models.find((item) => aiAppModelKey(item) === value);
+    if (nextModel) {
+      void saveAIAppModel(app.id, nextModel.model, nextModel.source);
     }
-    const nextModel = models.find((item) => item.model === value);
     void ensureCloudAuthForModel(nextModel);
   };
 
@@ -715,7 +738,7 @@ function LiveLogsDrawer({
     if (!(await ensureCloudAuthForModel(currentModelInfo))) {
       return;
     }
-    onOpenChat(currentModelID || undefined);
+    onOpenChat(currentModelID || undefined, currentModelInfo?.source);
   };
 
   const handleOpenCloudLogin = () => {
@@ -839,7 +862,7 @@ function LiveLogsDrawer({
                   {canSelectModel ? (
                     <div class="relative">
                       <select
-                        value={currentModelID}
+                        value={selectedModel || currentModelID}
                         onChange={(e) => {
                           handleModelChange((e.currentTarget as HTMLSelectElement).value);
                         }}
@@ -861,7 +884,7 @@ function LiveLogsDrawer({
                               <option value={currentModelID}>{currentModelID}</option>
                             )}
                             {models.map((model) => (
-                              <option key={model.model} value={model.model}>
+                              <option key={aiAppModelKey(model)} value={aiAppModelKey(model)}>
                                 {formatAIAppModelLabel(model)}
                               </option>
                             ))}
@@ -1347,10 +1370,11 @@ function normalizeAIAppModels(models: ModelInfo[]): ModelInfo[] {
   const out: ModelInfo[] = [];
   for (const model of models) {
     const modelId = model.model?.trim();
-    if (!modelId || seen.has(modelId)) {
+    const key = aiAppModelKey(model);
+    if (!modelId || seen.has(key)) {
       continue;
     }
-    seen.add(modelId);
+    seen.add(key);
     out.push(model);
   }
   return out;

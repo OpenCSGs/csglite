@@ -112,11 +112,12 @@ func (s *Server) cloudAuthStatus(ctx context.Context) cloudAuthStatus {
 }
 
 func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (inference.Engine, error) {
-	source = strings.TrimSpace(strings.ToLower(source))
+	source = strings.TrimSpace(source)
+	normalizedSource := strings.ToLower(source)
 	if providerIDFromSource(source) != "" {
 		return newThirdPartyProviderEngine(source, modelID)
 	}
-	if source == "cloud" {
+	if normalizedSource == "cloud" {
 		return s.newCloudEngine(modelID)
 	}
 
@@ -124,8 +125,14 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 	if err == nil {
 		return eng, nil
 	}
-	if source == "local" {
+	if normalizedSource == "local" {
 		return nil, err
+	}
+
+	if strings.TrimSpace(s.cfg.Token) == "" {
+		if providerSource := s.thirdPartyProviderSourceForModel(ctx, modelID); providerSource != "" {
+			return newThirdPartyProviderEngine(providerSource, modelID)
+		}
 	}
 
 	models, cloudErr := s.listCloudModels(ctx, false)
@@ -147,13 +154,24 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 		return s.newCloudEngine(modelID)
 	}
 
-	for _, item := range s.listThirdPartyProviderModels(ctx) {
-		if strings.TrimSpace(item.Model) == strings.TrimSpace(modelID) {
-			return newThirdPartyProviderEngine(item.Source, modelID)
-		}
+	if providerSource := s.thirdPartyProviderSourceForModel(ctx, modelID); providerSource != "" {
+		return newThirdPartyProviderEngine(providerSource, modelID)
 	}
 
 	return nil, err
+}
+
+func (s *Server) thirdPartyProviderSourceForModel(ctx context.Context, modelID string) string {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return ""
+	}
+	for _, item := range s.listThirdPartyProviderModels(ctx) {
+		if strings.TrimSpace(item.Model) == modelID {
+			return strings.TrimSpace(item.Source)
+		}
+	}
+	return ""
 }
 
 func (s *Server) newCloudEngine(modelID string) (inference.Engine, error) {

@@ -123,7 +123,7 @@ func TestResolveAIAppLaunchModelsRefreshesRequestedCloudModelAfterCacheMiss(t *t
 	}
 
 	currentModel = "fresh/model"
-	modelID, modelIDs, err := s.resolveAIAppLaunchModels(context.Background(), "fresh/model")
+	modelID, modelIDs, err := s.resolveAIAppLaunchModels(context.Background(), "fresh/model", "")
 	if err != nil {
 		t.Fatalf("resolveAIAppLaunchModels returned error: %v", err)
 	}

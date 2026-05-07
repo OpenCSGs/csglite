@@ -13,6 +13,7 @@ import (
 
 type openAIResponsesRequest struct {
 	Model             string                   `json:"model"`
+	Source            string                   `json:"source,omitempty"`
 	Input             interface{}              `json:"input"`
 	Instructions      string                   `json:"instructions,omitempty"`
 	Stream            bool                     `json:"stream,omitempty"`
@@ -47,7 +48,7 @@ func (s *Server) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
 		opts.MaxTokens = *req.MaxOutputTokens
 	}
 
-	eng, err := s.getChatEngine(r.Context(), req.Model, "", 0, 0, -1, "", "", "")
+	eng, err := s.getChatEngine(r.Context(), req.Model, req.Source, 0, 0, -1, "", "", "")
 	if err != nil {
 		if inference.HTTPStatusCode(err) != 0 {
 			writeOpenAIInferenceError(w, err)

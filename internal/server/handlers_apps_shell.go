@@ -483,7 +483,7 @@ func (s *aiAppShellSession) stopIdleTimeoutLocked() {
 	}
 }
 
-func (s *Server) openAIAppShellURL(ctx context.Context, appID, requestedModel, requestedWorkDir string) (string, error) {
+func (s *Server) openAIAppShellURL(ctx context.Context, appID, requestedModel, requestedSource, requestedWorkDir string) (string, error) {
 	if s.appShells == nil {
 		s.appShells = newAIAppShellManager()
 	}
@@ -493,7 +493,7 @@ func (s *Server) openAIAppShellURL(ctx context.Context, appID, requestedModel, r
 		return "", err
 	}
 
-	defaultModel, modelIDs, err := s.resolveAIAppShellLaunchModels(ctx, appID, requestedModel)
+	defaultModel, modelIDs, err := s.resolveAIAppShellLaunchModels(ctx, appID, requestedModel, requestedSource)
 	if err != nil {
 		return "", err
 	}
@@ -525,15 +525,15 @@ func (s *Server) openAIAppShellURL(ctx context.Context, appID, requestedModel, r
 	return u.String(), nil
 }
 
-func (s *Server) resolveAIAppShellLaunchModels(ctx context.Context, appID, requestedModel string) (string, []string, error) {
+func (s *Server) resolveAIAppShellLaunchModels(ctx context.Context, appID, requestedModel, requestedSource string) (string, []string, error) {
 	requestedModel = strings.TrimSpace(requestedModel)
 	if requestedModel != "" {
-		return s.resolveAIAppLaunchModels(ctx, requestedModel)
+		return s.resolveAIAppLaunchModels(ctx, requestedModel, requestedSource)
 	}
 
 	preferredModel := s.preferredAIAppModel(appID)
 	if preferredModel != "" {
-		modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, preferredModel)
+		modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, preferredModel, "")
 		if err == nil {
 			return modelID, modelIDs, nil
 		}
@@ -547,7 +547,7 @@ func (s *Server) resolveAIAppShellLaunchModels(ctx context.Context, appID, reque
 		// Fall through to default model selection
 	}
 
-	return s.resolveAIAppLaunchModels(ctx, "")
+	return s.resolveAIAppLaunchModels(ctx, "", "")
 }
 
 func resolveAIAppOpenTarget(appID string) (aiAppOpenTarget, error) {
@@ -581,7 +581,7 @@ func resolveAIAppOpenTarget(appID string) (aiAppOpenTarget, error) {
 	}
 }
 
-func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel string) (string, []string, error) {
+func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, requestedSource string) (string, []string, error) {
 	localModels, err := s.manager.List()
 	if err != nil {
 		return "", nil, fmt.Errorf("listing local models: %w", err)
@@ -643,7 +643,47 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel st
 	}
 
 	requestedModel = strings.TrimSpace(requestedModel)
+	requestedSource = strings.TrimSpace(requestedSource)
 	if requestedModel != "" {
+		if requestedSource != "" {
+			normalizedSource := strings.ToLower(requestedSource)
+			switch {
+			case normalizedSource == "local":
+				for _, item := range localModels {
+					if strings.TrimSpace(item.FullName()) == requestedModel {
+						return requestedModel, modelIDs, nil
+					}
+				}
+				return "", nil, fmt.Errorf("model %q is not available for AI Apps", requestedModel)
+			case normalizedSource == "cloud":
+				if strings.TrimSpace(s.cfg.Token) == "" {
+					return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings and save an Access Token first", requestedModel)
+				}
+				if s.cloud != nil {
+					if cloudModels, err := s.cloud.RefreshChatModels(ctx); err == nil {
+						for _, item := range cloudModels {
+							modelIDs = appendUniqueModelID(modelIDs, seen, item.Model)
+						}
+						if modelInfoListContains(cloudModels, requestedModel) {
+							return requestedModel, modelIDs, nil
+						}
+					}
+				}
+				return "", nil, fmt.Errorf("model %q is not available for AI Apps", requestedModel)
+			case providerIDFromSource(requestedSource) != "":
+				for _, item := range s.listThirdPartyProviderModels(ctx) {
+					modelID := strings.TrimSpace(item.Model)
+					if modelID == "" {
+						continue
+					}
+					modelIDs = appendUniqueModelID(modelIDs, seen, modelID)
+					if strings.EqualFold(strings.TrimSpace(item.Source), requestedSource) && modelID == requestedModel {
+						return requestedModel, modelIDs, nil
+					}
+				}
+				return "", nil, fmt.Errorf("model %q is not available for AI Apps", requestedModel)
+			}
+		}
 		if _, ok := seen[requestedModel]; !ok {
 			if s.cloud != nil && strings.TrimSpace(s.cfg.Token) != "" {
 				if cloudModels, err := s.cloud.RefreshChatModels(ctx); err == nil {
