@@ -159,6 +159,78 @@ func TestAnthropicMessagesToOpenAI_ToolLoop(t *testing.T) {
 	}
 }
 
+func TestAnthropicMessagesToOpenAI_PreservesThinkingAsReasoningContent(t *testing.T) {
+	req := api.AnthropicMessageRequest{
+		Model: "test/model",
+		Messages: []api.AnthropicMessage{
+			{
+				Role: "assistant",
+				Content: []interface{}{
+					map[string]interface{}{"type": "thinking", "thinking": "plan the command"},
+					map[string]interface{}{"type": "text", "text": "Let me check."},
+					map[string]interface{}{
+						"type":  "tool_use",
+						"id":    "toolu_123",
+						"name":  "exec",
+						"input": map[string]interface{}{"command": "pwd"},
+					},
+				},
+			},
+			{
+				Role: "user",
+				Content: []interface{}{
+					map[string]interface{}{
+						"type":        "tool_result",
+						"tool_use_id": "toolu_123",
+						"content":     "ok",
+					},
+				},
+			},
+		},
+	}
+
+	got, err := anthropicMessagesToOpenAI(req)
+	if err != nil {
+		t.Fatalf("anthropicMessagesToOpenAI returned error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 messages, got %d: %#v", len(got), got)
+	}
+	if got[0]["role"] != "assistant" || got[0]["content"] != "Let me check." {
+		t.Fatalf("unexpected assistant message: %#v", got[0])
+	}
+	if got[0]["reasoning_content"] != "plan the command" {
+		t.Fatalf("reasoning_content = %#v, want plan the command", got[0]["reasoning_content"])
+	}
+	if _, ok := got[0]["tool_calls"]; !ok {
+		t.Fatalf("assistant tool_calls missing: %#v", got[0])
+	}
+	if got[1]["role"] != "tool" || got[1]["content"] != "ok" {
+		t.Fatalf("unexpected tool message: %#v", got[1])
+	}
+}
+
+func TestAnthropicMessagesToInference_PreservesThinkingAsReasoningContent(t *testing.T) {
+	req := api.AnthropicMessageRequest{
+		Model: "test/model",
+		Messages: []api.AnthropicMessage{{
+			Role: "assistant",
+			Content: []interface{}{
+				map[string]interface{}{"type": "thinking", "thinking": "hidden reasoning"},
+				map[string]interface{}{"type": "text", "text": "visible answer"},
+			},
+		}},
+	}
+
+	got := anthropicMessagesToInference(req)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 message, got %#v", got)
+	}
+	if got[0].Role != "assistant" || got[0].Content != "visible answer" || got[0].ReasoningContent != "hidden reasoning" {
+		t.Fatalf("unexpected inference message: %#v", got[0])
+	}
+}
+
 func TestAnthropicMessageResponseFromOpenAI_ToolUse(t *testing.T) {
 	openAIResp := api.OpenAIChatResponse{
 		Model: "test/model",
@@ -208,6 +280,45 @@ func TestAnthropicMessageResponseFromOpenAI_ToolUse(t *testing.T) {
 	}
 	if input["command"] != "pwd" {
 		t.Fatalf("tool input = %#v, want command=pwd", input)
+	}
+}
+
+func TestAnthropicMessageResponseFromOpenAI_PreservesReasoningContent(t *testing.T) {
+	openAIResp := api.OpenAIChatResponse{
+		Model: "test/model",
+		Choices: []api.OpenAIChoice{{
+			Index: 0,
+			Message: &api.Message{
+				Role:             "assistant",
+				ReasoningContent: "hidden reasoning",
+				Content:          "visible answer",
+				ToolCalls: []api.ToolCall{{
+					ID:   "call_123",
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:      "exec",
+						Arguments: "{\"command\":\"pwd\"}",
+					},
+				}},
+			},
+		}},
+	}
+
+	got, err := anthropicMessageResponseFromOpenAI("msg_test", "test/model", openAIResp, 5)
+	if err != nil {
+		t.Fatalf("anthropicMessageResponseFromOpenAI returned error: %v", err)
+	}
+	if len(got.Content) != 3 {
+		t.Fatalf("expected 3 content blocks, got %#v", got.Content)
+	}
+	if got.Content[0].Type != "thinking" || got.Content[0].Thinking != "hidden reasoning" {
+		t.Fatalf("unexpected thinking block: %#v", got.Content[0])
+	}
+	if got.Content[1].Type != "text" || got.Content[1].Text != "visible answer" {
+		t.Fatalf("unexpected text block: %#v", got.Content[1])
+	}
+	if got.Content[2].Type != "tool_use" || got.Content[2].ID != "call_123" {
+		t.Fatalf("unexpected tool block: %#v", got.Content[2])
 	}
 }
 
@@ -285,6 +396,119 @@ func TestHandleAnthropicMessagesWithTools(t *testing.T) {
 	}
 	if messages[0]["role"] != "user" || messages[0]["content"] != "run pwd" {
 		t.Fatalf("unexpected forwarded message: %#v", messages[0])
+	}
+}
+
+func TestHandleAnthropicMessagesProxyPreservesReasoningContent(t *testing.T) {
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-test",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index: 0,
+				Message: &api.Message{
+					Role:             "assistant",
+					ReasoningContent: "next hidden reasoning",
+					Content:          "next visible answer",
+				},
+			}},
+		},
+	}
+	s := newAnthropicProxyTestServer(t, engine)
+
+	body := `{
+	  "model": "test/model",
+	  "messages": [
+	    {"role":"assistant","content":[
+	      {"type":"thinking","thinking":"previous hidden reasoning"},
+	      {"type":"text","text":"previous visible answer"}
+	    ]},
+	    {"role":"user","content":"continue"}
+	  ],
+	  "stream": false
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	w := httptest.NewRecorder()
+
+	s.handleAnthropicMessages(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	messages, ok := engine.lastReq["messages"].([]map[string]interface{})
+	if !ok || len(messages) != 2 {
+		t.Fatalf("expected two forwarded messages, got %#v", engine.lastReq["messages"])
+	}
+	if messages[0]["role"] != "assistant" || messages[0]["content"] != "previous visible answer" {
+		t.Fatalf("unexpected forwarded assistant message: %#v", messages[0])
+	}
+	if messages[0]["reasoning_content"] != "previous hidden reasoning" {
+		t.Fatalf("forwarded reasoning_content = %#v", messages[0]["reasoning_content"])
+	}
+
+	var resp api.AnthropicMessageResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Content) != 2 {
+		t.Fatalf("expected thinking and text blocks, got %#v", resp.Content)
+	}
+	if resp.Content[0].Type != "thinking" || resp.Content[0].Thinking != "next hidden reasoning" {
+		t.Fatalf("unexpected thinking block: %#v", resp.Content[0])
+	}
+	if resp.Content[1].Type != "text" || resp.Content[1].Text != "next visible answer" {
+		t.Fatalf("unexpected text block: %#v", resp.Content[1])
+	}
+}
+
+func TestHandleAnthropicMessagesProxyStreamsReasoningContent(t *testing.T) {
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-test",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index: 0,
+				Message: &api.Message{
+					Role:             "assistant",
+					ReasoningContent: "stream hidden reasoning",
+					Content:          "stream visible answer",
+				},
+			}},
+		},
+	}
+	s := newAnthropicProxyTestServer(t, engine)
+
+	body := `{
+	  "model": "test/model",
+	  "messages": [{"role":"user","content":"hi"}],
+	  "stream": true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	w := httptest.NewRecorder()
+
+	s.handleAnthropicMessages(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("content-type = %q, want text/event-stream", w.Header().Get("Content-Type"))
+	}
+	bodyText := w.Body.String()
+	if !strings.Contains(bodyText, `"type":"thinking"`) {
+		t.Fatalf("expected thinking block in stream, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `"type":"thinking_delta"`) || !strings.Contains(bodyText, `"thinking":"stream hidden reasoning"`) {
+		t.Fatalf("expected thinking delta in stream, got %s", bodyText)
+	}
+	if !strings.Contains(bodyText, `"type":"text_delta"`) || !strings.Contains(bodyText, `"text":"stream visible answer"`) {
+		t.Fatalf("expected text delta in stream, got %s", bodyText)
 	}
 }
 

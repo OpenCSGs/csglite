@@ -51,6 +51,10 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		s.handleAnthropicMessagesWithTools(w, r, req, eng, opts, inputTokens, id)
 		return
 	}
+	if proxy, ok := eng.(inference.ChatCompletionProxier); ok {
+		s.handleAnthropicMessagesProxy(w, r, req, proxy, opts, inputTokens, id)
+		return
+	}
 
 	messages := anthropicMessagesToInference(req)
 
@@ -115,6 +119,76 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusOK, buildAnthropicMessageResponse(id, req.Model, response, inputTokens))
+}
+
+func (s *Server) handleAnthropicMessagesProxy(
+	w http.ResponseWriter,
+	r *http.Request,
+	req api.AnthropicMessageRequest,
+	proxy inference.ChatCompletionProxier,
+	opts inference.Options,
+	inputTokens int,
+	id string,
+) {
+	reqBody, err := anthropicRequestToProxyBody(req, opts, false)
+	if err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	resp, err := proxy.ChatCompletion(r.Context(), reqBody)
+	if err != nil {
+		if req.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			writeAnthropicSSE(w, "error", anthropicErrorPayloadFromInferenceError(err))
+			return
+		}
+		writeAnthropicInferenceError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var openAIResp api.OpenAIChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
+		message := "decoding response: " + err.Error()
+		if req.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			writeAnthropicSSE(w, "error", anthropicErrorPayloadWithType("api_error", message))
+			return
+		}
+		writeAnthropicErrorWithType(w, http.StatusInternalServerError, "api_error", message)
+		return
+	}
+	if openAIResp.Model == "" {
+		openAIResp.Model = req.Model
+	}
+
+	anthropicResp, err := anthropicMessageResponseFromOpenAI(id, req.Model, openAIResp, inputTokens)
+	if err != nil {
+		if req.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			writeAnthropicSSE(w, "error", anthropicErrorPayloadWithType("api_error", err.Error()))
+			return
+		}
+		writeAnthropicErrorWithType(w, http.StatusInternalServerError, "api_error", err.Error())
+		return
+	}
+
+	if !req.Stream {
+		writeJSON(w, http.StatusOK, anthropicResp)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	writeAnthropicStreamedMessage(w, anthropicResp)
 }
 
 func (s *Server) handleAnthropicMessagesWithTools(
@@ -293,10 +367,11 @@ func anthropicMessagesToInference(req api.AnthropicMessageRequest) []inference.M
 		messages = append(messages, inference.Message{Role: "system", Content: system})
 	}
 	for _, item := range req.Messages {
-		text := anthropicContentText(item.Content)
+		text, reasoning := anthropicMessageTextAndReasoning(item.Role, item.Content)
 		messages = append(messages, inference.Message{
-			Role:    item.Role,
-			Content: text,
+			Role:             item.Role,
+			Content:          text,
+			ReasoningContent: reasoning,
 		})
 	}
 	return messages
@@ -378,6 +453,7 @@ func anthropicMessageToOpenAIEntries(message api.AnthropicMessage, messageIndex 
 func anthropicContentBlockEntriesToOpenAI(role string, blocks []interface{}, messageIndex int, pendingToolNames map[string]string) ([]map[string]interface{}, error) {
 	entries := make([]map[string]interface{}, 0, len(blocks))
 	textParts := make([]string, 0, len(blocks))
+	reasoningParts := make([]string, 0)
 	assistantToolCalls := make([]map[string]interface{}, 0)
 	assistantToolIndex := 0
 
@@ -406,7 +482,11 @@ func anthropicContentBlockEntriesToOpenAI(role string, blocks []interface{}, mes
 				}
 			case "thinking":
 				if thinking, _ := block["thinking"].(string); strings.TrimSpace(thinking) != "" {
-					textParts = append(textParts, thinking)
+					if role == "assistant" {
+						reasoningParts = append(reasoningParts, thinking)
+					} else {
+						textParts = append(textParts, thinking)
+					}
 				}
 			case "tool_use":
 				if role != "assistant" {
@@ -460,7 +540,7 @@ func anthropicContentBlockEntriesToOpenAI(role string, blocks []interface{}, mes
 	}
 
 	if role == "assistant" {
-		if len(textParts) == 0 && len(assistantToolCalls) == 0 {
+		if len(textParts) == 0 && len(reasoningParts) == 0 && len(assistantToolCalls) == 0 {
 			return entries, nil
 		}
 		assistant := map[string]interface{}{"role": "assistant"}
@@ -471,6 +551,9 @@ func anthropicContentBlockEntriesToOpenAI(role string, blocks []interface{}, mes
 		}
 		if len(assistantToolCalls) > 0 {
 			assistant["tool_calls"] = assistantToolCalls
+		}
+		if len(reasoningParts) > 0 {
+			assistant["reasoning_content"] = strings.Join(reasoningParts, "\n")
 		}
 		entries = append(entries, assistant)
 		return entries, nil
@@ -605,7 +688,13 @@ func anthropicContentText(content interface{}) string {
 }
 
 func anthropicContentBlocksFromOpenAIMessage(msg *api.Message) []api.AnthropicContentBlock {
-	blocks := make([]api.AnthropicContentBlock, 0, 1+len(msg.ToolCalls))
+	blocks := make([]api.AnthropicContentBlock, 0, 2+len(msg.ToolCalls))
+	if reasoning := strings.TrimSpace(msg.ReasoningContent); reasoning != "" {
+		blocks = append(blocks, api.AnthropicContentBlock{
+			Type:     "thinking",
+			Thinking: reasoning,
+		})
+	}
 	if text := contentAsString(msg.Content); strings.TrimSpace(text) != "" {
 		blocks = append(blocks, api.AnthropicContentBlock{
 			Type: "text",
@@ -629,6 +718,48 @@ func anthropicContentBlocksFromOpenAIMessage(msg *api.Message) []api.AnthropicCo
 		})
 	}
 	return blocks
+}
+
+func anthropicMessageTextAndReasoning(role string, content interface{}) (string, string) {
+	if role != "assistant" {
+		return anthropicContentText(content), ""
+	}
+	switch value := content.(type) {
+	case nil:
+		return "", ""
+	case string:
+		return value, ""
+	case []interface{}:
+		textParts := make([]string, 0, len(value))
+		reasoningParts := make([]string, 0)
+		for _, raw := range value {
+			text, reasoning := anthropicContentPartTextAndReasoning(raw)
+			if text != "" {
+				textParts = append(textParts, text)
+			}
+			if reasoning != "" {
+				reasoningParts = append(reasoningParts, reasoning)
+			}
+		}
+		return strings.Join(textParts, "\n"), strings.Join(reasoningParts, "\n")
+	case map[string]interface{}:
+		return anthropicContentPartTextAndReasoning(value)
+	default:
+		return anthropicContentText(value), ""
+	}
+}
+
+func anthropicContentPartTextAndReasoning(content interface{}) (string, string) {
+	switch value := content.(type) {
+	case map[string]interface{}:
+		if stringValue(value["type"]) == "thinking" {
+			thinking, _ := value["thinking"].(string)
+			return "", thinking
+		}
+		return anthropicContentText(value), ""
+	default:
+		return anthropicContentText(value), ""
+	}
 }
 
 func anthropicContentBlocksText(blocks []api.AnthropicContentBlock) string {
@@ -728,6 +859,17 @@ func writeAnthropicStreamedMessage(w http.ResponseWriter, resp api.AnthropicMess
 					"delta": map[string]interface{}{
 						"type":         "input_json_delta",
 						"partial_json": partialJSON,
+					},
+				})
+			}
+		case "thinking":
+			if strings.TrimSpace(block.Thinking) != "" {
+				writeAnthropicSSE(w, "content_block_delta", map[string]interface{}{
+					"type":  "content_block_delta",
+					"index": i,
+					"delta": map[string]interface{}{
+						"type":     "thinking_delta",
+						"thinking": block.Thinking,
 					},
 				})
 			}
