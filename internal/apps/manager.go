@@ -240,7 +240,7 @@ func appSpecs() []appSpec {
 			latest: &latestVersionSource{
 				baseURL: "https://csgclaw.opencsg.com/releases/latest",
 				envVar:  "CSGHUB_LITE_CSGCLAW_LATEST_URL",
-				format:  "version-json",
+				format:  "github-release",
 			},
 			unix: &scriptSource{
 				mirrorURL:    "https://csgclaw.opencsg.com/install.sh",

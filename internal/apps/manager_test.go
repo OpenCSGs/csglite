@@ -275,8 +275,9 @@ func TestAppUpdateAvailableComparesVersionOrder(t *testing.T) {
 
 func TestFetchLatestVersionParsesGitHubReleaseTag(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/OpenCSGs/csgclaw/releases/latest" {
-			t.Fatalf("latest path = %q, want /repos/OpenCSGs/csgclaw/releases/latest", r.URL.Path)
+		// Mirrors https://csgclaw.opencsg.com/releases/latest (GitHub-compatible JSON).
+		if r.URL.Path != "/releases/latest" {
+			t.Fatalf("latest path = %q, want /releases/latest", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"tag_name":"v0.2.8"}`))
@@ -287,7 +288,7 @@ func TestFetchLatestVersionParsesGitHubReleaseTag(t *testing.T) {
 	latest, err := mgr.fetchLatestVersion(context.Background(), appSpec{
 		id: "csgclaw",
 		latest: &latestVersionSource{
-			baseURL: server.URL + "/repos/OpenCSGs/csgclaw/releases/latest",
+			baseURL: server.URL + "/releases/latest",
 			format:  "github-release",
 		},
 	})

@@ -2,7 +2,6 @@
 set -euo pipefail
 
 APP="${APP:-csgclaw}"
-REPO="${REPO:-OpenCSGs/csgclaw}"
 VERSION="${VERSION:-${1:-latest}}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 LIB_DIR="${LIB_DIR:-$HOME/.local/lib/${APP}}"
@@ -66,8 +65,11 @@ ensure_supported_platform() {
 }
 
 resolve_latest_version() {
-  local api_url tag
-  api_url="https://api.github.com/repos/${REPO}/releases/latest"
+  local api_url tag base
+  # Mirror serves GitHub-compatible JSON at ${BASE_URL}/latest (tag_name, assets, ...).
+  base="${BASE_URL:-https://csgclaw.opencsg.com/releases}"
+  while [[ "$base" == */ ]]; do base="${base%/}"; done
+  api_url="${base}/latest"
   tag="$(curl -fsSL "$api_url" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
   if [[ -z "$tag" ]]; then
     log "ERROR: failed to resolve latest release from ${api_url}"
