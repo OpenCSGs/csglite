@@ -505,7 +505,7 @@ func TestSyncOpenClawProfileRewritesStaleModelCatalog(t *testing.T) {
 	}
 }
 
-func TestPrepareCSGClawLaunchOnboardsAndDefaultsToServe(t *testing.T) {
+func TestPrepareCSGClawLaunchWritesConfigAndDefaultsToServe(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("csgclaw is not supported on Windows")
 	}
@@ -519,9 +519,8 @@ func TestPrepareCSGClawLaunchOnboardsAndDefaultsToServe(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	binDir := t.TempDir()
-	argsPath := filepath.Join(t.TempDir(), "args.txt")
 	commandPath := filepath.Join(binDir, "csgclaw")
-	content := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + strconv.Quote(argsPath) + "\nexit 0\n"
+	content := "#!/bin/sh\nexit 0\n"
 	if err := os.WriteFile(commandPath, []byte(content), 0o755); err != nil {
 		t.Fatalf("write fake csgclaw: %v", err)
 	}
@@ -539,24 +538,20 @@ func TestPrepareCSGClawLaunchOnboardsAndDefaultsToServe(t *testing.T) {
 		t.Fatalf("prepared args = %#v, want csgclaw serve", prepared.Args)
 	}
 
-	data, err := os.ReadFile(argsPath)
+	data, err := os.ReadFile(filepath.Join(home, ".csgclaw", "config.toml"))
 	if err != nil {
-		t.Fatalf("read onboard args: %v", err)
+		t.Fatalf("read config: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	configText := string(data)
 	for _, want := range []string{
-		"onboard",
-		"--provider",
-		csgClawLaunchProviderID,
-		"--manager-image",
-		csgClawManagerImage,
-		"--base-url",
-		server.URL + "/v1",
-		"--models",
-		"minimax-m2.5,Qwen/Qwen3.5-2B",
+		`manager_image_override = ""`,
+		`default = "csghub-lite.minimax-m2.5"`,
+		`[models.providers.csghub-lite]`,
+		`base_url = "` + server.URL + `/v1"`,
+		`models = ["minimax-m2.5", "Qwen/Qwen3.5-2B"]`,
 	} {
-		if !containsString(lines, want) {
-			t.Fatalf("onboard args missing %q: %#v", want, lines)
+		if !strings.Contains(configText, want) {
+			t.Fatalf("config missing %q:\n%s", want, configText)
 		}
 	}
 }

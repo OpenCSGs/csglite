@@ -31,8 +31,6 @@ const (
 	openClawMaxTokens         = 4096
 	openClawDefaultRegistry   = "https://registry.npmmirror.com"
 	csgClawLaunchProviderID   = "csghub-lite"
-	csgClawConfigureTimeout   = 2 * time.Minute
-	csgClawManagerImage       = "opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/picoclaw:2026.4.26"
 	codexCloudContextWindow   = 272000
 	codexLocalContextWindow   = 8192
 	codexBaseInstructions     = "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals. Focus on practical, safe, concise help for software tasks."
@@ -334,33 +332,8 @@ func prepareCSGClawLaunch(target launchTarget, serverURL, modelID string, userAr
 	modelBaseURL := strings.TrimRight(serverURL, "/") + "/v1"
 	apiKey := openClawProviderAPIKey(config.Get().Token)
 
-	ctx, cancel := context.WithTimeout(context.Background(), csgClawConfigureTimeout)
-	defer cancel()
-
-	onboardArgs := []string{
-		"onboard",
-		"--provider", csgClawLaunchProviderID,
-		"--manager-image", csgClawManagerImage,
-	}
-	if csgClawLaunchNeedsManagerRecreate(modelBaseURL, apiKey, modelID, csgClawManagerImage) {
-		onboardArgs = append(onboardArgs, "--force-recreate-manager")
-	}
-	onboardArgs = append(onboardArgs,
-		"--base-url", modelBaseURL,
-		"--api-key", apiKey,
-		"--models", strings.Join(modelIDs, ","),
-	)
-	cmd := exec.CommandContext(ctx, binary, onboardArgs...)
-	output, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return preparedLaunch{}, fmt.Errorf("configuring CSGClaw timed out after %s", csgClawConfigureTimeout)
-	}
-	if err != nil {
-		msg := strings.TrimSpace(string(output))
-		if msg == "" {
-			msg = err.Error()
-		}
-		return preparedLaunch{}, fmt.Errorf("configuring CSGClaw: %s", msg)
+	if err := ensureCSGClawLaunchConfig(modelBaseURL, apiKey, modelID, modelIDs); err != nil {
+		return preparedLaunch{}, fmt.Errorf("writing CSGClaw config: %w", err)
 	}
 
 	args := append([]string{}, userArgs...)
@@ -878,67 +851,149 @@ func csgClawOrderedModels(selected string, modelIDs []string) []string {
 	return ordered
 }
 
-func csgClawLaunchNeedsManagerRecreate(baseURL, apiKey, modelID, managerImage string) bool {
+func ensureCSGClawLaunchConfig(baseURL, apiKey, modelID string, models []string) error {
 	path, err := csgClawConfigPath()
 	if err != nil {
-		return true
+		return err
 	}
-	file, err := os.Open(path)
-	if err != nil {
-		return true
-	}
-	defer file.Close()
-
-	defaultSelector := ""
-	currentManagerImage := ""
-	providerBaseURL := ""
-	providerAPIKey := ""
-	providerModels := []string{}
-	section := ""
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			section = strings.Trim(line, "[]")
-			continue
-		}
-		key, value, ok := parseSimpleConfigKV(line)
-		if !ok {
-			continue
-		}
-		switch section {
-		case "bootstrap":
-			if key == "manager_image" {
-				currentManagerImage = value
-			}
-		case "models":
-			if key == "default" {
-				defaultSelector = value
-			}
-		case "models.providers." + csgClawLaunchProviderID:
-			switch key {
-			case "base_url":
-				providerBaseURL = value
-			case "api_key":
-				providerAPIKey = value
-			case "models":
-				providerModels = parseSimpleStringArray(value)
-			}
-		}
-	}
-	if scanner.Err() != nil {
-		return true
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
 	}
 
-	wantSelector := csgClawLaunchProviderID + "." + strings.TrimSpace(modelID)
-	return strings.TrimSpace(defaultSelector) != wantSelector ||
-		strings.TrimSpace(currentManagerImage) != strings.TrimSpace(managerImage) ||
-		strings.TrimRight(providerBaseURL, "/") != strings.TrimRight(baseURL, "/") ||
-		strings.TrimSpace(providerAPIKey) != strings.TrimSpace(apiKey) ||
-		!containsString(providerModels, modelID)
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	input := string(data)
+	if strings.TrimSpace(input) == "" {
+		input = defaultCSGClawLaunchConfig()
+	}
+
+	updated := setCSGClawLaunchModelConfig(input, baseURL, apiKey, modelID, models)
+	return os.WriteFile(path, []byte(updated), 0o600)
+}
+
+func defaultCSGClawLaunchConfig() string {
+	return `# Managed by csghub-lite for CSGClaw.
+
+[server]
+listen_addr = "0.0.0.0:18080"
+advertise_base_url = ""
+access_token = "your_access_token"
+no_auth = false
+
+[bootstrap]
+manager_image_override = ""
+
+[sandbox]
+provider = "boxlite-cli"
+home_dir_name = "boxlite"
+debian_registries_override = []
+`
+}
+
+func setCSGClawLaunchModelConfig(input, baseURL, apiKey, modelID string, models []string) string {
+	lines := strings.Split(strings.ReplaceAll(input, "\r\n", "\n"), "\n")
+	out := make([]string, 0, len(lines)+12)
+	inModelsSection := false
+	inBootstrap := false
+	inSandbox := false
+	bootstrapFound := false
+	managerImageOverrideSet := false
+	sandboxFound := false
+	debianRegistriesOverrideSet := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			if inBootstrap && !managerImageOverrideSet {
+				out = append(out, `manager_image_override = ""`)
+				managerImageOverrideSet = true
+			}
+			if inSandbox && !debianRegistriesOverrideSet {
+				out = append(out, `debian_registries_override = []`)
+				debianRegistriesOverrideSet = true
+			}
+			section := strings.Trim(trimmed, "[]")
+			inBootstrap = section == "bootstrap"
+			inSandbox = section == "sandbox"
+			if inBootstrap {
+				bootstrapFound = true
+			}
+			if inSandbox {
+				sandboxFound = true
+			}
+			inModelsSection = section == "models" || strings.HasPrefix(section, "models.providers.")
+		}
+		if inModelsSection {
+			continue
+		}
+		if inBootstrap {
+			key, _, ok := strings.Cut(trimmed, "=")
+			key = strings.TrimSpace(key)
+			if ok && (key == "manager_image" || key == "manager_image_override") {
+				if !managerImageOverrideSet {
+					out = append(out, `manager_image_override = ""`)
+					managerImageOverrideSet = true
+				}
+				continue
+			}
+		}
+		if inSandbox {
+			key, value, ok := strings.Cut(trimmed, "=")
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if ok && (key == "debian_registries" || key == "debian_registries_override") {
+				if !debianRegistriesOverrideSet {
+					if value == "" {
+						value = "[]"
+					}
+					out = append(out, "debian_registries_override = "+value)
+					debianRegistriesOverrideSet = true
+				}
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	if inBootstrap && !managerImageOverrideSet {
+		out = append(out, `manager_image_override = ""`)
+	}
+	if inSandbox && !debianRegistriesOverrideSet {
+		out = append(out, `debian_registries_override = []`)
+	}
+	if !bootstrapFound {
+		out = append(out, "", "[bootstrap]", `manager_image_override = ""`)
+	}
+	if !sandboxFound {
+		out = append(out, "", "[sandbox]", "provider = \"boxlite-cli\"", "home_dir_name = \"boxlite\"", "debian_registries_override = []")
+	}
+
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+	out = append(out, "", csgClawLaunchModelConfigBlock(baseURL, apiKey, modelID, models))
+	return strings.Join(out, "\n") + "\n"
+}
+
+func csgClawLaunchModelConfigBlock(baseURL, apiKey, modelID string, models []string) string {
+	quotedModels := make([]string, 0, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		quotedModels = append(quotedModels, strconv.Quote(model))
+	}
+	return strings.Join([]string{
+		"[models]",
+		"default = " + strconv.Quote(csgClawLaunchProviderID+"."+strings.TrimSpace(modelID)),
+		"",
+		"[models.providers." + csgClawLaunchProviderID + "]",
+		"base_url = " + strconv.Quote(strings.TrimRight(baseURL, "/")),
+		"api_key = " + strconv.Quote(apiKey),
+		"models = [" + strings.Join(quotedModels, ", ") + "]",
+	}, "\n")
 }
 
 func csgClawConfigPath() (string, error) {
@@ -947,56 +1002,6 @@ func csgClawConfigPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".csgclaw", "config.toml"), nil
-}
-
-func parseSimpleConfigKV(line string) (key, value string, ok bool) {
-	key, value, ok = strings.Cut(line, "=")
-	if !ok {
-		return "", "", false
-	}
-	key = strings.TrimSpace(key)
-	value = strings.TrimSpace(value)
-	if len(value) >= 2 && strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"") {
-		if unquoted, err := strconv.Unquote(value); err == nil {
-			value = unquoted
-		}
-	}
-	return key, value, true
-}
-
-func parseSimpleStringArray(value string) []string {
-	value = strings.TrimSpace(value)
-	if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
-		return nil
-	}
-	inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(value, "["), "]"))
-	if inner == "" {
-		return nil
-	}
-	parts := strings.Split(inner, ",")
-	items := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if len(part) >= 2 && strings.HasPrefix(part, "\"") && strings.HasSuffix(part, "\"") {
-			if unquoted, err := strconv.Unquote(part); err == nil {
-				part = unquoted
-			}
-		}
-		if part != "" {
-			items = append(items, part)
-		}
-	}
-	return items
-}
-
-func containsString(items []string, want string) bool {
-	want = strings.TrimSpace(want)
-	for _, item := range items {
-		if strings.TrimSpace(item) == want {
-			return true
-		}
-	}
-	return false
 }
 
 func syncOpenClawJSONFile(path string, mutate func(map[string]interface{})) error {

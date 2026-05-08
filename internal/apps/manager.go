@@ -28,15 +28,16 @@ import (
 )
 
 const (
-	progressModePercent       = "percent"
-	progressModeIndeterminate = "indeterminate"
-	mirrorBaseURL             = "https://git-devops.opencsg.com/opensource/apps/-/raw/main"
-	repoRawBaseURL            = "https://git-devops.opencsg.com/opensource/csghub-lite/-/raw/main"
-	installTimeout            = 20 * time.Minute
-	latestVersionCacheTTL     = 10 * time.Minute
-	latestVersionTimeout      = 3 * time.Second
-	installerPTYCols          = 120
-	installerPTYRows          = 36
+	progressModePercent        = "percent"
+	progressModeIndeterminate  = "indeterminate"
+	mirrorBaseURL              = "https://git-devops.opencsg.com/opensource/apps/-/raw/main"
+	repoRawBaseURL             = "https://git-devops.opencsg.com/opensource/csghub-lite/-/raw/main"
+	installTimeout             = 20 * time.Minute
+	latestVersionCacheTTL      = 10 * time.Minute
+	latestVersionTimeout       = 3 * time.Second
+	latestVersionResponseLimit = 64 * 1024
+	installerPTYCols           = 120
+	installerPTYRows           = 36
 )
 
 var versionTokenPattern = regexp.MustCompile(`(?i)v?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?`)
@@ -237,9 +238,9 @@ func appSpecs() []appSpec {
 			disabledReason: csgclawDisabledReason(),
 			versionArgs:    []string{"--version"},
 			latest: &latestVersionSource{
-				baseURL: "https://api.github.com/repos/OpenCSGs/csgclaw/releases/latest",
+				baseURL: "https://csgclaw.opencsg.com/releases/latest",
 				envVar:  "CSGHUB_LITE_CSGCLAW_LATEST_URL",
-				format:  "github-release",
+				format:  "version-json",
 			},
 			unix: &scriptSource{
 				mirrorURL:    "https://csgclaw.opencsg.com/install.sh",
@@ -513,7 +514,7 @@ func (m *Manager) fetchLatestVersion(ctx context.Context, spec appSpec) (string,
 	reqCtx, cancel := context.WithTimeout(ctx, latestVersionTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL+"/latest", nil)
-	if spec.latest.format == "github-release" {
+	if spec.latest.format == "github-release" || spec.latest.format == "version-json" {
 		req, err = http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL, nil)
 	}
 	if err != nil {
@@ -527,7 +528,7 @@ func (m *Manager) fetchLatestVersion(ctx context.Context, spec appSpec) (string,
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return "", fmt.Errorf("latest endpoint returned %s", resp.Status)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, latestVersionResponseLimit))
 	if err != nil {
 		return "", err
 	}
@@ -539,6 +540,15 @@ func (m *Manager) fetchLatestVersion(ctx context.Context, spec appSpec) (string,
 			return "", err
 		}
 		return strings.TrimSpace(payload.TagName), nil
+	}
+	if spec.latest.format == "version-json" {
+		var payload struct {
+			Version string `json:"version"`
+		}
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(payload.Version), nil
 	}
 	return strings.TrimSpace(string(data)), nil
 }

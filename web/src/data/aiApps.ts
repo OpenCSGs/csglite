@@ -315,8 +315,8 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
         zh: "下载当前平台对应的官方归档，并安装随包 runtime。",
       },
       {
-        en: "Run CSGClaw onboarding with the csghub-lite provider, then start the WebUI through csgclaw serve daemon mode.",
-        zh: "使用 csghub-lite provider 完成 CSGClaw onboard，然后通过 csgclaw serve daemon 模式启动 WebUI。",
+        en: "Write the csghub-lite provider into config.toml, then start the WebUI through csgclaw serve daemon mode.",
+        zh: "将 csghub-lite provider 写入 config.toml，然后通过 csgclaw serve daemon 模式启动 WebUI。",
       },
     ],
     status: "idle",
