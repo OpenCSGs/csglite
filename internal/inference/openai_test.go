@@ -255,3 +255,53 @@ func TestOpenAIEngineChatCompletionAddsKimiReasoningContentToToolCalls(t *testin
 		t.Fatalf("top_p = %v, want 0.95", got["top_p"])
 	}
 }
+
+func TestOpenAIEngineChatCompletionAddsDeepSeekV4ReasoningContentToToolCalls(t *testing.T) {
+	var got map[string]interface{}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	}))
+	defer ts.Close()
+
+	eng := NewOpenAIEngine(ts.URL, "deepseek-v4-pro", "test-token")
+	resp, err := eng.(ChatCompletionProxier).ChatCompletion(context.Background(), map[string]interface{}{
+		"model": "deepseek-v4-pro",
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": "use a tool"},
+			{
+				"role":    "assistant",
+				"content": nil,
+				"tool_calls": []map[string]interface{}{{
+					"id":   "call_1",
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      "lookup",
+						"arguments": "{}",
+					},
+				}},
+			},
+			{"role": "tool", "tool_call_id": "call_1", "content": "result"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletion returned error: %v", err)
+	}
+	resp.Body.Close()
+
+	messages, ok := got["messages"].([]interface{})
+	if !ok || len(messages) != 3 {
+		t.Fatalf("messages = %#v", got["messages"])
+	}
+	assistant, ok := messages[1].(map[string]interface{})
+	if !ok {
+		t.Fatalf("assistant message = %#v", messages[1])
+	}
+	if value, ok := assistant["reasoning_content"]; !ok || value != "" {
+		t.Fatalf("reasoning_content = %#v, want empty string", assistant["reasoning_content"])
+	}
+}

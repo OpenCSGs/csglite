@@ -157,6 +157,42 @@ func TestResponsesInputReasoningAttachedToToolCallAssistant(t *testing.T) {
 	}
 }
 
+func TestResponsesInputEncryptedReasoningAttachedToToolCallAssistant(t *testing.T) {
+	input := []interface{}{
+		map[string]interface{}{
+			"type":              "reasoning",
+			"encrypted_content": "opaque reasoning replay",
+		},
+		map[string]interface{}{
+			"type":      "function_call",
+			"call_id":   "call_1",
+			"name":      "list_dir",
+			"arguments": `{}`,
+		},
+		map[string]interface{}{
+			"type":    "function_call_output",
+			"name":    "list_dir",
+			"call_id": "call_1",
+			"output":  "ok",
+		},
+	}
+
+	messages, err := responsesInputToOpenAIMessages(input)
+	if err != nil {
+		t.Fatalf("responsesInputToOpenAIMessages() error = %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("len(messages) = %d, want 2", len(messages))
+	}
+	toolAssistant := messages[0]
+	if len(toolAssistant.ToolCalls) != 1 || toolAssistant.ToolCalls[0].Function.Name != "list_dir" {
+		t.Fatalf("tool assistant = %#v", toolAssistant)
+	}
+	if toolAssistant.ReasoningContent != "opaque reasoning replay" {
+		t.Fatalf("ReasoningContent = %q, want opaque reasoning replay", toolAssistant.ReasoningContent)
+	}
+}
+
 func TestResponsesOutputFromOpenAIChatResponseIncludesReasoningItem(t *testing.T) {
 	resp := api.OpenAIChatResponse{
 		Choices: []api.OpenAIChoice{{
@@ -181,5 +217,12 @@ func TestResponsesOutputFromOpenAIChatResponseIncludesReasoningItem(t *testing.T
 	}
 	if reasoning["type"] != "reasoning" || responsesReasoningItemText(reasoning) != "hidden reasoning" {
 		t.Fatalf("reasoning item = %#v, want hidden reasoning", reasoning)
+	}
+	if reasoning["encrypted_content"] != "hidden reasoning" {
+		t.Fatalf("encrypted_content = %#v, want hidden reasoning", reasoning["encrypted_content"])
+	}
+	summary, ok := reasoning["summary"].([]map[string]interface{})
+	if !ok || len(summary) != 1 || summary[0]["text"] != "hidden reasoning" {
+		t.Fatalf("summary = %#v, want hidden reasoning summary", reasoning["summary"])
 	}
 }

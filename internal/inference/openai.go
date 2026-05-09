@@ -255,11 +255,13 @@ func sanitizeOpenAIRequestBody(modelName string, reqBody map[string]interface{})
 			}
 			out["top_p"] = 0.95
 		}
+	}
+	if openAIModelRequiresToolCallReasoningContent(modelName) {
 		messages := reqBody["messages"]
 		if out != nil {
 			messages = out["messages"]
 		}
-		if normalized, changed := normalizeKimiToolCallMessages(messages); changed {
+		if normalized, changed := normalizeToolCallReasoningContentMessages(messages); changed {
 			if out == nil {
 				out = cloneOpenAIRequestBody(reqBody)
 			}
@@ -290,13 +292,20 @@ func openAIModelRequiresTemperatureOne(modelName string) bool {
 	return strings.HasPrefix(modelName, "kimi-") || strings.HasPrefix(modelName, "moonshot-")
 }
 
-func normalizeKimiToolCallMessages(messages interface{}) (interface{}, bool) {
+func openAIModelRequiresToolCallReasoningContent(modelName string) bool {
+	modelName = strings.TrimSpace(strings.ToLower(modelName))
+	return strings.HasPrefix(modelName, "kimi-") ||
+		strings.HasPrefix(modelName, "moonshot-") ||
+		strings.Contains(modelName, "deepseek-v4")
+}
+
+func normalizeToolCallReasoningContentMessages(messages interface{}) (interface{}, bool) {
 	switch v := messages.(type) {
 	case []map[string]interface{}:
 		out := make([]map[string]interface{}, len(v))
 		changed := false
 		for i, msg := range v {
-			next, msgChanged := normalizeKimiToolCallMessageMap(msg)
+			next, msgChanged := normalizeToolCallReasoningContentMessageMap(msg)
 			out[i] = next
 			changed = changed || msgChanged
 		}
@@ -312,7 +321,7 @@ func normalizeKimiToolCallMessages(messages interface{}) (interface{}, bool) {
 				out[i] = item
 				continue
 			}
-			next, msgChanged := normalizeKimiToolCallMessageMap(msg)
+			next, msgChanged := normalizeToolCallReasoningContentMessageMap(msg)
 			out[i] = next
 			changed = changed || msgChanged
 		}
@@ -339,7 +348,7 @@ func normalizeKimiToolCallMessages(messages interface{}) (interface{}, bool) {
 			if msg.ReasoningContent != "" {
 				next["reasoning_content"] = msg.ReasoningContent
 			}
-			normalized, msgChanged := normalizeKimiToolCallMessageMap(next)
+			normalized, msgChanged := normalizeToolCallReasoningContentMessageMap(next)
 			out[i] = normalized
 			changed = changed || msgChanged
 		}
@@ -350,7 +359,7 @@ func normalizeKimiToolCallMessages(messages interface{}) (interface{}, bool) {
 	return messages, false
 }
 
-func normalizeKimiToolCallMessageMap(msg map[string]interface{}) (map[string]interface{}, bool) {
+func normalizeToolCallReasoningContentMessageMap(msg map[string]interface{}) (map[string]interface{}, bool) {
 	if strings.TrimSpace(fmt.Sprint(msg["role"])) != "assistant" {
 		return msg, false
 	}

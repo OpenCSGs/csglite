@@ -1154,7 +1154,7 @@ func buildResponsesOutputItem(itemID, text, status string) map[string]interface{
 }
 
 func buildResponsesReasoningItem(itemID, text, status string) map[string]interface{} {
-	return map[string]interface{}{
+	item := map[string]interface{}{
 		"id":      itemID,
 		"type":    "reasoning",
 		"status":  status,
@@ -1164,6 +1164,14 @@ func buildResponsesReasoningItem(itemID, text, status string) map[string]interfa
 			"text": text,
 		}},
 	}
+	if text != "" {
+		item["summary"] = []map[string]interface{}{{
+			"type": "summary_text",
+			"text": text,
+		}}
+		item["encrypted_content"] = text
+	}
+	return item
 }
 
 func buildResponsesResponse(id, itemID, modelID, text string, created int64, status string, inputTokens int) map[string]interface{} {
