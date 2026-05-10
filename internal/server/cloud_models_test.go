@@ -213,6 +213,33 @@ func TestHandleCloudAuthTokenSaveInvalidatesCloudModelCache(t *testing.T) {
 	}
 }
 
+func TestSortModelsByPriorityKeepsLocalModelsFirst(t *testing.T) {
+	models := []api.ModelInfo{
+		{Model: "z/cloud-external", Source: "cloud", Format: "cloud", LLMType: "external_llm"},
+		{Model: "z/local", Source: "local", Format: "gguf"},
+		{Model: "a/cloud-opencsg", Source: "cloud", Format: "cloud", OwnedBy: "opencsg"},
+		{Model: "a/local-safetensors", Format: "safetensors"},
+		{Model: "b/cloud-other", Source: "cloud", Format: "cloud"},
+	}
+
+	sortModelsByPriority(models)
+
+	got := make([]string, 0, len(models))
+	for _, model := range models {
+		got = append(got, model.Model)
+	}
+	want := []string{
+		"a/local-safetensors",
+		"z/local",
+		"z/cloud-external",
+		"a/cloud-opencsg",
+		"b/cloud-other",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("sorted models = %#v, want %#v", got, want)
+	}
+}
+
 func containsModelID(modelIDs []string, want string) bool {
 	for _, item := range modelIDs {
 		if item == want {

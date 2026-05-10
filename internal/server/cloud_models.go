@@ -130,6 +130,12 @@ func (s *Server) refreshCloudChatModels(ctx context.Context) ([]api.ModelInfo, e
 
 func sortModelsByPriority(models []api.ModelInfo) {
 	sort.SliceStable(models, func(i, j int) bool {
+		iIsLocal := isLocalModelInfo(models[i])
+		jIsLocal := isLocalModelInfo(models[j])
+		if iIsLocal != jIsLocal {
+			return iIsLocal
+		}
+
 		iType := strings.TrimSpace(strings.ToLower(models[i].LLMType))
 		jType := strings.TrimSpace(strings.ToLower(models[j].LLMType))
 		iOwner := strings.TrimSpace(strings.ToLower(models[i].OwnedBy))
@@ -149,4 +155,10 @@ func sortModelsByPriority(models []api.ModelInfo) {
 
 		return models[i].Model < models[j].Model
 	})
+}
+
+func isLocalModelInfo(model api.ModelInfo) bool {
+	source := strings.TrimSpace(strings.ToLower(model.Source))
+	format := strings.TrimSpace(strings.ToLower(model.Format))
+	return source == "local" || format == "gguf" || format == "safetensors"
 }
