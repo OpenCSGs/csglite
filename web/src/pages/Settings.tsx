@@ -72,10 +72,14 @@ const providerFormError = signal("");
 const providerFormSaving = signal(false);
 
 const providerTypes = [
-  { value: "openai", label: "OpenAI Compatible", baseURL: "https://api.openai.com/v1" },
-  { value: "deepseek", label: "DeepSeek", baseURL: "https://api.deepseek.com/v1" },
-  { value: "openrouter", label: "OpenRouter", baseURL: "https://openrouter.ai/api/v1" },
-  { value: "other", label: "Other", baseURL: "" },
+  { value: "openai", label: "OpenAI Compatible", name: "OpenAI", baseURL: "https://api.openai.com/v1" },
+  { value: "deepseek", label: "DeepSeek", name: "DeepSeek", baseURL: "https://api.deepseek.com/v1" },
+  { value: "mimo", label: "MiMo (Xiaomi)", name: "MiMo", baseURL: "https://api.xiaomimimo.com/v1" },
+  { value: "kimi", label: "Kimi (Moonshot)", name: "Kimi", baseURL: "https://api.moonshot.cn/v1" },
+  { value: "bigmodel", label: "BigModel (Zhipu)", name: "BigModel", baseURL: "https://open.bigmodel.cn/api/coding/paas/v4" },
+  { value: "qianfan", label: "Qianfan (Baidu)", name: "Qianfan", baseURL: "https://qianfan.baidubce.com/v2" },
+  { value: "openrouter", label: "OpenRouter", name: "OpenRouter", baseURL: "https://openrouter.ai/api/v1" },
+  { value: "other", label: "Other", name: "", baseURL: "" },
 ];
 
 function loadContextIndex(): number {
@@ -963,8 +967,9 @@ export function Settings() {
         onChangeProviderType={(value) => {
           providerFormType.value = value;
           const option = providerTypes.find((item) => item.value === value);
-          if (option?.baseURL && !providerFormBaseURL.value.trim()) {
-            providerFormBaseURL.value = option.baseURL;
+          if (option) {
+            if (option.name) providerFormName.value = option.name;
+            if (option.baseURL) providerFormBaseURL.value = option.baseURL;
           }
         }}
         onChangeEnabled={(value) => (providerFormEnabled.value = value)}
