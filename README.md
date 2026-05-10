@@ -97,15 +97,18 @@ csghub-lite login
 csghub-lite supports integrating third-party OpenAI-compatible API providers. Configure providers in Settings, and their models appear alongside local and OpenCSG models in Chat.
 
 Supported providers include:
-- **OpenAI** — `https://api.openai.com/v1`
-- **DeepSeek** — `https://api.deepseek.com/v1`
-- **MiMo** (Xiaomi) — `https://api.xiaomimimo.com/v1`
-- **Kimi** (Moonshot) — `https://api.moonshot.cn/v1`
-- **BigModel** (Zhipu/智谱AI) — `https://open.bigmodel.cn/api/coding/paas/v4`
-- **Qianfan** (Baidu) — `https://qianfan.baidubce.com/v2`
-- **MiniMax** — `https://api.minimax.chat/v1`
-- **OpenRouter** — `https://openrouter.ai/api/v1`
-- **Any OpenAI-compatible API** — custom base URL
+
+| Provider | Notes | Base URL |
+| --- | --- | --- |
+| OpenAI | OpenAI-compatible | `https://api.openai.com/v1` |
+| DeepSeek | - | `https://api.deepseek.com/v1` |
+| MiMo | Xiaomi | `https://api.xiaomimimo.com/v1` |
+| Kimi | Moonshot | `https://api.moonshot.cn/v1` |
+| BigModel | Zhipu/智谱AI | `https://open.bigmodel.cn/api/coding/paas/v4` |
+| Qianfan | Baidu | `https://qianfan.baidubce.com/v2` |
+| MiniMax | - | `https://api.minimax.chat/v1` |
+| OpenRouter | - | `https://openrouter.ai/api/v1` |
+| Any OpenAI-compatible API | Custom provider | Custom base URL |
 
 ### Coding Agents
 
