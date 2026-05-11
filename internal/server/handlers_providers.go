@@ -19,7 +19,7 @@ func (s *Server) handleProvidersList(w http.ResponseWriter, r *http.Request) {
 		resp.Providers[i] = api.ThirdPartyProvider{
 			ID:       p.ID,
 			Name:     p.Name,
-			BaseURL:  p.BaseURL,
+			BaseURL:  normalizeThirdPartyProviderBaseURL(p),
 			Provider: p.Provider,
 			Enabled:  p.Enabled,
 			// APIKey is intentionally not returned for security
@@ -96,6 +96,7 @@ func (s *Server) handleProviderCreate(w http.ResponseWriter, r *http.Request) {
 		Provider: provider,
 		Enabled:  req.Enabled,
 	}
+	newProvider.BaseURL = normalizeThirdPartyProviderBaseURL(newProvider)
 	if _, err := validateThirdPartyProvider(r.Context(), newProvider); err != nil {
 		writeError(w, http.StatusBadRequest, "provider configuration is invalid: "+err.Error())
 		return
@@ -151,6 +152,7 @@ func (s *Server) handleProviderUpdate(w http.ResponseWriter, r *http.Request) {
 			if req.Enabled != nil {
 				candidate.Enabled = *req.Enabled
 			}
+			candidate.BaseURL = normalizeThirdPartyProviderBaseURL(candidate)
 			if _, err := validateThirdPartyProvider(r.Context(), candidate); err != nil {
 				writeError(w, http.StatusBadRequest, "provider configuration is invalid: "+err.Error())
 				return

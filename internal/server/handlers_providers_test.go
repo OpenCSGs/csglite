@@ -228,6 +228,80 @@ func TestThirdPartyProviderEngineTrimsV1BaseURL(t *testing.T) {
 	}
 }
 
+func TestThirdPartyProviderEngineUsesCompatibleBaseURLPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	t.Cleanup(config.ResetProviders)
+
+	var modelPath, chatPath string
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/paas/v4/models":
+			modelPath = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"data":[{"id":"glm-5.1"}]}`)
+		case "/api/paas/v4/chat/completions":
+			chatPath = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer apiServer.Close()
+
+	if err := config.SaveProviders([]config.ThirdPartyProvider{{
+		ID:       "provider1",
+		Name:     "BigModel",
+		BaseURL:  apiServer.URL + "/api/paas/v4",
+		APIKey:   "secret",
+		Provider: "bigmodel",
+		Enabled:  true,
+	}}); err != nil {
+		t.Fatalf("save providers: %v", err)
+	}
+
+	models, err := listOpenAICompatibleProviderModels(context.Background(), config.GetProviders()[0])
+	if err != nil {
+		t.Fatalf("list models returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Model != "glm-5.1" {
+		t.Fatalf("models = %#v", models)
+	}
+
+	eng, err := newThirdPartyProviderEngine("provider:provider1", "glm-5.1")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	got, err := eng.Chat(context.Background(), nil, inference.DefaultOptions(), nil)
+	if err != nil {
+		t.Fatalf("chat returned error: %v", err)
+	}
+	if got != "ok" {
+		t.Fatalf("chat = %q, want ok", got)
+	}
+	if modelPath != "/api/paas/v4/models" {
+		t.Fatalf("model path = %q", modelPath)
+	}
+	if chatPath != "/api/paas/v4/chat/completions" {
+		t.Fatalf("chat path = %q", chatPath)
+	}
+}
+
+func TestBigModelLegacyPresetBaseURLNormalizesToOfficialPath(t *testing.T) {
+	provider := config.ThirdPartyProvider{
+		Name:     "BigModel",
+		BaseURL:  "https://open.bigmodel.cn/api/coding/paas/v4/",
+		Provider: "bigmodel",
+	}
+
+	if got := normalizeThirdPartyProviderBaseURL(provider); got != bigModelOfficialBaseURL {
+		t.Fatalf("base URL = %q, want %q", got, bigModelOfficialBaseURL)
+	}
+}
+
 func TestGetChatEnginePrefersThirdPartyWhenCloudLoginMissing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

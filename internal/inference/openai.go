@@ -14,19 +14,48 @@ import (
 )
 
 type openAIEngine struct {
-	baseURL   string
-	modelName string
-	token     string
-	client    *http.Client
+	baseURL            string
+	chatCompletionsURL string
+	modelName          string
+	token              string
+	client             *http.Client
 }
 
 func NewOpenAIEngine(baseURL, modelName, token string) Engine {
+	baseURL = strings.TrimRight(baseURL, "/")
 	return &openAIEngine{
-		baseURL:   strings.TrimRight(baseURL, "/"),
-		modelName: modelName,
-		token:     strings.TrimSpace(token),
-		client:    &http.Client{Timeout: 0},
+		baseURL:            baseURL,
+		chatCompletionsURL: openAIChatCompletionsURL(baseURL),
+		modelName:          modelName,
+		token:              strings.TrimSpace(token),
+		client:             &http.Client{Timeout: 0},
 	}
+}
+
+func NewOpenAICompatibleEngine(baseURL, modelName, token string) Engine {
+	baseURL = strings.TrimRight(baseURL, "/")
+	return &openAIEngine{
+		baseURL:            baseURL,
+		chatCompletionsURL: openAICompatibleChatCompletionsURL(baseURL),
+		modelName:          modelName,
+		token:              strings.TrimSpace(token),
+		client:             &http.Client{Timeout: 0},
+	}
+}
+
+func openAIChatCompletionsURL(baseURL string) string {
+	return strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
+}
+
+func openAICompatibleChatCompletionsURL(baseURL string) string {
+	return strings.TrimRight(baseURL, "/") + "/chat/completions"
+}
+
+func (e *openAIEngine) chatCompletionsEndpoint() string {
+	if strings.TrimSpace(e.chatCompletionsURL) != "" {
+		return e.chatCompletionsURL
+	}
+	return openAIChatCompletionsURL(e.baseURL)
 }
 
 func (e *openAIEngine) ChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
@@ -36,7 +65,7 @@ func (e *openAIEngine) ChatCompletion(ctx context.Context, reqBody map[string]in
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.chatCompletionsEndpoint(), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
@@ -95,7 +124,7 @@ func (e *openAIEngine) Chat(ctx context.Context, messages []Message, opts Option
 		return "", fmt.Errorf("marshaling request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.chatCompletionsEndpoint(), bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}

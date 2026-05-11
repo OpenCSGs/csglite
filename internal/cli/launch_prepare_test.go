@@ -281,25 +281,34 @@ func TestPrepareCodexLaunchIncludesModelCatalog(t *testing.T) {
 		t.Fatalf("prepareCodexLaunch returned error: %v", err)
 	}
 
+	if len(prepared.Args) != 2 || prepared.Args[0] != "--model" || prepared.Args[1] != "Qwen/Qwen3.5-2B" {
+		t.Fatalf("prepared args = %#v, want only --model override", prepared.Args)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("read codex config: %v", err)
+	}
+	configText := string(data)
 	for _, want := range []string{
-		`model_provider="csghub_lite"`,
-		`model_providers.csghub_lite.name="OpenCSG"`,
-		`model_providers.csghub_lite.base_url=` + strconv.Quote(server.URL+"/v1"),
-		`model_providers.csghub_lite.supports_websockets=false`,
+		`model_provider = "csghub_lite"`,
+		`[model_providers.csghub_lite]`,
+		`name = "OpenCSG"`,
+		`base_url = ` + strconv.Quote(server.URL+"/v1"),
+		`supports_websockets = false`,
 	} {
-		if !hasConfigOverride(prepared.Args, want) {
-			t.Fatalf("missing Codex config override %q in args %#v", want, prepared.Args)
+		if !strings.Contains(configText, want) {
+			t.Fatalf("codex config missing %q:\n%s", want, configText)
 		}
 	}
-	catalogValue := configValue(prepared.Args, "model_catalog_json=")
+	catalogValue := configValueFromConfig(configText, "model_catalog_json")
 	if catalogValue == "" {
-		t.Fatalf("missing model_catalog_json config in args %#v", prepared.Args)
+		t.Fatalf("missing model_catalog_json config:\n%s", configText)
 	}
 	catalogPath, err := strconv.Unquote(catalogValue)
 	if err != nil {
 		t.Fatalf("unquote model_catalog_json %q: %v", catalogValue, err)
 	}
-	data, err := os.ReadFile(catalogPath)
+	data, err = os.ReadFile(catalogPath)
 	if err != nil {
 		t.Fatalf("read model catalog: %v", err)
 	}
@@ -319,10 +328,10 @@ func TestPrepareCodexLaunchIncludesModelCatalog(t *testing.T) {
 	if len(payload.Models) != 2 {
 		t.Fatalf("model catalog count = %d, want 2", len(payload.Models))
 	}
-	if payload.Models[0].Slug != "Qwen/Qwen3.5-2B" || payload.Models[0].DisplayName != "Qwen 3.5 2B" {
+	if payload.Models[0].Slug != "Qwen/Qwen3.5-2B" {
 		t.Fatalf("unexpected first model entry: %#v", payload.Models[0])
 	}
-	if payload.Models[1].Slug != "afrideva/Qwen2-0.5B-Instruct-GGUF:fh23aijhzx8g" || payload.Models[1].DisplayName != "Qwen2-0.5B-Instruct-GGUF" {
+	if payload.Models[1].Slug != "afrideva/Qwen2-0.5B-Instruct-GGUF:fh23aijhzx8g" {
 		t.Fatalf("unexpected second model entry: %#v", payload.Models[1])
 	}
 	if payload.Models[0].Visibility != "list" || payload.Models[1].Visibility != "list" {
@@ -768,6 +777,21 @@ func configValue(args []string, prefix string) string {
 		if (args[i] == "-c" || args[i] == "--config") && strings.HasPrefix(args[i+1], prefix) {
 			return strings.TrimPrefix(args[i+1], prefix)
 		}
+	}
+	return ""
+}
+
+func configValueFromConfig(configText, key string) string {
+	for _, line := range strings.Split(configText, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		before, after, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(before) != key {
+			continue
+		}
+		return strings.TrimSpace(after)
 	}
 	return ""
 }

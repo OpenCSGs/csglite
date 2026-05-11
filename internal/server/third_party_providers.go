@@ -17,6 +17,11 @@ import (
 )
 
 const thirdPartyProviderSourcePrefix = "provider:"
+const (
+	bigModelProviderType        = "bigmodel"
+	bigModelOfficialBaseURL     = "https://open.bigmodel.cn/api/paas/v4"
+	bigModelLegacyCodingBaseURL = "https://open.bigmodel.cn/api/coding/paas/v4"
+)
 
 func providerSource(id string) string {
 	return thirdPartyProviderSourcePrefix + strings.TrimSpace(id)
@@ -51,13 +56,13 @@ func (s *Server) listThirdPartyProviderModels(ctx context.Context) []api.ModelIn
 
 	// Use cached data if available and fresh (within 30 seconds).
 	// This avoids repeated API calls to third-party providers.
-		s.thirdPartyModelsCacheMu.Lock()
+	s.thirdPartyModelsCacheMu.Lock()
 	if s.thirdPartyModelsCache != nil && time.Since(s.thirdPartyModelsCacheAt) < 30*time.Second {
 		cache := s.thirdPartyModelsCache
 		s.thirdPartyModelsCacheMu.Unlock()
 		return cache
 	}
-		s.thirdPartyModelsCacheMu.Unlock()
+	s.thirdPartyModelsCacheMu.Unlock()
 
 	// Query all providers in parallel to reduce latency.
 	var mu sync.Mutex
@@ -95,7 +100,7 @@ func (s *Server) listThirdPartyProviderModels(ctx context.Context) []api.ModelIn
 }
 
 func listOpenAICompatibleProviderModels(ctx context.Context, provider config.ThirdPartyProvider) ([]api.ModelInfo, error) {
-	baseURL := strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/")
+	baseURL := normalizeThirdPartyProviderBaseURL(provider)
 	if baseURL == "" || strings.TrimSpace(provider.APIKey) == "" {
 		return nil, nil
 	}
@@ -146,9 +151,13 @@ func listOpenAICompatibleProviderModels(ctx context.Context, provider config.Thi
 	return models, nil
 }
 
-func providerEngineBaseURL(baseURL string) string {
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	return strings.TrimSuffix(baseURL, "/v1")
+func normalizeThirdPartyProviderBaseURL(provider config.ThirdPartyProvider) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/")
+	providerType := strings.TrimSpace(strings.ToLower(provider.Provider))
+	if providerType == bigModelProviderType && strings.EqualFold(baseURL, bigModelLegacyCodingBaseURL) {
+		return bigModelOfficialBaseURL
+	}
+	return baseURL
 }
 
 func validateThirdPartyProvider(ctx context.Context, provider config.ThirdPartyProvider) (int, error) {
@@ -177,10 +186,10 @@ func newThirdPartyProviderEngine(source, modelID string) (inference.Engine, erro
 	if !provider.Enabled {
 		return nil, inference.NewHTTPStatusError(http.StatusForbidden, "third-party provider is disabled")
 	}
-	baseURL := strings.TrimSpace(provider.BaseURL)
+	baseURL := normalizeThirdPartyProviderBaseURL(provider)
 	apiKey := strings.TrimSpace(provider.APIKey)
 	if baseURL == "" || apiKey == "" {
 		return nil, inference.NewHTTPStatusError(http.StatusBadRequest, "third-party provider is missing base URL or API key")
 	}
-	return inference.NewOpenAIEngine(providerEngineBaseURL(baseURL), modelID, apiKey), nil
+	return inference.NewOpenAICompatibleEngine(baseURL, modelID, apiKey), nil
 }
