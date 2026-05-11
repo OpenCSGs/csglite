@@ -59,6 +59,11 @@ func (e *openAIEngine) chatCompletionsEndpoint() string {
 }
 
 func (e *openAIEngine) ChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
+	// Ensure model field uses the engine's actual model name
+	if reqBody == nil {
+		reqBody = map[string]interface{}{}
+	}
+	reqBody["model"] = e.modelName
 	reqBody = sanitizeOpenAIRequestBody(e.modelName, reqBody)
 	body, err := json.Marshal(reqBody)
 	if err != nil {

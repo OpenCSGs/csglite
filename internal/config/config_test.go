@@ -162,3 +162,88 @@ func TestStorageSubdirsForRoot(t *testing.T) {
 		t.Fatalf("DatasetDirForStorage(%q) = %q", root, got)
 	}
 }
+
+func TestResolveModelAlias(t *testing.T) {
+	tests := []struct {
+		name      string
+		aliases   map[string]string
+		modelID   string
+		wantModel string
+	}{
+		{
+			name:      "no aliases configured",
+			aliases:   nil,
+			modelID:   "claude-sonnet-4",
+			wantModel: "claude-sonnet-4",
+		},
+		{
+			name:      "alias exists",
+			aliases:   map[string]string{"claude-sonnet-4": "deepseek-chat"},
+			modelID:   "claude-sonnet-4",
+			wantModel: "deepseek-chat",
+		},
+		{
+			name:      "alias does not exist",
+			aliases:   map[string]string{"claude-sonnet-4": "deepseek-chat"},
+			modelID:   "other-model",
+			wantModel: "other-model",
+		},
+		{
+			name:      "alias with whitespace in modelID",
+			aliases:   map[string]string{"claude-sonnet-4": "deepseek-chat"},
+			modelID:   "  claude-sonnet-4  ",
+			wantModel: "deepseek-chat",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{ModelAliases: tt.aliases}
+			got := cfg.ResolveModelAlias(tt.modelID)
+			if got != tt.wantModel {
+				t.Errorf("ResolveModelAlias(%q) = %q, want %q", tt.modelID, got, tt.wantModel)
+			}
+		})
+	}
+}
+
+func TestGetAllAliases(t *testing.T) {
+	tests := []struct {
+		name    string
+		aliases map[string]string
+		wantLen int
+	}{
+		{
+			name:    "nil aliases",
+			aliases: nil,
+			wantLen: 0,
+		},
+		{
+			name:    "empty aliases",
+			aliases: map[string]string{},
+			wantLen: 0,
+		},
+		{
+			name:    "multiple aliases",
+			aliases: map[string]string{"claude-sonnet-4": "deepseek-chat", "claude-opus-4": "gpt-4o"},
+			wantLen: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{ModelAliases: tt.aliases}
+			got := cfg.GetAllAliases()
+			if len(got) != tt.wantLen {
+				t.Errorf("GetAllAliases() returned %d aliases, want %d", len(got), tt.wantLen)
+			}
+			// Verify it returns a copy, not the original
+			if tt.aliases != nil && len(tt.aliases) > 0 {
+				got["new-alias"] = "new-model"
+				if _, exists := tt.aliases["new-alias"]; exists {
+					t.Error("GetAllAliases() did not return a copy, modifying it affected the original")
+				}
+			}
+		})
+	}
+}

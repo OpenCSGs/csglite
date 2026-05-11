@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -28,6 +29,31 @@ func (c *Config) StorageDir() string {
 	return StorageDir(c.ModelDir, c.DatasetDir)
 }
 
+// ResolveModelAlias resolves a model alias to the actual model name.
+// If the modelID is not an alias, it returns the modelID unchanged.
+func (c *Config) ResolveModelAlias(modelID string) string {
+	modelID = strings.TrimSpace(modelID)
+	if c.ModelAliases == nil {
+		return modelID
+	}
+	if resolved, ok := c.ModelAliases[modelID]; ok {
+		return strings.TrimSpace(resolved)
+	}
+	return modelID
+}
+
+// GetAllAliases returns all configured model aliases.
+func (c *Config) GetAllAliases() map[string]string {
+	if c.ModelAliases == nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(c.ModelAliases))
+	for k, v := range c.ModelAliases {
+		out[k] = v
+	}
+	return out
+}
+
 type Config struct {
 	ServerURL            string            `json:"server_url"`
 	AIGatewayURL         string            `json:"ai_gateway_url,omitempty"`
@@ -37,6 +63,7 @@ type Config struct {
 	DatasetDir           string            `json:"dataset_dir"`
 	AIAppPreferredModels map[string]string `json:"ai_app_preferred_models,omitempty"`
 	WebSearch            WebSearchConfig   `json:"web_search,omitempty"`
+	ModelAliases         map[string]string `json:"model_aliases,omitempty"` // alias -> actual_model
 }
 
 type WebSearchConfig struct {
@@ -187,6 +214,9 @@ func Load() (*Config, error) {
 			globalConfig.AIAppPreferredModels = map[string]string{}
 		}
 		globalConfig.WebSearch = NormalizeWebSearchConfig(globalConfig.WebSearch)
+		if globalConfig.ModelAliases == nil {
+			globalConfig.ModelAliases = map[string]string{}
+		}
 	})
 	return globalConfig, loadErr
 }

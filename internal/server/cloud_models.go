@@ -71,6 +71,27 @@ func (s *Server) listAvailableModelsWithRefresh(ctx context.Context, refreshClou
 		out = append(out, item)
 	}
 
+	// Add alias models
+	aliases := s.cfg.GetAllAliases()
+	for alias, actualModel := range aliases {
+		if _, ok := seen[alias]; ok {
+			continue
+		}
+		// Find the actual model info to copy its properties
+		for _, item := range out {
+			if strings.TrimSpace(item.Model) == actualModel {
+				aliasInfo := item
+				aliasInfo.Name = alias
+				aliasInfo.Model = alias
+				aliasInfo.Label = alias
+				aliasInfo.DisplayName = alias + " (alias → " + actualModel + ")"
+				seen[alias] = struct{}{}
+				out = append(out, aliasInfo)
+				break
+			}
+		}
+	}
+
 	sortModelsByPriority(out)
 
 	return out, nil

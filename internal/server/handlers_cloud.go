@@ -112,6 +112,8 @@ func (s *Server) cloudAuthStatus(ctx context.Context) cloudAuthStatus {
 }
 
 func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (inference.Engine, error) {
+	// Resolve model alias first
+	modelID = s.cfg.ResolveModelAlias(modelID)
 	source = strings.TrimSpace(source)
 	normalizedSource := strings.ToLower(source)
 	if providerIDFromSource(source) != "" {
