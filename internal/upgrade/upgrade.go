@@ -256,8 +256,12 @@ func (u *Updater) PerformUpgrade(ctx context.Context, result *Result) error {
 
 // PerformUpgradeWithProgress downloads and installs the latest version with progress callback
 func (u *Updater) PerformUpgradeWithProgress(ctx context.Context, result *Result, progress ProgressFunc) error {
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "csghub-lite-upgrade-*")
+	// Ensure temp directory exists (macOS may clean /var/folders)
+	tmpBase := os.TempDir()
+	if err := os.MkdirAll(tmpBase, 0o700); err != nil {
+		return fmt.Errorf("failed to create temp base directory: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp(tmpBase, "csghub-lite-upgrade-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
