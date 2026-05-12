@@ -15,6 +15,7 @@ csghub-lite 是一个轻量级的本地大语言模型运行工具，基于 [CSG
 - [run](cli/run.md) — 自动下载并交互对话
 - [chat](cli/chat.md) — 与本地模型交互对话
 - [serve](cli/serve.md) — 启动 REST API 服务
+- [restart](cli/restart.md) — 重启后台 API 服务
 - [pull](cli/pull.md) — 下载模型
 - [list](cli/list.md) — 列出本地模型
 - [show](cli/show.md) — 查看模型详情

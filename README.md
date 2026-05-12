@@ -157,6 +157,7 @@ All apps auto-configure to use csghub-lite's OpenAI-compatible API endpoint with
 | `csghub-lite ps` | List currently running models and their keep-alive |
 | `csghub-lite stop <model>` | Stop/unload a running model |
 | `csghub-lite serve` | Start the API server (auto-started by `run`) |
+| `csghub-lite restart` | Restart the background API server |
 | `csghub-lite pull <model>` | Download a model from CSGHub |
 | `csghub-lite list` / `ls` | List locally downloaded models |
 | `csghub-lite show <model>` | Show model details (format, size, files) |

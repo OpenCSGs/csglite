@@ -26,6 +26,7 @@ csghub-lite 提供以下命令：
 |------|------|
 | [`ps`](ps.md) | 列出服务器上运行中的模型 |
 | [`stop <model>`](stop.md) | 停止/卸载服务器上运行中的模型 |
+| [`restart`](restart.md) | 重启后台 API 服务 |
 
 ## 配置与认证
 

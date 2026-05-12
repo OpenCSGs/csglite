@@ -19,7 +19,7 @@ func TestNewRootCmd(t *testing.T) {
 
 	expected := []string{
 		"serve", "apps", "run MODEL", "chat MODEL", "pull NAME", "list",
-		"show MODEL", "ps", "stop MODEL", "stop-service",
+		"show MODEL", "ps", "stop MODEL", "stop-service", "restart",
 		"rm NAME", "login", "search QUERY", "config", "uninstall",
 	}
 	for _, name := range expected {
