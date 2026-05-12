@@ -310,28 +310,14 @@ export function Chat() {
     saveSelectedModelKey(nextKey);
     const model = availableModels.value.find((x) => modelKey(x) === nextKey);
     if (model?.source === "cloud" && !hasCloudAuth(cloudAuth.value)) {
-      void openCloudAuthDialog(t("chat.cloudLoginRequired"));
-    }
-  };
-
-  const handleOpenCloudLogin = () => {
-    const url = cloudAuth.value?.login_url;
-    if (url) {
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
-  };
-
-  const handleOpenCloudTokenPage = () => {
-    const url = cloudAuth.value?.access_token_url;
-    if (url) {
-      window.open(url, "_blank", "noopener,noreferrer");
+      void openCloudAuthDialog(t("chat.cloudApiKeyRequired"));
     }
   };
 
   const handleSaveCloudToken = async () => {
     const token = cloudTokenInput.value.trim();
     if (!token) {
-      cloudAuthError.value = t("chat.cloudTokenEmpty");
+      cloudAuthError.value = t("chat.cloudApiKeyEmpty");
       return;
     }
 
@@ -341,7 +327,7 @@ export function Chat() {
       const status = await saveCloudToken(token);
       cloudAuth.value = status;
       if (!hasCloudAuth(status)) {
-        cloudAuthError.value = t("chat.cloudLoginExpired");
+        cloudAuthError.value = t("chat.cloudApiKeyInvalid");
         return;
       }
       try {
@@ -421,11 +407,11 @@ export function Chat() {
       try {
         const status = cloudAuth.value || await refreshCloudAuth();
         if (!hasCloudAuth(status)) {
-          await openCloudAuthDialog(t("chat.cloudLoginRequired"));
+          await openCloudAuthDialog(t("chat.cloudApiKeyRequired"));
           return;
         }
       } catch {
-        await openCloudAuthDialog(t("chat.cloudLoginRequired"));
+        await openCloudAuthDialog(t("chat.cloudApiKeyRequired"));
         return;
       }
     }
@@ -536,7 +522,7 @@ export function Chat() {
         saveCurrentConversation();
       } else if (!ac.signal.aborted) {
         if (currentModel.source === "cloud" && /(AUTH-ERR-1|AUTH-ERR-5|login first|Error 401)/i.test(errMessage)) {
-          await openCloudAuthDialog(t("chat.cloudLoginExpired"));
+          await openCloudAuthDialog(t("chat.cloudApiKeyInvalid"));
         } else {
           chatError.value = errMessage;
         }
@@ -1017,8 +1003,8 @@ export function Chat() {
             )}
             <div class="flex items-start justify-between gap-4">
               <div>
-                <h3 class="text-lg font-semibold text-gray-900">{t("chat.cloudLoginTitle")}</h3>
-                <p class="mt-2 text-sm leading-6 text-gray-500">{t("chat.cloudLoginDesc")}</p>
+                <h3 class="text-lg font-semibold text-gray-900">{t("chat.cloudApiKeyTitle")}</h3>
+                <p class="mt-2 text-sm leading-6 text-gray-500">{t("chat.cloudApiKeyDesc")}</p>
               </div>
               <button
                 onClick={() => {
@@ -1034,38 +1020,39 @@ export function Chat() {
               </button>
             </div>
 
+            <div class="mt-5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+              <div class="text-xs font-medium uppercase tracking-wide text-gray-400">{t("chat.cloudGatewayLabel")}</div>
+              <div class="mt-1 text-sm font-medium text-gray-800">{t("chat.cloudGatewayValue")}</div>
+            </div>
+
             {cloudAuthError.value && (
               <div class="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {cloudAuthError.value}
               </div>
             )}
 
-            <div class="mt-5 flex flex-wrap gap-2">
-              <button
-                onClick={handleOpenCloudLogin}
-                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-              >
-                {t("chat.cloudOpenLogin")}
-              </button>
-              <button
-                onClick={handleOpenCloudTokenPage}
-                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-              >
-                {t("chat.cloudOpenTokenPage")}
-              </button>
-            </div>
-
             <div class="mt-5">
-              <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudTokenLabel")}</label>
+              <div class="mb-2 flex items-center justify-between gap-3">
+                <label class="block text-sm font-medium text-gray-700">{t("chat.cloudApiKeyLabel")}</label>
+                <a
+                  href="https://opencsg.com/settings/api-keys"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                >
+                  {t("chat.cloudApiKeyHelp")}
+                </a>
+              </div>
               <input
                 type="password"
                 autoComplete="off"
                 spellcheck={false}
                 class="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder={t("chat.cloudTokenPlaceholder")}
+                placeholder={t("chat.cloudApiKeyPlaceholder")}
                 value={cloudTokenInput.value}
                 onInput={(e) => (cloudTokenInput.value = (e.target as HTMLInputElement).value)}
               />
+              <p class="mt-2 text-xs leading-5 text-gray-500">{t("chat.cloudApiKeyHint")}</p>
             </div>
 
             <div class="mt-5 flex justify-end gap-2">
@@ -1083,7 +1070,7 @@ export function Chat() {
                 disabled={isSavingCloudToken.value}
                 class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors"
               >
-                {isSavingCloudToken.value ? t("chat.cloudSavingToken") : t("chat.cloudSaveToken")}
+                {isSavingCloudToken.value ? t("chat.cloudApiKeySaving") : t("chat.cloudApiKeySave")}
               </button>
             </div>
           </div>
