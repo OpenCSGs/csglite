@@ -34,6 +34,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/responses", s.handleOpenAIResponses)
 	mux.HandleFunc("POST /v1/messages", s.handleAnthropicMessages)
 	mux.HandleFunc("POST /v1/messages/count_tokens", s.handleAnthropicCountTokens)
+	mux.HandleFunc("POST /anthropic/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /anthropic/messages/count_tokens", s.handleAnthropicCountTokens)
+	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
 
 	// New: marketplace, system, logs, settings
 	mux.HandleFunc("GET /api/marketplace/models", s.handleMarketplaceModels)
@@ -43,6 +47,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/settings", s.handleSettingsUpdate)
 	mux.HandleFunc("POST /api/settings/directories", s.handleSettingsDirectories)
+	mux.HandleFunc("GET /api/api-keys", s.handleAPIKeysList)
+	mux.HandleFunc("POST /api/api-keys/settings", s.handleAPIKeysSettingsUpdate)
+	mux.HandleFunc("POST /api/api-keys", s.handleAPIKeyCreate)
+	mux.HandleFunc("DELETE /api/api-keys/{id}", s.handleAPIKeyDelete)
+	mux.HandleFunc("GET /api/api-usage", s.handleAPIUsage)
 	// Third-party providers
 	mux.HandleFunc("GET /api/providers", s.handleProvidersList)
 	mux.HandleFunc("POST /api/providers/validate", s.handleProviderValidate)
@@ -83,14 +92,14 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /", devStaticHandler("web/dist"))
 	}
 
-	return corsMiddleware(LogMiddleware(mux))
+	return corsMiddleware(s.apiAuthMiddleware(LogMiddleware(mux)))
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

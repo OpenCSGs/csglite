@@ -109,6 +109,7 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		writeAnthropicSSE(w, "message_stop", map[string]interface{}{
 			"type": "message_stop",
 		})
+		s.recordAPIUsage(r, req.Model, inputTokens, outputTokens)
 		return
 	}
 
@@ -118,7 +119,9 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, buildAnthropicMessageResponse(id, req.Model, response, inputTokens))
+	anthropicResp := buildAnthropicMessageResponse(id, req.Model, response, inputTokens)
+	s.recordAPIUsage(r, req.Model, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
+	writeJSON(w, http.StatusOK, anthropicResp)
 }
 
 func (s *Server) handleAnthropicMessagesProxy(
@@ -181,6 +184,7 @@ func (s *Server) handleAnthropicMessagesProxy(
 	}
 
 	if !req.Stream {
+		s.recordAPIUsage(r, req.Model, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 		writeJSON(w, http.StatusOK, anthropicResp)
 		return
 	}
@@ -188,6 +192,7 @@ func (s *Server) handleAnthropicMessagesProxy(
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	s.recordAPIUsage(r, req.Model, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 	writeAnthropicStreamedMessage(w, anthropicResp)
 }
 
@@ -259,6 +264,7 @@ func (s *Server) handleAnthropicMessagesWithTools(
 	}
 
 	if !req.Stream {
+		s.recordAPIUsage(r, req.Model, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 		writeJSON(w, http.StatusOK, anthropicResp)
 		return
 	}
@@ -266,6 +272,7 @@ func (s *Server) handleAnthropicMessagesWithTools(
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	s.recordAPIUsage(r, req.Model, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 	writeAnthropicStreamedMessage(w, anthropicResp)
 }
 

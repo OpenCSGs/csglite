@@ -48,6 +48,16 @@ func getThirdPartyProvider(id string) (config.ThirdPartyProvider, bool) {
 	return config.ThirdPartyProvider{}, false
 }
 
+func (s *Server) invalidateThirdPartyProviderModelsCache() {
+	if s == nil {
+		return
+	}
+	s.thirdPartyModelsCacheMu.Lock()
+	s.thirdPartyModelsCache = nil
+	s.thirdPartyModelsCacheAt = time.Time{}
+	s.thirdPartyModelsCacheMu.Unlock()
+}
+
 func (s *Server) listThirdPartyProviderModels(ctx context.Context) []api.ModelInfo {
 	providers := config.GetProviders()
 	if len(providers) == 0 {

@@ -47,6 +47,7 @@ const pendingUninstallId = signal("");
 const pendingOpenId = signal("");
 const pendingStopId = signal("");
 const visibleError = computed(() => actionError.value || loadError.value);
+const providersChangedEvent = "csghub:providers-changed";
 
 function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
   return status?.authenticated ?? status?.has_token ?? false;
@@ -604,34 +605,44 @@ function LiveLogsDrawer({
     }
 
     let disposed = false;
-    setModelsLoading(true);
-
-    // Only refresh on first load, subsequent opens use cached data
-    getTags({ refresh: false })
-      .then((items) => {
-        if (disposed) return;
-        // If we got models, use them. If empty, try with refresh.
-        if (items.length > 0) {
-          setModels(normalizeAIAppModels(items));
-          return;
-        }
-        return getTags({ refresh: true }).then((refreshed) => {
+    const loadModels = (showLoading = false) => {
+      if (showLoading) {
+        setModelsLoading(true);
+      }
+      getTags({ refresh: true })
+        .then((items) => {
           if (disposed) return;
-          setModels(normalizeAIAppModels(refreshed));
+          setModels(normalizeAIAppModels(items));
+        })
+        .catch(() => {
+          if (disposed) return;
+          setModels([]);
+        })
+        .finally(() => {
+          if (!disposed) {
+            setModelsLoading(false);
+          }
         });
-      })
-      .catch(() => {
-        if (disposed) return;
-        setModels([]);
-      })
-      .finally(() => {
-        if (!disposed) {
-          setModelsLoading(false);
-        }
-      });
+    };
+
+    loadModels(true);
+
+    const handleFocus = () => loadModels();
+    const handleProvidersChanged = () => loadModels();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadModels();
+      }
+    };
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener(providersChangedEvent, handleProvidersChanged);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       disposed = true;
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener(providersChangedEvent, handleProvidersChanged);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [app.id, canSelectModel]);
 

@@ -152,6 +152,47 @@ export interface AppSettings {
   autostart: boolean;
 }
 
+export interface LocalAPIKeyInfo {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at?: string;
+}
+
+export interface LocalAPIKeysResponse {
+  auth_enabled: boolean;
+  keys: LocalAPIKeyInfo[];
+}
+
+export interface LocalAPIKeyCreateResponse {
+  key: LocalAPIKeyInfo;
+  api_key: string;
+}
+
+export interface LocalAPIUsageTotals {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface LocalAPIUsageRow {
+  api_key_id: string;
+  api_key_name: string;
+  model: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  last_used_at: string;
+}
+
+export interface LocalAPIUsageResponse {
+  totals: LocalAPIUsageTotals;
+  rows: LocalAPIUsageRow[];
+}
+
 export interface LocalDirectoryEntry {
   name: string;
   path: string;
@@ -372,6 +413,36 @@ export async function saveSettings(patch: { storage_dir?: string; model_dir?: st
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
+}
+
+export async function getLocalAPIKeys(): Promise<LocalAPIKeysResponse> {
+  return fetchJSON<LocalAPIKeysResponse>("/api/api-keys");
+}
+
+export async function updateLocalAPIKeySettings(authEnabled: boolean): Promise<LocalAPIKeysResponse> {
+  return fetchJSON<LocalAPIKeysResponse>("/api/api-keys/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ auth_enabled: authEnabled }),
+  });
+}
+
+export async function createLocalAPIKey(name: string): Promise<LocalAPIKeyCreateResponse> {
+  return fetchJSON<LocalAPIKeyCreateResponse>("/api/api-keys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteLocalAPIKey(id: string): Promise<void> {
+  await fetchJSON<{ status: string }>(`/api/api-keys/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getLocalAPIUsage(): Promise<LocalAPIUsageResponse> {
+  return fetchJSON<LocalAPIUsageResponse>("/api/api-usage");
 }
 
 export async function browseLocalDirectories(path?: string): Promise<LocalDirectoryBrowseResponse> {

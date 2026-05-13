@@ -18,8 +18,13 @@ import {
   updateProvider,
   deleteProvider,
   validateProvider,
+  getLocalAPIKeys,
+  updateLocalAPIKeySettings,
+  createLocalAPIKey,
+  deleteLocalAPIKey,
+  getLocalAPIUsage,
 } from "../api/client";
-import type { AppSettings, CloudAuthStatus, LocalDirectoryBrowseResponse, ThirdPartyProvider } from "../api/client";
+import type { AppSettings, CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalDirectoryBrowseResponse, ThirdPartyProvider } from "../api/client";
 
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
@@ -70,6 +75,21 @@ const providerFormType = signal("openai");
 const providerFormEnabled = signal(true);
 const providerFormError = signal("");
 const providerFormSaving = signal(false);
+const providersChangedEvent = "csghub:providers-changed";
+type SettingsTab = "system" | "apiKeys" | "usage";
+
+const activeSettingsTab = signal<SettingsTab>("system");
+const localAPIKeys = signal<LocalAPIKeysResponse | null>(null);
+const localAPIKeysLoading = signal(false);
+const localAPIKeysError = signal("");
+const localAPIKeyName = signal("");
+const localAPIKeyCreated = signal("");
+const localAPIKeySaving = signal(false);
+const localAPIKeyDeleting = signal("");
+const localAPIUsage = signal<LocalAPIUsageResponse | null>(null);
+const localAPIUsageLoading = signal(false);
+const localAPIUsageError = signal("");
+const copiedBaseURL = signal("");
 
 const providerTypes = [
   { value: "openai", label: "OpenAI Compatible", name: "OpenAI", baseURL: "https://api.openai.com/v1" },
@@ -81,6 +101,10 @@ const providerTypes = [
   { value: "openrouter", label: "OpenRouter", name: "OpenRouter", baseURL: "https://openrouter.ai/api/v1" },
   { value: "other", label: "Other", name: "", baseURL: "" },
 ];
+
+function notifyProvidersChanged() {
+  window.dispatchEvent(new Event(providersChangedEvent));
+}
 
 function loadContextIndex(): number {
   try {
@@ -175,6 +199,72 @@ async function fetchProviders() {
     providersError.value = err?.message || t("settings.providersLoadFailed");
   } finally {
     providersLoading.value = false;
+  }
+}
+
+async function fetchLocalAPIKeys() {
+  localAPIKeysLoading.value = true;
+  localAPIKeysError.value = "";
+  try {
+    localAPIKeys.value = await getLocalAPIKeys();
+  } catch (err: any) {
+    localAPIKeysError.value = err?.message || t("settings.localAPIKeysLoadFailed");
+  } finally {
+    localAPIKeysLoading.value = false;
+  }
+}
+
+async function fetchLocalAPIUsage() {
+  localAPIUsageLoading.value = true;
+  localAPIUsageError.value = "";
+  try {
+    localAPIUsage.value = await getLocalAPIUsage();
+  } catch (err: any) {
+    localAPIUsageError.value = err?.message || t("settings.apiUsageLoadFailed");
+  } finally {
+    localAPIUsageLoading.value = false;
+  }
+}
+
+async function toggleLocalAPIAuth(enabled: boolean) {
+  localAPIKeySaving.value = true;
+  localAPIKeysError.value = "";
+  try {
+    localAPIKeys.value = await updateLocalAPIKeySettings(enabled);
+  } catch (err: any) {
+    localAPIKeysError.value = err?.message || t("settings.localAPIAuthSaveFailed");
+  } finally {
+    localAPIKeySaving.value = false;
+  }
+}
+
+async function createLocalKey() {
+  localAPIKeySaving.value = true;
+  localAPIKeysError.value = "";
+  localAPIKeyCreated.value = "";
+  try {
+    const resp = await createLocalAPIKey(localAPIKeyName.value.trim());
+    localAPIKeyCreated.value = resp.api_key;
+    localAPIKeyName.value = "";
+    await fetchLocalAPIKeys();
+  } catch (err: any) {
+    localAPIKeysError.value = err?.message || t("settings.localAPIKeyCreateFailed");
+  } finally {
+    localAPIKeySaving.value = false;
+  }
+}
+
+async function removeLocalKey(id: string) {
+  if (!confirm(t("settings.localAPIKeyDeleteConfirm"))) return;
+  localAPIKeyDeleting.value = id;
+  localAPIKeysError.value = "";
+  try {
+    await deleteLocalAPIKey(id);
+    await fetchLocalAPIKeys();
+  } catch (err: any) {
+    localAPIKeysError.value = err?.message || t("settings.localAPIKeyDeleteFailed");
+  } finally {
+    localAPIKeyDeleting.value = "";
   }
 }
 
@@ -370,6 +460,7 @@ async function saveProviderForm() {
       });
     }
     await fetchProviders();
+    notifyProvidersChanged();
     isProviderDialogOpen.value = false;
     editingProvider.value = null;
   } catch (err: any) {
@@ -386,6 +477,7 @@ async function toggleProviderEnabled(provider: ThirdPartyProvider) {
     providers.value = providers.value.map((p) =>
       p.id === provider.id ? { ...p, enabled: !p.enabled } : p
     );
+    notifyProvidersChanged();
   } catch (err: any) {
     providersError.value = err?.message || t("settings.providerSaveFailed");
   }
@@ -397,6 +489,7 @@ async function removeProvider(provider: ThirdPartyProvider) {
   try {
     await deleteProvider(provider.id);
     providers.value = providers.value.filter((item) => item.id !== provider.id);
+    notifyProvidersChanged();
   } catch (err: any) {
     providersError.value = err?.message || t("settings.providerDeleteFailed");
   }
@@ -460,6 +553,20 @@ function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
   return status?.authenticated ?? status?.has_token ?? false;
 }
 
+function localAPIOrigin(): string {
+  return window.location.origin;
+}
+
+function copySettingsSnippet(value: string) {
+  void navigator.clipboard?.writeText(value);
+  copiedBaseURL.value = value;
+  window.setTimeout(() => {
+    if (copiedBaseURL.value === value) {
+      copiedBaseURL.value = "";
+    }
+  }, 1500);
+}
+
 export function Settings() {
   void locale.value;
   const showTokenInput = !(cloudAuth.value?.authenticated && cloudAuth.value?.user);
@@ -468,6 +575,8 @@ export function Settings() {
     fetchSettings();
     fetchCloudAuth();
     void fetchProviders();
+    void fetchLocalAPIKeys();
+    void fetchLocalAPIUsage();
     void fetchUpgradeInfo();
     contextIndex.value = loadContextIndex();
     parallelIndex.value = loadParallelIndex();
@@ -517,8 +626,16 @@ export function Settings() {
   return (
     <div class="p-8 max-w-3xl mx-auto">
       <h1 class="text-2xl font-bold text-gray-900">{t("settings.title")}</h1>
-      <p class="text-gray-500 text-sm mt-1 mb-10">{t("settings.subtitle")}</p>
+      <p class="text-gray-500 text-sm mt-1 mb-6">{t("settings.subtitle")}</p>
 
+      <div class="mb-10 flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-1">
+        <SettingsTabButton tab="system" label={t("settings.tabSystem")} />
+        <SettingsTabButton tab="apiKeys" label={t("settings.tabAPIKeys")} />
+        <SettingsTabButton tab="usage" label={t("settings.tabUsage")} />
+      </div>
+
+          {activeSettingsTab.value === "system" && (
+            <>
       {/* Storage location */}
       <div class="mb-10">
         <div class="flex items-center gap-2 mb-1">
@@ -673,6 +790,12 @@ export function Settings() {
           </span>
         </div>
       </div>
+            </>
+          )}
+
+          {activeSettingsTab.value === "apiKeys" && (
+            <>
+      <LocalAPIKeysSection />
 
       {/* Account */}
       <div class="mb-10">
@@ -861,7 +984,11 @@ export function Settings() {
           </div>
         </div>
       </div>
+            </>
+          )}
 
+          {activeSettingsTab.value === "system" && (
+            <>
       {/* API docs */}
       <div class="mb-10">
         <div class="flex items-center gap-2 mb-1">
@@ -927,6 +1054,10 @@ export function Settings() {
           {t("settings.resetDefaults")}
         </button>
       </div>
+            </>
+          )}
+
+          {activeSettingsTab.value === "usage" && <UsageStatisticsSection />}
 
       <DirectoryPickerDialog
         open={isStorageDirPickerOpen.value}
@@ -975,6 +1106,273 @@ export function Settings() {
       />
     </div>
   );
+}
+
+function SettingsTabButton({ tab, label }: { tab: SettingsTab; label: string }) {
+  const active = activeSettingsTab.value === tab;
+  return (
+    <button
+      type="button"
+      onClick={() => (activeSettingsTab.value = tab)}
+      class={`flex-1 rounded-lg px-4 py-2 text-center text-sm transition-colors ${
+        active
+          ? "bg-indigo-50 text-indigo-700 font-medium"
+          : "text-gray-600 hover:bg-gray-50"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function LocalAPIKeysSection() {
+  const keys = localAPIKeys.value?.keys || [];
+  const authEnabled = localAPIKeys.value?.auth_enabled || false;
+  const origin = localAPIOrigin();
+  const openAIBaseURL = `${origin}/v1`;
+  const anthropicBaseURL = `${origin}/anthropic`;
+  const openAICurl = `curl ${openAIBaseURL}/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer <API_KEY>" \\
+  -d '{"model":"<MODEL>","messages":[{"role":"user","content":"Hello"}]}'`;
+  const anthropicCurl = `curl ${anthropicBaseURL}/v1/messages \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: <API_KEY>" \\
+  -d '{"model":"<MODEL>","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'`;
+  return (
+    <div class="mb-10">
+      <div class="flex items-center gap-2 mb-1">
+        <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 11-4.243 4.243L6 15v3h3l5.507-5.507A3 3 0 0115.75 5.25z" />
+        </svg>
+        <span class="font-semibold text-gray-900">{t("settings.localAPIKeys")}</span>
+      </div>
+      <p class="text-sm text-gray-500 mb-3 ml-7">{t("settings.localAPIKeysDesc")}</p>
+      <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4">
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p class="text-sm font-semibold text-gray-900">{t("settings.localAPIAuth")}</p>
+            <p class="mt-1 text-sm text-gray-500">{t("settings.localAPIAuthDesc")}</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={authEnabled}
+                disabled={localAPIKeySaving.value}
+                onChange={(e) => void toggleLocalAPIAuth((e.target as HTMLInputElement).checked)}
+                class="sr-only peer"
+              />
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600 peer-disabled:opacity-60 peer-disabled:cursor-not-allowed"></div>
+            </label>
+            <span class="text-sm text-gray-700">{authEnabled ? t("settings.localAPIAuthOn") : t("settings.localAPIAuthOff")}</span>
+          </div>
+        </div>
+
+        <div class="mt-5 border-t border-gray-100 pt-5">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div class="flex-1">
+              <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.localAPIKeyName")}</label>
+              <input
+                class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={localAPIKeyName.value}
+                onInput={(e) => (localAPIKeyName.value = (e.target as HTMLInputElement).value)}
+                placeholder={t("settings.localAPIKeyNamePlaceholder")}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => void createLocalKey()}
+              disabled={localAPIKeySaving.value}
+              class="px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {localAPIKeySaving.value ? "..." : t("settings.localAPIKeyCreate")}
+            </button>
+          </div>
+          {localAPIKeyCreated.value && (
+            <div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p class="text-sm font-medium text-amber-900">{t("settings.localAPIKeyCreated")}</p>
+              <input
+                readOnly
+                class="mt-2 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-mono text-amber-900"
+                value={localAPIKeyCreated.value}
+                onFocus={(e) => (e.target as HTMLInputElement).select()}
+              />
+              <p class="mt-2 text-xs text-amber-800">{t("settings.localAPIKeyCreatedHint")}</p>
+            </div>
+          )}
+        </div>
+
+        {localAPIKeysError.value && <p class="mt-3 text-sm text-red-600">{localAPIKeysError.value}</p>}
+        <div class="mt-5 space-y-2 border-t border-gray-100 pt-5">
+          {localAPIKeysLoading.value ? (
+            <p class="text-sm text-gray-500">...</p>
+          ) : keys.length === 0 ? (
+            <p class="text-sm text-gray-400">{t("settings.localAPIKeysEmpty")}</p>
+          ) : (
+            keys.map((key) => (
+              <div key={key.id} class="flex flex-col gap-3 rounded-lg border border-gray-100 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-gray-900 truncate">{key.name}</p>
+                  <p class="text-xs text-gray-500">{t("settings.localAPIKeyPrefix", key.prefix)}</p>
+                  <p class="text-xs text-gray-400">{t("settings.localAPIKeyLastUsed", formatDateTime(key.last_used_at))}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void removeLocalKey(key.id)}
+                  disabled={localAPIKeyDeleting.value === key.id}
+                  class="px-3 py-1.5 border border-red-200 rounded-lg text-xs text-red-600 hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                >
+                  {localAPIKeyDeleting.value === key.id ? "..." : t("settings.localAPIKeyDelete")}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div class="ml-7 mt-4 rounded-xl border border-gray-200 bg-white p-4">
+        <p class="text-sm font-semibold text-gray-900">{t("settings.localAPIBaseURL")}</p>
+        <p class="mt-1 text-sm text-gray-500">{t("settings.localAPIBaseURLDesc")}</p>
+        <div class="mt-4 space-y-3">
+          <BaseURLRow label={t("settings.localAPIBaseURLOpenAI")} value={openAIBaseURL} />
+          <BaseURLRow label={t("settings.localAPIBaseURLAnthropic")} value={anthropicBaseURL} />
+        </div>
+        <div class="mt-5 border-t border-gray-100 pt-5">
+          <p class="text-sm font-semibold text-gray-900">{t("settings.localAPIAccessMethod")}</p>
+          <div class="mt-3 space-y-3">
+            <CurlExample label={t("settings.localAPIBaseURLOpenAI")} value={openAICurl} />
+            <CurlExample label={t("settings.localAPIBaseURLAnthropic")} value={anthropicCurl} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BaseURLRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div class="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</div>
+      <div class="mt-1 flex gap-2">
+        <input
+          readOnly
+          class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-mono text-gray-800"
+          value={value}
+          onFocus={(e) => (e.target as HTMLInputElement).select()}
+        />
+        <button
+          type="button"
+          onClick={() => copySettingsSnippet(value)}
+          class="shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+        >
+          {copiedBaseURL.value === value ? t("settings.copied") : t("settings.copy")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CurlExample({ label, value }: { label: string; value: string }) {
+  return (
+    <div class="rounded-lg border border-gray-100 bg-gray-50 p-3">
+      <div class="mb-2 flex items-center justify-between gap-3">
+        <span class="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</span>
+        <button
+          type="button"
+          onClick={() => copySettingsSnippet(value)}
+          class="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+        >
+          {copiedBaseURL.value === value ? t("settings.copied") : t("settings.copy")}
+        </button>
+      </div>
+      <pre class="overflow-x-auto whitespace-pre-wrap break-words text-xs text-gray-700"><code>{value}</code></pre>
+    </div>
+  );
+}
+
+function UsageStatisticsSection() {
+  const usage = localAPIUsage.value;
+  const rows = usage?.rows || [];
+  return (
+    <div class="mb-10">
+      <div class="flex items-center justify-between gap-3 mb-4">
+        <div>
+          <h2 class="font-semibold text-gray-900">{t("settings.apiUsage")}</h2>
+          <p class="mt-1 text-sm text-gray-500">{t("settings.apiUsageDesc")}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void fetchLocalAPIUsage()}
+          disabled={localAPIUsageLoading.value}
+          class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        >
+          {localAPIUsageLoading.value ? "..." : t("settings.apiUsageRefresh")}
+        </button>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-4">
+        <UsageCard label={t("settings.apiUsageRequests")} value={formatNumber(usage?.totals.requests || 0)} />
+        <UsageCard label={t("settings.apiUsageInput")} value={formatNumber(usage?.totals.input_tokens || 0)} />
+        <UsageCard label={t("settings.apiUsageOutput")} value={formatNumber(usage?.totals.output_tokens || 0)} />
+        <UsageCard label={t("settings.apiUsageTotal")} value={formatNumber(usage?.totals.total_tokens || 0)} />
+      </div>
+      {localAPIUsageError.value && <p class="mt-3 text-sm text-red-600">{localAPIUsageError.value}</p>}
+      <div class="mt-5 overflow-hidden rounded-xl border border-gray-200 bg-white">
+        {rows.length === 0 ? (
+          <p class="p-4 text-sm text-gray-400">{localAPIUsageLoading.value ? "..." : t("settings.apiUsageEmpty")}</p>
+        ) : (
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-100 text-sm">
+              <thead class="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
+                <tr>
+                  <th class="px-4 py-3">{t("settings.apiUsageKey")}</th>
+                  <th class="px-4 py-3">{t("settings.apiUsageModel")}</th>
+                  <th class="px-4 py-3">{t("settings.apiUsageRequests")}</th>
+                  <th class="px-4 py-3">{t("settings.apiUsageInput")}</th>
+                  <th class="px-4 py-3">{t("settings.apiUsageOutput")}</th>
+                  <th class="px-4 py-3">{t("settings.apiUsageTotal")}</th>
+                  <th class="px-4 py-3">{t("settings.apiUsageLastUsed")}</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                {rows.map((row) => (
+                  <tr key={`${row.api_key_id}:${row.model}`}>
+                    <td class="px-4 py-3 font-medium text-gray-900">{row.api_key_name}</td>
+                    <td class="px-4 py-3 text-gray-600">{row.model}</td>
+                    <td class="px-4 py-3 text-gray-600">{formatNumber(row.requests)}</td>
+                    <td class="px-4 py-3 text-gray-600">{formatNumber(row.input_tokens)}</td>
+                    <td class="px-4 py-3 text-gray-600">{formatNumber(row.output_tokens)}</td>
+                    <td class="px-4 py-3 text-gray-600">{formatNumber(row.total_tokens)}</td>
+                    <td class="px-4 py-3 text-gray-500">{formatDateTime(row.last_used_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function UsageCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div class="rounded-xl border border-gray-200 bg-white p-4">
+      <p class="text-xs uppercase tracking-wide text-gray-400">{label}</p>
+      <p class="mt-2 text-xl font-semibold text-gray-900">{value}</p>
+    </div>
+  );
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat().format(value || 0);
+}
+
+function formatDateTime(value?: string): string {
+  if (!value) return t("settings.never");
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return t("settings.never");
+  return date.toLocaleString();
 }
 
 function LangBtn({ code, label }: { code: Locale; label: string }) {

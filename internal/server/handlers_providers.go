@@ -42,12 +42,20 @@ func (s *Server) handleProviderValidate(w http.ResponseWriter, r *http.Request) 
 		BaseURL:  strings.TrimSpace(req.BaseURL),
 		APIKey:   strings.TrimSpace(req.APIKey),
 		Provider: strings.TrimSpace(req.Provider),
-		Enabled:  req.Enabled,
+		Enabled:  boolDefault(req.Enabled, true),
 	}
 	if provider.APIKey == "" && provider.ID != "" {
 		if existing, ok := getThirdPartyProvider(provider.ID); ok {
 			provider.APIKey = existing.APIKey
 		}
+	}
+
+	if !provider.Enabled {
+		writeJSON(w, http.StatusOK, api.ThirdPartyProviderValidateResponse{
+			Valid:      true,
+			ModelCount: 0,
+		})
+		return
 	}
 
 	modelCount, err := validateThirdPartyProvider(r.Context(), provider)
@@ -94,12 +102,14 @@ func (s *Server) handleProviderCreate(w http.ResponseWriter, r *http.Request) {
 		BaseURL:  baseURL,
 		APIKey:   apiKey,
 		Provider: provider,
-		Enabled:  req.Enabled,
+		Enabled:  boolDefault(req.Enabled, true),
 	}
 	newProvider.BaseURL = normalizeThirdPartyProviderBaseURL(newProvider)
-	if _, err := validateThirdPartyProvider(r.Context(), newProvider); err != nil {
-		writeError(w, http.StatusBadRequest, "provider configuration is invalid: "+err.Error())
-		return
+	if newProvider.Enabled {
+		if _, err := validateThirdPartyProvider(r.Context(), newProvider); err != nil {
+			writeError(w, http.StatusBadRequest, "provider configuration is invalid: "+err.Error())
+			return
+		}
 	}
 	providers = append(providers, newProvider)
 
@@ -107,6 +117,7 @@ func (s *Server) handleProviderCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save provider: "+err.Error())
 		return
 	}
+	s.invalidateThirdPartyProviderModelsCache()
 
 	writeJSON(w, http.StatusCreated, api.ThirdPartyProvider{
 		ID:       newProvider.ID,
@@ -153,9 +164,11 @@ func (s *Server) handleProviderUpdate(w http.ResponseWriter, r *http.Request) {
 				candidate.Enabled = *req.Enabled
 			}
 			candidate.BaseURL = normalizeThirdPartyProviderBaseURL(candidate)
-			if _, err := validateThirdPartyProvider(r.Context(), candidate); err != nil {
-				writeError(w, http.StatusBadRequest, "provider configuration is invalid: "+err.Error())
-				return
+			if candidate.Enabled {
+				if _, err := validateThirdPartyProvider(r.Context(), candidate); err != nil {
+					writeError(w, http.StatusBadRequest, "provider configuration is invalid: "+err.Error())
+					return
+				}
 			}
 			providers[i] = candidate
 			break
@@ -171,6 +184,7 @@ func (s *Server) handleProviderUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save provider: "+err.Error())
 		return
 	}
+	s.invalidateThirdPartyProviderModelsCache()
 
 	// Return updated provider without API key
 	for _, p := range providers {
@@ -215,6 +229,14 @@ func (s *Server) handleProviderDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save providers: "+err.Error())
 		return
 	}
+	s.invalidateThirdPartyProviderModelsCache()
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func boolDefault(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }

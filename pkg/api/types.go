@@ -298,6 +298,55 @@ type SettingsUpdateRequest struct {
 	Autostart  *bool  `json:"autostart,omitempty"`
 }
 
+type APIKeyInfo struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
+type APIKeysResponse struct {
+	AuthEnabled bool         `json:"auth_enabled"`
+	Keys        []APIKeyInfo `json:"keys"`
+}
+
+type APIKeyCreateRequest struct {
+	Name string `json:"name,omitempty"`
+}
+
+type APIKeyCreateResponse struct {
+	Key    APIKeyInfo `json:"key"`
+	APIKey string     `json:"api_key"`
+}
+
+type APIKeySettingsUpdateRequest struct {
+	AuthEnabled bool `json:"auth_enabled"`
+}
+
+type APIUsageTotals struct {
+	Requests     int64 `json:"requests"`
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
+}
+
+type APIUsageRow struct {
+	APIKeyID     string    `json:"api_key_id"`
+	APIKeyName   string    `json:"api_key_name"`
+	Model        string    `json:"model"`
+	Requests     int64     `json:"requests"`
+	InputTokens  int64     `json:"input_tokens"`
+	OutputTokens int64     `json:"output_tokens"`
+	TotalTokens  int64     `json:"total_tokens"`
+	LastUsedAt   time.Time `json:"last_used_at"`
+}
+
+type APIUsageResponse struct {
+	Totals APIUsageTotals `json:"totals"`
+	Rows   []APIUsageRow  `json:"rows"`
+}
+
 type DirectoryBrowseRequest struct {
 	Path string `json:"path,omitempty"`
 }
@@ -456,7 +505,7 @@ type ThirdPartyProviderCreateRequest struct {
 	BaseURL  string `json:"base_url"`
 	APIKey   string `json:"api_key"`
 	Provider string `json:"provider,omitempty"`
-	Enabled  bool   `json:"enabled"`
+	Enabled  *bool  `json:"enabled,omitempty"`
 }
 
 type ThirdPartyProviderValidateRequest struct {
@@ -465,7 +514,7 @@ type ThirdPartyProviderValidateRequest struct {
 	BaseURL  string `json:"base_url"`
 	APIKey   string `json:"api_key,omitempty"`
 	Provider string `json:"provider,omitempty"`
-	Enabled  bool   `json:"enabled"`
+	Enabled  *bool  `json:"enabled,omitempty"`
 }
 
 type ThirdPartyProviderValidateResponse struct {

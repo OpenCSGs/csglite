@@ -47,6 +47,7 @@ const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
 const parallelStorageKey = "csghub.chat.num_parallel";
 const parallelSteps = [1, 2, 4, 8];
 const selectedModelStorageKey = "csghub.chat.selected_model";
+const providersChangedEvent = "csghub:providers-changed";
 
 function modelKey(model: Pick<ModelInfo, "model" | "name" | "source">): string {
   return `${model.source || "local"}:${model.model || model.name}`;
@@ -345,9 +346,13 @@ export function Chat() {
   };
 
   useEffect(() => {
-    getTags({ refresh: true }).then((m) => {
-      setAvailableModels(m);
-    }).catch(() => {});
+    const refreshModels = () => {
+      getTags({ refresh: true }).then((m) => {
+        setAvailableModels(m);
+      }).catch(() => {});
+    };
+
+    refreshModels();
     getPs().then((running) => {
       if (running.length > 0 && !selectedModelKey.value) {
         selectedModelKey.value = `local:${running[0].model || running[0].name}`;
@@ -371,6 +376,22 @@ export function Chat() {
         await refreshConversationList();
       }
     })();
+
+    const handleFocus = () => refreshModels();
+    const handleProvidersChanged = () => refreshModels();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshModels();
+      }
+    };
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener(providersChangedEvent, handleProvidersChanged);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener(providersChangedEvent, handleProvidersChanged);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   useEffect(() => {

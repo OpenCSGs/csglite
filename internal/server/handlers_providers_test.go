@@ -406,3 +406,80 @@ func TestDisabledProviderExcludedFromTagsAndEngine(t *testing.T) {
 		t.Fatalf("expected error for disabled provider engine")
 	}
 }
+
+func TestProviderUpdateInvalidatesThirdPartyModelCache(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	t.Cleanup(config.ResetProviders)
+
+	modelRequests := 0
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		modelRequests++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"id": "gpt-4o-mini"}},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	if err := config.SaveProviders([]config.ThirdPartyProvider{{
+		ID:      "provider1",
+		Name:    "OpenAI",
+		BaseURL: apiServer.URL + "/v1",
+		APIKey:  "secret",
+		Enabled: true,
+	}}); err != nil {
+		t.Fatalf("save providers: %v", err)
+	}
+
+	hasProviderModel := func() bool {
+		req := httptest.NewRequest(http.MethodGet, "/api/tags", nil)
+		w := httptest.NewRecorder()
+		s.handleTags(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("tags status = %d body=%s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Models []struct {
+				Source string `json:"source"`
+			} `json:"models"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode tags: %v", err)
+		}
+		for _, m := range resp.Models {
+			if m.Source == "provider:provider1" {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !hasProviderModel() {
+		t.Fatalf("provider model should appear before disabling")
+	}
+	if modelRequests != 1 {
+		t.Fatalf("model requests before disabling = %d, want 1", modelRequests)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/providers/provider1", strings.NewReader(`{"enabled":false}`))
+	req.SetPathValue("id", "provider1")
+	w := httptest.NewRecorder()
+	s.handleProviderUpdate(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	if hasProviderModel() {
+		t.Fatalf("disabled provider model should not remain in cached tags response")
+	}
+	if modelRequests != 1 {
+		t.Fatalf("disabling provider should not revalidate remote models, got %d requests", modelRequests)
+	}
+}

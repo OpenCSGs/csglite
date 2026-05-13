@@ -383,13 +383,19 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	defer s.touchEngine(req.Model)
 
 	stream := req.Stream == nil || *req.Stream
+	inputTokens := estimateAnthropicTokens(req.Prompt)
+	if inputTokens == 0 {
+		inputTokens = 1
+	}
 
 	if stream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
+		var full strings.Builder
 		onToken := func(token string) {
+			full.WriteString(token)
 			writeSSE(w, api.GenerateResponse{
 				Model:     req.Model,
 				Response:  token,
@@ -408,6 +414,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		s.recordAPIUsage(r, req.Model, inputTokens, estimateAnthropicTokens(full.String()))
 		writeSSE(w, api.GenerateResponse{
 			Model:     req.Model,
 			Done:      true,
@@ -419,6 +426,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		s.recordAPIUsage(r, req.Model, inputTokens, estimateAnthropicTokens(response))
 		writeJSON(w, http.StatusOK, api.GenerateResponse{
 			Model:     req.Model,
 			Response:  response,
@@ -488,6 +496,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	for _, m := range req.Messages {
 		messages = append(messages, inference.Message{Role: m.Role, Content: m.Content, ReasoningContent: m.ReasoningContent})
 	}
+	inputTokens := countMessageTokens(req.Messages)
 
 	stream := req.Stream == nil || *req.Stream
 	if hasToolChatFeatures(req) {
@@ -502,8 +511,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Connection", "keep-alive")
 
 			wroteChunk := false
+			var full strings.Builder
 			onToken := func(token string) {
 				wroteChunk = true
+				full.WriteString(token)
 				writeSSE(w, api.ChatResponse{
 					Model: req.Model,
 					Message: &api.Message{
@@ -533,6 +544,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			_ = fullResp
+			s.recordAPIUsage(r, req.Model, inputTokens, estimateAnthropicTokens(full.String()))
 			writeSSE(w, api.ChatResponse{
 				Model:     req.Model,
 				Done:      true,
@@ -546,8 +558,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Connection", "keep-alive")
 
 		wroteChunk := false
+		var full strings.Builder
 		onToken := func(token string) {
 			wroteChunk = true
+			full.WriteString(token)
 			writeNDJSON(w, api.ChatResponse{
 				Model: req.Model,
 				Message: &api.Message{
@@ -576,6 +590,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		s.recordAPIUsage(r, req.Model, inputTokens, estimateAnthropicTokens(full.String()))
 		writeNDJSON(w, api.ChatResponse{
 			Model: req.Model,
 			Message: &api.Message{
@@ -591,6 +606,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			writeInferenceError(w, err)
 			return
 		}
+		s.recordAPIUsage(r, req.Model, inputTokens, estimateAnthropicTokens(response))
 		writeJSON(w, http.StatusOK, api.ChatResponse{
 			Model: req.Model,
 			Message: &api.Message{

@@ -53,6 +53,11 @@ func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	openAIResp = normalizeOpenAIToolResponse(openAIResp, req.Tools)
+	inputTokens, outputTokens := openAIUsageTokens(openAIResp)
+	if inputTokens == 0 {
+		inputTokens = countMessageTokens(req.Messages)
+	}
+	s.recordAPIUsage(r, req.Model, inputTokens, outputTokens)
 
 	ollamaResp, err := openAIChatResponseToOllama(req.Model, openAIResp)
 	if err != nil {

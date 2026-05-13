@@ -1330,6 +1330,158 @@
         }
       }
     },
+    "/api/api-keys": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List local API keys",
+        "description": "Returns the remote access authorization setting and API key metadata. Secret values are never returned.",
+        "operationId": "listAPIKeys",
+        "responses": {
+          "200": {
+            "description": "API key metadata and authorization state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIKeysResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Create a local API key",
+        "description": "Creates an API key for remote access. The plaintext key is returned only once.",
+        "operationId": "createAPIKey",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/APIKeyCreateRequest"
+              },
+              "example": {
+                "name": "LAN client"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created API key with one-time plaintext secret.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIKeyCreateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/api-keys/settings": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update local API key authorization settings",
+        "description": "Enables or disables API key checks for non-loopback inference API requests. Localhost remains passwordless, and non-inference management endpoints are not protected by this setting.",
+        "operationId": "updateAPIKeySettings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/APIKeySettingsUpdateRequest"
+              },
+              "example": {
+                "auth_enabled": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated API key authorization state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIKeysResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/api-keys/{id}": {
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Delete a local API key",
+        "operationId": "deleteAPIKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "API key deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/api-usage": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List local API usage statistics",
+        "description": "Returns aggregate request and token usage grouped by API key and model.",
+        "operationId": "getAPIUsage",
+        "responses": {
+          "200": {
+            "description": "API usage totals and rows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIUsageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/providers": {
       "get": {
         "tags": [
@@ -1505,6 +1657,167 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/conversations": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List chat conversations",
+        "operationId": "listConversations",
+        "responses": {
+          "200": {
+            "description": "Conversation metadata list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationsListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Create a chat conversation",
+        "operationId": "createConversation",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Conversation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created conversation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get a chat conversation",
+        "operationId": "getConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conversation details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update a chat conversation",
+        "operationId": "updateConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Conversation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated conversation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Delete a chat conversation",
+        "operationId": "deleteConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conversation deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2801,7 +3114,8 @@
           "version",
           "storage_dir",
           "model_dir",
-          "dataset_dir"
+          "dataset_dir",
+          "autostart"
         ],
         "properties": {
           "version": {
@@ -2815,6 +3129,9 @@
           },
           "dataset_dir": {
             "type": "string"
+          },
+          "autostart": {
+            "type": "boolean"
           }
         }
       },
@@ -2830,6 +3147,287 @@
           },
           "dataset_dir": {
             "type": "string"
+          },
+          "autostart": {
+            "type": "boolean"
+          }
+        }
+      },
+      "APIKeyInfo": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_used_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "APIKeysResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "auth_enabled",
+          "keys"
+        ],
+        "properties": {
+          "auth_enabled": {
+            "type": "boolean"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/APIKeyInfo"
+            }
+          }
+        }
+      },
+      "APIKeyCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "APIKeyCreateResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "api_key"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/APIKeyInfo"
+          },
+          "api_key": {
+            "type": "string",
+            "writeOnly": true
+          }
+        }
+      },
+      "APIKeySettingsUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "auth_enabled"
+        ],
+        "properties": {
+          "auth_enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "APIUsageTotals": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requests",
+          "input_tokens",
+          "output_tokens",
+          "total_tokens"
+        ],
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "APIUsageRow": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "api_key_id",
+          "api_key_name",
+          "model",
+          "requests",
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "last_used_at"
+        ],
+        "properties": {
+          "api_key_id": {
+            "type": "string"
+          },
+          "api_key_name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "requests": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_used_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "APIUsageResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "totals",
+          "rows"
+        ],
+        "properties": {
+          "totals": {
+            "$ref": "#/components/schemas/APIUsageTotals"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/APIUsageRow"
+            }
+          }
+        }
+      },
+      "ConversationSettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "num_ctx": {
+            "type": "integer"
+          },
+          "num_parallel": {
+            "type": "integer"
+          }
+        }
+      },
+      "Conversation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "created_at",
+          "updated_at",
+          "messages"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          },
+          "settings": {
+            "$ref": "#/components/schemas/ConversationSettings"
+          }
+        }
+      },
+      "ConversationMeta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "created_at",
+          "updated_at",
+          "msg_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "msg_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ConversationsListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversations"
+        ],
+        "properties": {
+          "conversations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationMeta"
+            }
           }
         }
       },

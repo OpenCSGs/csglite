@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -91,6 +92,7 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 	for _, m := range req.Messages {
 		messages = append(messages, inference.Message{Role: m.Role, Content: m.Content, ReasoningContent: m.ReasoningContent})
 	}
+	inputTokens := countMessageTokens(req.Messages)
 
 	id := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	created := time.Now().Unix()
@@ -100,7 +102,9 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
+		var full strings.Builder
 		onToken := func(token string) {
+			full.WriteString(token)
 			chunk := api.OpenAIChatResponse{
 				ID:      id,
 				Object:  "chat.completion.chunk",
@@ -119,6 +123,7 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 			writeSSE(w, map[string]string{"error": err.Error()})
 			return
 		}
+		s.recordAPIUsage(r, req.Model, inputTokens, estimateAnthropicTokens(full.String()))
 
 		stop := "stop"
 		writeSSE(w, api.OpenAIChatResponse{
@@ -142,6 +147,7 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 			writeOpenAIInferenceError(w, err)
 			return
 		}
+		s.recordAPIUsage(r, req.Model, inputTokens, estimateAnthropicTokens(response))
 
 		stop := "stop"
 		writeJSON(w, http.StatusOK, api.OpenAIChatResponse{
@@ -191,7 +197,26 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 		w.Header().Set("Connection", "keep-alive")
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, resp.Body)
+	if stream {
+		_, _ = io.Copy(w, resp.Body)
+		s.recordAPIUsage(r, req.Model, countMessageTokens(req.Messages), 0)
+	} else {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return
+		}
+		var openAIResp api.OpenAIChatResponse
+		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&openAIResp); err == nil {
+			inputTokens, outputTokens := openAIUsageTokens(openAIResp)
+			if inputTokens == 0 {
+				inputTokens = countMessageTokens(req.Messages)
+			}
+			s.recordAPIUsage(r, req.Model, inputTokens, outputTokens)
+		} else {
+			s.recordAPIUsage(r, req.Model, countMessageTokens(req.Messages), 0)
+		}
+		_, _ = w.Write(body)
+	}
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -261,6 +286,11 @@ func (s *Server) handleOpenAIChatCompletionsWithTools(
 	if openAIResp.Model == "" {
 		openAIResp.Model = req.Model
 	}
+	inputTokens, outputTokens := openAIUsageTokens(openAIResp)
+	if inputTokens == 0 {
+		inputTokens = countMessageTokens(req.Messages)
+	}
+	s.recordAPIUsage(r, req.Model, inputTokens, outputTokens)
 
 	if !stream {
 		writeJSON(w, http.StatusOK, openAIResp)
