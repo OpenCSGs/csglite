@@ -69,6 +69,40 @@ make build
 
 Download the latest binary for your platform from the [Releases](https://github.com/opencsgs/csghub-lite/releases) page.
 
+### Docker
+
+csghub-lite publishes two container images:
+
+- Standard image: `opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite:latest`
+- ROCm image: `opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite-rocm:latest`
+
+Persist `/root/.csghub-lite` so downloaded models, datasets, settings, API keys, and usage data survive container restarts.
+
+```bash
+# Standard image with a host directory
+mkdir -p ~/.csghub-lite-docker
+docker run -d --name csghub-lite \
+  -p 11435:11435 \
+  -v ~/.csghub-lite-docker:/root/.csghub-lite \
+  opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite:latest
+```
+
+For AMD GPU hosts with ROCm support:
+
+```bash
+docker run -d --name csghub-lite-rocm \
+  --device=/dev/kfd \
+  --device=/dev/dri \
+  --group-add video \
+  --ipc=host \
+  --security-opt seccomp=unconfined \
+  -p 11435:11435 \
+  -v csghub-lite-data:/root/.csghub-lite \
+  opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite-rocm:latest
+```
+
+After the container starts, open `http://localhost:11435`.
+
 ## Quick Start
 
 ```bash
@@ -106,7 +140,7 @@ Supported providers include:
 | Kimi | Moonshot | `https://api.moonshot.cn/v1` |
 | BigModel | Zhipu/智谱AI | `https://open.bigmodel.cn/api/paas/v4` |
 | Qianfan | Baidu | `https://qianfan.baidubce.com/v2` |
-| MiniMax | - | `https://api.minimax.chat/v1` |
+| MiniMax | - | `https://api.minimaxi.com/v1` |
 | OpenRouter | - | `https://openrouter.ai/api/v1` |
 | Any OpenAI-compatible API | Custom provider | Custom base URL |
 
