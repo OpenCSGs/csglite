@@ -45,10 +45,11 @@ const (
 )
 
 var (
-	aiAppShellIdleTimeout  = 15 * time.Minute
-	aiAppShellPingInterval = 30 * time.Second
-	aiAppShellPongWait     = 75 * time.Second
-	aiAppShellWriteTimeout = 10 * time.Second
+	aiAppShellIdleTimeout     = 15 * time.Minute
+	aiAppShellDetachedTimeout = 15 * time.Second
+	aiAppShellPingInterval    = 30 * time.Second
+	aiAppShellPongWait        = 75 * time.Second
+	aiAppShellWriteTimeout    = 10 * time.Second
 )
 
 var aiAppShellUpgrader = websocket.Upgrader{
@@ -171,6 +172,7 @@ func (m *aiAppShellManager) Create(appID, title, modelID string, prepared aiAppP
 	cmd := exec.Command(prepared.Binary, prepared.Args...)
 	cmd.Env = prepared.Env
 	cmd.Dir = prepared.Dir
+	prepareAIAppShellCommand(cmd)
 
 	if err := pty.Start(cmd); err != nil {
 		_ = pty.Close()
@@ -194,7 +196,7 @@ func (m *aiAppShellManager) Create(appID, title, modelID string, prepared aiAppP
 	m.sessions[session.id] = session
 	m.mu.Unlock()
 
-	session.scheduleIdleTimeout()
+	session.scheduleDetachedTimeout()
 	session.start()
 	return session, nil
 }
@@ -214,6 +216,23 @@ func (m *aiAppShellManager) Close(id string) bool {
 	session.Terminate()
 	m.remove(id)
 	return true
+}
+
+func (m *aiAppShellManager) CloseAll() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	sessions := make([]*aiAppShellSession, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	m.sessions = make(map[string]*aiAppShellSession)
+	m.mu.Unlock()
+
+	for _, session := range sessions {
+		session.Terminate()
+	}
 }
 
 func (m *aiAppShellManager) remove(id string) {
@@ -295,8 +314,6 @@ func (s *aiAppShellSession) Attach() aiAppShellAttach {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.scheduleIdleTimeoutLocked()
-
 	attach := aiAppShellAttach{
 		ready: aiAppShellControlMessage{
 			Type:    "ready",
@@ -310,6 +327,7 @@ func (s *aiAppShellSession) Attach() aiAppShellAttach {
 	}
 
 	if s.done {
+		s.scheduleIdleTimeoutLocked()
 		attach.exitMsg = &aiAppShellControlMessage{
 			Type:     "exit",
 			Session:  s.id,
@@ -323,6 +341,7 @@ func (s *aiAppShellSession) Attach() aiAppShellAttach {
 		return attach
 	}
 
+	s.stopIdleTimeoutLocked()
 	ch := make(chan aiAppShellEvent, aiAppShellEventBuffer)
 	s.subs[ch] = struct{}{}
 	attach.events = ch
@@ -340,7 +359,11 @@ func (s *aiAppShellSession) Detach(ch chan aiAppShellEvent) {
 		close(ch)
 	}
 	if len(s.subs) == 0 {
-		s.scheduleIdleTimeoutLocked()
+		if s.done {
+			s.scheduleIdleTimeoutLocked()
+		} else {
+			s.scheduleDetachedTimeoutLocked()
+		}
 	}
 	s.mu.Unlock()
 }
@@ -383,7 +406,7 @@ func (s *aiAppShellSession) Terminate() {
 	s.mu.Unlock()
 
 	if process != nil {
-		_ = process.Kill()
+		terminateAIAppShellProcess(process)
 	}
 	if pty != nil {
 		_ = pty.Close()
@@ -392,7 +415,9 @@ func (s *aiAppShellSession) Terminate() {
 
 func (s *aiAppShellSession) touchActivity() {
 	s.mu.Lock()
-	s.scheduleIdleTimeoutLocked()
+	if s.done {
+		s.scheduleIdleTimeoutLocked()
+	}
 	s.mu.Unlock()
 }
 
@@ -467,10 +492,24 @@ func (s *aiAppShellSession) scheduleIdleTimeout() {
 }
 
 func (s *aiAppShellSession) scheduleIdleTimeoutLocked() {
+	s.scheduleTimeoutLocked(aiAppShellIdleTimeout)
+}
+
+func (s *aiAppShellSession) scheduleDetachedTimeout() {
+	s.mu.Lock()
+	s.scheduleDetachedTimeoutLocked()
+	s.mu.Unlock()
+}
+
+func (s *aiAppShellSession) scheduleDetachedTimeoutLocked() {
+	s.scheduleTimeoutLocked(aiAppShellDetachedTimeout)
+}
+
+func (s *aiAppShellSession) scheduleTimeoutLocked(timeout time.Duration) {
 	if s.idleTimer != nil {
 		s.idleTimer.Stop()
 	}
-	s.idleTimer = time.AfterFunc(aiAppShellIdleTimeout, func() {
+	s.idleTimer = time.AfterFunc(timeout, func() {
 		s.Terminate()
 		s.manager.remove(s.id)
 	})

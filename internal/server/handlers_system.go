@@ -229,7 +229,7 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		log.Println("shutting down server...")
-		s.closeAllEngines()
+		s.shutdownRuntime()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.http.Shutdown(shutCtx)

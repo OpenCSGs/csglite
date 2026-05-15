@@ -18,45 +18,43 @@ func waitForShellSession(t *testing.T, timeout time.Duration, check func() bool,
 	t.Fatal(message)
 }
 
-func TestAIAppShellSessionTouchActivityExtendsIdleTimeout(t *testing.T) {
-	oldTimeout := aiAppShellIdleTimeout
-	aiAppShellIdleTimeout = 120 * time.Millisecond
+func TestAIAppShellSessionDetachedActivityDoesNotExtendTimeout(t *testing.T) {
+	oldTimeout := aiAppShellDetachedTimeout
+	aiAppShellDetachedTimeout = 120 * time.Millisecond
 	t.Cleanup(func() {
-		aiAppShellIdleTimeout = oldTimeout
+		aiAppShellDetachedTimeout = oldTimeout
 	})
 
 	manager := newAIAppShellManager()
 	session := &aiAppShellSession{
 		manager: manager,
-		id:      "touch-activity",
+		id:      "detached-activity",
 		subs:    make(map[chan aiAppShellEvent]struct{}),
 	}
 	manager.sessions[session.id] = session
-	session.scheduleIdleTimeout()
+	session.scheduleDetachedTimeout()
 
 	time.Sleep(70 * time.Millisecond)
 	session.touchActivity()
 
 	if _, ok := manager.Get(session.id); !ok {
-		t.Fatal("session expired before the refreshed timeout elapsed")
+		t.Fatal("session expired before detached timeout elapsed")
 	}
 
-	time.Sleep(70 * time.Millisecond)
-	if _, ok := manager.Get(session.id); !ok {
-		t.Fatal("session expired too early after touchActivity")
-	}
-
-	waitForShellSession(t, 250*time.Millisecond, func() bool {
+	waitForShellSession(t, 150*time.Millisecond, func() bool {
 		_, ok := manager.Get(session.id)
 		return !ok
-	}, "session did not expire after the refreshed idle timeout")
+	}, "detached session output refreshed the timeout")
 }
 
-func TestAIAppShellSessionAttachStillExpiresWhenIdle(t *testing.T) {
+func TestAIAppShellSessionAttachKeepsLiveSession(t *testing.T) {
 	oldTimeout := aiAppShellIdleTimeout
+	oldDetachedTimeout := aiAppShellDetachedTimeout
 	aiAppShellIdleTimeout = 100 * time.Millisecond
+	aiAppShellDetachedTimeout = 100 * time.Millisecond
 	t.Cleanup(func() {
 		aiAppShellIdleTimeout = oldTimeout
+		aiAppShellDetachedTimeout = oldDetachedTimeout
 	})
 
 	manager := newAIAppShellManager()
@@ -66,18 +64,23 @@ func TestAIAppShellSessionAttachStillExpiresWhenIdle(t *testing.T) {
 		subs:    make(map[chan aiAppShellEvent]struct{}),
 	}
 	manager.sessions[session.id] = session
-	session.scheduleIdleTimeout()
+	session.scheduleDetachedTimeout()
 
 	attach := session.Attach()
 	if attach.events == nil {
 		t.Fatal("expected live attach events channel")
 	}
-	defer session.Detach(attach.events)
 
+	time.Sleep(250 * time.Millisecond)
+	if _, ok := manager.Get(session.id); !ok {
+		t.Fatal("attached live session expired")
+	}
+
+	session.Detach(attach.events)
 	waitForShellSession(t, 250*time.Millisecond, func() bool {
 		_, ok := manager.Get(session.id)
 		return !ok
-	}, "attached idle session did not expire after idle timeout")
+	}, "detached live session did not expire after detached timeout")
 }
 
 func TestDrainAIAppShellOutputBatchesQueuedChunksAndPreservesExit(t *testing.T) {

@@ -163,14 +163,22 @@ func (s *Server) Run(ctx context.Context) error {
 
 	select {
 	case err := <-errCh:
+		s.shutdownRuntime()
 		return err
 	case <-ctx.Done():
 		log.Println("shutting down server...")
-		s.closeAllEngines()
+		s.shutdownRuntime()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return s.http.Shutdown(shutCtx)
 	}
+}
+
+func (s *Server) shutdownRuntime() {
+	if s.appShells != nil {
+		s.appShells.CloseAll()
+	}
+	s.closeAllEngines()
 }
 
 // checkPort attempts to listen on the address to detect conflicts early.
