@@ -183,6 +183,94 @@ func TestHandleTagsIncludesThirdPartyProviderModels(t *testing.T) {
 	}
 }
 
+func TestThirdPartyModelProviderUsesConfiguredName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	t.Cleanup(config.ResetProviders)
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"id": "mi-model"}},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	if err := config.SaveProviders([]config.ThirdPartyProvider{{
+		ID:       "provider1",
+		Name:     "xiaomi-plan",
+		BaseURL:  apiServer.URL + "/v1",
+		APIKey:   "secret",
+		Provider: "openai",
+		Enabled:  true,
+	}}); err != nil {
+		t.Fatalf("save providers: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers?source=model", nil)
+	w := httptest.NewRecorder()
+	s.handleProvidersList(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("providers status = %d body=%s", w.Code, w.Body.String())
+	}
+	var providersResp struct {
+		Providers []struct {
+			ID         string `json:"id"`
+			Name       string `json:"name"`
+			Source     string `json:"source"`
+			ModelCount int    `json:"model_count"`
+		} `json:"providers"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&providersResp); err != nil {
+		t.Fatalf("decode providers: %v", err)
+	}
+	if len(providersResp.Providers) != 1 {
+		t.Fatalf("providers = %#v, want one third-party provider", providersResp.Providers)
+	}
+	got := providersResp.Providers[0]
+	if got.ID != "xiaomi-plan" || got.Name != "xiaomi-plan" || got.Source != "provider" || got.ModelCount != 1 {
+		t.Fatalf("model provider = %#v, want xiaomi-plan provider", got)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("tags status = %d body=%s", w.Code, w.Body.String())
+	}
+	var tagsResp struct {
+		Models []struct {
+			Model    string `json:"model"`
+			Provider string `json:"provider"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
+		t.Fatalf("decode tags: %v", err)
+	}
+	if len(tagsResp.Models) != 1 || tagsResp.Models[0].Model != "mi-model" || tagsResp.Models[0].Provider != "xiaomi-plan" {
+		t.Fatalf("models = %#v, want xiaomi-plan model", tagsResp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=openai", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("openai filter status = %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
+		t.Fatalf("decode openai filtered tags: %v", err)
+	}
+	if len(tagsResp.Models) != 0 {
+		t.Fatalf("openai-compatible type should not be exposed as model provider: %#v", tagsResp.Models)
+	}
+}
+
 func TestThirdPartyProviderEngineTrimsV1BaseURL(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

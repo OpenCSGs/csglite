@@ -42,7 +42,7 @@
     },
     {
       "name": "Providers",
-      "description": "Third-party OpenAI-compatible provider configuration."
+      "description": "Third-party OpenAI-compatible provider configuration and model provider discovery."
     },
     {
       "name": "Upgrade",
@@ -96,7 +96,7 @@
           "Models"
         ],
         "summary": "List available models",
-        "description": "Returns local models and, when an OpenCSG token is configured, any available cloud chat models.",
+        "description": "Returns local, CSGHub cloud, and third-party provider models. Use `provider` to filter by a model provider such as `local`, `csghub`, or a third-party provider name.",
         "operationId": "getTags",
         "parameters": [
           {
@@ -105,6 +105,14 @@
             "description": "Force a refresh of the cloud model catalog before returning results.",
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "description": "Filter models by normalized provider ID. Local models use `local`; all CSGHub cloud models use `csghub`; third-party provider models use the configured provider name.",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -1506,17 +1514,43 @@
           "Providers"
         ],
         "summary": "List third-party providers",
+        "description": "Returns providers available for `/api/tags?provider=...` filtering by default or when `source=model`. Use `source=third_party` to return configured third-party provider settings.",
         "operationId": "listThirdPartyProviders",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Provider list source. `model` returns model filter providers; `third_party` returns configured provider settings.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "third_party",
+                "model"
+              ],
+              "default": "model"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Configured third-party providers without API keys.",
+            "description": "Provider list for the selected source.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ThirdPartyProvidersResponse"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ThirdPartyProvidersResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelProvidersResponse"
+                    }
+                  ]
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           }
         }
       },
@@ -2970,6 +3004,46 @@
           }
         }
       },
+      "ModelProvidersResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "providers"
+        ],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderInfo"
+            }
+          }
+        }
+      },
+      "ProviderInfo": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "model_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Normalized provider ID accepted by `/api/tags?provider=...`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Provider source, such as local, cloud, or provider."
+          },
+          "model_count": {
+            "type": "integer"
+          }
+        }
+      },
       "ThirdPartyProviderCreateRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -4172,6 +4246,10 @@
           },
           "source": {
             "type": "string"
+          },
+          "provider": {
+            "type": "string",
+            "description": "Normalized provider ID for filtering `/api/tags`, such as `local`, `csghub`, or a third-party provider name."
           },
           "pipeline_tag": {
             "type": "string"

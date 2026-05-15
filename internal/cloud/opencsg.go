@@ -193,6 +193,7 @@ func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
 
 	llmType := extractLLMType(item.Metadata)
 	ownedBy := strings.TrimSpace(item.OwnedBy)
+	provider := cloudModelProvider(ownedBy)
 	pricing := extractPricing(item.Metadata)
 
 	return api.ModelInfo{
@@ -203,6 +204,7 @@ func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
 		Label:         displayName,
 		DisplayName:   displayName,
 		Source:        "cloud",
+		Provider:      provider,
 		PipelineTag:   pipelineTag,
 		HasMMProj:     item.Task == "image-text-to-text",
 		ContextWindow: int64(limits.MaxInputTokens),
@@ -210,6 +212,10 @@ func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
 		OwnedBy:       ownedBy,
 		Pricing:       pricing,
 	}, true
+}
+
+func cloudModelProvider(string) string {
+	return "csghub"
 }
 
 func supportsChat(item remoteModel) bool {

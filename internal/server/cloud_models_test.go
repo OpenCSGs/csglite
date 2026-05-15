@@ -75,6 +75,118 @@ func TestHandleTagsWithoutTokenIncludesAndRefreshesCloudModels(t *testing.T) {
 	}
 }
 
+func TestHandleTagsProviderFilterCloudModels(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{
+					"id":           "xiaomi/model",
+					"task":         "text-generation",
+					"display_name": "Xiaomi Model",
+					"owned_by":     "xiaomi",
+				},
+				{
+					"id":           "opencsg/model",
+					"task":         "text-generation",
+					"display_name": "OpenCSG Model",
+					"owned_by":     "OpenCSG",
+				},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cloud = cloud.NewService(apiServer.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags?provider=csghub", nil)
+	w := httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode tags response: %v", err)
+	}
+	if len(resp.Models) != 2 {
+		t.Fatalf("models = %#v, want both cloud models under csghub", resp.Models)
+	}
+	for _, model := range resp.Models {
+		if model.Provider != "csghub" {
+			t.Fatalf("model provider = %q, want csghub", model.Provider)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("xiaomi status = %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode xiaomi tags response: %v", err)
+	}
+	if len(resp.Models) != 0 {
+		t.Fatalf("models = %#v, want no CSGHub cloud models for xiaomi provider", resp.Models)
+	}
+}
+
+func TestHandleModelProvidersListIncludesModelProviders(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{
+					"id":           "xiaomi/one",
+					"task":         "text-generation",
+					"display_name": "Xiaomi One",
+					"owned_by":     "xiaomi",
+				},
+				{
+					"id":           "xiaomi/two",
+					"task":         "text-generation",
+					"display_name": "Xiaomi Two",
+					"owned_by":     "xiaomi",
+				},
+				{
+					"id":           "opencsg/model",
+					"task":         "text-generation",
+					"display_name": "OpenCSG Model",
+					"owned_by":     "OpenCSG",
+				},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cloud = cloud.NewService(apiServer.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers?source=model", nil)
+	w := httptest.NewRecorder()
+	s.handleProvidersList(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp api.ModelProvidersResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode providers response: %v", err)
+	}
+	counts := map[string]int{}
+	for _, provider := range resp.Providers {
+		counts[provider.ID] = provider.ModelCount
+	}
+	if len(counts) != 1 || counts["csghub"] != 3 {
+		t.Fatalf("model provider counts = %#v, want csghub=3", counts)
+	}
+}
+
 func TestRefreshCloudChatModelsWithoutTokenThrottlesRepeatedForceRefresh(t *testing.T) {
 	requests := 0
 	currentModel := "stale/model"

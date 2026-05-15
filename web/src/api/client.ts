@@ -1300,7 +1300,7 @@ export interface ThirdPartyProviderValidateResponse {
 }
 
 export async function getProviders(): Promise<ThirdPartyProvider[]> {
-  const resp = await fetchJSON<ThirdPartyProvidersResponse>("/api/providers");
+  const resp = await fetchJSON<ThirdPartyProvidersResponse>("/api/providers?source=third_party");
   return resp.providers || [];
 }
 

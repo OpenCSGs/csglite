@@ -451,6 +451,47 @@ func TestHandleTags_WithModels(t *testing.T) {
 	}
 }
 
+func TestHandleTagsProviderFilterLocal(t *testing.T) {
+	s := newTestServer(t)
+	lm := &model.LocalModel{
+		Namespace:    "test",
+		Name:         "model",
+		Format:       model.FormatGGUF,
+		Size:         1024,
+		Files:        []string{"model.gguf"},
+		DownloadedAt: time.Now(),
+	}
+	model.SaveManifest(s.cfg.ModelDir, lm)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags?provider=local", nil)
+	w := httptest.NewRecorder()
+	s.handleTags(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	var resp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(resp.Models) != 1 || resp.Models[0].Provider != "local" || resp.Models[0].Source != "local" {
+		t.Fatalf("models = %#v, want one local provider model", resp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode filtered response: %v", err)
+	}
+	if len(resp.Models) != 0 {
+		t.Fatalf("models len = %d, want 0 for non-local provider", len(resp.Models))
+	}
+}
+
 func TestHandleShow(t *testing.T) {
 	s := newTestServer(t)
 

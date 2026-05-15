@@ -104,6 +104,9 @@ func TestModelInfoFromRemote_ExtractsPricing(t *testing.T) {
 	if info.OwnedBy != "OpenCSG" {
 		t.Fatalf("OwnedBy = %q, want OpenCSG", info.OwnedBy)
 	}
+	if info.Provider != "csghub" {
+		t.Fatalf("Provider = %q, want csghub", info.Provider)
+	}
 	if info.Pricing == nil || info.Pricing.InputTokenPrice == nil || info.Pricing.OutputTokenPrice == nil {
 		t.Fatalf("Pricing = %#v, want input and output prices", info.Pricing)
 	}

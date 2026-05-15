@@ -122,6 +122,7 @@ func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
 		Label:         modelID,
 		DisplayName:   modelID,
 		Source:        "local",
+		Provider:      "local",
 		PipelineTag:   pipelineTag,
 		HasMMProj:     hasMMProj,
 		ContextWindow: contextWindow,

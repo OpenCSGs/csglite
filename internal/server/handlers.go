@@ -69,6 +69,27 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	provider := normalizeModelProvider(r.URL.Query().Get("provider"))
+	if provider != "" {
+		filtered := make([]api.ModelInfo, 0, len(infos))
+		for _, info := range infos {
+			if !modelMatchesProvider(info, provider) {
+				continue
+			}
+			if info.Provider == "" {
+				info.Provider = modelProviderID(info)
+			}
+			filtered = append(filtered, info)
+		}
+		infos = filtered
+	} else {
+		for i := range infos {
+			if infos[i].Provider == "" {
+				infos[i].Provider = modelProviderID(infos[i])
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, api.TagsResponse{Models: infos})
 }
 

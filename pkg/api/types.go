@@ -201,6 +201,7 @@ type ModelInfo struct {
 	Label         string        `json:"label,omitempty"`
 	DisplayName   string        `json:"display_name,omitempty"`
 	Source        string        `json:"source,omitempty"`
+	Provider      string        `json:"provider,omitempty"`
 	PipelineTag   string        `json:"pipeline_tag,omitempty"`
 	HasMMProj     bool          `json:"has_mmproj,omitempty"`
 	ContextWindow int64         `json:"context_window,omitempty"`
@@ -550,6 +551,17 @@ type ThirdPartyProvider struct {
 
 type ThirdPartyProvidersResponse struct {
 	Providers []ThirdPartyProvider `json:"providers"`
+}
+
+type ModelProvidersResponse struct {
+	Providers []ProviderInfo `json:"providers"`
+}
+
+type ProviderInfo struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Source     string `json:"source,omitempty"`
+	ModelCount int    `json:"model_count"`
 }
 
 type ThirdPartyProviderCreateRequest struct {

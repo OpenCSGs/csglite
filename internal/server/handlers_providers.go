@@ -11,6 +11,18 @@ import (
 
 // GET /api/providers -- list all third-party providers
 func (s *Server) handleProvidersList(w http.ResponseWriter, r *http.Request) {
+	source := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("source")))
+	switch source {
+	case "", "model", "models":
+		s.handleModelProvidersList(w, r)
+	case "third_party", "third-party", "config":
+		s.handleThirdPartyProvidersList(w, r)
+	default:
+		writeError(w, http.StatusBadRequest, "invalid providers source")
+	}
+}
+
+func (s *Server) handleThirdPartyProvidersList(w http.ResponseWriter, r *http.Request) {
 	providers := config.GetProviders()
 	resp := api.ThirdPartyProvidersResponse{
 		Providers: make([]api.ThirdPartyProvider, len(providers)),
@@ -26,6 +38,15 @@ func (s *Server) handleProvidersList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleModelProvidersList(w http.ResponseWriter, r *http.Request) {
+	providers, err := s.listModelProviders(r.Context(), requestWantsModelRefresh(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, api.ModelProvidersResponse{Providers: providers})
 }
 
 // POST /api/providers/validate -- validate provider settings without saving
