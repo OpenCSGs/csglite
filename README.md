@@ -127,6 +127,7 @@ docker run -d --name csghub-lite-rocm \
   --ipc=host \
   --security-opt seccomp=unconfined \
   -p 11435:11435 \
+  -e CSGHUB_LITE_VERSION=v0.8.52 \
   -v csghub-lite-data:/root/.csghub-lite \
   opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite-rocm:latest
 ```
