@@ -61,6 +61,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/cloud/auth", s.handleCloudAuthStatus)
 	mux.HandleFunc("POST /api/cloud/auth/token", s.handleCloudAuthTokenSave)
 	mux.HandleFunc("DELETE /api/cloud/auth/token", s.handleCloudAuthTokenDelete)
+	mux.HandleFunc("POST /api/cloud/api-key", s.handleCloudAPIKeySave)
+	mux.HandleFunc("DELETE /api/cloud/api-key", s.handleCloudAPIKeyDelete)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/apps", s.handleApps)

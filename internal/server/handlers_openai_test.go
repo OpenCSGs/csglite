@@ -520,7 +520,7 @@ func TestHandleModelsAnthropicFormatUsesLoadedContextWhenLarger(t *testing.T) {
 }
 
 func TestHandleAnthropicMessagesSupportsCloudModels(t *testing.T) {
-	cfg := &config.Config{ModelDir: t.TempDir(), Token: "test-token"}
+	cfg := &config.Config{ModelDir: t.TempDir(), OpenCSGAPIKey: "test-token"}
 	apiServer := newCloudOpenAIAPIServer(t, "test-token")
 	defer apiServer.Close()
 
@@ -551,7 +551,7 @@ func TestHandleAnthropicMessagesSupportsCloudModels(t *testing.T) {
 }
 
 func TestHandleOpenAIChatCompletionsCloudStreamPreservesReasoningContent(t *testing.T) {
-	cfg := &config.Config{ModelDir: t.TempDir(), Token: "test-token"}
+	cfg := &config.Config{ModelDir: t.TempDir(), OpenCSGAPIKey: "test-token"}
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":

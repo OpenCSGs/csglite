@@ -32,6 +32,7 @@ type Config struct {
 	ServerURL            string            `json:"server_url"`
 	AIGatewayURL         string            `json:"ai_gateway_url,omitempty"`
 	Token                string            `json:"token,omitempty"`
+	OpenCSGAPIKey        string            `json:"opencsg_api_key,omitempty"`
 	ListenAddr           string            `json:"listen_addr"`
 	ModelDir             string            `json:"model_dir"`
 	DatasetDir           string            `json:"dataset_dir"`

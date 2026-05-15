@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/opencsgs/csghub-lite/internal/cloud"
 	"github.com/opencsgs/csghub-lite/internal/config"
+	"github.com/opencsgs/csghub-lite/internal/inference"
 )
 
 func newCloudAuthAPIServer(t *testing.T, token, username string) *httptest.Server {
@@ -174,5 +176,113 @@ func TestHandleCloudAuthTokenSaveAndDelete(t *testing.T) {
 	}
 	if deleteResp.Authenticated {
 		t.Fatalf("Authenticated after delete = true, want false")
+	}
+}
+
+func TestHandleCloudAPIKeySaveAndDelete(t *testing.T) {
+	config.Reset()
+	t.Cleanup(config.Reset)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	s := newTestServer(t)
+
+	saveReq := httptest.NewRequest(http.MethodPost, "/api/cloud/api-key", strings.NewReader(`{"api_key":" manual-key "}`))
+	w := httptest.NewRecorder()
+	s.handleCloudAPIKeySave(w, saveReq)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("save status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if s.cfg.OpenCSGAPIKey != "manual-key" {
+		t.Fatalf("saved API key = %q, want manual-key", s.cfg.OpenCSGAPIKey)
+	}
+
+	var saveResp cloudAuthStatus
+	if err := json.NewDecoder(w.Body).Decode(&saveResp); err != nil {
+		t.Fatalf("decode save response: %v", err)
+	}
+	if !saveResp.HasAPIKey || saveResp.APIKeySource != "manual" {
+		t.Fatalf("API key status = has:%v source:%q, want manual key", saveResp.HasAPIKey, saveResp.APIKeySource)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/cloud/api-key", nil)
+	w = httptest.NewRecorder()
+	s.handleCloudAPIKeyDelete(w, deleteReq)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if s.cfg.OpenCSGAPIKey != "" {
+		t.Fatalf("API key after delete = %q, want empty", s.cfg.OpenCSGAPIKey)
+	}
+}
+
+func TestNewCloudEngineUsesBuiltinAPIKey(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/token/access-token":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"msg": "OK",
+				"data": map[string]any{
+					"token":     "access-token",
+					"user_name": "alice",
+					"user_uuid": "user-1",
+				},
+			})
+		case "/api/v1/user/alice":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"msg": "OK",
+				"data": map[string]any{
+					"username": "alice",
+					"uuid":     "user-1",
+				},
+			})
+		case "/api/v1/namespaces/user-1/apikeys/builtin":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"msg": "OK",
+				"data": map[string]any{
+					"api_key": "builtin-key",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer authServer.Close()
+
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer builtin-key" {
+			t.Fatalf("Authorization = %q, want %q", got, "Bearer builtin-key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{"role": "assistant", "content": "ok"},
+			}},
+		})
+	}))
+	defer modelServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = authServer.URL
+	s.cfg.Token = "access-token"
+	s.cloud = cloud.NewService(modelServer.URL)
+
+	eng, err := s.newCloudEngine(context.Background(), "cloud/model")
+	if err != nil {
+		t.Fatalf("newCloudEngine error: %v", err)
+	}
+	got, err := eng.Generate(context.Background(), "hi", inference.DefaultOptions(), nil)
+	if err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
+	if got != "ok" {
+		t.Fatalf("response = %q, want ok", got)
 	}
 }

@@ -63,7 +63,7 @@ func (s *Server) resolveAPIUsageSource(ctx context.Context, model, source string
 			return apiUsageSourceLocal, apiUsageSourceLocal, ""
 		}
 	}
-	if s != nil && strings.TrimSpace(s.cfg.Token) == "" {
+	if s != nil && !s.hasCloudCredential() {
 		if providerSource := s.thirdPartyProviderSourceForModel(ctx, model); providerSource != "" {
 			return s.resolveAPIUsageSource(ctx, model, providerSource)
 		}

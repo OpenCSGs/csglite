@@ -930,7 +930,7 @@ func TestOpenAIAppShellURLMissingCloudTokenShowsSettingsHint(t *testing.T) {
 	if err == nil {
 		t.Fatal("openAIAppShellURL returned nil error, want settings hint")
 	}
-	if got := err.Error(); !strings.Contains(got, "open csghub-lite Settings and save an Access Token first") {
+	if got := err.Error(); !strings.Contains(got, "open csghub-lite Settings to sign in to OpenCSG or save an API Key first") {
 		t.Fatalf("error = %q, want settings hint", got)
 	}
 }
@@ -945,7 +945,7 @@ func TestOpenAIAppShellURLWithoutLocalModelsShowsOpenCSGLoginHint(t *testing.T) 
 	if err == nil {
 		t.Fatal("openAIAppShellURL returned nil error, want OpenCSG login hint")
 	}
-	if got := err.Error(); !strings.Contains(got, "save an Access Token to use OpenCSG models") {
+	if got := err.Error(); !strings.Contains(got, "open csghub-lite Settings to sign in to OpenCSG or save an API Key") {
 		t.Fatalf("error = %q, want OpenCSG login hint", got)
 	}
 }

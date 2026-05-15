@@ -50,7 +50,12 @@ const visibleError = computed(() => actionError.value || loadError.value);
 const providersChangedEvent = "csghub:providers-changed";
 
 function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
-  return status?.authenticated ?? status?.has_token ?? false;
+  return Boolean(status?.authenticated || status?.has_api_key);
+}
+
+function openExternalURL(url?: string) {
+  if (!url) return;
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function aiAppModelKey(model: Pick<ModelInfo, "model" | "source">): string {
@@ -752,10 +757,10 @@ function LiveLogsDrawer({
         return true;
       }
     } catch {
-      /* fall through to API key dialog */
+      /* fall through to login dialog */
     }
 
-    await openCloudAuthDialog(t("chat.cloudApiKeyRequired"));
+    await openCloudAuthDialog(t("chat.cloudLoginRequired"));
     return false;
   };
 
@@ -778,7 +783,7 @@ function LiveLogsDrawer({
   const handleSaveCloudToken = async () => {
     const token = cloudTokenInput.trim();
     if (!token) {
-      setCloudAuthError(t("chat.cloudApiKeyEmpty"));
+      setCloudAuthError(t("chat.cloudTokenEmpty"));
       return;
     }
 
@@ -787,8 +792,8 @@ function LiveLogsDrawer({
     try {
       const status = await saveCloudToken(token);
       setCloudAuth(status);
-      if (!hasCloudAuth(status)) {
-        setCloudAuthError(t("chat.cloudApiKeyInvalid"));
+      if (!status.authenticated) {
+        setCloudAuthError(t("chat.cloudLoginExpired"));
         return;
       }
       try {
@@ -1112,8 +1117,8 @@ function LiveLogsDrawer({
             )}
             <div class="flex items-start justify-between gap-4">
               <div>
-                <h3 class="text-lg font-semibold text-gray-900">{t("chat.cloudApiKeyTitle")}</h3>
-                <p class="mt-2 text-sm leading-6 text-gray-500">{t("chat.cloudApiKeyDesc")}</p>
+                <h3 class="text-lg font-semibold text-gray-900">{t("chat.cloudLoginTitle")}</h3>
+                <p class="mt-2 text-sm leading-6 text-gray-500">{t("chat.cloudLoginDesc")}</p>
               </div>
               <button
                 onClick={() => {
@@ -1140,28 +1145,33 @@ function LiveLogsDrawer({
               </div>
             )}
 
+            <div class="mt-5 flex flex-wrap gap-2">
+              <button
+                onClick={() => openExternalURL(cloudAuth?.login_url)}
+                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                {t("chat.cloudOpenLogin")}
+              </button>
+              <button
+                onClick={() => openExternalURL(cloudAuth?.access_token_url)}
+                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                {t("chat.cloudOpenTokenPage")}
+              </button>
+            </div>
+
             <div class="mt-5">
-              <div class="mb-2 flex items-center justify-between gap-3">
-                <label class="block text-sm font-medium text-gray-700">{t("chat.cloudApiKeyLabel")}</label>
-                <a
-                  href="https://opencsg.com/settings/api-keys"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="text-sm font-medium text-indigo-600 hover:text-indigo-700"
-                >
-                  {t("chat.cloudApiKeyHelp")}
-                </a>
-              </div>
+              <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudTokenLabel")}</label>
               <input
                 type="password"
                 autoComplete="off"
                 spellcheck={false}
                 class="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder={t("chat.cloudApiKeyPlaceholder")}
+                placeholder={t("chat.cloudTokenPlaceholder")}
                 value={cloudTokenInput}
                 onInput={(e) => setCloudTokenInput((e.currentTarget as HTMLInputElement).value)}
               />
-              <p class="mt-2 text-xs leading-5 text-gray-500">{t("chat.cloudApiKeyHint")}</p>
+              <p class="mt-2 text-xs leading-5 text-gray-500">{t("chat.cloudTokenHint")}</p>
             </div>
 
             <div class="mt-5 flex justify-end gap-2">
@@ -1179,7 +1189,7 @@ function LiveLogsDrawer({
                 disabled={isSavingCloudToken}
                 class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors"
               >
-                {isSavingCloudToken ? t("chat.cloudApiKeySaving") : t("chat.cloudApiKeySave")}
+                {isSavingCloudToken ? t("chat.cloudSavingToken") : t("chat.cloudSaveToken")}
               </button>
             </div>
           </div>

@@ -108,7 +108,7 @@ func (s *Server) openClawChatURL(ctx context.Context, modelID, modelSource strin
 }
 
 func (s *Server) refreshOpenClawModelCatalog(ctx context.Context) {
-	if s.cloud == nil || strings.TrimSpace(s.cfg.Token) == "" {
+	if s.cloud == nil || !s.hasCloudCredential() {
 		return
 	}
 

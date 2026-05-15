@@ -7,9 +7,11 @@ import type { Locale } from "../i18n";
 import {
   browseLocalDirectories,
   checkUpgrade,
+  clearCloudAPIKey,
   clearCloudToken,
   getCloudAuthStatus,
   getSettings,
+  saveCloudAPIKey,
   saveCloudToken,
   saveSettings,
   upgradeWithProgress,
@@ -44,9 +46,13 @@ const contextIndex = signal(1);
 const parallelIndex = signal(2);
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudTokenInput = signal("");
+const cloudAPIKeyInput = signal("");
 const cloudAuthError = signal("");
+const cloudAPIKeyError = signal("");
 const isClearingCloudToken = signal(false);
 const isSavingCloudToken = signal(false);
+const isClearingCloudAPIKey = signal(false);
+const isSavingCloudAPIKey = signal(false);
 const isSavingStorageDir = signal(false);
 const storageDirInput = signal("");
 const storageDirError = signal("");
@@ -604,8 +610,20 @@ function cloudUserInitial(status: CloudAuthStatus | null): string {
   return label ? label[0].toUpperCase() : "?";
 }
 
-function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
-  return status?.authenticated ?? status?.has_token ?? false;
+function hasManualCloudAPIKey(status: CloudAuthStatus | null | undefined): boolean {
+  return status?.api_key_source === "manual";
+}
+
+function cloudAPIKeyStatus(status: CloudAuthStatus | null | undefined): string {
+  if (!status) return "...";
+  const suffix = status.api_key_prefix ? ` (${status.api_key_prefix})` : "";
+  if (status.api_key_source === "manual") {
+    return t("settings.cloudAPIKeyManualStatus", suffix);
+  }
+  if (status.api_key_source === "builtin") {
+    return t("settings.cloudAPIKeyBuiltinStatus", suffix);
+  }
+  return t("settings.cloudAPIKeyMissingStatus");
 }
 
 function localAPIOrigin(): string {
@@ -655,7 +673,15 @@ export function Settings() {
     parallelIndex.value = loadParallelIndex();
   }, []);
 
+  const handleOpenCloudLogin = () => {
+    openExternal(cloudAuth.value?.login_url);
+  };
+
   const handleOpenCloudTokenPage = () => {
+    openExternal(cloudAuth.value?.access_token_url);
+  };
+
+  const handleOpenCloudAPIKeyPage = () => {
     openExternal("https://opencsg.com/settings/api-keys");
   };
 
@@ -675,7 +701,7 @@ export function Settings() {
   const handleSaveCloudToken = async () => {
     const token = cloudTokenInput.value.trim();
     if (!token) {
-      cloudAuthError.value = t("chat.cloudApiKeyEmpty");
+      cloudAuthError.value = t("chat.cloudTokenEmpty");
       return;
     }
 
@@ -684,8 +710,8 @@ export function Settings() {
     try {
       const status = await saveCloudToken(token);
       cloudAuth.value = status;
-      if (!hasCloudAuth(status)) {
-        cloudAuthError.value = t("chat.cloudApiKeyInvalid");
+      if (!status.authenticated) {
+        cloudAuthError.value = t("chat.cloudLoginExpired");
         return;
       }
       cloudTokenInput.value = "";
@@ -693,6 +719,39 @@ export function Settings() {
       cloudAuthError.value = err?.message || t("chat.failedResp");
     } finally {
       isSavingCloudToken.value = false;
+    }
+  };
+
+  const handleSaveCloudAPIKey = async () => {
+    const apiKey = cloudAPIKeyInput.value.trim();
+    if (!apiKey) {
+      cloudAPIKeyError.value = t("chat.cloudApiKeyEmpty");
+      return;
+    }
+
+    isSavingCloudAPIKey.value = true;
+    cloudAPIKeyError.value = "";
+    try {
+      cloudAuth.value = await saveCloudAPIKey(apiKey);
+      cloudAPIKeyInput.value = "";
+    } catch (err: any) {
+      cloudAPIKeyError.value = err?.message || t("chat.failedResp");
+    } finally {
+      isSavingCloudAPIKey.value = false;
+    }
+  };
+
+  const handleClearCloudAPIKey = async () => {
+    if (isClearingCloudAPIKey.value) return;
+    isClearingCloudAPIKey.value = true;
+    cloudAPIKeyError.value = "";
+    try {
+      cloudAuth.value = await clearCloudAPIKey();
+      cloudAPIKeyInput.value = "";
+    } catch (err: any) {
+      cloudAPIKeyError.value = err?.message || t("chat.failedResp");
+    } finally {
+      isClearingCloudAPIKey.value = false;
     }
   };
 
@@ -951,12 +1010,6 @@ export function Settings() {
           </span>
         </div>
       </div>
-            </>
-          )}
-
-          {activeSettingsTab.value === "apiKeys" && (
-            <>
-      <LocalAPIKeysSection />
 
       {/* Account */}
       <div class="mb-10">
@@ -1016,6 +1069,12 @@ export function Settings() {
               </div>
               <div class="flex gap-2">
                 <button
+                  onClick={handleOpenCloudLogin}
+                  class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  {t("settings.login")}
+                </button>
+                <button
                   onClick={handleLogout}
                   disabled={isClearingCloudToken.value}
                   class="px-4 py-2 border border-red-200 rounded-lg text-sm text-red-600 hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
@@ -1032,6 +1091,12 @@ export function Settings() {
               </div>
               <div class="flex gap-2">
                 <button
+                  onClick={handleOpenCloudLogin}
+                  class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  {t("settings.login")}
+                </button>
+                <button
                   onClick={handleOpenCloudTokenPage}
                   class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                 >
@@ -1042,12 +1107,8 @@ export function Settings() {
           )}
           {showTokenInput && (
             <div class="mt-5 border-t border-gray-100 pt-5">
-              <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudApiKeyLabel")}</label>
+              <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudTokenLabel")}</label>
               <p class="mb-3 text-sm text-gray-500">{t("settings.tokenInputHint")}</p>
-              <div class="mb-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                <div class="text-xs font-medium uppercase tracking-wide text-gray-400">{t("chat.cloudGatewayLabel")}</div>
-                <div class="mt-1 text-sm font-medium text-gray-800">{t("chat.cloudGatewayValue")}</div>
-              </div>
               <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
                 <div class="flex-1">
                   <input
@@ -1055,7 +1116,7 @@ export function Settings() {
                     autoComplete="off"
                     spellcheck={false}
                     class="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder={t("chat.cloudApiKeyPlaceholder")}
+                    placeholder={t("chat.cloudTokenPlaceholder")}
                     value={cloudTokenInput.value}
                     onInput={(e) => (cloudTokenInput.value = (e.target as HTMLInputElement).value)}
                   />
@@ -1065,13 +1126,90 @@ export function Settings() {
                   disabled={isSavingCloudToken.value}
                   class="px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                 >
-                  {isSavingCloudToken.value ? t("chat.cloudApiKeySaving") : t("chat.cloudApiKeySave")}
+                  {isSavingCloudToken.value ? t("chat.cloudSavingToken") : t("chat.cloudSaveToken")}
                 </button>
               </div>
             </div>
           )}
           {cloudAuthError.value && (
             <p class="mt-3 text-sm text-red-600">{cloudAuthError.value}</p>
+          )}
+        </div>
+      </div>
+            </>
+          )}
+
+          {activeSettingsTab.value === "apiKeys" && (
+            <>
+      <LocalAPIKeysSection />
+
+      {/* OpenCSG API Key */}
+      <div class="mb-10">
+        <div class="flex items-center gap-2 mb-1">
+          <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 7.5a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a8.25 8.25 0 1115 0" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 14.25l1.5 1.5 3-3" />
+          </svg>
+          <span class="font-semibold text-gray-900">{t("settings.cloudAPIKey")}</span>
+        </div>
+        <p class="text-sm text-gray-500 mb-3 ml-7">{t("settings.cloudAPIKeyDesc")}</p>
+        <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4">
+          <div class="mb-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            <div class="text-xs font-medium uppercase tracking-wide text-gray-400">{t("chat.cloudGatewayLabel")}</div>
+            <div class="mt-1 text-sm font-medium text-gray-800">{t("chat.cloudGatewayValue")}</div>
+          </div>
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p class="text-sm font-semibold text-gray-900">{cloudAPIKeyStatus(cloudAuth.value)}</p>
+              <p class="mt-1 text-sm text-gray-500">{t("settings.cloudAPIKeyStatusHint")}</p>
+            </div>
+            <div class="flex gap-2">
+              <button
+                onClick={handleOpenCloudAPIKeyPage}
+                class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                {t("settings.openAPIKeyPage")}
+              </button>
+              {hasManualCloudAPIKey(cloudAuth.value) && (
+                <button
+                  onClick={handleClearCloudAPIKey}
+                  disabled={isClearingCloudAPIKey.value}
+                  class="px-4 py-2 border border-red-200 rounded-lg text-sm text-red-600 hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isClearingCloudAPIKey.value ? t("settings.clearingAPIKey") : t("settings.clearAPIKey")}
+                </button>
+              )}
+            </div>
+          </div>
+          <div class="mt-5 border-t border-gray-100 pt-5">
+            <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudApiKeyLabel")}</label>
+            <p class="mb-3 text-sm text-gray-500">{t("settings.cloudAPIKeyInputHint")}</p>
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div class="flex-1">
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellcheck={false}
+                  class="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder={t("chat.cloudApiKeyPlaceholder")}
+                  value={cloudAPIKeyInput.value}
+                  onInput={(e) => (cloudAPIKeyInput.value = (e.target as HTMLInputElement).value)}
+                />
+              </div>
+              <button
+                onClick={handleSaveCloudAPIKey}
+                disabled={isSavingCloudAPIKey.value}
+                class="px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              >
+                {isSavingCloudAPIKey.value ? t("chat.cloudApiKeySaving") : t("chat.cloudApiKeySave")}
+              </button>
+            </div>
+          </div>
+          {cloudAuth.value?.api_key_error && (
+            <p class="mt-3 text-sm text-amber-700">{cloudAuth.value.api_key_error}</p>
+          )}
+          {cloudAPIKeyError.value && (
+            <p class="mt-3 text-sm text-red-600">{cloudAPIKeyError.value}</p>
           )}
         </div>
       </div>

@@ -612,7 +612,7 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 		modelIDs = appendUniqueModelID(modelIDs, seen, modelID)
 	}
 
-	if s.cloud != nil && strings.TrimSpace(s.cfg.Token) != "" {
+	if s.cloud != nil && s.hasCloudCredential() {
 		s.refreshOpenClawModelCatalog(ctx)
 		if cloudModels, err := s.cloud.ListChatModels(ctx); err == nil {
 			for _, item := range cloudModels {
@@ -638,8 +638,8 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 
 	if defaultModel == "" {
 		if !hasLocalModels {
-			if strings.TrimSpace(s.cfg.Token) == "" {
-				return "", nil, fmt.Errorf("no local models were found. Pull a model first, or open csghub-lite Settings and save an Access Token to use OpenCSG models")
+			if !s.hasCloudCredential() {
+				return "", nil, fmt.Errorf("no local models were found. Pull a model first, or open csghub-lite Settings to sign in to OpenCSG or save an API Key")
 			}
 			return "", nil, fmt.Errorf("no local or OpenCSG models were found. Pull a model first, or check OpenCSG model access in csghub-lite Settings")
 		}
@@ -660,8 +660,8 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 				}
 				return "", nil, fmt.Errorf("model %q is not available for AI Apps", requestedModel)
 			case normalizedSource == "cloud":
-				if strings.TrimSpace(s.cfg.Token) == "" {
-					return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings and save an Access Token first", requestedModel)
+				if !s.hasCloudCredential() {
+					return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
 				}
 				if s.cloud != nil {
 					if cloudModels, err := s.cloud.RefreshChatModels(ctx); err == nil {
@@ -689,7 +689,7 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 			}
 		}
 		if _, ok := seen[requestedModel]; !ok {
-			if s.cloud != nil && strings.TrimSpace(s.cfg.Token) != "" {
+			if s.cloud != nil && s.hasCloudCredential() {
 				if cloudModels, err := s.cloud.RefreshChatModels(ctx); err == nil {
 					for _, item := range cloudModels {
 						modelIDs = appendUniqueModelID(modelIDs, seen, item.Model)
@@ -711,8 +711,8 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 			}
 		}
 		if _, ok := seen[requestedModel]; !ok {
-			if strings.TrimSpace(s.cfg.Token) == "" {
-				return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings and save an Access Token first", requestedModel)
+			if !s.hasCloudCredential() {
+				return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
 			}
 			return "", nil, fmt.Errorf("model %q is not available for AI Apps", requestedModel)
 		}

@@ -276,6 +276,10 @@ export interface CloudAuthStatus {
   authenticated: boolean;
   login_url: string;
   access_token_url: string;
+  has_api_key: boolean;
+  api_key_source?: "manual" | "builtin" | string;
+  api_key_prefix?: string;
+  api_key_error?: string;
   user?: CloudAuthUser | null;
 }
 
@@ -501,6 +505,20 @@ export async function saveCloudToken(token: string): Promise<CloudAuthStatus> {
 
 export async function clearCloudToken(): Promise<CloudAuthStatus> {
   return fetchJSON<CloudAuthStatus>("/api/cloud/auth/token", {
+    method: "DELETE",
+  });
+}
+
+export async function saveCloudAPIKey(apiKey: string): Promise<CloudAuthStatus> {
+  return fetchJSON<CloudAuthStatus>("/api/cloud/api-key", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+}
+
+export async function clearCloudAPIKey(): Promise<CloudAuthStatus> {
+  return fetchJSON<CloudAuthStatus>("/api/cloud/api-key", {
     method: "DELETE",
   });
 }

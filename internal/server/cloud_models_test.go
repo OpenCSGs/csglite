@@ -257,7 +257,7 @@ func TestGetChatEngineRefreshesCloudModelsAfterCacheMiss(t *testing.T) {
 	defer apiServer.Close()
 
 	s := newTestServer(t)
-	s.cfg.Token = "test-token"
+	s.cfg.OpenCSGAPIKey = "test-api-key"
 	s.cloud = cloud.NewService(apiServer.URL)
 
 	if _, err := s.refreshCloudChatModels(context.Background()); err != nil {

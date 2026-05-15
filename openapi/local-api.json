@@ -2007,6 +2007,68 @@
         }
       }
     },
+    "/api/cloud/api-key": {
+      "post": {
+        "tags": [
+          "CloudAuth"
+        ],
+        "summary": "Save or replace the manual OpenCSG API Key",
+        "operationId": "saveCloudAPIKey",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudAPIKeyRequest"
+              },
+              "example": {
+                "api_key": "sk-opencsg-api-key"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated auth status after saving the API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudAuthStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "CloudAuth"
+        ],
+        "summary": "Clear the manual OpenCSG API Key",
+        "operationId": "deleteCloudAPIKey",
+        "responses": {
+          "200": {
+            "description": "Updated auth status after clearing the API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudAuthStatus"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/shutdown": {
       "post": {
         "tags": [
@@ -4828,7 +4890,8 @@
           "has_token",
           "authenticated",
           "login_url",
-          "access_token_url"
+          "access_token_url",
+          "has_api_key"
         ],
         "properties": {
           "auth_mode": {
@@ -4846,6 +4909,25 @@
           "access_token_url": {
             "type": "string"
           },
+          "has_api_key": {
+            "type": "boolean",
+            "description": "True when a manual OpenCSG API key is saved or a built-in API key is available for the authenticated user."
+          },
+          "api_key_source": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "builtin"
+            ]
+          },
+          "api_key_prefix": {
+            "type": "string",
+            "description": "Redacted API key prefix for display only."
+          },
+          "api_key_error": {
+            "type": "string",
+            "description": "Error returned while resolving the built-in API key, if any."
+          },
           "user": {
             "$ref": "#/components/schemas/CloudAuthUser"
           }
@@ -4859,6 +4941,18 @@
         ],
         "properties": {
           "token": {
+            "type": "string"
+          }
+        }
+      },
+      "CloudAPIKeyRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "api_key"
+        ],
+        "properties": {
+          "api_key": {
             "type": "string"
           }
         }
