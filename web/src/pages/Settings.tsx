@@ -26,7 +26,7 @@ import {
   deleteLocalAPIKey,
   getLocalAPIUsage,
 } from "../api/client";
-import type { AppSettings, CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalDirectoryBrowseResponse, ThirdPartyProvider, WebSearchSettings } from "../api/client";
+import type { AppSettings, CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, LocalDirectoryBrowseResponse, ThirdPartyProvider, WebSearchSettings } from "../api/client";
 
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
@@ -84,7 +84,6 @@ const providerFormSaving = signal(false);
 const providersChangedEvent = "csghub:providers-changed";
 type SettingsTab = "system" | "apiKeys" | "usage";
 type UsagePeriod = "week" | "month" | "year" | "all";
-type UsageSourceFilter = { source: string; sourceType: string } | null;
 
 const activeSettingsTab = signal<SettingsTab>("system");
 const localAPIKeys = signal<LocalAPIKeysResponse | null>(null);
@@ -98,7 +97,6 @@ const localAPIUsage = signal<LocalAPIUsageResponse | null>(null);
 const localAPIUsageLoading = signal(false);
 const localAPIUsageError = signal("");
 const localAPIUsagePeriod = signal<UsagePeriod>("all");
-const localAPIUsageSourceFilter = signal<UsageSourceFilter>(null);
 let localAPIUsageRequestID = 0;
 const copiedBaseURL = signal("");
 const webSearchEnabled = signal(false);
@@ -247,15 +245,6 @@ async function fetchLocalAPIUsage(period: UsagePeriod = localAPIUsagePeriod.valu
     const usage = await getLocalAPIUsage(period);
     if (requestID !== localAPIUsageRequestID) return;
     localAPIUsage.value = usage;
-    const sourceFilter = localAPIUsageSourceFilter.value;
-    const sourceStillVisible = sourceFilter
-      ? usage.source_totals.some(
-          (item) => item.source_type === sourceFilter.sourceType && item.source === sourceFilter.source,
-        )
-      : true;
-    if (!sourceStillVisible) {
-      localAPIUsageSourceFilter.value = null;
-    }
   } catch (err: any) {
     if (requestID !== localAPIUsageRequestID) return;
     localAPIUsageError.value = err?.message || t("settings.apiUsageLoadFailed");
@@ -643,19 +632,6 @@ function copySettingsSnippet(value: string) {
 function selectLocalAPIUsagePeriod(period: UsagePeriod) {
   localAPIUsagePeriod.value = period;
   void fetchLocalAPIUsage(period);
-}
-
-function toggleLocalAPIUsageSourceFilter(sourceType: string, source: string) {
-  const current = localAPIUsageSourceFilter.value;
-  if (current?.sourceType === sourceType && current.source === source) {
-    localAPIUsageSourceFilter.value = null;
-    return;
-  }
-  localAPIUsageSourceFilter.value = { sourceType, source };
-}
-
-function clearLocalAPIUsageSourceFilter() {
-  localAPIUsageSourceFilter.value = null;
 }
 
 export function Settings() {
@@ -1593,11 +1569,7 @@ function CurlExample({ label, value }: { label: string; value: string }) {
 function UsageStatisticsSection() {
   const usage = localAPIUsage.value;
   const rows = usage?.rows || [];
-  const sourceTotals = usage?.source_totals || [];
-  const sourceFilter = localAPIUsageSourceFilter.value;
-  const visibleRows = sourceFilter
-    ? rows.filter((row) => row.source_type === sourceFilter.sourceType && row.source === sourceFilter.source)
-    : rows;
+  const summary = usage?.total_summary;
   return (
     <div class="mb-10">
       <div class="flex items-center justify-between gap-3 mb-4">
@@ -1620,36 +1592,19 @@ function UsageStatisticsSection() {
         <UsagePeriodButton period="year" label={t("settings.apiUsagePeriodYear")} />
         <UsagePeriodButton period="all" label={t("settings.apiUsagePeriodAll")} />
       </div>
-      <div class="grid gap-3 sm:grid-cols-4">
-        <UsageCard label={t("settings.apiUsageRequests")} value={formatNumber(usage?.totals.requests || 0)} />
-        <UsageCard label={t("settings.apiUsageInput")} value={formatNumber(usage?.totals.input_tokens || 0)} />
-        <UsageCard label={t("settings.apiUsageOutput")} value={formatNumber(usage?.totals.output_tokens || 0)} />
-        <UsageCard label={t("settings.apiUsageTotal")} value={formatNumber(usage?.totals.total_tokens || 0)} />
+      <div class="grid gap-4 md:grid-cols-3">
+        <UsageCard label={t("settings.apiUsageCumulative")} value={formatNumber(lastSummaryValue(summary, 0, usage?.totals.total_tokens || 0))} tone="orange" />
+        <UsageCard label={t("settings.apiUsageLocalModels")} value={formatNumber(lastSummaryValue(summary, 1, 0))} tone="green" />
+        <UsageCard label={t("settings.apiUsageCloudModels")} value={formatNumber(lastSummaryValue(summary, 2, 0))} tone="purple" />
       </div>
-      {sourceTotals.length > 0 && (
-        <div class="mt-4 grid gap-3 sm:grid-cols-3">
-          <SourceUsageCard
-            label={t("settings.apiUsageSourceAll")}
-            requests={usage?.totals.requests || 0}
-            totalTokens={usage?.totals.total_tokens || 0}
-            active={!sourceFilter}
-            onClick={clearLocalAPIUsageSourceFilter}
-          />
-          {sourceTotals.map((item) => (
-            <SourceUsageCard
-              key={`${item.source_type}:${item.source}`}
-              label={apiUsageSourceSummaryLabel(item.source_type, item.source_name)}
-              requests={item.requests}
-              totalTokens={item.total_tokens}
-              active={sourceFilter?.sourceType === item.source_type && sourceFilter.source === item.source}
-              onClick={() => toggleLocalAPIUsageSourceFilter(item.source_type, item.source)}
-            />
-          ))}
-        </div>
-      )}
+      <UsageSummaryChart summary={summary} />
       {localAPIUsageError.value && <p class="mt-3 text-sm text-red-600">{localAPIUsageError.value}</p>}
-      <div class="mt-5 overflow-hidden rounded-xl border border-gray-200 bg-white">
-        {visibleRows.length === 0 ? (
+      <div class="mt-6 mb-3 flex items-center justify-between gap-3">
+        <h3 class="text-sm font-semibold text-gray-900">{t("settings.apiUsageBreakdown")}</h3>
+        <span class="text-xs text-gray-400">{t("settings.apiUsageRequests")}: {formatNumber(usage?.totals.requests || 0)}</span>
+      </div>
+      <div class="overflow-hidden rounded-xl border border-gray-200 bg-white">
+        {rows.length === 0 ? (
           <p class="p-4 text-sm text-gray-400">{localAPIUsageLoading.value ? "..." : t("settings.apiUsageEmpty")}</p>
         ) : (
           <div>
@@ -1666,7 +1621,7 @@ function UsageStatisticsSection() {
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-100">
-                {visibleRows.map((row) => (
+                {rows.map((row) => (
                   <tr key={`${row.api_key_id}:${row.source}:${row.model}`}>
                     <td
                       class="truncate whitespace-nowrap px-4 py-3 text-gray-600"
@@ -1712,44 +1667,124 @@ function UsagePeriodButton({ period, label }: { period: UsagePeriod; label: stri
   );
 }
 
-function UsageCard({ label, value }: { label: string; value: string }) {
+function UsageCard({ label, value, tone }: { label: string; value: string; tone: "orange" | "green" | "purple" }) {
+  const toneClasses = {
+    orange: "text-orange-500 bg-orange-50 border-orange-100",
+    green: "text-emerald-500 bg-emerald-50 border-emerald-100",
+    purple: "text-violet-500 bg-violet-50 border-violet-100",
+  }[tone];
   return (
-    <div class="rounded-xl border border-gray-200 bg-white p-4">
-      <p class="text-xs uppercase tracking-wide text-gray-400">{label}</p>
-      <p class="mt-2 text-xl font-semibold text-gray-900">{value}</p>
+    <div class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="text-sm font-medium text-gray-500">{label}</p>
+          <p class="mt-4 text-3xl font-semibold tracking-tight text-gray-900">{value}</p>
+        </div>
+        <span class={`inline-flex h-8 w-8 items-center justify-center rounded-lg border text-xs ${toneClasses}`}>
+          {label.slice(0, 1)}
+        </span>
+      </div>
     </div>
   );
 }
 
-function SourceUsageCard({
-  label,
-  requests,
-  totalTokens,
-  active,
-  onClick,
-}: {
-  label: string;
-  requests: number;
-  totalTokens: number;
-  active: boolean;
-  onClick: () => void;
-}) {
+function UsageSummaryChart({ summary }: { summary?: LocalAPIUsageTotalSummary }) {
+  const xAxis = summary?.xAxis || [];
+  const labels = [t("settings.apiUsageCumulative"), t("settings.apiUsageLocalModels"), t("settings.apiUsageCloudModels")];
+  const colors = ["#f97316", "#10b981", "#8b5cf6"];
+  const fills = ["#ffedd5", "#d1fae5", "#ede9fe"];
+  const series = (summary?.series || []).slice(0, 3).map((item, index) => ({
+    ...item,
+    label: labels[index] || item.name,
+    color: colors[index] || "#6366f1",
+    fill: fills[index] || "#e0e7ff",
+  }));
+  const values = series.flatMap((item) => item.data);
+  const maxValue = Math.max(1, ...values);
+  const width = 760;
+  const height = 300;
+  const padding = { top: 24, right: 24, bottom: 42, left: 52 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const xFor = (index: number) => padding.left + (xAxis.length <= 1 ? innerWidth : (index / (xAxis.length - 1)) * innerWidth);
+  const yFor = (value: number) => padding.top + innerHeight - (value / maxValue) * innerHeight;
+  const xLabels = chartXAxisLabels(xAxis);
+
   return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      class={`rounded-xl border p-4 text-left transition-colors ${
-        active
-          ? "border-indigo-300 bg-indigo-50"
-          : "border-gray-200 bg-white hover:bg-gray-50"
-      }`}
-    >
-      <p class="text-sm font-semibold text-gray-900">{label}</p>
-      <p class="mt-2 text-xl font-semibold text-gray-900">{formatNumber(totalTokens)}</p>
-      <p class="mt-1 text-xs text-gray-500">{t("settings.apiUsageSourceRequests", formatNumber(requests))}</p>
-    </button>
+    <div class="mt-5 rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+      <div class="mb-3 flex flex-wrap items-center justify-end gap-4">
+        {series.map((item) => (
+          <span key={item.label} class="inline-flex items-center gap-2 text-sm font-medium text-gray-600">
+            <span class="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+            {item.label}
+          </span>
+        ))}
+      </div>
+      {xAxis.length === 0 || series.length === 0 ? (
+        <p class="flex h-64 items-center justify-center text-sm text-gray-400">{t("settings.apiUsageEmpty")}</p>
+      ) : (
+        <svg class="h-72 w-full overflow-visible" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t("settings.apiUsage")}>
+          {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+            const y = padding.top + innerHeight - ratio * innerHeight;
+            return (
+              <g key={ratio}>
+                <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} stroke="#e5e7eb" strokeDasharray="4 4" />
+                <text x={padding.left - 12} y={y + 4} textAnchor="end" class="fill-gray-400 text-xs">
+                  {formatNumber(Math.round(maxValue * ratio))}
+                </text>
+              </g>
+            );
+          })}
+          {series.map((item) => {
+            const points = item.data.map((value, index) => `${xFor(index)},${yFor(value)}`);
+            const areaPoints = [`${xFor(0)},${padding.top + innerHeight}`, ...points, `${xFor(item.data.length - 1)},${padding.top + innerHeight}`].join(" ");
+            return (
+              <g key={item.label}>
+                <polygon points={areaPoints} fill={item.fill} opacity="0.55" />
+                <polyline points={points.join(" ")} fill="none" stroke={item.color} stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+              </g>
+            );
+          })}
+          {xLabels.map((item) => (
+            <text key={`${item.index}:${item.label}`} x={xFor(item.index)} y={height - 10} textAnchor="middle" class="fill-gray-400 text-xs">
+              {formatChartDate(item.label)}
+            </text>
+          ))}
+        </svg>
+      )}
+    </div>
   );
+}
+
+function lastSummaryValue(summary: LocalAPIUsageTotalSummary | undefined, seriesIndex: number, fallback: number): number {
+  const data = summary?.series[seriesIndex]?.data || [];
+  return data.length > 0 ? data[data.length - 1] : fallback;
+}
+
+function chartXAxisLabels(xAxis: string[]): Array<{ index: number; label: string }> {
+  if (xAxis.length <= 6) {
+    return xAxis.map((label, index) => ({ index, label }));
+  }
+  const maxLabels = 6;
+  const seen = new Set<number>();
+  const labels: Array<{ index: number; label: string }> = [];
+  for (let i = 0; i < maxLabels; i++) {
+    const index = Math.round((i / (maxLabels - 1)) * (xAxis.length - 1));
+    if (!seen.has(index)) {
+      seen.add(index);
+      labels.push({ index, label: xAxis[index] });
+    }
+  }
+  return labels;
+}
+
+function formatChartDate(value: string): string {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(locale.value === "zh" ? "zh-CN" : "en-US", {
+    month: "numeric",
+    day: "numeric",
+  }).format(date);
 }
 
 function apiUsageSourceSummaryLabel(sourceType: string, sourceName?: string): string {

@@ -3535,12 +3535,63 @@
           }
         }
       },
+      "APIUsageSummarySeries": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "type",
+          "data"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "line"
+            ]
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "APIUsageTotalSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "xAxis",
+          "series"
+        ],
+        "properties": {
+          "xAxis": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/APIUsageSummarySeries"
+            }
+          }
+        }
+      },
       "APIUsageResponse": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "period",
           "totals",
+          "total_summary",
           "source_totals",
           "rows"
         ],
@@ -3560,6 +3611,9 @@
           },
           "totals": {
             "$ref": "#/components/schemas/APIUsageTotals"
+          },
+          "total_summary": {
+            "$ref": "#/components/schemas/APIUsageTotalSummary"
           },
           "source_totals": {
             "type": "array",

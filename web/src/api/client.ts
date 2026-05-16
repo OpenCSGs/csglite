@@ -221,10 +221,22 @@ export interface LocalAPIUsageSourceTotal {
   total_tokens: number;
 }
 
+export interface LocalAPIUsageSummarySeries {
+  name: string;
+  type: "line";
+  data: number[];
+}
+
+export interface LocalAPIUsageTotalSummary {
+  xAxis: string[];
+  series: LocalAPIUsageSummarySeries[];
+}
+
 export interface LocalAPIUsageResponse {
   period: string;
   from?: string;
   totals: LocalAPIUsageTotals;
+  total_summary: LocalAPIUsageTotalSummary;
   source_totals: LocalAPIUsageSourceTotal[];
   rows: LocalAPIUsageRow[];
 }

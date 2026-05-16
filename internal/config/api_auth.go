@@ -302,7 +302,7 @@ func (s *APIUsageStore) List(options APIUsageListOptions) (APIUsageState, error)
 		state.Records = filterAPIUsageRecords(state.Records, options)
 	}
 	sortAPIUsageRecords(state.Records)
-	return APIUsageState{Records: state.Records}, nil
+	return APIUsageState{Records: state.Records, Events: filterAPIUsageEvents(state.Events, options)}, nil
 }
 
 func (s *APIUsageStore) loadLocked() (APIUsageState, error) {
@@ -511,6 +511,16 @@ func filterAPIUsageRecords(records []APIUsageRecord, options APIUsageListOptions
 	for _, record := range records {
 		if apiUsageTimeInRange(record.LastUsedAt, options) {
 			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func filterAPIUsageEvents(events []APIUsageEventRecord, options APIUsageListOptions) []APIUsageEventRecord {
+	out := make([]APIUsageEventRecord, 0, len(events))
+	for _, event := range events {
+		if apiUsageTimeInRange(event.CreatedAt, options) {
+			out = append(out, event)
 		}
 	}
 	return out

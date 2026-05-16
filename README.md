@@ -50,6 +50,12 @@ Inspired by [Ollama](https://ollama.com), csghub-lite provides model download, l
 curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh | sh
 ```
 
+Pin a release version:
+
+```bash
+curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh | CSGHUB_LITE_VERSION=v0.8.55 sh
+```
+
 ### Quick install (Windows PowerShell)
 
 ```powershell
@@ -335,24 +341,6 @@ Switch to a private CSGHub deployment:
 ```bash
 csghub-lite config set server_url https://my-private-csghub.example.com
 ```
-
-## Model Formats
-
-| Format | Download | Inference |
-|---|---|---|
-| GGUF | Yes | Yes (via llama.cpp) |
-| SafeTensors | Yes | Yes (auto-converted to GGUF) |
-
-SafeTensors checkpoints are converted once using the bundled llama.cpp `convert_hf_to_gguf.py`. `csghub-lite` automatically prepares an isolated Python environment under `~/.csghub-lite/tools/python`; if that setup fails, run the same commands manually:
-
-```bash
-python3 -m venv ~/.csghub-lite/tools/python
-~/.csghub-lite/tools/python/bin/python -m pip install --upgrade --index-url https://mirrors.aliyun.com/pypi/simple pip
-~/.csghub-lite/tools/python/bin/python -m pip install --index-url https://mirrors.aliyun.com/pypi/simple --find-links https://mirrors.aliyun.com/pytorch-wheels/cpu torch
-~/.csghub-lite/tools/python/bin/python -m pip install --index-url https://mirrors.aliyun.com/pypi/simple safetensors transformers sentencepiece
-```
-
-Use Python 3.10+ on `PATH` (Windows: `python` or `python3`). `csghub-lite` retries torch from the official PyTorch CPU index (`https://download.pytorch.org/whl/cpu`) if the Aliyun mirror is unavailable. `gguf-py` is loaded from matching Gitee `llama.cpp` source (`https://gitee.com/xzgan/llama.cpp`), not PyPI. If `transformers` is too old for a new architecture, `csghub-lite` tries to upgrade it inside the managed venv before retrying. Some models may need extra packages (for example `sentencepiece`); see [`internal/convert/data/README.md`](internal/convert/data/README.md) for the full list and troubleshooting.
 
 ## Development
 

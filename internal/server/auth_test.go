@@ -147,6 +147,12 @@ func TestAPIUsageAggregatesByKeyAndModel(t *testing.T) {
 	if resp.Totals.Requests != 2 || resp.Totals.InputTokens != 5 || resp.Totals.OutputTokens != 12 || resp.Totals.TotalTokens != 17 {
 		t.Fatalf("unexpected totals: %#v", resp.Totals)
 	}
+	if len(resp.TotalSummary.XAxis) != 1 || len(resp.TotalSummary.Series) != 3 {
+		t.Fatalf("unexpected total summary shape: %#v", resp.TotalSummary)
+	}
+	if resp.TotalSummary.Series[0].Data[0] != 17 || resp.TotalSummary.Series[1].Data[0] != 17 || resp.TotalSummary.Series[2].Data[0] != 0 {
+		t.Fatalf("unexpected total summary values: %#v", resp.TotalSummary)
+	}
 	if len(resp.Rows) != 1 || resp.Rows[0].APIKeyName != "client" || resp.Rows[0].Model != "test/model" {
 		t.Fatalf("unexpected rows: %#v", resp.Rows)
 	}
@@ -286,6 +292,9 @@ func TestAPIUsageFiltersByPeriod(t *testing.T) {
 	}
 	if resp.Totals.TotalTokens != 7 || len(resp.Rows) != 1 || resp.Rows[0].Model != "new/model" {
 		t.Fatalf("unexpected weekly usage: %#v", resp)
+	}
+	if len(resp.TotalSummary.XAxis) != 1 || resp.TotalSummary.Series[0].Data[0] != 7 || resp.TotalSummary.Series[2].Data[0] != 7 {
+		t.Fatalf("unexpected weekly total summary: %#v", resp.TotalSummary)
 	}
 	if len(resp.SourceTotals) != 1 || resp.SourceTotals[0].SourceType != "provider" {
 		t.Fatalf("unexpected weekly source totals: %#v", resp.SourceTotals)

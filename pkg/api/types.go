@@ -392,10 +392,22 @@ type APIUsageSourceTotal struct {
 	TotalTokens  int64  `json:"total_tokens"`
 }
 
+type APIUsageSummarySeries struct {
+	Name string  `json:"name"`
+	Type string  `json:"type"`
+	Data []int64 `json:"data"`
+}
+
+type APIUsageTotalSummary struct {
+	XAxis  []string                `json:"xAxis"`
+	Series []APIUsageSummarySeries `json:"series"`
+}
+
 type APIUsageResponse struct {
 	Period       string                `json:"period"`
 	From         *time.Time            `json:"from,omitempty"`
 	Totals       APIUsageTotals        `json:"totals"`
+	TotalSummary APIUsageTotalSummary  `json:"total_summary"`
 	SourceTotals []APIUsageSourceTotal `json:"source_totals"`
 	Rows         []APIUsageRow         `json:"rows"`
 }

@@ -397,7 +397,7 @@ const en: Record<string, string> = {
   "settings.localAPIKeyCreateFailed": "Failed to create API key.",
   "settings.localAPIKeyDeleteFailed": "Failed to delete API key.",
   "settings.apiUsage": "Usage Statistics",
-  "settings.apiUsageDesc": "Aggregated local gateway usage by client, model, and source.",
+  "settings.apiUsageDesc": "Track cumulative token consumption across local and cloud models.",
   "settings.apiUsageRefresh": "Refresh",
   "settings.apiUsageEmpty": "No API usage recorded yet.",
   "settings.apiUsageLoadFailed": "Failed to load API usage.",
@@ -420,6 +420,10 @@ const en: Record<string, string> = {
   "settings.apiUsageModel": "Model",
   "settings.apiUsageTokens": "Tokens",
   "settings.apiUsageLastUsed": "Last Used",
+  "settings.apiUsageCumulative": "Cumulative Consumption",
+  "settings.apiUsageLocalModels": "Local Models",
+  "settings.apiUsageCloudModels": "Cloud Models",
+  "settings.apiUsageBreakdown": "Model Breakdown",
 
   // Library
   "lib.title": "Models",
@@ -1042,7 +1046,7 @@ const zh: Record<string, string> = {
   "settings.localAPIKeyCreateFailed": "创建 API Key 失败。",
   "settings.localAPIKeyDeleteFailed": "删除 API Key 失败。",
   "settings.apiUsage": "用量统计",
-  "settings.apiUsageDesc": "按客户端、模型和来源聚合本地网关用量。",
+  "settings.apiUsageDesc": "查看本地模型和云端模型的累计 Token 消耗。",
   "settings.apiUsageRefresh": "刷新",
   "settings.apiUsageEmpty": "暂无 API 用量记录。",
   "settings.apiUsageLoadFailed": "加载 API 用量失败。",
@@ -1065,6 +1069,10 @@ const zh: Record<string, string> = {
   "settings.apiUsageModel": "模型",
   "settings.apiUsageTokens": "Tokens",
   "settings.apiUsageLastUsed": "最近使用",
+  "settings.apiUsageCumulative": "累计消耗",
+  "settings.apiUsageLocalModels": "本地模型",
+  "settings.apiUsageCloudModels": "云端模型",
+  "settings.apiUsageBreakdown": "模型明细",
 
   // Library
   "lib.title": "模型库",

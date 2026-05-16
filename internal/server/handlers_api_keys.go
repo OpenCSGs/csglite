@@ -102,6 +102,7 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := api.APIUsageResponse{
 		Period:       period,
+		TotalSummary: s.apiUsageTotalSummary(r.Context(), state.Events),
 		Rows:         make([]api.APIUsageRow, 0, len(state.Records)),
 		SourceTotals: make([]api.APIUsageSourceTotal, 0, 4),
 	}
@@ -118,6 +119,67 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 		addAPIUsageSourceTotal(&resp.SourceTotals, row)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) apiUsageTotalSummary(ctx context.Context, events []config.APIUsageEventRecord) api.APIUsageTotalSummary {
+	summary := api.APIUsageTotalSummary{
+		XAxis: make([]string, 0),
+		Series: []api.APIUsageSummarySeries{
+			{Name: "累计消耗", Type: "line", Data: make([]int64, 0)},
+			{Name: "本地模型", Type: "line", Data: make([]int64, 0)},
+			{Name: "云端模型", Type: "line", Data: make([]int64, 0)},
+		},
+	}
+	if len(events) == 0 {
+		return summary
+	}
+
+	daily := map[string]struct {
+		local int64
+		cloud int64
+	}{}
+	var firstDay, lastDay time.Time
+	for _, event := range events {
+		if event.CreatedAt.IsZero() {
+			continue
+		}
+		day := time.Date(event.CreatedAt.UTC().Year(), event.CreatedAt.UTC().Month(), event.CreatedAt.UTC().Day(), 0, 0, 0, 0, time.UTC)
+		if firstDay.IsZero() || day.Before(firstDay) {
+			firstDay = day
+		}
+		if lastDay.IsZero() || day.After(lastDay) {
+			lastDay = day
+		}
+
+		sourceType := strings.TrimSpace(event.SourceType)
+		if sourceType == "" {
+			_, sourceType, _ = s.resolveAPIUsageSource(ctx, event.Model, event.Source)
+		}
+		key := day.Format("2006-01-02")
+		totals := daily[key]
+		if sourceType == apiUsageSourceLocal {
+			totals.local += event.TotalTokens
+		} else {
+			totals.cloud += event.TotalTokens
+		}
+		daily[key] = totals
+	}
+	if firstDay.IsZero() || lastDay.IsZero() {
+		return summary
+	}
+
+	var cumulativeLocal, cumulativeCloud int64
+	for day := firstDay; !day.After(lastDay); day = day.AddDate(0, 0, 1) {
+		key := day.Format("2006-01-02")
+		totals := daily[key]
+		cumulativeLocal += totals.local
+		cumulativeCloud += totals.cloud
+		summary.XAxis = append(summary.XAxis, key)
+		summary.Series[0].Data = append(summary.Series[0].Data, cumulativeLocal+cumulativeCloud)
+		summary.Series[1].Data = append(summary.Series[1].Data, cumulativeLocal)
+		summary.Series[2].Data = append(summary.Series[2].Data, cumulativeCloud)
+	}
+	return summary
 }
 
 func apiUsagePeriod(r *http.Request) (string, *time.Time) {
