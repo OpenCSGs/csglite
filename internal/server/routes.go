@@ -7,6 +7,7 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/tags", s.handleTags)
+	mux.HandleFunc("GET /api/pipeline-tags", s.handlePipelineTags)
 	mux.HandleFunc("GET /api/tags/manage", s.handleProviderTagsManageList)
 	mux.HandleFunc("POST /api/tags/manage", s.handleProviderTagsManageAdd)
 	mux.HandleFunc("PUT /api/tags/manage", s.handleProviderTagsManageReplace)

@@ -21,6 +21,11 @@ func (s *Server) handleProviderTagsManageList(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "failed to fetch provider models: "+err.Error())
 		return
 	}
+	models, ok = filterModelsByPipelineCategory(models, r.URL.Query().Get("category"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid category")
+		return
+	}
 	writeJSON(w, http.StatusOK, api.TagsResponse{Models: models})
 }
 
@@ -76,6 +81,10 @@ func (s *Server) handleProviderTagsManageReplace(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "failed to fetch provider models: "+err.Error())
 		return
 	}
+	if _, ok := pipelineTagsForCategory(r.URL.Query().Get("category")); !ok {
+		writeError(w, http.StatusBadRequest, "invalid category")
+		return
+	}
 	selected := make([]string, 0, len(req.Models))
 	selectedModels := make([]api.ModelInfo, 0, len(req.Models))
 	for _, modelID := range normalizeModelIDs(req.Models) {
@@ -93,6 +102,11 @@ func (s *Server) handleProviderTagsManageReplace(w http.ResponseWriter, r *http.
 		return
 	}
 	s.invalidateThirdPartyProviderModelsCache()
+	selectedModels, ok = filterModelsByPipelineCategory(selectedModels, r.URL.Query().Get("category"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid category")
+		return
+	}
 	writeJSON(w, http.StatusOK, api.TagsResponse{Models: selectedModels})
 }
 

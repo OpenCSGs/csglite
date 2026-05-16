@@ -98,6 +98,11 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.TagsResponse{Models: infos})
 }
 
+// GET /api/pipeline-tags -- list supported Hugging Face pipeline tags by csghub-lite category
+func (s *Server) handlePipelineTags(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, api.PipelineTagsResponse{PipelineTags: supportedPipelineTagGroups})
+}
+
 // GET /api/ps -- list running models
 func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()

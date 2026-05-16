@@ -195,9 +195,7 @@ func listOpenAICompatibleProviderModels(ctx context.Context, provider config.Thi
 	}
 
 	var result struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+		Data []thirdPartyProviderModel `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
@@ -207,22 +205,32 @@ func listOpenAICompatibleProviderModels(ctx context.Context, provider config.Thi
 	for _, item := range result.Data {
 		modelID := strings.TrimSpace(item.ID)
 		if modelID == "" {
+			modelID = strings.TrimSpace(item.Name)
+		}
+		if modelID == "" {
 			continue
 		}
-		label := fmt.Sprintf("%s [%s]", modelID, provider.Name)
+		labelName := modelID
+		if displayName := strings.TrimSpace(item.DisplayName); displayName != "" {
+			labelName = displayName
+		}
+		label := fmt.Sprintf("%s [%s]", labelName, provider.Name)
 		modelProvider := normalizeModelProvider(provider.Name)
 		if modelProvider == "" {
 			modelProvider = normalizeModelProvider(provider.ID)
 		}
+		pipelineTag, inputModalities, outputModalities := inferThirdPartyModelMetadata(provider, item)
 		models = append(models, api.ModelInfo{
-			Name:        modelID,
-			Model:       modelID,
-			Label:       label,
-			DisplayName: label,
-			Format:      "api",
-			Source:      providerSource(provider.ID),
-			Provider:    modelProvider,
-			PipelineTag: "text-generation",
+			Name:             modelID,
+			Model:            modelID,
+			Label:            label,
+			DisplayName:      label,
+			Format:           "api",
+			Source:           providerSource(provider.ID),
+			Provider:         modelProvider,
+			PipelineTag:      pipelineTag,
+			InputModalities:  inputModalities,
+			OutputModalities: outputModalities,
 		})
 	}
 	return models, nil

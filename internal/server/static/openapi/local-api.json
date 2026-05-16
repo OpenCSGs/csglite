@@ -133,6 +133,28 @@
         }
       }
     },
+    "/api/pipeline-tags": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "List supported pipeline tags",
+        "description": "Returns csghub-lite model categories and the Hugging Face task / pipeline_tag values that belong to each category.",
+        "operationId": "getPipelineTags",
+        "responses": {
+          "200": {
+            "description": "Pipeline tags grouped by csghub-lite category.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineTagsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tags/manage": {
       "get": {
         "tags": [
@@ -149,6 +171,21 @@
             "description": "Third-party provider ID or configured provider name.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Optional csghub-lite category key from `/api/pipeline-tags`. When omitted, all provider catalog models are returned.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "language_model",
+                "image_generation",
+                "video_generation",
+                "text_to_speech",
+                "speech_recognition"
+              ]
             }
           }
         ],
@@ -241,6 +278,21 @@
             "description": "Third-party provider ID or configured provider name.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Optional csghub-lite category key from `/api/pipeline-tags`. When supplied, the response is filtered to selected models in that category.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "language_model",
+                "image_generation",
+                "video_generation",
+                "text_to_speech",
+                "speech_recognition"
+              ]
             }
           }
         ],
@@ -4585,6 +4637,20 @@
           "pipeline_tag": {
             "type": "string"
           },
+          "input_modalities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Input modalities supported by the model, such as text, image, video, audio, or file."
+          },
+          "output_modalities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Output modalities produced by the model, such as text, image, video, audio, speech, or transcription."
+          },
           "has_mmproj": {
             "type": "boolean"
           },
@@ -4646,6 +4712,47 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ModelInfo"
+            }
+          }
+        }
+      },
+      "PipelineTagsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pipeline_tags"
+        ],
+        "properties": {
+          "pipeline_tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PipelineTagGroup"
+            }
+          }
+        }
+      },
+      "PipelineTagGroup": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "label",
+          "tags"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Stable csghub-lite category key."
+          },
+          "label": {
+            "type": "string",
+            "description": "Display label for the category."
+          },
+          "tags": {
+            "type": "array",
+            "description": "Hugging Face task / pipeline_tag values.",
+            "items": {
+              "type": "string"
             }
           }
         }

@@ -12,6 +12,7 @@ import (
 	"github.com/opencsgs/csghub-lite/internal/cloud"
 	"github.com/opencsgs/csghub-lite/internal/config"
 	"github.com/opencsgs/csghub-lite/internal/inference"
+	"github.com/opencsgs/csghub-lite/pkg/api"
 )
 
 func TestProviderCRUDDoesNotExposeAPIKey(t *testing.T) {
@@ -129,6 +130,78 @@ func TestListOpenAICompatibleProviderModels(t *testing.T) {
 	}
 }
 
+func TestInferThirdPartyPipelineFromOpenRouterArchitecture(t *testing.T) {
+	cases := []struct {
+		name       string
+		item       thirdPartyProviderModel
+		wantTag    string
+		wantInput  string
+		wantOutput string
+	}{
+		{
+			name:       "text to image",
+			item:       thirdPartyProviderModel{ID: "image", Architecture: &providerArchitecture{InputModalities: []string{"text"}, OutputModalities: []string{"image"}}},
+			wantTag:    "text-to-image",
+			wantInput:  "text",
+			wantOutput: "image",
+		},
+		{
+			name:       "image to video",
+			item:       thirdPartyProviderModel{ID: "video", Architecture: &providerArchitecture{InputModalities: []string{"image"}, OutputModalities: []string{"video"}}},
+			wantTag:    "image-to-video",
+			wantInput:  "image",
+			wantOutput: "video",
+		},
+		{
+			name:       "audio speech",
+			item:       thirdPartyProviderModel{ID: "speech", Architecture: &providerArchitecture{Modality: "text->audio"}},
+			wantTag:    "text-to-speech",
+			wantInput:  "text",
+			wantOutput: "audio",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tag, inputs, outputs := inferThirdPartyModelMetadata(config.ThirdPartyProvider{}, tc.item)
+			if tag != tc.wantTag || !stringSliceContains(inputs, tc.wantInput) || !stringSliceContains(outputs, tc.wantOutput) {
+				t.Fatalf("metadata = tag %q inputs %#v outputs %#v", tag, inputs, outputs)
+			}
+		})
+	}
+}
+
+func TestInferThirdPartyPipelineFromLiteLLMRulesAndProviderHints(t *testing.T) {
+	tag, inputs, outputs := inferThirdPartyModelMetadata(config.ThirdPartyProvider{Provider: "openai"}, thirdPartyProviderModel{ID: "dall-e-3"})
+	if tag != "text-to-image" || !stringSliceContains(outputs, "image") {
+		t.Fatalf("dall-e-3 metadata = tag %q inputs %#v outputs %#v", tag, inputs, outputs)
+	}
+
+	tag, inputs, outputs = inferThirdPartyModelMetadata(config.ThirdPartyProvider{Provider: "openai"}, thirdPartyProviderModel{ID: "gpt-4o"})
+	if tag != "text-generation" || !stringSliceContains(inputs, "image") {
+		t.Fatalf("gpt-4o metadata = tag %q inputs %#v outputs %#v", tag, inputs, outputs)
+	}
+
+	tag, inputs, outputs = inferThirdPartyModelMetadata(config.ThirdPartyProvider{Provider: "dashscope"}, thirdPartyProviderModel{ID: "qwen-image-2.0-pro-2026-04-22"})
+	if tag != "text-to-image" || !stringSliceContains(outputs, "image") {
+		t.Fatalf("dashscope qwen image metadata = tag %q inputs %#v outputs %#v", tag, inputs, outputs)
+	}
+
+	tag, inputs, outputs = inferThirdPartyModelMetadata(config.ThirdPartyProvider{}, thirdPartyProviderModel{ID: "xiaomi-tts-1"})
+	if tag != "text-to-speech" || !stringSliceContains(outputs, "audio") {
+		t.Fatalf("xiaomi tts metadata = tag %q inputs %#v outputs %#v", tag, inputs, outputs)
+	}
+
+	tag, inputs, outputs = inferThirdPartyModelMetadata(config.ThirdPartyProvider{}, thirdPartyProviderModel{ID: "kimi-video", SupportsVideoIn: true})
+	if tag != "video-text-to-text" || !stringSliceContains(inputs, "video") {
+		t.Fatalf("kimi video metadata = tag %q inputs %#v outputs %#v", tag, inputs, outputs)
+	}
+
+	tag, inputs, outputs = inferThirdPartyModelMetadata(config.ThirdPartyProvider{}, thirdPartyProviderModel{ID: "unknown-model"})
+	if tag != "text-generation" || len(inputs) != 0 || !stringSliceContains(outputs, "text") {
+		t.Fatalf("unknown metadata = tag %q inputs %#v outputs %#v", tag, inputs, outputs)
+	}
+}
+
 func TestHandleTagsIncludesSelectedThirdPartyProviderModels(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -204,6 +277,15 @@ func TestHandleTagsIncludesSelectedThirdPartyProviderModels(t *testing.T) {
 	if resp.Models[0].Label != "gpt-4o-mini [OpenAI]" {
 		t.Fatalf("label = %q, want provider label in tags response", resp.Models[0].Label)
 	}
+}
+
+func stringSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestThirdPartyModelProviderUsesConfiguredName(t *testing.T) {
@@ -315,9 +397,9 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]string{
-				{"id": "mi-model"},
-				{"id": "scope/with/slash"},
+			"data": []map[string]any{
+				{"id": "mi-model", "task": "text-generation"},
+				{"id": "scope/with/slash", "pipeline_tag": "text-to-image"},
 			},
 		})
 	}))
@@ -352,6 +434,19 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 	}
 	if len(tagsResp.Models) != 2 {
 		t.Fatalf("manage models = %#v, want two catalog models", tagsResp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=xiaomi-plan&category=image_generation", nil)
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageList(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("manage filtered list status = %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
+		t.Fatalf("decode filtered manage list: %v", err)
+	}
+	if len(tagsResp.Models) != 1 || tagsResp.Models[0].Model != "scope/with/slash" {
+		t.Fatalf("filtered manage models = %#v, want image model", tagsResp.Models)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)
@@ -406,6 +501,13 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 	if len(tagsResp.Models) != 0 {
 		t.Fatalf("selected models after delete = %#v, want none", tagsResp.Models)
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=xiaomi-plan&category=bad", nil)
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageList(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid category status = %d body=%s", w.Code, w.Body.String())
+	}
 }
 
 func TestProviderTagsManageReplaceModels(t *testing.T) {
@@ -420,7 +522,10 @@ func TestProviderTagsManageReplaceModels(t *testing.T) {
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]string{{"id": "a"}, {"id": "b"}},
+			"data": []map[string]string{
+				{"id": "a", "task": "text-generation"},
+				{"id": "b", "task": "text-to-image"},
+			},
 		})
 	}))
 	defer apiServer.Close()
@@ -445,6 +550,20 @@ func TestProviderTagsManageReplaceModels(t *testing.T) {
 	got := config.GetProviderModelAllowlist("provider1")
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
 		t.Fatalf("allowlist = %#v, want a,b", got)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/tags/manage?provider=provider1&category=image_generation", strings.NewReader(`{"models":["a","b"]}`))
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageReplace(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("replace filtered status = %d body=%s", w.Code, w.Body.String())
+	}
+	var resp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode replace filtered response: %v", err)
+	}
+	if len(resp.Models) != 1 || resp.Models[0].Model != "b" {
+		t.Fatalf("replace filtered models = %#v, want b", resp.Models)
 	}
 }
 

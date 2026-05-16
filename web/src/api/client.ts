@@ -11,6 +11,8 @@ export interface ModelInfo {
   source?: string;
   provider?: string;
   pipeline_tag?: string;
+  input_modalities?: string[];
+  output_modalities?: string[];
   has_mmproj?: boolean;
   context_window?: number;
   description?: string;
@@ -420,14 +422,16 @@ export async function getProviderSelectedTags(provider: string): Promise<ModelIn
   return data.models || [];
 }
 
-export async function getProviderManageTags(provider: string): Promise<ModelInfo[]> {
+export async function getProviderManageTags(provider: string, category?: string): Promise<ModelInfo[]> {
   const query = new URLSearchParams({ provider });
+  if (category?.trim()) query.set("category", category.trim());
   const data = await fetchJSON<{ models: ModelInfo[] }>(`/api/tags/manage?${query}`);
   return data.models || [];
 }
 
-export async function replaceProviderManageTags(provider: string, models: string[]): Promise<ModelInfo[]> {
+export async function replaceProviderManageTags(provider: string, models: string[], category?: string): Promise<ModelInfo[]> {
   const query = new URLSearchParams({ provider });
+  if (category?.trim()) query.set("category", category.trim());
   const data = await fetchJSON<{ models: ModelInfo[] }>(`/api/tags/manage?${query}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

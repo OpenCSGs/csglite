@@ -343,7 +343,9 @@ function setAvailableModels(models: ModelInfo[]) {
 
 const isVisionModel = computed(() => {
   const m = selectedModelInfo.value;
-  return m?.pipeline_tag === "image-text-to-text" && (m?.source === "cloud" || m?.has_mmproj === true);
+  if (!m) return false;
+  if (m.input_modalities?.includes("image")) return true;
+  return m.pipeline_tag === "image-text-to-text" && (m.source === "cloud" || m.has_mmproj === true);
 });
 
 function normalizeImage(file: File): Promise<{ full: string; thumb: string }> {

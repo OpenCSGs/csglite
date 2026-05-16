@@ -102,6 +102,16 @@ type TagsResponse struct {
 	Models []ModelInfo `json:"models"`
 }
 
+type PipelineTagsResponse struct {
+	PipelineTags []PipelineTagGroup `json:"pipeline_tags"`
+}
+
+type PipelineTagGroup struct {
+	Category string   `json:"category"`
+	Label    string   `json:"label"`
+	Tags     []string `json:"tags"`
+}
+
 type LocalModelSearchResponse struct {
 	Query       string      `json:"query,omitempty"`
 	Format      string      `json:"format,omitempty"`
@@ -193,23 +203,25 @@ type ToolFunction struct {
 }
 
 type ModelInfo struct {
-	Name          string        `json:"name"`
-	Model         string        `json:"model"`
-	Size          int64         `json:"size"`
-	Format        string        `json:"format"`
-	ModifiedAt    time.Time     `json:"modified_at"`
-	Label         string        `json:"label,omitempty"`
-	DisplayName   string        `json:"display_name,omitempty"`
-	Source        string        `json:"source,omitempty"`
-	Provider      string        `json:"provider,omitempty"`
-	PipelineTag   string        `json:"pipeline_tag,omitempty"`
-	HasMMProj     bool          `json:"has_mmproj,omitempty"`
-	ContextWindow int64         `json:"context_window,omitempty"`
-	Description   string        `json:"description,omitempty"`
-	License       string        `json:"license,omitempty"`
-	LLMType       string        `json:"llm_type,omitempty"`
-	OwnedBy       string        `json:"owned_by,omitempty"`
-	Pricing       *ModelPricing `json:"pricing,omitempty"`
+	Name             string        `json:"name"`
+	Model            string        `json:"model"`
+	Size             int64         `json:"size"`
+	Format           string        `json:"format"`
+	ModifiedAt       time.Time     `json:"modified_at"`
+	Label            string        `json:"label,omitempty"`
+	DisplayName      string        `json:"display_name,omitempty"`
+	Source           string        `json:"source,omitempty"`
+	Provider         string        `json:"provider,omitempty"`
+	PipelineTag      string        `json:"pipeline_tag,omitempty"`
+	InputModalities  []string      `json:"input_modalities,omitempty"`
+	OutputModalities []string      `json:"output_modalities,omitempty"`
+	HasMMProj        bool          `json:"has_mmproj,omitempty"`
+	ContextWindow    int64         `json:"context_window,omitempty"`
+	Description      string        `json:"description,omitempty"`
+	License          string        `json:"license,omitempty"`
+	LLMType          string        `json:"llm_type,omitempty"`
+	OwnedBy          string        `json:"owned_by,omitempty"`
+	Pricing          *ModelPricing `json:"pricing,omitempty"`
 }
 
 type ModelPricing struct {

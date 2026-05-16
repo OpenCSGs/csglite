@@ -124,6 +124,7 @@ const providerTypes = [
   { value: "minimax", label: "MiniMax", name: "MiniMax", baseURL: "https://api.minimaxi.com/v1" },
   { value: "mimo", label: "MiMo (Xiaomi)", name: "MiMo", baseURL: "https://api.xiaomimimo.com/v1" },
   { value: "kimi", label: "Kimi (Moonshot)", name: "Kimi", baseURL: "https://api.moonshot.cn/v1" },
+  { value: "dashscope", label: "DashScope", name: "DashScope", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
   { value: "bigmodel", label: "BigModel (Zhipu)", name: "BigModel", baseURL: "https://open.bigmodel.cn/api/paas/v4" },
   { value: "qianfan", label: "Qianfan (Baidu)", name: "Qianfan", baseURL: "https://qianfan.baidubce.com/v2" },
   { value: "openrouter", label: "OpenRouter", name: "OpenRouter", baseURL: "https://openrouter.ai/api/v1" },
@@ -586,6 +587,120 @@ function toggleProviderModel(modelID: string, checked: boolean) {
 
 function providerModelLabel(model: ModelInfo): string {
   return model.display_name || model.label || model.model;
+}
+
+function pipelineTagLabel(tag?: string): string {
+  switch (tag) {
+    case "text-to-image":
+      return t("pipeline.imageGeneration");
+    case "image-to-image":
+      return t("pipeline.imageToImage");
+    case "text-to-video":
+      return t("pipeline.textToVideo");
+    case "image-to-video":
+      return t("pipeline.imageToVideo");
+    case "video-text-to-text":
+      return t("pipeline.videoUnderstanding");
+    case "text-to-speech":
+      return t("pipeline.textToSpeech");
+    case "automatic-speech-recognition":
+      return t("pipeline.speechRecognition");
+    default:
+      return t("pipeline.languageModel");
+  }
+}
+
+function modalityLabel(modality: string): string {
+  switch (modality) {
+    case "text":
+      return t("pipeline.modalityText");
+    case "image":
+      return t("pipeline.modalityImage");
+    case "video":
+      return t("pipeline.modalityVideo");
+    case "audio":
+    case "speech":
+      return t("pipeline.modalityAudio");
+    case "file":
+      return t("pipeline.modalityFile");
+    case "transcription":
+      return t("pipeline.modalityText");
+    default:
+      return modality;
+  }
+}
+
+function uniqueModalities(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const key = value.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+function modelOutputModalities(model: ModelInfo): string[] {
+  const outputs = uniqueModalities(model.output_modalities || []);
+  if (outputs.length > 0) return outputs;
+  switch (model.pipeline_tag) {
+    case "text-to-image":
+    case "image-to-image":
+      return ["image"];
+    case "text-to-video":
+    case "image-to-video":
+      return ["video"];
+    case "text-to-speech":
+      return ["audio"];
+    case "automatic-speech-recognition":
+      return ["text"];
+    default:
+      return ["text"];
+  }
+}
+
+function modelInputModalities(model: ModelInfo): string[] {
+  return uniqueModalities(model.input_modalities || []).filter((item) => item !== "text");
+}
+
+function ProviderModelModalityBadges({
+  model,
+  showPipelineTag = false,
+  showInputs = false,
+  showOutputs = true,
+  compact = false,
+}: {
+  model: ModelInfo;
+  showPipelineTag?: boolean;
+  showInputs?: boolean;
+  showOutputs?: boolean;
+  compact?: boolean;
+}) {
+  const pill = compact ? "rounded px-1.5 py-0.5 text-[10px]" : "rounded-full px-2 py-0.5 text-[11px]";
+  const inputs = showInputs ? modelInputModalities(model) : [];
+  const outputs = showOutputs ? modelOutputModalities(model) : [];
+  if (!showPipelineTag && inputs.length === 0 && outputs.length === 0) return null;
+  return (
+    <span class={`flex min-w-0 flex-wrap items-center gap-1 ${compact ? "" : "gap-1.5"}`}>
+      {showPipelineTag && (
+        <span class={`${pill} bg-gray-100 text-gray-600`}>
+          {pipelineTagLabel(model.pipeline_tag)}
+        </span>
+      )}
+      {inputs.map((item) => (
+        <span key={`in-${item}`} class={`${pill} bg-blue-50 text-blue-700`}>
+          {t("pipeline.inputCapability", modalityLabel(item))}
+        </span>
+      ))}
+      {outputs.map((item) => (
+        <span key={`out-${item}`} class={`${pill} bg-violet-50 text-violet-700`}>
+          {t("pipeline.outputCapability", modalityLabel(item))}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 async function toggleProviderEnabled(provider: ThirdPartyProvider) {
@@ -1316,20 +1431,25 @@ export function Settings() {
                     <p class="text-sm font-medium text-gray-900 truncate">{provider.name}</p>
                     <p class="text-xs text-gray-500 truncate">{provider.base_url}</p>
                     <p class="mt-1 text-[11px] uppercase tracking-wide text-gray-400">{provider.provider || "openai"}</p>
-                    <div class="mt-2 flex flex-wrap gap-1.5">
+                    <div class="mt-2">
                       {(providerSelectedModels.value[provider.id] || []).length === 0 ? (
                         <span class="text-xs text-gray-400">{t("settings.providerModelsNoneSelected")}</span>
                       ) : (
-                        (providerSelectedModels.value[provider.id] || []).slice(0, 4).map((model) => (
-                          <span key={model.model} class="rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">
-                            {providerModelLabel(model)}
-                          </span>
-                        ))
-                      )}
-                      {(providerSelectedModels.value[provider.id] || []).length > 4 && (
-                        <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-                          {t("settings.providerModelsMore", (providerSelectedModels.value[provider.id] || []).length - 4)}
-                        </span>
+                        <div class="grid grid-cols-2 gap-1.5">
+                          {(providerSelectedModels.value[provider.id] || []).slice(0, 4).map((model) => (
+                            <div key={model.model} class="min-w-0 rounded-md bg-indigo-50 px-2 py-1">
+                              <p class="truncate text-xs font-medium text-indigo-700">{providerModelLabel(model)}</p>
+                              <div class="mt-0.5">
+                                <ProviderModelModalityBadges model={model} showOutputs compact />
+                              </div>
+                            </div>
+                          ))}
+                          {(providerSelectedModels.value[provider.id] || []).length > 4 && (
+                            <p class="col-span-2 text-xs text-gray-500">
+                              {t("settings.providerModelsMore", (providerSelectedModels.value[provider.id] || []).length - 4)}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -2095,8 +2215,11 @@ function ProviderDialog({
                       onChange={(e) => onToggleModel(model.model, (e.target as HTMLInputElement).checked)}
                       class="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span class="min-w-0">
-                      <span class="block truncate text-sm font-medium text-gray-900">{providerModelLabel(model)}</span>
+                    <span class="min-w-0 flex-1">
+                      <span class="flex min-w-0 flex-wrap items-center gap-1.5">
+                        <span class="truncate text-sm font-medium text-gray-900">{providerModelLabel(model)}</span>
+                        <ProviderModelModalityBadges model={model} showPipelineTag showInputs showOutputs />
+                      </span>
                       <span class="block truncate text-xs text-gray-500">{model.model}</span>
                     </span>
                   </label>

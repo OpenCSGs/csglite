@@ -454,6 +454,32 @@ func TestHandleTags_WithModels(t *testing.T) {
 	}
 }
 
+func TestHandlePipelineTags(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/pipeline-tags", nil)
+	w := httptest.NewRecorder()
+
+	s.handlePipelineTags(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp api.PipelineTagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(resp.PipelineTags) != 5 {
+		t.Fatalf("pipeline_tags len = %d, want 5", len(resp.PipelineTags))
+	}
+	if resp.PipelineTags[0].Category != "language_model" || resp.PipelineTags[0].Label != "语言模型" {
+		t.Fatalf("first group = %#v, want language model group", resp.PipelineTags[0])
+	}
+	if got := strings.Join(resp.PipelineTags[0].Tags, ","); got != "text-generation,conversational,text2text-generation,fill-mask" {
+		t.Fatalf("language model tags = %q", got)
+	}
+}
+
 func TestHandleTagsProviderFilterLocal(t *testing.T) {
 	s := newTestServer(t)
 	lm := &model.LocalModel{
@@ -823,6 +849,7 @@ func TestRoutes(t *testing.T) {
 	}{
 		{"GET", "/"},
 		{"GET", "/api/tags"},
+		{"GET", "/api/pipeline-tags"},
 		{"GET", "/api/tags/manage"},
 		{"POST", "/api/tags/manage"},
 		{"PUT", "/api/tags/manage"},
