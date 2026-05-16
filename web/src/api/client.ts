@@ -9,6 +9,7 @@ export interface ModelInfo {
   label?: string;
   display_name?: string;
   source?: string;
+  provider?: string;
   pipeline_tag?: string;
   has_mmproj?: boolean;
   context_window?: number;
@@ -411,6 +412,44 @@ export async function getTags(options?: { refresh?: boolean }): Promise<ModelInf
   const url = query.toString() ? `/api/tags?${query}` : "/api/tags";
   const data = await fetchJSON<{ models: ModelInfo[] }>(url);
   return data.models || [];
+}
+
+export async function getProviderSelectedTags(provider: string): Promise<ModelInfo[]> {
+  const query = new URLSearchParams({ provider });
+  const data = await fetchJSON<{ models: ModelInfo[] }>(`/api/tags?${query}`);
+  return data.models || [];
+}
+
+export async function getProviderManageTags(provider: string): Promise<ModelInfo[]> {
+  const query = new URLSearchParams({ provider });
+  const data = await fetchJSON<{ models: ModelInfo[] }>(`/api/tags/manage?${query}`);
+  return data.models || [];
+}
+
+export async function replaceProviderManageTags(provider: string, models: string[]): Promise<ModelInfo[]> {
+  const query = new URLSearchParams({ provider });
+  const data = await fetchJSON<{ models: ModelInfo[] }>(`/api/tags/manage?${query}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ models }),
+  });
+  return data.models || [];
+}
+
+export async function addProviderManageTag(provider: string, model: string): Promise<ModelInfo> {
+  const query = new URLSearchParams({ provider });
+  return fetchJSON<ModelInfo>(`/api/tags/manage?${query}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model }),
+  });
+}
+
+export async function deleteProviderManageTag(provider: string, model: string): Promise<void> {
+  const query = new URLSearchParams({ provider, model });
+  await fetchJSON<{ status: string }>(`/api/tags/manage?${query}`, {
+    method: "DELETE",
+  });
 }
 
 export async function searchLocalModels(params?: {

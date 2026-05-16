@@ -7,6 +7,10 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/tags", s.handleTags)
+	mux.HandleFunc("GET /api/tags/manage", s.handleProviderTagsManageList)
+	mux.HandleFunc("POST /api/tags/manage", s.handleProviderTagsManageAdd)
+	mux.HandleFunc("PUT /api/tags/manage", s.handleProviderTagsManageReplace)
+	mux.HandleFunc("DELETE /api/tags/manage", s.handleProviderTagsManageDelete)
 	mux.HandleFunc("GET /api/models/search", s.handleLocalModelSearch)
 	mux.HandleFunc("GET /api/models/{namespace}/{name}/manifest", s.handleModelManifest)
 	mux.HandleFunc("GET /api/models/{namespace}/{name}/files/{path...}", s.handleModelFile)

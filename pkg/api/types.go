@@ -606,6 +606,14 @@ type ThirdPartyProviderUpdateRequest struct {
 	Enabled  *bool  `json:"enabled,omitempty"`
 }
 
+type ProviderTagModelRequest struct {
+	Model string `json:"model"`
+}
+
+type ProviderTagModelsReplaceRequest struct {
+	Models []string `json:"models"`
+}
+
 // -- Conversation history types --
 
 type Conversation struct {

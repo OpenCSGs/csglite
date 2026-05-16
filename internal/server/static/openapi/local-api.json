@@ -96,7 +96,7 @@
           "Models"
         ],
         "summary": "List available models",
-        "description": "Returns local, CSGHub cloud, and third-party provider models. Use `provider` to filter by a model provider such as `local`, `csghub`, or a third-party provider name.",
+        "description": "Returns local, CSGHub cloud, and selected third-party provider models. Use `provider` to filter by a model provider such as `local`, `csghub`, or a third-party provider name. Third-party provider filters return only models selected through `/api/tags/manage`.",
         "operationId": "getTags",
         "parameters": [
           {
@@ -129,6 +129,192 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/tags/manage": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "List provider catalog models",
+        "description": "Returns all currently available models from a configured third-party provider. This catalog is used to choose which provider models appear in `/api/tags?provider=...`.",
+        "operationId": "listProviderTagCatalog",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": true,
+            "description": "Third-party provider ID or configured provider name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provider catalog models.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Select a provider model",
+        "operationId": "addProviderTagModel",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": true,
+            "description": "Third-party provider ID or configured provider name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderTagModelRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Model was already selected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelInfo"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Model selected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Replace selected provider models",
+        "operationId": "replaceProviderTagModels",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": true,
+            "description": "Third-party provider ID or configured provider name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderTagModelsReplaceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Selected provider models.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Unselect a provider model",
+        "operationId": "deleteProviderTagModel",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": true,
+            "description": "Third-party provider ID or configured provider name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": true,
+            "description": "Provider model ID to remove from the selected list.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Model unselected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -3201,6 +3387,33 @@
           },
           "enabled": {
             "type": "boolean"
+          }
+        }
+      },
+      "ProviderTagModelRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          }
+        }
+      },
+      "ProviderTagModelsReplaceRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "models"
+        ],
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

@@ -57,7 +57,7 @@ func (s *Server) listAvailableModelsWithRefresh(ctx context.Context, refreshClou
 		}
 	}
 
-	for _, item := range s.listThirdPartyProviderModels(ctx) {
+	for _, item := range s.listSelectedThirdPartyProviderModels(ctx) {
 		modelID := strings.TrimSpace(item.Model)
 		source := strings.TrimSpace(item.Source)
 		if modelID == "" || source == "" {

@@ -221,7 +221,7 @@ func (s *Server) thirdPartyProviderSourceForModel(ctx context.Context, modelID s
 	if modelID == "" {
 		return ""
 	}
-	for _, item := range s.listThirdPartyProviderModels(ctx) {
+	for _, item := range s.listSelectedThirdPartyProviderModels(ctx) {
 		if strings.TrimSpace(item.Model) == modelID {
 			return strings.TrimSpace(item.Source)
 		}

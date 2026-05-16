@@ -19,7 +19,9 @@ func TestProviderCRUDDoesNotExposeAPIKey(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
@@ -64,7 +66,9 @@ func TestProviderCreateRejectsInvalidConfigWithoutSaving(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad key", http.StatusUnauthorized)
@@ -125,12 +129,14 @@ func TestListOpenAICompatibleProviderModels(t *testing.T) {
 	}
 }
 
-func TestHandleTagsIncludesThirdPartyProviderModels(t *testing.T) {
+func TestHandleTagsIncludesSelectedThirdPartyProviderModels(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
@@ -172,6 +178,23 @@ func TestHandleTagsIncludesThirdPartyProviderModels(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode tags: %v", err)
 	}
+	if len(resp.Models) != 0 {
+		t.Fatalf("models before selection = %#v, want none", resp.Models)
+	}
+
+	if err := config.ReplaceProviderModelAllowlist("provider1", []string{"gpt-4o-mini"}); err != nil {
+		t.Fatalf("save provider model allowlist: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("selected status = %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode selected tags: %v", err)
+	}
 	if len(resp.Models) != 1 || resp.Models[0].Model != "gpt-4o-mini" || resp.Models[0].Source != "provider:provider1" {
 		t.Fatalf("models = %#v", resp.Models)
 	}
@@ -188,7 +211,9 @@ func TestThirdPartyModelProviderUsesConfiguredName(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
@@ -211,6 +236,10 @@ func TestThirdPartyModelProviderUsesConfiguredName(t *testing.T) {
 		Enabled:  true,
 	}}); err != nil {
 		t.Fatalf("save providers: %v", err)
+	}
+
+	if err := config.ReplaceProviderModelAllowlist("provider1", []string{"mi-model"}); err != nil {
+		t.Fatalf("save provider model allowlist: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/providers?source=model", nil)
@@ -271,12 +300,162 @@ func TestThirdPartyModelProviderUsesConfiguredName(t *testing.T) {
 	}
 }
 
+func TestProviderTagsManageSelectsModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
+	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{
+				{"id": "mi-model"},
+				{"id": "scope/with/slash"},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	if err := config.SaveProviders([]config.ThirdPartyProvider{{
+		ID:       "provider1",
+		Name:     "xiaomi-plan",
+		BaseURL:  apiServer.URL + "/v1",
+		APIKey:   "secret",
+		Provider: "openai",
+		Enabled:  true,
+	}}); err != nil {
+		t.Fatalf("save providers: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=xiaomi-plan", nil)
+	w := httptest.NewRecorder()
+	s.handleProviderTagsManageList(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("manage list status = %d body=%s", w.Code, w.Body.String())
+	}
+	var tagsResp struct {
+		Models []struct {
+			Model    string `json:"model"`
+			Provider string `json:"provider"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
+		t.Fatalf("decode manage list: %v", err)
+	}
+	if len(tagsResp.Models) != 2 {
+		t.Fatalf("manage models = %#v, want two catalog models", tagsResp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("selected tags status = %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
+		t.Fatalf("decode selected tags: %v", err)
+	}
+	if len(tagsResp.Models) != 0 {
+		t.Fatalf("selected models before add = %#v, want none", tagsResp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/tags/manage?provider=xiaomi-plan", strings.NewReader(`{"model":"scope/with/slash"}`))
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageAdd(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("add status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("selected tags status after add = %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
+		t.Fatalf("decode selected tags after add: %v", err)
+	}
+	if len(tagsResp.Models) != 1 || tagsResp.Models[0].Model != "scope/with/slash" || tagsResp.Models[0].Provider != "xiaomi-plan" {
+		t.Fatalf("selected models = %#v, want slash model", tagsResp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/tags/manage?provider=xiaomi-plan&model=scope%2Fwith%2Fslash", nil)
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageDelete(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("selected tags status after delete = %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
+		t.Fatalf("decode selected tags after delete: %v", err)
+	}
+	if len(tagsResp.Models) != 0 {
+		t.Fatalf("selected models after delete = %#v, want none", tagsResp.Models)
+	}
+}
+
+func TestProviderTagsManageReplaceModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
+	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"id": "a"}, {"id": "b"}},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	if err := config.SaveProviders([]config.ThirdPartyProvider{{
+		ID:      "provider1",
+		Name:    "xiaomi-plan",
+		BaseURL: apiServer.URL + "/v1",
+		APIKey:  "secret",
+		Enabled: true,
+	}}); err != nil {
+		t.Fatalf("save providers: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/api/tags/manage?provider=provider1", strings.NewReader(`{"models":["a","b","a"]}`))
+	w := httptest.NewRecorder()
+	s.handleProviderTagsManageReplace(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("replace status = %d body=%s", w.Code, w.Body.String())
+	}
+	got := config.GetProviderModelAllowlist("provider1")
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("allowlist = %#v, want a,b", got)
+	}
+}
+
 func TestThirdPartyProviderEngineTrimsV1BaseURL(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
 
 	var chatPath string
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -321,7 +500,9 @@ func TestThirdPartyProviderEngineUsesCompatibleBaseURLPath(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
 
 	var modelPath, chatPath string
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -395,7 +576,9 @@ func TestGetChatEnginePrefersThirdPartyWhenCloudLoginMissing(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
 
 	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -424,6 +607,9 @@ func TestGetChatEnginePrefersThirdPartyWhenCloudLoginMissing(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save providers: %v", err)
 	}
+	if err := config.ReplaceProviderModelAllowlist("provider1", []string{"shared/model"}); err != nil {
+		t.Fatalf("save provider model allowlist: %v", err)
+	}
 
 	eng, err := s.getChatEngine(context.Background(), "shared/model", "", 0, 0, -1, "", "", "")
 	if err != nil {
@@ -443,7 +629,9 @@ func TestDisabledProviderExcludedFromTagsAndEngine(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
 
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
@@ -500,7 +688,9 @@ func TestProviderUpdateInvalidatesThirdPartyModelCache(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
 
 	modelRequests := 0
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -524,6 +714,9 @@ func TestProviderUpdateInvalidatesThirdPartyModelCache(t *testing.T) {
 		Enabled: true,
 	}}); err != nil {
 		t.Fatalf("save providers: %v", err)
+	}
+	if err := config.ReplaceProviderModelAllowlist("provider1", []string{"gpt-4o-mini"}); err != nil {
+		t.Fatalf("save provider model allowlist: %v", err)
 	}
 
 	hasProviderModel := func() bool {

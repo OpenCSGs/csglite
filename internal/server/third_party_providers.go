@@ -48,6 +48,19 @@ func getThirdPartyProvider(id string) (config.ThirdPartyProvider, bool) {
 	return config.ThirdPartyProvider{}, false
 }
 
+func getThirdPartyProviderByAlias(alias string) (config.ThirdPartyProvider, bool) {
+	alias = normalizeModelProvider(alias)
+	if alias == "" {
+		return config.ThirdPartyProvider{}, false
+	}
+	for _, provider := range config.GetProviders() {
+		if normalizeModelProvider(provider.ID) == alias || normalizeModelProvider(provider.Name) == alias {
+			return provider, true
+		}
+	}
+	return config.ThirdPartyProvider{}, false
+}
+
 func (s *Server) invalidateThirdPartyProviderModelsCache() {
 	if s == nil {
 		return
@@ -106,6 +119,55 @@ func (s *Server) listThirdPartyProviderModels(ctx context.Context) []api.ModelIn
 		s.thirdPartyModelsCacheMu.Unlock()
 	}
 
+	return out
+}
+
+func (s *Server) listSelectedThirdPartyProviderModels(ctx context.Context) []api.ModelInfo {
+	providers := config.GetProviders()
+	if len(providers) == 0 {
+		return nil
+	}
+
+	allModels := s.listThirdPartyProviderModels(ctx)
+	if len(allModels) == 0 {
+		return nil
+	}
+
+	selectedByProvider := make(map[string]map[string]struct{}, len(providers))
+	for _, provider := range providers {
+		modelIDs := config.GetProviderModelAllowlist(provider.ID)
+		if len(modelIDs) == 0 {
+			continue
+		}
+		selected := make(map[string]struct{}, len(modelIDs))
+		for _, modelID := range modelIDs {
+			modelID = strings.TrimSpace(modelID)
+			if modelID != "" {
+				selected[modelID] = struct{}{}
+			}
+		}
+		if len(selected) > 0 {
+			selectedByProvider[provider.ID] = selected
+		}
+	}
+	if len(selectedByProvider) == 0 {
+		return nil
+	}
+
+	out := make([]api.ModelInfo, 0, len(allModels))
+	for _, model := range allModels {
+		providerID := providerIDFromSource(model.Source)
+		if providerID == "" {
+			continue
+		}
+		selected := selectedByProvider[providerID]
+		if selected == nil {
+			continue
+		}
+		if _, ok := selected[strings.TrimSpace(model.Model)]; ok {
+			out = append(out, model)
+		}
+	}
 	return out
 }
 

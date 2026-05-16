@@ -20,13 +20,16 @@ import {
   updateProvider,
   deleteProvider,
   validateProvider,
+  getProviderManageTags,
+  getProviderSelectedTags,
+  replaceProviderManageTags,
   getLocalAPIKeys,
   updateLocalAPIKeySettings,
   createLocalAPIKey,
   deleteLocalAPIKey,
   getLocalAPIUsage,
 } from "../api/client";
-import type { AppSettings, CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, LocalDirectoryBrowseResponse, ThirdPartyProvider, WebSearchSettings } from "../api/client";
+import type { AppSettings, CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, LocalDirectoryBrowseResponse, ModelInfo, ThirdPartyProvider, WebSearchSettings } from "../api/client";
 
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
@@ -81,6 +84,14 @@ const providerFormType = signal("openai");
 const providerFormEnabled = signal(true);
 const providerFormError = signal("");
 const providerFormSaving = signal(false);
+const providerDialogStep = signal<"details" | "models">("details");
+const providerModelTarget = signal<ThirdPartyProvider | null>(null);
+const providerModelCatalog = signal<ModelInfo[]>([]);
+const providerModelSelected = signal<Record<string, boolean>>({});
+const providerModelsLoading = signal(false);
+const providerModelsSaving = signal(false);
+const providerModelsError = signal("");
+const providerSelectedModels = signal<Record<string, ModelInfo[]>>({});
 const providersChangedEvent = "csghub:providers-changed";
 type SettingsTab = "system" | "apiKeys" | "usage";
 type UsagePeriod = "week" | "month" | "year" | "all";
@@ -217,7 +228,18 @@ async function fetchProviders() {
   providersLoading.value = true;
   providersError.value = "";
   try {
-    providers.value = await getProviders();
+    const list = await getProviders();
+    providers.value = list;
+    const entries = await Promise.all(
+      list.map(async (provider) => {
+        try {
+          return [provider.id, await getProviderSelectedTags(provider.id)] as const;
+        } catch {
+          return [provider.id, []] as const;
+        }
+      })
+    );
+    providerSelectedModels.value = Object.fromEntries(entries);
   } catch (err: any) {
     providersError.value = err?.message || t("settings.providersLoadFailed");
   } finally {
@@ -428,6 +450,11 @@ function openExternal(url?: string) {
 
 function openProviderDialog(provider?: ThirdPartyProvider) {
   editingProvider.value = provider || null;
+  providerModelTarget.value = provider || null;
+  providerDialogStep.value = "details";
+  providerModelCatalog.value = [];
+  providerModelSelected.value = {};
+  providerModelsError.value = "";
   providerFormName.value = provider?.name || "";
   providerFormBaseURL.value = provider?.base_url || "";
   providerFormAPIKey.value = "";
@@ -438,10 +465,35 @@ function openProviderDialog(provider?: ThirdPartyProvider) {
 }
 
 function closeProviderDialog() {
-  if (providerFormSaving.value) return;
+  if (providerFormSaving.value || providerModelsSaving.value) return;
   isProviderDialogOpen.value = false;
   editingProvider.value = null;
+  providerModelTarget.value = null;
+  providerDialogStep.value = "details";
+  providerModelCatalog.value = [];
+  providerModelSelected.value = {};
+  providerModelsError.value = "";
   providerFormError.value = "";
+}
+
+async function loadProviderDialogModels(provider: ThirdPartyProvider) {
+  providerModelsLoading.value = true;
+  providerModelsError.value = "";
+  try {
+    const [catalog, selected] = await Promise.all([
+      getProviderManageTags(provider.id),
+      getProviderSelectedTags(provider.id),
+    ]);
+    const selectedIDs = new Set(selected.map((model) => model.model));
+    providerModelCatalog.value = catalog;
+    providerModelSelected.value = Object.fromEntries(catalog.map((model) => [model.model, selectedIDs.has(model.model)]));
+  } catch (err: any) {
+    providerModelCatalog.value = [];
+    providerModelSelected.value = {};
+    providerModelsError.value = err?.message || t("settings.providerModelsLoadFailed");
+  } finally {
+    providerModelsLoading.value = false;
+  }
 }
 
 async function saveProviderForm() {
@@ -471,8 +523,9 @@ async function saveProviderForm() {
       provider: providerType,
       enabled,
     });
+    let savedProvider: ThirdPartyProvider;
     if (editingProvider.value) {
-      await updateProvider(editingProvider.value.id, {
+      savedProvider = await updateProvider(editingProvider.value.id, {
         name,
         base_url: baseURL,
         api_key: apiKey || undefined,
@@ -480,7 +533,7 @@ async function saveProviderForm() {
         enabled,
       });
     } else {
-      await createProvider({
+      savedProvider = await createProvider({
         name,
         base_url: baseURL,
         api_key: apiKey,
@@ -490,13 +543,49 @@ async function saveProviderForm() {
     }
     await fetchProviders();
     notifyProvidersChanged();
-    isProviderDialogOpen.value = false;
-    editingProvider.value = null;
+    editingProvider.value = savedProvider;
+    providerModelTarget.value = savedProvider;
+    providerDialogStep.value = "models";
+    await loadProviderDialogModels(savedProvider);
   } catch (err: any) {
     providerFormError.value = err?.message || t("settings.providerSaveFailed");
   } finally {
     providerFormSaving.value = false;
   }
+}
+
+async function saveProviderModels() {
+  const provider = providerModelTarget.value;
+  if (!provider) return;
+  providerModelsSaving.value = true;
+  providerModelsError.value = "";
+  try {
+    const selected = providerModelCatalog.value
+      .filter((model) => providerModelSelected.value[model.model])
+      .map((model) => model.model);
+    await replaceProviderManageTags(provider.id, selected);
+    await fetchProviders();
+    notifyProvidersChanged();
+    isProviderDialogOpen.value = false;
+    editingProvider.value = null;
+    providerModelTarget.value = null;
+    providerDialogStep.value = "details";
+  } catch (err: any) {
+    providerModelsError.value = err?.message || t("settings.providerModelsSaveFailed");
+  } finally {
+    providerModelsSaving.value = false;
+  }
+}
+
+function toggleProviderModel(modelID: string, checked: boolean) {
+  providerModelSelected.value = {
+    ...providerModelSelected.value,
+    [modelID]: checked,
+  };
+}
+
+function providerModelLabel(model: ModelInfo): string {
+  return model.display_name || model.label || model.model;
 }
 
 async function toggleProviderEnabled(provider: ThirdPartyProvider) {
@@ -1227,6 +1316,22 @@ export function Settings() {
                     <p class="text-sm font-medium text-gray-900 truncate">{provider.name}</p>
                     <p class="text-xs text-gray-500 truncate">{provider.base_url}</p>
                     <p class="mt-1 text-[11px] uppercase tracking-wide text-gray-400">{provider.provider || "openai"}</p>
+                    <div class="mt-2 flex flex-wrap gap-1.5">
+                      {(providerSelectedModels.value[provider.id] || []).length === 0 ? (
+                        <span class="text-xs text-gray-400">{t("settings.providerModelsNoneSelected")}</span>
+                      ) : (
+                        (providerSelectedModels.value[provider.id] || []).slice(0, 4).map((model) => (
+                          <span key={model.model} class="rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">
+                            {providerModelLabel(model)}
+                          </span>
+                        ))
+                      )}
+                      {(providerSelectedModels.value[provider.id] || []).length > 4 && (
+                        <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                          {t("settings.providerModelsMore", (providerSelectedModels.value[provider.id] || []).length - 4)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div class="flex items-center gap-2">
                     <label class="relative inline-flex items-center cursor-pointer">
@@ -1346,6 +1451,7 @@ export function Settings() {
       <ProviderDialog
         open={isProviderDialogOpen.value}
         editing={!!editingProvider.value}
+        step={providerDialogStep.value}
         name={providerFormName.value}
         baseURL={providerFormBaseURL.value}
         apiKey={providerFormAPIKey.value}
@@ -1353,8 +1459,16 @@ export function Settings() {
         enabled={providerFormEnabled.value}
         error={providerFormError.value}
         saving={providerFormSaving.value}
+        modelTarget={providerModelTarget.value}
+        modelCatalog={providerModelCatalog.value}
+        modelSelected={providerModelSelected.value}
+        modelsLoading={providerModelsLoading.value}
+        modelsSaving={providerModelsSaving.value}
+        modelsError={providerModelsError.value}
         onClose={closeProviderDialog}
         onSave={() => void saveProviderForm()}
+        onSaveModels={() => void saveProviderModels()}
+        onToggleModel={toggleProviderModel}
         onChangeName={(value) => (providerFormName.value = value)}
         onChangeBaseURL={(value) => (providerFormBaseURL.value = value)}
         onChangeAPIKey={(value) => (providerFormAPIKey.value = value)}
@@ -1845,6 +1959,7 @@ function LangBtn({ code, label }: { code: Locale; label: string }) {
 function ProviderDialog({
   open,
   editing,
+  step,
   name,
   baseURL,
   apiKey,
@@ -1852,8 +1967,16 @@ function ProviderDialog({
   enabled,
   error,
   saving,
+  modelTarget,
+  modelCatalog,
+  modelSelected,
+  modelsLoading,
+  modelsSaving,
+  modelsError,
   onClose,
   onSave,
+  onSaveModels,
+  onToggleModel,
   onChangeName,
   onChangeBaseURL,
   onChangeAPIKey,
@@ -1862,6 +1985,7 @@ function ProviderDialog({
 }: {
   open: boolean;
   editing: boolean;
+  step: "details" | "models";
   name: string;
   baseURL: string;
   apiKey: string;
@@ -1869,8 +1993,16 @@ function ProviderDialog({
   enabled: boolean;
   error: string;
   saving: boolean;
+  modelTarget: ThirdPartyProvider | null;
+  modelCatalog: ModelInfo[];
+  modelSelected: Record<string, boolean>;
+  modelsLoading: boolean;
+  modelsSaving: boolean;
+  modelsError: string;
   onClose: () => void;
   onSave: () => void;
+  onSaveModels: () => void;
+  onToggleModel: (modelID: string, checked: boolean) => void;
   onChangeName: (value: string) => void;
   onChangeBaseURL: (value: string) => void;
   onChangeAPIKey: (value: string) => void;
@@ -1882,82 +2014,114 @@ function ProviderDialog({
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4" onClick={onClose}>
       <div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div class="border-b border-gray-100 px-6 py-5">
-          <h2 class="text-lg font-semibold text-gray-900">{editing ? t("settings.providerEditTitle") : t("settings.providerAddTitle")}</h2>
-          <p class="mt-1 text-sm text-gray-500">{t("settings.providerDialogDesc")}</p>
+          <h2 class="text-lg font-semibold text-gray-900">
+            {step === "models" ? t("settings.providerModelsTitle") : editing ? t("settings.providerEditTitle") : t("settings.providerAddTitle")}
+          </h2>
+          <p class="mt-1 text-sm text-gray-500">
+            {step === "models" ? t("settings.providerModelsDesc", modelTarget?.name || name) : t("settings.providerDialogDesc")}
+          </p>
         </div>
-        <div class="space-y-4 px-6 py-5">
-          <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.providerType")}</label>
-            <select
-              class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={providerType}
-              onChange={(e) => onChangeProviderType((e.target as HTMLSelectElement).value)}
-            >
-              {providerTypes.map((item) => (
-                <option key={item.value} value={item.value}>{item.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.providerName")}</label>
-            <input
-              class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={name}
-              onInput={(e) => onChangeName((e.target as HTMLInputElement).value)}
-              placeholder="OpenAI"
-            />
-          </div>
-          <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.providerBaseURL")}</label>
-            <input
-              class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={baseURL}
-              onInput={(e) => onChangeBaseURL((e.target as HTMLInputElement).value)}
-              placeholder="https://api.openai.com/v1"
-            />
-          </div>
-          <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.providerAPIKey")}</label>
-            <input
-              type="password"
-              autoComplete="off"
-              spellcheck={false}
-              class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={apiKey}
-              onInput={(e) => onChangeAPIKey((e.target as HTMLInputElement).value)}
-              placeholder={editing ? t("settings.providerAPIKeyUnchanged") : "sk-..."}
-            />
-          </div>
-          <div class="flex items-center gap-3">
-            <label class="relative inline-flex items-center cursor-pointer">
+        {step === "details" ? (
+          <div class="space-y-4 px-6 py-5">
+            <div>
+              <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.providerType")}</label>
+              <select
+                class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={providerType}
+                onChange={(e) => onChangeProviderType((e.target as HTMLSelectElement).value)}
+              >
+                {providerTypes.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.providerName")}</label>
               <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => onChangeEnabled((e.target as HTMLInputElement).checked)}
-                class="sr-only peer"
+                class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={name}
+                onInput={(e) => onChangeName((e.target as HTMLInputElement).value)}
+                placeholder="OpenAI"
               />
-              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-            </label>
-            <span class="text-sm text-gray-700">{enabled ? t("settings.providerEnabled") : t("settings.providerDisabled")}</span>
+            </div>
+            <div>
+              <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.providerBaseURL")}</label>
+              <input
+                class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={baseURL}
+                onInput={(e) => onChangeBaseURL((e.target as HTMLInputElement).value)}
+                placeholder="https://api.openai.com/v1"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.providerAPIKey")}</label>
+              <input
+                type="password"
+                autoComplete="off"
+                spellcheck={false}
+                class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                value={apiKey}
+                onInput={(e) => onChangeAPIKey((e.target as HTMLInputElement).value)}
+                placeholder={editing ? t("settings.providerAPIKeyUnchanged") : "sk-..."}
+              />
+            </div>
+            <div class="flex items-center gap-3">
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  onChange={(e) => onChangeEnabled((e.target as HTMLInputElement).checked)}
+                  class="sr-only peer"
+                />
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+              <span class="text-sm text-gray-700">{enabled ? t("settings.providerEnabled") : t("settings.providerDisabled")}</span>
+            </div>
+            {error && <p class="text-sm text-red-600">{error}</p>}
           </div>
-          {error && <p class="text-sm text-red-600">{error}</p>}
-        </div>
+        ) : (
+          <div class="px-6 py-5">
+            {modelsLoading ? (
+              <p class="text-sm text-gray-500">...</p>
+            ) : modelCatalog.length === 0 ? (
+              <p class="text-sm text-gray-500">{modelsError || t("settings.providerModelsEmpty")}</p>
+            ) : (
+              <div class="max-h-80 space-y-2 overflow-y-auto pr-1">
+                {modelCatalog.map((model) => (
+                  <label key={model.model} class="flex items-start gap-3 rounded-lg border border-gray-100 px-3 py-2 hover:bg-gray-50">
+                    <input
+                      type="checkbox"
+                      checked={!!modelSelected[model.model]}
+                      onChange={(e) => onToggleModel(model.model, (e.target as HTMLInputElement).checked)}
+                      class="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span class="min-w-0">
+                      <span class="block truncate text-sm font-medium text-gray-900">{providerModelLabel(model)}</span>
+                      <span class="block truncate text-xs text-gray-500">{model.model}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {modelsError && modelCatalog.length > 0 && <p class="mt-3 text-sm text-red-600">{modelsError}</p>}
+          </div>
+        )}
         <div class="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">
           <button
             type="button"
             onClick={onClose}
-            disabled={saving}
+            disabled={saving || modelsSaving}
             class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition-colors"
           >
             {t("upgrade.cancel")}
           </button>
           <button
             type="button"
-            onClick={onSave}
-            disabled={saving}
+            onClick={step === "models" ? onSaveModels : onSave}
+            disabled={saving || modelsSaving || (step === "models" && modelsLoading)}
             class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors"
           >
-            {saving ? "..." : t("settings.providerSave")}
+            {saving || modelsSaving ? "..." : step === "models" ? t("settings.providerModelsSave") : t("settings.providerSaveNext")}
           </button>
         </div>
       </div>

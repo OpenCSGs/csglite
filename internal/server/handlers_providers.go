@@ -250,6 +250,10 @@ func (s *Server) handleProviderDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save providers: "+err.Error())
 		return
 	}
+	if err := config.DeleteProviderModelAllowlist(id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete provider models: "+err.Error())
+		return
+	}
 	s.invalidateThirdPartyProviderModelsCache()
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})

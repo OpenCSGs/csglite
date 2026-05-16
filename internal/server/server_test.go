@@ -39,6 +39,7 @@ func TestMain(m *testing.M) {
 		_ = os.Setenv("USERPROFILE", home)
 	}
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	os.Exit(m.Run())
 }
 
@@ -48,7 +49,9 @@ func newTestServer(t *testing.T) *Server {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
 	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
 	dir := t.TempDir()
 	cfg := &config.Config{
 		ServerURL:  "https://hub.opencsg.com",
@@ -820,6 +823,10 @@ func TestRoutes(t *testing.T) {
 	}{
 		{"GET", "/"},
 		{"GET", "/api/tags"},
+		{"GET", "/api/tags/manage"},
+		{"POST", "/api/tags/manage"},
+		{"PUT", "/api/tags/manage"},
+		{"DELETE", "/api/tags/manage"},
 		{"GET", "/api/models/search"},
 		{"GET", "/api/models/test/model/manifest"},
 		{"GET", "/api/models/test/model/files/model.gguf"},
