@@ -114,6 +114,21 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Optional csghub-lite category key from `/api/pipeline-tags`. When provided, only models whose pipeline tag belongs to the category are returned.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "language_model",
+                "image_generation",
+                "video_generation",
+                "text_to_speech",
+                "speech_recognition"
+              ]
+            }
           }
         ],
         "responses": {
@@ -126,6 +141,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -3451,6 +3469,10 @@
         "properties": {
           "model": {
             "type": "string"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Optional custom display name shown in model lists. When omitted, the provider default name is used."
           }
         }
       },
@@ -3464,7 +3486,14 @@
           "models": {
             "type": "array",
             "items": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/components/schemas/ProviderTagModelRequest"
+                }
+              ]
             }
           }
         }
@@ -3672,7 +3701,9 @@
           "requests",
           "input_tokens",
           "output_tokens",
-          "total_tokens"
+          "total_tokens",
+          "local_tokens",
+          "cloud_tokens"
         ],
         "properties": {
           "requests": {
@@ -3690,6 +3721,16 @@
           "total_tokens": {
             "type": "integer",
             "minimum": 0
+          },
+          "local_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total tokens consumed by local models."
+          },
+          "cloud_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total tokens consumed by non-local models, including OpenCSG cloud and third-party providers."
           }
         }
       },

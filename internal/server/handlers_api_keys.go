@@ -110,11 +110,16 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 		resp.From = since
 	}
 	for _, record := range state.Records {
+		row := s.apiUsageRow(r.Context(), record)
 		resp.Totals.Requests += record.Requests
 		resp.Totals.InputTokens += record.InputTokens
 		resp.Totals.OutputTokens += record.OutputTokens
 		resp.Totals.TotalTokens += record.TotalTokens
-		row := s.apiUsageRow(r.Context(), record)
+		if row.SourceType == apiUsageSourceLocal {
+			resp.Totals.LocalTokens += record.TotalTokens
+		} else {
+			resp.Totals.CloudTokens += record.TotalTokens
+		}
 		resp.Rows = append(resp.Rows, row)
 		addAPIUsageSourceTotal(&resp.SourceTotals, row)
 	}

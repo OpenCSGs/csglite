@@ -50,8 +50,12 @@ func (s *Server) handleProviderTagsManageAdd(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	model = applyProviderModelDisplayName(model, req.DisplayName)
 	alreadySelected := modelIDInList(config.GetProviderModelAllowlist(provider.ID), model.Model)
-	if err := config.AddProviderModelAllowlist(provider.ID, model.Model); err != nil {
+	if err := config.AddProviderModelSelection(provider.ID, config.ProviderModelSelection{
+		Model:       model.Model,
+		DisplayName: strings.TrimSpace(req.DisplayName),
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save provider model: "+err.Error())
 		return
 	}
@@ -85,19 +89,23 @@ func (s *Server) handleProviderTagsManageReplace(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "invalid category")
 		return
 	}
-	selected := make([]string, 0, len(req.Models))
+	selected := make([]config.ProviderModelSelection, 0, len(req.Models))
 	selectedModels := make([]api.ModelInfo, 0, len(req.Models))
-	for _, modelID := range normalizeModelIDs(req.Models) {
-		model, ok := findModelInfoByID(catalog, modelID)
+	for _, requested := range normalizeProviderTagModelSelections(req.Models) {
+		model, ok := findModelInfoByID(catalog, requested.Model)
 		if !ok {
-			writeError(w, http.StatusNotFound, "provider model not found: "+modelID)
+			writeError(w, http.StatusNotFound, "provider model not found: "+requested.Model)
 			return
 		}
-		selected = append(selected, model.Model)
+		model = applyProviderModelDisplayName(model, requested.DisplayName)
+		selected = append(selected, config.ProviderModelSelection{
+			Model:       model.Model,
+			DisplayName: strings.TrimSpace(requested.DisplayName),
+		})
 		selectedModels = append(selectedModels, model)
 	}
 
-	if err := config.ReplaceProviderModelAllowlist(provider.ID, selected); err != nil {
+	if err := config.ReplaceProviderModelSelections(provider.ID, selected); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save provider models: "+err.Error())
 		return
 	}
@@ -190,6 +198,35 @@ func normalizeModelIDs(models []string) []string {
 		out = append(out, model)
 	}
 	return out
+}
+
+func normalizeProviderTagModelSelections(models []api.ProviderTagModelSelection) []api.ProviderTagModelSelection {
+	out := make([]api.ProviderTagModelSelection, 0, len(models))
+	seen := map[string]struct{}{}
+	for _, model := range models {
+		model.Model = strings.TrimSpace(model.Model)
+		model.DisplayName = strings.TrimSpace(model.DisplayName)
+		if model.Model == "" {
+			continue
+		}
+		if _, ok := seen[model.Model]; ok {
+			continue
+		}
+		seen[model.Model] = struct{}{}
+		out = append(out, model)
+	}
+	return out
+}
+
+func applyProviderModelDisplayName(model api.ModelInfo, displayName string) api.ModelInfo {
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		return model
+	}
+	model.Name = displayName
+	model.DisplayName = displayName
+	model.Label = displayName
+	return model
 }
 
 func modelIDInList(models []string, modelID string) bool {

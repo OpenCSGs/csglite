@@ -147,6 +147,9 @@ func TestAPIUsageAggregatesByKeyAndModel(t *testing.T) {
 	if resp.Totals.Requests != 2 || resp.Totals.InputTokens != 5 || resp.Totals.OutputTokens != 12 || resp.Totals.TotalTokens != 17 {
 		t.Fatalf("unexpected totals: %#v", resp.Totals)
 	}
+	if resp.Totals.LocalTokens != 17 || resp.Totals.CloudTokens != 0 {
+		t.Fatalf("unexpected source token totals: %#v", resp.Totals)
+	}
 	if len(resp.TotalSummary.XAxis) != 1 || len(resp.TotalSummary.Series) != 3 {
 		t.Fatalf("unexpected total summary shape: %#v", resp.TotalSummary)
 	}
@@ -185,7 +188,7 @@ func TestAPIUsageRecordsBuiltinClientWithoutAPIKey(t *testing.T) {
 	if resp.Rows[0].APIKeyID != apiUsageBuiltinKeyID || resp.Rows[0].APIKeyName != apiUsageBuiltinKeyName {
 		t.Fatalf("unexpected builtin client row: %#v", resp.Rows[0])
 	}
-	if resp.Rows[0].SourceType != "provider" || resp.Totals.TotalTokens != 10 {
+	if resp.Rows[0].SourceType != "provider" || resp.Totals.TotalTokens != 10 || resp.Totals.CloudTokens != 10 {
 		t.Fatalf("unexpected usage row: %#v totals=%#v", resp.Rows[0], resp.Totals)
 	}
 }
@@ -290,7 +293,7 @@ func TestAPIUsageFiltersByPeriod(t *testing.T) {
 	if resp.Period != "week" || resp.From == nil {
 		t.Fatalf("period = %q from=%v, want week with from", resp.Period, resp.From)
 	}
-	if resp.Totals.TotalTokens != 7 || len(resp.Rows) != 1 || resp.Rows[0].Model != "new/model" {
+	if resp.Totals.TotalTokens != 7 || resp.Totals.CloudTokens != 7 || len(resp.Rows) != 1 || resp.Rows[0].Model != "new/model" {
 		t.Fatalf("unexpected weekly usage: %#v", resp)
 	}
 	if len(resp.TotalSummary.XAxis) != 1 || resp.TotalSummary.Series[0].Data[0] != 7 || resp.TotalSummary.Series[2].Data[0] != 7 {

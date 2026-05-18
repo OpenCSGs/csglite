@@ -408,6 +408,39 @@ func TestThirdPartyModelProviderUsesConfiguredName(t *testing.T) {
 		t.Fatalf("category = %q, want language_model", tagsResp.Models[0].Category)
 	}
 
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan&category=language_model", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("language category status = %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
+		t.Fatalf("decode language category tags: %v", err)
+	}
+	if len(tagsResp.Models) != 1 || tagsResp.Models[0].Model != "mi-model" {
+		t.Fatalf("language category models = %#v, want mi-model", tagsResp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan&category=image_generation", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("image category status = %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
+		t.Fatalf("decode image category tags: %v", err)
+	}
+	if len(tagsResp.Models) != 0 {
+		t.Fatalf("image category models = %#v, want none", tagsResp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan&category=bad", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid category status = %d body=%s", w.Code, w.Body.String())
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=openai", nil)
 	w = httptest.NewRecorder()
 	s.handleTags(w, req)
@@ -603,6 +636,26 @@ func TestProviderTagsManageReplaceModels(t *testing.T) {
 	got := config.GetProviderModelAllowlist("provider1")
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
 		t.Fatalf("allowlist = %#v, want a,b", got)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/tags/manage?provider=provider1", strings.NewReader(`{"models":[{"model":"a","display_name":"Renamed A"}]}`))
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageReplace(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("replace display name status = %d body=%s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("tags display name status = %d body=%s", w.Code, w.Body.String())
+	}
+	var selectedResp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&selectedResp); err != nil {
+		t.Fatalf("decode display name tags: %v", err)
+	}
+	if len(selectedResp.Models) != 1 || selectedResp.Models[0].DisplayName != "Renamed A" || selectedResp.Models[0].Label != "Renamed A" {
+		t.Fatalf("renamed selected models = %#v, want Renamed A", selectedResp.Models)
 	}
 
 	req = httptest.NewRequest(http.MethodPut, "/api/tags/manage?provider=provider1&category=image_generation", strings.NewReader(`{"models":["a","b"]}`))

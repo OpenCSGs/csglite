@@ -81,23 +81,24 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 			if !modelMatchesProvider(info, provider) {
 				continue
 			}
-			if info.Provider == "" {
-				info.Provider = modelProviderID(info)
-			}
-			if info.Category == "" {
-				info.Category = categoryForPipelineTag(info.PipelineTag)
-			}
 			filtered = append(filtered, info)
 		}
 		infos = filtered
-	} else {
-		for i := range infos {
-			if infos[i].Provider == "" {
-				infos[i].Provider = modelProviderID(infos[i])
-			}
-			if infos[i].Category == "" {
-				infos[i].Category = categoryForPipelineTag(infos[i].PipelineTag)
-			}
+	}
+
+	var ok bool
+	infos, ok = filterModelsByPipelineCategory(infos, r.URL.Query().Get("category"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid category")
+		return
+	}
+
+	for i := range infos {
+		if infos[i].Provider == "" {
+			infos[i].Provider = modelProviderID(infos[i])
+		}
+		if infos[i].Category == "" {
+			infos[i].Category = categoryForPipelineTag(infos[i].PipelineTag)
 		}
 	}
 

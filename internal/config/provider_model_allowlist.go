@@ -11,8 +11,13 @@ import (
 const ProviderModelAllowlistFile = "provider_model_allowlist.json"
 
 type ProviderModelAllowlist struct {
-	Version   int                 `json:"version"`
-	Providers map[string][]string `json:"providers"`
+	Version   int                                 `json:"version"`
+	Providers map[string][]ProviderModelSelection `json:"providers"`
+}
+
+type ProviderModelSelection struct {
+	Model       string `json:"model"`
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 var (
@@ -34,7 +39,7 @@ func LoadProviderModelAllowlist() (ProviderModelAllowlist, error) {
 	providerModelAllowlistOnce.Do(func() {
 		providerModelAllowlist = ProviderModelAllowlist{
 			Version:   1,
-			Providers: map[string][]string{},
+			Providers: map[string][]ProviderModelSelection{},
 		}
 
 		cfgPath, err := ProviderModelAllowlistPath()
@@ -63,19 +68,36 @@ func LoadProviderModelAllowlist() (ProviderModelAllowlist, error) {
 }
 
 func GetProviderModelAllowlist(providerID string) []string {
+	selections := GetProviderModelSelections(providerID)
+	models := make([]string, 0, len(selections))
+	for _, selection := range selections {
+		models = append(models, selection.Model)
+	}
+	return models
+}
+
+func GetProviderModelSelections(providerID string) []ProviderModelSelection {
 	providerModelAllowlistMu.RLock()
 	if providerModelAllowlist.Providers != nil {
-		models := append([]string{}, providerModelAllowlist.Providers[strings.TrimSpace(providerID)]...)
+		models := copyProviderModelSelections(providerModelAllowlist.Providers[strings.TrimSpace(providerID)])
 		providerModelAllowlistMu.RUnlock()
 		return models
 	}
 	providerModelAllowlistMu.RUnlock()
 
 	state, _ := LoadProviderModelAllowlist()
-	return append([]string{}, state.Providers[strings.TrimSpace(providerID)]...)
+	return copyProviderModelSelections(state.Providers[strings.TrimSpace(providerID)])
 }
 
 func ReplaceProviderModelAllowlist(providerID string, models []string) error {
+	selections := make([]ProviderModelSelection, 0, len(models))
+	for _, model := range models {
+		selections = append(selections, ProviderModelSelection{Model: model})
+	}
+	return ReplaceProviderModelSelections(providerID, selections)
+}
+
+func ReplaceProviderModelSelections(providerID string, models []ProviderModelSelection) error {
 	providerID = strings.TrimSpace(providerID)
 	if providerID == "" {
 		return nil
@@ -91,21 +113,26 @@ func ReplaceProviderModelAllowlist(providerID string, models []string) error {
 	}
 	providerModelAllowlist.Version = 1
 	if providerModelAllowlist.Providers == nil {
-		providerModelAllowlist.Providers = map[string][]string{}
+		providerModelAllowlist.Providers = map[string][]ProviderModelSelection{}
 	}
-	providerModelAllowlist.Providers[providerID] = normalizeModelIDList(models)
+	providerModelAllowlist.Providers[providerID] = normalizeProviderModelSelections(models)
 	return saveProviderModelAllowlistLocked()
 }
 
 func AddProviderModelAllowlist(providerID, modelID string) error {
+	return AddProviderModelSelection(providerID, ProviderModelSelection{Model: modelID})
+}
+
+func AddProviderModelSelection(providerID string, selection ProviderModelSelection) error {
 	providerID = strings.TrimSpace(providerID)
-	modelID = strings.TrimSpace(modelID)
-	if providerID == "" || modelID == "" {
+	selection.Model = strings.TrimSpace(selection.Model)
+	selection.DisplayName = strings.TrimSpace(selection.DisplayName)
+	if providerID == "" || selection.Model == "" {
 		return nil
 	}
-	models := GetProviderModelAllowlist(providerID)
-	models = append(models, modelID)
-	return ReplaceProviderModelAllowlist(providerID, models)
+	models := GetProviderModelSelections(providerID)
+	models = append(models, selection)
+	return ReplaceProviderModelSelections(providerID, models)
 }
 
 func RemoveProviderModelAllowlist(providerID, modelID string) (bool, error) {
@@ -115,11 +142,11 @@ func RemoveProviderModelAllowlist(providerID, modelID string) (bool, error) {
 		return false, nil
 	}
 
-	models := GetProviderModelAllowlist(providerID)
-	out := make([]string, 0, len(models))
+	models := GetProviderModelSelections(providerID)
+	out := make([]ProviderModelSelection, 0, len(models))
 	removed := false
 	for _, model := range models {
-		if model == modelID {
+		if model.Model == modelID {
 			removed = true
 			continue
 		}
@@ -128,7 +155,7 @@ func RemoveProviderModelAllowlist(providerID, modelID string) (bool, error) {
 	if !removed {
 		return false, nil
 	}
-	return true, ReplaceProviderModelAllowlist(providerID, out)
+	return true, ReplaceProviderModelSelections(providerID, out)
 }
 
 func DeleteProviderModelAllowlist(providerID string) error {
@@ -176,7 +203,7 @@ func normalizeProviderModelAllowlist(state ProviderModelAllowlist) ProviderModel
 		state.Version = 1
 	}
 	if state.Providers == nil {
-		state.Providers = map[string][]string{}
+		state.Providers = map[string][]ProviderModelSelection{}
 	}
 	for rawProviderID, models := range state.Providers {
 		providerID := strings.TrimSpace(rawProviderID)
@@ -187,7 +214,7 @@ func normalizeProviderModelAllowlist(state ProviderModelAllowlist) ProviderModel
 		if providerID != rawProviderID {
 			delete(state.Providers, rawProviderID)
 		}
-		state.Providers[providerID] = normalizeModelIDList(models)
+		state.Providers[providerID] = normalizeProviderModelSelections(models)
 	}
 	return state
 }
@@ -209,14 +236,53 @@ func normalizeModelIDList(models []string) []string {
 	return out
 }
 
+func normalizeProviderModelSelections(models []ProviderModelSelection) []ProviderModelSelection {
+	out := make([]ProviderModelSelection, 0, len(models))
+	seen := map[string]struct{}{}
+	for _, model := range models {
+		model.Model = strings.TrimSpace(model.Model)
+		model.DisplayName = strings.TrimSpace(model.DisplayName)
+		if model.Model == "" {
+			continue
+		}
+		if _, ok := seen[model.Model]; ok {
+			continue
+		}
+		seen[model.Model] = struct{}{}
+		out = append(out, model)
+	}
+	return out
+}
+
+func copyProviderModelSelections(models []ProviderModelSelection) []ProviderModelSelection {
+	return append([]ProviderModelSelection{}, models...)
+}
+
 func copyProviderModelAllowlist(state ProviderModelAllowlist) ProviderModelAllowlist {
 	state = normalizeProviderModelAllowlist(state)
 	out := ProviderModelAllowlist{
 		Version:   state.Version,
-		Providers: make(map[string][]string, len(state.Providers)),
+		Providers: make(map[string][]ProviderModelSelection, len(state.Providers)),
 	}
 	for providerID, models := range state.Providers {
-		out.Providers[providerID] = append([]string{}, models...)
+		out.Providers[providerID] = copyProviderModelSelections(models)
 	}
 	return out
+}
+
+func (s *ProviderModelSelection) UnmarshalJSON(data []byte) error {
+	var model string
+	if err := json.Unmarshal(data, &model); err == nil {
+		s.Model = strings.TrimSpace(model)
+		s.DisplayName = ""
+		return nil
+	}
+	type alias ProviderModelSelection
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	s.Model = strings.TrimSpace(decoded.Model)
+	s.DisplayName = strings.TrimSpace(decoded.DisplayName)
+	return nil
 }

@@ -29,7 +29,7 @@ import {
   deleteLocalAPIKey,
   getLocalAPIUsage,
 } from "../api/client";
-import type { AppSettings, CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, LocalDirectoryBrowseResponse, ModelInfo, ThirdPartyProvider, WebSearchSettings } from "../api/client";
+import type { AppSettings, CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, LocalDirectoryBrowseResponse, ModelInfo, ProviderTagModelSelection, ThirdPartyProvider, WebSearchSettings } from "../api/client";
 
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
@@ -88,6 +88,7 @@ const providerDialogStep = signal<"details" | "models">("details");
 const providerModelTarget = signal<ThirdPartyProvider | null>(null);
 const providerModelCatalog = signal<ModelInfo[]>([]);
 const providerModelSelected = signal<Record<string, boolean>>({});
+const providerModelDisplayNames = signal<Record<string, string>>({});
 const providerModelsLoading = signal(false);
 const providerModelsSaving = signal(false);
 const providerModelsError = signal("");
@@ -234,7 +235,7 @@ async function fetchProviders() {
     const entries = await Promise.all(
       list.map(async (provider) => {
         try {
-          return [provider.id, await getProviderSelectedTags(provider.id)] as const;
+          return [provider.id, await getProviderSelectedTags(provider.name || provider.id)] as const;
         } catch {
           return [provider.id, []] as const;
         }
@@ -455,6 +456,7 @@ function openProviderDialog(provider?: ThirdPartyProvider) {
   providerDialogStep.value = "details";
   providerModelCatalog.value = [];
   providerModelSelected.value = {};
+  providerModelDisplayNames.value = {};
   providerModelsError.value = "";
   providerFormName.value = provider?.name || "";
   providerFormBaseURL.value = provider?.base_url || "";
@@ -473,6 +475,7 @@ function closeProviderDialog() {
   providerDialogStep.value = "details";
   providerModelCatalog.value = [];
   providerModelSelected.value = {};
+  providerModelDisplayNames.value = {};
   providerModelsError.value = "";
   providerFormError.value = "";
 }
@@ -483,14 +486,22 @@ async function loadProviderDialogModels(provider: ThirdPartyProvider) {
   try {
     const [catalog, selected] = await Promise.all([
       getProviderManageTags(provider.id),
-      getProviderSelectedTags(provider.id),
+      getProviderSelectedTags(provider.name || provider.id),
     ]);
     const selectedIDs = new Set(selected.map((model) => model.model));
+    const defaultNames = Object.fromEntries(catalog.map((model) => [model.model, defaultProviderModelDisplayName(model)] as const));
+    const selectedDisplayNames = Object.fromEntries(selected.flatMap((model) => {
+      const displayName = defaultProviderModelDisplayName(model).trim();
+      const defaultName = (defaultNames[model.model] || model.model).trim();
+      return displayName && displayName !== defaultName ? [[model.model, displayName] as const] : [];
+    }));
     providerModelCatalog.value = catalog;
     providerModelSelected.value = Object.fromEntries(catalog.map((model) => [model.model, selectedIDs.has(model.model)]));
+    providerModelDisplayNames.value = selectedDisplayNames;
   } catch (err: any) {
     providerModelCatalog.value = [];
     providerModelSelected.value = {};
+    providerModelDisplayNames.value = {};
     providerModelsError.value = err?.message || t("settings.providerModelsLoadFailed");
   } finally {
     providerModelsLoading.value = false;
@@ -561,9 +572,12 @@ async function saveProviderModels() {
   providerModelsSaving.value = true;
   providerModelsError.value = "";
   try {
-    const selected = providerModelCatalog.value
+    const selected: ProviderTagModelSelection[] = providerModelCatalog.value
       .filter((model) => providerModelSelected.value[model.model])
-      .map((model) => model.model);
+      .map((model) => ({
+        model: model.model,
+        display_name: (providerModelDisplayNames.value[model.model] || "").trim() || undefined,
+      }));
     await replaceProviderManageTags(provider.id, selected);
     await fetchProviders();
     notifyProvidersChanged();
@@ -585,8 +599,19 @@ function toggleProviderModel(modelID: string, checked: boolean) {
   };
 }
 
-function providerModelLabel(model: ModelInfo): string {
+function changeProviderModelDisplayName(modelID: string, value: string) {
+  providerModelDisplayNames.value = {
+    ...providerModelDisplayNames.value,
+    [modelID]: value,
+  };
+}
+
+function defaultProviderModelDisplayName(model: ModelInfo): string {
   return model.display_name || model.label || model.model;
+}
+
+function providerModelLabel(model: ModelInfo): string {
+  return defaultProviderModelDisplayName(model);
 }
 
 function pipelineTagLabel(tag?: string): string {
@@ -1582,6 +1607,7 @@ export function Settings() {
         modelTarget={providerModelTarget.value}
         modelCatalog={providerModelCatalog.value}
         modelSelected={providerModelSelected.value}
+        modelDisplayNames={providerModelDisplayNames.value}
         modelsLoading={providerModelsLoading.value}
         modelsSaving={providerModelsSaving.value}
         modelsError={providerModelsError.value}
@@ -1589,6 +1615,7 @@ export function Settings() {
         onSave={() => void saveProviderForm()}
         onSaveModels={() => void saveProviderModels()}
         onToggleModel={toggleProviderModel}
+        onChangeModelDisplayName={changeProviderModelDisplayName}
         onChangeName={(value) => (providerFormName.value = value)}
         onChangeBaseURL={(value) => (providerFormBaseURL.value = value)}
         onChangeAPIKey={(value) => (providerFormAPIKey.value = value)}
@@ -1828,8 +1855,8 @@ function UsageStatisticsSection() {
       </div>
       <div class="grid gap-4 md:grid-cols-3">
         <UsageCard label={t("settings.apiUsageCumulative")} value={formatNumber(lastSummaryValue(summary, 0, usage?.totals.total_tokens || 0))} tone="orange" />
-        <UsageCard label={t("settings.apiUsageLocalModels")} value={formatNumber(lastSummaryValue(summary, 1, 0))} tone="green" />
-        <UsageCard label={t("settings.apiUsageCloudModels")} value={formatNumber(lastSummaryValue(summary, 2, 0))} tone="purple" />
+        <UsageCard label={t("settings.apiUsageLocalModels")} value={formatNumber(lastSummaryValue(summary, 1, usage?.totals.local_tokens || 0))} tone="green" />
+        <UsageCard label={t("settings.apiUsageCloudModels")} value={formatNumber(lastSummaryValue(summary, 2, usage?.totals.cloud_tokens || 0))} tone="purple" />
       </div>
       <UsageSummaryChart summary={summary} />
       {localAPIUsageError.value && <p class="mt-3 text-sm text-red-600">{localAPIUsageError.value}</p>}
@@ -2090,6 +2117,7 @@ function ProviderDialog({
   modelTarget,
   modelCatalog,
   modelSelected,
+  modelDisplayNames,
   modelsLoading,
   modelsSaving,
   modelsError,
@@ -2097,6 +2125,7 @@ function ProviderDialog({
   onSave,
   onSaveModels,
   onToggleModel,
+  onChangeModelDisplayName,
   onChangeName,
   onChangeBaseURL,
   onChangeAPIKey,
@@ -2116,6 +2145,7 @@ function ProviderDialog({
   modelTarget: ThirdPartyProvider | null;
   modelCatalog: ModelInfo[];
   modelSelected: Record<string, boolean>;
+  modelDisplayNames: Record<string, string>;
   modelsLoading: boolean;
   modelsSaving: boolean;
   modelsError: string;
@@ -2123,6 +2153,7 @@ function ProviderDialog({
   onSave: () => void;
   onSaveModels: () => void;
   onToggleModel: (modelID: string, checked: boolean) => void;
+  onChangeModelDisplayName: (modelID: string, value: string) => void;
   onChangeName: (value: string) => void;
   onChangeBaseURL: (value: string) => void;
   onChangeAPIKey: (value: string) => void;
@@ -2208,7 +2239,7 @@ function ProviderDialog({
             ) : (
               <div class="max-h-80 space-y-2 overflow-y-auto pr-1">
                 {modelCatalog.map((model) => (
-                  <label key={model.model} class="flex items-start gap-3 rounded-lg border border-gray-100 px-3 py-2 hover:bg-gray-50">
+                  <div key={model.model} class="flex items-start gap-3 rounded-lg border border-gray-100 px-3 py-2 hover:bg-gray-50">
                     <input
                       type="checkbox"
                       checked={!!modelSelected[model.model]}
@@ -2221,8 +2252,15 @@ function ProviderDialog({
                         <ProviderModelModalityBadges model={model} showPipelineTag showInputs showOutputs />
                       </span>
                       <span class="block truncate text-xs text-gray-500">{model.model}</span>
+                      <input
+                        class="mt-2 w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+                        value={modelDisplayNames[model.model] || ""}
+                        disabled={!modelSelected[model.model]}
+                        onInput={(e) => onChangeModelDisplayName(model.model, (e.target as HTMLInputElement).value)}
+                        placeholder={t("settings.providerModelDisplayNamePlaceholder")}
+                      />
                     </span>
-                  </label>
+                  </div>
                 ))}
               </div>
             )}

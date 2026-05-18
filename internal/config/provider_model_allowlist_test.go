@@ -28,6 +28,32 @@ func TestProviderModelAllowlistSaveLoadAndNormalize(t *testing.T) {
 	}
 }
 
+func TestProviderModelAllowlistStoresDisplayNames(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ResetProviderModelAllowlist()
+	t.Cleanup(ResetProviderModelAllowlist)
+
+	if err := ReplaceProviderModelSelections(" provider1 ", []ProviderModelSelection{
+		{Model: " a ", DisplayName: " Renamed A "},
+		{Model: "b"},
+		{Model: "a", DisplayName: "Duplicate"},
+	}); err != nil {
+		t.Fatalf("replace allowlist: %v", err)
+	}
+	got := GetProviderModelSelections("provider1")
+	if len(got) != 2 || got[0].Model != "a" || got[0].DisplayName != "Renamed A" || got[1].Model != "b" || got[1].DisplayName != "" {
+		t.Fatalf("selections = %#v, want renamed a and default b", got)
+	}
+
+	ResetProviderModelAllowlist()
+	got = GetProviderModelSelections("provider1")
+	if len(got) != 2 || got[0].DisplayName != "Renamed A" {
+		t.Fatalf("loaded selections = %#v, want persisted display name", got)
+	}
+}
+
 func TestProviderModelAllowlistRemoveAndDelete(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

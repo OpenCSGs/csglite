@@ -198,6 +198,8 @@ export interface LocalAPIUsageTotals {
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;
+  local_tokens: number;
+  cloud_tokens: number;
 }
 
 export interface LocalAPIUsageRow {
@@ -222,6 +224,11 @@ export interface LocalAPIUsageSourceTotal {
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;
+}
+
+export interface ProviderTagModelSelection {
+  model: string;
+  display_name?: string;
 }
 
 export interface LocalAPIUsageSummarySeries {
@@ -429,7 +436,7 @@ export async function getProviderManageTags(provider: string, category?: string)
   return data.models || [];
 }
 
-export async function replaceProviderManageTags(provider: string, models: string[], category?: string): Promise<ModelInfo[]> {
+export async function replaceProviderManageTags(provider: string, models: ProviderTagModelSelection[], category?: string): Promise<ModelInfo[]> {
   const query = new URLSearchParams({ provider });
   if (category?.trim()) query.set("category", category.trim());
   const data = await fetchJSON<{ models: ModelInfo[] }>(`/api/tags/manage?${query}`, {

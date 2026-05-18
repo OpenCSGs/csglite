@@ -1,6 +1,10 @@
 package api
 
-import "time"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 // -- Request types --
 
@@ -379,6 +383,8 @@ type APIUsageTotals struct {
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
 	TotalTokens  int64 `json:"total_tokens"`
+	LocalTokens  int64 `json:"local_tokens"`
+	CloudTokens  int64 `json:"cloud_tokens"`
 }
 
 type APIUsageRow struct {
@@ -620,11 +626,34 @@ type ThirdPartyProviderUpdateRequest struct {
 }
 
 type ProviderTagModelRequest struct {
-	Model string `json:"model"`
+	Model       string `json:"model"`
+	DisplayName string `json:"display_name,omitempty"`
+}
+
+type ProviderTagModelSelection struct {
+	Model       string `json:"model"`
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 type ProviderTagModelsReplaceRequest struct {
-	Models []string `json:"models"`
+	Models []ProviderTagModelSelection `json:"models"`
+}
+
+func (s *ProviderTagModelSelection) UnmarshalJSON(data []byte) error {
+	var model string
+	if err := json.Unmarshal(data, &model); err == nil {
+		s.Model = strings.TrimSpace(model)
+		s.DisplayName = ""
+		return nil
+	}
+	type alias ProviderTagModelSelection
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	s.Model = strings.TrimSpace(decoded.Model)
+	s.DisplayName = strings.TrimSpace(decoded.DisplayName)
+	return nil
 }
 
 // -- Conversation history types --

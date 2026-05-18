@@ -133,17 +133,17 @@ func (s *Server) listSelectedThirdPartyProviderModels(ctx context.Context) []api
 		return nil
 	}
 
-	selectedByProvider := make(map[string]map[string]struct{}, len(providers))
+	selectedByProvider := make(map[string]map[string]string, len(providers))
 	for _, provider := range providers {
-		modelIDs := config.GetProviderModelAllowlist(provider.ID)
-		if len(modelIDs) == 0 {
+		selections := config.GetProviderModelSelections(provider.ID)
+		if len(selections) == 0 {
 			continue
 		}
-		selected := make(map[string]struct{}, len(modelIDs))
-		for _, modelID := range modelIDs {
-			modelID = strings.TrimSpace(modelID)
+		selected := make(map[string]string, len(selections))
+		for _, selection := range selections {
+			modelID := strings.TrimSpace(selection.Model)
 			if modelID != "" {
-				selected[modelID] = struct{}{}
+				selected[modelID] = strings.TrimSpace(selection.DisplayName)
 			}
 		}
 		if len(selected) > 0 {
@@ -164,7 +164,12 @@ func (s *Server) listSelectedThirdPartyProviderModels(ctx context.Context) []api
 		if selected == nil {
 			continue
 		}
-		if _, ok := selected[strings.TrimSpace(model.Model)]; ok {
+		if displayName, ok := selected[strings.TrimSpace(model.Model)]; ok {
+			if displayName != "" {
+				model.Name = displayName
+				model.DisplayName = displayName
+				model.Label = displayName
+			}
 			out = append(out, model)
 		}
 	}
