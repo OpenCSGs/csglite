@@ -94,6 +94,7 @@ type Manager struct {
 	states      map[string]*appState
 	latestMu    sync.Mutex
 	latestCache map[string]latestVersionCacheEntry
+	latestJobs  map[string]struct{}
 }
 
 type installDetectionState struct {
@@ -112,6 +113,7 @@ func NewManager(cfg *config.Config) *Manager {
 		specs:       appSpecs(),
 		states:      make(map[string]*appState),
 		latestCache: make(map[string]latestVersionCacheEntry),
+		latestJobs:  make(map[string]struct{}),
 	}
 
 	for _, spec := range m.specs {
@@ -450,11 +452,8 @@ func (m *Manager) UnsubscribeLogs(appID string, ch chan string) {
 }
 
 func (m *Manager) EnrichLatestVersion(ctx context.Context, info *api.AIAppInfo) {
-	if info == nil || !info.Supported || info.Disabled || !info.Installed || !info.Managed {
-		return
-	}
-	spec, ok := m.specByID(info.ID)
-	if !ok || spec.latest == nil {
+	spec, ok := m.latestVersionSpec(info)
+	if !ok {
 		return
 	}
 	latest, ok := m.resolveLatestVersion(ctx, spec)
@@ -463,6 +462,66 @@ func (m *Manager) EnrichLatestVersion(ctx context.Context, info *api.AIAppInfo) 
 	}
 	info.LatestVersion = latest
 	info.UpdateAvailable = appUpdateAvailable(info.Version, latest)
+}
+
+func (m *Manager) EnrichCachedLatestVersion(info *api.AIAppInfo) {
+	if info == nil {
+		return
+	}
+	if _, ok := m.latestVersionSpec(info); !ok {
+		return
+	}
+
+	m.latestMu.Lock()
+	cached, ok := m.latestCache[info.ID]
+	m.latestMu.Unlock()
+	if !ok || cached.version == "" {
+		return
+	}
+
+	info.LatestVersion = cached.version
+	info.UpdateAvailable = appUpdateAvailable(info.Version, cached.version)
+}
+
+func (m *Manager) RefreshLatestVersionAsync(info api.AIAppInfo) {
+	spec, ok := m.latestVersionSpec(&info)
+	if !ok {
+		return
+	}
+
+	cacheKey := spec.id
+	now := time.Now()
+	m.latestMu.Lock()
+	if cached, ok := m.latestCache[cacheKey]; ok && now.Before(cached.expiresAt) {
+		m.latestMu.Unlock()
+		return
+	}
+	if _, ok := m.latestJobs[cacheKey]; ok {
+		m.latestMu.Unlock()
+		return
+	}
+	m.latestJobs[cacheKey] = struct{}{}
+	m.latestMu.Unlock()
+
+	go func() {
+		defer func() {
+			m.latestMu.Lock()
+			delete(m.latestJobs, cacheKey)
+			m.latestMu.Unlock()
+		}()
+		_, _ = m.resolveLatestVersion(context.Background(), spec)
+	}()
+}
+
+func (m *Manager) latestVersionSpec(info *api.AIAppInfo) (appSpec, bool) {
+	if info == nil || !info.Supported || info.Disabled || !info.Installed || !info.Managed {
+		return appSpec{}, false
+	}
+	spec, ok := m.specByID(info.ID)
+	if !ok || spec.latest == nil {
+		return appSpec{}, false
+	}
+	return spec, true
 }
 
 func (m *Manager) specByID(appID string) (appSpec, bool) {

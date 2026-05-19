@@ -699,7 +699,7 @@ func TestProviderTagsManageReplaceModels(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&patched); err != nil {
 		t.Fatalf("decode model id patch: %v", err)
 	}
-	if patched.Model != "alias-a" || patched.DisplayName != "Patched A" {
+	if patched.Model != "alias-a" || patched.DisplayName != "Patched A" || patched.Description != "Patched description" {
 		t.Fatalf("model id patch = %#v, want alias-a with patched metadata", patched)
 	}
 	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)

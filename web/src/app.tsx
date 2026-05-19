@@ -10,6 +10,7 @@ import { Settings } from "./pages/Settings";
 import { Pricing } from "./pages/Pricing";
 import { AIApps } from "./pages/AIApps";
 import { AIAppShell } from "./pages/AIAppShell";
+import { AIGateway } from "./pages/AIGateway";
 
 export function App() {
   return (
@@ -36,6 +37,7 @@ function AppRoutes() {
         <Route path="/datasets" component={Datasets} />
         <Route path="/chat" component={Chat} />
         <Route path="/ai-apps" component={AIApps} />
+        <Route path="/ai-gateway" component={AIGateway} />
         <Route path="/settings" component={Settings} />
         <Route path="/pricing" component={Pricing} />
       </Router>

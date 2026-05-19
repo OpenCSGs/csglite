@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -104,6 +105,78 @@ func TestHandleAppsDoesNotResolveDefaultModelIDWithoutPreference(t *testing.T) {
 	info := findAIAppInfo(t, resp.Apps, "claude-code")
 	if info.ModelID != "" {
 		t.Fatalf("claude-code model_id = %q, want empty without saved preference", info.ModelID)
+	}
+}
+
+func TestHandleAppsReturnsBeforeLatestVersionLookup(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("APPDATA", filepath.Join(homeDir, "AppData", "Roaming"))
+	}
+
+	addFakeAppBinary(t, "claude")
+	markerPath := filepath.Join(homeDir, ".csghub-lite", "apps", "managed", "claude-code.installed")
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err != nil {
+		t.Fatalf("mkdir marker dir: %v", err)
+	}
+	if err := os.WriteFile(markerPath, []byte("managed\n"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	latestRequested := make(chan struct{}, 1)
+	releaseLatest := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseLatest)
+		})
+	}
+	latestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/latest" {
+			t.Errorf("latest path = %q, want /latest", r.URL.Path)
+		}
+		select {
+		case latestRequested <- struct{}{}:
+		default:
+		}
+		<-releaseLatest
+		_, _ = w.Write([]byte("9.9.9\n"))
+	}))
+	defer latestServer.Close()
+	defer release()
+	t.Setenv("CSGHUB_LITE_CLAUDE_DIST_BASE_URL", latestServer.URL)
+
+	s := New(&config.Config{
+		ModelDir:             t.TempDir(),
+		ListenAddr:           ":11435",
+		AIAppPreferredModels: map[string]string{},
+	}, "test")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/apps", nil)
+
+	done := make(chan struct{})
+	go func() {
+		s.handleApps(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(750 * time.Millisecond):
+		release()
+		<-done
+		t.Fatal("handleApps blocked on latest version lookup")
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleApps status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	select {
+	case <-latestRequested:
+	case <-time.After(time.Second):
+		t.Fatal("expected latest version lookup to start in the background")
 	}
 }
 

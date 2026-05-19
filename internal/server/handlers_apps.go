@@ -234,7 +234,8 @@ func (s *Server) enrichAIAppListItem(ctx context.Context, info *api.AIAppInfo) {
 	if !info.Supported || info.Disabled {
 		return
 	}
-	s.appManager.EnrichLatestVersion(ctx, info)
+	s.appManager.EnrichCachedLatestVersion(info)
+	s.appManager.RefreshLatestVersionAsync(*info)
 	info.ModelID = s.preferredAIAppModel(info.ID)
 }
 
