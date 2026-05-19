@@ -543,8 +543,20 @@ async function saveProviderModelEdit() {
       closeProviderModelEditDialog();
       return;
     }
-    await updateProviderManageTag(provider.id, currentID, payload);
-    await fetchProviders();
+    const updated = await updateProviderManageTag(provider.id, currentID, payload);
+    const currentModels = providerSelectedModels.value[provider.id] || [];
+    let replaced = false;
+    const nextModels = currentModels.map((model) => {
+      if (model.model !== currentID) {
+        return model;
+      }
+      replaced = true;
+      return updated;
+    });
+    providerSelectedModels.value = {
+      ...providerSelectedModels.value,
+      [provider.id]: replaced ? nextModels : [...nextModels, updated],
+    };
     notifyProvidersChanged();
     providerModelEditSaving.value = false;
     closeProviderModelEditDialog();

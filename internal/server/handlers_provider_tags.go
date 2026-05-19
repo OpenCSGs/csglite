@@ -175,7 +175,6 @@ func (s *Server) handleProviderTagsManageUpdate(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusNotFound, "provider model not selected")
 		return
 	}
-	s.invalidateThirdPartyProviderModelsCache()
 
 	model := api.ModelInfo{
 		Name:        selection.Model,
