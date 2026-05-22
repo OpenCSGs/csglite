@@ -93,6 +93,60 @@ func TestRunConfigShowAndGetIncludeDefaultAIGatewayURL(t *testing.T) {
 	}
 }
 
+func TestRunConfigSetServerURLClearsTokenWhenChanged(t *testing.T) {
+	setupCLIConfigHome(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+	cfg.Token = "existing-token"
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("config.Save() error: %v", err)
+	}
+
+	if err := runConfigSet(nil, []string{"server_url", "https://opencsg-stg.com"}); err != nil {
+		t.Fatalf("runConfigSet(server_url) error: %v", err)
+	}
+
+	config.Reset()
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() after set error: %v", err)
+	}
+	if cfg.ServerURL != "https://opencsg-stg.com" {
+		t.Fatalf("ServerURL = %q, want staging URL", cfg.ServerURL)
+	}
+	if cfg.Token != "" {
+		t.Fatalf("Token = %q, want empty after server_url change", cfg.Token)
+	}
+}
+
+func TestRunConfigSetServerURLKeepsTokenWhenUnchanged(t *testing.T) {
+	setupCLIConfigHome(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+	cfg.ServerURL = "https://opencsg-stg.com"
+	cfg.Token = "existing-token"
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("config.Save() error: %v", err)
+	}
+
+	if err := runConfigSet(nil, []string{"server_url", " https://opencsg-stg.com "}); err != nil {
+		t.Fatalf("runConfigSet(server_url) error: %v", err)
+	}
+
+	config.Reset()
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() after set error: %v", err)
+	}
+	if cfg.Token != "existing-token" {
+		t.Fatalf("Token = %q, want existing-token", cfg.Token)
+	}
+}
+
 func setupCLIConfigHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()

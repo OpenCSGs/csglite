@@ -112,13 +112,16 @@ func New(cfg *config.Config, version string) *Server {
 	logBuf := NewLogBuffer(500)
 	SetupLogging(logBuf)
 
+	cloudSvc := cloud.NewService(resolveCloudURL(cfg))
+	cloudSvc.SetAccessToken(cfg.Token)
+
 	s := &Server{
 		cfg:            cfg,
 		version:        version,
 		manager:        mgr,
 		datasetManager: dsMgr,
 		appManager:     apps.NewManager(cfg),
-		cloud:          cloud.NewService(resolveCloudURL(cfg)),
+		cloud:          cloudSvc,
 		engines:        make(map[string]*managedEngine),
 		loading:        make(map[string]*engineLoadState),
 		logBuf:         logBuf,

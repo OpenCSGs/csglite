@@ -65,7 +65,7 @@ func (s *Server) handleCloudAuthTokenSave(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if s.cloud != nil {
-		s.cloud.InvalidateChatModels()
+		s.cloud.SetAccessToken(token)
 	}
 
 	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))
@@ -78,7 +78,7 @@ func (s *Server) handleCloudAuthTokenDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if s.cloud != nil {
-		s.cloud.InvalidateChatModels()
+		s.cloud.SetAccessToken("")
 	}
 
 	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))

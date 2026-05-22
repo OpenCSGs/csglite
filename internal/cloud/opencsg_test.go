@@ -187,6 +187,65 @@ func TestModelTokenLimitsFromRemoteTopLevelFields(t *testing.T) {
 	}
 }
 
+func TestRefreshChatModelsSendsAccessTokenWhenSet(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer access-token" {
+			t.Fatalf("Authorization = %q, want %q", got, "Bearer access-token")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{
+					"id":   "auth/model",
+					"task": "text-generation",
+				},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	svc := NewService(apiServer.URL)
+	svc.SetAccessToken(" access-token ")
+
+	models, err := svc.RefreshChatModels(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshChatModels returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Model != "auth/model" {
+		t.Fatalf("models = %#v, want auth/model", models)
+	}
+}
+
+func TestRefreshChatModelsOmitsAuthorizationWithoutAccessToken(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want empty", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{
+					"id":   "public/model",
+					"task": "text-generation",
+				},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	svc := NewService(apiServer.URL)
+
+	models, err := svc.RefreshChatModels(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshChatModels returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Model != "public/model" {
+		t.Fatalf("models = %#v, want public/model", models)
+	}
+}
+
 func TestRefreshChatModelsBypassesCache(t *testing.T) {
 	requests := 0
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

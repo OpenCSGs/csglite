@@ -22,9 +22,10 @@ const (
 )
 
 type Service struct {
-	baseURL string
-	client  *http.Client
-	ttl     time.Duration
+	baseURL     string
+	accessToken string
+	client      *http.Client
+	ttl         time.Duration
 
 	mu       sync.RWMutex
 	cached   []api.ModelInfo
@@ -65,6 +66,18 @@ func NewService(baseURL string) *Service {
 		client:  &http.Client{Timeout: 15 * time.Second},
 		ttl:     defaultCacheTTL,
 	}
+}
+
+func (s *Service) SetAccessToken(token string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.accessToken = strings.TrimSpace(token)
+	s.cached = nil
+	s.limits = nil
+	s.cachedAt = time.Time{}
+	s.mu.Unlock()
 }
 
 func (s *Service) BaseURL() string {
@@ -130,6 +143,9 @@ func (s *Service) refresh(ctx context.Context) ([]api.ModelInfo, error) {
 		return nil, fmt.Errorf("creating cloud model request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	if token := s.currentAccessToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -165,6 +181,15 @@ func (s *Service) refresh(ctx context.Context) ([]api.ModelInfo, error) {
 	s.mu.Unlock()
 
 	return models, nil
+}
+
+func (s *Service) currentAccessToken() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.accessToken
 }
 
 func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {

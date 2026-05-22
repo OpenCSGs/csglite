@@ -115,9 +115,15 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	}
 
 	key, value := strings.TrimSpace(args[0]), args[1]
+	syncToken := false
 	switch key {
 	case "server_url":
-		cfg.ServerURL = strings.TrimSpace(value)
+		serverURL := strings.TrimSpace(value)
+		if serverURL != strings.TrimSpace(cfg.ServerURL) && strings.TrimSpace(cfg.Token) != "" {
+			cfg.Token = ""
+			syncToken = true
+		}
+		cfg.ServerURL = serverURL
 	case "ai_gateway_url":
 		cfg.AIGatewayURL = strings.TrimSpace(value)
 	case "storage_dir":
@@ -162,7 +168,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
-	if key == "token" {
+	if key == "token" || syncToken {
 		warnIfTokenSyncFailed(cfg)
 	}
 

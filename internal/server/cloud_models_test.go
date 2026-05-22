@@ -75,6 +75,49 @@ func TestHandleTagsWithoutTokenIncludesAndRefreshesCloudModels(t *testing.T) {
 	}
 }
 
+func TestHandleTagsSendsLoginTokenToCloudGateway(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer access-token" {
+			t.Fatalf("Authorization = %q, want %q", got, "Bearer access-token")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{
+					"id":   "auth/model",
+					"task": "text-generation",
+				},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	cfg := &config.Config{
+		AIGatewayURL: apiServer.URL,
+		ListenAddr:   ":0",
+		ModelDir:     t.TempDir(),
+		DatasetDir:   t.TempDir(),
+		Token:        "access-token",
+	}
+	s := New(cfg, "test")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags?refresh=1", nil)
+	w := httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode tags response: %v", err)
+	}
+	if len(resp.Models) != 1 || resp.Models[0].Model != "auth/model" {
+		t.Fatalf("models = %#v, want auth/model", resp.Models)
+	}
+}
+
 func TestHandleTagsProviderFilterCloudModels(t *testing.T) {
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
