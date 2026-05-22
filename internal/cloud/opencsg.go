@@ -19,6 +19,8 @@ const (
 	DefaultLoginURL       = "https://iam.opencsg.com/login/oauth/authorize?client_id=d623c957e69976c8a7a8&response_type=code&redirect_uri=https://hub.opencsg.com/api/v1/callback/casdoor&scope=read&state=casdoor"
 	DefaultAccessTokenURL = "https://opencsg.com/settings/access-token"
 	defaultCacheTTL       = 5 * time.Minute
+	cloudModelListPage    = "1"
+	cloudModelListPer     = "40"
 )
 
 type Service struct {
@@ -138,7 +140,7 @@ func (s *Service) cachedModels() ([]api.ModelInfo, bool) {
 }
 
 func (s *Service) refresh(ctx context.Context) ([]api.ModelInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/v1/models", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/v1/models?page="+cloudModelListPage+"&per="+cloudModelListPer, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating cloud model request: %w", err)
 	}
@@ -205,10 +207,7 @@ func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
 		displayName = strings.TrimSpace(item.ID)
 	}
 
-	pipelineTag := strings.TrimSpace(item.Task)
-	if pipelineTag == "" {
-		pipelineTag = "text-generation"
-	}
+	pipelineTag := cloudPipelineTag(item)
 
 	var modifiedAt time.Time
 	if item.Created > 0 {
@@ -231,7 +230,7 @@ func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
 		Source:        "cloud",
 		Provider:      provider,
 		PipelineTag:   pipelineTag,
-		HasMMProj:     item.Task == "image-text-to-text",
+		HasMMProj:     hasCloudTask(item, "image-text-to-text"),
 		ContextWindow: int64(limits.MaxInputTokens),
 		LLMType:       llmType,
 		OwnedBy:       ownedBy,
@@ -244,15 +243,50 @@ func cloudModelProvider(string) string {
 }
 
 func supportsChat(item remoteModel) bool {
-	task := strings.TrimSpace(strings.ToLower(item.Task))
-	switch task {
-	case "text-generation", "image-text-to-text":
+	tasks := cloudTasks(item)
+	if len(tasks) == 0 {
 		return true
-	case "":
-		return true
-	default:
-		return false
 	}
+	return hasTask(tasks, "text-generation") || hasTask(tasks, "image-text-to-text")
+}
+
+func cloudPipelineTag(item remoteModel) string {
+	tasks := cloudTasks(item)
+	if len(tasks) == 0 || hasTask(tasks, "text-generation") {
+		return "text-generation"
+	}
+	if hasTask(tasks, "image-text-to-text") {
+		return "image-text-to-text"
+	}
+	return tasks[0]
+}
+
+func hasCloudTask(item remoteModel, want string) bool {
+	return hasTask(cloudTasks(item), want)
+}
+
+func hasTask(tasks []string, want string) bool {
+	want = strings.TrimSpace(strings.ToLower(want))
+	for _, task := range tasks {
+		if task == want {
+			return true
+		}
+	}
+	return false
+}
+
+func cloudTasks(item remoteModel) []string {
+	fields := strings.FieldsFunc(item.Task, func(r rune) bool {
+		return r == ','
+	})
+	tasks := make([]string, 0, len(fields))
+	for _, field := range fields {
+		task := strings.TrimSpace(strings.ToLower(field))
+		if task != "" {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks
 }
 
 func modelTokenLimitsFromRemote(item remoteModel) ModelTokenLimits {

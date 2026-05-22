@@ -132,6 +132,38 @@ func TestModelInfoFromRemote_VisionModelEnablesImages(t *testing.T) {
 	}
 }
 
+func TestModelInfoFromRemote_AllowsCommaSeparatedChatTasks(t *testing.T) {
+	info, ok := modelInfoFromRemote(remoteModel{
+		ID:   "provider/multimodal-model",
+		Task: "text-generation,image-text-to-text",
+	})
+	if !ok {
+		t.Fatal("expected comma-separated chat model to be included")
+	}
+	if info.PipelineTag != "text-generation" {
+		t.Fatalf("PipelineTag = %q, want normalized text-generation", info.PipelineTag)
+	}
+	if !info.HasMMProj {
+		t.Fatal("HasMMProj = false, want true for comma-separated vision task")
+	}
+}
+
+func TestModelInfoFromRemote_AllowsCommaSeparatedChatTasksWithSpaces(t *testing.T) {
+	info, ok := modelInfoFromRemote(remoteModel{
+		ID:   "provider/spaced-multimodal-model",
+		Task: "text-generation, image-text-to-text",
+	})
+	if !ok {
+		t.Fatal("expected comma-separated chat model with spaces to be included")
+	}
+	if info.PipelineTag != "text-generation" {
+		t.Fatalf("PipelineTag = %q, want normalized text-generation", info.PipelineTag)
+	}
+	if !info.HasMMProj {
+		t.Fatal("HasMMProj = false, want true for comma-separated vision task with spaces")
+	}
+}
+
 func TestModelInfoFromRemote_FiltersUnsupportedTask(t *testing.T) {
 	if _, ok := modelInfoFromRemote(remoteModel{
 		ID:   "stabilityai/stable-diffusion-xl-base-1.0:abc",
@@ -189,6 +221,15 @@ func TestModelTokenLimitsFromRemoteTopLevelFields(t *testing.T) {
 
 func TestRefreshChatModelsSendsAccessTokenWhenSet(t *testing.T) {
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %q, want /v1/models", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("page"); got != cloudModelListPage {
+			t.Fatalf("page query = %q, want %q", got, cloudModelListPage)
+		}
+		if got := r.URL.Query().Get("per"); got != cloudModelListPer {
+			t.Fatalf("per query = %q, want %q", got, cloudModelListPer)
+		}
 		if got := r.Header.Get("Authorization"); got != "Bearer access-token" {
 			t.Fatalf("Authorization = %q, want %q", got, "Bearer access-token")
 		}
