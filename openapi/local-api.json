@@ -637,6 +637,150 @@
         }
       }
     },
+    "/api/models/upload/start": {
+      "post": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Start a local model upload session",
+        "description": "Creates a resumable-style upload session used by the web UI for large model files. Files are uploaded one at a time with raw PUT requests, then imported on complete.",
+        "operationId": "startModelUpload",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelUploadStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Upload session created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelUploadStartResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/upload/{uploadID}/file": {
+      "put": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Upload a file to a model upload session",
+        "operationId": "uploadModelSessionFile",
+        "parameters": [
+          {
+            "name": "uploadID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "File uploaded."
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/models/upload/{uploadID}/complete": {
+      "post": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Complete a model upload session",
+        "operationId": "completeModelUpload",
+        "parameters": [
+          {
+            "name": "uploadID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The imported local model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelUploadResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/models/upload/{uploadID}": {
+      "delete": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Cancel a model upload session",
+        "operationId": "cancelModelUpload",
+        "parameters": [
+          {
+            "name": "uploadID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Upload session cancelled."
+          }
+        }
+      }
+    },
     "/api/models/{namespace}/{name}/files/{path...}": {
       "get": {
         "tags": [
@@ -1682,6 +1826,151 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/images/jobs": {
+      "post": {
+        "tags": [
+          "Images"
+        ],
+        "summary": "Create asynchronous image generation job",
+        "description": "Starts local text-to-image generation in the background and returns a job that can be polled for status and result.",
+        "operationId": "createImageGenerationJob",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIImagesGenerationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Image generation job accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationJobResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/images/jobs/{jobID}": {
+      "get": {
+        "tags": [
+          "Images"
+        ],
+        "summary": "Get image generation job",
+        "operationId": "getImageGenerationJob",
+        "parameters": [
+          {
+            "name": "jobID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image generation job status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationJobResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Images"
+        ],
+        "summary": "Cancel image generation job",
+        "operationId": "cancelImageGenerationJob",
+        "parameters": [
+          {
+            "name": "jobID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled job status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationJobResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/images/jobs/{jobID}/result": {
+      "get": {
+        "tags": [
+          "Images"
+        ],
+        "summary": "Get image generation job result",
+        "operationId": "getImageGenerationJobResult",
+        "parameters": [
+          {
+            "name": "jobID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Generated image data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIImagesGenerationResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Job is still queued or running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationJobResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -5382,6 +5671,40 @@
           }
         }
       },
+      "ModelUploadStartRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "archive",
+              "directory",
+              "files"
+            ],
+            "default": "files"
+          },
+          "overwrite": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "ModelUploadStartResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "upload_id"
+        ],
+        "properties": {
+          "upload_id": {
+            "type": "string"
+          }
+        }
+      },
       "DatasetPullRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -6509,6 +6832,53 @@
             "items": {
               "$ref": "#/components/schemas/OpenAIImage"
             }
+          }
+        }
+      },
+      "ImageGenerationJobResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "status",
+          "created_at",
+          "updated_at",
+          "request"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "request": {
+            "$ref": "#/components/schemas/OpenAIImagesGenerationRequest"
+          },
+          "result": {
+            "$ref": "#/components/schemas/OpenAIImagesGenerationResponse"
+          },
+          "error": {
+            "type": "string"
           }
         }
       },

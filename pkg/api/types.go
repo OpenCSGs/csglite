@@ -598,6 +598,17 @@ type OpenAIImagesGenerationResponse struct {
 	Data    []OpenAIImage `json:"data"`
 }
 
+type ImageGenerationJobResponse struct {
+	ID          string                          `json:"id"`
+	Status      string                          `json:"status"`
+	CreatedAt   time.Time                       `json:"created_at"`
+	UpdatedAt   time.Time                       `json:"updated_at"`
+	CompletedAt *time.Time                      `json:"completed_at,omitempty"`
+	Request     OpenAIImagesGenerationRequest   `json:"request"`
+	Result      *OpenAIImagesGenerationResponse `json:"result,omitempty"`
+	Error       string                          `json:"error,omitempty"`
+}
+
 type OpenAIImage struct {
 	B64JSON       string `json:"b64_json,omitempty"`
 	URL           string `json:"url,omitempty"`

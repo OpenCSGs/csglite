@@ -17,22 +17,8 @@ func (s *Server) handleOpenAIImagesGenerations(w http.ResponseWriter, r *http.Re
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid request body")
 		return
 	}
-	req.Model = strings.TrimSpace(req.Model)
-	req.Prompt = strings.TrimSpace(req.Prompt)
-	if req.Model == "" {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
-		return
-	}
-	if req.Prompt == "" {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "prompt is required")
-		return
-	}
-	if req.N != nil && (*req.N < 1 || *req.N > 4) {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "n must be between 1 and 4")
-		return
-	}
-	if req.ResponseFormat != "" && req.ResponseFormat != "b64_json" {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "only response_format=b64_json is supported for local image generation")
+	if errMsg := normalizeOpenAIImagesGenerationRequest(&req); errMsg != "" {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", errMsg)
 		return
 	}
 
@@ -68,6 +54,24 @@ func (s *Server) handleOpenAIImagesGenerations(w http.ResponseWriter, r *http.Re
 	s.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func normalizeOpenAIImagesGenerationRequest(req *api.OpenAIImagesGenerationRequest) string {
+	req.Model = strings.TrimSpace(req.Model)
+	req.Prompt = strings.TrimSpace(req.Prompt)
+	if req.Model == "" {
+		return "model is required"
+	}
+	if req.Prompt == "" {
+		return "prompt is required"
+	}
+	if req.N != nil && (*req.N < 1 || *req.N > 4) {
+		return "n must be between 1 and 4"
+	}
+	if req.ResponseFormat != "" && req.ResponseFormat != "b64_json" {
+		return "only response_format=b64_json is supported for local image generation"
+	}
+	return ""
 }
 
 // GET /api/image-runtime -- report the lazy Diffusers runtime status.

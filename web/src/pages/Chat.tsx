@@ -4,7 +4,7 @@ import { signal, computed } from "@preact/signals";
 import {
   getTags, getPs, streamChat, getCloudAuthStatus, saveCloudToken,
   listConversations, getConversation, createConversation, updateConversation, deleteConversation,
-  getSettings,
+  getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob,
 } from "../api/client";
 import type {
   ModelInfo, ChatMessage, ContentPart, CloudAuthStatus,
@@ -86,6 +86,10 @@ function applyModelSamplingDefaults(model?: Pick<ModelInfo, "model" | "name" | "
   temperature.value = defaultTemperatureForModel(model);
 }
 
+function isTextToImageModel(model?: Pick<ModelInfo, "pipeline_tag"> | null): boolean {
+  return model?.pipeline_tag === "text-to-image";
+}
+
 function modelLabel(model: ModelInfo): string {
   const label = model.label || model.display_name || model.name;
   const source = model.source || "local";
@@ -116,6 +120,20 @@ function saveSelectedModelKey(key: string) {
   } catch {
     /* ignore storage failures */
   }
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = window.setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      window.clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    }, { once: true });
+  });
 }
 
 function readWebSearchEnabled(defaultValue: boolean): boolean {
@@ -874,11 +892,56 @@ export function Chat() {
 
     const numCtx = normalizeNumCtx(conv.settings?.num_ctx);
     const numParallel = conv.settings?.num_parallel || defaultNumParallel();
+    const textToImageMode = isTextToImageModel(currentModel);
 
     chatError.value = "";
     const responseStartedAt = Date.now();
     try {
-      await streamChat(
+      if (textToImageMode) {
+        const job = await createImageGenerationJob({
+          model: currentModel.model || currentModel.name,
+          prompt: text,
+        });
+        let latest = job;
+        while (!ac.signal.aborted) {
+          if (latest.status === "succeeded") {
+            const imageParts: ContentPart[] = (latest.result?.data || [])
+              .map((item) => item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url || "")
+              .filter(Boolean)
+              .map((url) => ({ type: "image_url" as const, image_url: { url } }));
+            if (imageParts.length === 0) {
+              throw new Error("Image generation completed without image data.");
+            }
+            imageParts.push({ type: "text" as const, text: t("chat.imageGenerated") });
+            conv.messages.push({
+              role: "assistant",
+              content: imageParts,
+              meta: buildResponseMeta(t("chat.imageGenerated"), responseStartedAt),
+            });
+            activeConversation.value = { ...conv };
+            saveCurrentConversation();
+            break;
+          }
+          if (latest.status === "failed") {
+            throw new Error(latest.error || t("chat.failedResp"));
+          }
+          if (latest.status === "cancelled") {
+            throw new Error("Image generation cancelled.");
+          }
+          streamingContent.value = latest.status === "queued" ? t("chat.imageQueued") : t("chat.imageGenerating");
+          await sleep(1500, ac.signal);
+          latest = await getImageGenerationJob(job.id);
+        }
+        if (ac.signal.aborted) {
+          try {
+            await cancelImageGenerationJob(job.id);
+          } catch {
+            /* ignore cancellation cleanup errors */
+          }
+        }
+        streamingContent.value = "";
+      } else {
+        await streamChat(
         currentModel.model || currentModel.name,
         apiMessages,
         {
@@ -943,10 +1006,11 @@ export function Chat() {
             searchSkippedReason.value = route.reason;
           }
         },
-      );
+        );
+      }
     } catch (e: any) {
       const errMessage = e?.message || t("chat.failedResp");
-      if (streamingContent.value) {
+      if (streamingContent.value && (!ac.signal.aborted || !textToImageMode)) {
         const assistantContent = streamingContent.value;
         const sources = streamingSources.value;
         conv.messages.push({
@@ -974,6 +1038,9 @@ export function Chat() {
     searchPlanningQuery.value = "";
     searchSkippedReason.value = "";
     streamingSources.value = [];
+    if (textToImageMode && ac.signal.aborted) {
+      streamingContent.value = "";
+    }
     isGenerating.value = false;
     abortRef.current = null;
   };

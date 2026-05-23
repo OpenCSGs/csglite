@@ -235,6 +235,19 @@ export interface ImageGenerationResponse {
   }>;
 }
 
+export type ImageGenerationJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface ImageGenerationJobResponse {
+  id: string;
+  status: ImageGenerationJobStatus;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+  request: ImageGenerationRequest;
+  result?: ImageGenerationResponse;
+  error?: string;
+}
+
 export interface WebSearchResult {
   title: string;
   url: string;
@@ -701,6 +714,28 @@ export async function generateImage(req: ImageGenerationRequest): Promise<ImageG
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...req, response_format: req.response_format || "b64_json" }),
+  });
+}
+
+export async function createImageGenerationJob(req: ImageGenerationRequest): Promise<ImageGenerationJobResponse> {
+  return fetchJSON<ImageGenerationJobResponse>("/api/images/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...req, response_format: req.response_format || "b64_json" }),
+  });
+}
+
+export async function getImageGenerationJob(id: string): Promise<ImageGenerationJobResponse> {
+  return fetchJSON<ImageGenerationJobResponse>(`/api/images/jobs/${encodeURIComponent(id)}`);
+}
+
+export async function getImageGenerationJobResult(id: string): Promise<ImageGenerationResponse> {
+  return fetchJSON<ImageGenerationResponse>(`/api/images/jobs/${encodeURIComponent(id)}/result`);
+}
+
+export async function cancelImageGenerationJob(id: string): Promise<ImageGenerationJobResponse> {
+  return fetchJSON<ImageGenerationJobResponse>(`/api/images/jobs/${encodeURIComponent(id)}`, {
+    method: "DELETE",
   });
 }
 

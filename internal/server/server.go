@@ -103,6 +103,7 @@ type Server struct {
 	loading      map[string]*engineLoadState
 	imageEngines map[string]*managedImageEngine
 	imageLoading map[string]*imageEngineLoadState
+	imageJobs    *imageGenerationJobStore
 	prefsMu      sync.Mutex
 	openclawMu   sync.Mutex
 	csgclawMu    sync.Mutex
@@ -141,6 +142,7 @@ func New(cfg *config.Config, version string) *Server {
 		loading:        make(map[string]*engineLoadState),
 		imageEngines:   make(map[string]*managedImageEngine),
 		imageLoading:   make(map[string]*imageEngineLoadState),
+		imageJobs:      newImageGenerationJobStore(),
 		logBuf:         logBuf,
 	}
 	s.appShells = newAIAppShellManager()

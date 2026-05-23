@@ -1,6 +1,13 @@
 import { useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
-import { generateImage, getImageRuntimeStatus, installImageRuntime, searchLocalModels } from "../api/client";
+import {
+  cancelImageGenerationJob,
+  createImageGenerationJob,
+  getImageGenerationJob,
+  getImageRuntimeStatus,
+  installImageRuntime,
+  searchLocalModels,
+} from "../api/client";
 import type { ImageRuntimeStatus, ModelInfo } from "../api/client";
 import { locale, t } from "../i18n";
 
@@ -17,6 +24,12 @@ const installing = signal(false);
 const error = signal("");
 const runtime = signal<ImageRuntimeStatus | null>(null);
 const images = signal<string[]>([]);
+const activeJobID = signal("");
+const jobStatus = signal("");
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function optionalNumber(value: string): number | undefined {
   const trimmed = value.trim();
@@ -37,8 +50,10 @@ export function ImageGeneration() {
   void locale.value;
 
   useEffect(() => {
+    let cancelled = false;
     searchLocalModels({ pipeline_tag: "text-to-image", limit: 100 })
       .then((resp) => {
+        if (cancelled) return;
         models.value = resp.models || [];
         if (!selectedModel.value && resp.models?.[0]) {
           selectedModel.value = resp.models[0].model || resp.models[0].name;
@@ -46,6 +61,12 @@ export function ImageGeneration() {
       })
       .catch((err) => (error.value = err.message || String(err)));
     refreshRuntime();
+    return () => {
+      cancelled = true;
+      if (activeJobID.value) {
+        cancelImageGenerationJob(activeJobID.value).catch(() => {});
+      }
+    };
   }, []);
 
   const runInstall = async () => {
@@ -65,8 +86,9 @@ export function ImageGeneration() {
     if (!selectedModel.value || !prompt.value.trim()) return;
     loading.value = true;
     error.value = "";
+    jobStatus.value = t("image.jobQueued");
     try {
-      const resp = await generateImage({
+      const job = await createImageGenerationJob({
         model: selectedModel.value,
         prompt: prompt.value,
         negative_prompt: negativePrompt.value.trim() || undefined,
@@ -75,14 +97,41 @@ export function ImageGeneration() {
         seed: optionalNumber(seed.value),
         cfg_scale: optionalNumber(cfgScale.value),
       });
-      images.value = (resp.data || []).map((item) => item.b64_json || "").filter(Boolean);
+      activeJobID.value = job.id;
+      let latest = job;
+      while (loading.value) {
+        if (latest.status === "succeeded") {
+          images.value = (latest.result?.data || []).map((item) => item.b64_json || "").filter(Boolean);
+          break;
+        }
+        if (latest.status === "failed") {
+          throw new Error(latest.error || t("image.failed"));
+        }
+        if (latest.status === "cancelled") {
+          throw new Error(t("image.cancelled"));
+        }
+        jobStatus.value = latest.status === "queued" ? t("image.jobQueued") : t("image.jobRunning");
+        await sleep(1500);
+        latest = await getImageGenerationJob(job.id);
+      }
       await refreshRuntime();
     } catch (err: any) {
       error.value = err.message || String(err);
       await refreshRuntime();
     } finally {
+      activeJobID.value = "";
+      jobStatus.value = "";
       loading.value = false;
     }
+  };
+
+  const cancelGenerate = async () => {
+    const id = activeJobID.value;
+    if (id) {
+      await cancelImageGenerationJob(id).catch(() => {});
+    }
+    loading.value = false;
+    jobStatus.value = "";
   };
 
   const rt = runtime.value;
@@ -156,13 +205,24 @@ export function ImageGeneration() {
             <Field label={t("image.seed")} value={seed.value} onInput={(v) => (seed.value = v)} />
             <Field label={t("image.cfgScale")} value={cfgScale.value} onInput={(v) => (cfgScale.value = v)} />
           </div>
-          <button
-            onClick={runGenerate}
-            disabled={loading.value || !selectedModel.value || !prompt.value.trim()}
-            class="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {loading.value ? t("image.generating") : t("image.generate")}
-          </button>
+          <div class="space-y-2">
+            <button
+              onClick={runGenerate}
+              disabled={loading.value || !selectedModel.value || !prompt.value.trim()}
+              class="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {loading.value ? (jobStatus.value || t("image.generating")) : t("image.generate")}
+            </button>
+            {loading.value && (
+              <button
+                type="button"
+                onClick={cancelGenerate}
+                class="w-full rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                {t("image.cancel")}
+              </button>
+            )}
+          </div>
         </section>
 
         <section class="min-h-[520px] rounded-xl border border-gray-200 bg-white p-5">
