@@ -1719,6 +1719,16 @@
         "summary": "Install local image runtime",
         "description": "Creates or repairs the user-scoped Python Diffusers runtime. This endpoint is intended to be called only when a user runs local text-to-image generation.",
         "operationId": "installImageRuntime",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageRuntimeInstallRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Diffusers runtime is ready.",
@@ -3887,6 +3897,10 @@
           "storage_dir",
           "model_dir",
           "dataset_dir",
+          "server_url",
+          "ai_gateway_url",
+          "default_server_url",
+          "default_ai_gateway_url",
           "autostart",
           "web_search"
         ],
@@ -3901,6 +3915,18 @@
             "type": "string"
           },
           "dataset_dir": {
+            "type": "string"
+          },
+          "server_url": {
+            "type": "string"
+          },
+          "ai_gateway_url": {
+            "type": "string"
+          },
+          "default_server_url": {
+            "type": "string"
+          },
+          "default_ai_gateway_url": {
             "type": "string"
           },
           "autostart": {
@@ -3923,6 +3949,14 @@
           },
           "dataset_dir": {
             "type": "string"
+          },
+          "server_url": {
+            "type": "string",
+            "description": "CSGHub marketplace server URL. Empty string restores the default server URL."
+          },
+          "ai_gateway_url": {
+            "type": "string",
+            "description": "OpenCSG AI Gateway URL. Empty string clears the custom value and uses the default AI Gateway."
           },
           "autostart": {
             "type": "boolean"
@@ -5263,12 +5297,48 @@
           }
         }
       },
+      "LocalInferenceSupport": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "supported",
+          "mode"
+        ],
+        "properties": {
+          "supported": {
+            "type": "boolean"
+          },
+          "runtime": {
+            "type": "string",
+            "enum": [
+              "llama",
+              "diffusers"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "none",
+              "direct",
+              "convert",
+              "image"
+            ]
+          },
+          "architecture": {
+            "type": "string"
+          },
+          "runtime_architecture": {
+            "type": "string"
+          }
+        }
+      },
       "ModelManifestResponse": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "details",
-          "files"
+          "files",
+          "local_inference"
         ],
         "properties": {
           "details": {
@@ -5279,6 +5349,9 @@
             "items": {
               "$ref": "#/components/schemas/ModelFileEntry"
             }
+          },
+          "local_inference": {
+            "$ref": "#/components/schemas/LocalInferenceSupport"
           }
         }
       },
@@ -6148,7 +6221,8 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "details"
+          "details",
+          "local_inference"
         ],
         "properties": {
           "details": {
@@ -6159,6 +6233,9 @@
             "items": {
               "$ref": "#/components/schemas/MarketplaceModelQuantization"
             }
+          },
+          "local_inference": {
+            "$ref": "#/components/schemas/LocalInferenceSupport"
           }
         }
       },
@@ -6318,6 +6395,16 @@
           },
           "error": {
             "type": "string"
+          }
+        }
+      },
+      "ImageRuntimeInstallRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "upgrade_packages": {
+            "type": "boolean",
+            "description": "Upgrade Diffuser-related Python packages instead of only installing missing runtime dependencies."
           }
         }
       },

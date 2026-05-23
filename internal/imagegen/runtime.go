@@ -202,6 +202,10 @@ func (m *RuntimeManager) Install(ctx context.Context) (RuntimeStatus, error) {
 }
 
 func (m *RuntimeManager) InstallWithProgress(ctx context.Context, progress ProgressFunc) (RuntimeStatus, error) {
+	return m.InstallWithProgressOptions(ctx, progress, false)
+}
+
+func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progress ProgressFunc, upgradePackages bool) (RuntimeStatus, error) {
 	if progress == nil {
 		progress = func(string, int, int) {}
 	}
@@ -259,12 +263,24 @@ func (m *RuntimeManager) InstallWithProgress(ctx context.Context, progress Progr
 	if err := runCommand(ctx, python, torchArgs...); err != nil {
 		return m.Status(ctx), fmt.Errorf("installing PyTorch: %w", err)
 	}
-	deps := []string{"-m", "pip", "install", "diffusers", "transformers", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow"}
+	deps := []string{"-m", "pip", "install"}
+	if upgradePackages {
+		deps = append(deps, "--upgrade")
+	}
+	deps = append(deps, "diffusers", "transformers", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow")
 	if indexes.PyPIIndexURL != "" {
 		deps = append(deps, "-i", indexes.PyPIIndexURL)
-		progress("install Diffusers dependencies from "+indexes.PyPIIndexURL, 6, 6)
+		if upgradePackages {
+			progress("upgrade Diffusers dependencies from "+indexes.PyPIIndexURL, 6, 6)
+		} else {
+			progress("install Diffusers dependencies from "+indexes.PyPIIndexURL, 6, 6)
+		}
 	} else {
-		progress("install Diffusers dependencies", 6, 6)
+		if upgradePackages {
+			progress("upgrade Diffusers dependencies", 6, 6)
+		} else {
+			progress("install Diffusers dependencies", 6, 6)
+		}
 	}
 	if err := runCommand(ctx, python, deps...); err != nil {
 		return m.Status(ctx), fmt.Errorf("installing Diffusers dependencies: %w", err)

@@ -147,6 +147,68 @@ func TestRunConfigSetServerURLKeepsTokenWhenUnchanged(t *testing.T) {
 	}
 }
 
+func TestRunConfigUnsetServerURLRestoresDefaultAndClearsToken(t *testing.T) {
+	setupCLIConfigHome(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+	cfg.ServerURL = "https://opencsg-stg.com"
+	cfg.Token = "existing-token"
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("config.Save() error: %v", err)
+	}
+
+	if err := runConfigUnset(nil, []string{"server_url"}); err != nil {
+		t.Fatalf("runConfigUnset(server_url) error = %v", err)
+	}
+
+	config.Reset()
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() after unset error: %v", err)
+	}
+	if cfg.ServerURL != config.DefaultServerURL {
+		t.Fatalf("ServerURL = %q, want %q", cfg.ServerURL, config.DefaultServerURL)
+	}
+	if cfg.Token != "" {
+		t.Fatalf("Token = %q, want cleared token", cfg.Token)
+	}
+}
+
+func TestRunConfigUnsetAIGatewayURLUsesDefault(t *testing.T) {
+	setupCLIConfigHome(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+	cfg.AIGatewayURL = "https://gateway.example.com"
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("config.Save() error: %v", err)
+	}
+
+	if err := runConfigUnset(nil, []string{"ai_gateway_url"}); err != nil {
+		t.Fatalf("runConfigUnset(ai_gateway_url) error = %v", err)
+	}
+
+	config.Reset()
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() after unset error: %v", err)
+	}
+	if cfg.AIGatewayURL != "" {
+		t.Fatalf("AIGatewayURL = %q, want empty custom value", cfg.AIGatewayURL)
+	}
+	getOutput := captureCLIStdout(t, func() {
+		if err := runConfigGet(nil, []string{"ai_gateway_url"}); err != nil {
+			t.Fatalf("runConfigGet(ai_gateway_url) error: %v", err)
+		}
+	})
+	if strings.TrimSpace(getOutput) != cloud.DefaultBaseURL {
+		t.Fatalf("config get ai_gateway_url = %q, want %q", strings.TrimSpace(getOutput), cloud.DefaultBaseURL)
+	}
+}
+
 func setupCLIConfigHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()

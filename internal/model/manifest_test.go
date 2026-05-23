@@ -176,6 +176,28 @@ func TestDetectPipelineTagSentenceTransformersEmbedding(t *testing.T) {
 	}
 }
 
+func TestDetectPipelineTagRegisteredEmbeddingArchitecture(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["ModernBertModel"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := DetectPipelineTag(dir); got != "feature-extraction" {
+		t.Fatalf("DetectPipelineTag() = %q, want feature-extraction", got)
+	}
+}
+
+func TestDetectPipelineTagRegisteredVisionArchitecture(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["Idefics3ForConditionalGeneration"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := DetectPipelineTag(dir); got != "image-text-to-text" {
+		t.Fatalf("DetectPipelineTag() = %q, want image-text-to-text", got)
+	}
+}
+
 func TestDetectPipelineTagDiffusersModelIndexDefaultsToTextToImage(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"QwenImagePipeline"}`), 0o644); err != nil {
@@ -187,6 +209,27 @@ func TestDetectPipelineTagDiffusersModelIndexDefaultsToTextToImage(t *testing.T)
 
 	if got := DetectPipelineTag(dir); got != "text-to-image" {
 		t.Fatalf("DetectPipelineTag() = %q, want text-to-image", got)
+	}
+}
+
+func TestDetectPipelineTagDiffusersFamilies(t *testing.T) {
+	for _, className := range []string{
+		"FluxPipeline",
+		"PixArtAlphaPipeline",
+		"AuraFlowPipeline",
+		"SanaPipeline",
+		"StableCascadeCombinedPipeline",
+		"ZImagePipeline",
+	} {
+		t.Run(className, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"`+className+`"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := DetectPipelineTag(dir); got != "text-to-image" {
+				t.Fatalf("DetectPipelineTag() = %q, want text-to-image", got)
+			}
+		})
 	}
 }
 

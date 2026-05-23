@@ -438,7 +438,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 				lastLoadProgressLog = time.Now()
 			}
 		}
-		_, err = s.getOrLoadImageEngineWithProgress(context.Background(), req.Model, imageProgress)
+		_, err = s.getOrLoadImageEngineWithProgress(context.Background(), req.Model, imageProgress, false)
 	} else if embeddingModel {
 		_, err = s.getOrLoadEngineFullMode(req.Model, progress, requestedNumCtx, 0, requestedNGPULayers, "", "", requestedDType, engineModeEmbed)
 	} else {

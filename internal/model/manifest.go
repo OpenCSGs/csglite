@@ -11,24 +11,87 @@ import (
 
 // Vision-related HuggingFace architecture suffixes/names.
 var visionArchitectures = map[string]bool{
-	"Qwen2VLForConditionalGeneration":    true,
-	"Qwen2_5_VLForConditionalGeneration": true,
-	"Qwen3_5ForConditionalGeneration":    true,
-	"Qwen3_5MoeForConditionalGeneration": true,
-	"LlavaForConditionalGeneration":      true,
-	"LlavaNextForConditionalGeneration":  true,
-	"CogVLMForCausalLM":                  true,
-	"InternVLChatModel":                  true,
-	"MiniCPMV":                           true,
-	"Phi3VForCausalLM":                   true,
-	"Gemma3ForConditionalGeneration":     true,
+	"AudioFlamingo3ForConditionalGeneration": true,
+	"ChameleonForConditionalGeneration":      true,
+	"CogVLMForCausalLM":                      true,
+	"DeepseekOCRForCausalLM":                 true,
+	"DotsOCRForCausalLM":                     true,
+	"Gemma3ForConditionalGeneration":         true,
+	"Gemma3nForConditionalGeneration":        true,
+	"Glm4vForConditionalGeneration":          true,
+	"Glm4vMoeForConditionalGeneration":       true,
+	"GlmOcrForConditionalGeneration":         true,
+	"HunYuanVLForConditionalGeneration":      true,
+	"Idefics3ForConditionalGeneration":       true,
+	"InternVLChatModel":                      true,
+	"JanusForConditionalGeneration":          true,
+	"KimiK25ForConditionalGeneration":        true,
+	"KimiVLForConditionalGeneration":         true,
+	"Lfm2VlForConditionalGeneration":         true,
+	"LightOnOCRForConditionalGeneration":     true,
+	"LlavaForConditionalGeneration":          true,
+	"LlavaNextForConditionalGeneration":      true,
+	"MERaLiON2ForConditionalGeneration":      true,
+	"MiniCPMV":                               true,
+	"MiniCPMV4_6ForConditionalGeneration":    true,
+	"Mistral3ForConditionalGeneration":       true,
+	"NemotronH_Nano_VL_V2":                   true,
+	"PaddleOCRVLForConditionalGeneration":    true,
+	"Phi3VForCausalLM":                       true,
+	"Phi4ForCausalLMV":                       true,
+	"Qwen2VLForConditionalGeneration":        true,
+	"Qwen2VLModel":                           true,
+	"Qwen2_5OmniModel":                       true,
+	"Qwen2_5_VLForConditionalGeneration":     true,
+	"Qwen3OmniMoeForConditionalGeneration":   true,
+	"Qwen3VLForConditionalGeneration":        true,
+	"Qwen3VLMoeForConditionalGeneration":     true,
+	"Qwen3_5ForConditionalGeneration":        true,
+	"Qwen3_5MoeForConditionalGeneration":     true,
+	"Sarashina2VisionForCausalLM":            true,
+	"SmolVLMForConditionalGeneration":        true,
+	"StepVLForConditionalGeneration":         true,
+	"VoxtralForConditionalGeneration":        true,
+	"YoutuVLForConditionalGeneration":        true,
 }
 
 var embeddingArchitectures = map[string]bool{
-	"BertModel":       true,
-	"NomicBertModel":  true,
-	"RobertaModel":    true,
-	"XLMRobertaModel": true,
+	"BertForMaskedLM":                     true,
+	"BertForSequenceClassification":       true,
+	"BertModel":                           true,
+	"CamembertModel":                      true,
+	"DistilBertForMaskedLM":               true,
+	"DistilBertForSequenceClassification": true,
+	"DistilBertModel":                     true,
+	"EuroBertModel":                       true,
+	"JinaBertForMaskedLM":                 true,
+	"JinaBertModel":                       true,
+	"JinaEmbeddingsV5Model":               true,
+	"ModernBertForMaskedLM":               true,
+	"ModernBertForSequenceClassification": true,
+	"ModernBertModel":                     true,
+	"NeoBERT":                             true,
+	"NeoBERTForSequenceClassification":    true,
+	"NeoBERTLMHead":                       true,
+	"NomicBertModel":                      true,
+	"RobertaForSequenceClassification":    true,
+	"RobertaModel":                        true,
+	"T5EncoderModel":                      true,
+	"UMT5Model":                           true,
+	"XLMRobertaForSequenceClassification": true,
+	"XLMRobertaModel":                     true,
+}
+
+// IsEmbeddingArchitecture reports whether the HuggingFace architecture is treated
+// as a local embedding model by csghub-lite.
+func IsEmbeddingArchitecture(architecture string) bool {
+	return embeddingArchitectures[strings.TrimSpace(architecture)]
+}
+
+// IsVisionArchitecture reports whether the HuggingFace architecture is a supported
+// multimodal vision-language model.
+func IsVisionArchitecture(architecture string) bool {
+	return visionArchitectures[strings.TrimSpace(architecture)]
 }
 
 // DetectPipelineTag reads config.json in modelDir and returns a local pipeline
@@ -75,17 +138,9 @@ func detectDiffusersPipelineTag(modelDir string) string {
 	}
 	className := strings.ToLower(strings.TrimSpace(idx.ClassName))
 	switch {
-	case strings.Contains(className, "texttoimage"),
-		strings.Contains(className, "qwenimagepipeline"),
-		strings.Contains(className, "fluxpipeline"),
-		strings.Contains(className, "stablediffusionpipeline"),
-		strings.Contains(className, "stablediffusionxlpipeline"),
-		strings.Contains(className, "stablediffusion3pipeline"):
+	case isTextToImageDiffusersClass(className):
 		return "text-to-image"
-	case strings.Contains(className, "image2image"),
-		strings.Contains(className, "img2img"),
-		strings.Contains(className, "kontext"),
-		strings.Contains(className, "edit"):
+	case isImageToImageDiffusersClass(className):
 		return "image-to-image"
 	default:
 		// A Diffusers model_index.json is a stronger signal than the legacy
@@ -93,6 +148,41 @@ func detectDiffusersPipelineTag(modelDir string) string {
 		// newly supported text-to-image pipelines do not fall back to llama.
 		return "text-to-image"
 	}
+}
+
+func isTextToImageDiffusersClass(className string) bool {
+	return strings.Contains(className, "texttoimage") ||
+		strings.Contains(className, "pipelinefortext2image") ||
+		strings.Contains(className, "qwenimage") ||
+		strings.Contains(className, "flux") ||
+		strings.Contains(className, "stablediffusion") ||
+		strings.Contains(className, "stablecascade") ||
+		strings.Contains(className, "wuerstchen") ||
+		strings.Contains(className, "kandinsky") ||
+		strings.Contains(className, "pixart") ||
+		strings.Contains(className, "auraflow") ||
+		strings.Contains(className, "sana") ||
+		strings.Contains(className, "lumina") ||
+		strings.Contains(className, "kolors") ||
+		strings.Contains(className, "cogview") ||
+		strings.Contains(className, "hunyuan") ||
+		strings.Contains(className, "dit") ||
+		strings.Contains(className, "glmpipeline") ||
+		strings.Contains(className, "glmimage") ||
+		strings.Contains(className, "zimage") ||
+		strings.Contains(className, "ovisimage") ||
+		strings.Contains(className, "prxpipeline") ||
+		strings.Contains(className, "latentconsistency") ||
+		strings.Contains(className, "deepfloyd")
+}
+
+func isImageToImageDiffusersClass(className string) bool {
+	return strings.Contains(className, "image2image") ||
+		strings.Contains(className, "img2img") ||
+		strings.Contains(className, "inpaint") ||
+		strings.Contains(className, "depth2img") ||
+		strings.Contains(className, "kontext") ||
+		strings.Contains(className, "edit")
 }
 
 // FindMMProj looks for a multimodal projector GGUF file (mmproj) in the model directory.

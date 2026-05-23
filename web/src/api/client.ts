@@ -64,6 +64,7 @@ export interface ModelFileEntry {
 export interface ModelManifestResponse {
   details: ModelInfo;
   files: ModelFileEntry[];
+  local_inference: LocalInferenceSupport;
 }
 
 export interface ModelUploadResponse {
@@ -136,9 +137,18 @@ export interface MarketplaceModelQuantization {
   example_path: string;
 }
 
+export interface LocalInferenceSupport {
+  supported: boolean;
+  runtime?: "llama" | "diffusers";
+  mode: "none" | "direct" | "convert" | "image";
+  architecture?: string;
+  runtime_architecture?: string;
+}
+
 export interface MarketplaceModelDetailResponse {
   details: MarketplaceModel;
   quantizations: MarketplaceModelQuantization[];
+  local_inference: LocalInferenceSupport;
 }
 
 export interface MarketplaceDataset {
@@ -173,6 +183,10 @@ export interface AppSettings {
   storage_dir: string;
   model_dir: string;
   dataset_dir: string;
+  server_url: string;
+  ai_gateway_url: string;
+  default_server_url: string;
+  default_ai_gateway_url: string;
   autostart: boolean;
   web_search: WebSearchSettings;
 }
@@ -627,8 +641,12 @@ export async function getImageRuntimeStatus(): Promise<ImageRuntimeStatus> {
   return fetchJSON<ImageRuntimeStatus>("/api/image-runtime");
 }
 
-export async function installImageRuntime(): Promise<ImageRuntimeStatus> {
-  return fetchJSON<ImageRuntimeStatus>("/api/image-runtime/install", { method: "POST" });
+export async function installImageRuntime(options?: { upgrade_packages?: boolean }): Promise<ImageRuntimeStatus> {
+  return fetchJSON<ImageRuntimeStatus>("/api/image-runtime/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ upgrade_packages: options?.upgrade_packages || undefined }),
+  });
 }
 
 export async function generateImage(req: ImageGenerationRequest): Promise<ImageGenerationResponse> {
@@ -639,7 +657,15 @@ export async function generateImage(req: ImageGenerationRequest): Promise<ImageG
   });
 }
 
-export async function saveSettings(patch: { storage_dir?: string; model_dir?: string; dataset_dir?: string; autostart?: boolean; web_search?: WebSearchSettings }): Promise<AppSettings> {
+export async function saveSettings(patch: {
+  storage_dir?: string;
+  model_dir?: string;
+  dataset_dir?: string;
+  server_url?: string;
+  ai_gateway_url?: string;
+  autostart?: boolean;
+  web_search?: WebSearchSettings;
+}): Promise<AppSettings> {
   return fetchJSON<AppSettings>("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

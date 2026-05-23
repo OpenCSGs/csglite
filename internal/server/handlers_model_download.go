@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/opencsgs/csghub-lite/internal/localinference"
 	"github.com/opencsgs/csghub-lite/internal/model"
 	"github.com/opencsgs/csghub-lite/pkg/api"
 )
@@ -35,9 +36,16 @@ func (s *Server) handleModelManifest(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	modelDir, err := s.manager.ModelPath(modelID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("model %q not found", modelID))
+		return
+	}
+
 	writeJSON(w, http.StatusOK, api.ModelManifestResponse{
-		Details: s.localModelInfo(lm),
-		Files:   files,
+		Details:        s.localModelInfo(lm),
+		Files:          files,
+		LocalInference: localinference.FromLocalModel(lm, modelDir),
 	})
 }
 

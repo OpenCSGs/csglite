@@ -12,6 +12,9 @@ import (
 
 	"github.com/opencsgs/csghub-lite/internal/csghub"
 	"github.com/opencsgs/csghub-lite/internal/ggufpick"
+	"github.com/opencsgs/csghub-lite/internal/localinference"
+	"github.com/opencsgs/csghub-lite/internal/model"
+	"github.com/opencsgs/csghub-lite/pkg/api"
 )
 
 const marketplaceListCacheTTL = 2 * time.Minute
@@ -93,8 +96,9 @@ type marketplaceModelQuantization struct {
 }
 
 type marketplaceModelDetailResponse struct {
-	Details       *csghub.Model                  `json:"details"`
-	Quantizations []marketplaceModelQuantization `json:"quantizations,omitempty"`
+	Details        *csghub.Model                  `json:"details"`
+	Quantizations  []marketplaceModelQuantization `json:"quantizations,omitempty"`
+	LocalInference api.LocalInferenceSupport      `json:"local_inference"`
 }
 
 // GET /api/marketplace/models/{namespace}/{name} -- proxy to CSGHub model detail
@@ -113,9 +117,39 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	var quantizations []marketplaceModelQuantization
-	if marketplaceModelFormat(details.Tags) == "gguf" {
-		if files, err := client.GetModelTree(r.Context(), namespace, name); err == nil {
+	format := marketplaceModelFormat(details.Tags)
+	architecture := strings.TrimSpace(details.Metadata.Architecture)
+	configMetadata := marketplaceModelConfigMetadata{}
+
+	var (
+		files         []csghub.RepoFile
+		filesFetched  bool
+		quantizations []marketplaceModelQuantization
+	)
+	if format == "gguf" || format == "" || architecture == "" {
+		if fetched, err := client.GetModelTree(r.Context(), namespace, name); err == nil {
+			files = fetched
+			filesFetched = true
+		}
+	}
+	if format == "" && filesFetched {
+		format = marketplaceModelFormatFromFiles(files)
+	}
+	if architecture == "" && filesFetched && marketplaceRepoHasFile(files, "config.json") {
+		if rawConfig, err := client.GetModelRawFile(r.Context(), namespace, name, "config.json"); err == nil {
+			configMetadata = marketplaceMetadataFromConfig(rawConfig)
+			architecture = configMetadata.Architecture
+		}
+	}
+	enrichMarketplaceModelDetail(details, format, architecture, configMetadata)
+	if format == "gguf" {
+		if !filesFetched {
+			if fetched, err := client.GetModelTree(r.Context(), namespace, name); err == nil {
+				files = fetched
+				filesFetched = true
+			}
+		}
+		if filesFetched {
 			quantizations = summarizeMarketplaceQuantizations(files)
 		}
 	}
@@ -123,6 +157,11 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, marketplaceModelDetailResponse{
 		Details:       details,
 		Quantizations: quantizations,
+		LocalInference: localinference.FromMarketplace(
+			format,
+			architecture,
+			details.Metadata.ClassName,
+		),
 	})
 }
 
@@ -237,6 +276,148 @@ func marketplaceModelFormat(tags []csghub.Tag) string {
 		}
 	}
 	return ""
+}
+
+func marketplaceModelFormatFromFiles(files []csghub.RepoFile) string {
+	hasSafeTensors := false
+	hasPyTorch := false
+	for _, file := range files {
+		path := strings.ToLower(marketplaceRepoFilePath(file))
+		switch {
+		case strings.HasSuffix(path, ".gguf"):
+			return string(model.FormatGGUF)
+		case strings.HasSuffix(path, ".safetensors"):
+			hasSafeTensors = true
+		case strings.HasSuffix(path, ".bin") || strings.HasSuffix(path, ".pt") || strings.HasSuffix(path, ".pth"):
+			hasPyTorch = true
+		}
+	}
+	if hasSafeTensors {
+		return string(model.FormatSafeTensors)
+	}
+	if hasPyTorch {
+		return string(model.FormatPyTorch)
+	}
+	return ""
+}
+
+func marketplaceRepoHasFile(files []csghub.RepoFile, name string) bool {
+	name = strings.TrimSpace(name)
+	for _, file := range files {
+		if marketplaceRepoFilePath(file) == name {
+			return true
+		}
+	}
+	return false
+}
+
+type marketplaceModelConfigMetadata struct {
+	Architecture string
+	ModelType    string
+	TensorType   string
+}
+
+func marketplaceMetadataFromConfig(rawConfig string) marketplaceModelConfigMetadata {
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
+		TorchDType    string   `json:"torch_dtype"`
+	}
+	if json.Unmarshal([]byte(rawConfig), &cfg) != nil {
+		return marketplaceModelConfigMetadata{}
+	}
+	metadata := marketplaceModelConfigMetadata{
+		ModelType:  strings.TrimSpace(cfg.ModelType),
+		TensorType: strings.TrimSpace(cfg.TorchDType),
+	}
+	if len(cfg.Architectures) > 0 {
+		metadata.Architecture = strings.TrimSpace(cfg.Architectures[0])
+	}
+	return metadata
+}
+
+func enrichMarketplaceModelDetail(details *csghub.Model, format, architecture string, configMetadata marketplaceModelConfigMetadata) {
+	if details == nil {
+		return
+	}
+	if details.Tags == nil {
+		details.Tags = []csghub.Tag{}
+	}
+	if format != "" {
+		details.Tags = marketplaceEnsureTag(details.Tags, format, "framework", marketplaceFrameworkShowName(format))
+	}
+	if inferredTask := marketplaceInferredTaskTag(details, architecture); inferredTask != "" {
+		details.Tags = marketplaceEnsureTag(details.Tags, inferredTask, "task", marketplaceTaskShowName(inferredTask))
+	}
+	if strings.TrimSpace(details.Metadata.Architecture) == "" {
+		details.Metadata.Architecture = architecture
+	}
+	if strings.TrimSpace(details.Metadata.ModelType) == "" {
+		details.Metadata.ModelType = configMetadata.ModelType
+	}
+	if strings.TrimSpace(details.Metadata.TensorType) == "" {
+		details.Metadata.TensorType = configMetadata.TensorType
+	}
+}
+
+func marketplaceEnsureTag(tags []csghub.Tag, name, category, showName string) []csghub.Tag {
+	normalizedName := strings.ToLower(strings.TrimSpace(name))
+	normalizedCategory := strings.TrimSpace(category)
+	if normalizedName == "" || normalizedCategory == "" {
+		return tags
+	}
+	for _, tag := range tags {
+		if strings.EqualFold(strings.TrimSpace(tag.Name), normalizedName) && strings.TrimSpace(tag.Category) == normalizedCategory {
+			return tags
+		}
+	}
+	return append(tags, csghub.Tag{
+		Name:     normalizedName,
+		Category: normalizedCategory,
+		ShowName: showName,
+	})
+}
+
+func marketplaceFrameworkShowName(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case string(model.FormatGGUF):
+		return "GGUF"
+	case string(model.FormatSafeTensors):
+		return "SafeTensors"
+	case string(model.FormatPyTorch):
+		return "PyTorch"
+	default:
+		return format
+	}
+}
+
+func marketplaceInferredTaskTag(details *csghub.Model, architecture string) string {
+	haystack := strings.ToLower(strings.Join([]string{
+		details.Path,
+		details.Name,
+		details.Nickname,
+		details.Metadata.ModelType,
+		architecture,
+	}, " "))
+	switch {
+	case strings.Contains(haystack, "embedding"):
+		return "feature-extraction"
+	case strings.Contains(haystack, "reranker"):
+		return "sentence-similarity"
+	default:
+		return ""
+	}
+}
+
+func marketplaceTaskShowName(task string) string {
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "feature-extraction":
+		return "Feature Extraction"
+	case "sentence-similarity":
+		return "Sentence Similarity"
+	default:
+		return task
+	}
 }
 
 func normalizeMarketplaceFramework(value string) string {

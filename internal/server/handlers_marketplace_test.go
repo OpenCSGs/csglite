@@ -273,6 +273,77 @@ func TestHandleMarketplaceModelDetailReturnsQuantizations(t *testing.T) {
 	if resp.Quantizations[1].Name != "Q4_K_M" || resp.Quantizations[1].FileCount != 2 {
 		t.Fatalf("second quantization = %#v, want Q4_K_M x2", resp.Quantizations[1])
 	}
+	if !resp.LocalInference.Supported || resp.LocalInference.Runtime != "llama" || resp.LocalInference.Mode != "direct" || resp.LocalInference.RuntimeArchitecture != "qwen2" {
+		t.Fatalf("local_inference = %#v, want llama direct qwen2", resp.LocalInference)
+	}
+}
+
+func TestHandleMarketplaceModelDetailInfersLocalInferenceFromRepoFiles(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/models/Qwen/Qwen3-Embedding-4B":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[csghub.Model]{
+				Msg: "OK",
+				Data: csghub.Model{
+					ID:   1,
+					Name: "Qwen3-Embedding-4B",
+					Path: "Qwen/Qwen3-Embedding-4B",
+				},
+			})
+		case "/api/v1/models/Qwen/Qwen3-Embedding-4B/tree":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoFile]{
+				Msg: "OK",
+				Data: []csghub.RepoFile{
+					{Path: "config.json", Name: "config.json"},
+					{Path: "model-00001-of-00002.safetensors", Name: "model-00001-of-00002.safetensors", LFS: true},
+					{Path: "model-00002-of-00002.safetensors", Name: "model-00002-of-00002.safetensors", LFS: true},
+				},
+			})
+		case "/api/v1/models/Qwen/Qwen3-Embedding-4B/raw/config.json":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[string]{
+				Msg:  "OK",
+				Data: `{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3"}`,
+			})
+		default:
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/Qwen/Qwen3-Embedding-4B", nil)
+	req.SetPathValue("namespace", "Qwen")
+	req.SetPathValue("name", "Qwen3-Embedding-4B")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.LocalInference.Supported || resp.LocalInference.Runtime != "llama" || resp.LocalInference.Mode != "convert" || resp.LocalInference.RuntimeArchitecture != "qwen3" {
+		t.Fatalf("local_inference = %#v, want llama convert qwen3", resp.LocalInference)
+	}
+	if resp.Details.Metadata.Architecture != "Qwen3ForCausalLM" {
+		t.Fatalf("architecture = %q, want Qwen3ForCausalLM", resp.Details.Metadata.Architecture)
+	}
+	if resp.Details.Metadata.ModelType != "qwen3" {
+		t.Fatalf("model_type = %q, want qwen3", resp.Details.Metadata.ModelType)
+	}
+	if !hasMarketplaceTag(resp.Details.Tags, "safetensors", "framework") {
+		t.Fatalf("tags = %#v, want safetensors framework tag", resp.Details.Tags)
+	}
+	if !hasMarketplaceTag(resp.Details.Tags, "feature-extraction", "task") {
+		t.Fatalf("tags = %#v, want feature-extraction task tag", resp.Details.Tags)
+	}
 }
 
 func TestHandleMarketplaceModelDetailIgnoresTreeError(t *testing.T) {
@@ -323,4 +394,13 @@ func TestHandleMarketplaceModelDetailIgnoresTreeError(t *testing.T) {
 	if len(resp.Quantizations) != 0 {
 		t.Fatalf("quantizations = %#v, want empty when tree fails", resp.Quantizations)
 	}
+}
+
+func hasMarketplaceTag(tags []csghub.Tag, name, category string) bool {
+	for _, tag := range tags {
+		if tag.Name == name && tag.Category == category {
+			return true
+		}
+	}
+	return false
 }

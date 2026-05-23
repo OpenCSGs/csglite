@@ -42,7 +42,7 @@ func TestHandleOpenAIImagesGenerations(t *testing.T) {
 	defer func() { ensureImageRuntimeReady = oldEnsureImageRuntimeReady }()
 
 	fake := &fakeImageEngine{}
-	ensureImageRuntimeReady = func(context.Context, *imagegen.RuntimeManager, imagegen.ProgressFunc) error {
+	ensureImageRuntimeReady = func(context.Context, *imagegen.RuntimeManager, imagegen.ProgressFunc, bool) error {
 		return nil
 	}
 	newDiffusersEngine = func(context.Context, string, string, *imagegen.RuntimeManager) (imagegen.Engine, error) {

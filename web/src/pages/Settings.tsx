@@ -9,6 +9,7 @@ import {
   checkUpgrade,
   clearCloudToken,
   getCloudAuthStatus,
+  installImageRuntime,
   getSettings,
   saveCloudToken,
   saveSettings,
@@ -60,6 +61,19 @@ const webSearchSafeSearch = signal(1);
 const webSearchTimeoutSeconds = signal(5);
 const webSearchError = signal("");
 const isSavingWebSearch = signal(false);
+const serverUrlInput = signal("");
+const aiGatewayUrlInput = signal("");
+const defaultServerUrl = signal("");
+const defaultAiGatewayUrl = signal("");
+const serviceUrlsError = signal("");
+const serviceUrlsMessage = signal("");
+const isSavingServiceUrls = signal(false);
+const isResettingDefaults = signal(false);
+const resetDefaultsMessage = signal("");
+const resetDefaultsError = signal("");
+const isUpgradingDiffuser = signal(false);
+const diffuserUpgradeMessage = signal("");
+const diffuserUpgradeError = signal("");
 
 function loadContextIndex(): number {
   try {
@@ -103,12 +117,30 @@ function saveParallelIndex(idx: number) {
   }
 }
 
-function resetDefaults() {
+async function resetDefaults() {
+  isResettingDefaults.value = true;
+  resetDefaultsMessage.value = "";
+  resetDefaultsError.value = "";
   contextIndex.value = 1;
   saveContextIndex(1);
   parallelIndex.value = 2;
   saveParallelIndex(2);
-  fetchSettings();
+  serviceUrlsError.value = "";
+  serviceUrlsMessage.value = "";
+  try {
+    const data = await saveSettings({ server_url: "", ai_gateway_url: "" });
+    applySettings(data);
+    serviceUrlsMessage.value = t("settings.serviceUrlsResetSuccess");
+    resetDefaultsMessage.value = t("settings.resetDefaultsSuccess");
+    fetchCloudAuth();
+  } catch (err: any) {
+    const message = err?.message || t("settings.resetDefaultsFailed");
+    serviceUrlsError.value = message;
+    resetDefaultsError.value = message;
+    fetchSettings();
+  } finally {
+    isResettingDefaults.value = false;
+  }
 }
 
 function applySettings(data: AppSettings) {
@@ -116,6 +148,10 @@ function applySettings(data: AppSettings) {
   storageDirInput.value = data.storage_dir || "";
   modelDirectory.value = data.model_dir || "";
   datasetDirectory.value = data.dataset_dir || "";
+  serverUrlInput.value = data.server_url || "";
+  aiGatewayUrlInput.value = data.ai_gateway_url || "";
+  defaultServerUrl.value = data.default_server_url || "";
+  defaultAiGatewayUrl.value = data.default_ai_gateway_url || "";
   appVersion.value = data.version || "";
   upgradeProgress.value = {
     ...upgradeProgress.value,
@@ -316,6 +352,40 @@ async function saveWebSearchSettings() {
     webSearchError.value = err?.message || t("settings.webSearchSaveFailed");
   } finally {
     isSavingWebSearch.value = false;
+  }
+}
+
+async function saveServiceURLs() {
+  isSavingServiceUrls.value = true;
+  serviceUrlsError.value = "";
+  serviceUrlsMessage.value = "";
+  try {
+    const data = await saveSettings({
+      server_url: serverUrlInput.value,
+      ai_gateway_url: aiGatewayUrlInput.value,
+    });
+    applySettings(data);
+    serviceUrlsMessage.value = t("settings.serviceUrlsSaveSuccess");
+    fetchCloudAuth();
+  } catch (err: any) {
+    serviceUrlsError.value = err?.message || t("settings.serviceUrlsSaveFailed");
+  } finally {
+    isSavingServiceUrls.value = false;
+  }
+}
+
+async function upgradeDiffuser() {
+  if (isUpgradingDiffuser.value) return;
+  isUpgradingDiffuser.value = true;
+  diffuserUpgradeMessage.value = "";
+  diffuserUpgradeError.value = "";
+  try {
+    await installImageRuntime({ upgrade_packages: true });
+    diffuserUpgradeMessage.value = t("settings.diffuserUpgradeSuccess");
+  } catch (err: any) {
+    diffuserUpgradeError.value = err?.message || t("settings.diffuserUpgradeFailed");
+  } finally {
+    isUpgradingDiffuser.value = false;
   }
 }
 
@@ -534,6 +604,59 @@ export function Settings() {
         <div class="flex gap-2 ml-7">
           <LangBtn code="en" label="EN" />
           <LangBtn code="zh" label="中文" />
+        </div>
+      </div>
+
+      {/* Service URLs */}
+      <div class="mb-10">
+        <div class="flex items-center gap-2 mb-1">
+          <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          </svg>
+          <span class="font-semibold text-gray-900">{t("settings.serviceUrls")}</span>
+        </div>
+        <p class="text-sm text-gray-500 mb-3 ml-7">{t("settings.serviceUrlsDesc")}</p>
+        <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4 space-y-4">
+          <label class="block">
+            <span class="text-sm font-medium text-gray-700">{t("settings.serverUrl")}</span>
+            <input
+              type="url"
+              value={serverUrlInput.value}
+              onInput={(event) => {
+                serverUrlInput.value = (event.currentTarget as HTMLInputElement).value;
+              }}
+              placeholder={defaultServerUrl.value}
+              class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            />
+            <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultServerUrl.value || "-")}</span>
+          </label>
+          <label class="block">
+            <span class="text-sm font-medium text-gray-700">{t("settings.aiGatewayUrl")}</span>
+            <input
+              type="url"
+              value={aiGatewayUrlInput.value}
+              onInput={(event) => {
+                aiGatewayUrlInput.value = (event.currentTarget as HTMLInputElement).value;
+              }}
+              placeholder={defaultAiGatewayUrl.value}
+              class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            />
+            <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultAiGatewayUrl.value || "-")}</span>
+          </label>
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-sm">
+              {serviceUrlsError.value && <span class="text-red-600">{serviceUrlsError.value}</span>}
+              {serviceUrlsMessage.value && <span class="text-green-600">{serviceUrlsMessage.value}</span>}
+            </div>
+            <button
+              type="button"
+              onClick={() => void saveServiceURLs()}
+              disabled={isSavingServiceUrls.value}
+              class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+            >
+              {isSavingServiceUrls.value ? "..." : t("settings.save")}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -841,6 +964,35 @@ export function Settings() {
         </div>
       </div>
 
+      {/* Diffuser */}
+      <div class="mb-10">
+        <div class="flex items-center gap-2 mb-1">
+          <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 12V4m0 8l-3-3m3 3l3-3" />
+          </svg>
+          <span class="font-semibold text-gray-900">{t("settings.diffuser")}</span>
+        </div>
+        <p class="text-sm text-gray-500 mb-3 ml-7">{t("settings.diffuserDesc")}</p>
+        <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4">
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p class="text-sm font-semibold text-gray-900">{t("settings.diffuserUpgradeTitle")}</p>
+              <p class="mt-1 text-sm text-gray-500">{t("settings.diffuserUpgradeHint")}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void upgradeDiffuser()}
+              disabled={isUpgradingDiffuser.value}
+              class="inline-flex items-center justify-center px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {isUpgradingDiffuser.value ? t("settings.diffuserUpgrading") : t("settings.diffuserUpgrade")}
+            </button>
+          </div>
+          {diffuserUpgradeMessage.value && <p class="mt-3 text-sm text-green-600">{diffuserUpgradeMessage.value}</p>}
+          {diffuserUpgradeError.value && <p class="mt-3 text-sm text-red-600">{diffuserUpgradeError.value}</p>}
+        </div>
+      </div>
+
       {/* Version information */}
       <div class="mb-10">
         <div class="flex items-center gap-2 mb-1">
@@ -871,12 +1023,17 @@ export function Settings() {
         </div>
       </div>
 
-      <div class="flex justify-end border-t border-gray-100 pt-6">
+      <div class="flex flex-col gap-3 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
+        <div class="text-sm">
+          {resetDefaultsMessage.value && <span class="text-green-600">{resetDefaultsMessage.value}</span>}
+          {resetDefaultsError.value && <span class="text-red-600">{resetDefaultsError.value}</span>}
+        </div>
         <button
-          onClick={resetDefaults}
-          class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+          onClick={() => void resetDefaults()}
+          disabled={isResettingDefaults.value}
+          class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
         >
-          {t("settings.resetDefaults")}
+          {isResettingDefaults.value ? t("settings.resettingDefaults") : t("settings.resetDefaults")}
         </button>
       </div>
       <DirectoryPickerDialog

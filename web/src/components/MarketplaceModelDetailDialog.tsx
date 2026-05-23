@@ -6,6 +6,12 @@ import type {
   MarketplaceTag,
 } from "../api/client";
 import { locale, t } from "../i18n";
+import { LocalInferenceBadge } from "./LocalInferenceBadge";
+import {
+  localInferenceLabelKey,
+  localInferenceModeFromSupport,
+  localInferenceValueKey,
+} from "../utils/localInference";
 
 type MarketplaceModelDetailDialogProps = {
   modelPath: string;
@@ -67,6 +73,7 @@ export function MarketplaceModelDetailDialog({
 
   const model = detail?.details || null;
   const formatTags = model ? getModelFormatTags(model.tags || []) : [];
+  const localInferenceMode = localInferenceModeFromSupport(detail?.local_inference);
   const taskTags = (model?.tags || []).filter((tag) => tag.category === "task");
   const runtimeTags = (model?.tags || []).filter((tag) => tag.category === "runtime_framework");
   const quantizations = detail?.quantizations || [];
@@ -98,6 +105,9 @@ export function MarketplaceModelDetailDialog({
                   {t("mp.downloaded")}
                 </span>
               )}
+              {!loading && model && (
+                <LocalInferenceBadge mode={localInferenceMode} prefix="mp" />
+              )}
             </div>
             <p class="mt-1 text-sm text-gray-500">{t("mp.detailSubtitle")}</p>
           </div>
@@ -128,6 +138,7 @@ export function MarketplaceModelDetailDialog({
             <div class="space-y-6">
               <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                 <SummaryTile label={t("mp.format")} value={formatTags.length > 0 ? formatTags.map(formatBadgeLabel).join(" / ") : t("lib.notAvailable")} />
+                <SummaryTile label={t(localInferenceLabelKey("mp"))} value={t(localInferenceValueKey(localInferenceMode, "mp"))} />
                 <SummaryTile label={t("mp.modelParams")} value={formatModelParams(model.metadata?.model_params)} />
                 <SummaryTile label={t("mp.architecture")} value={model.metadata?.architecture || model.metadata?.class_name || t("lib.notAvailable")} />
                 <SummaryTile label={t("mp.tensorType")} value={model.metadata?.tensor_type || t("lib.notAvailable")} />

@@ -9,6 +9,14 @@ aligned in the same task:
 - User-facing `gguf-py` install/download hints that reference a llama.cpp tag.
 - Installer defaults in `scripts/install.sh` and `scripts/install.ps1` for
   downloaded `llama-server`.
+- Local inference architecture support tables:
+  - `internal/convert/arch_llama.go` HF architecture to GGUF architecture
+    mappings.
+  - `internal/convert/arch_support.go` bundled `convert_hf_to_gguf.py`
+    `@ModelBase.register(...)` coverage, including HF architecture to
+    llama.cpp/GGUF runtime architecture mappings.
+  - `internal/model/manifest.go` embedding, vision, and Diffusers pipeline
+    detection lists.
 
 Users should get a consistent llama.cpp version for:
 
@@ -19,6 +27,13 @@ Users should get a consistent llama.cpp version for:
 Do not sync only the converter and leave installer defaults on an older tag. If
 an exact mirrored binary tag is unavailable, either mirror it as part of the task
 or explicitly choose the fallback tag and update all three surfaces together.
+
+When upgrading the bundled llama.cpp converter, inspect the new
+`convert_hf_to_gguf.py` registry and update the Go mapping tables in the same
+task. SafeTensors support depends on mapping HuggingFace architecture names
+such as `Qwen2ForCausalLM` to the llama.cpp/GGUF runtime architecture such as
+`qwen2`; do not rely on matching architecture names directly. Add or update
+tests for newly supported architectures and local inference support decisions.
 
 ## Ubuntu CUDA Mirror
 

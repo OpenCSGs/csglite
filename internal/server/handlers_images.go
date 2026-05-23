@@ -82,12 +82,16 @@ func (s *Server) handleImageRuntimeStatus(w http.ResponseWriter, r *http.Request
 
 // POST /api/image-runtime/install -- install or repair the Diffusers runtime.
 func (s *Server) handleImageRuntimeInstall(w http.ResponseWriter, r *http.Request) {
+	var req api.ImageRuntimeInstallRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
 	manager, err := imagegen.NewRuntimeManager()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	status, err := manager.Install(r.Context())
+	status, err := manager.InstallWithProgressOptions(r.Context(), nil, req.UpgradePackages)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error":  err.Error(),

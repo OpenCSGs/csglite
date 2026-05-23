@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csghub-lite/internal/autostart"
+	"github.com/opencsgs/csghub-lite/internal/cloud"
 	"github.com/opencsgs/csghub-lite/internal/config"
 	"github.com/opencsgs/csghub-lite/internal/hardware"
 	"github.com/opencsgs/csghub-lite/pkg/api"
@@ -112,6 +113,21 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		s.cfg.WebSearch = next
 		configUpdated = true
 	}
+	if req.ServerURL != nil {
+		serverURL := strings.TrimSpace(*req.ServerURL)
+		if serverURL == "" {
+			serverURL = config.DefaultServerURL
+		}
+		if serverURL != strings.TrimSpace(s.cfg.ServerURL) && strings.TrimSpace(s.cfg.Token) != "" {
+			s.cfg.Token = ""
+		}
+		s.cfg.ServerURL = serverURL
+		configUpdated = true
+	}
+	if req.AIGatewayURL != nil {
+		s.cfg.AIGatewayURL = strings.TrimSpace(*req.AIGatewayURL)
+		configUpdated = true
+	}
 
 	if dirsUpdated {
 		if err := os.MkdirAll(s.cfg.ModelDir, 0o755); err != nil {
@@ -150,12 +166,16 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 func currentSettingsResponse(cfg *config.Config, version string) api.SettingsResponse {
 	autostartEnabled, _ := autostart.IsEnabled()
 	return api.SettingsResponse{
-		Version:    version,
-		StorageDir: cfg.StorageDir(),
-		ModelDir:   cfg.ModelDir,
-		DatasetDir: cfg.DatasetDir,
-		Autostart:  autostartEnabled,
-		WebSearch:  webSearchConfigToSettings(cfg.WebSearch),
+		Version:             version,
+		StorageDir:          cfg.StorageDir(),
+		ModelDir:            cfg.ModelDir,
+		DatasetDir:          cfg.DatasetDir,
+		ServerURL:           strings.TrimSpace(cfg.ServerURL),
+		AIGatewayURL:        resolveCloudURL(cfg),
+		DefaultServerURL:    config.DefaultServerURL,
+		DefaultAIGatewayURL: cloud.DefaultBaseURL,
+		Autostart:           autostartEnabled,
+		WebSearch:           webSearchConfigToSettings(cfg.WebSearch),
 	}
 }
 

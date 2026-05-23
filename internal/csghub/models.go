@@ -58,6 +58,17 @@ func (c *Client) GetModel(ctx context.Context, namespace, name string) (*Model, 
 	return &resp.Data, nil
 }
 
+// GetModelRawFile returns the text content of a non-LFS model repository file.
+func (c *Client) GetModelRawFile(ctx context.Context, namespace, name, filePath string) (string, error) {
+	path := fmt.Sprintf("/api/v1/models/%s/%s/raw/%s", namespace, name, filePath)
+
+	var resp APIResponse[string]
+	if err := c.getJSON(ctx, path, &resp); err != nil {
+		return "", fmt.Errorf("getting raw file %s from %s/%s: %w", filePath, namespace, name, err)
+	}
+	return resp.Data, nil
+}
+
 // GetModelTree returns the file tree for a model repository.
 func (c *Client) GetModelTree(ctx context.Context, namespace, name string) ([]RepoFile, error) {
 	return c.getModelTreeRecursive(ctx, namespace, name, "")

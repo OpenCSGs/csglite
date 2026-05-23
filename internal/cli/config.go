@@ -57,12 +57,13 @@ func newConfigCmd() *cobra.Command {
 			"Examples:\n" +
 				"  csghub-lite config show\n" +
 				"  csghub-lite config get server_url\n" +
+				"  csghub-lite config unset ai_gateway_url\n" +
 				"  csghub-lite config set storage_dir /data/csghub-lite\n" +
 				"  csghub-lite config set listen_addr :8080",
 		}, "\n\n"),
 	}
 
-	cmd.AddCommand(newConfigSetCmd(), newConfigGetCmd(), newConfigShowCmd())
+	cmd.AddCommand(newConfigSetCmd(), newConfigUnsetCmd(), newConfigGetCmd(), newConfigShowCmd())
 	return cmd
 }
 
@@ -81,6 +82,22 @@ func newConfigSetCmd() *cobra.Command {
 		}, "\n\n"),
 		Args: cobra.ExactArgs(2),
 		RunE: runConfigSet,
+	}
+}
+
+func newConfigUnsetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unset KEY",
+		Short: "Unset a configuration value",
+		Long: strings.Join([]string{
+			"Unset a configuration value and fall back to its default.",
+			"Available keys:\n" + configKeysHelpText(),
+			"Examples:\n" +
+				"  csghub-lite config unset server_url\n" +
+				"  csghub-lite config unset ai_gateway_url",
+		}, "\n\n"),
+		Args: cobra.ExactArgs(1),
+		RunE: runConfigUnset,
 	}
 }
 
@@ -173,6 +190,38 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Set %s = %s\n", key, displayConfigValue(cfg, key))
+	return nil
+}
+
+func runConfigUnset(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	key := strings.TrimSpace(args[0])
+	syncToken := false
+	switch key {
+	case "server_url":
+		if strings.TrimSpace(cfg.ServerURL) != config.DefaultServerURL && strings.TrimSpace(cfg.Token) != "" {
+			cfg.Token = ""
+			syncToken = true
+		}
+		cfg.ServerURL = config.DefaultServerURL
+	case "ai_gateway_url":
+		cfg.AIGatewayURL = ""
+	default:
+		return fmt.Errorf("config key %q cannot be unset (valid: server_url, ai_gateway_url)", key)
+	}
+
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("saving config: %w", err)
+	}
+	if syncToken {
+		warnIfTokenSyncFailed(cfg)
+	}
+
+	fmt.Printf("Unset %s; using %s\n", key, displayConfigValue(cfg, key))
 	return nil
 }
 

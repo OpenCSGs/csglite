@@ -345,11 +345,11 @@ var loadEmbeddingEngineWithProgress = inference.LoadEmbeddingEngineWithProgress
 var newDiffusersEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (imagegen.Engine, error) {
 	return imagegen.NewDiffusersEngine(ctx, modelName, modelDir, runtimeManager)
 }
-var ensureImageRuntimeReady = func(ctx context.Context, runtimeManager *imagegen.RuntimeManager, progress imagegen.ProgressFunc) error {
-	if status := runtimeManager.Status(ctx); status.Ready {
+var ensureImageRuntimeReady = func(ctx context.Context, runtimeManager *imagegen.RuntimeManager, progress imagegen.ProgressFunc, upgradePackages bool) error {
+	if status := runtimeManager.Status(ctx); status.Ready && !upgradePackages {
 		return nil
 	}
-	_, err := runtimeManager.InstallWithProgress(ctx, progress)
+	_, err := runtimeManager.InstallWithProgressOptions(ctx, progress, upgradePackages)
 	return err
 }
 
@@ -491,10 +491,19 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 }
 
 func (s *Server) getOrLoadImageEngine(ctx context.Context, modelID string) (imagegen.Engine, error) {
-	return s.getOrLoadImageEngineWithProgress(ctx, modelID, nil)
+	return s.getOrLoadImageEngineWithProgress(ctx, modelID, nil, false)
 }
 
-func (s *Server) getOrLoadImageEngineWithProgress(ctx context.Context, modelID string, progress imagegen.ProgressFunc) (imagegen.Engine, error) {
+func (s *Server) getOrLoadImageEngineWithProgress(ctx context.Context, modelID string, progress imagegen.ProgressFunc, upgradePackages bool) (imagegen.Engine, error) {
+	if upgradePackages {
+		s.mu.Lock()
+		if me, ok := s.imageEngines[modelID]; ok {
+			_ = me.engine.Close()
+			delete(s.imageEngines, modelID)
+		}
+		s.mu.Unlock()
+	}
+
 	s.mu.RLock()
 	me, ok := s.imageEngines[modelID]
 	s.mu.RUnlock()
@@ -540,7 +549,7 @@ func (s *Server) getOrLoadImageEngineWithProgress(ctx context.Context, modelID s
 		log.Printf("MODEL %s: image engine load started", modelID)
 		runtimeManager, err := imagegen.NewRuntimeManager()
 		if err == nil {
-			err = ensureImageRuntimeReady(ctx, runtimeManager, progress)
+			err = ensureImageRuntimeReady(ctx, runtimeManager, progress, upgradePackages)
 			if err == nil {
 				state.engine, err = newDiffusersEngine(ctx, modelID, modelDir, runtimeManager)
 			}

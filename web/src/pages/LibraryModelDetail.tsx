@@ -3,6 +3,12 @@ import type { RoutePropsForPath } from "preact-iso";
 import { getModelManifest } from "../api/client";
 import type { ModelManifestResponse, ModelFileEntry } from "../api/client";
 import { locale, t } from "../i18n";
+import { LocalInferenceBadge } from "../components/LocalInferenceBadge";
+import {
+  localInferenceLabelKey,
+  localInferenceModeFromSupport,
+  localInferenceValueKey,
+} from "../utils/localInference";
 
 type LibraryModelDetailProps = RoutePropsForPath<"/library/detail/:model">;
 
@@ -44,6 +50,7 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
   const manifestCurl = buildCurlCommand(manifestURL);
   const exampleFile = manifest?.files?.[0];
   const exampleCurl = exampleFile ? buildFileCurlCommand(exampleFile) : "";
+  const localInferenceMode = localInferenceModeFromSupport(manifest?.local_inference);
 
   const handleCopy = async (key: string, value: string) => {
     try {
@@ -86,6 +93,7 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
                 {manifest.details.format.toUpperCase()}
               </span>
             )}
+            {manifest && <LocalInferenceBadge mode={localInferenceMode} prefix="lib" />}
           </div>
           <p class="text-gray-500 text-sm mt-1">{t("lib.detailSubtitle")}</p>
         </div>
@@ -108,6 +116,7 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
         <div class="space-y-6 mt-6">
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <SummaryTile label={t("lib.format")} value={manifest.details.format?.toUpperCase() || t("lib.notAvailable")} />
+            <SummaryTile label={t(localInferenceLabelKey("lib"))} value={t(localInferenceValueKey(localInferenceMode, "lib"))} />
             <SummaryTile label={t("lib.fileSize")} value={fmtSize(manifest.details.size)} />
             <SummaryTile label={t("lib.fileCount")} value={String(manifest.files.length)} />
             <SummaryTile label={t("lib.updated")} value={fmtDate(manifest.details.modified_at)} />
