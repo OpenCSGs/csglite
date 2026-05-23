@@ -59,6 +59,16 @@ type ImageRuntimeInstallRequest struct {
 	UpgradePackages bool `json:"upgrade_packages,omitempty"`
 }
 
+type ModelUploadStartRequest struct {
+	Model     string `json:"model,omitempty"`
+	Mode      string `json:"mode,omitempty"`
+	Overwrite bool   `json:"overwrite,omitempty"`
+}
+
+type ModelUploadStartResponse struct {
+	UploadID string `json:"upload_id"`
+}
+
 type LoadResponse struct {
 	Status  string `json:"status"`
 	Step    string `json:"step,omitempty"`

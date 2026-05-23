@@ -3,46 +3,36 @@ package server
 import (
 	"fmt"
 	"io"
-	"mime/multipart"
+	"log"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/opencsgs/csghub-lite/internal/model"
 	"github.com/opencsgs/csghub-lite/pkg/api"
 )
 
-const defaultModelUploadMemory = 32 << 20
+const uploadProgressLogInterval = 5 * time.Second
 
 // POST /api/models/upload -- import a local model archive, folder, or file set
 func (s *Server) handleModelUpload(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(defaultModelUploadMemory); err != nil {
+	start := time.Now()
+	reader, err := r.MultipartReader()
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart upload: "+err.Error())
 		return
 	}
-	defer r.MultipartForm.RemoveAll()
+	log.Printf("MODEL UPLOAD: stream started content_length=%d", r.ContentLength)
 
-	form := r.MultipartForm
-	files := form.File["files"]
-	if len(files) == 0 {
-		writeError(w, http.StatusBadRequest, "at least one file is required")
+	stagingParent := s.cfg.TempDir()
+	if err := os.MkdirAll(stagingParent, 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "creating upload staging parent: "+err.Error())
 		return
 	}
-
-	mode := strings.ToLower(strings.TrimSpace(firstFormValue(form.Value, "mode")))
-	if mode == "" {
-		mode = "files"
-	}
-	overwrite := parseUploadBool(firstFormValue(form.Value, "overwrite"))
-	paths := form.Value["paths"]
-	modelID := strings.TrimSpace(firstFormValue(form.Value, "model"))
-	if modelID == "" {
-		modelID = deriveUploadModelID(files[0].Filename)
-	}
-
-	staging, err := os.MkdirTemp("", "csghub-model-upload-*")
+	staging, err := os.MkdirTemp(stagingParent, ".csghub-model-upload-*")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "creating upload staging dir: "+err.Error())
 		return
@@ -55,56 +45,134 @@ func (s *Server) handleModelUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	mode := "files"
+	overwrite := false
+	modelID := ""
+	paths := []string{}
+	fileCount := 0
+	var totalBytes int64
+	archivePath := ""
 	kind := model.ImportSourceDirectory
-	if mode == "archive" {
-		if len(files) != 1 {
-			writeError(w, http.StatusBadRequest, "archive upload requires exactly one file")
+	partIndex := 0
+
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("MODEL UPLOAD %s: stream read failed after %s: %v", uploadLogModelID(modelID), time.Since(start).Round(time.Millisecond), err)
+			writeError(w, http.StatusBadRequest, "invalid multipart upload: "+err.Error())
 			return
 		}
-		relPath := safeUploadFileName(files[0].Filename)
-		if relPath == "" {
-			relPath = "model"
-		}
-		source = filepath.Join(staging, relPath)
-		if err := saveUploadedFile(files[0], source); err != nil {
-			writeError(w, http.StatusInternalServerError, "saving uploaded archive: "+err.Error())
-			return
-		}
-		kind = model.ImportSourceArchive
-	} else if mode == "directory" || mode == "files" {
-		for i, header := range files {
-			relPath := ""
-			if i < len(paths) {
-				relPath = paths[i]
+		partIndex++
+		partName := part.FormName()
+
+		switch partName {
+		case "model":
+			modelID = strings.TrimSpace(readUploadField(part))
+			log.Printf("MODEL UPLOAD %s: part=%d field=model value=%q elapsed=%s", uploadLogModelID(modelID), partIndex, modelID, time.Since(start).Round(time.Millisecond))
+		case "mode":
+			if value := strings.ToLower(strings.TrimSpace(readUploadField(part))); value != "" {
+				mode = value
 			}
-			if relPath == "" {
-				relPath = header.Filename
-			}
-			cleanRel, err := cleanUploadRelativePath(relPath)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
+			log.Printf("MODEL UPLOAD %s: part=%d field=mode value=%q elapsed=%s", uploadLogModelID(modelID), partIndex, mode, time.Since(start).Round(time.Millisecond))
+		case "overwrite":
+			overwrite = parseUploadBool(readUploadField(part))
+			log.Printf("MODEL UPLOAD %s: part=%d field=overwrite value=%t elapsed=%s", uploadLogModelID(modelID), partIndex, overwrite, time.Since(start).Round(time.Millisecond))
+		case "paths":
+			value := readUploadField(part)
+			paths = append(paths, value)
+			log.Printf("MODEL UPLOAD %s: part=%d field=paths index=%d value=%q elapsed=%s", uploadLogModelID(modelID), partIndex, len(paths)-1, value, time.Since(start).Round(time.Millisecond))
+		case "files":
+			if mode == "archive" {
+				if fileCount > 0 {
+					writeError(w, http.StatusBadRequest, "archive upload requires exactly one file")
+					return
+				}
+				relPath := safeUploadFileName(part.FileName())
+				if relPath == "" {
+					relPath = "model"
+				}
+				archivePath = filepath.Join(staging, relPath)
+				if modelID == "" {
+					modelID = deriveUploadModelID(part.FileName())
+				}
+				log.Printf("MODEL UPLOAD %s: part=%d file started index=%d mode=archive filename=%q target=%q elapsed=%s", uploadLogModelID(modelID), partIndex, fileCount, part.FileName(), archivePath, time.Since(start).Round(time.Millisecond))
+				n, err := saveUploadPart(part, archivePath, uploadLogModelID(modelID), fileCount, part.FileName())
+				if err != nil {
+					log.Printf("MODEL UPLOAD %s: archive stream failed after %s: %v", uploadLogModelID(modelID), time.Since(start).Round(time.Millisecond), err)
+					writeError(w, http.StatusInternalServerError, "saving uploaded archive: "+err.Error())
+					return
+				}
+				log.Printf("MODEL UPLOAD %s: part=%d file complete index=%d filename=%q bytes=%d elapsed=%s", uploadLogModelID(modelID), partIndex, fileCount, part.FileName(), n, time.Since(start).Round(time.Millisecond))
+				totalBytes += n
+				kind = model.ImportSourceArchive
+			} else if mode == "directory" || mode == "files" {
+				relPath := ""
+				if fileCount < len(paths) {
+					relPath = paths[fileCount]
+				}
+				if relPath == "" {
+					relPath = part.FileName()
+				}
+				cleanRel, err := cleanUploadRelativePath(relPath)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				if modelID == "" {
+					modelID = deriveUploadModelID(part.FileName())
+				}
+				target := filepath.Join(source, filepath.FromSlash(cleanRel))
+				log.Printf("MODEL UPLOAD %s: part=%d file started index=%d mode=%s filename=%q rel=%q target=%q elapsed=%s", uploadLogModelID(modelID), partIndex, fileCount, mode, part.FileName(), cleanRel, target, time.Since(start).Round(time.Millisecond))
+				n, err := saveUploadPart(part, target, uploadLogModelID(modelID), fileCount, cleanRel)
+				if err != nil {
+					log.Printf("MODEL UPLOAD %s: file stream failed after %s file=%q: %v", uploadLogModelID(modelID), time.Since(start).Round(time.Millisecond), relPath, err)
+					writeError(w, http.StatusInternalServerError, "saving uploaded file: "+err.Error())
+					return
+				}
+				log.Printf("MODEL UPLOAD %s: part=%d file complete index=%d rel=%q bytes=%d elapsed=%s", uploadLogModelID(modelID), partIndex, fileCount, cleanRel, n, time.Since(start).Round(time.Millisecond))
+				totalBytes += n
+			} else {
+				writeError(w, http.StatusBadRequest, "unsupported upload mode")
 				return
 			}
-			if err := saveUploadedFile(header, filepath.Join(source, filepath.FromSlash(cleanRel))); err != nil {
-				writeError(w, http.StatusInternalServerError, "saving uploaded file: "+err.Error())
-				return
-			}
+			fileCount++
+		default:
+			log.Printf("MODEL UPLOAD %s: part=%d ignored field=%q elapsed=%s", uploadLogModelID(modelID), partIndex, partName, time.Since(start).Round(time.Millisecond))
+			_, _ = io.Copy(io.Discard, part)
 		}
-	} else {
-		writeError(w, http.StatusBadRequest, "unsupported upload mode")
+	}
+	if fileCount == 0 {
+		writeError(w, http.StatusBadRequest, "at least one file is required")
 		return
 	}
+	if mode == "archive" {
+		source = archivePath
+	}
+	log.Printf("MODEL UPLOAD %s: stream complete mode=%s overwrite=%t files=%d size=%d elapsed=%s", uploadLogModelID(modelID), mode, overwrite, fileCount, totalBytes, time.Since(start).Round(time.Millisecond))
 
-	lm, err := s.manager.Import(model.ImportOptions{
+	importStart := time.Now()
+	log.Printf("MODEL UPLOAD %s: import started", modelID)
+	opts := model.ImportOptions{
 		ModelID:   modelID,
 		Source:    source,
 		Kind:      kind,
 		Overwrite: overwrite,
-	})
+	}
+	var lm *model.LocalModel
+	if kind == model.ImportSourceDirectory {
+		lm, err = s.manager.ImportPreparedDirectory(opts)
+	} else {
+		lm, err = s.manager.Import(opts)
+	}
 	if err != nil {
+		log.Printf("MODEL UPLOAD %s: import failed after %s: %v", modelID, time.Since(importStart).Round(time.Millisecond), err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	log.Printf("MODEL UPLOAD %s: import complete elapsed=%s total=%s", modelID, time.Since(importStart).Round(time.Millisecond), time.Since(start).Round(time.Millisecond))
 	lm, err = s.manager.GetWithFileEntries(lm.FullName())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -133,24 +201,64 @@ func (s *Server) modelFileEntries(lm *model.LocalModel) []api.ModelFileEntry {
 	return files
 }
 
-func saveUploadedFile(header *multipart.FileHeader, target string) error {
-	src, err := header.Open()
-	if err != nil {
-		return err
-	}
-	defer src.Close()
+func saveUploadPart(src io.Reader, target, modelID string, fileIndex int, displayPath string) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
+		return 0, err
 	}
 	dst, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer dst.Close()
-	if _, err := io.Copy(dst, src); err != nil {
-		return err
+	progress := &uploadProgressWriter{
+		writer:      dst,
+		modelID:     modelID,
+		fileIndex:   fileIndex,
+		displayPath: displayPath,
+		startedAt:   time.Now(),
+		lastLogAt:   time.Now(),
 	}
-	return dst.Close()
+	n, err := io.Copy(progress, src)
+	if err != nil {
+		return n, err
+	}
+	return n, dst.Close()
+}
+
+type uploadProgressWriter struct {
+	writer      io.Writer
+	modelID     string
+	fileIndex   int
+	displayPath string
+	startedAt   time.Time
+	lastLogAt   time.Time
+	written     int64
+}
+
+func (w *uploadProgressWriter) Write(p []byte) (int, error) {
+	n, err := w.writer.Write(p)
+	w.written += int64(n)
+	now := time.Now()
+	if now.Sub(w.lastLogAt) >= uploadProgressLogInterval {
+		w.lastLogAt = now
+		log.Printf("MODEL UPLOAD %s: file progress index=%d path=%q bytes=%d elapsed=%s", w.modelID, w.fileIndex, w.displayPath, w.written, now.Sub(w.startedAt).Round(time.Millisecond))
+	}
+	return n, err
+}
+
+func readUploadField(r io.Reader) string {
+	data, err := io.ReadAll(io.LimitReader(r, 1<<20))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func uploadLogModelID(modelID string) string {
+	if strings.TrimSpace(modelID) == "" {
+		return "(pending)"
+	}
+	return modelID
 }
 
 func firstFormValue(values map[string][]string, key string) string {

@@ -50,6 +50,7 @@ func TestHandleModelUpload_Files(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(s.cfg.ModelDir, "local", "uploaded", "weights", "model.gguf")); err != nil {
 		t.Fatalf("uploaded file: %v", err)
 	}
+	assertNoUploadStagingDirs(t, s.cfg.TempDir())
 }
 
 func TestHandleModelUpload_Archive(t *testing.T) {
@@ -166,6 +167,17 @@ func multipartModelUpload(t *testing.T, fields map[string]string, files []upload
 		t.Fatal(err)
 	}
 	return body, writer.FormDataContentType()
+}
+
+func assertNoUploadStagingDirs(t *testing.T, tmpDir string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(tmpDir, ".csghub-model-upload-*"))
+	if err != nil {
+		t.Fatalf("glob upload staging dirs: %v", err)
+	}
+	if len(matches) > 0 {
+		t.Fatalf("upload staging dirs were not cleaned up: %#v", matches)
+	}
 }
 
 func zipBytes(t *testing.T, files map[string]string) []byte {

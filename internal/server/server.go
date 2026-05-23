@@ -153,11 +153,11 @@ func New(cfg *config.Config, version string) *Server {
 
 	handler := s.routes()
 	s.http = &http.Server{
-		Addr:         cfg.ListenAddr,
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 0, // streaming responses
-		IdleTimeout:  120 * time.Second,
+		Addr:              cfg.ListenAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 30 * time.Second,
+		WriteTimeout:      0, // streaming responses and large uploads
+		IdleTimeout:       120 * time.Second,
 	}
 	return s
 }

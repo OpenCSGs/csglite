@@ -588,39 +588,86 @@ export function uploadLocalModel(
   options: LocalModelUploadOptions,
   onProgress?: (percent: number) => void
 ): Promise<ModelUploadResponse> {
-  return new Promise((resolve, reject) => {
-    const form = new FormData();
-    if (options.model?.trim()) form.set("model", options.model.trim());
-    form.set("mode", options.mode);
-    form.set("overwrite", options.overwrite ? "true" : "false");
-    for (const item of options.files) {
-      form.append("paths", item.path || item.file.name);
-      form.append("files", item.file, item.file.name);
-    }
+  return uploadLocalModelSession(options, onProgress);
+}
 
+async function uploadLocalModelSession(
+  options: LocalModelUploadOptions,
+  onProgress?: (percent: number) => void
+): Promise<ModelUploadResponse> {
+  const start = await fetchJSON<{ upload_id: string }>("/api/models/upload/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: options.model?.trim() || undefined,
+      mode: options.mode,
+      overwrite: !!options.overwrite,
+    }),
+  });
+  const uploadID = start.upload_id;
+  const totalBytes = options.files.reduce((sum, item) => sum + (item.file.size || 0), 0);
+  let completedBytes = 0;
+  try {
+    for (const item of options.files) {
+      await uploadLocalModelSessionFile(uploadID, item, (loaded) => {
+        if (totalBytes > 0) {
+          onProgress?.(Math.min(99, Math.round(((completedBytes + loaded) / totalBytes) * 100)));
+        }
+      });
+      completedBytes += item.file.size || 0;
+      if (totalBytes > 0) {
+        onProgress?.(Math.min(99, Math.round((completedBytes / totalBytes) * 100)));
+      }
+    }
+    const resp = await fetchJSON<ModelUploadResponse>(`/api/models/upload/${encodeURIComponent(uploadID)}/complete`, {
+      method: "POST",
+    });
+    onProgress?.(100);
+    return resp;
+  } catch (err) {
+    try {
+      await fetchJSON(`/api/models/upload/${encodeURIComponent(uploadID)}`, { method: "DELETE" });
+    } catch {
+      /* ignore cleanup errors */
+    }
+    throw err;
+  }
+}
+
+function uploadLocalModelSessionFile(
+  uploadID: string,
+  item: LocalModelUploadFile,
+  onProgress?: (loaded: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const path = item.path || item.file.name;
+    const params = new URLSearchParams();
+    params.set("path", path);
+    params.set("filename", item.file.name);
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/models/upload");
+    xhr.open("PUT", `/api/models/upload/${encodeURIComponent(uploadID)}/file?${params.toString()}`);
     xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && event.total > 0) {
-        onProgress?.(Math.round((event.loaded / event.total) * 100));
+      if (event.lengthComputable) {
+        onProgress?.(event.loaded);
       }
     };
     xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+        return;
+      }
       let data: any = null;
       try {
         data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
       } catch {
-        reject(new Error("upload failed"));
-        return;
-      }
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(data as ModelUploadResponse);
-        return;
+        /* ignore parse errors */
       }
       reject(new Error(data?.error || data?.message || "upload failed"));
     };
-    xhr.onerror = () => reject(new Error("upload failed"));
-    xhr.send(form);
+    xhr.onerror = () => reject(new Error("upload connection failed"));
+    xhr.onabort = () => reject(new Error("upload aborted"));
+    xhr.ontimeout = () => reject(new Error("upload timed out"));
+    xhr.send(item.file);
   });
 }
 

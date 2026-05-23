@@ -15,6 +15,7 @@ const (
 	ConfigFile        = "config.json"
 	ModelsDir         = "models"
 	DatasetsDir       = "datasets"
+	TmpDir            = "tmp"
 )
 
 func (c *Config) DisplayURL() string {
@@ -26,6 +27,10 @@ func (c *Config) DisplayURL() string {
 
 func (c *Config) StorageDir() string {
 	return StorageDir(c.ModelDir, c.DatasetDir)
+}
+
+func (c *Config) TempDir() string {
+	return TempDirForStorage(c.StorageDir())
 }
 
 type Config struct {
@@ -89,6 +94,10 @@ func ModelDirForStorage(storageDir string) string {
 
 func DatasetDirForStorage(storageDir string) string {
 	return filepath.Join(filepath.Clean(storageDir), DatasetsDir)
+}
+
+func TempDirForStorage(storageDir string) string {
+	return filepath.Join(filepath.Clean(storageDir), TmpDir)
 }
 
 func StorageDir(modelDir, datasetDir string) string {

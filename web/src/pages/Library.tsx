@@ -218,13 +218,25 @@ function deriveUploadModelID(path: string): string {
   return `local/${base || "uploaded-model"}`;
 }
 
+function deriveUploadModelIDFromSelection(files: LocalModelUploadFile[], mode: UploadMode): string {
+  if (mode === "directory") {
+    const roots = files
+      .map((item) => (item.path || item.file.name || "").replace(/\\/g, "/").split("/").filter(Boolean)[0])
+      .filter(Boolean);
+    if (roots.length > 0 && roots.every((root) => root === roots[0])) {
+      return deriveUploadModelID(roots[0]);
+    }
+  }
+  return deriveUploadModelID(files[0]?.path || files[0]?.file.name || "");
+}
+
 function setUploadSelection(files: LocalModelUploadFile[], mode: UploadMode) {
   uploadFiles.value = files;
   uploadMode.value = mode;
   uploadProgress.value = 0;
   uploadError.value = "";
   if (!uploadModelID.value.trim() && files.length > 0) {
-    uploadModelID.value = deriveUploadModelID(files[0].path || files[0].file.name);
+    uploadModelID.value = deriveUploadModelIDFromSelection(files, mode);
   }
 }
 

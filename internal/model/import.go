@@ -41,7 +41,7 @@ func (m *Manager) Import(opts ImportOptions) (*LocalModel, error) {
 		return nil, fmt.Errorf("source is required")
 	}
 
-	stagingParent := filepath.Dir(m.cfg.ModelDir)
+	stagingParent := m.cfg.TempDir()
 	if err := os.MkdirAll(stagingParent, 0o755); err != nil {
 		return nil, fmt.Errorf("creating staging parent: %w", err)
 	}
@@ -73,6 +73,54 @@ func (m *Manager) Import(opts ImportOptions) (*LocalModel, error) {
 	preparedDir := filepath.Join(staging, "prepared")
 	if err := copyModelTree(contentRoot, preparedDir); err != nil {
 		return nil, fmt.Errorf("copying model files: %w", err)
+	}
+	if _, _, err := FindModelFile(preparedDir); err != nil {
+		return nil, fmt.Errorf("no supported model weight file found")
+	}
+
+	lm := &LocalModel{
+		Namespace:    namespace,
+		Name:         name,
+		DownloadedAt: time.Now(),
+		PipelineTag:  DetectPipelineTag(preparedDir),
+	}
+	if changed, err := EnsureLocalModelFiles(preparedDir, lm); err != nil {
+		return nil, fmt.Errorf("scanning model files: %w", err)
+	} else if changed {
+		lm.Format = DetectFormat(lm.Files)
+		lm.Size = localModelEntriesSize(lm.FileEntries)
+	}
+	if lm.Format == FormatUnknown {
+		return nil, fmt.Errorf("no supported model weight file found")
+	}
+	if err := SaveManifestInDir(preparedDir, lm); err != nil {
+		return nil, fmt.Errorf("writing manifest: %w", err)
+	}
+
+	destDir := ModelDir(m.cfg.ModelDir, namespace, name)
+	if err := installPreparedModel(preparedDir, destDir, opts.Overwrite); err != nil {
+		return nil, err
+	}
+	return LoadManifest(m.cfg.ModelDir, namespace, name)
+}
+
+// ImportPreparedDirectory installs an already-staged directory into the managed
+// model store without copying it through an additional prepared directory first.
+func (m *Manager) ImportPreparedDirectory(opts ImportOptions) (*LocalModel, error) {
+	namespace, name, err := parseSafeLocalModelID(opts.ModelID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(opts.Source) == "" {
+		return nil, fmt.Errorf("source is required")
+	}
+	if opts.Kind != ImportSourceDirectory {
+		return nil, fmt.Errorf("unsupported import source kind %q", opts.Kind)
+	}
+
+	preparedDir, err := modelContentRoot(opts.Source)
+	if err != nil {
+		return nil, err
 	}
 	if _, _, err := FindModelFile(preparedDir); err != nil {
 		return nil, fmt.Errorf("no supported model weight file found")
