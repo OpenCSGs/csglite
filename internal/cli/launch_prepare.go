@@ -133,6 +133,9 @@ func normalizeLaunchModelChoices(models []api.ModelInfo) []launchModelChoice {
 		if modelID == "" {
 			continue
 		}
+		if !isLaunchModelAvailableForAIApps(item) {
+			continue
+		}
 		if _, ok := seen[modelID]; ok {
 			continue
 		}
@@ -158,6 +161,13 @@ func normalizeLaunchModelChoices(models []api.ModelInfo) []launchModelChoice {
 		})
 	}
 	return choices
+}
+
+func isLaunchModelAvailableForAIApps(model api.ModelInfo) bool {
+	if !strings.EqualFold(strings.TrimSpace(model.Source), "cloud") && !strings.EqualFold(strings.TrimSpace(model.Format), "cloud") {
+		return true
+	}
+	return !strings.EqualFold(strings.TrimSpace(model.Model), "opus4.7")
 }
 
 func stdinIsTerminal() bool {

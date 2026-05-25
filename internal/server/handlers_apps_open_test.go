@@ -896,6 +896,66 @@ func TestResolveCSGClawLaunchModelsUsesRememberedModelWhenRequestOmitted(t *test
 	}
 }
 
+func TestResolveAIAppLaunchModelsExcludesUnavailableCloudModels(t *testing.T) {
+	cfg := &config.Config{
+		ModelDir:   t.TempDir(),
+		ListenAddr: ":11435",
+		Token:      "test-token",
+	}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:    "Qwen",
+		Name:         "Qwen3.5-2B",
+		Format:       model.FormatGGUF,
+		Size:         4_000_000_000,
+		Files:        []string{"model.gguf"},
+		DownloadedAt: time.Unix(123, 0),
+	}); err != nil {
+		t.Fatalf("save model manifest: %v", err)
+	}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{
+					"id":           "opus4.7",
+					"task":         "text-generation",
+					"display_name": "opus4.7",
+				},
+				{
+					"id":           "glm-5",
+					"task":         "text-generation",
+					"display_name": "glm-5",
+				},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := New(cfg, "test")
+	s.cloud = cloud.NewService(apiServer.URL)
+
+	modelID, modelIDs, err := s.resolveAIAppLaunchModels(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("resolveAIAppLaunchModels returned error: %v", err)
+	}
+	if modelID != "Qwen/Qwen3.5-2B" {
+		t.Fatalf("modelID = %q, want local default", modelID)
+	}
+	if !sameStrings(modelIDs, []string{"Qwen/Qwen3.5-2B", "glm-5"}) {
+		t.Fatalf("modelIDs = %#v, want available models without opus4.7", modelIDs)
+	}
+
+	_, _, err = s.resolveAIAppLaunchModels(context.Background(), "opus4.7", "cloud")
+	if err == nil {
+		t.Fatal("resolveAIAppLaunchModels returned nil error for unavailable cloud model")
+	}
+	if got := err.Error(); !strings.Contains(got, `model "opus4.7" is not available for AI Apps`) {
+		t.Fatalf("error = %q, want unavailable model error", got)
+	}
+}
+
 func TestOpenAIAppShellURLMissingCloudTokenShowsSettingsHint(t *testing.T) {
 	cfg := &config.Config{
 		ModelDir:   t.TempDir(),

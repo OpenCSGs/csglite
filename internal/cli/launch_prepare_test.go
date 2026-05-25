@@ -129,6 +129,21 @@ func TestNormalizeLaunchModelChoicesProviderNoSourceSuffix(t *testing.T) {
 	}
 }
 
+func TestNormalizeLaunchModelChoicesExcludesUnavailableAIAppCloudModels(t *testing.T) {
+	models := []api.ModelInfo{
+		{Model: "opus4.7", Source: "cloud", Format: "cloud"},
+		{Model: "glm-5", Source: "cloud", Format: "cloud"},
+		{Model: "opus4.7", Source: "local"},
+	}
+	choices := normalizeLaunchModelChoices(models)
+	if len(choices) != 2 {
+		t.Fatalf("choices count = %d, want 2", len(choices))
+	}
+	if choices[0].ID != "glm-5" || choices[1].ID != "opus4.7" {
+		t.Fatalf("choices = %#v, want cloud glm-5 and local opus4.7", choices)
+	}
+}
+
 func TestPrependArgsIfMissing(t *testing.T) {
 	args := prependArgsIfMissing([]string{"run", "hello"}, []string{"--model", "demo"}, "--model", "-m")
 	if len(args) != 4 || args[0] != "--model" || args[1] != "demo" {

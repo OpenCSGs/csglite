@@ -1472,13 +1472,20 @@ function normalizeAIAppModels(models: ModelInfo[]): ModelInfo[] {
   for (const model of models) {
     const modelId = model.model?.trim();
     const key = aiAppModelKey(model);
-    if (!modelId || seen.has(key)) {
+    if (!modelId || seen.has(key) || !isAIAppLaunchModel(model)) {
       continue;
     }
     seen.add(key);
     out.push(model);
   }
   return out;
+}
+
+function isAIAppLaunchModel(model: ModelInfo): boolean {
+  if (model.source !== "cloud") {
+    return true;
+  }
+  return model.model?.trim().toLowerCase() !== "opus4.7";
 }
 
 function localizeAIAppErrorMessage(message: string, fallback: string): string {
