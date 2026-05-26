@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/opencsgs/csghub-lite/pkg/api"
@@ -28,7 +29,7 @@ func TestOllamaMessagesToOpenAI_ToolLoop(t *testing.T) {
 		},
 	}
 
-	got, err := ollamaMessagesToOpenAI(messages)
+	got, err := ollamaMessagesToOpenAI(messages, nil)
 	if err != nil {
 		t.Fatalf("ollamaMessagesToOpenAI returned error: %v", err)
 	}
@@ -57,6 +58,63 @@ func TestOllamaMessagesToOpenAI_ToolLoop(t *testing.T) {
 
 	if got[2]["tool_call_id"] != call["id"] {
 		t.Fatalf("expected tool result to reference generated call id, got %#v vs %#v", got[2]["tool_call_id"], call["id"])
+	}
+}
+
+func TestOllamaMessagesToOpenAI_ToolArgumentsStringIsJSON(t *testing.T) {
+	messages := []api.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:      "exec",
+						Arguments: "pwd",
+					},
+				},
+			},
+		},
+	}
+
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "exec",
+				Parameters: map[string]interface{}{
+					"type":     "object",
+					"required": []interface{}{"command"},
+					"properties": map[string]interface{}{
+						"command": map[string]interface{}{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+
+	got, err := ollamaMessagesToOpenAI(messages, tools)
+	if err != nil {
+		t.Fatalf("ollamaMessagesToOpenAI returned error: %v", err)
+	}
+
+	assistantCalls, ok := got[0]["tool_calls"].([]map[string]interface{})
+	if !ok || len(assistantCalls) != 1 {
+		t.Fatalf("expected one assistant tool call, got %#v", got[0]["tool_calls"])
+	}
+	function, ok := assistantCalls[0]["function"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected function payload, got %#v", assistantCalls[0]["function"])
+	}
+	arguments, ok := function["arguments"].(string)
+	if !ok {
+		t.Fatalf("expected string arguments, got %#v", function["arguments"])
+	}
+	if !json.Valid([]byte(arguments)) {
+		t.Fatalf("expected JSON arguments, got %q", arguments)
+	}
+	if arguments != `{"command":"pwd"}` {
+		t.Fatalf("unexpected arguments payload: %#v", arguments)
 	}
 }
 

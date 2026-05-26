@@ -222,14 +222,22 @@ export function AIAppShell() {
       });
     };
 
+    let followOutput = true;
+    const isTerminalAtBottom = () => {
+      const buffer = terminal.buffer.active;
+      return buffer.viewportY >= buffer.baseY;
+    };
     let followOutputFrame: number | null = null;
     const scheduleFollowOutput = () => {
+      if (!followOutput) {
+        return;
+      }
       if (followOutputFrame !== null) {
         return;
       }
       followOutputFrame = window.requestAnimationFrame(() => {
         followOutputFrame = null;
-        if (terminal.rows > 0) {
+        if (followOutput && terminal.rows > 0) {
           terminal.scrollToBottom();
         }
       });
@@ -255,11 +263,15 @@ export function AIAppShell() {
     };
 
     const inputDisposable = terminal.onData((data) => {
+      followOutput = true;
       sendInput(encoder.encode(data));
       scheduleFollowOutput();
     });
     const binaryDisposable = terminal.onBinary((data) => {
       sendInput(encodeTerminalBinary(data));
+    });
+    const scrollDisposable = terminal.onScroll(() => {
+      followOutput = isTerminalAtBottom();
     });
 
     const pointerFocusHandler = () => {
@@ -367,6 +379,7 @@ export function AIAppShell() {
         window.clearTimeout(timer);
       }
       xtermCompatDisposable?.dispose();
+      scrollDisposable.dispose();
       binaryDisposable.dispose();
       inputDisposable.dispose();
       ws.close();

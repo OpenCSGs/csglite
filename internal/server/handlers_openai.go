@@ -339,7 +339,7 @@ func (s *Server) handleOpenAIChatCompletionsWithTools(
 }
 
 func openAIChatRequestToProxyBody(req api.OpenAIChatRequest, opts inference.Options, stream bool) (map[string]interface{}, error) {
-	messages, err := ollamaMessagesToOpenAI(req.Messages)
+	messages, err := ollamaMessagesToOpenAI(req.Messages, req.Tools)
 	if err != nil {
 		return nil, err
 	}

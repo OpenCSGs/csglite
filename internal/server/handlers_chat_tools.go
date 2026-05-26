@@ -157,7 +157,7 @@ func shouldEmitToolChunk(msg *api.Message) bool {
 }
 
 func ollamaChatRequestToOpenAI(req api.ChatRequest, opts inference.Options) (map[string]interface{}, error) {
-	messages, err := ollamaMessagesToOpenAI(req.Messages)
+	messages, err := ollamaMessagesToOpenAI(req.Messages, req.Tools)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ type pendingToolCall struct {
 	Name string
 }
 
-func ollamaMessagesToOpenAI(messages []api.Message) ([]map[string]interface{}, error) {
+func ollamaMessagesToOpenAI(messages []api.Message, tools []api.Tool) ([]map[string]interface{}, error) {
 	out := make([]map[string]interface{}, 0, len(messages))
 	pending := make([]pendingToolCall, 0)
 	assistantCount := 0
@@ -208,7 +208,7 @@ func ollamaMessagesToOpenAI(messages []api.Message) ([]map[string]interface{}, e
 						"type": defaultToolType(call.Type),
 						"function": map[string]interface{}{
 							"name":      call.Function.Name,
-							"arguments": toolArgumentsJSONString(call.Function.Arguments),
+							"arguments": toolArgumentsJSONStringForTool(call.Function.Arguments, toolForName(tools, call.Function.Name)),
 						},
 					})
 				}
@@ -273,17 +273,91 @@ func matchPendingToolCall(pending []pendingToolCall, toolName string) (string, [
 }
 
 func toolArgumentsJSONString(args interface{}) string {
+	return toolArgumentsJSONStringForTool(args, api.Tool{})
+}
+
+func toolArgumentsJSONStringForTool(args interface{}, tool api.Tool) string {
 	if args == nil {
 		return "{}"
 	}
 	if s, ok := args.(string); ok {
-		return s
+		trimmed := strings.TrimSpace(s)
+		if trimmed == "" {
+			return "{}"
+		}
+		var parsed interface{}
+		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+			if wrapped, ok := toolArgumentObjectFromScalar(parsed, tool); ok {
+				return marshalToolArguments(wrapped)
+			}
+			return trimmed
+		}
+		if wrapped, ok := toolArgumentObjectFromScalar(trimmed, tool); ok {
+			return marshalToolArguments(wrapped)
+		}
+		return marshalToolArguments(s)
 	}
+	if wrapped, ok := toolArgumentObjectFromScalar(args, tool); ok {
+		return marshalToolArguments(wrapped)
+	}
+	return marshalToolArguments(args)
+}
+
+func marshalToolArguments(args interface{}) string {
 	buf, err := json.Marshal(args)
 	if err != nil {
 		return "{}"
 	}
 	return string(buf)
+}
+
+func toolArgumentObjectFromScalar(value interface{}, tool api.Tool) (map[string]interface{}, bool) {
+	switch value.(type) {
+	case map[string]interface{}, []interface{}:
+		return nil, false
+	}
+	name, ok := singleToolArgumentName(tool)
+	if !ok {
+		return nil, false
+	}
+	return map[string]interface{}{name: value}, true
+}
+
+func singleToolArgumentName(tool api.Tool) (string, bool) {
+	params, ok := tool.Function.Parameters.(map[string]interface{})
+	if !ok || params == nil {
+		return "", false
+	}
+	if name, ok := singleRequiredArgumentName(params["required"]); ok {
+		return name, true
+	}
+	properties, ok := params["properties"].(map[string]interface{})
+	if !ok || len(properties) != 1 {
+		return "", false
+	}
+	for name := range properties {
+		if strings.TrimSpace(name) != "" {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+func singleRequiredArgumentName(required interface{}) (string, bool) {
+	switch v := required.(type) {
+	case []interface{}:
+		if len(v) != 1 {
+			return "", false
+		}
+		return stringValue(v[0]), stringValue(v[0]) != ""
+	case []string:
+		if len(v) != 1 || strings.TrimSpace(v[0]) == "" {
+			return "", false
+		}
+		return strings.TrimSpace(v[0]), true
+	default:
+		return "", false
+	}
 }
 
 func contentAsString(content interface{}) string {
@@ -577,6 +651,11 @@ func lookupToolByName(tools []api.Tool, name string) (api.Tool, bool) {
 		}
 	}
 	return api.Tool{}, false
+}
+
+func toolForName(tools []api.Tool, name string) api.Tool {
+	tool, _ := lookupToolByName(tools, name)
+	return tool
 }
 
 func toolAllowsEmptyArguments(tool api.Tool) bool {
