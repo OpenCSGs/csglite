@@ -4188,8 +4188,10 @@
           "dataset_dir",
           "server_url",
           "ai_gateway_url",
+          "cloud_provider_name",
           "default_server_url",
           "default_ai_gateway_url",
+          "default_cloud_provider_name",
           "autostart",
           "web_search"
         ],
@@ -4212,10 +4214,17 @@
           "ai_gateway_url": {
             "type": "string"
           },
+          "cloud_provider_name": {
+            "type": "string",
+            "description": "Provider name shown for built-in cloud models."
+          },
           "default_server_url": {
             "type": "string"
           },
           "default_ai_gateway_url": {
+            "type": "string"
+          },
+          "default_cloud_provider_name": {
             "type": "string"
           },
           "autostart": {
@@ -4246,6 +4255,10 @@
           "ai_gateway_url": {
             "type": "string",
             "description": "OpenCSG AI Gateway URL. Empty string clears the custom value and uses the default AI Gateway."
+          },
+          "cloud_provider_name": {
+            "type": "string",
+            "description": "Provider name shown for built-in cloud models. Empty string restores the default provider name."
           },
           "autostart": {
             "type": "boolean"

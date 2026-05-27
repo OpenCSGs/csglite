@@ -4,18 +4,23 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
 const (
-	DefaultServerURL  = "https://hub.opencsg.com"
-	DefaultDisplayURL = "https://opencsg.com"
-	DefaultListenAddr = ":11435"
-	AppDir            = ".csghub-lite"
-	ConfigFile        = "config.json"
-	ModelsDir         = "models"
-	DatasetsDir       = "datasets"
-	TmpDir            = "tmp"
+	DefaultServerURL         = "https://hub.opencsg.com"
+	DefaultDisplayURL        = "https://opencsg.com"
+	DefaultListenAddr        = ":11435"
+	DefaultCloudProviderName = "csghub"
+	EnvServerURL             = "CSGHUB_LITE_SERVER_URL"
+	EnvAIGatewayURL          = "CSGHUB_LITE_AI_GATEWAY_URL"
+	EnvCloudProviderName     = "CSGHUB_LITE_CLOUD_PROVIDER_NAME"
+	AppDir                   = ".csghub-lite"
+	ConfigFile               = "config.json"
+	ModelsDir                = "models"
+	DatasetsDir              = "datasets"
+	TmpDir                   = "tmp"
 )
 
 func (c *Config) DisplayURL() string {
@@ -36,6 +41,7 @@ func (c *Config) TempDir() string {
 type Config struct {
 	ServerURL            string            `json:"server_url"`
 	AIGatewayURL         string            `json:"ai_gateway_url,omitempty"`
+	CloudProviderName    string            `json:"cloud_provider_name,omitempty"`
 	Token                string            `json:"token,omitempty"`
 	OpenCSGAPIKey        string            `json:"opencsg_api_key,omitempty"`
 	ListenAddr           string            `json:"listen_addr"`
@@ -141,7 +147,6 @@ func Load() (*Config, error) {
 	var loadErr error
 	configOnce.Do(func() {
 		globalConfig = &Config{
-			ServerURL:            DefaultServerURL,
 			ListenAddr:           DefaultListenAddr,
 			AIAppPreferredModels: map[string]string{},
 			WebSearch:            DefaultWebSearchConfig(),
@@ -169,24 +174,25 @@ func Load() (*Config, error) {
 
 		data, err := os.ReadFile(cfgPath)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if !os.IsNotExist(err) {
+				loadErr = err
 				return
 			}
-			loadErr = err
-			return
+		} else {
+			if err := json.Unmarshal(data, globalConfig); err != nil {
+				loadErr = err
+				return
+			}
 		}
 
-		if err := json.Unmarshal(data, globalConfig); err != nil {
-			loadErr = err
-			return
-		}
-
+		ApplyEnvironmentDefaults(globalConfig)
 		if globalConfig.ServerURL == "" {
 			globalConfig.ServerURL = DefaultServerURL
 		}
 		if globalConfig.ListenAddr == "" {
 			globalConfig.ListenAddr = DefaultListenAddr
 		}
+		globalConfig.CloudProviderName = NormalizeCloudProviderName(globalConfig.CloudProviderName)
 		if globalConfig.ModelDir == "" {
 			globalConfig.ModelDir = modelDir
 		}
@@ -199,6 +205,29 @@ func Load() (*Config, error) {
 		globalConfig.WebSearch = NormalizeWebSearchConfig(globalConfig.WebSearch)
 	})
 	return globalConfig, loadErr
+}
+
+func ApplyEnvironmentDefaults(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvServerURL)); value != "" && strings.TrimSpace(cfg.ServerURL) == "" {
+		cfg.ServerURL = value
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvAIGatewayURL)); value != "" && strings.TrimSpace(cfg.AIGatewayURL) == "" {
+		cfg.AIGatewayURL = value
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvCloudProviderName)); value != "" && strings.TrimSpace(cfg.CloudProviderName) == "" {
+		cfg.CloudProviderName = NormalizeCloudProviderName(value)
+	}
+}
+
+func NormalizeCloudProviderName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return DefaultCloudProviderName
+	}
+	return name
 }
 
 func DefaultWebSearchConfig() WebSearchConfig {
@@ -252,6 +281,8 @@ func Save(cfg *Config) error {
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		return err
 	}
+
+	cfg.CloudProviderName = NormalizeCloudProviderName(cfg.CloudProviderName)
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

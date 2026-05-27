@@ -239,6 +239,12 @@ func setMarketplaceCache(key string, body []byte) {
 	marketplaceListCache.Unlock()
 }
 
+func clearMarketplaceCache() {
+	marketplaceListCache.Lock()
+	marketplaceListCache.entries = make(map[string]marketplaceListCacheEntry)
+	marketplaceListCache.Unlock()
+}
+
 func writeMarketplaceListResponse(w http.ResponseWriter, cacheKey string, payload interface{}) {
 	body, err := json.Marshal(payload)
 	if err != nil {

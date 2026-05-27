@@ -47,6 +47,9 @@ func TestHandleSettingsReturnsStorageDir(t *testing.T) {
 	if resp.AIGatewayURL != cloud.DefaultBaseURL || resp.DefaultAIGatewayURL != cloud.DefaultBaseURL {
 		t.Fatalf("AI Gateway URLs = %q/%q, want default %q", resp.AIGatewayURL, resp.DefaultAIGatewayURL, cloud.DefaultBaseURL)
 	}
+	if resp.CloudProviderName != config.DefaultCloudProviderName || resp.DefaultCloudProviderName != config.DefaultCloudProviderName {
+		t.Fatalf("cloud provider names = %q/%q, want default %q", resp.CloudProviderName, resp.DefaultCloudProviderName, config.DefaultCloudProviderName)
+	}
 }
 
 func TestHandleSettingsUpdateStorageDirUpdatesModelAndDatasetDirs(t *testing.T) {
@@ -104,9 +107,11 @@ func TestHandleSettingsUpdateServiceURLs(t *testing.T) {
 
 	serverURL := " https://opencsg-stg.com "
 	aiGatewayURL := " https://gateway.example.com "
+	cloudProviderName := " OpenCSG "
 	body, err := json.Marshal(api.SettingsUpdateRequest{
-		ServerURL:    &serverURL,
-		AIGatewayURL: &aiGatewayURL,
+		ServerURL:         &serverURL,
+		AIGatewayURL:      &aiGatewayURL,
+		CloudProviderName: &cloudProviderName,
 	})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
@@ -129,17 +134,25 @@ func TestHandleSettingsUpdateServiceURLs(t *testing.T) {
 	if s.cfg.AIGatewayURL != "https://gateway.example.com" {
 		t.Fatalf("AIGatewayURL = %q, want custom gateway", s.cfg.AIGatewayURL)
 	}
+	if s.cfg.CloudProviderName != "OpenCSG" {
+		t.Fatalf("CloudProviderName = %q, want custom provider name", s.cfg.CloudProviderName)
+	}
+	if got := s.cloud.BaseURL(); got != "https://gateway.example.com" {
+		t.Fatalf("cloud base URL = %q, want custom gateway", got)
+	}
 }
 
 func TestHandleSettingsUpdateServiceURLsRestoreDefaults(t *testing.T) {
 	s := newTestServer(t)
 	s.cfg.ServerURL = "https://opencsg-stg.com"
 	s.cfg.AIGatewayURL = "https://gateway.example.com"
+	s.cfg.CloudProviderName = "OpenCSG"
 
 	empty := ""
 	body, err := json.Marshal(api.SettingsUpdateRequest{
-		ServerURL:    &empty,
-		AIGatewayURL: &empty,
+		ServerURL:         &empty,
+		AIGatewayURL:      &empty,
+		CloudProviderName: &empty,
 	})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
@@ -163,5 +176,11 @@ func TestHandleSettingsUpdateServiceURLsRestoreDefaults(t *testing.T) {
 	}
 	if s.cfg.AIGatewayURL != "" || resp.AIGatewayURL != cloud.DefaultBaseURL {
 		t.Fatalf("ai_gateway_url = cfg %q resp %q, want empty/default %q", s.cfg.AIGatewayURL, resp.AIGatewayURL, cloud.DefaultBaseURL)
+	}
+	if s.cfg.CloudProviderName != config.DefaultCloudProviderName || resp.CloudProviderName != config.DefaultCloudProviderName {
+		t.Fatalf("cloud_provider_name = cfg %q resp %q, want %q", s.cfg.CloudProviderName, resp.CloudProviderName, config.DefaultCloudProviderName)
+	}
+	if got := s.cloud.BaseURL(); got != cloud.DefaultBaseURL {
+		t.Fatalf("cloud base URL = %q, want default %q", got, cloud.DefaultBaseURL)
 	}
 }

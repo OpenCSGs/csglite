@@ -63,8 +63,10 @@ const webSearchError = signal("");
 const isSavingWebSearch = signal(false);
 const serverUrlInput = signal("");
 const aiGatewayUrlInput = signal("");
+const cloudProviderNameInput = signal("");
 const defaultServerUrl = signal("");
 const defaultAiGatewayUrl = signal("");
+const defaultCloudProviderName = signal("");
 const serviceUrlsError = signal("");
 const serviceUrlsMessage = signal("");
 const isSavingServiceUrls = signal(false);
@@ -74,6 +76,11 @@ const resetDefaultsError = signal("");
 const isUpgradingDiffuser = signal(false);
 const diffuserUpgradeMessage = signal("");
 const diffuserUpgradeError = signal("");
+const providersChangedEvent = "csghub:providers-changed";
+
+function notifyProvidersChanged() {
+  window.dispatchEvent(new Event(providersChangedEvent));
+}
 
 function loadContextIndex(): number {
   try {
@@ -128,8 +135,9 @@ async function resetDefaults() {
   serviceUrlsError.value = "";
   serviceUrlsMessage.value = "";
   try {
-    const data = await saveSettings({ server_url: "", ai_gateway_url: "" });
+    const data = await saveSettings({ server_url: "", ai_gateway_url: "", cloud_provider_name: "" });
     applySettings(data);
+    notifyProvidersChanged();
     serviceUrlsMessage.value = t("settings.serviceUrlsResetSuccess");
     resetDefaultsMessage.value = t("settings.resetDefaultsSuccess");
     fetchCloudAuth();
@@ -150,8 +158,10 @@ function applySettings(data: AppSettings) {
   datasetDirectory.value = data.dataset_dir || "";
   serverUrlInput.value = data.server_url || "";
   aiGatewayUrlInput.value = data.ai_gateway_url || "";
+  cloudProviderNameInput.value = data.cloud_provider_name || "";
   defaultServerUrl.value = data.default_server_url || "";
   defaultAiGatewayUrl.value = data.default_ai_gateway_url || "";
+  defaultCloudProviderName.value = data.default_cloud_provider_name || "csghub";
   appVersion.value = data.version || "";
   upgradeProgress.value = {
     ...upgradeProgress.value,
@@ -363,8 +373,10 @@ async function saveServiceURLs() {
     const data = await saveSettings({
       server_url: serverUrlInput.value,
       ai_gateway_url: aiGatewayUrlInput.value,
+      cloud_provider_name: cloudProviderNameInput.value,
     });
     applySettings(data);
+    notifyProvidersChanged();
     serviceUrlsMessage.value = t("settings.serviceUrlsSaveSuccess");
     fetchCloudAuth();
   } catch (err: any) {
@@ -642,6 +654,19 @@ export function Settings() {
               class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
             />
             <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultAiGatewayUrl.value || "-")}</span>
+          </label>
+          <label class="block">
+            <span class="text-sm font-medium text-gray-700">{t("settings.cloudProviderName")}</span>
+            <input
+              type="text"
+              value={cloudProviderNameInput.value}
+              onInput={(event) => {
+                cloudProviderNameInput.value = (event.currentTarget as HTMLInputElement).value;
+              }}
+              placeholder={defaultCloudProviderName.value}
+              class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            />
+            <span class="mt-1 block text-xs text-gray-400">{t("settings.cloudProviderNameHint", defaultCloudProviderName.value || "csghub")}</span>
           </label>
           <div class="flex items-center justify-between gap-3">
             <div class="text-sm">

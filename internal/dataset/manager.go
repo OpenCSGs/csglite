@@ -34,12 +34,13 @@ func (m *Manager) Pull(ctx context.Context, datasetID string, progress csghub.Sn
 		return nil, fmt.Errorf("creating dataset dir: %w", err)
 	}
 
-	info, err := m.client.GetDataset(ctx, namespace, name)
+	client := csghub.NewClient(m.cfg.ServerURL, m.cfg.Token)
+	info, err := client.GetDataset(ctx, namespace, name)
 	if err != nil {
 		return nil, fmt.Errorf("fetching dataset info: %w", err)
 	}
 
-	downloadedFiles, err := m.client.DatasetSnapshotDownload(ctx, namespace, name, destDir, progress)
+	downloadedFiles, err := client.DatasetSnapshotDownload(ctx, namespace, name, destDir, progress)
 	if err != nil {
 		return nil, fmt.Errorf("downloading dataset: %w", err)
 	}
@@ -227,5 +228,5 @@ func (m *Manager) ListFiles(datasetID, subPath string) ([]FileEntry, error) {
 }
 
 func (m *Manager) Client() *csghub.Client {
-	return m.client
+	return csghub.NewClient(m.cfg.ServerURL, m.cfg.Token)
 }

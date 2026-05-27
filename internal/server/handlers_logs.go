@@ -200,7 +200,7 @@ func LogMiddleware(next http.Handler) http.Handler {
 		if lw.status == 0 {
 			lw.status = http.StatusOK
 		}
-		if isQuietRequestLog(r) && lw.status < http.StatusBadRequest && elapsed < time.Second {
+		if isQuietRequestLog(r) && lw.status < http.StatusBadRequest && elapsed < 5*time.Second {
 			return
 		}
 		log.Printf("REQUEST: %s %s (%s)", r.Method, r.URL.Path, elapsed.Round(time.Millisecond))

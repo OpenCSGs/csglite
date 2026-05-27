@@ -73,7 +73,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/tags -- list available local, OpenCSG, and third-party provider models
 func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-store")
 
 	infos, err := s.listAvailableModelsWithRefresh(r.Context(), requestWantsModelRefresh(r))
 	if err != nil {

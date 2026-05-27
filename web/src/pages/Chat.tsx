@@ -33,6 +33,8 @@ const isSavingCloudToken = signal(false);
 const webSearchEnabled = signal(true);
 const webSearchAvailable = signal(false);
 const streamingSources = signal<WebSearchResult[]>([]);
+const cloudProviderName = signal("");
+const cloudGatewayURL = signal("");
 
 function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
   return Boolean(status?.authenticated || status?.has_api_key);
@@ -94,12 +96,17 @@ function modelLabel(model: ModelInfo): string {
   const label = model.label || model.display_name || model.name;
   const source = model.source || "local";
   if (source === "cloud") {
-    return `${label} [${t("chat.cloud")}]`;
+    const provider = model.provider || cloudProviderName.value || t("chat.cloud");
+    return `${label} [${provider}]`;
   }
   if (source.startsWith("provider:")) {
     return label;
   }
   return `${label} [${t("chat.local")}]`;
+}
+
+function configuredCloudProviderName(): string {
+  return cloudProviderName.value || t("chat.cloud");
 }
 
 function readSelectedModelKey(): string {
@@ -681,7 +688,7 @@ export function Chat() {
     const model = availableModels.value.find((x) => modelKey(x) === nextKey);
     applyModelSamplingDefaults(model);
     if (model?.source === "cloud" && !hasCloudAuth(cloudAuth.value)) {
-      void openCloudAuthDialog(t("chat.cloudLoginRequired"));
+      void openCloudAuthDialog(t("chat.cloudLoginRequired", model.provider || configuredCloudProviderName()));
     }
   };
 
@@ -732,14 +739,20 @@ export function Chat() {
     getCloudAuthStatus().then((status) => {
       cloudAuth.value = status;
     }).catch(() => {});
-    getSettings().then((settings) => {
-      const available = Boolean(settings.web_search?.enabled);
-      webSearchAvailable.value = available;
-      webSearchEnabled.value = readWebSearchEnabled(true);
-    }).catch(() => {
-      webSearchAvailable.value = false;
-      webSearchEnabled.value = true;
-    });
+    const refreshSettings = () => {
+      getSettings().then((settings) => {
+        cloudProviderName.value = settings.cloud_provider_name || settings.default_cloud_provider_name || "";
+        cloudGatewayURL.value = settings.ai_gateway_url || settings.default_ai_gateway_url || "";
+        const available = Boolean(settings.web_search?.enabled);
+        webSearchAvailable.value = available;
+        webSearchEnabled.value = readWebSearchEnabled(true);
+      }).catch(() => {
+        webSearchAvailable.value = false;
+        webSearchEnabled.value = true;
+      });
+    };
+
+    refreshSettings();
 
     (async () => {
       await migrateLocalStorage();
@@ -755,11 +768,17 @@ export function Chat() {
       }
     })();
 
-    const handleFocus = () => refreshModels();
-    const handleProvidersChanged = () => refreshModels();
+    const refreshAll = () => {
+      refreshSettings();
+      refreshModels();
+    };
+    const handleFocus = () => refreshAll();
+    const handleProvidersChanged = () => {
+      refreshAll();
+    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        refreshModels();
+        refreshAll();
       }
     };
     window.addEventListener("focus", handleFocus);
@@ -826,14 +845,15 @@ export function Chat() {
     if (!text || !currentModel || isGenerating.value) return;
 
     if (currentModel.source === "cloud") {
+      const provider = currentModel.provider || configuredCloudProviderName();
       try {
         const status = cloudAuth.value || await refreshCloudAuth();
         if (!hasCloudAuth(status)) {
-          await openCloudAuthDialog(t("chat.cloudLoginRequired"));
+          await openCloudAuthDialog(t("chat.cloudLoginRequired", provider));
           return;
         }
       } catch {
-        await openCloudAuthDialog(t("chat.cloudLoginRequired"));
+        await openCloudAuthDialog(t("chat.cloudLoginRequired", provider));
         return;
       }
     }
@@ -1027,7 +1047,7 @@ export function Chat() {
         saveCurrentConversation();
       } else if (!ac.signal.aborted) {
         if (currentModel.source === "cloud" && /(AUTH-ERR-1|AUTH-ERR-5|login first|Error 401|login expired|API Key)/i.test(errMessage)) {
-          await openCloudAuthDialog(t("chat.cloudLoginExpired"));
+          await openCloudAuthDialog(t("chat.cloudLoginExpired", currentModel.provider || configuredCloudProviderName()));
         } else {
           chatError.value = errMessage;
         }
@@ -1541,8 +1561,8 @@ export function Chat() {
             )}
             <div class="flex items-start justify-between gap-4">
               <div>
-                <h3 class="text-lg font-semibold text-gray-900">{t("chat.cloudLoginTitle")}</h3>
-                <p class="mt-2 text-sm leading-6 text-gray-500">{t("chat.cloudLoginDesc")}</p>
+                <h3 class="text-lg font-semibold text-gray-900">{t("chat.cloudLoginTitle", configuredCloudProviderName())}</h3>
+                <p class="mt-2 text-sm leading-6 text-gray-500">{t("chat.cloudLoginDesc", configuredCloudProviderName())}</p>
               </div>
               <button
                 onClick={() => {
@@ -1560,7 +1580,7 @@ export function Chat() {
 
             <div class="mt-5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
               <div class="text-xs font-medium uppercase tracking-wide text-gray-400">{t("chat.cloudGatewayLabel")}</div>
-              <div class="mt-1 text-sm font-medium text-gray-800">{t("chat.cloudGatewayValue")}</div>
+              <div class="mt-1 text-sm font-medium text-gray-800">{cloudGatewayURL.value || t("chat.cloudGatewayValue")}</div>
             </div>
 
             {cloudAuthError.value && (

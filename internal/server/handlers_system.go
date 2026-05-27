@@ -82,6 +82,9 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 
 	var dirsUpdated bool
 	var configUpdated bool
+	var serverURLUpdated bool
+	var aiGatewayURLUpdated bool
+	var cloudTokenUpdated bool
 	storageDir := strings.TrimSpace(req.StorageDir)
 	if storageDir != "" {
 		storageDir = filepath.Clean(storageDir)
@@ -120,12 +123,23 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		if serverURL != strings.TrimSpace(s.cfg.ServerURL) && strings.TrimSpace(s.cfg.Token) != "" {
 			s.cfg.Token = ""
+			cloudTokenUpdated = true
 		}
+		serverURLUpdated = serverURL != strings.TrimSpace(s.cfg.ServerURL)
 		s.cfg.ServerURL = serverURL
 		configUpdated = true
 	}
 	if req.AIGatewayURL != nil {
-		s.cfg.AIGatewayURL = strings.TrimSpace(*req.AIGatewayURL)
+		aiGatewayURL := strings.TrimSpace(*req.AIGatewayURL)
+		if aiGatewayURL == "" && strings.TrimSpace(os.Getenv(config.EnvAIGatewayURL)) != "" {
+			aiGatewayURL = cloud.DefaultBaseURL
+		}
+		aiGatewayURLUpdated = aiGatewayURL != strings.TrimSpace(s.cfg.AIGatewayURL)
+		s.cfg.AIGatewayURL = aiGatewayURL
+		configUpdated = true
+	}
+	if req.CloudProviderName != nil {
+		s.cfg.CloudProviderName = config.NormalizeCloudProviderName(*req.CloudProviderName)
 		configUpdated = true
 	}
 
@@ -144,6 +158,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to save config: "+err.Error())
 			return
 		}
+		s.applyRuntimeSettingsUpdate(serverURLUpdated, aiGatewayURLUpdated, cloudTokenUpdated)
 	}
 
 	if req.Autostart != nil {
@@ -163,19 +178,38 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, currentSettingsResponse(s.cfg, s.version))
 }
 
+func (s *Server) applyRuntimeSettingsUpdate(serverURLUpdated, aiGatewayURLUpdated, cloudTokenUpdated bool) {
+	if serverURLUpdated || cloudTokenUpdated {
+		clearMarketplaceCache()
+		if s.cloud != nil {
+			s.cloud.SetAccessToken(s.cfg.Token)
+		}
+	}
+	if aiGatewayURLUpdated {
+		if s.cloud != nil {
+			s.cloud.SetBaseURL(resolveCloudURL(s.cfg))
+		}
+		s.cloudRefreshMu.Lock()
+		s.cloudRefreshAt = time.Time{}
+		s.cloudRefreshMu.Unlock()
+	}
+}
+
 func currentSettingsResponse(cfg *config.Config, version string) api.SettingsResponse {
 	autostartEnabled, _ := autostart.IsEnabled()
 	return api.SettingsResponse{
-		Version:             version,
-		StorageDir:          cfg.StorageDir(),
-		ModelDir:            cfg.ModelDir,
-		DatasetDir:          cfg.DatasetDir,
-		ServerURL:           strings.TrimSpace(cfg.ServerURL),
-		AIGatewayURL:        resolveCloudURL(cfg),
-		DefaultServerURL:    config.DefaultServerURL,
-		DefaultAIGatewayURL: cloud.DefaultBaseURL,
-		Autostart:           autostartEnabled,
-		WebSearch:           webSearchConfigToSettings(cfg.WebSearch),
+		Version:                  version,
+		StorageDir:               cfg.StorageDir(),
+		ModelDir:                 cfg.ModelDir,
+		DatasetDir:               cfg.DatasetDir,
+		ServerURL:                strings.TrimSpace(cfg.ServerURL),
+		AIGatewayURL:             resolveCloudURL(cfg),
+		CloudProviderName:        config.NormalizeCloudProviderName(cfg.CloudProviderName),
+		DefaultCloudProviderName: config.DefaultCloudProviderName,
+		DefaultServerURL:         config.DefaultServerURL,
+		DefaultAIGatewayURL:      cloud.DefaultBaseURL,
+		Autostart:                autostartEnabled,
+		WebSearch:                webSearchConfigToSettings(cfg.WebSearch),
 	}
 }
 

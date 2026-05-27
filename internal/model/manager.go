@@ -37,12 +37,13 @@ func (m *Manager) Pull(ctx context.Context, modelID string, quant string, progre
 		return nil, fmt.Errorf("creating model dir: %w", err)
 	}
 
-	info, err := m.client.GetModel(ctx, namespace, name)
+	client := csghub.NewClient(m.cfg.ServerURL, m.cfg.Token)
+	info, err := client.GetModel(ctx, namespace, name)
 	if err != nil {
 		return nil, fmt.Errorf("fetching model info: %w", err)
 	}
 
-	downloadedFiles, err := m.client.SnapshotDownload(ctx, namespace, name, destDir, quant, progress)
+	downloadedFiles, err := client.SnapshotDownload(ctx, namespace, name, destDir, quant, progress)
 	if err != nil {
 		return nil, fmt.Errorf("downloading model: %w", err)
 	}
@@ -191,5 +192,5 @@ func (m *Manager) Exists(modelID string) bool {
 
 // Client returns the underlying CSGHub client.
 func (m *Manager) Client() *csghub.Client {
-	return m.client
+	return csghub.NewClient(m.cfg.ServerURL, m.cfg.Token)
 }

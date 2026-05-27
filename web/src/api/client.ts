@@ -185,8 +185,10 @@ export interface AppSettings {
   dataset_dir: string;
   server_url: string;
   ai_gateway_url: string;
+  cloud_provider_name: string;
   default_server_url: string;
   default_ai_gateway_url: string;
+  default_cloud_provider_name: string;
   autostart: boolean;
   web_search: WebSearchSettings;
 }
@@ -508,9 +510,10 @@ export async function getTags(options?: { refresh?: boolean }): Promise<ModelInf
   const query = new URLSearchParams();
   if (options?.refresh) {
     query.set("refresh", "1");
+    query.set("_", Date.now().toString());
   }
   const url = query.toString() ? `/api/tags?${query}` : "/api/tags";
-  const data = await fetchJSON<{ models: ModelInfo[] }>(url);
+  const data = await fetchJSON<{ models: ModelInfo[] }>(url, { cache: "no-store" });
   return data.models || [];
 }
 
@@ -745,6 +748,7 @@ export async function saveSettings(patch: {
   dataset_dir?: string;
   server_url?: string;
   ai_gateway_url?: string;
+  cloud_provider_name?: string;
   autostart?: boolean;
   web_search?: WebSearchSettings;
 }): Promise<AppSettings> {

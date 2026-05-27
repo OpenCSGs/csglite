@@ -13,7 +13,15 @@ func setupTestDir(t *testing.T) string {
 	return dir
 }
 
+func clearCloudServiceEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv(EnvServerURL, "")
+	t.Setenv(EnvAIGatewayURL, "")
+	t.Setenv(EnvCloudProviderName, "")
+}
+
 func TestDefaultValues(t *testing.T) {
+	clearCloudServiceEnv(t)
 	Reset()
 	cfg, err := Load()
 	if err != nil {
@@ -25,8 +33,79 @@ func TestDefaultValues(t *testing.T) {
 	if cfg.ListenAddr != DefaultListenAddr {
 		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, DefaultListenAddr)
 	}
+	if cfg.CloudProviderName != DefaultCloudProviderName {
+		t.Errorf("CloudProviderName = %q, want %q", cfg.CloudProviderName, DefaultCloudProviderName)
+	}
 	if cfg.AIAppPreferredModels == nil {
 		t.Fatal("AIAppPreferredModels = nil, want initialized map")
+	}
+}
+
+func TestLoadAppliesCloudServiceEnvironmentOverrides(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv(EnvServerURL, " https://modelhub.example.com ")
+	t.Setenv(EnvAIGatewayURL, " https://gateway.example.com/v1 ")
+	t.Setenv(EnvCloudProviderName, " Example Hub ")
+	Reset()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.ServerURL != "https://modelhub.example.com" {
+		t.Fatalf("ServerURL = %q, want environment override", cfg.ServerURL)
+	}
+	if cfg.AIGatewayURL != "https://gateway.example.com/v1" {
+		t.Fatalf("AIGatewayURL = %q, want environment override", cfg.AIGatewayURL)
+	}
+	if cfg.CloudProviderName != "Example Hub" {
+		t.Fatalf("CloudProviderName = %q, want environment override", cfg.CloudProviderName)
+	}
+}
+
+func TestLoadKeepsSavedCloudServiceConfigOverEnvironmentDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv(EnvServerURL, "https://env.example.com")
+	t.Setenv(EnvAIGatewayURL, "https://env-gateway.example.com")
+	t.Setenv(EnvCloudProviderName, "Env Hub")
+
+	appHome := filepath.Join(home, AppDir)
+	if err := os.MkdirAll(appHome, 0o755); err != nil {
+		t.Fatalf("MkdirAll error: %v", err)
+	}
+	cfg := &Config{
+		ServerURL:         "https://saved.example.com",
+		AIGatewayURL:      "https://saved-gateway.example.com",
+		CloudProviderName: "Saved Hub",
+		ListenAddr:        DefaultListenAddr,
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(appHome, ConfigFile), data, 0o644); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	Reset()
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if loaded.ServerURL != cfg.ServerURL {
+		t.Fatalf("ServerURL = %q, want saved value", loaded.ServerURL)
+	}
+	if loaded.AIGatewayURL != cfg.AIGatewayURL {
+		t.Fatalf("AIGatewayURL = %q, want saved value", loaded.AIGatewayURL)
+	}
+	if loaded.CloudProviderName != cfg.CloudProviderName {
+		t.Fatalf("CloudProviderName = %q, want saved value", loaded.CloudProviderName)
 	}
 }
 
@@ -109,6 +188,7 @@ func TestSaveCreatesDirectory(t *testing.T) {
 }
 
 func TestConfigGet(t *testing.T) {
+	clearCloudServiceEnv(t)
 	Reset()
 	cfg := Get()
 	if cfg == nil {

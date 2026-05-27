@@ -366,26 +366,29 @@ type DatasetPullResponse struct {
 }
 
 type SettingsResponse struct {
-	Version             string            `json:"version"`
-	StorageDir          string            `json:"storage_dir"`
-	ModelDir            string            `json:"model_dir"`
-	DatasetDir          string            `json:"dataset_dir"`
-	ServerURL           string            `json:"server_url"`
-	AIGatewayURL        string            `json:"ai_gateway_url"`
-	DefaultServerURL    string            `json:"default_server_url"`
-	DefaultAIGatewayURL string            `json:"default_ai_gateway_url"`
-	Autostart           bool              `json:"autostart"`
-	WebSearch           WebSearchSettings `json:"web_search"`
+	Version                  string            `json:"version"`
+	StorageDir               string            `json:"storage_dir"`
+	ModelDir                 string            `json:"model_dir"`
+	DatasetDir               string            `json:"dataset_dir"`
+	ServerURL                string            `json:"server_url"`
+	AIGatewayURL             string            `json:"ai_gateway_url"`
+	CloudProviderName        string            `json:"cloud_provider_name"`
+	DefaultCloudProviderName string            `json:"default_cloud_provider_name"`
+	DefaultServerURL         string            `json:"default_server_url"`
+	DefaultAIGatewayURL      string            `json:"default_ai_gateway_url"`
+	Autostart                bool              `json:"autostart"`
+	WebSearch                WebSearchSettings `json:"web_search"`
 }
 
 type SettingsUpdateRequest struct {
-	StorageDir   string             `json:"storage_dir,omitempty"`
-	ModelDir     string             `json:"model_dir,omitempty"`
-	DatasetDir   string             `json:"dataset_dir,omitempty"`
-	ServerURL    *string            `json:"server_url,omitempty"`
-	AIGatewayURL *string            `json:"ai_gateway_url,omitempty"`
-	Autostart    *bool              `json:"autostart,omitempty"`
-	WebSearch    *WebSearchSettings `json:"web_search,omitempty"`
+	StorageDir        string             `json:"storage_dir,omitempty"`
+	ModelDir          string             `json:"model_dir,omitempty"`
+	DatasetDir        string             `json:"dataset_dir,omitempty"`
+	ServerURL         *string            `json:"server_url,omitempty"`
+	AIGatewayURL      *string            `json:"ai_gateway_url,omitempty"`
+	CloudProviderName *string            `json:"cloud_provider_name,omitempty"`
+	Autostart         *bool              `json:"autostart,omitempty"`
+	WebSearch         *WebSearchSettings `json:"web_search,omitempty"`
 }
 
 type APIKeyInfo struct {

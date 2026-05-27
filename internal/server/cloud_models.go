@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opencsgs/csghub-lite/internal/config"
 	"github.com/opencsgs/csghub-lite/pkg/api"
 )
 
@@ -83,9 +84,11 @@ func (s *Server) listCloudModels(ctx context.Context, refresh bool) ([]api.Model
 		return nil, nil
 	}
 	if refresh {
-		return s.refreshCloudChatModels(ctx)
+		models, err := s.refreshCloudChatModels(ctx)
+		return s.withConfiguredCloudProvider(models), err
 	}
-	return s.cloud.ListChatModels(ctx)
+	models, err := s.cloud.ListChatModels(ctx)
+	return s.withConfiguredCloudProvider(models), err
 }
 
 func (s *Server) refreshCloudChatModels(ctx context.Context) ([]api.ModelInfo, error) {
@@ -126,6 +129,17 @@ func (s *Server) refreshCloudChatModels(ctx context.Context) ([]api.ModelInfo, e
 
 		return models, err
 	}
+}
+
+func (s *Server) withConfiguredCloudProvider(models []api.ModelInfo) []api.ModelInfo {
+	provider := config.DefaultCloudProviderName
+	if s != nil && s.cfg != nil {
+		provider = config.NormalizeCloudProviderName(s.cfg.CloudProviderName)
+	}
+	for i := range models {
+		models[i].Provider = provider
+	}
+	return models
 }
 
 func sortModelsByPriority(models []api.ModelInfo) {

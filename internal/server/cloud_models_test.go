@@ -45,8 +45,8 @@ func TestHandleTagsWithoutTokenIncludesAndRefreshesCloudModels(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
 	}
-	if got := w.Header().Get("Cache-Control"); got != "no-cache" {
-		t.Fatalf("Cache-Control = %q, want no-cache", got)
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}
 
 	var resp api.TagsResponse
@@ -227,6 +227,46 @@ func TestHandleModelProvidersListIncludesModelProviders(t *testing.T) {
 	}
 	if len(counts) != 1 || counts["csghub"] != 3 {
 		t.Fatalf("model provider counts = %#v, want csghub=3", counts)
+	}
+}
+
+func TestHandleModelProvidersListUsesConfiguredCloudProviderName(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{
+					"id":           "opencsg/model",
+					"task":         "text-generation",
+					"display_name": "OpenCSG Model",
+					"owned_by":     "OpenCSG",
+				},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.CloudProviderName = "OpenCSG"
+	s.cloud = cloud.NewService(apiServer.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/providers?source=model", nil)
+	w := httptest.NewRecorder()
+	s.handleProvidersList(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp api.ModelProvidersResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode providers response: %v", err)
+	}
+	if len(resp.Providers) != 1 {
+		t.Fatalf("providers = %#v, want one cloud provider", resp.Providers)
+	}
+	if resp.Providers[0].ID != "opencsg" || resp.Providers[0].Name != "OpenCSG" || resp.Providers[0].ModelCount != 1 {
+		t.Fatalf("provider = %#v, want configured OpenCSG provider", resp.Providers[0])
 	}
 }
 

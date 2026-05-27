@@ -5,11 +5,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/opencsgs/csghub-lite/internal/config"
 	"github.com/opencsgs/csghub-lite/pkg/api"
 )
 
 const localModelProvider = "local"
-const csghubModelProvider = "csghub"
 
 func normalizeModelProvider(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
@@ -28,7 +28,10 @@ func modelProviderID(info api.ModelInfo) string {
 		return normalizeModelProvider(providerID)
 	}
 	if isCloudModelInfo(info) {
-		return csghubModelProvider
+		if provider := normalizeModelProvider(info.Provider); provider != "" {
+			return provider
+		}
+		return config.DefaultCloudProviderName
 	}
 	if provider := normalizeModelProvider(info.Provider); provider != "" {
 		return provider
@@ -51,7 +54,7 @@ func modelProviderAliases(info api.ModelInfo) []string {
 		return normalizedProviderAliases(values)
 	}
 	if isCloudModelInfo(info) {
-		return []string{csghubModelProvider}
+		return normalizedProviderAliases([]string{info.Provider, config.DefaultCloudProviderName})
 	}
 
 	return normalizedProviderAliases([]string{info.Provider, info.OwnedBy, info.Source})
@@ -91,12 +94,17 @@ func modelProviderName(info api.ModelInfo, id string) string {
 	if id == localModelProvider {
 		return localModelProvider
 	}
-	if id == csghubModelProvider {
-		return csghubModelProvider
-	}
 	if providerID := providerIDFromSource(info.Source); providerID != "" {
 		if provider, ok := getThirdPartyProvider(providerID); ok && strings.TrimSpace(provider.Name) != "" {
 			return strings.TrimSpace(provider.Name)
+		}
+	}
+	if isCloudModelInfo(info) {
+		if provider := strings.TrimSpace(info.Provider); normalizeModelProvider(provider) == id {
+			return provider
+		}
+		if id == config.DefaultCloudProviderName {
+			return config.DefaultCloudProviderName
 		}
 	}
 	if ownedBy := strings.TrimSpace(info.OwnedBy); normalizeModelProvider(ownedBy) == id {

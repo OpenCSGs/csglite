@@ -82,15 +82,29 @@ func (s *Service) SetAccessToken(token string) {
 	s.mu.Unlock()
 }
 
+func (s *Service) SetBaseURL(baseURL string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	s.cached = nil
+	s.limits = nil
+	s.cachedAt = time.Time{}
+	s.mu.Unlock()
+}
+
 func (s *Service) BaseURL() string {
 	if s == nil {
 		return ""
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.baseURL
 }
 
 func (s *Service) ListChatModels(ctx context.Context) ([]api.ModelInfo, error) {
-	if s == nil || s.baseURL == "" {
+	if s == nil || s.BaseURL() == "" {
 		return nil, nil
 	}
 	if models, ok := s.cachedModels(); ok {
@@ -100,7 +114,7 @@ func (s *Service) ListChatModels(ctx context.Context) ([]api.ModelInfo, error) {
 }
 
 func (s *Service) RefreshChatModels(ctx context.Context) ([]api.ModelInfo, error) {
-	if s == nil || s.baseURL == "" {
+	if s == nil || s.BaseURL() == "" {
 		return nil, nil
 	}
 	return s.refresh(ctx)
@@ -140,7 +154,8 @@ func (s *Service) cachedModels() ([]api.ModelInfo, bool) {
 }
 
 func (s *Service) refresh(ctx context.Context) ([]api.ModelInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+"/v1/models?page="+cloudModelListPage+"&per="+cloudModelListPer, nil)
+	baseURL := s.BaseURL()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models?page="+cloudModelListPage+"&per="+cloudModelListPer, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating cloud model request: %w", err)
 	}

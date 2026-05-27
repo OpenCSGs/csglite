@@ -10,6 +10,7 @@ import {
   deleteProvider,
   deleteLocalAPIKey,
   getCloudAuthStatus,
+  getSettings,
   getLocalAPIKeys,
   getLocalAPIUsage,
   getProviderManageTags,
@@ -47,6 +48,8 @@ const providersError = signal("");
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudAPIKeyInput = signal("");
 const cloudAPIKeyError = signal("");
+const cloudProviderName = signal("");
+const cloudGatewayURL = signal("");
 const isClearingCloudAPIKey = signal(false);
 const isSavingCloudAPIKey = signal(false);
 const copiedSnippet = signal("");
@@ -143,6 +146,18 @@ function fetchCloudAuth() {
     .catch((err: any) => {
       cloudAuth.value = null;
       cloudAPIKeyError.value = err?.message || "";
+    });
+}
+
+function fetchCloudSettings() {
+  getSettings()
+    .then((settings) => {
+      cloudProviderName.value = settings.cloud_provider_name || settings.default_cloud_provider_name || "";
+      cloudGatewayURL.value = settings.ai_gateway_url || settings.default_ai_gateway_url || "";
+    })
+    .catch(() => {
+      cloudProviderName.value = "";
+      cloudGatewayURL.value = "";
     });
 }
 
@@ -559,6 +574,10 @@ function cloudAPIKeyStatus(status: CloudAuthStatus | null | undefined): string {
   return t("settings.cloudAPIKeyMissingStatus");
 }
 
+function configuredCloudProviderName(): string {
+  return cloudProviderName.value || t("chat.cloud");
+}
+
 export function AIGateway() {
   void locale.value;
 
@@ -566,6 +585,7 @@ export function AIGateway() {
     void fetchLocalAPIKeys();
     void fetchLocalAPIUsage();
     fetchCloudAuth();
+    fetchCloudSettings();
     void fetchProviderOptions();
   }, []);
 
@@ -708,10 +728,10 @@ function CloudAPIKeySection() {
       <div class="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div class="max-w-2xl">
           <div class="inline-flex rounded-full bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700">
-            {t("gateway.cloudKeyBadge")}
+            {t("gateway.cloudKeyBadge", configuredCloudProviderName())}
           </div>
-          <h2 class="mt-3 text-base font-semibold text-gray-900">{t("settings.cloudAPIKey")}</h2>
-          <p class="mt-1 text-sm leading-6 text-gray-500">{t("settings.cloudAPIKeyDesc")}</p>
+          <h2 class="mt-3 text-base font-semibold text-gray-900">{t("settings.cloudAPIKey", configuredCloudProviderName())}</h2>
+          <p class="mt-1 text-sm leading-6 text-gray-500">{t("settings.cloudAPIKeyDesc", configuredCloudProviderName())}</p>
         </div>
         <button
           type="button"
@@ -724,7 +744,7 @@ function CloudAPIKeySection() {
       <div class="mt-5 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
         <div class="rounded-xl border border-gray-100 bg-gray-50 p-4">
           <p class="text-xs font-medium uppercase tracking-wide text-gray-400">{t("chat.cloudGatewayLabel")}</p>
-          <p class="mt-1 text-sm font-semibold text-gray-900">{t("chat.cloudGatewayValue")}</p>
+          <p class="mt-1 text-sm font-semibold text-gray-900">{cloudGatewayURL.value || t("chat.cloudGatewayValue")}</p>
           <div class="mt-4 rounded-lg bg-white px-3 py-2">
             <p class="text-xs font-medium text-gray-400">{t("gateway.authStatus")}</p>
             <p class="mt-1 text-sm font-semibold text-gray-900">{cloudAPIKeyStatus(cloudAuth.value)}</p>
