@@ -271,7 +271,7 @@ func (s *Server) evictExpired(now time.Time) {
 // touchEngine updates lastUsed for the given model. Must be called after
 // every inference request so the evictor knows the engine is still active.
 func (s *Server) touchEngine(modelID string) {
-	s.touchEngineKey(engineCacheKey(modelID, engineModeChat))
+	s.touchEngineKey(engineCacheKey(s.resolveLocalModelStorageID(modelID), engineModeChat))
 }
 
 func (s *Server) touchEngineKey(key string) {
@@ -283,6 +283,7 @@ func (s *Server) touchEngineKey(key string) {
 }
 
 func (s *Server) setEngineKeepAlive(modelID string, keepAlive time.Duration) {
+	modelID = s.resolveLocalModelStorageID(modelID)
 	s.mu.Lock()
 	for _, key := range []string{engineCacheKey(modelID, engineModeChat), engineCacheKey(modelID, engineModeEmbed)} {
 		if me, ok := s.engines[key]; ok {
@@ -293,6 +294,7 @@ func (s *Server) setEngineKeepAlive(modelID string, keepAlive time.Duration) {
 }
 
 func (s *Server) setImageEngineKeepAlive(modelID string, keepAlive time.Duration) {
+	modelID = s.resolveLocalModelStorageID(modelID)
 	s.mu.Lock()
 	if me, ok := s.imageEngines[modelID]; ok {
 		me.keepAlive = keepAlive
@@ -301,6 +303,7 @@ func (s *Server) setImageEngineKeepAlive(modelID string, keepAlive time.Duration
 }
 
 func (s *Server) touchImageEngine(modelID string) {
+	modelID = s.resolveLocalModelStorageID(modelID)
 	s.mu.Lock()
 	if me, ok := s.imageEngines[modelID]; ok {
 		me.lastUsed = time.Now()
@@ -364,6 +367,7 @@ func (s *Server) getOrLoadEmbeddingEngineWithOpts(modelID string, numCtx, nGPULa
 }
 
 func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype, mode string) (inference.Engine, error) {
+	modelID = s.resolveLocalModelStorageID(modelID)
 	normalizedCacheTypeK, err := inference.NormalizeCacheType(cacheTypeK)
 	if err != nil {
 		return nil, err
@@ -497,6 +501,7 @@ func (s *Server) getOrLoadImageEngine(ctx context.Context, modelID string) (imag
 }
 
 func (s *Server) getOrLoadImageEngineWithProgress(ctx context.Context, modelID string, progress imagegen.ProgressFunc, upgradePackages bool) (imagegen.Engine, error) {
+	modelID = s.resolveLocalModelStorageID(modelID)
 	if upgradePackages {
 		s.mu.Lock()
 		if me, ok := s.imageEngines[modelID]; ok {

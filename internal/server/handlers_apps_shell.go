@@ -573,7 +573,7 @@ func (s *Server) resolveAIAppShellLaunchModels(ctx context.Context, appID, reque
 		return s.resolveAIAppLaunchModels(ctx, requestedModel, requestedSource)
 	}
 
-	preferredModel := s.preferredAIAppModel(appID)
+	preferredModel := s.localInferenceModelID(s.preferredAIAppModel(appID))
 	if preferredModel != "" {
 		modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, preferredModel, "")
 		if err == nil {
@@ -629,7 +629,7 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 		return "", nil, fmt.Errorf("listing available models: %w", err)
 	}
 	availableModels = filterAIAppLaunchModels(availableModels)
-	modelIDs, seen := modelIDsFromInfos(availableModels)
+	modelIDs, seen := s.modelIDsFromInfos(availableModels)
 	defaultModel := ""
 	if len(modelIDs) > 0 {
 		defaultModel = modelIDs[0]
@@ -652,6 +652,7 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 	requestedModel = strings.TrimSpace(requestedModel)
 	requestedSource = strings.TrimSpace(requestedSource)
 	if requestedModel != "" {
+		requestedModel = s.localInferenceModelID(requestedModel)
 		if requestedSource != "" {
 			normalizedSource := strings.ToLower(requestedSource)
 			if (normalizedSource == "local" || normalizedSource == "cloud" || providerIDFromSource(requestedSource) != "") &&
@@ -694,11 +695,15 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 	return defaultModel, modelIDs, nil
 }
 
-func modelIDsFromInfos(models []api.ModelInfo) ([]string, map[string]struct{}) {
+func (s *Server) modelIDsFromInfos(models []api.ModelInfo) ([]string, map[string]struct{}) {
 	modelIDs := make([]string, 0, len(models))
 	seen := make(map[string]struct{}, len(models))
 	for _, item := range models {
-		modelIDs = appendUniqueModelID(modelIDs, seen, item.Model)
+		modelID := strings.TrimSpace(item.Model)
+		modelIDs = appendUniqueModelID(modelIDs, seen, modelID)
+		if isLocalModelInfo(item) {
+			s.registerLocalModelAliases(seen, modelID)
+		}
 	}
 	return modelIDs, seen
 }
@@ -803,7 +808,7 @@ func (s *Server) savePreferredAIAppModel(appID, modelID string) {
 	if s.cfg.AIAppPreferredModels == nil {
 		s.cfg.AIAppPreferredModels = map[string]string{}
 	}
-	s.cfg.AIAppPreferredModels[appID] = modelID
+	s.cfg.AIAppPreferredModels[appID] = s.localInferenceModelID(modelID)
 	_ = config.Save(s.cfg)
 }
 

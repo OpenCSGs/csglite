@@ -766,12 +766,12 @@ func TestOpenAIAppShellURLRemembersRequestedModel(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected session %q to exist", sessionID)
 	}
-	if session.modelID != "Qwen/Qwen2.5-Coder-1.5B" {
+	if session.modelID != "Qwen2.5-Coder-1.5B" {
 		t.Fatalf("session modelID = %q, want coder model", session.modelID)
 	}
 	_ = s.appShells.Close(sessionID)
 
-	if got := s.preferredAIAppModel("claude-code"); got != "Qwen/Qwen2.5-Coder-1.5B" {
+	if got := s.preferredAIAppModel("claude-code"); got != "Qwen2.5-Coder-1.5B" {
 		t.Fatalf("preferredAIAppModel = %q, want coder model", got)
 	}
 }
@@ -837,7 +837,7 @@ func TestOpenAIAppShellURLUsesRememberedModelWhenRequestOmitted(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected session %q to exist", sessionID)
 	}
-	if session.modelID != "Qwen/Qwen2.5-Coder-1.5B" {
+	if session.modelID != "Qwen2.5-Coder-1.5B" {
 		t.Fatalf("session modelID = %q, want remembered coder model", session.modelID)
 	}
 	_ = s.appShells.Close(sessionID)
@@ -891,7 +891,7 @@ func TestResolveCSGClawLaunchModelsUsesRememberedModelWhenRequestOmitted(t *test
 	if modelID != "glm-5" {
 		t.Fatalf("modelID = %q, want remembered glm-5", modelID)
 	}
-	if !sameStrings(modelIDs, []string{"Qwen/Qwen3-0.6B-GGUF", "glm-5"}) {
+	if !sameStrings(modelIDs, []string{"Qwen3-0.6B-GGUF", "glm-5"}) {
 		t.Fatalf("modelIDs = %#v, want local model plus remembered glm-5", modelIDs)
 	}
 }
@@ -940,10 +940,10 @@ func TestResolveAIAppLaunchModelsExcludesUnavailableCloudModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveAIAppLaunchModels returned error: %v", err)
 	}
-	if modelID != "Qwen/Qwen3.5-2B" {
+	if modelID != "Qwen3.5-2B" {
 		t.Fatalf("modelID = %q, want local default", modelID)
 	}
-	if !sameStrings(modelIDs, []string{"Qwen/Qwen3.5-2B", "glm-5"}) {
+	if !sameStrings(modelIDs, []string{"Qwen3.5-2B", "glm-5"}) {
 		t.Fatalf("modelIDs = %#v, want available models without opus4.7", modelIDs)
 	}
 

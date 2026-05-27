@@ -427,7 +427,7 @@ func TestHandleOpenAIModelsUsesCsghubOwner(t *testing.T) {
 	if len(resp.Data) != 1 {
 		t.Fatalf("expected one model, got %#v", resp.Data)
 	}
-	if resp.Data[0].ID != "Qwen/Qwen3.5-2B" {
+	if resp.Data[0].ID != "Qwen3.5-2B" {
 		t.Fatalf("unexpected model id: %#v", resp.Data[0].ID)
 	}
 	if resp.Data[0].OwnedBy != "csghub" {
@@ -472,7 +472,7 @@ func TestHandleOpenAIModelsIncludesCloudModels(t *testing.T) {
 	if len(resp.Data) != 2 {
 		t.Fatalf("expected two models, got %#v", resp.Data)
 	}
-	if resp.Data[0].ID != "Qwen/Qwen3.5-2B" {
+	if resp.Data[0].ID != "Qwen3.5-2B" {
 		t.Fatalf("first model id = %q, want local model", resp.Data[0].ID)
 	}
 	if resp.Data[1].ID != "cloud/model" {
@@ -525,7 +525,7 @@ func TestHandleModelsAnthropicFormatIncludesCloudModels(t *testing.T) {
 	if len(resp.Data) != 2 {
 		t.Fatalf("expected two models, got %#v", resp.Data)
 	}
-	if resp.Data[0].ID != "Qwen/Qwen3.5-2B" {
+	if resp.Data[0].ID != "Qwen3.5-2B" {
 		t.Fatalf("first model id = %q, want local model", resp.Data[0].ID)
 	}
 	if resp.Data[1].ID != "cloud/model" {
@@ -537,7 +537,7 @@ func TestHandleModelsAnthropicFormatIncludesCloudModels(t *testing.T) {
 	if resp.Data[0].MaxInputTokens != defaultAnthropicMaxInputTokens {
 		t.Fatalf("local max_input_tokens = %d, want %d", resp.Data[0].MaxInputTokens, defaultAnthropicMaxInputTokens)
 	}
-	if resp.FirstID != "Qwen/Qwen3.5-2B" || resp.LastID != "cloud/model" {
+	if resp.FirstID != "Qwen3.5-2B" || resp.LastID != "cloud/model" {
 		t.Fatalf("unexpected pagination metadata: %#v", resp)
 	}
 }
@@ -642,7 +642,7 @@ func TestHandleModelsAnthropicFormatUsesLoadedContextWhenLarger(t *testing.T) {
 	}
 	var target *api.AnthropicModelInfo
 	for i := range resp.Data {
-		if resp.Data[i].ID == "MiniMaxAI/MiniMax-M2.5" {
+		if resp.Data[i].ID == "MiniMax-M2.5" {
 			target = &resp.Data[i]
 			break
 		}

@@ -130,8 +130,8 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		models = append(models, api.RunningModel{
-			Name:      lm.FullName(),
-			Model:     lm.FullName(),
+			Name:      s.localInferenceModelID(lm.FullName()),
+			Model:     s.localInferenceModelID(lm.FullName()),
 			Size:      lm.Size,
 			Format:    string(lm.Format),
 			Status:    "running",
@@ -148,8 +148,8 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		models = append(models, api.RunningModel{
-			Name:   lm.FullName(),
-			Model:  lm.FullName(),
+			Name:   s.localInferenceModelID(lm.FullName()),
+			Model:  s.localInferenceModelID(lm.FullName()),
 			Size:   lm.Size,
 			Format: string(lm.Format),
 			Status: "loading",
@@ -161,8 +161,8 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		models = append(models, api.RunningModel{
-			Name:      lm.FullName(),
-			Model:     lm.FullName(),
+			Name:      s.localInferenceModelID(lm.FullName()),
+			Model:     s.localInferenceModelID(lm.FullName()),
 			Size:      lm.Size,
 			Format:    string(lm.Format),
 			Status:    "running",
@@ -178,8 +178,8 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		models = append(models, api.RunningModel{
-			Name:   lm.FullName(),
-			Model:  lm.FullName(),
+			Name:   s.localInferenceModelID(lm.FullName()),
+			Model:  s.localInferenceModelID(lm.FullName()),
 			Size:   lm.Size,
 			Format: string(lm.Format),
 			Status: "loading",
@@ -199,16 +199,17 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	stopped := false
-	for _, key := range []string{engineCacheKey(req.Model, engineModeChat), engineCacheKey(req.Model, engineModeEmbed)} {
+	modelID := s.resolveLocalModelStorageID(req.Model)
+	for _, key := range []string{engineCacheKey(modelID, engineModeChat), engineCacheKey(modelID, engineModeEmbed)} {
 		if me, ok := s.engines[key]; ok {
 			me.engine.Close()
 			delete(s.engines, key)
 			stopped = true
 		}
 	}
-	if me, ok := s.imageEngines[req.Model]; ok {
+	if me, ok := s.imageEngines[modelID]; ok {
 		me.engine.Close()
-		delete(s.imageEngines, req.Model)
+		delete(s.imageEngines, modelID)
 		stopped = true
 	}
 	s.mu.Unlock()
@@ -229,7 +230,7 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lm, err := s.manager.Get(req.Model)
+	lm, err := s.manager.ResolveLocalModel(req.Model)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("model %q not found", req.Model))
 		return
@@ -295,9 +296,11 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	modelID := s.resolveLocalModelStorageID(req.Model)
+
 	// Close engine if running
 	s.mu.Lock()
-	for _, key := range []string{engineCacheKey(req.Model, engineModeChat), engineCacheKey(req.Model, engineModeEmbed)} {
+	for _, key := range []string{engineCacheKey(modelID, engineModeChat), engineCacheKey(modelID, engineModeEmbed)} {
 		if me, ok := s.engines[key]; ok {
 			me.engine.Close()
 			delete(s.engines, key)
@@ -305,7 +308,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	if err := s.manager.Remove(req.Model); err != nil {
+	if err := s.manager.Remove(modelID); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

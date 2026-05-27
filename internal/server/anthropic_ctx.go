@@ -9,14 +9,15 @@ import (
 )
 
 func (s *Server) anthropicPreferredNumCtx(modelID string) int {
+	storageID := s.resolveLocalModelStorageID(modelID)
 	preferred := 0
 	if s.manager != nil {
-		if modelDir, err := s.manager.ModelPath(modelID); err == nil {
+		if modelDir, err := s.manager.ModelPath(storageID); err == nil {
 			preferred = anthropicDefaultLocalNumCtx(modelDir)
 		}
 	}
 
-	loaded := s.loadedModelNumCtx(modelID)
+	loaded := s.loadedModelNumCtx(storageID)
 	if loaded > preferred {
 		return loaded
 	}

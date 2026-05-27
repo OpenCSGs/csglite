@@ -97,27 +97,28 @@ func (s *Server) listLocalModelInfos() ([]api.ModelInfo, error) {
 }
 
 func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
-	modelID := strings.TrimSpace(item.FullName())
-	pipelineTag := s.resolvedLocalPipelineTag(modelID, strings.TrimSpace(item.PipelineTag))
+	storageID := strings.TrimSpace(item.FullName())
+	inferenceID := model.InferenceModelID(item)
+	pipelineTag := s.resolvedLocalPipelineTag(storageID, strings.TrimSpace(item.PipelineTag))
 	hasMMProj := false
 	var contextWindow int64
 
-	if dir, err := s.manager.ModelPath(modelID); err == nil {
+	if dir, err := s.manager.ModelPath(storageID); err == nil {
 		hasMMProj = model.FindMMProj(dir) != ""
-		contextWindow = s.localModelContextWindow(modelID, dir)
+		contextWindow = s.localModelContextWindow(storageID, dir)
 	}
 	if pipelineTag == "" {
 		pipelineTag = "text-generation"
 	}
 
 	return api.ModelInfo{
-		Name:          modelID,
-		Model:         modelID,
+		Name:          inferenceID,
+		Model:         inferenceID,
 		Size:          item.Size,
 		Format:        string(item.Format),
 		ModifiedAt:    item.DownloadedAt,
-		Label:         modelID,
-		DisplayName:   modelID,
+		Label:         inferenceID,
+		DisplayName:   inferenceID,
 		Source:        "local",
 		Provider:      "local",
 		Category:      categoryForPipelineTag(pipelineTag),
@@ -130,20 +131,20 @@ func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
 }
 
 func (s *Server) modelUsesEmbeddingEngine(modelID string) bool {
-	lm, err := s.manager.Get(modelID)
+	lm, err := s.manager.ResolveLocalModel(modelID)
 	if err != nil || lm == nil {
 		return false
 	}
-	pipelineTag := s.resolvedLocalPipelineTag(modelID, strings.TrimSpace(lm.PipelineTag))
+	pipelineTag := s.resolvedLocalPipelineTag(lm.FullName(), strings.TrimSpace(lm.PipelineTag))
 	return isEmbeddingPipelineTag(pipelineTag)
 }
 
 func (s *Server) modelUsesImageGenerationEngine(modelID string) bool {
-	lm, err := s.manager.Get(modelID)
+	lm, err := s.manager.ResolveLocalModel(modelID)
 	if err != nil || lm == nil {
 		return false
 	}
-	pipelineTag := s.resolvedLocalPipelineTag(modelID, strings.TrimSpace(lm.PipelineTag))
+	pipelineTag := s.resolvedLocalPipelineTag(lm.FullName(), strings.TrimSpace(lm.PipelineTag))
 	return isImageGenerationPipelineTag(pipelineTag)
 }
 

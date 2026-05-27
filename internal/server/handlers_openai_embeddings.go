@@ -46,7 +46,7 @@ func (s *Server) handleEmbeddingChat(w http.ResponseWriter, r *http.Request, req
 		writeError(w, http.StatusBadRequest, "selected model backend does not support embeddings")
 		return
 	}
-	defer s.touchEngineKey(engineCacheKey(req.Model, engineModeEmbed))
+	defer s.touchEngineKey(engineCacheKey(s.resolveLocalModelStorageID(req.Model), engineModeEmbed))
 
 	resp, err := proxy.Embeddings(r.Context(), map[string]interface{}{
 		"model": req.Model,
@@ -172,7 +172,7 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "selected model backend does not support embeddings")
 		return
 	}
-	defer s.touchEngineKey(engineCacheKey(req.Model, engineModeEmbed))
+	defer s.touchEngineKey(engineCacheKey(s.resolveLocalModelStorageID(req.Model), engineModeEmbed))
 
 	reqBody, err := openAIEmbeddingsRequestToProxyBody(req, rawReq)
 	if err != nil {

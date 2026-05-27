@@ -81,8 +81,8 @@ func TestHandleLocalModelSearch_QueryAndPagination(t *testing.T) {
 	if len(resp.Models) != 1 {
 		t.Fatalf("models len = %d, want 1", len(resp.Models))
 	}
-	if resp.Models[0].Model != "Qwen/qwen3-0.6b-gguf" {
-		t.Fatalf("first model = %q, want Qwen/qwen3-0.6b-gguf", resp.Models[0].Model)
+	if resp.Models[0].Model != "qwen3-0.6b-gguf" {
+		t.Fatalf("first model = %q, want qwen3-0.6b-gguf", resp.Models[0].Model)
 	}
 	if resp.Models[0].Description != "Fast coding assistant" {
 		t.Fatalf("description = %q, want Fast coding assistant", resp.Models[0].Description)
@@ -106,8 +106,8 @@ func TestHandleLocalModelSearch_QueryAndPagination(t *testing.T) {
 	if resp.HasMore {
 		t.Fatal("has_more = true, want false")
 	}
-	if len(resp.Models) != 1 || resp.Models[0].Model != "Vision/qwen2-vl" {
-		t.Fatalf("offset models = %#v, want Vision/qwen2-vl", resp.Models)
+	if len(resp.Models) != 1 || resp.Models[0].Model != "qwen2-vl" {
+		t.Fatalf("offset models = %#v, want qwen2-vl", resp.Models)
 	}
 }
 
@@ -154,8 +154,8 @@ func TestHandleLocalModelSearch_Filters(t *testing.T) {
 	if resp.Total != 1 || len(resp.Models) != 1 {
 		t.Fatalf("models = %#v, want 1 safetensors match", resp.Models)
 	}
-	if resp.Models[0].Model != "Acme/embed-sft" {
-		t.Fatalf("model = %q, want Acme/embed-sft", resp.Models[0].Model)
+	if resp.Models[0].Model != "embed-sft" {
+		t.Fatalf("model = %q, want embed-sft", resp.Models[0].Model)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/models/search?pipeline_tag=image-text-to-text", nil)
@@ -170,8 +170,8 @@ func TestHandleLocalModelSearch_Filters(t *testing.T) {
 	if resp.Total != 1 || len(resp.Models) != 1 {
 		t.Fatalf("models = %#v, want 1 vision match", resp.Models)
 	}
-	if resp.Models[0].Model != "Vision/qwen2-vl" {
-		t.Fatalf("vision model = %q, want Vision/qwen2-vl", resp.Models[0].Model)
+	if resp.Models[0].Model != "qwen2-vl" {
+		t.Fatalf("vision model = %q, want qwen2-vl", resp.Models[0].Model)
 	}
 	if !resp.Models[0].HasMMProj {
 		t.Fatal("has_mmproj = false, want true")

@@ -449,8 +449,8 @@ func TestHandleTags_WithModels(t *testing.T) {
 	if len(resp.Models) != 1 {
 		t.Fatalf("models len = %d, want 1", len(resp.Models))
 	}
-	if resp.Models[0].Name != "test/model" {
-		t.Errorf("model name = %q, want %q", resp.Models[0].Name, "test/model")
+	if resp.Models[0].Name != "model" {
+		t.Errorf("model name = %q, want %q", resp.Models[0].Name, "model")
 	}
 	if resp.Models[0].Provider != "local" {
 		t.Errorf("provider = %q, want local", resp.Models[0].Provider)
@@ -553,8 +553,8 @@ func TestHandleShow(t *testing.T) {
 
 	var resp api.ShowResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	if resp.Details.Name != "ns/mdl" {
-		t.Errorf("details.name = %q, want %q", resp.Details.Name, "ns/mdl")
+	if resp.Details.Name != "mdl" {
+		t.Errorf("details.name = %q, want %q", resp.Details.Name, "mdl")
 	}
 }
 

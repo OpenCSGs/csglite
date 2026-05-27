@@ -55,8 +55,8 @@ func TestHandleModelManifest_BackfillsLegacyManifest(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Details.Model != "Acme/demo" {
-		t.Fatalf("details.model = %q, want Acme/demo", resp.Details.Model)
+	if resp.Details.Model != "demo" {
+		t.Fatalf("details.model = %q, want demo", resp.Details.Model)
 	}
 	if len(resp.Files) != 2 {
 		t.Fatalf("files len = %d, want 2", len(resp.Files))

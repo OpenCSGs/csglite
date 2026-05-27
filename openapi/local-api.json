@@ -5065,7 +5065,8 @@
         ],
         "properties": {
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model ID to run. Local models accept the short public ID returned by model list APIs; legacy `namespace/name` IDs are also accepted."
           },
           "prompt": {
             "type": "string"
@@ -5093,7 +5094,8 @@
         ],
         "properties": {
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model ID returned by the request."
           },
           "response": {
             "type": "string"
@@ -5115,7 +5117,8 @@
         ],
         "properties": {
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model ID to run. Local models accept the short public ID returned by model list APIs; legacy `namespace/name` IDs are also accepted."
           },
           "source": {
             "type": "string",
@@ -5152,7 +5155,8 @@
         ],
         "properties": {
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model ID returned by the request."
           },
           "message": {
             "$ref": "#/components/schemas/Message"
@@ -5211,7 +5215,8 @@
         ],
         "properties": {
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model ID to delete. Local models accept the short public ID returned by model list APIs; legacy `namespace/name` IDs are also accepted."
           }
         }
       },
@@ -5223,7 +5228,8 @@
         ],
         "properties": {
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model ID to inspect. Local models accept the short public ID returned by model list APIs; legacy `namespace/name` IDs are also accepted."
           }
         }
       },
@@ -5235,7 +5241,8 @@
         ],
         "properties": {
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model ID to stop. Local models accept the short public ID returned by model list APIs; legacy `namespace/name` IDs are also accepted."
           }
         }
       },
@@ -5247,7 +5254,8 @@
         ],
         "properties": {
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model ID to load. Local models accept the short public ID returned by model list APIs; legacy `namespace/name` IDs are also accepted."
           },
           "stream": {
             "type": "boolean",
@@ -5312,10 +5320,12 @@
         ],
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Client-visible model ID. Local models use a short public ID without `namespace/`; when local names collide, later models receive a stable hash suffix."
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Client-visible model ID. Local models use a short public ID without `namespace/`; when local names collide, later models receive a stable hash suffix."
           },
           "size": {
             "type": "integer"
