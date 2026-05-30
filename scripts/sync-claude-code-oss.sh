@@ -150,8 +150,31 @@ bucket_endpoint_url() {
   printf 'https://%s.%s\n' "${STARHUB_OSS_PUBLIC_BUCKET}" "$host"
 }
 
+ensure_external_proxy() {
+  local before=""
+  local after=""
+  before="${https_proxy:-}${HTTPS_PROXY:-}${http_proxy:-}${HTTP_PROXY:-}"
+  if [[ -n "$before" ]]; then
+    return 0
+  fi
+  if [[ -z "${HOME:-}" || ! -f "${HOME}/.myshrc" ]]; then
+    return 0
+  fi
+
+  set +u
+  # shellcheck source=/dev/null
+  . "${HOME}/.myshrc" >/dev/null 2>&1 || true
+  set -u
+
+  after="${https_proxy:-}${HTTPS_PROXY:-}${http_proxy:-}${HTTP_PROXY:-}"
+  if [[ -n "$after" ]]; then
+    printf '\033[0;32m[INFO]\033[0m %s\n' "loaded proxy settings from ${HOME}/.myshrc for upstream downloads" >&2
+  fi
+}
+
 download_text() {
   local url="$1"
+  ensure_external_proxy
   if command -v curl >/dev/null 2>&1; then
     curl --connect-timeout 15 --max-time 60 --retry 3 --retry-delay 2 -fsSL "$url"
   else
@@ -162,12 +185,19 @@ download_text() {
 download_file() {
   local url="$1"
   local output="$2"
+  ensure_external_proxy
   if [[ "$url" == https://storage.googleapis.com/* ]]; then
-    parallel_range_download_file "$url" "$output"
-    return 0
+    if parallel_range_download_file "$url" "$output"; then
+      return 0
+    fi
+    warn "range download unavailable for ${url}; falling back to curl"
   fi
   if command -v curl >/dev/null 2>&1; then
-    curl --connect-timeout 15 --max-time 1800 --retry 3 --retry-delay 2 -fsSL -o "$output" "$url"
+    if [[ -f "$output" ]]; then
+      curl --connect-timeout 15 --max-time 1800 --retry 5 --retry-delay 5 -C - -fSL -o "$output" "$url"
+    else
+      curl --connect-timeout 15 --max-time 1800 --retry 5 --retry-delay 5 -fSL -o "$output" "$url"
+    fi
   else
     wget --tries=3 --timeout=30 -O "$output" "$url"
   fi
@@ -187,7 +217,7 @@ import urllib.request
 url, output = sys.argv[1:3]
 part_path = output + ".part"
 workers = int(os.environ.get("CLAUDE_CODE_DOWNLOAD_WORKERS", "8"))
-chunk_size = int(os.environ.get("CLAUDE_CODE_DOWNLOAD_CHUNK_SIZE", str(16 * 1024 * 1024)))
+chunk_size = int(os.environ.get("CLAUDE_CODE_DOWNLOAD_CHUNK_SIZE", str(2 * 1024 * 1024)))
 
 
 def request(method, headers=None, timeout=60):

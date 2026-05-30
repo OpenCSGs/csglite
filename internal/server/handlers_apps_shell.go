@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/x/xpty"
 	"github.com/gorilla/websocket"
 
+	"github.com/opencsgs/csghub-lite/internal/antigravityagent"
 	"github.com/opencsgs/csghub-lite/internal/claudeagent"
 	"github.com/opencsgs/csghub-lite/internal/codexagent"
 	"github.com/opencsgs/csghub-lite/internal/config"
@@ -618,6 +619,12 @@ func resolveAIAppOpenTarget(appID string) (aiAppOpenTarget, error) {
 			DisplayName: "Pi",
 			Binaries:    []string{"pi"},
 		}, nil
+	case "antigravity":
+		return aiAppOpenTarget{
+			AppID:       "antigravity",
+			DisplayName: "Antigravity",
+			Binaries:    []string{"agy"},
+		}, nil
 	default:
 		return aiAppOpenTarget{}, fmt.Errorf("%s does not provide a web shell entry yet", appID)
 	}
@@ -916,6 +923,19 @@ func (s *Server) prepareAIAppShellLaunch(target aiAppOpenTarget, modelID string,
 			Binary: binary,
 			Args:   []string{"--provider", piagent.ProviderID, "--model", modelID},
 			Env:    envWithOverridesAndUnset(aiAppShellEnvOverrides(nil), "NO_COLOR"),
+			Dir:    workingDir,
+		}, nil
+	case "antigravity":
+		models := make([]api.ModelInfo, 0, len(modelIDs))
+		for _, modelID := range modelIDs {
+			models = append(models, api.ModelInfo{Model: modelID})
+		}
+		if err := antigravityagent.SyncConfig(serverURL, openClawProviderAPIKey(s.cfg.Token), modelID, models); err != nil {
+			log.Printf("AI APP antigravity: syncing config failed: %v", err)
+		}
+		return aiAppPreparedLaunch{
+			Binary: binary,
+			Env:    envWithOverridesAndUnset(aiAppShellEnvOverrides(antigravityagent.EnvOverrides(serverURL, openClawProviderAPIKey(s.cfg.Token), modelID)), "NO_COLOR"),
 			Dir:    workingDir,
 		}, nil
 	default:

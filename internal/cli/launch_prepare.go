@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opencsgs/csghub-lite/internal/antigravityagent"
 	"github.com/opencsgs/csghub-lite/internal/claudeagent"
 	"github.com/opencsgs/csghub-lite/internal/codexagent"
 	"github.com/opencsgs/csghub-lite/internal/config"
@@ -225,6 +226,8 @@ func prepareLaunchExecution(target launchTarget, serverURL, modelID string, user
 		return prepareCodexLaunch(target, serverURL, modelID, userArgs)
 	case "pi":
 		return preparePiLaunch(target, serverURL, modelID, userArgs)
+	case "antigravity":
+		return prepareAntigravityLaunch(target, serverURL, modelID, userArgs)
 	case "openclaw":
 		return prepareOpenClawLaunch(target, serverURL, modelID, userArgs)
 	case "csgclaw":
@@ -291,6 +294,22 @@ func prepareCodexLaunch(target launchTarget, serverURL, modelID string, userArgs
 
 	env := envWithOverrides(nil)
 	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
+}
+
+func prepareAntigravityLaunch(target launchTarget, serverURL, modelID string, userArgs []string) (preparedLaunch, error) {
+	binary, err := resolveLaunchBinary(target.Binaries)
+	if err != nil {
+		return preparedLaunch{}, fmt.Errorf("%s is installed, but the launch command was not found on PATH", target.DisplayName)
+	}
+	models, err := getLaunchModels(serverURL)
+	if err != nil {
+		return preparedLaunch{}, err
+	}
+	if err := antigravityagent.SyncConfig(serverURL, openClawProviderAPIKey(config.Get().Token), modelID, models); err != nil {
+		return preparedLaunch{}, err
+	}
+	env := envWithOverrides(antigravityagent.EnvOverrides(serverURL, openClawProviderAPIKey(config.Get().Token), modelID))
+	return preparedLaunch{Binary: binary, Args: append([]string{}, userArgs...), Env: env}, nil
 }
 
 func preparePiLaunch(target launchTarget, serverURL, modelID string, userArgs []string) (preparedLaunch, error) {

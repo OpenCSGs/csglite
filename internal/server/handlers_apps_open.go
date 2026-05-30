@@ -60,7 +60,7 @@ func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, modelSource, 
 			return "", err
 		}
 		return rewriteLoopbackURLHost(url, publicBaseURL), nil
-	case "claude-code", "open-code", "codex", "pi":
+	case "claude-code", "open-code", "codex", "pi", "antigravity":
 		return s.openAIAppShellURL(ctx, appID, modelID, modelSource, workDir, publicBaseURL)
 	default:
 		return "", fmt.Errorf("%s does not provide a direct chat entry yet", appID)

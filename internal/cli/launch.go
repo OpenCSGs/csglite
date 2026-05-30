@@ -33,7 +33,7 @@ type launchOptions struct {
 	Gateway     string
 }
 
-const launchSupportedApps = "claude-code, open-code, codex, pi, openclaw, csgclaw, dify, anythingllm"
+const launchSupportedApps = "claude-code, open-code, codex, antigravity, pi, openclaw, csgclaw, dify, anythingllm"
 const claudeDangerouslySkipPermissionsFlag = "dangerously-skip-permissions"
 
 func newLaunchCmd() *cobra.Command {
@@ -250,6 +250,12 @@ func resolveLaunchTarget(name string) (launchTarget, error) {
 			AppID:       "pi",
 			DisplayName: "Pi",
 			Binaries:    []string{"pi"},
+		}, nil
+	case "antigravity", "agy":
+		return launchTarget{
+			AppID:       "antigravity",
+			DisplayName: "Antigravity",
+			Binaries:    []string{"agy"},
 		}, nil
 	case "openclaw":
 		return launchTarget{

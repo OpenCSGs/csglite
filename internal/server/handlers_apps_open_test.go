@@ -1257,6 +1257,66 @@ func TestPrepareAIAppShellLaunchUsesPiProviderConfig(t *testing.T) {
 	}
 }
 
+func TestPrepareAIAppShellLaunchUsesAntigravityProviderConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "agy")
+	content := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		commandPath = filepath.Join(binDir, "agy.cmd")
+		content = "@echo off\r\nexit /b 0\r\n"
+	}
+	if err := os.WriteFile(commandPath, []byte(content), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := New(&config.Config{ListenAddr: ":11435"}, "test")
+	workDir := t.TempDir()
+	prepared, err := s.prepareAIAppShellLaunch(aiAppOpenTarget{
+		AppID:       "antigravity",
+		DisplayName: "Antigravity",
+		Binaries:    []string{"agy"},
+	}, "Qwen/Qwen3.5-2B", []string{"Qwen/Qwen3.5-2B", "minimax-m2.5"}, workDir)
+	if err != nil {
+		t.Fatalf("prepareAIAppShellLaunch returned error: %v", err)
+	}
+	if prepared.Binary == "" {
+		t.Fatalf("expected launch binary, got empty")
+	}
+	if got := envValue(prepared.Env, "CSGHUB_LITE_API_KEY"); got != "csghub-lite" {
+		t.Fatalf("CSGHUB_LITE_API_KEY = %q, want csghub-lite", got)
+	}
+	if got := envValue(prepared.Env, "OPENAI_BASE_URL"); got != "http://127.0.0.1:11435/v1" {
+		t.Fatalf("OPENAI_BASE_URL = %q, want local v1 URL", got)
+	}
+	if envHasKey(prepared.Env, "NO_COLOR") {
+		t.Fatalf("NO_COLOR should be removed from Antigravity web shell environment: %#v", prepared.Env)
+	}
+
+	settingsText, err := os.ReadFile(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"))
+	if err != nil {
+		t.Fatalf("read Antigravity settings: %v", err)
+	}
+	if !strings.Contains(string(settingsText), `"model": "Qwen/Qwen3.5-2B"`) {
+		t.Fatalf("settings.json = %q, want selected model", settingsText)
+	}
+	for _, want := range []string{
+		`"customProviders": [`,
+		`"name": "LiteLLM"`,
+		`"type": "openai"`,
+		`"baseUrl": "http://127.0.0.1:11435/v1"`,
+		`"apiKey": "csghub-lite"`,
+		`"modelId": "Qwen/Qwen3.5-2B"`,
+	} {
+		if !strings.Contains(string(settingsText), want) {
+			t.Fatalf("settings.json missing %q:\n%s", want, settingsText)
+		}
+	}
+}
+
 func TestWriteOpenCodeWebLaunchConfigIncludesAllModels(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

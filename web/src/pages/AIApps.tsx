@@ -1355,7 +1355,15 @@ function updateStatusLabel(state: AIAppRuntimeState): string {
 function phaseLabel(phase: string): string {
   const key = `aiApps.phase.${phase}`;
   const translated = t(key);
-  return translated === key ? phase : translated;
+  return translated === key ? humanizePhase(phase) : translated;
+}
+
+function humanizePhase(phase: string): string {
+  return phase
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function statusColorClass(status: AIAppRuntimeState["status"]): string {
@@ -1405,7 +1413,7 @@ function drawerNotice(state: AIAppRuntimeState): string {
 }
 
 function canOpenAIApp(app: AIAppCatalogEntry, state: AIAppRuntimeState): boolean {
-  return ["openclaw", "csgclaw", "claude-code", "open-code", "codex", "pi"].includes(app.id) &&
+  return ["openclaw", "csgclaw", "claude-code", "open-code", "codex", "antigravity", "pi"].includes(app.id) &&
     state.status === "installed" &&
     !state.disabled;
 }
@@ -1451,6 +1459,8 @@ function cliLaunchAppName(appID: string): string {
       return "opencode";
     case "codex":
       return "codex";
+    case "antigravity":
+      return "antigravity";
     case "pi":
       return "pi";
     case "openclaw":
@@ -1463,7 +1473,7 @@ function cliLaunchAppName(appID: string): string {
 }
 
 function canSelectAIAppModel(app: AIAppCatalogEntry): boolean {
-  return ["claude-code", "open-code", "codex", "pi", "openclaw", "csgclaw"].includes(app.id);
+  return ["claude-code", "open-code", "codex", "antigravity", "pi", "openclaw", "csgclaw"].includes(app.id);
 }
 
 function normalizeAIAppModels(models: ModelInfo[]): ModelInfo[] {

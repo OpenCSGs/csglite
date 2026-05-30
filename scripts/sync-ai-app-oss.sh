@@ -29,6 +29,7 @@ Supported apps:
   - claude-code
   - open-code
   - codex
+  - antigravity
 
 Options:
   --app APP             App to sync (repeatable). Defaults to all mirror-backed apps
@@ -49,10 +50,12 @@ Optional environment variables:
   STARHUB_OPEN_CODE_DIST_BASE_URL Public URL override for generated manifest
   STARHUB_CODEX_DIST_PREFIX       Default: codex-releases
   STARHUB_CODEX_DIST_BASE_URL     Public URL override for generated manifest
+  STARHUB_ANTIGRAVITY_DIST_PREFIX Default: antigravity-releases
+  STARHUB_ANTIGRAVITY_DIST_BASE_URL Public URL override for generated manifest
 
 Examples:
   ./scripts/sync-ai-app-oss.sh
-  ./scripts/sync-ai-app-oss.sh --app claude-code --app open-code --app codex
+  ./scripts/sync-ai-app-oss.sh --app claude-code --app open-code --app codex --app antigravity
   ./scripts/sync-ai-app-oss.sh --app codex --version 0.118.0
   ./scripts/sync-ai-app-oss.sh --app claude-code
 EOF
@@ -89,7 +92,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${#APP_IDS[@]}" -eq 0 ]]; then
-  APP_IDS=(claude-code open-code codex)
+  APP_IDS=(claude-code open-code codex antigravity)
 fi
 
 if [[ "$REQUESTED_VERSION" != "latest" && "${#APP_IDS[@]}" -ne 1 ]]; then
@@ -98,7 +101,7 @@ fi
 
 for app_id in "${APP_IDS[@]}"; do
   case "${app_id}" in
-    claude-code|open-code|codex) ;;
+    claude-code|open-code|codex|antigravity) ;;
     *) die "unsupported app: ${app_id}" ;;
   esac
 done
@@ -170,7 +173,11 @@ download_file() {
   local output="$2"
   ensure_external_proxy
   if command -v curl >/dev/null 2>&1; then
-    curl --connect-timeout 15 --max-time 1800 --retry 3 --retry-delay 2 -fsSL -o "$output" "$url"
+    if [[ -f "$output" ]]; then
+      curl --connect-timeout 15 --max-time 1800 --retry 5 --retry-delay 5 --retry-all-errors -C - -fSL -o "$output" "$url"
+    else
+      curl --connect-timeout 15 --max-time 1800 --retry 5 --retry-delay 5 --retry-all-errors -fSL -o "$output" "$url"
+    fi
   else
     wget --tries=3 --timeout=30 -O "$output" "$url"
   fi
@@ -183,6 +190,20 @@ import sys
 
 path = sys.argv[1]
 h = hashlib.sha256()
+with open(path, "rb") as fh:
+    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+        h.update(chunk)
+print(h.hexdigest())
+PY
+}
+
+sha512_file() {
+  "${PYTHON_BIN}" - "$1" <<'PY'
+import hashlib
+import sys
+
+path = sys.argv[1]
+h = hashlib.sha512()
 with open(path, "rb") as fh:
     for chunk in iter(lambda: fh.read(1024 * 1024), b""):
         h.update(chunk)
@@ -272,6 +293,7 @@ app_prefix() {
   case "$1" in
     open-code) trim_trailing_slash "${STARHUB_OPEN_CODE_DIST_PREFIX:-open-code-releases}" ;;
     codex) trim_trailing_slash "${STARHUB_CODEX_DIST_PREFIX:-codex-releases}" ;;
+    antigravity) trim_trailing_slash "${STARHUB_ANTIGRAVITY_DIST_PREFIX:-antigravity-releases}" ;;
     *)
       die "unsupported release-backed app: $1"
       ;;
@@ -282,6 +304,7 @@ app_public_base_url() {
   case "$1" in
     open-code) resolve_public_base_url "$(app_prefix "$1")" "${STARHUB_OPEN_CODE_DIST_BASE_URL:-}" ;;
     codex) resolve_public_base_url "$(app_prefix "$1")" "${STARHUB_CODEX_DIST_BASE_URL:-}" ;;
+    antigravity) resolve_public_base_url "$(app_prefix "$1")" "${STARHUB_ANTIGRAVITY_DIST_BASE_URL:-}" ;;
     *)
       die "unsupported release-backed app: $1"
       ;;
@@ -343,6 +366,154 @@ sync_claude_via_wrapper() {
   fi
   info "delegating Claude Code sync to scripts/sync-claude-code-oss.sh"
   "${cmd[@]}"
+}
+
+sync_antigravity_app() {
+  local app_id="antigravity"
+  local prefix=""
+  local public_base_url=""
+  local workdir=""
+  local index_file=""
+  local manifest_file=""
+  local latest_file=""
+  local version=""
+  local object_key=""
+  local artifact_path=""
+  local actual_checksum=""
+
+  if [[ "${REQUESTED_VERSION}" != "latest" ]]; then
+    die "antigravity sync currently supports latest only; upstream exposes latest platform manifests"
+  fi
+
+  prefix="$(app_prefix "${app_id}")"
+  public_base_url="$(app_public_base_url "${app_id}")"
+  workdir="$(mktemp -d "${TMPDIR:-/tmp}/${app_id}-oss-sync.XXXXXX")"
+  if [[ "${KEEP_WORKDIR}" == "1" ]]; then
+    info "kept workdir for ${app_id}: ${workdir}"
+  fi
+
+  index_file="${workdir}/platforms.tsv"
+  manifest_file="${workdir}/manifest.json"
+  latest_file="${workdir}/latest"
+
+  ensure_external_proxy
+  "${PYTHON_BIN}" - "${index_file}" <<'PY'
+import json
+import os
+import sys
+import urllib.request
+
+index_path = sys.argv[1]
+base_url = "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests"
+platforms = [
+    ("darwin-arm64", "darwin_arm64", "tar.gz", "antigravity", "agy"),
+    ("darwin-x64", "darwin_amd64", "tar.gz", "antigravity", "agy"),
+    ("linux-arm64", "linux_arm64", "tar.gz", "antigravity", "agy"),
+    ("linux-x64", "linux_amd64", "tar.gz", "antigravity", "agy"),
+    ("win32-arm64", "windows_arm64", "raw", "agy.exe", "agy.exe"),
+    ("win32-x64", "windows_amd64", "raw", "agy.exe", "agy.exe"),
+]
+
+rows = []
+versions = set()
+for platform, upstream_platform, archive_format, binary, launcher in platforms:
+    url = f"{base_url}/{upstream_platform}.json"
+    with urllib.request.urlopen(url, timeout=60) as resp:
+        manifest = json.load(resp)
+    version = str(manifest["version"]).strip()
+    source_url = str(manifest["url"]).strip()
+    checksum = str(manifest["sha512"]).strip().lower()
+    asset_name = os.path.basename(source_url.split("?", 1)[0])
+    versions.add(version)
+    rows.append((platform, upstream_platform, asset_name, archive_format, binary, launcher, checksum, version, source_url))
+
+if len(versions) != 1:
+    raise SystemExit(f"Antigravity platform manifests reported different versions: {sorted(versions)}")
+
+with open(index_path, "w", encoding="utf-8") as out:
+    for row in rows:
+        out.write("\t".join(row) + "\n")
+PY
+
+  version="$(awk -F $'\t' 'NR == 1 {print $8}' "${index_file}")"
+  [[ -n "${version}" ]] || die "failed to resolve antigravity version"
+  info "syncing antigravity version ${version} from upstream platform manifests"
+
+  while IFS=$'\t' read -r platform upstream_platform asset_name archive_format binary launcher checksum row_version download_url; do
+    [[ -n "$platform" ]] || continue
+
+    artifact_path="${workdir}/${asset_name}"
+    object_key="${prefix}/${version}/${platform}/${asset_name}"
+
+    info "downloading antigravity ${upstream_platform}/${asset_name}"
+    download_file "${download_url}" "${artifact_path}"
+
+    actual_checksum="$(sha512_file "${artifact_path}")"
+    if [[ "${actual_checksum}" != "${checksum}" ]]; then
+      die "checksum mismatch for antigravity ${platform}/${asset_name}: expected ${checksum}, got ${actual_checksum}"
+    fi
+
+    info "uploading ${object_key}"
+    oss_put_object "${artifact_path}" "${object_key}" "application/octet-stream"
+  done < "${index_file}"
+
+  "${PYTHON_BIN}" - "${index_file}" "${manifest_file}" "${version}" "${prefix}" "${public_base_url}" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+index_path, manifest_path, version, prefix, public_base_url = sys.argv[1:6]
+manifest = {
+    "app_id": "antigravity",
+    "version": version,
+    "source": "antigravity-platform-manifest",
+    "repository": "https://antigravity.google/cli/install.sh",
+    "prefix": prefix,
+    "public_base_url": public_base_url,
+    "synced_at": datetime.now(timezone.utc).isoformat(),
+    "platforms": {},
+}
+
+with open(index_path, "r", encoding="utf-8") as fh:
+    for raw in fh:
+        raw = raw.strip()
+        if not raw:
+            continue
+        platform, upstream_platform, asset_name, archive_format, binary, launcher, checksum, row_version, download_url = raw.split("\t")
+        path = f"{version}/{platform}/{asset_name}"
+        manifest["platforms"][platform] = {
+            "asset": asset_name,
+            "archive_format": archive_format,
+            "binary": binary,
+            "launcher": launcher,
+            "checksum_sha512": checksum,
+            "path": path,
+            "source_platform": upstream_platform,
+            "source_url": download_url,
+            "public_url": f"{public_base_url}/{path}",
+        }
+
+with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+
+  info "uploading ${prefix}/${version}/manifest.json"
+  oss_put_object "${manifest_file}" "${prefix}/${version}/manifest.json" "application/json"
+
+  if [[ "${UPDATE_LATEST}" == "1" ]]; then
+    printf '%s\n' "${version}" > "${latest_file}"
+    info "uploading ${prefix}/latest"
+    oss_put_object "${latest_file}" "${prefix}/latest" "text/plain"
+  fi
+
+  info "antigravity ${version} mirror is ready"
+  info "public base URL: ${public_base_url}"
+  info "manifest URL: ${public_base_url}/${version}/manifest.json"
+
+  if [[ "${KEEP_WORKDIR}" != "1" ]]; then
+    rm -rf "${workdir}"
+  fi
 }
 
 sync_release_app() {
@@ -538,7 +709,15 @@ PY
 }
 
 require_cmd python3
-require_cmd gh
+needs_gh=0
+for app_id in "${APP_IDS[@]}"; do
+  case "${app_id}" in
+    open-code|codex) needs_gh=1 ;;
+  esac
+done
+if [[ "${needs_gh}" == "1" ]]; then
+  require_cmd gh
+fi
 if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
   die "curl or wget is required"
 fi
@@ -566,6 +745,9 @@ for app_id in "${APP_IDS[@]}"; do
       ;;
     open-code|codex)
       sync_release_app "${app_id}"
+      ;;
+    antigravity)
+      sync_antigravity_app
       ;;
     *)
       die "unsupported app: ${app_id}"

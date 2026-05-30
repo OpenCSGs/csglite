@@ -279,6 +279,32 @@ func appSpecs() []appSpec {
 			},
 		},
 		{
+			id:           "antigravity",
+			binaryName:   "agy",
+			installMode:  "script",
+			progressMode: progressModePercent,
+			supported:    true,
+			versionArgs:  []string{"--version"},
+			latest: &latestVersionSource{
+				baseURL: "https://opencsg-public-resource.oss-cn-beijing.aliyuncs.com/antigravity-releases",
+				envVar:  "CSGHUB_LITE_ANTIGRAVITY_DIST_BASE_URL",
+			},
+			unix: &scriptSource{
+				mirrorURL:    mirrorBaseURL + "/antigravity/install.sh",
+				embeddedPath: "scripts/antigravity-install.sh",
+			},
+			windows: &scriptSource{
+				mirrorURL:    mirrorBaseURL + "/antigravity/install.ps1",
+				embeddedPath: "scripts/antigravity-install.ps1",
+			},
+			uninstallUnix: &scriptSource{
+				embeddedPath: "scripts/antigravity-uninstall.sh",
+			},
+			uninstallWin: &scriptSource{
+				embeddedPath: "scripts/antigravity-uninstall.ps1",
+			},
+		},
+		{
 			id:           "pi",
 			binaryName:   "pi",
 			installMode:  "script",

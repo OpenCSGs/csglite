@@ -241,6 +241,50 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     },
   },
   {
+    id: "antigravity",
+    name: "Antigravity",
+    siteLabel: "@google",
+    website: "https://antigravity.google",
+    detailsUrl: "https://antigravity.google",
+    icon: "/apps/antigravity.svg",
+    category: "coding",
+    description: {
+      en: "Google's AI coding agent CLI for working with projects from the terminal.",
+      zh: "Google 的 AI 编程 Agent CLI，可在终端中协助处理项目代码。",
+    },
+    installMode: "script",
+    progressMode: "percent",
+    installHint: {
+      en: "Install the mirrored Antigravity CLI release for macOS, Linux, and Windows.",
+      zh: "通过镜像的 Antigravity CLI 发布包完成安装，支持 macOS、Linux 和 Windows。",
+    },
+    cnInstallHint: {
+      en: "By default the installer reads a versioned Antigravity mirror and wires the agy launcher locally; set CSGHUB_LITE_ANTIGRAVITY_DIST_BASE_URL only when testing another mirror.",
+      zh: "默认从版本化的 Antigravity 镜像读取发布包并在本地配置 agy 启动命令；仅在测试其他镜像时才需要设置 CSGHUB_LITE_ANTIGRAVITY_DIST_BASE_URL。",
+    },
+    commandPreview: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+    liveLogsReady: true,
+    plannedSteps: [
+      {
+        en: "Resolve the requested Antigravity CLI version from the mirrored manifest.",
+        zh: "从镜像 manifest 中解析目标 Antigravity CLI 版本。",
+      },
+      {
+        en: "Download the mirrored release for the current platform and verify its SHA512 checksum.",
+        zh: "下载当前平台对应的镜像发布包，并校验 SHA512 checksum。",
+      },
+      {
+        en: "Place the agy launcher in the user's local bin directory and run Antigravity's shell environment setup.",
+        zh: "将 agy 启动命令安装到当前用户本地 bin 目录，并执行 Antigravity 的 shell 环境配置。",
+      },
+    ],
+    status: "idle",
+    statusText: {
+      en: "Ready to install",
+      zh: "可安装",
+    },
+  },
+  {
     id: "pi",
     name: "Pi",
     siteLabel: "@pi.dev",

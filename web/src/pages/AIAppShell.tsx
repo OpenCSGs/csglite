@@ -8,7 +8,7 @@ import { locale, t } from "../i18n";
 type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
 const claudeCodeAppId = "claude-code";
 const shellAppsWithModelSwitch = new Set([claudeCodeAppId, "pi"]);
-const shellAppsWithWorkDirSwitch = new Set(["claude-code", "open-code", "codex", "pi"]);
+const shellAppsWithWorkDirSwitch = new Set(["claude-code", "open-code", "codex", "antigravity", "pi"]);
 
 interface ShellControlMessage {
   type: string;

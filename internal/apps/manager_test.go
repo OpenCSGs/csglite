@@ -72,6 +72,33 @@ func TestClaudeInstallerMirrorURLsUseCurrentRepoScripts(t *testing.T) {
 	}
 }
 
+func TestAntigravityAppSpecUsesMirroredInstallerAndAgyBinary(t *testing.T) {
+	var antigravity appSpec
+	found := false
+	for _, spec := range appSpecs() {
+		if spec.id == "antigravity" {
+			antigravity = spec
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("antigravity spec not found")
+	}
+	if antigravity.binaryName != "agy" {
+		t.Fatalf("antigravity binaryName = %q, want agy", antigravity.binaryName)
+	}
+	if antigravity.latest == nil || antigravity.latest.envVar != "CSGHUB_LITE_ANTIGRAVITY_DIST_BASE_URL" {
+		t.Fatalf("antigravity latest source = %#v, want mirror env override", antigravity.latest)
+	}
+	if antigravity.unix == nil || antigravity.unix.mirrorURL != mirrorBaseURL+"/antigravity/install.sh" {
+		t.Fatalf("antigravity unix installer = %#v, want mirrored install.sh", antigravity.unix)
+	}
+	if antigravity.windows == nil || antigravity.windows.mirrorURL != mirrorBaseURL+"/antigravity/install.ps1" {
+		t.Fatalf("antigravity windows installer = %#v, want mirrored install.ps1", antigravity.windows)
+	}
+}
+
 func TestDetectInstalledBinaryPathFallsBackToCommonDirs(t *testing.T) {
 	homeDir := setTempHome(t)
 	t.Setenv("PATH", "")
