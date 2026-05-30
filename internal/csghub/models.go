@@ -34,6 +34,12 @@ func (c *Client) ListModels(ctx context.Context, params ModelListParams) ([]Mode
 	if params.TagName != "" {
 		q.Set("tag_name", params.TagName)
 	}
+	if params.ModelParamsMin != "" {
+		q.Set("model_params_min", params.ModelParamsMin)
+	}
+	if params.ModelParamsMax != "" {
+		q.Set("model_params_max", params.ModelParamsMax)
+	}
 
 	path := "/api/v1/models"
 	if encoded := q.Encode(); encoded != "" {

@@ -1402,6 +1402,8 @@ export async function getMarketplaceModels(params: {
   search?: string;
   sort?: string;
   framework?: string;
+  modelParamsMin?: string;
+  modelParamsMax?: string;
   page?: number;
   per?: number;
 }): Promise<{ data: MarketplaceModel[]; total: number }> {
@@ -1409,6 +1411,8 @@ export async function getMarketplaceModels(params: {
   if (params.search) q.set("search", params.search);
   q.set("sort", params.sort || "trending");
   if (params.framework) q.set("framework", params.framework);
+  if (params.modelParamsMin) q.set("model_params_min", params.modelParamsMin);
+  if (params.modelParamsMax) q.set("model_params_max", params.modelParamsMax);
   q.set("page", String(params.page || 1));
   q.set("per", String(params.per || 16));
   const resp = await fetchJSON<{ data: MarketplaceModel[]; total: number }>(

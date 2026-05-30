@@ -24,6 +24,12 @@ func TestHandleMarketplaceModelsMapsFrameworkToTagFilter(t *testing.T) {
 		if got := r.URL.Query().Get("framework"); got != "" {
 			t.Fatalf("framework = %q, want empty", got)
 		}
+		if got := r.URL.Query().Get("model_params_min"); got != "6" {
+			t.Fatalf("model_params_min = %q, want %q", got, "6")
+		}
+		if got := r.URL.Query().Get("model_params_max"); got != "6.99999" {
+			t.Fatalf("model_params_max = %q, want %q", got, "6.99999")
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(csghub.ListResponse[csghub.Model]{
@@ -37,7 +43,7 @@ func TestHandleMarketplaceModelsMapsFrameworkToTagFilter(t *testing.T) {
 	s := newTestServer(t)
 	s.cfg.ServerURL = apiServer.URL
 
-	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?framework=gguf", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?framework=gguf&model_params_min=6&model_params_max=6.99999", nil)
 	w := httptest.NewRecorder()
 
 	s.handleMarketplaceModels(w, req)

@@ -110,14 +110,16 @@ type FileCommit struct {
 
 // ModelListParams holds parameters for listing models.
 type ModelListParams struct {
-	Search      string
-	Sort        string
-	Page        int
-	PerPage     int
-	Source      string
-	Framework   string
-	TagCategory string
-	TagName     string
+	Search         string
+	Sort           string
+	Page           int
+	PerPage        int
+	Source         string
+	Framework      string
+	TagCategory    string
+	TagName        string
+	ModelParamsMin string
+	ModelParamsMax string
 }
 
 // Dataset represents a dataset returned by the CSGHub API.

@@ -30,6 +30,12 @@ func TestListModels(t *testing.T) {
 		if q.Get("page") != "2" {
 			t.Errorf("page = %q, want %q", q.Get("page"), "2")
 		}
+		if q.Get("model_params_min") != "6" {
+			t.Errorf("model_params_min = %q, want %q", q.Get("model_params_min"), "6")
+		}
+		if q.Get("model_params_max") != "6.99999" {
+			t.Errorf("model_params_max = %q, want %q", q.Get("model_params_max"), "6.99999")
+		}
 
 		resp := ListResponse[Model]{
 			Msg:   "OK",
@@ -42,10 +48,12 @@ func TestListModels(t *testing.T) {
 
 	c := NewClient(server.URL, "")
 	models, total, err := c.ListModels(context.Background(), ModelListParams{
-		Search:      "qwen",
-		TagCategory: "framework",
-		TagName:     "gguf",
-		Page:        2,
+		Search:         "qwen",
+		TagCategory:    "framework",
+		TagName:        "gguf",
+		Page:           2,
+		ModelParamsMin: "6",
+		ModelParamsMax: "6.99999",
 	})
 	if err != nil {
 		t.Fatalf("ListModels error: %v", err)

@@ -45,11 +45,13 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 
 	requestedFramework := normalizeMarketplaceFramework(q.Get("framework"))
 	listParams := csghub.ModelListParams{
-		Search:  q.Get("search"),
-		Sort:    q.Get("sort"),
-		Page:    page,
-		PerPage: per,
-		Source:  q.Get("source"),
+		Search:         q.Get("search"),
+		Sort:           q.Get("sort"),
+		Page:           page,
+		PerPage:        per,
+		Source:         q.Get("source"),
+		ModelParamsMin: q.Get("model_params_min"),
+		ModelParamsMax: q.Get("model_params_max"),
 	}
 	if requestedFramework != "" {
 		listParams.TagCategory = "framework"
@@ -491,13 +493,15 @@ func listMarketplaceModelsWithFrameworkFallback(
 
 	for upstreamPage := 1; upstreamPage <= maxFallbackPages; upstreamPage++ {
 		batch, upstreamTotal, err := client.ListModels(ctx, csghub.ModelListParams{
-			Search:      params.Search,
-			Sort:        params.Sort,
-			Page:        upstreamPage,
-			PerPage:     upstreamPerPage,
-			Source:      params.Source,
-			TagCategory: params.TagCategory,
-			TagName:     params.TagName,
+			Search:         params.Search,
+			Sort:           params.Sort,
+			Page:           upstreamPage,
+			PerPage:        upstreamPerPage,
+			Source:         params.Source,
+			TagCategory:    params.TagCategory,
+			TagName:        params.TagName,
+			ModelParamsMin: params.ModelParamsMin,
+			ModelParamsMax: params.ModelParamsMax,
 		})
 		if err != nil {
 			if len(items) > 0 || matchedCount > 0 {
