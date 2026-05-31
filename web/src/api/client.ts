@@ -383,7 +383,8 @@ export interface AIAppInfo {
 }
 
 export interface AIAppOpenResponse {
-  url: string;
+  url?: string;
+  mode?: "url" | "desktop";
 }
 
 export interface CloudAuthStatus {

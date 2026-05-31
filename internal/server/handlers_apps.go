@@ -177,7 +177,12 @@ func (s *Server) handleAppOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("AI APP %s: open requested model=%q source=%q work_dir=%q", req.AppID, req.ModelID, req.Source, req.WorkDir)
-	url, err := s.openAIAppURL(r.Context(), req.AppID, req.ModelID, req.Source, req.WorkDir, aiAppPublicBaseURL(r))
+	ctx := withLocalhostBrowserAccess(r.Context(), r)
+	if req.AppID == "codex-app" && !isLocalhostBrowserAccess(r) {
+		writeError(w, http.StatusForbidden, "Codex App can only be opened from localhost")
+		return
+	}
+	url, err := s.openAIAppURL(ctx, req.AppID, req.ModelID, req.Source, req.WorkDir, aiAppPublicBaseURL(r))
 	if err != nil {
 		log.Printf("AI APP %s: open failed: %v", req.AppID, err)
 		if strings.Contains(err.Error(), "unknown app") {
@@ -188,8 +193,14 @@ func (s *Server) handleAppOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("AI APP %s: open ready url=%s", req.AppID, redactURLToken(url))
-	writeJSON(w, http.StatusOK, api.AIAppOpenResponse{URL: url})
+	mode := "url"
+	if req.AppID == "codex-app" {
+		mode = "desktop"
+		log.Printf("AI APP %s: desktop launch ready", req.AppID)
+	} else {
+		log.Printf("AI APP %s: open ready url=%s", req.AppID, redactURLToken(url))
+	}
+	writeJSON(w, http.StatusOK, api.AIAppOpenResponse{URL: url, Mode: mode})
 }
 
 func aiAppPublicBaseURL(r *http.Request) string {

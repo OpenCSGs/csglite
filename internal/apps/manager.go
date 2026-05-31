@@ -151,6 +151,22 @@ func csgclawDisabledReason() string {
 	return ""
 }
 
+func codexAppSupported() bool {
+	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+}
+
+func codexAppDisabledReason() string {
+	switch runtime.GOOS {
+	case "linux":
+		return "linux_unsupported"
+	default:
+		if codexAppSupported() {
+			return ""
+		}
+		return "platform_unsupported"
+	}
+}
+
 func appSpecs() []appSpec {
 	return []appSpec{
 		{
@@ -276,6 +292,32 @@ func appSpecs() []appSpec {
 			},
 			uninstallWin: &scriptSource{
 				embeddedPath: "scripts/codex-uninstall.ps1",
+			},
+		},
+		{
+			id:             "codex-app",
+			binaryName:     "codex-app",
+			installMode:    "script",
+			progressMode:   progressModePercent,
+			supported:      codexAppSupported(),
+			disabledReason: codexAppDisabledReason(),
+			latest: &latestVersionSource{
+				baseURL: "https://opencsg-public-resource.oss-cn-beijing.aliyuncs.com/codex-app-releases",
+				envVar:  "CSGHUB_LITE_CODEX_APP_DIST_BASE_URL",
+			},
+			unix: &scriptSource{
+				mirrorURL:    mirrorBaseURL + "/codex-app/install.sh",
+				embeddedPath: "scripts/codex-app-install.sh",
+			},
+			windows: &scriptSource{
+				mirrorURL:    mirrorBaseURL + "/codex-app/install.ps1",
+				embeddedPath: "scripts/codex-app-install.ps1",
+			},
+			uninstallUnix: &scriptSource{
+				embeddedPath: "scripts/codex-app-uninstall.sh",
+			},
+			uninstallWin: &scriptSource{
+				embeddedPath: "scripts/codex-app-uninstall.ps1",
 			},
 		},
 		{
@@ -1209,6 +1251,9 @@ func (m *Manager) currentScriptSource(spec appSpec, action string) (*scriptSourc
 }
 
 func detectInstalled(ctx context.Context, spec appSpec) (string, string, bool) {
+	if spec.id == "codex-app" {
+		return detectCodexAppInstall()
+	}
 	if spec.binaryName == "" {
 		return "", "", false
 	}
@@ -1349,11 +1394,54 @@ func inferLegacyManagedInstall(spec appSpec, installPath string) bool {
 		return looksLikeLegacyRuntimeInstall(installPath, spec.binaryName, "opencode")
 	case "codex":
 		return looksLikeLegacyRuntimeInstall(installPath, spec.binaryName, "codex")
+	case "codex-app":
+		return looksLikeCodexAppInstall(installPath)
 	case "openclaw":
 		return looksLikeLegacyOpenClawInstall(installPath)
 	default:
 		return false
 	}
+}
+
+func detectCodexAppInstall() (string, string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", "", false
+	}
+	launcherPath := filepath.Join(home, ".local", "bin", launcherBinaryName("codex-app"))
+	if _, err := os.Stat(launcherPath); err != nil {
+		return "", "", false
+	}
+	versionPath := filepath.Join(home, ".local", "share", "codex-app", "version")
+	version := launcherPath
+	if data, err := os.ReadFile(versionPath); err == nil {
+		if trimmed := strings.TrimSpace(string(data)); trimmed != "" {
+			version = trimmed
+		}
+	}
+	return launcherPath, version, true
+}
+
+func looksLikeCodexAppInstall(installPath string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || installPath == "" {
+		return false
+	}
+	launcherPath := filepath.Join(home, ".local", "bin", launcherBinaryName("codex-app"))
+	if !samePath(installPath, launcherPath) {
+		return false
+	}
+	targetPath := filepath.Join(home, ".local", "share", "codex-app", "launch-target")
+	data, err := os.ReadFile(targetPath)
+	if err != nil {
+		return false
+	}
+	target := strings.TrimSpace(string(data))
+	if target == "" {
+		return false
+	}
+	_, err = os.Stat(target)
+	return err == nil
 }
 
 func looksLikeLegacyRuntimeInstall(installPath, binaryName, runtimeDir string) bool {

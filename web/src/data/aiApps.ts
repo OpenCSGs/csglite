@@ -241,6 +241,50 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     },
   },
   {
+    id: "codex-app",
+    name: "Codex App",
+    siteLabel: "@openai.com",
+    website: "https://developers.openai.com/codex/app",
+    detailsUrl: "https://developers.openai.com/codex/app",
+    icon: "/apps/codex-app.svg",
+    category: "coding",
+    description: {
+      en: "OpenAI's desktop app for running Codex threads in parallel with worktrees, automations, and built-in Git workflows.",
+      zh: "OpenAI 的 Codex 桌面客户端，支持并行线程、worktree、自动化与内置 Git 工作流。",
+    },
+    installMode: "script",
+    progressMode: "percent",
+    installHint: {
+      en: "Install the mirrored Codex desktop app for macOS or Windows. Linux desktop builds are not available yet.",
+      zh: "通过镜像安装 Codex 桌面客户端，支持 macOS 与 Windows。Linux 桌面版暂未提供。",
+    },
+    cnInstallHint: {
+      en: "By default the installer reads a versioned Codex App mirror; set CSGHUB_LITE_CODEX_APP_DIST_BASE_URL only when testing another mirror.",
+      zh: "默认从版本化的 Codex App 镜像读取桌面安装包；仅在测试其他镜像时才需要设置 CSGHUB_LITE_CODEX_APP_DIST_BASE_URL。",
+    },
+    commandPreview: "curl -fsSL https://git-devops.opencsg.com/opensource/apps/-/raw/main/codex-app/install.sh | bash",
+    liveLogsReady: true,
+    plannedSteps: [
+      {
+        en: "Resolve the requested Codex App version from the mirrored manifest.",
+        zh: "从镜像 manifest 中解析目标 Codex App 版本。",
+      },
+      {
+        en: "Download the mirrored desktop installer for the current platform and verify its checksum.",
+        zh: "下载当前平台对应的桌面安装包，并校验 checksum。",
+      },
+      {
+        en: "Install Codex.app or the Windows desktop binary locally, then open it directly from AI Apps on localhost.",
+        zh: "将 Codex.app 或 Windows 桌面程序安装到本地，并在 localhost 访问时直接从应用页打开。",
+      },
+    ],
+    status: "idle",
+    statusText: {
+      en: "Ready to install",
+      zh: "可安装",
+    },
+  },
+  {
     id: "pi",
     name: "Pi",
     siteLabel: "@pi.dev",

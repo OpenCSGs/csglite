@@ -483,6 +483,10 @@ export function AIAppShell() {
         : modelId || undefined;
       const { url } = await openAIApp(appId || claudeCodeAppId, requestedModel, trimmedWorkDir, selectedModelParts?.source);
       await closeShellSession(sessionId);
+      if (!url) {
+        setError(t("aiApps.openFailed"));
+        return;
+      }
       location.replace(url);
       return;
     } catch (err) {

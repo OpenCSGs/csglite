@@ -6306,13 +6306,17 @@
       "AIAppOpenResponse": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "url"
-        ],
         "properties": {
           "url": {
             "type": "string",
             "format": "uri"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "url",
+              "desktop"
+            ]
           }
         }
       },

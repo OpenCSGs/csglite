@@ -532,7 +532,8 @@ type AIAppsResponse struct {
 }
 
 type AIAppOpenResponse struct {
-	URL string `json:"url"`
+	URL  string `json:"url,omitempty"`
+	Mode string `json:"mode,omitempty"`
 }
 
 // -- OpenAI-compatible types --

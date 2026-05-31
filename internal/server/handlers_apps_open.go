@@ -62,6 +62,14 @@ func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, modelSource, 
 		return rewriteLoopbackURLHost(url, publicBaseURL), nil
 	case "claude-code", "open-code", "codex", "pi":
 		return s.openAIAppShellURL(ctx, appID, modelID, modelSource, workDir, publicBaseURL)
+	case "codex-app":
+		if _, err := s.ensureCodexAppLaunchConfig(ctx, modelID, modelSource); err != nil {
+			return "", err
+		}
+		if err := s.launchCodexDesktopApp(ctx); err != nil {
+			return "", err
+		}
+		return "", nil
 	default:
 		return "", fmt.Errorf("%s does not provide a direct chat entry yet", appID)
 	}

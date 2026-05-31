@@ -190,12 +190,25 @@ export function AIApps() {
   const handleOpenApp = async (appId: string, modelId?: string, source?: string) => {
     pendingOpenId.value = appId;
     actionError.value = "";
-    const popup = openAppPopup();
+    if (appId === "codex-app" && !isLocalhostBrowserAccess()) {
+      actionError.value = t("aiApps.error.localhostRequired");
+      pendingOpenId.value = "";
+      return;
+    }
+    const opensDesktopApp = appId === "codex-app";
+    const popup = opensDesktopApp ? null : openAppPopup();
     try {
-      const { url } = await openAIApp(appId, modelId, undefined, source);
+      const response = await openAIApp(appId, modelId, undefined, source);
+      if (response.mode === "desktop" || opensDesktopApp) {
+        if (popup) {
+          popup.close();
+        }
+        return;
+      }
+      const url = response.url || "";
       if (popup) {
         popup.location.replace(url);
-      } else {
+      } else if (url) {
         window.location.href = url;
       }
     } catch (error) {
@@ -485,7 +498,7 @@ function AIAppCard({
                   }`}
                 >
                   <OpenIcon className="w-3.5 h-3.5" />
-                  {pendingOpen ? t("aiApps.opening") : t("aiApps.open")}
+                  {pendingOpen ? openActionLabel(app, true) : openActionLabel(app, false)}
                 </button>
               )}
               {!isInstalled && (
@@ -846,7 +859,7 @@ function LiveLogsDrawer({
                   ? "border border-amber-200 bg-amber-50 text-amber-700"
                 : "border border-indigo-200 bg-indigo-50 text-indigo-700"
           }`}>
-            {drawerNotice(state)}
+            {drawerNotice(app, state)}
           </div>
 
           <div class={`grid grid-cols-1 ${showProgressSummary || showRuntimeSummary ? "sm:grid-cols-5" : "sm:grid-cols-4"} gap-3`}>
@@ -966,6 +979,29 @@ function LiveLogsDrawer({
             </section>
           )}
 
+          {isDesktopAIApp(app) && state.status === "installed" && !state.disabled && (
+            <section class="space-y-2">
+              <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.desktopLaunch")}</h3>
+              <p class="text-sm text-gray-500">{t("aiApps.desktopLaunchHint")}</p>
+              <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600 font-mono break-all">
+                ~/.codex/config.toml
+              </div>
+              {canOpenChat && (
+                <button
+                  onClick={() => void handleOpenCurrentApp()}
+                  disabled={pendingOpen}
+                  class={`inline-flex items-center justify-center rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                    pendingOpen
+                      ? "border-gray-200 text-gray-300 cursor-not-allowed"
+                      : "border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                  }`}
+                >
+                  {openActionLabel(app, pendingOpen)}
+                </button>
+              )}
+            </section>
+          )}
+
           <section class="space-y-2">
             <div class="flex items-center justify-between gap-3">
               <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.installCommand")}</h3>
@@ -1059,7 +1095,7 @@ function LiveLogsDrawer({
                     : "border-indigo-200 text-indigo-600 hover:bg-indigo-50"
                 }`}
               >
-                {pendingOpen ? t("aiApps.opening") : t("aiApps.open")}
+                {pendingOpen ? openActionLabel(app, true) : openActionLabel(app, false)}
               </button>
             )}
             {!state.disabled && !isWorking && state.status === "installed" && state.managed && (
@@ -1373,8 +1409,17 @@ function actionLabel(state: AIAppRuntimeState): string {
   return t("aiApps.install");
 }
 
-function drawerNotice(state: AIAppRuntimeState): string {
+function drawerNotice(app: AIAppCatalogEntry, state: AIAppRuntimeState): string {
+  if (isDesktopAIApp(app) && state.status === "installed" && !state.disabled && !isLocalhostBrowserAccess()) {
+    return t("aiApps.error.localhostRequired");
+  }
   if (state.disabled) {
+    if (state.phase === "linux_unsupported") {
+      return t("aiApps.disabledLinuxNotice");
+    }
+    if (state.phase === "windows_unsupported") {
+      return t("aiApps.disabledWindowsNotice");
+    }
     return t("aiApps.disabledDockerNotice");
   }
   if (state.phase === "uninstall_failed") {
@@ -1405,6 +1450,11 @@ function drawerNotice(state: AIAppRuntimeState): string {
 }
 
 function canOpenAIApp(app: AIAppCatalogEntry, state: AIAppRuntimeState): boolean {
+  if (app.id === "codex-app") {
+    return state.status === "installed" &&
+      !state.disabled &&
+      isLocalhostBrowserAccess();
+  }
   return ["openclaw", "csgclaw", "claude-code", "open-code", "codex", "pi"].includes(app.id) &&
     state.status === "installed" &&
     !state.disabled;
@@ -1463,7 +1513,18 @@ function cliLaunchAppName(appID: string): string {
 }
 
 function canSelectAIAppModel(app: AIAppCatalogEntry): boolean {
-  return ["claude-code", "open-code", "codex", "pi", "openclaw", "csgclaw"].includes(app.id);
+  return ["claude-code", "open-code", "codex", "codex-app", "pi", "openclaw", "csgclaw"].includes(app.id);
+}
+
+function isDesktopAIApp(app: AIAppCatalogEntry): boolean {
+  return app.id === "codex-app";
+}
+
+function openActionLabel(app: AIAppCatalogEntry, pending: boolean): string {
+  if (isDesktopAIApp(app)) {
+    return pending ? t("aiApps.launching") : t("aiApps.launch");
+  }
+  return pending ? t("aiApps.opening") : t("aiApps.open");
 }
 
 function normalizeAIAppModels(models: ModelInfo[]): ModelInfo[] {
@@ -1495,6 +1556,9 @@ function localizeAIAppErrorMessage(message: string, fallback: string): string {
   }
 
   const normalized = trimmed.toLowerCase();
+  if (normalized.includes("codex app can only be opened from localhost")) {
+    return t("aiApps.error.localhostRequired");
+  }
   if (normalized.includes("no local models were found") && normalized.includes("access token")) {
     return t("aiApps.error.noLocalModelsOpenCSG");
   }
@@ -1600,4 +1664,12 @@ function escapeHTML(text: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function isLocalhostBrowserAccess(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const host = window.location.hostname.trim().toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
 }

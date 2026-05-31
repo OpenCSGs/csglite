@@ -9,6 +9,7 @@ This document covers mirroring AI app releases to the StarHub OSS bucket.
 | claude-code | Anthropic GCS | `scripts/sync-claude-code-oss.sh` |
 | open-code | GitHub: anomalyco/opencode | `scripts/sync-ai-app-oss.sh --app open-code` |
 | codex | GitHub: openai/codex | `scripts/sync-ai-app-oss.sh --app codex` |
+| codex-app | OpenAI Codex desktop CDN + GitHub Windows desktop EXE | `scripts/sync-ai-app-oss.sh --app codex-app` |
 
 ## Sync Workflow
 
@@ -37,6 +38,7 @@ This document covers mirroring AI app releases to the StarHub OSS bucket.
    ./scripts/sync-ai-app-oss.sh --app claude-code
    ./scripts/sync-ai-app-oss.sh --app open-code
    ./scripts/sync-ai-app-oss.sh --app codex
+   ./scripts/sync-ai-app-oss.sh --app codex-app
    ```
 
 3. **Skip if already synced**: If the mirrored `latest` matches the upstream
@@ -69,6 +71,8 @@ Each app follows this versioned layout:
   linux-x64, linux-x64-musl, win32-arm64, win32-x64
 - **codex**: darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-arm64,
   win32-x64 (uses musl builds for Linux)
+- **codex-app**: darwin-arm64, darwin-x64, win32-arm64, win32-x64 (desktop
+  installers only; Linux is not supported)
 
 ## Safety Rules
 

@@ -29,6 +29,7 @@ Supported apps:
   - claude-code
   - open-code
   - codex
+  - codex-app
 
 Options:
   --app APP             App to sync (repeatable). Defaults to all mirror-backed apps
@@ -49,11 +50,14 @@ Optional environment variables:
   STARHUB_OPEN_CODE_DIST_BASE_URL Public URL override for generated manifest
   STARHUB_CODEX_DIST_PREFIX       Default: codex-releases
   STARHUB_CODEX_DIST_BASE_URL     Public URL override for generated manifest
+  STARHUB_CODEX_APP_DIST_PREFIX   Default: codex-app-releases
+  STARHUB_CODEX_APP_DIST_BASE_URL Public URL override for generated manifest
 
 Examples:
   ./scripts/sync-ai-app-oss.sh
   ./scripts/sync-ai-app-oss.sh --app claude-code --app open-code --app codex
   ./scripts/sync-ai-app-oss.sh --app codex --version 0.118.0
+  ./scripts/sync-ai-app-oss.sh --app codex-app
   ./scripts/sync-ai-app-oss.sh --app claude-code
 EOF
 }
@@ -98,7 +102,7 @@ fi
 
 for app_id in "${APP_IDS[@]}"; do
   case "${app_id}" in
-    claude-code|open-code|codex) ;;
+    claude-code|open-code|codex|codex-app) ;;
     *) die "unsupported app: ${app_id}" ;;
   esac
 done
@@ -170,9 +174,9 @@ download_file() {
   local output="$2"
   ensure_external_proxy
   if command -v curl >/dev/null 2>&1; then
-    curl --connect-timeout 15 --max-time 1800 --retry 3 --retry-delay 2 -fsSL -o "$output" "$url"
+    curl --connect-timeout 15 --max-time 7200 --retry 5 --retry-delay 5 --retry-all-errors -fsSL -o "$output" "$url"
   else
-    wget --tries=3 --timeout=30 -O "$output" "$url"
+    wget --tries=5 --timeout=60 -O "$output" "$url"
   fi
 }
 
@@ -537,6 +541,187 @@ PY
   fi
 }
 
+sync_codex_app() {
+  local prefix public_base_url workdir version manifest_file latest_file index_file
+  prefix="$(trim_trailing_slash "${STARHUB_CODEX_APP_DIST_PREFIX:-codex-app-releases}")"
+  public_base_url="$(resolve_public_base_url "$prefix" "${STARHUB_CODEX_APP_DIST_BASE_URL:-}")"
+  workdir="$(mktemp -d "${TMPDIR:-/tmp}/codex-app-sync.XXXXXX")"
+  manifest_file="${workdir}/manifest.json"
+  latest_file="${workdir}/latest"
+  index_file="${workdir}/index.tsv"
+
+  info "syncing codex-app desktop installers"
+
+  version="$("${PYTHON_BIN}" - "${index_file}" <<'PY'
+import json
+import subprocess
+import sys
+import urllib.request
+import xml.etree.ElementTree as ET
+
+index_path = sys.argv[1]
+sparkle_ns = {"sparkle": "http://www.andymatuschak.org/xml-namespaces/sparkle"}
+
+
+def fetch(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "csghub-lite-sync"})
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        return resp.read()
+
+
+def appcast_entry(url):
+    root = ET.fromstring(fetch(url))
+    item = root.find("./channel/item")
+    if item is None:
+        raise SystemExit(f"appcast has no item: {url}")
+    enclosure = item.find("enclosure")
+    if enclosure is None:
+        raise SystemExit(f"appcast item has no enclosure: {url}")
+    download_url = enclosure.attrib.get("url", "").strip()
+    if not download_url:
+        raise SystemExit(f"appcast enclosure missing url: {url}")
+    return {
+        "version": (item.findtext("sparkle:shortVersionString", namespaces=sparkle_ns) or "").strip(),
+        "url": download_url,
+        "asset": download_url.rsplit("/", 1)[-1],
+    }
+
+
+def gh_desktop_exe(repo, arch_asset):
+    payload = subprocess.check_output(
+        ["gh", "release", "view", "--repo", repo, "--json", "tagName,assets"],
+        text=True,
+    )
+    release = json.loads(payload)
+    assets = release.get("assets") or []
+    candidates = [asset for asset in assets if asset.get("name") == arch_asset]
+    if not candidates:
+        raise SystemExit(f"missing expected desktop asset in {release.get('tagName')}: {arch_asset}")
+    asset = candidates[0]
+    size = int(asset.get("size") or 0)
+    if size < 150_000_000:
+        raise SystemExit(f"asset looks too small for Codex App desktop build: {arch_asset} ({size} bytes)")
+    return {
+        "url": asset.get("url"),
+        "asset": arch_asset,
+    }
+
+
+entries = []
+mac_arm = appcast_entry("https://persistent.oaistatic.com/codex-app-prod/appcast.xml")
+mac_x64 = appcast_entry("https://persistent.oaistatic.com/codex-app-prod/appcast-x64.xml")
+version = mac_arm["version"] or mac_x64["version"]
+if not version:
+    raise SystemExit("failed to resolve Codex App version from macOS appcasts")
+if mac_x64["version"] and mac_x64["version"] != version:
+    raise SystemExit(f"macOS appcast versions differ: arm64={version} x64={mac_x64['version']}")
+
+entries.append(("darwin-arm64", mac_arm["asset"], "zip", "Codex.app", mac_arm["url"]))
+entries.append(("darwin-x64", mac_x64["asset"], "zip", "Codex.app", mac_x64["url"]))
+
+for platform, asset_name in (
+    ("win32-arm64", "codex-aarch64-pc-windows-msvc.exe"),
+    ("win32-x64", "codex-x86_64-pc-windows-msvc.exe"),
+):
+    win = gh_desktop_exe("openai/codex", asset_name)
+    entries.append((platform, asset_name, "exe", asset_name, win["url"]))
+
+with open(index_path, "w", encoding="utf-8") as index_out:
+    for platform, asset_name, archive_format, binary, download_url in entries:
+        index_out.write(f"{platform}\t{asset_name}\t{archive_format}\t{binary}\t{download_url}\n")
+
+print(version)
+PY
+)"
+
+  [[ -n "${version}" ]] || die "failed to resolve codex-app version"
+
+  : > "${workdir}/uploaded.tsv"
+
+  while IFS=$'\t' read -r platform asset_name archive_format binary download_url; do
+    [[ -n "$platform" ]] || continue
+
+    artifact_path="${workdir}/${asset_name}"
+    object_key="${prefix}/${version}/${platform}/${asset_name}"
+    mirror_url="${public_base_url}/${version}/${platform}/${asset_name}"
+
+    if curl -fsSI "${mirror_url}" >/dev/null 2>&1; then
+      info "reusing mirrored codex-app ${platform}/${asset_name} for checksum"
+      download_file "${mirror_url}" "${artifact_path}"
+    else
+      info "downloading codex-app ${platform}/${asset_name}"
+      download_file "${download_url}" "${artifact_path}"
+      info "uploading ${object_key}"
+      oss_put_object "${artifact_path}" "${object_key}" "application/octet-stream"
+    fi
+
+    checksum="$(sha256_file "${artifact_path}")"
+    actual_size="$("${PYTHON_BIN}" - "${artifact_path}" <<'PY'
+import os
+import sys
+print(os.path.getsize(sys.argv[1]))
+PY
+)"
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${platform}" "${asset_name}" "${archive_format}" "${binary}" \
+      "${checksum}" "${actual_size}" "${download_url}" >> "${workdir}/uploaded.tsv"
+  done < "${index_file}"
+
+  "${PYTHON_BIN}" - "${workdir}/uploaded.tsv" "${manifest_file}" "${version}" "${prefix}" "${public_base_url}" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+index_path, manifest_path, version, prefix, public_base_url = sys.argv[1:6]
+manifest = {
+    "app_id": "codex-app",
+    "version": version,
+    "source": "codex-app-prod",
+    "prefix": prefix,
+    "public_base_url": public_base_url,
+    "synced_at": datetime.now(timezone.utc).isoformat(),
+    "platforms": {},
+}
+with open(index_path, "r", encoding="utf-8") as fh:
+    for raw in fh:
+        raw = raw.strip()
+        if not raw:
+            continue
+        platform, asset_name, archive_format, binary, checksum, size, download_url = raw.split("\t")
+        manifest["platforms"][platform] = {
+            "asset": asset_name,
+            "archive_format": archive_format,
+            "binary": binary,
+            "checksum": checksum,
+            "size": int(size),
+            "path": f"{version}/{platform}/{asset_name}",
+            "source_url": download_url,
+            "public_url": f"{public_base_url}/{version}/{platform}/{asset_name}",
+        }
+with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+
+  info "uploading ${prefix}/${version}/manifest.json"
+  oss_put_object "${manifest_file}" "${prefix}/${version}/manifest.json" "application/json"
+
+  if [[ "${UPDATE_LATEST}" == "1" ]]; then
+    printf '%s\n' "${version}" > "${latest_file}"
+    info "uploading ${prefix}/latest"
+    oss_put_object "${latest_file}" "${prefix}/latest" "text/plain"
+  fi
+
+  info "codex-app ${version} mirror is ready"
+  info "public base URL: ${public_base_url}"
+  info "manifest URL: ${public_base_url}/${version}/manifest.json"
+
+  if [[ "${KEEP_WORKDIR}" != "1" ]]; then
+    rm -rf "${workdir}"
+  fi
+}
+
 require_cmd python3
 require_cmd gh
 if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
@@ -566,6 +751,9 @@ for app_id in "${APP_IDS[@]}"; do
       ;;
     open-code|codex)
       sync_release_app "${app_id}"
+      ;;
+    codex-app)
+      sync_codex_app
       ;;
     *)
       die "unsupported app: ${app_id}"
