@@ -2523,6 +2523,38 @@
         }
       }
     },
+    "/api/conversations/search": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Search chat conversations",
+        "operationId": "searchConversations",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Search query matched against conversation title, model, and message text."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching conversation metadata list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationsListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conversations/{id}": {
       "get": {
         "tags": [

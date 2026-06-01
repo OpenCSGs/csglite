@@ -51,14 +51,48 @@ func (s *Store) List() ([]api.ConversationMeta, error) {
 		if err := json.Unmarshal(data, &conv); err != nil {
 			continue
 		}
-		metas = append(metas, api.ConversationMeta{
-			ID:        conv.ID,
-			Title:     conv.Title,
-			Model:     conv.Model,
-			CreatedAt: conv.CreatedAt,
-			UpdatedAt: conv.UpdatedAt,
-			MsgCount:  len(conv.Messages),
-		})
+		metas = append(metas, conversationMeta(conv))
+	}
+
+	sort.Slice(metas, func(i, j int) bool {
+		return metas[i].UpdatedAt.After(metas[j].UpdatedAt)
+	})
+	return metas, nil
+}
+
+func (s *Store) Search(query string) ([]api.ConversationMeta, error) {
+	needle := strings.ToLower(strings.TrimSpace(query))
+	if needle == "" {
+		return s.List()
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading conversations dir: %w", err)
+	}
+
+	var metas []api.ConversationMeta
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var conv api.Conversation
+		if err := json.Unmarshal(data, &conv); err != nil {
+			continue
+		}
+		if conversationMatches(conv, needle) {
+			metas = append(metas, conversationMeta(conv))
+		}
 	}
 
 	sort.Slice(metas, func(i, j int) bool {
@@ -130,6 +164,58 @@ func (s *Store) Delete(id string) error {
 
 func (s *Store) filePath(id string) string {
 	return filepath.Join(s.dir, id+".json")
+}
+
+func conversationMeta(conv api.Conversation) api.ConversationMeta {
+	return api.ConversationMeta{
+		ID:        conv.ID,
+		Title:     conv.Title,
+		Model:     conv.Model,
+		CreatedAt: conv.CreatedAt,
+		UpdatedAt: conv.UpdatedAt,
+		MsgCount:  len(conv.Messages),
+	}
+}
+
+func conversationMatches(conv api.Conversation, needle string) bool {
+	if containsFolded(conv.Title, needle) || containsFolded(conv.Model, needle) {
+		return true
+	}
+	for _, msg := range conv.Messages {
+		if containsFolded(messageSearchText(msg.Content), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFolded(text, needle string) bool {
+	return strings.Contains(strings.ToLower(text), needle)
+}
+
+func messageSearchText(content interface{}) string {
+	var parts []string
+	appendSearchText(&parts, content)
+	return strings.Join(parts, " ")
+}
+
+func appendSearchText(parts *[]string, value interface{}) {
+	switch v := value.(type) {
+	case string:
+		*parts = append(*parts, v)
+	case []interface{}:
+		for _, item := range v {
+			appendSearchText(parts, item)
+		}
+	case map[string]interface{}:
+		partType, _ := v["type"].(string)
+		if partType != "" && partType != "text" {
+			return
+		}
+		if text, ok := v["text"].(string); ok {
+			*parts = append(*parts, text)
+		}
+	}
 }
 
 func isValidID(id string) bool {

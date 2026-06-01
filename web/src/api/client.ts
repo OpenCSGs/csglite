@@ -1010,6 +1010,17 @@ export async function listConversations(): Promise<ConversationMeta[]> {
   return data.conversations || [];
 }
 
+export async function searchConversations(query: string): Promise<ConversationMeta[]> {
+  const params = new URLSearchParams();
+  const trimmed = query.trim();
+  if (trimmed) {
+    params.set("q", trimmed);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const data = await fetchJSON<{ conversations: ConversationMeta[] }>(`/api/conversations/search${suffix}`);
+  return data.conversations || [];
+}
+
 export async function getConversation(id: string): Promise<Conversation> {
   return fetchJSON<Conversation>(`/api/conversations/${encodeURIComponent(id)}`);
 }

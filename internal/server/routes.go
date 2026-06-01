@@ -98,6 +98,7 @@ func (s *Server) routes() http.Handler {
 	// Conversation history
 	mux.HandleFunc("GET /api/conversations", s.handleConversationsList)
 	mux.HandleFunc("POST /api/conversations", s.handleConversationCreate)
+	mux.HandleFunc("GET /api/conversations/search", s.handleConversationsSearch)
 	mux.HandleFunc("GET /api/conversations/{id}", s.handleConversationGet)
 	mux.HandleFunc("PUT /api/conversations/{id}", s.handleConversationUpdate)
 	mux.HandleFunc("DELETE /api/conversations/{id}", s.handleConversationDelete)
