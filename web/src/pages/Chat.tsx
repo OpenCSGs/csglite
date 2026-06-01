@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { signal, computed } from "@preact/signals";
 import {
   getTags, getPs, streamChat, getCloudAuthStatus, saveCloudToken,
-  listConversations, getConversation, createConversation, updateConversation, deleteConversation,
+  listConversations, searchConversations, getConversation, createConversation, updateConversation, deleteConversation,
   getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob,
 } from "../api/client";
 import type {
@@ -18,6 +18,7 @@ import { buildChatContextMessages } from "../chatContext";
 const availableModels = signal<ModelInfo[]>([]);
 const selectedModelKey = signal("");
 const conversationMetas = signal<ConversationMeta[]>([]);
+const conversationSearchQuery = signal("");
 const activeConversation = signal<Conversation | null>(null);
 const activeSessionId = signal("");
 const inputText = signal("");
@@ -597,7 +598,8 @@ function relativeTime(dateStr: string): string {
 
 async function refreshConversationList() {
   try {
-    const metas = await listConversations();
+    const query = conversationSearchQuery.value.trim();
+    const metas = query ? await searchConversations(query) : await listConversations();
     conversationMetas.value = metas;
   } catch {
     /* ignore */
@@ -1081,6 +1083,16 @@ export function Chat() {
     }
   };
 
+  const handleConversationSearchInput = async (e: Event) => {
+    conversationSearchQuery.value = (e.target as HTMLInputElement).value;
+    await refreshConversationList();
+  };
+
+  const handleClearConversationSearch = async () => {
+    conversationSearchQuery.value = "";
+    await refreshConversationList();
+  };
+
   const handleSelectConversation = async (id: string) => {
     if (id === activeSessionId.value) return;
     openConversationMenuId.value = "";
@@ -1148,6 +1160,7 @@ export function Chat() {
 
   const conv = activeConversation.value;
   const messages = conv?.messages || [];
+  const hasConversationSearch = conversationSearchQuery.value.trim().length > 0;
 
   return (
     <div class="flex h-full min-h-0 gap-0 bg-[#f7f8fb] p-4">
@@ -1176,10 +1189,36 @@ export function Chat() {
               </svg>
               {t("chat.newChat")}
             </button>
+            <div class="relative mt-3">
+              <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m1.35-5.65a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                value={conversationSearchQuery.value}
+                onInput={handleConversationSearchInput}
+                placeholder={t("chat.searchConversations")}
+                class="h-9 w-full rounded-xl border border-gray-200 bg-white px-9 text-sm text-gray-700 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              />
+              {hasConversationSearch && (
+                <button
+                  type="button"
+                  onClick={handleClearConversationSearch}
+                  class="absolute right-2 top-1/2 rounded-lg p-1 text-gray-400 transition-colors -translate-y-1/2 hover:bg-gray-100 hover:text-gray-600"
+                  title={t("chat.clearConversationSearch")}
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
           <div class="flex-1 overflow-auto px-3 pb-4">
             {conversationMetas.value.length === 0 && (
-              <div class="mt-8 px-4 text-center text-xs text-gray-400">{t("chat.noConversations")}</div>
+              <div class="mt-8 px-4 text-center text-xs text-gray-400">
+                {hasConversationSearch ? t("chat.noConversationSearchResults") : t("chat.noConversations")}
+              </div>
             )}
             {conversationMetas.value.map((meta) => (
               <div

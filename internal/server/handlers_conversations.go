@@ -21,6 +21,18 @@ func (s *Server) handleConversationsList(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, api.ConversationsListResponse{Conversations: metas})
 }
 
+func (s *Server) handleConversationsSearch(w http.ResponseWriter, r *http.Request) {
+	metas, err := s.conversations.Search(r.URL.Query().Get("q"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if metas == nil {
+		metas = []api.ConversationMeta{}
+	}
+	writeJSON(w, http.StatusOK, api.ConversationsListResponse{Conversations: metas})
+}
+
 func (s *Server) handleConversationGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	conv, err := s.conversations.Get(id)
