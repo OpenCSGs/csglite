@@ -17,6 +17,13 @@ function isEmbeddingModel(model?: Pick<ModelInfo, "pipeline_tag" | "category"> |
   return category === "embedding" || ["feature-extraction", "sentence-similarity", "text-embedding", "embedding"].includes(pipelineTag);
 }
 
+function isASRModel(model?: Pick<ModelInfo, "pipeline_tag" | "input_modalities" | "output_modalities"> | null): boolean {
+  const pipelineTag = (model?.pipeline_tag || "").toLowerCase();
+  return pipelineTag === "automatic-speech-recognition" ||
+    Boolean(model?.input_modalities?.includes("audio")) ||
+    Boolean(model?.output_modalities?.includes("transcription"));
+}
+
 export function Dashboard() {
   const logRef = useRef<HTMLDivElement>(null);
   void locale.value;
@@ -68,6 +75,9 @@ export function Dashboard() {
   ]
     .filter(Boolean)
     .join(" · ");
+  const apiModelInfo = apiInfoModel.value
+    ? allModels.value.find((m) => m.name === apiInfoModel.value || m.model === apiInfoModel.value)
+    : undefined;
 
   return (
     <div class="p-8 max-w-6xl mx-auto space-y-6">
@@ -198,8 +208,9 @@ export function Dashboard() {
       {apiInfoModel.value && (
         <ApiInfoDialog
           model={apiInfoModel.value}
-          isVision={allModels.value.find((m) => m.name === apiInfoModel.value)?.pipeline_tag === "image-text-to-text"}
-          isEmbedding={isEmbeddingModel(allModels.value.find((m) => m.name === apiInfoModel.value))}
+          isVision={apiModelInfo?.pipeline_tag === "image-text-to-text"}
+          isEmbedding={isEmbeddingModel(apiModelInfo)}
+          isASR={isASRModel(apiModelInfo)}
           onClose={() => (apiInfoModel.value = "")}
         />
       )}
@@ -207,7 +218,7 @@ export function Dashboard() {
   );
 }
 
-function ApiInfoDialog({ model, isVision, isEmbedding, onClose }: { model: string; isVision?: boolean; isEmbedding?: boolean; onClose: () => void }) {
+function ApiInfoDialog({ model, isVision, isEmbedding, isASR, onClose }: { model: string; isVision?: boolean; isEmbedding?: boolean; isASR?: boolean; onClose: () => void }) {
   const baseUrl = `${location.protocol}//${location.host}`;
 
   const textMsg = `{"role": "user", "content": "Hello!"}`;
@@ -216,7 +227,12 @@ function ApiInfoDialog({ model, isVision, isEmbedding, onClose }: { model: strin
         {"type": "image_url", "image_url": {"url": "data:image/png;base64,<BASE64_DATA>"}}
       ]}`;
 
-  const curlExample = isEmbedding
+  const curlExample = isASR
+    ? `curl ${baseUrl}/v1/audio/transcriptions \\
+  -F model="${model}" \\
+  -F file="@audio.mp3" \\
+  -F response_format="json"`
+    : isEmbedding
     ? `curl ${baseUrl}/v1/embeddings \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -246,7 +262,23 @@ function ApiInfoDialog({ model, isVision, isEmbedding, onClose }: { model: strin
             ]
         }`;
 
-  const pythonExample = isEmbedding
+  const pythonExample = isASR
+    ? `from openai import OpenAI
+
+client = OpenAI(
+    base_url="${baseUrl}/v1",
+    api_key="unused"
+)
+
+with open("audio.mp3", "rb") as audio:
+    response = client.audio.transcriptions.create(
+        model="${model}",
+        file=audio,
+        response_format="json"
+    )
+
+print(response.text)`
+    : isEmbedding
     ? `from openai import OpenAI
 
 client = OpenAI(
@@ -312,7 +344,20 @@ for chunk in response:
       ]
     }`;
 
-  const jsExample = isEmbedding
+  const jsExample = isASR
+    ? `const form = new FormData();
+form.set("model", "${model}");
+form.set("file", audioFile); // File from <input type="file">
+form.set("response_format", "json");
+
+const response = await fetch("${baseUrl}/v1/audio/transcriptions", {
+  method: "POST",
+  body: form
+});
+
+const data = await response.json();
+console.log(data.text);`
+    : isEmbedding
     ? `const response = await fetch("${baseUrl}/v1/embeddings", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -370,6 +415,7 @@ console.log(data.choices[0].message.content);`;
               {t("dash.apiModel")}: <span class="font-mono text-indigo-600">{model}</span>
               {isVision && <span class="ml-2 px-1.5 py-0.5 text-xs bg-purple-50 text-purple-700 rounded">Vision</span>}
               {isEmbedding && <span class="ml-2 px-1.5 py-0.5 text-xs bg-emerald-50 text-emerald-700 rounded">Embedding</span>}
+              {isASR && <span class="ml-2 px-1.5 py-0.5 text-xs bg-cyan-50 text-cyan-700 rounded">ASR</span>}
             </p>
           </div>
         </div>
@@ -406,7 +452,7 @@ function CodeBlock({ title, code }: { title: string; code: string }) {
               <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
             </svg>
           )}
-          {copied.value ? t("dash.copied") : "Copy"}
+          {copied.value ? t("dash.copied") : t("dash.copy")}
         </button>
       </div>
       <pre class="bg-gray-900 text-gray-100 rounded-lg p-4 text-xs leading-5 overflow-x-auto font-mono whitespace-pre-wrap break-all">

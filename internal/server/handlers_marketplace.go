@@ -327,9 +327,10 @@ type marketplaceModelConfigMetadata struct {
 
 func marketplaceMetadataFromConfig(rawConfig string) marketplaceModelConfigMetadata {
 	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-		TorchDType    string   `json:"torch_dtype"`
+		Architectures  []string `json:"architectures"`
+		SupportedArchs []string `json:"supported_archs"`
+		ModelType      string   `json:"model_type"`
+		TorchDType     string   `json:"torch_dtype"`
 	}
 	if json.Unmarshal([]byte(rawConfig), &cfg) != nil {
 		return marketplaceModelConfigMetadata{}
@@ -340,6 +341,19 @@ func marketplaceMetadataFromConfig(rawConfig string) marketplaceModelConfigMetad
 	}
 	if len(cfg.Architectures) > 0 {
 		metadata.Architecture = strings.TrimSpace(cfg.Architectures[0])
+	}
+	if metadata.Architecture == "" && len(cfg.SupportedArchs) > 0 {
+		metadata.Architecture = strings.TrimSpace(cfg.SupportedArchs[0])
+	}
+	if metadata.Architecture == "" {
+		switch strings.ToLower(strings.TrimSpace(cfg.ModelType)) {
+		case "glm_asr", "glm-asr":
+			metadata.Architecture = "GlmAsrForConditionalGeneration"
+		case "qwen3_asr", "qwen3-asr":
+			metadata.Architecture = "Qwen3ASRForConditionalGeneration"
+		case "whisper":
+			metadata.Architecture = "WhisperForConditionalGeneration"
+		}
 	}
 	return metadata
 }
@@ -408,6 +422,14 @@ func marketplaceInferredTaskTag(details *csghub.Model, architecture string) stri
 		architecture,
 	}, " "))
 	switch {
+	case model.IsASRModelFamily(haystack):
+		return "automatic-speech-recognition"
+	case strings.Contains(haystack, "whisper") ||
+		strings.Contains(haystack, "wav2vec") ||
+		strings.Contains(haystack, "speech-recognition") ||
+		strings.Contains(haystack, "automatic-speech-recognition") ||
+		strings.Contains(haystack, "asr"):
+		return "automatic-speech-recognition"
 	case strings.Contains(haystack, "embedding"):
 		return "feature-extraction"
 	case strings.Contains(haystack, "reranker"):
@@ -423,6 +445,8 @@ func marketplaceTaskShowName(task string) string {
 		return "Feature Extraction"
 	case "sentence-similarity":
 		return "Sentence Similarity"
+	case "automatic-speech-recognition":
+		return "Automatic Speech Recognition"
 	default:
 		return task
 	}

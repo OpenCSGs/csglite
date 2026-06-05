@@ -93,6 +93,37 @@ func TestManagerImport_TarGz(t *testing.T) {
 	}
 }
 
+func TestManagerImport_ModelScopeFunASRPT(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "model.pt"), []byte("weights"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "configuration.json"), []byte(`{
+  "framework": "pytorch",
+  "task": "auto-speech-recognition",
+  "model": {"type": "funasr"},
+  "pipeline": {"type": "funasr-pipeline"}
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(&config.Config{ModelDir: t.TempDir()})
+	lm, err := mgr.Import(ImportOptions{
+		ModelID: "local/funasr",
+		Source:  source,
+		Kind:    ImportSourceDirectory,
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if lm.Format != FormatPyTorch {
+		t.Fatalf("format = %q, want pytorch", lm.Format)
+	}
+	if lm.PipelineTag != "automatic-speech-recognition" {
+		t.Fatalf("pipeline_tag = %q, want automatic-speech-recognition", lm.PipelineTag)
+	}
+}
+
 func TestManagerImport_RejectsUnsafeArchivePath(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "bad.zip")
 	writeZip(t, archivePath, map[string]string{

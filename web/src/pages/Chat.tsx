@@ -4,7 +4,7 @@ import { signal, computed } from "@preact/signals";
 import {
   getTags, getPs, streamChat, getCloudAuthStatus, saveCloudToken,
   listConversations, searchConversations, getConversation, createConversation, updateConversation, deleteConversation,
-  getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob,
+  getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob, transcribeAudio,
 } from "../api/client";
 import type {
   ModelInfo, ChatMessage, ContentPart, CloudAuthStatus,
@@ -59,6 +59,8 @@ const searchPlanningQuery = signal("");
 const searchSkippedReason = signal("");
 const chatError = signal("");
 const pendingImages = signal<PendingImage[]>([]);
+const pendingAudio = signal<PendingAudio | null>(null);
+const isRecordingAudio = signal(false);
 const contextStorageKey = "csghub.chat.num_ctx";
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
@@ -91,6 +93,26 @@ function applyModelSamplingDefaults(model?: Pick<ModelInfo, "model" | "name" | "
 
 function isTextToImageModel(model?: Pick<ModelInfo, "pipeline_tag"> | null): boolean {
   return model?.pipeline_tag === "text-to-image";
+}
+
+function isASRModel(model?: Pick<ModelInfo, "pipeline_tag" | "input_modalities" | "output_modalities"> | null): boolean {
+  const pipelineTag = (model?.pipeline_tag || "").toLowerCase();
+  return pipelineTag === "automatic-speech-recognition" ||
+    Boolean(model?.input_modalities?.includes("audio")) ||
+    Boolean(model?.output_modalities?.includes("transcription"));
+}
+
+type ChatModelMode = "chat" | "vision" | "image" | "asr";
+
+function getChatModelMode(model?: ModelInfo | null): ChatModelMode {
+  if (!model) return "chat";
+  if (isTextToImageModel(model)) return "image";
+  if (isASRModel(model)) return "asr";
+  if (model.input_modalities?.includes("image")) return "vision";
+  if (model.pipeline_tag === "image-text-to-text" && (model.source === "cloud" || model.has_mmproj === true)) {
+    return "vision";
+  }
+  return "chat";
 }
 
 function modelLabel(model: ModelInfo): string {
@@ -522,12 +544,7 @@ function setAvailableModels(models: ModelInfo[]) {
   }
 }
 
-const isVisionModel = computed(() => {
-  const m = selectedModelInfo.value;
-  if (!m) return false;
-  if (m.input_modalities?.includes("image")) return true;
-  return m.pipeline_tag === "image-text-to-text" && (m.source === "cloud" || m.has_mmproj === true);
-});
+const selectedModelMode = computed(() => getChatModelMode(selectedModelInfo.value));
 
 function normalizeImage(file: File): Promise<{ full: string; thumb: string }> {
   return new Promise((resolve, reject) => {
@@ -544,6 +561,38 @@ function normalizeImage(file: File): Promise<{ full: string; thumb: string }> {
 interface PendingImage {
   full: string;
   thumb: string;
+}
+
+interface PendingAudio {
+  file: File;
+  name: string;
+  size: number;
+  objectUrl: string;
+  recorded?: boolean;
+}
+
+function preferredAudioMimeType(): string {
+  if (typeof MediaRecorder === "undefined") return "";
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+  return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) || "";
+}
+
+function extensionForAudioMimeType(mime: string): string {
+  if (mime.includes("mp4")) return "m4a";
+  if (mime.includes("ogg")) return "ogg";
+  return "webm";
+}
+
+function setPendingAudio(next: PendingAudio | null) {
+  const current = pendingAudio.value;
+  if (current?.objectUrl) URL.revokeObjectURL(current.objectUrl);
+  pendingAudio.value = next;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function readNumCtx(): number | undefined {
@@ -666,6 +715,9 @@ export function Chat() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const abortRef = useRef<AbortController | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingChunksRef = useRef<BlobPart[]>([]);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
   void locale.value;
 
   const refreshCloudAuth = async (): Promise<CloudAuthStatus> => {
@@ -689,6 +741,11 @@ export function Chat() {
     saveSelectedModelKey(nextKey);
     const model = availableModels.value.find((x) => modelKey(x) === nextKey);
     applyModelSamplingDefaults(model);
+    if (isASRModel(model)) {
+      pendingImages.value = [];
+    } else {
+      setPendingAudio(null);
+    }
     if (model?.source === "cloud" && !hasCloudAuth(cloudAuth.value)) {
       void openCloudAuthDialog(t("chat.cloudLoginRequired", model.provider || configuredCloudProviderName()));
     }
@@ -790,6 +847,12 @@ export function Chat() {
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener(providersChangedEvent, handleProvidersChanged);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (mediaRecorderRef.current?.state === "recording") {
+        mediaRecorderRef.current.stop();
+      }
+      recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+      recordingStreamRef.current = null;
+      setPendingAudio(null);
     };
   }, []);
 
@@ -841,10 +904,106 @@ export function Chat() {
     pendingImages.value = pendingImages.value.filter((_, i) => i !== idx);
   };
 
+  const queueAudioTranscription = () => {
+    window.setTimeout(() => {
+      if (getChatModelMode(selectedModelInfo.value) !== "asr") return;
+      if (!pendingAudio.value || isGenerating.value || isRecordingAudio.value) return;
+      void handleSend();
+    }, 0);
+  };
+
+  const handleAudioUpload = (e: Event) => {
+    const files = (e.target as HTMLInputElement).files;
+    const file = files?.[0];
+    if (!file) return;
+    setPendingAudio({
+      file,
+      name: file.name || t("chat.audioFile"),
+      size: file.size,
+      objectUrl: URL.createObjectURL(file),
+    });
+    (e.target as HTMLInputElement).value = "";
+    queueAudioTranscription();
+  };
+
+  const removeAudio = () => {
+    setPendingAudio(null);
+  };
+
+  const stopRecordingStream = () => {
+    recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+    recordingStreamRef.current = null;
+  };
+
+  const startAudioRecording = async () => {
+    if (isRecordingAudio.value || isGenerating.value) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      chatError.value = t("chat.recordingUnsupported");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = preferredAudioMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      recordingChunksRef.current = [];
+      recordingStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordingChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        const type = recorder.mimeType || mimeType || "audio/webm";
+        const blob = new Blob(recordingChunksRef.current, { type });
+        recordingChunksRef.current = [];
+        stopRecordingStream();
+        isRecordingAudio.value = false;
+        if (blob.size === 0) return;
+        const ext = extensionForAudioMimeType(type);
+        const file = new File([blob], `recording-${Date.now()}.${ext}`, { type });
+        setPendingAudio({
+          file,
+          name: file.name,
+          size: file.size,
+          objectUrl: URL.createObjectURL(file),
+          recorded: true,
+        });
+        queueAudioTranscription();
+      };
+      recorder.onerror = () => {
+        stopRecordingStream();
+        isRecordingAudio.value = false;
+        chatError.value = t("chat.recordingFailed");
+      };
+      recorder.start();
+      isRecordingAudio.value = true;
+      chatError.value = "";
+    } catch (e: any) {
+      stopRecordingStream();
+      isRecordingAudio.value = false;
+      chatError.value = e?.message || t("chat.recordingFailed");
+    }
+  };
+
+  const stopAudioRecording = () => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
   const handleSend = async () => {
     const text = inputText.value.trim();
     const currentModel = selectedModelInfo.value;
-    if (!text || !currentModel || isGenerating.value) return;
+    const mode = getChatModelMode(currentModel);
+    const imageMode = mode === "image";
+    const asrMode = mode === "asr";
+    const visionMode = mode === "vision";
+    const audio = pendingAudio.value;
+    if (!currentModel || isGenerating.value) return;
+    if (asrMode) {
+      if (!audio || isRecordingAudio.value) return;
+    } else if (!text) {
+      return;
+    }
 
     if (currentModel.source === "cloud") {
       const provider = currentModel.provider || configuredCloudProviderName();
@@ -870,7 +1029,13 @@ export function Chat() {
     let userContent: ChatMessage["content"];
     let currentUserMessage: ChatMessage;
 
-    if (images.length > 0) {
+    if (asrMode && audio) {
+      const audioLabel = audio.recorded ? t("chat.recordedAudio") : t("chat.audioFile");
+      userContent = text
+        ? `${audioLabel}: ${audio.name}\n${t("chat.audioPrompt")}: ${text}`
+        : `${audioLabel}: ${audio.name}`;
+      currentUserMessage = { role: "user", content: userContent };
+    } else if (visionMode && images.length > 0) {
       const displayParts: ContentPart[] = images.map((img) => ({
         type: "image_url" as const,
         image_url: { url: img.thumb },
@@ -893,12 +1058,15 @@ export function Chat() {
 
     conv.messages.push({ role: "user", content: userContent });
     if (conv.messages.length === 1) {
-      conv.title = text.slice(0, 30) || "New Chat";
+      conv.title = text.slice(0, 30) || (asrMode && audio ? audio.name.slice(0, 30) : "New Chat");
     }
     conv.model = modelKey(currentModel);
     activeConversation.value = { ...conv };
     inputText.value = "";
     pendingImages.value = [];
+    if (asrMode) {
+      setPendingAudio(null);
+    }
     saveCurrentConversation();
 
     stickToBottomRef.current = true;
@@ -914,12 +1082,11 @@ export function Chat() {
 
     const numCtx = normalizeNumCtx(conv.settings?.num_ctx);
     const numParallel = conv.settings?.num_parallel || defaultNumParallel();
-    const textToImageMode = isTextToImageModel(currentModel);
 
     chatError.value = "";
     const responseStartedAt = Date.now();
     try {
-      if (textToImageMode) {
+      if (imageMode) {
         const job = await createImageGenerationJob({
           model: currentModel.model || currentModel.name,
           prompt: text,
@@ -962,6 +1129,23 @@ export function Chat() {
           }
         }
         streamingContent.value = "";
+      } else if (asrMode && audio) {
+        streamingContent.value = t("chat.transcribingAudio");
+        const response = await transcribeAudio({
+          model: currentModel.model || currentModel.name,
+          file: audio.file,
+          prompt: text || undefined,
+          response_format: "json",
+        }, ac.signal);
+        const transcript = response.text || "";
+        conv.messages.push({
+          role: "assistant",
+          content: transcript || t("chat.emptyTranscription"),
+          meta: buildResponseMeta(transcript || t("chat.emptyTranscription"), responseStartedAt),
+        });
+        activeConversation.value = { ...conv };
+        streamingContent.value = "";
+        saveCurrentConversation();
       } else {
         await streamChat(
         currentModel.model || currentModel.name,
@@ -1032,7 +1216,7 @@ export function Chat() {
       }
     } catch (e: any) {
       const errMessage = e?.message || t("chat.failedResp");
-      if (streamingContent.value && (!ac.signal.aborted || !textToImageMode)) {
+      if (streamingContent.value && !asrMode && (!ac.signal.aborted || !imageMode)) {
         const assistantContent = streamingContent.value;
         const sources = streamingSources.value;
         conv.messages.push({
@@ -1060,7 +1244,7 @@ export function Chat() {
     searchPlanningQuery.value = "";
     searchSkippedReason.value = "";
     streamingSources.value = [];
-    if (textToImageMode && ac.signal.aborted) {
+    if (asrMode || (imageMode && ac.signal.aborted)) {
       streamingContent.value = "";
     }
     isGenerating.value = false;
@@ -1161,6 +1345,12 @@ export function Chat() {
   const conv = activeConversation.value;
   const messages = conv?.messages || [];
   const hasConversationSearch = conversationSearchQuery.value.trim().length > 0;
+  const modelMode = selectedModelMode.value;
+  const asrMode = modelMode === "asr";
+  const visionMode = modelMode === "vision";
+  const canSend = asrMode
+    ? Boolean(pendingAudio.value && !isRecordingAudio.value && selectedModelInfo.value)
+    : Boolean(inputText.value.trim() && selectedModelInfo.value);
 
   return (
     <div class="flex h-full min-h-0 gap-0 bg-[#f7f8fb] p-4">
@@ -1415,18 +1605,69 @@ export function Chat() {
                 ))}
               </div>
             )}
+            {pendingAudio.value && (
+              <div class="mb-3 rounded-xl border border-cyan-100 bg-cyan-50 px-3 py-2">
+                <div class="flex items-center gap-3">
+                  <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-white text-cyan-600">
+                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-2v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-2c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" />
+                    </svg>
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-sm font-medium text-cyan-900">{pendingAudio.value.name}</div>
+                    <div class="text-xs text-cyan-700">
+                      {pendingAudio.value.recorded ? t("chat.recordedAudio") : t("chat.audioFile")} · {formatBytes(pendingAudio.value.size)}
+                    </div>
+                    <div class="mt-0.5 text-xs text-cyan-600">{t("chat.audioReadyHint")}</div>
+                  </div>
+                  <audio src={pendingAudio.value.objectUrl} controls class="h-8 max-w-[220px]" />
+                  <button
+                    onClick={removeAudio}
+                    class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white text-cyan-500 hover:text-red-500"
+                    title={t("chat.removeAudio")}
+                  >
+                    x
+                  </button>
+                </div>
+              </div>
+            )}
             <div class="rounded-[24px] border border-gray-200 bg-white p-3 shadow-[0_16px_50px_rgba(15,23,42,0.08)]">
               <textarea
                 class="min-h-[46px] w-full resize-none border-0 bg-transparent px-2 text-sm leading-6 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0"
                 rows={2}
-                placeholder={isVisionModel.value ? t("chat.askImage") : t("chat.askHelp")}
+                placeholder={asrMode ? t("chat.askAudio") : visionMode ? t("chat.askImage") : t("chat.askHelp")}
                 value={inputText.value}
                 onInput={(e) => (inputText.value = (e.target as HTMLTextAreaElement).value)}
                 onKeyDown={handleKeyDown}
               />
               <div class="mt-2 flex items-center justify-between gap-3">
                 <div class="flex min-w-0 items-center gap-2">
-                  {isVisionModel.value ? (
+                  {asrMode ? (
+                    <>
+                      <label class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition-colors hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-600" title={t("chat.uploadAudio")}>
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                        </svg>
+                        <input type="file" accept="audio/*,.mp3,.wav,.m4a,.flac,.webm" class="hidden" onChange={handleAudioUpload} />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={isRecordingAudio.value ? stopAudioRecording : startAudioRecording}
+                        disabled={isGenerating.value}
+                        class={`flex h-9 w-9 items-center justify-center rounded-xl border transition-colors ${
+                          isRecordingAudio.value
+                            ? "border-red-200 bg-red-50 text-red-600"
+                            : "border-gray-200 text-gray-500 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-600"
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
+                        title={isRecordingAudio.value ? t("chat.stopRecording") : t("chat.startRecording")}
+                      >
+                        <svg class="h-5 w-5" fill={isRecordingAudio.value ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6.75 6.75 0 006.75-6.75V7.5a6.75 6.75 0 10-13.5 0V12A6.75 6.75 0 0012 18.75z" />
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75V22m-4 0h8" />
+                        </svg>
+                      </button>
+                    </>
+                  ) : visionMode ? (
                     <label class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600" title={t("chat.uploadImage")}>
                       <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
@@ -1446,7 +1687,7 @@ export function Chat() {
                   )}
                   <button
                     type="button"
-                    disabled={!webSearchAvailable.value}
+                    disabled={!webSearchAvailable.value || asrMode}
                     onClick={() => {
                       const next = !webSearchEnabled.value;
                       webSearchEnabled.value = next;
@@ -1457,7 +1698,7 @@ export function Chat() {
                         ? "border-blue-200 bg-blue-50 text-blue-700"
                         : "border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:bg-gray-50"
                     } disabled:cursor-not-allowed disabled:opacity-50`}
-                    title={webSearchAvailable.value ? t("chat.webSearchToggle") : t("chat.webSearchNotConfigured")}
+                    title={asrMode ? t("chat.webSearchUnavailableForASR") : webSearchAvailable.value ? t("chat.webSearchToggle") : t("chat.webSearchNotConfigured")}
                     aria-pressed={webSearchAvailable.value && webSearchEnabled.value}
                   >
                     {t("chat.webSearch")}
@@ -1487,9 +1728,9 @@ export function Chat() {
                 ) : (
                   <button
                     onClick={handleSend}
-                    disabled={!inputText.value.trim() || !selectedModelInfo.value}
+                    disabled={!canSend}
                     class="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
-                    title={t("chat.send")}
+                    title={asrMode ? t("chat.transcribe") : t("chat.send")}
                   >
                     <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />

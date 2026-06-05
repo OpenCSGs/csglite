@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csghub-lite/internal/apps"
+	"github.com/opencsgs/csghub-lite/internal/asr"
 	"github.com/opencsgs/csghub-lite/internal/chathistory"
 	"github.com/opencsgs/csghub-lite/internal/cloud"
 	"github.com/opencsgs/csghub-lite/internal/config"
@@ -62,6 +63,18 @@ type imageEngineLoadState struct {
 	err    error
 }
 
+type managedASREngine struct {
+	engine    asr.Engine
+	lastUsed  time.Time
+	keepAlive time.Duration
+}
+
+type asrEngineLoadState struct {
+	done   chan struct{}
+	engine asr.Engine
+	err    error
+}
+
 func (m *managedEngine) keepAliveForever() bool {
 	return m.keepAlive < 0
 }
@@ -103,6 +116,8 @@ type Server struct {
 	loading      map[string]*engineLoadState
 	imageEngines map[string]*managedImageEngine
 	imageLoading map[string]*imageEngineLoadState
+	asrEngines   map[string]*managedASREngine
+	asrLoading   map[string]*asrEngineLoadState
 	imageJobs    *imageGenerationJobStore
 	prefsMu      sync.Mutex
 	openclawMu   sync.Mutex
@@ -142,6 +157,8 @@ func New(cfg *config.Config, version string) *Server {
 		loading:        make(map[string]*engineLoadState),
 		imageEngines:   make(map[string]*managedImageEngine),
 		imageLoading:   make(map[string]*imageEngineLoadState),
+		asrEngines:     make(map[string]*managedASREngine),
+		asrLoading:     make(map[string]*asrEngineLoadState),
 		imageJobs:      newImageGenerationJobStore(),
 		logBuf:         logBuf,
 	}
@@ -266,6 +283,16 @@ func (s *Server) evictExpired(now time.Time) {
 			delete(s.imageEngines, id)
 		}
 	}
+	for id, me := range s.asrEngines {
+		if me.keepAlive < 0 {
+			continue
+		}
+		if now.After(me.lastUsed.Add(me.keepAlive)) {
+			log.Printf("evicting idle ASR model %s (unused for %s)", id, me.keepAlive)
+			me.engine.Close()
+			delete(s.asrEngines, id)
+		}
+	}
 }
 
 // touchEngine updates lastUsed for the given model. Must be called after
@@ -302,10 +329,28 @@ func (s *Server) setImageEngineKeepAlive(modelID string, keepAlive time.Duration
 	s.mu.Unlock()
 }
 
+func (s *Server) setASREngineKeepAlive(modelID string, keepAlive time.Duration) {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	s.mu.Lock()
+	if me, ok := s.asrEngines[modelID]; ok {
+		me.keepAlive = keepAlive
+	}
+	s.mu.Unlock()
+}
+
 func (s *Server) touchImageEngine(modelID string) {
 	modelID = s.resolveLocalModelStorageID(modelID)
 	s.mu.Lock()
 	if me, ok := s.imageEngines[modelID]; ok {
+		me.lastUsed = time.Now()
+	}
+	s.mu.Unlock()
+}
+
+func (s *Server) touchASREngine(modelID string) {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	s.mu.Lock()
+	if me, ok := s.asrEngines[modelID]; ok {
 		me.lastUsed = time.Now()
 	}
 	s.mu.Unlock()
@@ -584,6 +629,107 @@ func (s *Server) getOrLoadImageEngineWithProgress(ctx context.Context, modelID s
 	}
 }
 
+var newASREngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (asr.Engine, error) {
+	return asr.NewPythonEngine(ctx, modelName, modelDir, runtimeManager)
+}
+
+func (s *Server) getOrLoadASREngine(ctx context.Context, modelID string) (asr.Engine, error) {
+	modelID = s.resolveLocalModelStorageID(modelID)
+
+	s.mu.RLock()
+	me, ok := s.asrEngines[modelID]
+	s.mu.RUnlock()
+	if ok {
+		return me.engine, nil
+	}
+
+	modelDir, err := s.manager.ModelPath(modelID)
+	if err != nil {
+		return nil, fmt.Errorf("model %q not found locally; use 'csghub-lite pull %s' first", modelID, modelID)
+	}
+	lm, err := s.manager.Get(modelID)
+	if err != nil {
+		return nil, err
+	}
+	pipelineTag := s.resolvedLocalPipelineTag(modelID, strings.TrimSpace(lm.PipelineTag))
+	if !isASRPipelineTag(pipelineTag) {
+		return nil, fmt.Errorf("model %q is not an automatic speech recognition model", modelID)
+	}
+
+	for {
+		s.mu.Lock()
+		if me, ok := s.asrEngines[modelID]; ok {
+			eng := me.engine
+			s.mu.Unlock()
+			return eng, nil
+		}
+		if state, ok := s.asrLoading[modelID]; ok {
+			s.mu.Unlock()
+			<-state.done
+			if state.err != nil {
+				return nil, state.err
+			}
+			if state.engine != nil {
+				return state.engine, nil
+			}
+			continue
+		}
+		state := &asrEngineLoadState{done: make(chan struct{})}
+		s.asrLoading[modelID] = state
+		s.mu.Unlock()
+
+		log.Printf("MODEL %s: ASR engine load started", modelID)
+		runtimeManager, err := imagegen.NewRuntimeManager()
+		if err == nil {
+			err = ensureASRRuntimeReady(ctx, runtimeManager, nil, false)
+			if err == nil {
+				state.engine, err = newASREngine(ctx, modelID, modelDir, runtimeManager)
+			}
+		}
+		state.err = err
+
+		s.mu.Lock()
+		delete(s.asrLoading, modelID)
+		if state.err == nil {
+			s.asrEngines[modelID] = &managedASREngine{
+				engine:    state.engine,
+				lastUsed:  time.Now(),
+				keepAlive: DefaultKeepAlive,
+			}
+		}
+		close(state.done)
+		s.mu.Unlock()
+
+		if state.err != nil {
+			log.Printf("MODEL %s: ASR engine load failed: %v", modelID, state.err)
+			return nil, state.err
+		}
+		log.Printf("MODEL %s: ASR engine load complete", modelID)
+		return state.engine, nil
+	}
+}
+
+func (s *Server) closeASREngine(modelID string) {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	s.mu.Lock()
+	me, ok := s.asrEngines[modelID]
+	if ok {
+		delete(s.asrEngines, modelID)
+	}
+	s.mu.Unlock()
+	if ok {
+		_ = me.engine.Close()
+	}
+}
+
+var ensureASRRuntimeReady = func(ctx context.Context, runtimeManager *imagegen.RuntimeManager, progress imagegen.ProgressFunc, upgradePackages bool) error {
+	if status := runtimeManager.ASRStatus(ctx); status.Ready && !upgradePackages {
+		return nil
+	}
+	_, err := runtimeManager.InstallASRWithProgressOptions(ctx, progress, upgradePackages)
+	return err
+}
+
 func (s *Server) closeAllEngines() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -594,5 +740,9 @@ func (s *Server) closeAllEngines() {
 	for id, me := range s.imageEngines {
 		me.engine.Close()
 		delete(s.imageEngines, id)
+	}
+	for id, me := range s.asrEngines {
+		me.engine.Close()
+		delete(s.asrEngines, id)
 	}
 }

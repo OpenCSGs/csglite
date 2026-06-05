@@ -144,6 +144,7 @@ func (c *Client) downloadSnapshot(ctx context.Context, repoType, namespace, name
 		if err != nil {
 			return nil, err
 		}
+		downloadFiles = filterTransformersWeightDownload(downloadFiles)
 	}
 
 	if len(downloadFiles) == 0 {
@@ -290,6 +291,86 @@ func filterGGUFMultiQuantDownload(files []RepoFile, quant string) ([]RepoFile, e
 		}
 	}
 	return out, nil
+}
+
+func filterTransformersWeightDownload(files []RepoFile) []RepoFile {
+	if repoHasGGUFWeight(files) {
+		return files
+	}
+	hasSafeTensors := false
+	hasPreferredSafeTensors := false
+	hasPyTorch := false
+	for _, f := range files {
+		path := strings.ToLower(f.Path)
+		name := strings.ToLower(repoFileBaseName(f))
+		if strings.HasSuffix(path, ".safetensors") || strings.HasSuffix(name, ".safetensors") {
+			hasSafeTensors = true
+			if !isFP32SafeTensorsWeight(path, name) {
+				hasPreferredSafeTensors = true
+			}
+		}
+		if isPreferredPyTorchWeight(path, name) {
+			hasPyTorch = true
+		}
+	}
+	if !hasSafeTensors && !hasPyTorch {
+		return files
+	}
+
+	out := make([]RepoFile, 0, len(files))
+	for _, f := range files {
+		path := strings.ToLower(f.Path)
+		name := strings.ToLower(repoFileBaseName(f))
+		if hasSafeTensors {
+			if hasPreferredSafeTensors && isFP32SafeTensorsWeight(path, name) {
+				continue
+			}
+			if isNonSafeTensorsTransformersWeight(path, name) {
+				continue
+			}
+			out = append(out, f)
+			continue
+		}
+		if hasPyTorch && isRedundantTransformersWeight(path, name) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+func repoHasGGUFWeight(files []RepoFile) bool {
+	for _, f := range files {
+		if ggufpick.IsWeightGGUF(repoFileBaseName(f)) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPreferredPyTorchWeight(path, name string) bool {
+	return name == "pytorch_model.bin" ||
+		strings.HasPrefix(name, "pytorch_model-") && strings.HasSuffix(name, ".bin") ||
+		strings.HasSuffix(path, "/pytorch_model.bin") ||
+		strings.Contains(path, "/pytorch_model-") && strings.HasSuffix(path, ".bin")
+}
+
+func isNonSafeTensorsTransformersWeight(path, name string) bool {
+	return isPreferredPyTorchWeight(path, name) ||
+		isRedundantTransformersWeight(path, name)
+}
+
+func isRedundantTransformersWeight(path, name string) bool {
+	return name == "flax_model.msgpack" ||
+		name == "tf_model.h5" ||
+		name == "model.ckpt.index" ||
+		strings.HasPrefix(name, "pytorch_model.fp32") ||
+		strings.Contains(path, "/pytorch_model.fp32")
+}
+
+func isFP32SafeTensorsWeight(path, name string) bool {
+	return strings.Contains(name, ".fp32") && strings.HasSuffix(name, ".safetensors") ||
+		strings.Contains(path, ".fp32") && strings.HasSuffix(path, ".safetensors")
 }
 
 // ParseModelID splits a model identifier like "namespace/name" into parts.

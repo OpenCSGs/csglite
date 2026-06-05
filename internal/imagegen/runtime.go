@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	runtimeDirName        = "image-runtime"
+	runtimeDirName        = "ai-runtime"
+	legacyRuntimeDirName  = "image-runtime"
 	venvDirName           = "venv"
 	manifestFileName      = "runtime.json"
 	aliyunPyPIIndex       = "https://mirrors.aliyun.com/pypi/simple"
@@ -38,6 +39,18 @@ var requiredPythonPackages = []string{
 	"sentencepiece",
 	"google.protobuf",
 	"PIL",
+}
+
+var requiredASRPythonPackages = []string{
+	"fastapi",
+	"funasr",
+	"modelscope",
+	"transformers",
+	"safetensors",
+	"soundfile",
+	"librosa",
+	"imageio_ffmpeg",
+	"uvicorn",
 }
 
 var defaultTorchPackages = []string{"torch", "torchvision", "torchaudio"}
@@ -110,11 +123,38 @@ func NewRuntimeManager() (*RuntimeManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewRuntimeManagerAt(filepath.Join(home, runtimeDirName)), nil
+	rootDir := filepath.Join(home, runtimeDirName)
+	if err := migrateLegacyRuntimeDir(filepath.Join(home, legacyRuntimeDirName), rootDir); err != nil {
+		return nil, err
+	}
+	return NewRuntimeManagerAt(rootDir), nil
 }
 
 func NewRuntimeManagerAt(rootDir string) *RuntimeManager {
 	return &RuntimeManager{rootDir: filepath.Clean(rootDir)}
+}
+
+func migrateLegacyRuntimeDir(legacyDir, rootDir string) error {
+	legacyDir = filepath.Clean(legacyDir)
+	rootDir = filepath.Clean(rootDir)
+	if legacyDir == rootDir {
+		return nil
+	}
+	if _, err := os.Stat(rootDir); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("checking AI runtime directory: %w", err)
+	}
+	if _, err := os.Stat(legacyDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("checking legacy image runtime directory: %w", err)
+	}
+	if err := os.Rename(legacyDir, rootDir); err != nil {
+		return fmt.Errorf("migrating legacy image runtime to AI runtime: %w", err)
+	}
+	return nil
 }
 
 func (m *RuntimeManager) RootDir() string {
@@ -167,6 +207,47 @@ func (m *RuntimeManager) Status(ctx context.Context) RuntimeStatus {
 
 func (m *RuntimeManager) EnsureReady(ctx context.Context) error {
 	status := m.Status(ctx)
+	if status.Ready {
+		return nil
+	}
+	return &RuntimeNotReadyError{Status: status}
+}
+
+func (m *RuntimeManager) ASRStatus(ctx context.Context) RuntimeStatus {
+	hardware := DetectHardware()
+	indexes := ResolvePackageIndexes(hardware)
+	status := RuntimeStatus{
+		RuntimeDir:    m.rootDir,
+		VenvDir:       m.VenvDir(),
+		Python:        m.PythonPath(),
+		Platform:      runtime.GOOS,
+		Arch:          runtime.GOARCH,
+		Hardware:      hardware,
+		TorchIndexURL: torchSourceURL(indexes),
+	}
+	status.InstallCommand = m.InstallCommand(status.Hardware)
+
+	if _, err := os.Stat(status.Python); err != nil {
+		status.Error = "ASR runtime is not installed"
+		status.MissingPackages = append([]string{"torch", "torchaudio"}, requiredASRPythonPackages...)
+		return status
+	}
+	missing, err := missingPackages(ctx, status.Python, append([]string{"torch", "torchaudio"}, requiredASRPythonPackages...))
+	if err != nil {
+		status.Error = err.Error()
+		status.MissingPackages = append([]string{"torch", "torchaudio"}, requiredASRPythonPackages...)
+		return status
+	}
+	status.MissingPackages = missing
+	status.Ready = len(missing) == 0
+	if !status.Ready {
+		status.Error = "ASR runtime is missing Python packages"
+	}
+	return status
+}
+
+func (m *RuntimeManager) EnsureASRReady(ctx context.Context) error {
+	status := m.ASRStatus(ctx)
 	if status.Ready {
 		return nil
 	}
@@ -302,6 +383,130 @@ func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progres
 		return m.Status(ctx), err
 	}
 	return m.Status(ctx), nil
+}
+
+func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, progress ProgressFunc, upgradePackages bool) (RuntimeStatus, error) {
+	if progress == nil {
+		progress = func(string, int, int) {}
+	}
+
+	hardware := DetectHardware()
+	indexes := ResolvePackageIndexes(hardware)
+	progress(fmt.Sprintf("detect system %s/%s %s mirror=%s", runtime.GOOS, runtime.GOARCH, hardware, indexes.Mirror), 1, 5)
+	progress("prepare shared Python runtime", 2, 5)
+	if err := os.MkdirAll(m.rootDir, 0o755); err != nil {
+		return m.ASRStatus(ctx), fmt.Errorf("creating runtime directory: %w", err)
+	}
+
+	python := m.PythonPath()
+	createdVenv := false
+	if _, err := os.Stat(python); err != nil {
+		hostPython, err := findHostPython()
+		if err != nil {
+			return m.ASRStatus(ctx), err
+		}
+		progress("create Python venv", 3, 5)
+		if err := runCommand(ctx, hostPython, "-m", "venv", m.VenvDir()); err != nil {
+			return m.ASRStatus(ctx), fmt.Errorf("creating Python venv: %w", err)
+		}
+		createdVenv = true
+	}
+
+	if createdVenv || upgradePackages {
+		if err := runCommand(ctx, python, "-m", "ensurepip", "--upgrade"); err != nil {
+			return m.ASRStatus(ctx), fmt.Errorf("bootstrapping pip: %w", err)
+		}
+		pipArgs := []string{"-m", "pip", "install", "--upgrade", "pip"}
+		if indexes.PyPIIndexURL != "" {
+			pipArgs = append(pipArgs, "-i", indexes.PyPIIndexURL)
+		}
+		if err := runCommand(ctx, python, pipArgs...); err != nil {
+			return m.ASRStatus(ctx), fmt.Errorf("upgrading pip: %w", err)
+		}
+	}
+
+	torchPackages := torchPackageSpecs(hardware, indexes)
+	torchMissing, err := missingPackages(ctx, python, []string{"torch", "torchaudio"})
+	if err != nil {
+		return m.ASRStatus(ctx), err
+	}
+	if len(torchMissing) > 0 || upgradePackages {
+		torchArgs := append([]string{"-m", "pip", "install"}, torchPackages...)
+		if indexes.TorchIndexURL != "" {
+			torchArgs = append(torchArgs, "--index-url", indexes.TorchIndexURL)
+		} else if indexes.PyPIIndexURL != "" {
+			torchArgs = append(torchArgs, "-i", indexes.PyPIIndexURL)
+		}
+		if indexes.TorchFindLinksURL != "" {
+			torchArgs = append(torchArgs, "--find-links", indexes.TorchFindLinksURL)
+		}
+		if indexes.TorchIndexURL != "" {
+			progress("install PyTorch from "+indexes.TorchIndexURL, 4, 5)
+		} else if indexes.TorchFindLinksURL != "" && indexes.PyPIIndexURL != "" {
+			progress("install PyTorch from "+string(indexes.Mirror)+" mirror", 4, 5)
+		} else if indexes.TorchFindLinksURL != "" {
+			progress("install PyTorch from "+indexes.TorchFindLinksURL, 4, 5)
+		} else if indexes.PyPIIndexURL != "" {
+			progress("install PyTorch from "+indexes.PyPIIndexURL, 4, 5)
+		} else {
+			progress("install PyTorch", 4, 5)
+		}
+		if err := runCommand(ctx, python, torchArgs...); err != nil {
+			return m.ASRStatus(ctx), fmt.Errorf("installing PyTorch: %w", err)
+		}
+	}
+
+	asrPackages := []string{"fastapi", "funasr", "modelscope", "transformers", "safetensors", "soundfile", "librosa", "imageio-ffmpeg", "uvicorn"}
+	asrMissing, err := missingPackages(ctx, python, requiredASRPythonPackages)
+	if err != nil {
+		return m.ASRStatus(ctx), err
+	}
+	if len(asrMissing) == 0 && !upgradePackages {
+		return m.ASRStatus(ctx), nil
+	}
+	deps := []string{"-m", "pip", "install"}
+	if upgradePackages {
+		deps = append(deps, "--upgrade")
+	}
+	if upgradePackages {
+		deps = append(deps, asrPackages...)
+	} else {
+		deps = append(deps, asrMissing...)
+	}
+	if indexes.PyPIIndexURL != "" {
+		deps = append(deps, "-i", indexes.PyPIIndexURL)
+		if upgradePackages {
+			progress("upgrade ASR dependencies from "+indexes.PyPIIndexURL, 5, 5)
+		} else {
+			progress("install ASR dependencies from "+indexes.PyPIIndexURL, 5, 5)
+		}
+	} else {
+		if upgradePackages {
+			progress("upgrade ASR dependencies", 5, 5)
+		} else {
+			progress("install ASR dependencies", 5, 5)
+		}
+	}
+	if err := runCommand(ctx, python, deps...); err != nil {
+		return m.ASRStatus(ctx), fmt.Errorf("installing ASR dependencies: %w", err)
+	}
+
+	now := time.Now()
+	manifest := RuntimeManifest{
+		Python:      python,
+		Platform:    runtime.GOOS,
+		Arch:        runtime.GOARCH,
+		Hardware:    DetectHardware(),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		TorchIndex:  torchSourceURL(indexes),
+		PyPIIndex:   indexes.PyPIIndexURL,
+		PackageSpec: append(torchPackageSpecs(DetectHardware(), indexes), "fastapi", "funasr", "modelscope", "transformers", "safetensors", "soundfile", "librosa", "imageio-ffmpeg", "uvicorn"),
+	}
+	if err := writeManifest(filepath.Join(m.rootDir, manifestFileName), manifest); err != nil {
+		return m.ASRStatus(ctx), err
+	}
+	return m.ASRStatus(ctx), nil
 }
 
 func (m *RuntimeManager) InstallCommand(hw HardwareKind) []string {

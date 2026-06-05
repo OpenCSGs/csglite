@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/opencsgs/csghub-lite/internal/ggufpick"
@@ -55,6 +56,22 @@ var visionArchitectures = map[string]bool{
 	"YoutuVLForConditionalGeneration":        true,
 }
 
+var asrArchitectures = map[string]bool{
+	"GlmAsrForConditionalGeneration":      true,
+	"Qwen3ASRForConditionalGeneration":    true,
+	"WhisperForConditionalGeneration":     true,
+	"Wav2Vec2ForCTC":                      true,
+	"HubertForCTC":                        true,
+	"SEWForCTC":                           true,
+	"SEWDForCTC":                          true,
+	"Data2VecAudioForCTC":                 true,
+	"UniSpeechForCTC":                     true,
+	"UniSpeechSatForCTC":                  true,
+	"WavLMForCTC":                         true,
+	"Speech2TextForConditionalGeneration": true,
+	"SpeechEncoderDecoderModel":           true,
+}
+
 var embeddingArchitectures = map[string]bool{
 	"BertForMaskedLM":                     true,
 	"BertForSequenceClassification":       true,
@@ -94,35 +111,118 @@ func IsVisionArchitecture(architecture string) bool {
 	return visionArchitectures[strings.TrimSpace(architecture)]
 }
 
+// IsASRArchitecture reports whether the HuggingFace architecture is an
+// automatic speech recognition model.
+func IsASRArchitecture(architecture string) bool {
+	return asrArchitectures[strings.TrimSpace(architecture)]
+}
+
+// IsASRModelFamily reports whether a model id/name belongs to a known ASR
+// family served by the Python ASR runtime.
+func IsASRModelFamily(name string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	compact := strings.NewReplacer("-", "", " ", "", ".", "").Replace(normalized)
+	switch {
+	case strings.Contains(compact, "sensevoicesmall"):
+		return true
+	case strings.Contains(normalized, "fun-asr-nano"):
+		return true
+	case strings.Contains(normalized, "glm-asr-nano"):
+		return true
+	case strings.Contains(normalized, "qwen3-asr"):
+		return true
+	case strings.Contains(normalized, "whisper-large-v3"):
+		return true
+	case strings.Contains(normalized, "paraformer-zh"):
+		return true
+	default:
+		return false
+	}
+}
+
 // DetectPipelineTag reads config.json in modelDir and returns a local pipeline
 // tag for routing. Sentence-transformers repositories are treated as embedding
 // models even when the hub metadata was not persisted in older manifests.
 func DetectPipelineTag(modelDir string) string {
+	if IsASRModelFamily(modelDir) {
+		return "automatic-speech-recognition"
+	}
 	if tag := detectDiffusersPipelineTag(modelDir); tag != "" {
 		return tag
 	}
 	if _, err := os.Stat(filepath.Join(modelDir, "modules.json")); err == nil {
 		return "feature-extraction"
 	}
+	if tag := detectModelScopePipelineTag(modelDir); tag != "" {
+		return tag
+	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
 		return "text-generation"
 	}
 	var cfg struct {
-		Architectures []string `json:"architectures"`
+		Architectures  []string `json:"architectures"`
+		SupportedArchs []string `json:"supported_archs"`
+		ModelType      string   `json:"model_type"`
 	}
 	if json.Unmarshal(data, &cfg) != nil {
 		return "text-generation"
 	}
-	for _, arch := range cfg.Architectures {
+	if isASRModelType(cfg.ModelType) {
+		return "automatic-speech-recognition"
+	}
+	for _, arch := range append(cfg.Architectures, cfg.SupportedArchs...) {
 		if visionArchitectures[arch] {
 			return "image-text-to-text"
 		}
 		if embeddingArchitectures[arch] {
 			return "feature-extraction"
 		}
+		if asrArchitectures[arch] {
+			return "automatic-speech-recognition"
+		}
 	}
 	return "text-generation"
+}
+
+func detectModelScopePipelineTag(modelDir string) string {
+	data, err := os.ReadFile(filepath.Join(modelDir, "configuration.json"))
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Task  string `json:"task"`
+		Model struct {
+			Type string `json:"type"`
+		} `json:"model"`
+		Pipeline struct {
+			Type string `json:"type"`
+		} `json:"pipeline"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return ""
+	}
+	task := strings.ToLower(strings.TrimSpace(cfg.Task))
+	modelType := strings.ToLower(strings.TrimSpace(cfg.Model.Type))
+	pipelineType := strings.ToLower(strings.TrimSpace(cfg.Pipeline.Type))
+	if task == "automatic-speech-recognition" ||
+		task == "auto-speech-recognition" ||
+		strings.Contains(task, "speech-recognition") ||
+		modelType == "funasr" ||
+		strings.Contains(pipelineType, "funasr") {
+		return "automatic-speech-recognition"
+	}
+	return ""
+}
+
+func isASRModelType(modelType string) bool {
+	switch strings.ToLower(strings.TrimSpace(modelType)) {
+	case "glm_asr", "glm-asr", "qwen3_asr", "qwen3-asr", "whisper", "wav2vec2", "hubert", "sew", "sew-d", "data2vec-audio", "unispeech", "unispeech-sat", "wavlm", "speech_to_text":
+		return true
+	default:
+		return false
+	}
 }
 
 func detectDiffusersPipelineTag(modelDir string) string {
@@ -245,7 +345,7 @@ func DetectFormat(files []string) Format {
 	}
 	for _, f := range files {
 		lower := strings.ToLower(f)
-		if strings.HasSuffix(lower, ".bin") {
+		if strings.HasSuffix(lower, ".bin") || strings.HasSuffix(lower, ".pt") || strings.HasSuffix(lower, ".pth") {
 			return FormatPyTorch
 		}
 	}
@@ -254,11 +354,6 @@ func DetectFormat(files []string) Format {
 
 // FindModelFile returns the primary model file (GGUF or SafeTensors).
 func FindModelFile(modelDir string) (string, Format, error) {
-	entries, err := os.ReadDir(modelDir)
-	if err != nil {
-		return "", FormatUnknown, err
-	}
-
 	// Prefer GGUF weight files (skip multimodal projector); recurse into subdirs; pick highest precision.
 	ggufRel, err := ggufpick.CollectWeightGGUFRelPaths(modelDir)
 	if err != nil {
@@ -268,16 +363,45 @@ func FindModelFile(modelDir string) (string, Format, error) {
 		best := ggufpick.BestWeightGGUFRelPath(ggufRel)
 		return filepath.Join(modelDir, best), FormatGGUF, nil
 	}
-	// Then HuggingFace weights that the bundled llama.cpp converter can handle.
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".safetensors") {
-			return filepath.Join(modelDir, e.Name()), FormatSafeTensors, nil
-		}
+	// Then HuggingFace weights; recurse because uploaded folder selections often
+	// preserve a top-level repository directory or nested checkpoint directory.
+	if path, ok := findWeightFileBySuffix(modelDir, ".safetensors"); ok {
+		return path, FormatSafeTensors, nil
 	}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".bin") {
-			return filepath.Join(modelDir, e.Name()), FormatPyTorch, nil
-		}
+	if path, ok := findWeightFileBySuffix(modelDir, ".bin"); ok {
+		return path, FormatPyTorch, nil
+	}
+	if path, ok := findWeightFileBySuffix(modelDir, ".pt"); ok {
+		return path, FormatPyTorch, nil
+	}
+	if path, ok := findWeightFileBySuffix(modelDir, ".pth"); ok {
+		return path, FormatPyTorch, nil
 	}
 	return "", FormatUnknown, os.ErrNotExist
+}
+
+func findWeightFileBySuffix(modelDir, suffix string) (string, bool) {
+	var matches []string
+	_ = filepath.WalkDir(modelDir, func(current string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(strings.ToLower(d.Name()), suffix) {
+			matches = append(matches, current)
+		}
+		return nil
+	})
+	if len(matches) == 0 {
+		return "", false
+	}
+	sort.Strings(matches)
+	for _, candidate := range matches {
+		if strings.EqualFold(filepath.Base(candidate), "model"+suffix) || strings.EqualFold(filepath.Base(candidate), "pytorch_model"+suffix) {
+			return candidate, true
+		}
+	}
+	return matches[0], true
 }

@@ -3711,6 +3711,103 @@
           }
         }
       }
+    },
+    "/v1/audio/transcriptions": {
+      "post": {
+        "tags": [
+          "OpenAI Compatibility"
+        ],
+        "summary": "Create audio transcription",
+        "description": "OpenAI-compatible audio transcription endpoint served by the local ASR runtime.",
+        "operationId": "createAudioTranscription",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIAudioTranscriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transcription result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIAudioTranscriptionResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/asr-runtime": {
+      "get": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Get ASR runtime status",
+        "operationId": "getASRRuntimeStatus",
+        "responses": {
+          "200": {
+            "description": "Shared Python ASR runtime status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/asr-runtime/install": {
+      "post": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Install ASR runtime packages",
+        "operationId": "installASRRuntime",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ASRRuntimeInstallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated ASR runtime status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeStatus"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5668,7 +5765,8 @@
             "type": "string",
             "enum": [
               "llama",
-              "diffusers"
+              "diffusers",
+              "python-asr"
             ]
           },
           "mode": {
@@ -5677,7 +5775,8 @@
               "none",
               "direct",
               "convert",
-              "image"
+              "image",
+              "asr"
             ]
           },
           "architecture": {
@@ -7926,6 +8025,106 @@
           },
           "error": {
             "$ref": "#/components/schemas/AnthropicErrorObject"
+          }
+        }
+      },
+      "ASRRuntimeInstallRequest": {
+        "type": "object",
+        "properties": {
+          "upgrade_packages": {
+            "type": "boolean",
+            "description": "Upgrade ASR Python packages while installing."
+          }
+        }
+      },
+      "OpenAIAudioTranscriptionRequest": {
+        "type": "object",
+        "required": [
+          "file",
+          "model"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary"
+          },
+          "model": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "text",
+              "verbose_json"
+            ]
+          },
+          "temperature": {
+            "type": "number"
+          },
+          "hotwords": {
+            "type": "string",
+            "description": "Comma-separated or JSON array hotwords for FunASR models."
+          },
+          "itn": {
+            "type": "boolean",
+            "description": "Enable inverse text normalization for supported ASR models."
+          }
+        }
+      },
+      "OpenAIAudioTranscriptionResponse": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "number"
+          },
+          "backend": {
+            "type": "string"
+          },
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenAIAudioSegment"
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "OpenAIAudioSegment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "start": {
+            "type": "number"
+          },
+          "end": {
+            "type": "number"
+          },
+          "text": {
+            "type": "string"
           }
         }
       }

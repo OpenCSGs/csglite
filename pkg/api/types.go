@@ -59,6 +59,10 @@ type ImageRuntimeInstallRequest struct {
 	UpgradePackages bool `json:"upgrade_packages,omitempty"`
 }
 
+type ASRRuntimeInstallRequest struct {
+	UpgradePackages bool `json:"upgrade_packages,omitempty"`
+}
+
 type ModelUploadStartRequest struct {
 	Model     string `json:"model,omitempty"`
 	Mode      string `json:"mode,omitempty"`
@@ -581,6 +585,17 @@ type OpenAIImagesGenerationRequest struct {
 	Source         string   `json:"source,omitempty"`
 }
 
+type OpenAIAudioTranscriptionRequest struct {
+	Model          string   `json:"model"`
+	FilePath       string   `json:"file_path"`
+	Language       string   `json:"language,omitempty"`
+	Prompt         string   `json:"prompt,omitempty"`
+	ResponseFormat string   `json:"response_format,omitempty"`
+	Temperature    *float64 `json:"temperature,omitempty"`
+	Hotwords       []string `json:"hotwords,omitempty"`
+	ITN            *bool    `json:"itn,omitempty"`
+}
+
 type OpenAIChatResponse struct {
 	ID      string         `json:"id"`
 	Object  string         `json:"object"`
@@ -600,6 +615,23 @@ type OpenAIEmbeddingsResponse struct {
 type OpenAIImagesGenerationResponse struct {
 	Created int64         `json:"created"`
 	Data    []OpenAIImage `json:"data"`
+}
+
+type OpenAIAudioTranscriptionResponse struct {
+	Text     string                 `json:"text"`
+	Task     string                 `json:"task,omitempty"`
+	Language string                 `json:"language,omitempty"`
+	Duration *float64               `json:"duration,omitempty"`
+	Segments []OpenAIAudioSegment   `json:"segments,omitempty"`
+	Backend  string                 `json:"backend,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type OpenAIAudioSegment struct {
+	ID    int     `json:"id,omitempty"`
+	Start float64 `json:"start,omitempty"`
+	End   float64 `json:"end,omitempty"`
+	Text  string  `json:"text"`
 }
 
 type ImageGenerationJobResponse struct {

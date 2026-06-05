@@ -40,7 +40,13 @@ func (c *Client) downloadLFSFile(ctx context.Context, repoType, namespace, name,
 	var existingSize int64
 	if info, err := os.Stat(destPath); err == nil {
 		existingSize = info.Size()
-		if totalSize > 0 && existingSize >= totalSize {
+		if totalSize > 0 && existingSize > totalSize {
+			if removeErr := os.Remove(destPath); removeErr != nil {
+				return fmt.Errorf("removing oversized partial download %s: %w", destPath, removeErr)
+			}
+			existingSize = 0
+		}
+		if totalSize > 0 && existingSize == totalSize {
 			if progress != nil {
 				progress(totalSize, totalSize)
 			}

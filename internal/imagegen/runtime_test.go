@@ -2,6 +2,8 @@ package imagegen
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -140,6 +142,47 @@ func TestRuntimeStatusIsLazyAndDoesNotInstall(t *testing.T) {
 	}
 	if len(status.InstallCommand) == 0 {
 		t.Fatalf("status should include an install command hint")
+	}
+}
+
+func TestMigrateLegacyRuntimeDir(t *testing.T) {
+	root := t.TempDir()
+	legacyDir := filepath.Join(root, legacyRuntimeDirName)
+	runtimeDir := filepath.Join(root, runtimeDirName)
+	if err := os.MkdirAll(filepath.Join(legacyDir, venvDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateLegacyRuntimeDir(legacyDir, runtimeDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(runtimeDir, venvDirName)); err != nil {
+		t.Fatalf("migrated runtime missing venv: %v", err)
+	}
+	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
+		t.Fatalf("legacy runtime still exists or stat failed: %v", err)
+	}
+}
+
+func TestMigrateLegacyRuntimeDirKeepsExistingAIRuntime(t *testing.T) {
+	root := t.TempDir()
+	legacyDir := filepath.Join(root, legacyRuntimeDirName)
+	runtimeDir := filepath.Join(root, runtimeDirName)
+	if err := os.MkdirAll(filepath.Join(legacyDir, "legacy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(runtimeDir, venvDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := migrateLegacyRuntimeDir(legacyDir, runtimeDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(runtimeDir, venvDirName)); err != nil {
+		t.Fatalf("existing AI runtime changed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(legacyDir, "legacy")); err != nil {
+		t.Fatalf("legacy runtime should remain when AI runtime exists: %v", err)
 	}
 }
 

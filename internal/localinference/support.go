@@ -28,8 +28,14 @@ func FromLocalModel(lm *model.LocalModel, modelDir string) api.LocalInferenceSup
 	if support := diffusersSupportFromPipelineTag(pipelineTag); support.Supported {
 		return support
 	}
+	if support := asrSupportFromPipelineTag(pipelineTag); support.Supported {
+		return support
+	}
 
 	architecture := readArchitectureFromDir(modelDir)
+	if model.IsASRArchitecture(architecture) {
+		return asrSupport(architecture)
+	}
 	return llamaSupport(string(lm.Format), architecture)
 }
 
@@ -38,6 +44,9 @@ func FromLocalModel(lm *model.LocalModel, modelDir string) api.LocalInferenceSup
 func FromMarketplace(format, architecture, className string) api.LocalInferenceSupport {
 	if support := diffusersSupportFromClassName(className); support.Supported {
 		return support
+	}
+	if model.IsASRArchitecture(architecture) {
+		return asrSupport(architecture)
 	}
 	return llamaSupport(format, architecture)
 }
@@ -102,6 +111,28 @@ func diffusersSupportFromPipelineTag(pipelineTag string) api.LocalInferenceSuppo
 		}
 	default:
 		return api.LocalInferenceSupport{Mode: "none"}
+	}
+}
+
+func asrSupportFromPipelineTag(pipelineTag string) api.LocalInferenceSupport {
+	switch strings.ToLower(strings.TrimSpace(pipelineTag)) {
+	case "automatic-speech-recognition":
+		return api.LocalInferenceSupport{
+			Supported: true,
+			Runtime:   "python-asr",
+			Mode:      "asr",
+		}
+	default:
+		return api.LocalInferenceSupport{Mode: "none"}
+	}
+}
+
+func asrSupport(architecture string) api.LocalInferenceSupport {
+	return api.LocalInferenceSupport{
+		Supported:    true,
+		Runtime:      "python-asr",
+		Mode:         "asr",
+		Architecture: strings.TrimSpace(architecture),
 	}
 }
 

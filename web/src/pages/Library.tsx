@@ -132,8 +132,13 @@ function isEmbeddingModel(model: Pick<ModelInfo, "pipeline_tag">): boolean {
 	return tag === "feature-extraction" || tag === "sentence-similarity" || tag === "text-embedding" || tag === "embedding";
 }
 
+function isASRModel(model: Pick<ModelInfo, "pipeline_tag">): boolean {
+	const tag = model.pipeline_tag || "";
+	return tag === "automatic-speech-recognition";
+}
+
 function buildLoadOptionsForModel(model: ModelInfo, params: RunModelParams): LoadModelOptions {
-	if (isImageGenerationModel(model)) {
+	if (isImageGenerationModel(model) || isASRModel(model)) {
 		return {
 			keep_alive: optionalText(params.keepAlive),
 		};
@@ -152,6 +157,7 @@ function buildLoadOptionsForModel(model: ModelInfo, params: RunModelParams): Loa
 function loadingLabelForModel(model: ModelInfo): string {
 	if (loadProgress.value) return loadProgress.value;
 	if (isImageGenerationModel(model)) return t("lib.loadingImageRuntime");
+	if (isASRModel(model)) return t("lib.loadingASRRuntime");
 	if (model.format !== "gguf") return t("lib.converting");
 	return t("lib.loadingModel");
 }
@@ -890,6 +896,8 @@ function RunParamsDialog({
 }) {
   const imageGenerationModel = isImageGenerationModel(model);
   const embeddingModel = isEmbeddingModel(model);
+  const asrModel = isASRModel(model);
+  const runtimeManagedModel = imageGenerationModel || asrModel;
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
@@ -905,6 +913,8 @@ function RunParamsDialog({
           <p class="text-sm text-gray-500 mt-1">
             {imageGenerationModel
               ? t("lib.runParamsDescImage", model.name)
+              : asrModel
+                ? t("lib.runParamsDescASR", model.name)
               : embeddingModel
                 ? t("lib.runParamsDescEmbedding", model.name)
                 : t("lib.runParamsDesc", model.name)}
@@ -912,9 +922,9 @@ function RunParamsDialog({
         </div>
 
         <div class="px-6 py-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-          {imageGenerationModel ? (
+          {runtimeManagedModel ? (
             <div class="md:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
-              {t("lib.runParamImageRuntimeHint")}
+              {imageGenerationModel ? t("lib.runParamImageRuntimeHint") : t("lib.runParamASRRuntimeHint")}
             </div>
           ) : (
             <>

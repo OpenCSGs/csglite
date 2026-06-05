@@ -122,7 +122,7 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	models := make([]api.RunningModel, 0, len(s.engines)+len(s.loading))
+	models := make([]api.RunningModel, 0, len(s.engines)+len(s.loading)+len(s.imageEngines)+len(s.imageLoading)+len(s.asrEngines)+len(s.asrLoading))
 	for id, me := range s.engines {
 		modelID := engineModelIDFromKey(id)
 		lm, err := s.manager.Get(modelID)
@@ -185,6 +185,40 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 			Status: "loading",
 		})
 	}
+	for id, me := range s.asrEngines {
+		lm, err := s.manager.Get(id)
+		if err != nil {
+			continue
+		}
+		expiresAt := time.Time{}
+		if me.keepAlive >= 0 {
+			expiresAt = me.lastUsed.Add(me.keepAlive)
+		}
+		models = append(models, api.RunningModel{
+			Name:      s.localInferenceModelID(lm.FullName()),
+			Model:     s.localInferenceModelID(lm.FullName()),
+			Size:      lm.Size,
+			Format:    string(lm.Format),
+			Status:    "running",
+			ExpiresAt: expiresAt,
+		})
+	}
+	for id := range s.asrLoading {
+		if _, ok := s.asrEngines[id]; ok {
+			continue
+		}
+		lm, err := s.manager.Get(id)
+		if err != nil {
+			continue
+		}
+		models = append(models, api.RunningModel{
+			Name:   s.localInferenceModelID(lm.FullName()),
+			Model:  s.localInferenceModelID(lm.FullName()),
+			Size:   lm.Size,
+			Format: string(lm.Format),
+			Status: "loading",
+		})
+	}
 
 	writeJSON(w, http.StatusOK, api.PsResponse{Models: models})
 }
@@ -210,6 +244,11 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	if me, ok := s.imageEngines[modelID]; ok {
 		me.engine.Close()
 		delete(s.imageEngines, modelID)
+		stopped = true
+	}
+	if me, ok := s.asrEngines[modelID]; ok {
+		me.engine.Close()
+		delete(s.asrEngines, modelID)
 		stopped = true
 	}
 	s.mu.Unlock()
@@ -355,6 +394,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	embeddingModel := s.modelUsesEmbeddingEngine(req.Model)
 	imageGenerationModel := s.modelUsesImageGenerationEngine(req.Model)
+	asrModel := s.modelUsesASREngine(req.Model)
 
 	stream := req.Stream != nil && *req.Stream
 
@@ -363,6 +403,8 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		var err error
 		if imageGenerationModel {
 			_, err = s.getOrLoadImageEngine(context.Background(), req.Model)
+		} else if asrModel {
+			_, err = s.getOrLoadASREngine(context.Background(), req.Model)
 		} else if embeddingModel {
 			_, err = s.getOrLoadEmbeddingEngineWithOpts(req.Model, requestedNumCtx, requestedNGPULayers, requestedDType)
 		} else {
@@ -383,6 +425,8 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		}
 		if imageGenerationModel {
 			s.touchImageEngine(req.Model)
+		} else if asrModel {
+			s.touchASREngine(req.Model)
 		} else if embeddingModel {
 			s.touchEngineKey(engineCacheKey(req.Model, engineModeEmbed))
 		} else {
@@ -391,6 +435,8 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		if keepAliveSet {
 			if imageGenerationModel {
 				s.setImageEngineKeepAlive(req.Model, requestedKeepAlive)
+			} else if asrModel {
+				s.setASREngineKeepAlive(req.Model, requestedKeepAlive)
 			} else {
 				s.setEngineKeepAlive(req.Model, requestedKeepAlive)
 			}
@@ -442,6 +488,25 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		_, err = s.getOrLoadImageEngineWithProgress(context.Background(), req.Model, imageProgress, false)
+	} else if asrModel {
+		asrProgress := func(step string, current, total int) {
+			safeSSE(api.LoadResponse{
+				Status:  "installing asr runtime",
+				Step:    step,
+				Current: current,
+				Total:   total,
+			})
+			if time.Since(lastLoadProgressLog) >= 2*time.Second || current == total {
+				log.Printf("MODEL %s: ASR runtime progress step=%q current=%d total=%d", req.Model, step, current, total)
+				lastLoadProgressLog = time.Now()
+			}
+		}
+		runtimeManager, runtimeErr := imagegen.NewRuntimeManager()
+		if runtimeErr != nil {
+			err = runtimeErr
+		} else if err = ensureASRRuntimeReady(context.Background(), runtimeManager, asrProgress, false); err == nil {
+			_, err = s.getOrLoadASREngine(context.Background(), req.Model)
+		}
 	} else if embeddingModel {
 		_, err = s.getOrLoadEngineFullMode(req.Model, progress, requestedNumCtx, 0, requestedNGPULayers, "", "", requestedDType, engineModeEmbed)
 	} else {
@@ -458,6 +523,8 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	if imageGenerationModel {
 		s.touchImageEngine(req.Model)
+	} else if asrModel {
+		s.touchASREngine(req.Model)
 	} else if embeddingModel {
 		s.touchEngineKey(engineCacheKey(req.Model, engineModeEmbed))
 	} else {
@@ -466,6 +533,8 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	if keepAliveSet {
 		if imageGenerationModel {
 			s.setImageEngineKeepAlive(req.Model, requestedKeepAlive)
+		} else if asrModel {
+			s.setASREngineKeepAlive(req.Model, requestedKeepAlive)
 		} else {
 			s.setEngineKeepAlive(req.Model, requestedKeepAlive)
 		}

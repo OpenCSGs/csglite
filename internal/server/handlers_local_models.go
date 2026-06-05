@@ -148,12 +148,21 @@ func (s *Server) modelUsesImageGenerationEngine(modelID string) bool {
 	return isImageGenerationPipelineTag(pipelineTag)
 }
 
+func (s *Server) modelUsesASREngine(modelID string) bool {
+	lm, err := s.manager.ResolveLocalModel(modelID)
+	if err != nil || lm == nil {
+		return false
+	}
+	pipelineTag := s.resolvedLocalPipelineTag(lm.FullName(), strings.TrimSpace(lm.PipelineTag))
+	return isASRPipelineTag(pipelineTag)
+}
+
 func (s *Server) resolvedLocalPipelineTag(modelID, manifestPipelineTag string) string {
 	detected := ""
 	if dir, err := s.manager.ModelPath(modelID); err == nil {
 		detected = strings.TrimSpace(model.DetectPipelineTag(dir))
 	}
-	if isImageGenerationPipelineTag(detected) || isEmbeddingPipelineTag(detected) {
+	if isImageGenerationPipelineTag(detected) || isEmbeddingPipelineTag(detected) || isASRPipelineTag(detected) {
 		return detected
 	}
 	if manifestPipelineTag != "" {
@@ -174,6 +183,15 @@ func isEmbeddingPipelineTag(pipelineTag string) bool {
 func isImageGenerationPipelineTag(pipelineTag string) bool {
 	switch strings.ToLower(strings.TrimSpace(pipelineTag)) {
 	case "text-to-image":
+		return true
+	default:
+		return false
+	}
+}
+
+func isASRPipelineTag(pipelineTag string) bool {
+	switch strings.ToLower(strings.TrimSpace(pipelineTag)) {
+	case "automatic-speech-recognition":
 		return true
 	default:
 		return false

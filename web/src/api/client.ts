@@ -140,8 +140,8 @@ export interface MarketplaceModelQuantization {
 
 export interface LocalInferenceSupport {
   supported: boolean;
-  runtime?: "llama" | "diffusers";
-  mode: "none" | "direct" | "convert" | "image";
+  runtime?: "llama" | "diffusers" | "python-asr";
+  mode: "none" | "direct" | "convert" | "image" | "asr";
   architecture?: string;
   runtime_architecture?: string;
 }
@@ -215,6 +215,36 @@ export interface ImageRuntimeStatus {
   missing_packages?: string[];
   install_command?: string[];
   error?: string;
+}
+
+export type ASRRuntimeStatus = ImageRuntimeStatus;
+
+export interface AudioTranscriptionRequest {
+  model: string;
+  file: File;
+  language?: string;
+  prompt?: string;
+  response_format?: "json" | "verbose_json" | "text";
+  temperature?: number;
+  hotwords?: string[];
+  itn?: boolean;
+}
+
+export interface AudioTranscriptionSegment {
+  id?: number;
+  start?: number;
+  end?: number;
+  text: string;
+}
+
+export interface AudioTranscriptionResponse {
+  text: string;
+  task?: string;
+  language?: string;
+  duration?: number;
+  segments?: AudioTranscriptionSegment[];
+  backend?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ImageGenerationRequest {
@@ -720,6 +750,52 @@ export async function installImageRuntime(options?: { upgrade_packages?: boolean
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ upgrade_packages: options?.upgrade_packages || undefined }),
   });
+}
+
+export async function getASRRuntimeStatus(): Promise<ASRRuntimeStatus> {
+  return fetchJSON<ASRRuntimeStatus>("/api/asr-runtime");
+}
+
+export async function installASRRuntime(options?: { upgrade_packages?: boolean }): Promise<ASRRuntimeStatus> {
+  return fetchJSON<ASRRuntimeStatus>("/api/asr-runtime/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ upgrade_packages: options?.upgrade_packages || undefined }),
+  });
+}
+
+export async function transcribeAudio(req: AudioTranscriptionRequest, signal?: AbortSignal): Promise<AudioTranscriptionResponse> {
+  const form = new FormData();
+  form.set("model", req.model);
+  form.set("file", req.file, req.file.name || "audio");
+  form.set("response_format", req.response_format || "json");
+  if (req.language) form.set("language", req.language);
+  if (req.prompt) form.set("prompt", req.prompt);
+  if (typeof req.temperature === "number") form.set("temperature", String(req.temperature));
+  if (req.hotwords && req.hotwords.length > 0) form.set("hotwords", JSON.stringify(req.hotwords));
+  if (typeof req.itn === "boolean") form.set("itn", String(req.itn));
+
+  const resp = await fetch("/v1/audio/transcriptions", withLocaleHeader({
+    method: "POST",
+    body: form,
+    signal,
+  }));
+  const contentType = resp.headers.get("content-type") || "";
+  const body = await resp.text();
+  if (!resp.ok) {
+    throw new Error(extractErrorMessage(body, contentType, resp.statusText || "transcription failed"));
+  }
+  if (req.response_format === "text" || contentType.startsWith("text/plain")) {
+    return { text: body };
+  }
+  if (!contentType.includes("application/json")) {
+    throw unexpectedJSONError("/v1/audio/transcriptions", contentType, body);
+  }
+  try {
+    return JSON.parse(body) as AudioTranscriptionResponse;
+  } catch {
+    throw unexpectedJSONError("/v1/audio/transcriptions", contentType, body);
+  }
 }
 
 export async function generateImage(req: ImageGenerationRequest): Promise<ImageGenerationResponse> {

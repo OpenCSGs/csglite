@@ -198,6 +198,44 @@ func TestDetectPipelineTagRegisteredVisionArchitecture(t *testing.T) {
 	}
 }
 
+func TestDetectPipelineTagASRSupportedArchitectures(t *testing.T) {
+	for _, arch := range []string{
+		"Qwen3ASRForConditionalGeneration",
+		"GlmAsrForConditionalGeneration",
+		"WhisperForConditionalGeneration",
+	} {
+		t.Run(arch, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"supported_archs":["`+arch+`"]}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := DetectPipelineTag(dir); got != "automatic-speech-recognition" {
+				t.Fatalf("DetectPipelineTag() = %q, want automatic-speech-recognition", got)
+			}
+		})
+	}
+}
+
+func TestIsASRModelFamily(t *testing.T) {
+	for _, name := range []string{
+		"iic/SenseVoiceSmall",
+		"FunAudioLLM/Fun-ASR-Nano-2512",
+		"THUDM/GLM-ASR-Nano-2512",
+		"openai/Whisper-large-v3",
+		"openai/Whisper-large-v3-turbo",
+		"Qwen/Qwen3-ASR-0.6B",
+		"Qwen/Qwen3-ASR-1.7B",
+		"damo/Paraformer-zh",
+		"damo/Paraformer-zh-streaming",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !IsASRModelFamily(name) {
+				t.Fatalf("IsASRModelFamily(%q) = false, want true", name)
+			}
+		})
+	}
+}
+
 func TestDetectPipelineTagDiffusersModelIndexDefaultsToTextToImage(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"QwenImagePipeline"}`), 0o644); err != nil {

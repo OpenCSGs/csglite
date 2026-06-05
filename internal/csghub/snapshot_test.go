@@ -1,6 +1,8 @@
 package csghub
 
 import (
+	"context"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -86,6 +88,58 @@ func TestFilterGGUFMultiQuantDownload_unknownQuantReturnsError(t *testing.T) {
 	_, err := filterGGUFMultiQuantDownload(files, "IQ4_XS")
 	if err == nil {
 		t.Fatal("expected error for unknown quantization")
+	}
+}
+
+func TestFilterTransformersWeightDownloadPrefersSafeTensors(t *testing.T) {
+	files := []RepoFile{
+		{Type: "file", Path: "config.json", Name: "config.json"},
+		{Type: "file", Path: "model.safetensors", Name: "model.safetensors", LFS: true},
+		{Type: "file", Path: "model.fp32-00001-of-00002.safetensors", Name: "model.fp32-00001-of-00002.safetensors", LFS: true},
+		{Type: "file", Path: "pytorch_model.bin", Name: "pytorch_model.bin", LFS: true},
+		{Type: "file", Path: "flax_model.msgpack", Name: "flax_model.msgpack", LFS: true},
+	}
+	got := filterTransformersWeightDownload(files)
+	var names []string
+	for _, f := range got {
+		names = append(names, f.Name)
+	}
+	want := []string{"config.json", "model.safetensors"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("got %v, want %v", names, want)
+	}
+}
+
+func TestFilterTransformersWeightDownloadSkipsRedundantPyTorchWeights(t *testing.T) {
+	files := []RepoFile{
+		{Type: "file", Path: "config.json", Name: "config.json"},
+		{Type: "file", Path: "pytorch_model.bin", Name: "pytorch_model.bin", LFS: true},
+		{Type: "file", Path: "pytorch_model.fp32-00001-of-00002.bin", Name: "pytorch_model.fp32-00001-of-00002.bin", LFS: true},
+		{Type: "file", Path: "flax_model.msgpack", Name: "flax_model.msgpack", LFS: true},
+	}
+	got := filterTransformersWeightDownload(files)
+	var names []string
+	for _, f := range got {
+		names = append(names, f.Name)
+	}
+	want := []string{"config.json", "pytorch_model.bin"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("got %v, want %v", names, want)
+	}
+}
+
+func TestDownloadLFSFileRemovesOversizedPartial(t *testing.T) {
+	dest := t.TempDir() + "/model.safetensors"
+	if err := os.WriteFile(dest, []byte("too-large"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient("http://127.0.0.1:1", "")
+	err := client.downloadLFSFile(context.Background(), "models", "ns", "name", "model.safetensors", dest, 3, "", nil)
+	if err == nil {
+		t.Fatal("expected download error after oversized file is removed")
+	}
+	if info, statErr := os.Stat(dest); statErr == nil && info.Size() > 3 {
+		t.Fatalf("oversized partial file was not removed, size=%d", info.Size())
 	}
 }
 
