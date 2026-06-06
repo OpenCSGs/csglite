@@ -167,6 +167,24 @@ csghub-lite login
 
 > **Note:** The install script automatically installs [llama-server](https://github.com/ggml-org/llama.cpp) (required for inference). If you installed from source, install it separately: `brew install llama.cpp` (macOS) or download from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases).
 
+## Local Inference Capabilities
+
+csghub-lite can run several model families locally today, with more runtime
+types planned. The model detail page shows whether a downloaded model is
+currently supported for local inference.
+
+| Capability | Status | Runtime | Typical models |
+| --- | --- | --- | --- |
+| Text generation / chat | Supported | llama.cpp | Qwen/Qwen3, GLM, Llama, Mistral, DeepSeek distilled GGUF models |
+| Embeddings | Supported | llama.cpp | BGE, GTE, E5, Sentence Transformers-compatible embedding models |
+| Vision-language chat | Supported | llama.cpp multimodal | Qwen2.5-VL, Gemma 3 / 4 vision, Idefics-style multimodal models |
+| Text-to-image | Supported | Diffusers runtime | Qwen-Image, FLUX, Stable Diffusion, PixArt, Sana, CogView, Z-Image |
+| Automatic speech recognition | Supported | Python ASR runtime | FunASR, Whisper, Wav2Vec2-family ASR models |
+| Image-to-video | Coming soon | - | Stable Video Diffusion, SV3D |
+| Text-to-video | Coming soon | - | Video generation Diffusers models |
+| Text-to-speech | Coming soon | - | Speech synthesis models |
+| Image-to-image | Coming soon | - | Inpaint, img2img, editing pipelines |
+
 ## Integrations
 
 ### Third-Party Model Providers
