@@ -60,6 +60,7 @@ const searchSkippedReason = signal("");
 const chatError = signal("");
 const pendingImages = signal<PendingImage[]>([]);
 const pendingAudio = signal<PendingAudio | null>(null);
+const audioPreviews = signal<Record<string, LocalAudioPreview>>({});
 const isRecordingAudio = signal(false);
 const contextStorageKey = "csghub.chat.num_ctx";
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
@@ -571,6 +572,30 @@ interface PendingAudio {
   recorded?: boolean;
 }
 
+interface LocalAudioPreview {
+  name: string;
+  size: number;
+  objectUrl: string;
+  recorded?: boolean;
+}
+
+function messagePreviewKey(conversationID: string, messageIndex: number): string {
+  return `${conversationID}:${messageIndex}`;
+}
+
+function setAudioPreview(key: string, preview: LocalAudioPreview) {
+  const current = audioPreviews.value[key];
+  if (current?.objectUrl) URL.revokeObjectURL(current.objectUrl);
+  audioPreviews.value = { ...audioPreviews.value, [key]: preview };
+}
+
+function clearAudioPreviews() {
+  Object.values(audioPreviews.value).forEach((preview) => {
+    if (preview.objectUrl) URL.revokeObjectURL(preview.objectUrl);
+  });
+  audioPreviews.value = {};
+}
+
 function preferredAudioMimeType(): string {
   if (typeof MediaRecorder === "undefined") return "";
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
@@ -706,6 +731,10 @@ async function migrateLocalStorage() {
 }
 
 const SCROLL_NEAR_BOTTOM_PX = 96;
+const recordingMinDurationMs = 800;
+const recordingSilenceStopMs = 1500;
+const recordingMaxDurationMs = 30000;
+const recordingVoiceThreshold = 0.025;
 
 function isNearScrollBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_NEAR_BOTTOM_PX;
@@ -718,6 +747,9 @@ export function Chat() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<BlobPart[]>([]);
   const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingStopTimerRef = useRef<number | null>(null);
+  const recordingVadFrameRef = useRef<number | null>(null);
+  const recordingAudioContextRef = useRef<AudioContext | null>(null);
   void locale.value;
 
   const refreshCloudAuth = async (): Promise<CloudAuthStatus> => {
@@ -847,12 +879,23 @@ export function Chat() {
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener(providersChangedEvent, handleProvidersChanged);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (recordingStopTimerRef.current !== null) {
+        window.clearTimeout(recordingStopTimerRef.current);
+        recordingStopTimerRef.current = null;
+      }
+      if (recordingVadFrameRef.current !== null) {
+        window.cancelAnimationFrame(recordingVadFrameRef.current);
+        recordingVadFrameRef.current = null;
+      }
+      recordingAudioContextRef.current?.close().catch(() => {});
+      recordingAudioContextRef.current = null;
       if (mediaRecorderRef.current?.state === "recording") {
         mediaRecorderRef.current.stop();
       }
       recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
       recordingStreamRef.current = null;
       setPendingAudio(null);
+      clearAudioPreviews();
     };
   }, []);
 
@@ -935,6 +978,61 @@ export function Chat() {
     recordingStreamRef.current = null;
   };
 
+  const clearRecordingStopTimer = () => {
+    if (recordingStopTimerRef.current !== null) {
+      window.clearTimeout(recordingStopTimerRef.current);
+      recordingStopTimerRef.current = null;
+    }
+    if (recordingVadFrameRef.current !== null) {
+      window.cancelAnimationFrame(recordingVadFrameRef.current);
+      recordingVadFrameRef.current = null;
+    }
+    recordingAudioContextRef.current?.close().catch(() => {});
+    recordingAudioContextRef.current = null;
+  };
+
+  const startSilenceAutoStop = (stream: MediaStream, recorder: MediaRecorder) => {
+    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextCtor) return;
+
+    const audioContext = new AudioContextCtor() as AudioContext;
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    recordingAudioContextRef.current = audioContext;
+
+    const data = new Uint8Array(analyser.fftSize);
+    const startedAt = performance.now();
+    let lastVoiceAt = startedAt;
+
+    const tick = () => {
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i += 1) {
+        const centered = (data[i] - 128) / 128;
+        sum += centered * centered;
+      }
+      const rms = Math.sqrt(sum / data.length);
+      const now = performance.now();
+      if (rms >= recordingVoiceThreshold) {
+        lastVoiceAt = now;
+      }
+      if (
+        recorder.state === "recording" &&
+        now - startedAt >= recordingMinDurationMs &&
+        now - lastVoiceAt >= recordingSilenceStopMs
+      ) {
+        recorder.stop();
+        return;
+      }
+      if (recorder.state === "recording") {
+        recordingVadFrameRef.current = window.requestAnimationFrame(tick);
+      }
+    };
+    recordingVadFrameRef.current = window.requestAnimationFrame(tick);
+  };
+
   const startAudioRecording = async () => {
     if (isRecordingAudio.value || isGenerating.value) return;
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
@@ -952,6 +1050,7 @@ export function Chat() {
         if (event.data.size > 0) recordingChunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
+        clearRecordingStopTimer();
         const type = recorder.mimeType || mimeType || "audio/webm";
         const blob = new Blob(recordingChunksRef.current, { type });
         recordingChunksRef.current = [];
@@ -970,14 +1069,22 @@ export function Chat() {
         queueAudioTranscription();
       };
       recorder.onerror = () => {
+        clearRecordingStopTimer();
         stopRecordingStream();
         isRecordingAudio.value = false;
         chatError.value = t("chat.recordingFailed");
       };
       recorder.start();
       isRecordingAudio.value = true;
+      startSilenceAutoStop(stream, recorder);
+      recordingStopTimerRef.current = window.setTimeout(() => {
+        if (recorder.state === "recording") {
+          recorder.stop();
+        }
+      }, recordingMaxDurationMs);
       chatError.value = "";
     } catch (e: any) {
+      clearRecordingStopTimer();
       stopRecordingStream();
       isRecordingAudio.value = false;
       chatError.value = e?.message || t("chat.recordingFailed");
@@ -985,6 +1092,7 @@ export function Chat() {
   };
 
   const stopAudioRecording = () => {
+    clearRecordingStopTimer();
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.stop();
     }
@@ -1056,7 +1164,16 @@ export function Chat() {
     }
     const apiMessages = buildChatContextMessages(conv.messages, currentUserMessage);
 
+    const userMessageIndex = conv.messages.length;
     conv.messages.push({ role: "user", content: userContent });
+    if (asrMode && audio) {
+      setAudioPreview(messagePreviewKey(conv.id, userMessageIndex), {
+        name: audio.name,
+        size: audio.size,
+        objectUrl: URL.createObjectURL(audio.file),
+        recorded: audio.recorded,
+      });
+    }
     if (conv.messages.length === 1) {
       conv.title = text.slice(0, 30) || (asrMode && audio ? audio.name.slice(0, 30) : "New Chat");
     }
@@ -1346,6 +1463,7 @@ export function Chat() {
   const messages = conv?.messages || [];
   const hasConversationSearch = conversationSearchQuery.value.trim().length > 0;
   const modelMode = selectedModelMode.value;
+  const imageMode = modelMode === "image";
   const asrMode = modelMode === "asr";
   const visionMode = modelMode === "vision";
   const canSend = asrMode
@@ -1563,7 +1681,11 @@ export function Chat() {
               </div>
             )}
             {messages.map((m, i) => (
-              <MessageBubble key={i} message={m} />
+              <MessageBubble
+                key={i}
+                message={m}
+                audioPreview={audioPreviews.value[messagePreviewKey(activeSessionId.value, i)]}
+              />
             ))}
             {isGenerating.value && (
               <AssistantProgress
@@ -1654,14 +1776,20 @@ export function Chat() {
                         type="button"
                         onClick={isRecordingAudio.value ? stopAudioRecording : startAudioRecording}
                         disabled={isGenerating.value}
-                        class={`flex h-9 w-9 items-center justify-center rounded-xl border transition-colors ${
+                        class={`relative flex h-9 w-9 items-center justify-center rounded-xl border transition-colors ${
                           isRecordingAudio.value
                             ? "border-red-200 bg-red-50 text-red-600"
                             : "border-gray-200 text-gray-500 hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-600"
                         } disabled:cursor-not-allowed disabled:opacity-50`}
                         title={isRecordingAudio.value ? t("chat.stopRecording") : t("chat.startRecording")}
                       >
-                        <svg class="h-5 w-5" fill={isRecordingAudio.value ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        {isRecordingAudio.value && (
+                          <>
+                            <span class="pointer-events-none absolute -inset-1 rounded-2xl border border-red-300/70 animate-ping" />
+                            <span class="pointer-events-none absolute -inset-2 rounded-3xl border border-red-200/70 animate-ping" style={{ animationDelay: "300ms" }} />
+                          </>
+                        )}
+                        <svg class="relative z-10 h-5 w-5" fill={isRecordingAudio.value ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                           <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6.75 6.75 0 006.75-6.75V7.5a6.75 6.75 0 10-13.5 0V12A6.75 6.75 0 0012 18.75z" />
                           <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75V22m-4 0h8" />
                         </svg>
@@ -1685,24 +1813,25 @@ export function Chat() {
                       </svg>
                     </button>
                   )}
-                  <button
-                    type="button"
-                    disabled={!webSearchAvailable.value || asrMode}
-                    onClick={() => {
-                      const next = !webSearchEnabled.value;
-                      webSearchEnabled.value = next;
-                      saveWebSearchEnabled(next);
-                    }}
-                    class={`h-9 rounded-xl border px-3 text-xs font-medium transition-colors ${
-                      webSearchAvailable.value && webSearchEnabled.value
-                        ? "border-blue-200 bg-blue-50 text-blue-700"
-                        : "border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:bg-gray-50"
-                    } disabled:cursor-not-allowed disabled:opacity-50`}
-                    title={asrMode ? t("chat.webSearchUnavailableForASR") : webSearchAvailable.value ? t("chat.webSearchToggle") : t("chat.webSearchNotConfigured")}
-                    aria-pressed={webSearchAvailable.value && webSearchEnabled.value}
-                  >
-                    {t("chat.webSearch")}
-                  </button>
+                  {webSearchAvailable.value && !asrMode && !imageMode && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !webSearchEnabled.value;
+                        webSearchEnabled.value = next;
+                        saveWebSearchEnabled(next);
+                      }}
+                      class={`h-9 rounded-xl border px-3 text-xs font-medium transition-colors ${
+                        webSearchEnabled.value
+                          ? "border-blue-200 bg-blue-50 text-blue-700"
+                          : "border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:bg-gray-50"
+                      }`}
+                      title={t("chat.webSearchToggle")}
+                      aria-pressed={webSearchEnabled.value}
+                    >
+                      {t("chat.webSearch")}
+                    </button>
+                  )}
                   <select
                     class="max-w-[260px] truncate rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     value={selectedModelKey.value}
@@ -1923,7 +2052,7 @@ export function Chat() {
   );
 }
 
-function MessageBubble({ message, streaming }: { message: ChatMessage; streaming?: boolean }) {
+function MessageBubble({ message, streaming, audioPreview }: { message: ChatMessage; streaming?: boolean; audioPreview?: LocalAudioPreview }) {
   const isUser = message.role === "user";
   const content = message.content;
   const plainText = typeof content === "string"
@@ -2009,6 +2138,14 @@ function MessageBubble({ message, streaming }: { message: ChatMessage; streaming
         } ${streaming ? "animate-pulse" : ""}`}
       >
         {renderContent()}
+        {isUser && audioPreview && (
+          <div class="mt-3 rounded-xl border border-gray-200 bg-white/80 px-3 py-2">
+            <div class="mb-1 truncate text-xs text-gray-500">
+              {audioPreview.recorded ? t("chat.recordedAudio") : t("chat.audioFile")} · {formatBytes(audioPreview.size)}
+            </div>
+            <audio src={audioPreview.objectUrl} controls class="h-8 w-full max-w-[260px]" />
+          </div>
+        )}
         {!isUser && !streaming && (
           <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-300">
             <button
