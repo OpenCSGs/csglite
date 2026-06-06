@@ -158,7 +158,8 @@ func (s *Server) ensureOpenClawProfile(ctx context.Context, binary, requestedMod
 		}
 		cmd := exec.CommandContext(configureCtx, binary, args...)
 		cmd.Env = envWithOverrides(map[string]string{
-			"NPM_CONFIG_REGISTRY": openClawNPMRegistry(),
+			"NPM_CONFIG_REGISTRY":      openClawNPMRegistry(),
+			"OPENCLAW_DISABLE_BONJOUR": "1",
 		})
 		output, err := cmd.CombinedOutput()
 		if configureCtx.Err() == context.DeadlineExceeded {
@@ -235,20 +236,7 @@ func (s *Server) localBaseURL() string {
 }
 
 func openClawDashboardURL(ctx context.Context, binary string) (string, error) {
-	cmd := exec.CommandContext(ctx, binary, "--profile", openClawWebProfile, "dashboard", "--no-open")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(output))
-		if msg == "" {
-			msg = err.Error()
-		}
-		return "", fmt.Errorf("fetching OpenClaw dashboard URL: %s", msg)
-	}
-	url, err := extractDashboardURL(output)
-	if err != nil {
-		return "", err
-	}
-	return openClawURLWithGatewayToken(url)
+	return openClawDashboardURLFromConfig()
 }
 
 func extractDashboardURL(output []byte) (string, error) {
@@ -266,6 +254,58 @@ func extractDashboardURL(output []byte) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("OpenClaw did not return a usable dashboard URL")
+}
+
+func openClawDashboardURLFromConfig() (string, error) {
+	path, err := openClawProfileConfigPath()
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading OpenClaw profile config: %w", err)
+	}
+
+	var cfg struct {
+		Gateway struct {
+			Port int `json:"port"`
+			TLS  struct {
+				Enabled bool `json:"enabled"`
+			} `json:"tls"`
+		} `json:"gateway"`
+	}
+	if len(bytes.TrimSpace(data)) > 0 {
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return "", fmt.Errorf("parsing OpenClaw profile config: %w", err)
+		}
+	}
+
+	port, err := openClawGatewayPort(cfg.Gateway.Port)
+	if err != nil {
+		return "", err
+	}
+	scheme := "http"
+	if cfg.Gateway.TLS.Enabled {
+		scheme = "https"
+	}
+	return openClawURLWithGatewayToken(fmt.Sprintf("%s://%s/", scheme, net.JoinHostPort("127.0.0.1", strconv.Itoa(port))))
+}
+
+func openClawGatewayPort(configPort int) (int, error) {
+	if raw := strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_PORT")); raw != "" {
+		port, err := strconv.Atoi(raw)
+		if err != nil || port <= 0 || port > 65535 {
+			return 0, fmt.Errorf("invalid OPENCLAW_GATEWAY_PORT %q", raw)
+		}
+		return port, nil
+	}
+	if configPort > 0 {
+		if configPort > 65535 {
+			return 0, fmt.Errorf("invalid OpenClaw gateway port %d", configPort)
+		}
+		return configPort, nil
+	}
+	return 18789, nil
 }
 
 func openClawDirectChatURL(rawURL, session string) (string, error) {

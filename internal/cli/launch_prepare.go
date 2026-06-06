@@ -247,11 +247,11 @@ func prepareClaudeLaunch(target launchTarget, serverURL, modelID string, userArg
 	args = prependArgsIfMissing(args, []string{"--model", modelID}, "--model", "-m")
 	args = prependArgsIfMissing(args, []string{"--settings", claudeLaunchSettingsJSON(serverURL)}, "--settings")
 	env := envWithOverridesAndUnset(map[string]string{
-		"ANTHROPIC_BASE_URL":              serverURL,
-		"ANTHROPIC_API_KEY":               "csghub-lite",
-		"CLAUDE_API_BASE_URL":             serverURL,
-		"CLAUDE_API_KEY":                  "csghub-lite",
-		"CLAUDE_CODE_ATTRIBUTION_HEADER":  "0",
+		"ANTHROPIC_BASE_URL":             serverURL,
+		"ANTHROPIC_API_KEY":              "csghub-lite",
+		"CLAUDE_API_BASE_URL":            serverURL,
+		"CLAUDE_API_KEY":                 "csghub-lite",
+		"CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
 	}, "ANTHROPIC_AUTH_TOKEN")
 	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
 }
@@ -662,7 +662,8 @@ func ensureOpenClawProfile(binary, serverURL, modelID string) error {
 
 		cmd := exec.CommandContext(ctx, binary, args...)
 		cmd.Env = envWithOverrides(map[string]string{
-			"NPM_CONFIG_REGISTRY": openClawNPMRegistry(),
+			"NPM_CONFIG_REGISTRY":      openClawNPMRegistry(),
+			"OPENCLAW_DISABLE_BONJOUR": "1",
 		})
 		output, err := cmd.CombinedOutput()
 		if ctx.Err() == context.DeadlineExceeded {

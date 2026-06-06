@@ -136,6 +136,98 @@ func TestOpenClawURLWithGatewayTokenKeepsExistingToken(t *testing.T) {
 	}
 }
 
+func TestOpenClawDashboardURLFromConfigUsesDefaultPort(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCLAW_GATEWAY_PORT", "")
+	cfgDir := filepath.Join(home, ".openclaw-"+openClawWebProfile)
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	configJSON := `{
+  "gateway": {
+    "auth": {
+      "mode": "token",
+      "token": "config-token"
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(cfgDir, "openclaw.json"), []byte(configJSON), 0o644); err != nil {
+		t.Fatalf("write profile: %v", err)
+	}
+
+	got, err := openClawDashboardURLFromConfig()
+	if err != nil {
+		t.Fatalf("openClawDashboardURLFromConfig returned error: %v", err)
+	}
+	if want := "http://127.0.0.1:18789/#token=config-token"; got != want {
+		t.Fatalf("openClawDashboardURLFromConfig = %q, want %q", got, want)
+	}
+}
+
+func TestOpenClawDashboardURLFromConfigUsesConfiguredPortAndTLS(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCLAW_GATEWAY_PORT", "")
+	cfgDir := filepath.Join(home, ".openclaw-"+openClawWebProfile)
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	configJSON := `{
+  "gateway": {
+    "port": 19001,
+    "tls": {
+      "enabled": true
+    },
+    "auth": {
+      "mode": "token",
+      "token": "tls-token"
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(cfgDir, "openclaw.json"), []byte(configJSON), 0o644); err != nil {
+		t.Fatalf("write profile: %v", err)
+	}
+
+	got, err := openClawDashboardURLFromConfig()
+	if err != nil {
+		t.Fatalf("openClawDashboardURLFromConfig returned error: %v", err)
+	}
+	if want := "https://127.0.0.1:19001/#token=tls-token"; got != want {
+		t.Fatalf("openClawDashboardURLFromConfig = %q, want %q", got, want)
+	}
+}
+
+func TestOpenClawDashboardURLFromConfigUsesGatewayPortEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENCLAW_GATEWAY_PORT", "19002")
+	cfgDir := filepath.Join(home, ".openclaw-"+openClawWebProfile)
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	configJSON := `{
+  "gateway": {
+    "port": 19001,
+    "auth": {
+      "mode": "token",
+      "token": "env-token"
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(cfgDir, "openclaw.json"), []byte(configJSON), 0o644); err != nil {
+		t.Fatalf("write profile: %v", err)
+	}
+
+	got, err := openClawDashboardURLFromConfig()
+	if err != nil {
+		t.Fatalf("openClawDashboardURLFromConfig returned error: %v", err)
+	}
+	if want := "http://127.0.0.1:19002/#token=env-token"; got != want {
+		t.Fatalf("openClawDashboardURLFromConfig = %q, want %q", got, want)
+	}
+}
+
 func TestOpenClawProfileMatches(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
