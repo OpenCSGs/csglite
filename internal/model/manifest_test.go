@@ -291,6 +291,17 @@ func TestDetectPipelineTagDiffusersFamilies(t *testing.T) {
 	}
 }
 
+func TestDetectPipelineTagStableVideoDiffusionImageToVideo(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"StableVideoDiffusionPipeline"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := DetectPipelineTag(dir); got != "image-to-video" {
+		t.Fatalf("DetectPipelineTag() = %q, want image-to-video", got)
+	}
+}
+
 func TestDetectPipelineTagUnknownDiffusersModelIndexDefaultsToTextToImage(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"NewFancyPipeline"}`), 0o644); err != nil {

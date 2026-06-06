@@ -110,7 +110,7 @@ export function MarketplaceModelDetailDialog({
                   {t("mp.downloaded")}
                 </span>
               )}
-              {!loading && model && (
+              {!loading && model && localInferenceMode !== "none" && (
                 <LocalInferenceBadge mode={localInferenceMode} prefix="mp" />
               )}
             </div>
@@ -149,7 +149,11 @@ export function MarketplaceModelDetailDialog({
             <div class="space-y-6">
               <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                 <SummaryTile label={t("mp.format")} value={formatTags.length > 0 ? formatTags.map(formatBadgeLabel).join(" / ") : t("lib.notAvailable")} />
-                <SummaryTile label={t(localInferenceLabelKey("mp"))} value={t(localInferenceValueKey(localInferenceMode, "mp"))} />
+                <SummaryTile
+                  label={t(localInferenceLabelKey("mp"))}
+                  value={t(localInferenceValueKey(localInferenceMode, "mp"))}
+                  tone={localInferenceMode === "none" ? "danger" : "default"}
+                />
                 <SummaryTile label={t("mp.modelParams")} value={formatModelParams(model.metadata?.model_params)} />
                 <SummaryTile label={t("mp.architecture")} value={model.metadata?.architecture || model.metadata?.class_name || t("lib.notAvailable")} />
                 <SummaryTile label={t("mp.tensorType")} value={model.metadata?.tensor_type || t("lib.notAvailable")} />
@@ -306,11 +310,12 @@ function TagSection({
   );
 }
 
-function SummaryTile({ label, value }: { label: string; value: string }) {
+function SummaryTile({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "danger" }) {
+  const danger = tone === "danger";
   return (
-    <div class="rounded-xl border border-gray-200 bg-white px-4 py-3">
-      <div class="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</div>
-      <div class="mt-1 text-sm font-semibold text-gray-900 break-words">{value}</div>
+    <div class={`rounded-xl border px-4 py-3 ${danger ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"}`}>
+      <div class={`text-xs font-medium uppercase tracking-wide ${danger ? "text-red-500" : "text-gray-400"}`}>{label}</div>
+      <div class={`mt-1 text-sm font-semibold break-words ${danger ? "text-red-700" : "text-gray-900"}`}>{value}</div>
     </div>
   );
 }

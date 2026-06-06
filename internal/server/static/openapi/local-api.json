@@ -521,6 +521,41 @@
         }
       }
     },
+    "/api/models/{model}/manifest": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Get a local model download manifest by public model ID",
+        "description": "Resolves a local model by its public inference ID, such as a short model name shown in the local model library, and returns its download manifest.",
+        "operationId": "getModelManifestByPublicID",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Local model metadata with downloadable files.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelManifestResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/api/models/{namespace}/{name}/manifest": {
       "get": {
         "tags": [

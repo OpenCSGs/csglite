@@ -85,6 +85,46 @@ func TestHandleModelManifest_BackfillsLegacyManifest(t *testing.T) {
 	}
 }
 
+func TestHandleModelManifestByPublicID(t *testing.T) {
+	s := newTestServer(t)
+	modelDir := filepath.Join(s.cfg.ModelDir, "AIWizards", "Fun-ASR-Nano-2512")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"model_type":"funasr"}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	mustSaveLocalModel(t, s.cfg.ModelDir, &model.LocalModel{
+		Namespace:    "AIWizards",
+		Name:         "Fun-ASR-Nano-2512",
+		Format:       model.FormatPyTorch,
+		Size:         int64(len(`{"model_type":"funasr"}`)),
+		Files:        []string{"config.json"},
+		DownloadedAt: time.Unix(100, 0),
+		PipelineTag:  "automatic-speech-recognition",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/models/Fun-ASR-Nano-2512/manifest", nil)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp api.ModelManifestResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Details.Model != "Fun-ASR-Nano-2512" {
+		t.Fatalf("details.model = %q, want Fun-ASR-Nano-2512", resp.Details.Model)
+	}
+	if len(resp.Files) != 1 || resp.Files[0].DownloadURL != "/api/models/AIWizards/Fun-ASR-Nano-2512/files/config.json" {
+		t.Fatalf("files = %#v, want full-id download URL", resp.Files)
+	}
+}
+
 func TestHandleModelFile_SupportsHeadAndRange(t *testing.T) {
 	s := newTestServer(t)
 	payload := []byte("0123456789")

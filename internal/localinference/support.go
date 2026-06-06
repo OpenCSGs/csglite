@@ -31,6 +31,9 @@ func FromLocalModel(lm *model.LocalModel, modelDir string) api.LocalInferenceSup
 	if support := asrSupportFromPipelineTag(pipelineTag); support.Supported {
 		return support
 	}
+	if unsupportedPipelineTag(pipelineTag) {
+		return unsupported("")
+	}
 
 	architecture := readArchitectureFromDir(modelDir)
 	if model.IsASRArchitecture(architecture) {
@@ -42,6 +45,9 @@ func FromLocalModel(lm *model.LocalModel, modelDir string) api.LocalInferenceSup
 // FromMarketplace reports whether a marketplace model is likely to support local
 // inference after download, based on format tags and hub metadata.
 func FromMarketplace(format, architecture, className string) api.LocalInferenceSupport {
+	if isUnsupportedDiffusersClass(className) {
+		return unsupported(architecture)
+	}
 	if support := diffusersSupportFromClassName(className); support.Supported {
 		return support
 	}
@@ -54,12 +60,15 @@ func FromMarketplace(format, architecture, className string) api.LocalInferenceS
 // FromMarketplaceModel reports likely support for a marketplace model when the
 // model id/name or task tag provides stronger routing hints than config metadata.
 func FromMarketplaceModel(format, architecture, className, modelName, pipelineTag string) api.LocalInferenceSupport {
-	if support := diffusersSupportFromPipelineTag(pipelineTag); support.Supported {
-		return support
+	switch normalizePipelineTag(pipelineTag) {
+	case "text-to-image", "image-to-image":
+		return diffusersSupportForImageTask(architecture, className)
+	case "automatic-speech-recognition":
+		return asrSupport(architecture)
+	case "image-to-video", "text-to-video", "video-text-to-text":
+		return unsupported(architecture)
 	}
-	if support := asrSupportFromPipelineTag(pipelineTag); support.Supported {
-		return support
-	}
+
 	if model.IsASRModelFamily(modelName) {
 		return asrSupport(architecture)
 	}
@@ -117,7 +126,7 @@ func llamaRuntimeArchitecture(architecture string) string {
 }
 
 func diffusersSupportFromPipelineTag(pipelineTag string) api.LocalInferenceSupport {
-	switch strings.ToLower(strings.TrimSpace(pipelineTag)) {
+	switch normalizePipelineTag(pipelineTag) {
 	case "text-to-image", "image-to-image":
 		return api.LocalInferenceSupport{
 			Supported: true,
@@ -129,8 +138,31 @@ func diffusersSupportFromPipelineTag(pipelineTag string) api.LocalInferenceSuppo
 	}
 }
 
+func diffusersSupportForImageTask(architecture, className string) api.LocalInferenceSupport {
+	classPipelineTag := diffusersPipelineTagFromClassName(className)
+	switch classPipelineTag {
+	case "text-to-image", "image-to-image":
+		return api.LocalInferenceSupport{
+			Supported: true,
+			Runtime:   "diffusers",
+			Mode:      "image",
+		}
+	case "":
+		if strings.TrimSpace(className) == "" {
+			return api.LocalInferenceSupport{
+				Supported: true,
+				Runtime:   "diffusers",
+				Mode:      "image",
+			}
+		}
+		return unsupported(architecture)
+	default:
+		return unsupported(architecture)
+	}
+}
+
 func asrSupportFromPipelineTag(pipelineTag string) api.LocalInferenceSupport {
-	switch strings.ToLower(strings.TrimSpace(pipelineTag)) {
+	switch normalizePipelineTag(pipelineTag) {
 	case "automatic-speech-recognition":
 		return api.LocalInferenceSupport{
 			Supported: true,
@@ -165,6 +197,8 @@ func diffusersPipelineTagFromClassName(className string) string {
 		return ""
 	}
 	switch {
+	case isUnsupportedDiffusersClass(className):
+		return "image-to-video"
 	case isTextToImageDiffusersClass(className):
 		return "text-to-image"
 	case isImageToImageDiffusersClass(className):
@@ -174,6 +208,28 @@ func diffusersPipelineTagFromClassName(className string) string {
 	default:
 		return ""
 	}
+}
+
+func unsupportedPipelineTag(pipelineTag string) bool {
+	switch normalizePipelineTag(pipelineTag) {
+	case "image-to-video", "text-to-video", "video-text-to-text":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizePipelineTag(pipelineTag string) string {
+	return strings.ToLower(strings.TrimSpace(pipelineTag))
+}
+
+func isUnsupportedDiffusersClass(className string) bool {
+	return strings.Contains(className, "videodiffusion") ||
+		strings.Contains(className, "texttovideo") ||
+		strings.Contains(className, "imagetovideo") ||
+		strings.Contains(className, "image2video") ||
+		strings.Contains(className, "video2video") ||
+		strings.Contains(className, "videopipeline")
 }
 
 func isTextToImageDiffusersClass(className string) bool {

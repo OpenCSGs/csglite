@@ -93,7 +93,7 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
                 {manifest.details.format.toUpperCase()}
               </span>
             )}
-            {manifest && <LocalInferenceBadge mode={localInferenceMode} prefix="lib" />}
+            {manifest && localInferenceMode !== "none" && <LocalInferenceBadge mode={localInferenceMode} prefix="lib" />}
           </div>
           <p class="text-gray-500 text-sm mt-1">{t("lib.detailSubtitle")}</p>
         </div>
@@ -116,7 +116,11 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
         <div class="space-y-6 mt-6">
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <SummaryTile label={t("lib.format")} value={manifest.details.format?.toUpperCase() || t("lib.notAvailable")} />
-            <SummaryTile label={t(localInferenceLabelKey("lib"))} value={t(localInferenceValueKey(localInferenceMode, "lib"))} />
+            <SummaryTile
+              label={t(localInferenceLabelKey("lib"))}
+              value={t(localInferenceValueKey(localInferenceMode, "lib"))}
+              tone={localInferenceMode === "none" ? "danger" : "default"}
+            />
             <SummaryTile label={t("lib.fileSize")} value={fmtSize(manifest.details.size)} />
             <SummaryTile label={t("lib.fileCount")} value={String(manifest.files.length)} />
             <SummaryTile label={t("lib.updated")} value={fmtDate(manifest.details.modified_at)} />
@@ -287,11 +291,12 @@ function CodeBlock({
   );
 }
 
-function SummaryTile({ label, value }: { label: string; value: string }) {
+function SummaryTile({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "danger" }) {
+  const danger = tone === "danger";
   return (
-    <div class="rounded-xl border border-gray-200 bg-white px-4 py-3">
-      <div class="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</div>
-      <div class="mt-1 text-sm font-semibold text-gray-900 break-words">{value}</div>
+    <div class={`rounded-xl border px-4 py-3 ${danger ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"}`}>
+      <div class={`text-xs font-medium uppercase tracking-wide ${danger ? "text-red-500" : "text-gray-400"}`}>{label}</div>
+      <div class={`mt-1 text-sm font-semibold break-words ${danger ? "text-red-700" : "text-gray-900"}`}>{value}</div>
     </div>
   );
 }

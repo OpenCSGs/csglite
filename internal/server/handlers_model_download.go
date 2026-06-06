@@ -16,9 +16,22 @@ import (
 
 // GET /api/models/{namespace}/{name}/manifest -- local model manifest with file download URLs
 func (s *Server) handleModelManifest(w http.ResponseWriter, r *http.Request) {
+	s.handleModelManifestForID(w, modelIDFromPathValues(r))
+}
+
+// GET /api/models/{model}/manifest -- local model manifest resolved by public model ID.
+func (s *Server) handleModelManifestByPublicID(w http.ResponseWriter, r *http.Request) {
+	modelID, err := s.manager.ResolveLocalModelID(strings.TrimSpace(r.PathValue("model")))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	s.handleModelManifestForID(w, modelID)
+}
+
+func (s *Server) handleModelManifestForID(w http.ResponseWriter, modelID string) {
 	w.Header().Set("Cache-Control", "no-cache")
 
-	modelID := modelIDFromPathValues(r)
 	lm, err := s.manager.GetWithFileEntries(modelID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("model %q not found", modelID))

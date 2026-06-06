@@ -85,6 +85,41 @@ func TestFromMarketplaceModelASRTaskTag(t *testing.T) {
 	}
 }
 
+func TestFromMarketplaceModelImageToVideoTaskUnsupported(t *testing.T) {
+	support := FromMarketplaceModel("safetensors", "", "StableVideoDiffusionPipeline", "AIWizards/sv3d-diffusers", "image-to-video")
+	if support.Supported || support.Mode != "none" {
+		t.Fatalf("support = %#v, want unsupported", support)
+	}
+}
+
+func TestFromMarketplaceModelTaskGatesConflictingClassName(t *testing.T) {
+	support := FromMarketplaceModel("safetensors", "", "StableDiffusionXLPipeline", "AIWizards/sv3d-diffusers", "image-to-video")
+	if support.Supported || support.Mode != "none" {
+		t.Fatalf("support = %#v, want unsupported", support)
+	}
+}
+
+func TestFromMarketplaceModelTextToImageRejectsNonImageClassName(t *testing.T) {
+	support := FromMarketplaceModel("safetensors", "LlamaForCausalLM", "LlamaForCausalLM", "owner/not-image", "text-to-image")
+	if support.Supported || support.Mode != "none" {
+		t.Fatalf("support = %#v, want unsupported", support)
+	}
+}
+
+func TestFromMarketplaceModelTextToImageAllowsMissingClassName(t *testing.T) {
+	support := FromMarketplaceModel("safetensors", "", "", "owner/image-model", "text-to-image")
+	if !support.Supported || support.Runtime != "diffusers" || support.Mode != "image" {
+		t.Fatalf("support = %#v, want diffusers image", support)
+	}
+}
+
+func TestFromMarketplaceStableVideoDiffusionUnsupported(t *testing.T) {
+	support := FromMarketplace("safetensors", "", "StableVideoDiffusionPipeline")
+	if support.Supported || support.Mode != "none" {
+		t.Fatalf("support = %#v, want unsupported", support)
+	}
+}
+
 func TestFromLocalModelDiffusers(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"QwenImagePipeline"}`), 0o644); err != nil {
@@ -116,6 +151,9 @@ func TestFromLocalModelEmbeddingArchitecture(t *testing.T) {
 func TestDiffusersPipelineTagFromClassName(t *testing.T) {
 	if got := diffusersPipelineTagFromClassName("FluxPipeline"); got != "text-to-image" {
 		t.Fatalf("tag = %q, want text-to-image", got)
+	}
+	if got := diffusersPipelineTagFromClassName("StableVideoDiffusionPipeline"); got != "image-to-video" {
+		t.Fatalf("tag = %q, want image-to-video", got)
 	}
 	if got := diffusersPipelineTagFromClassName("LlamaForCausalLM"); got != "" {
 		t.Fatalf("tag = %q, want empty", got)

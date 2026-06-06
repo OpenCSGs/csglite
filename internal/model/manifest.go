@@ -272,6 +272,8 @@ func detectDiffusersPipelineTag(modelDir string) string {
 	}
 	className := strings.ToLower(strings.TrimSpace(idx.ClassName))
 	switch {
+	case isUnsupportedDiffusersClass(className):
+		return "image-to-video"
 	case isTextToImageDiffusersClass(className):
 		return "text-to-image"
 	case isImageToImageDiffusersClass(className):
@@ -282,6 +284,15 @@ func detectDiffusersPipelineTag(modelDir string) string {
 		// newly supported text-to-image pipelines do not fall back to llama.
 		return "text-to-image"
 	}
+}
+
+func isUnsupportedDiffusersClass(className string) bool {
+	return strings.Contains(className, "videodiffusion") ||
+		strings.Contains(className, "texttovideo") ||
+		strings.Contains(className, "imagetovideo") ||
+		strings.Contains(className, "image2video") ||
+		strings.Contains(className, "video2video") ||
+		strings.Contains(className, "videopipeline")
 }
 
 func isTextToImageDiffusersClass(className string) bool {

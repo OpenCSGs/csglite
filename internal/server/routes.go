@@ -19,6 +19,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/models/upload/{uploadID}/file", s.handleModelUploadFile)
 	mux.HandleFunc("POST /api/models/upload/{uploadID}/complete", s.handleModelUploadComplete)
 	mux.HandleFunc("DELETE /api/models/upload/{uploadID}", s.handleModelUploadCancel)
+	mux.HandleFunc("GET /api/models/{model}/manifest", s.handleModelManifestByPublicID)
 	mux.HandleFunc("GET /api/models/{namespace}/{name}/manifest", s.handleModelManifest)
 	mux.HandleFunc("GET /api/models/{namespace}/{name}/files/{path...}", s.handleModelFile)
 	mux.HandleFunc("GET /api/ps", s.handlePs)

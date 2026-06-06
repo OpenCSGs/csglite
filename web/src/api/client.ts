@@ -636,7 +636,11 @@ function splitModelID(model: string): { namespace: string; name: string } {
 }
 
 export async function getModelManifest(model: string): Promise<ModelManifestResponse> {
-  const { namespace, name } = splitModelID(model);
+  const trimmed = model.trim();
+  if (!trimmed.includes("/")) {
+    return fetchJSON<ModelManifestResponse>(`/api/models/${encodeURIComponent(trimmed)}/manifest`);
+  }
+  const { namespace, name } = splitModelID(trimmed);
   return fetchJSON<ModelManifestResponse>(`/api/models/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/manifest`);
 }
 
