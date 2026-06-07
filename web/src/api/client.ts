@@ -138,6 +138,12 @@ export interface MarketplaceModelQuantization {
   example_path: string;
 }
 
+export interface MarketplaceLocalModelStatus {
+  downloaded: boolean;
+  full_name?: string;
+  public_id?: string;
+}
+
 export interface LocalInferenceSupport {
   supported: boolean;
   runtime?: "llama" | "diffusers" | "python-asr";
@@ -150,6 +156,7 @@ export interface MarketplaceModelDetailResponse {
   details: MarketplaceModel;
   quantizations: MarketplaceModelQuantization[];
   local_inference: LocalInferenceSupport;
+  local_model: MarketplaceLocalModelStatus;
 }
 
 export interface MarketplaceDataset {

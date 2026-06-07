@@ -6745,12 +6745,33 @@
           }
         }
       },
+      "MarketplaceLocalModelStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "downloaded"
+        ],
+        "properties": {
+          "downloaded": {
+            "type": "boolean"
+          },
+          "full_name": {
+            "type": "string",
+            "description": "Full local model repository ID when the marketplace model is downloaded."
+          },
+          "public_id": {
+            "type": "string",
+            "description": "Public local inference model ID when the marketplace model is downloaded."
+          }
+        }
+      },
       "MarketplaceModelDetailResponse": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "details",
-          "local_inference"
+          "local_inference",
+          "local_model"
         ],
         "properties": {
           "details": {
@@ -6764,6 +6785,9 @@
           },
           "local_inference": {
             "$ref": "#/components/schemas/LocalInferenceSupport"
+          },
+          "local_model": {
+            "$ref": "#/components/schemas/MarketplaceLocalModelStatus"
           }
         }
       },

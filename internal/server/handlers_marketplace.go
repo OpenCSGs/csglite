@@ -97,10 +97,17 @@ type marketplaceModelQuantization struct {
 	ExamplePath string `json:"example_path"`
 }
 
+type marketplaceLocalModelStatus struct {
+	Downloaded bool   `json:"downloaded"`
+	FullName   string `json:"full_name,omitempty"`
+	PublicID   string `json:"public_id,omitempty"`
+}
+
 type marketplaceModelDetailResponse struct {
 	Details        *csghub.Model                  `json:"details"`
 	Quantizations  []marketplaceModelQuantization `json:"quantizations,omitempty"`
 	LocalInference api.LocalInferenceSupport      `json:"local_inference"`
+	LocalModel     marketplaceLocalModelStatus    `json:"local_model"`
 }
 
 // GET /api/marketplace/models/{namespace}/{name} -- proxy to CSGHub model detail
@@ -111,6 +118,7 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "missing namespace or name")
 		return
 	}
+	requestedModelID := strings.TrimSpace(namespace) + "/" + strings.TrimSpace(name)
 
 	client := csghub.NewClient(s.cfg.ServerURL, s.cfg.Token)
 	details, err := client.GetModel(r.Context(), namespace, name)
@@ -167,7 +175,53 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 			details.Path,
 			pipelineTag,
 		),
+		LocalModel: s.marketplaceLocalModelStatus(details, requestedModelID),
 	})
+}
+
+func (s *Server) marketplaceLocalModelStatus(details *csghub.Model, requestedModelID string) marketplaceLocalModelStatus {
+	models, err := s.manager.List()
+	if err != nil {
+		return marketplaceLocalModelStatus{}
+	}
+	publicIDs := model.PublicModelIDs(models)
+	candidates := marketplaceLocalModelCandidates(details, requestedModelID)
+	for _, lm := range models {
+		if lm == nil {
+			continue
+		}
+		fullName := strings.TrimSpace(lm.FullName())
+		publicID := strings.TrimSpace(publicIDs[fullName])
+		if publicID == "" {
+			publicID = model.InferenceModelID(lm)
+		}
+		if candidates[fullName] || candidates[publicID] || candidates[model.InferenceModelID(lm)] {
+			return marketplaceLocalModelStatus{
+				Downloaded: true,
+				FullName:   fullName,
+				PublicID:   publicID,
+			}
+		}
+	}
+	return marketplaceLocalModelStatus{}
+}
+
+func marketplaceLocalModelCandidates(details *csghub.Model, requestedModelID string) map[string]bool {
+	candidates := make(map[string]bool)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			candidates[value] = true
+		}
+	}
+	add(requestedModelID)
+	if details == nil {
+		return candidates
+	}
+	add(details.Path)
+	add(details.HFPath)
+	add(details.Name)
+	return candidates
 }
 
 // GET /api/marketplace/datasets -- proxy to CSGHub Hub dataset listing

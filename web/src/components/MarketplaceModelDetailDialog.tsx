@@ -82,6 +82,7 @@ export function MarketplaceModelDetailDialog({
   const taskTags = (model?.tags || []).filter((tag) => tag.category === "task");
   const runtimeTags = (model?.tags || []).filter((tag) => tag.category === "runtime_framework");
   const quantizations = detail?.quantizations || [];
+  const downloaded = Boolean(isLocal || detail?.local_model?.downloaded);
 
   return (
     <div
@@ -105,7 +106,7 @@ export function MarketplaceModelDetailDialog({
                   {formatBadgeLabel(tag)}
                 </span>
               ))}
-              {isLocal && (
+              {downloaded && (
                 <span class="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-600">
                   {t("mp.downloaded")}
                 </span>
@@ -119,7 +120,7 @@ export function MarketplaceModelDetailDialog({
           <div class="flex items-center gap-3 flex-shrink-0">
             <DetailDownloadAction
               modelPath={modelPath}
-              isLocal={isLocal}
+              isLocal={downloaded}
               pulling={pulling}
               onDownload={onDownload}
             />

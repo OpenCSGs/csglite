@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/opencsgs/csghub-lite/internal/csghub"
+	"github.com/opencsgs/csghub-lite/internal/model"
 )
 
 func TestHandleMarketplaceModelsMapsFrameworkToTagFilter(t *testing.T) {
@@ -281,6 +282,68 @@ func TestHandleMarketplaceModelDetailReturnsQuantizations(t *testing.T) {
 	}
 	if !resp.LocalInference.Supported || resp.LocalInference.Runtime != "llama" || resp.LocalInference.Mode != "direct" || resp.LocalInference.RuntimeArchitecture != "qwen2" {
 		t.Fatalf("local_inference = %#v, want llama direct qwen2", resp.LocalInference)
+	}
+}
+
+func TestHandleMarketplaceModelDetailReturnsLocalModelStatus(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/models/openai/openai_whisper-large-v3":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[csghub.Model]{
+				Msg: "OK",
+				Data: csghub.Model{
+					ID:   1,
+					Name: "openai_whisper-large-v3",
+					Path: "openai/openai_whisper-large-v3",
+					Tags: []csghub.Tag{
+						{Name: "safetensors", Category: "framework", ShowName: "SafeTensors"},
+						{Name: "automatic-speech-recognition", Category: "task", ShowName: "Automatic Speech Recognition"},
+					},
+					Metadata: csghub.ModelMetadata{
+						Architecture: "WhisperForConditionalGeneration",
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+	if err := model.SaveManifest(s.cfg.ModelDir, &model.LocalModel{
+		Namespace: "openai",
+		Name:      "openai_whisper-large-v3",
+		Format:    model.FormatSafeTensors,
+	}); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/openai/openai_whisper-large-v3", nil)
+	req.SetPathValue("namespace", "openai")
+	req.SetPathValue("name", "openai_whisper-large-v3")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.LocalModel.Downloaded {
+		t.Fatalf("local_model.downloaded = false, want true")
+	}
+	if resp.LocalModel.FullName != "openai/openai_whisper-large-v3" {
+		t.Fatalf("local_model.full_name = %q, want openai/openai_whisper-large-v3", resp.LocalModel.FullName)
+	}
+	if resp.LocalModel.PublicID != "openai_whisper-large-v3" {
+		t.Fatalf("local_model.public_id = %q, want openai_whisper-large-v3", resp.LocalModel.PublicID)
 	}
 }
 

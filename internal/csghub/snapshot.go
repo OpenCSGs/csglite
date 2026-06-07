@@ -300,6 +300,7 @@ func filterTransformersWeightDownload(files []RepoFile) []RepoFile {
 	hasSafeTensors := false
 	hasPreferredSafeTensors := false
 	hasPyTorch := false
+	hasRedundantTransformersWeight := false
 	for _, f := range files {
 		path := strings.ToLower(f.Path)
 		name := strings.ToLower(repoFileBaseName(f))
@@ -312,8 +313,11 @@ func filterTransformersWeightDownload(files []RepoFile) []RepoFile {
 		if isPreferredPyTorchWeight(path, name) {
 			hasPyTorch = true
 		}
+		if isRedundantTransformersWeight(path, name) {
+			hasRedundantTransformersWeight = true
+		}
 	}
-	if !hasSafeTensors && !hasPyTorch {
+	if !hasSafeTensors && !hasPyTorch && !hasRedundantTransformersWeight {
 		return files
 	}
 
@@ -325,13 +329,16 @@ func filterTransformersWeightDownload(files []RepoFile) []RepoFile {
 			if hasPreferredSafeTensors && isFP32SafeTensorsWeight(path, name) {
 				continue
 			}
+			if isBinFile(path, name) {
+				continue
+			}
 			if isNonSafeTensorsTransformersWeight(path, name) {
 				continue
 			}
 			out = append(out, f)
 			continue
 		}
-		if hasPyTorch && isRedundantTransformersWeight(path, name) {
+		if isRedundantTransformersWeight(path, name) {
 			continue
 		}
 		out = append(out, f)
@@ -360,12 +367,20 @@ func isNonSafeTensorsTransformersWeight(path, name string) bool {
 		isRedundantTransformersWeight(path, name)
 }
 
+func isBinFile(path, name string) bool {
+	return strings.HasSuffix(name, ".bin") || strings.HasSuffix(path, ".bin")
+}
+
 func isRedundantTransformersWeight(path, name string) bool {
 	return name == "flax_model.msgpack" ||
 		name == "tf_model.h5" ||
 		name == "model.ckpt.index" ||
-		strings.HasPrefix(name, "pytorch_model.fp32") ||
-		strings.Contains(path, "/pytorch_model.fp32")
+		isFP32PyTorchWeight(path, name)
+}
+
+func isFP32PyTorchWeight(path, name string) bool {
+	return (strings.HasPrefix(name, "pytorch") && strings.Contains(name, ".fp32") && strings.HasSuffix(name, ".bin")) ||
+		strings.Contains(path, "/pytorch") && strings.Contains(path, ".fp32") && strings.HasSuffix(path, ".bin")
 }
 
 func isFP32SafeTensorsWeight(path, name string) bool {

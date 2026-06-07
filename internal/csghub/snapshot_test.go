@@ -97,6 +97,7 @@ func TestFilterTransformersWeightDownloadPrefersSafeTensors(t *testing.T) {
 		{Type: "file", Path: "model.safetensors", Name: "model.safetensors", LFS: true},
 		{Type: "file", Path: "model.fp32-00001-of-00002.safetensors", Name: "model.fp32-00001-of-00002.safetensors", LFS: true},
 		{Type: "file", Path: "pytorch_model.bin", Name: "pytorch_model.bin", LFS: true},
+		{Type: "file", Path: "weights/extra.bin", Name: "extra.bin", LFS: true},
 		{Type: "file", Path: "flax_model.msgpack", Name: "flax_model.msgpack", LFS: true},
 	}
 	got := filterTransformersWeightDownload(files)
@@ -123,6 +124,25 @@ func TestFilterTransformersWeightDownloadSkipsRedundantPyTorchWeights(t *testing
 		names = append(names, f.Name)
 	}
 	want := []string{"config.json", "pytorch_model.bin"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("got %v, want %v", names, want)
+	}
+}
+
+func TestFilterTransformersWeightDownloadSkipsStandaloneFP32PyTorchShards(t *testing.T) {
+	files := []RepoFile{
+		{Type: "file", Path: "config.json", Name: "config.json"},
+		{Type: "file", Path: "pytorch_model.fp32-00001-of-00002.bin", Name: "pytorch_model.fp32-00001-of-00002.bin", LFS: true},
+		{Type: "file", Path: "pytorch_model.fp32-00002-of-00002.bin", Name: "pytorch_model.fp32-00002-of-00002.bin", LFS: true},
+		{Type: "file", Path: "subdir/pytorch.fp32-00001-of-00001.bin", Name: "pytorch.fp32-00001-of-00001.bin", LFS: true},
+		{Type: "file", Path: "tokenizer.json", Name: "tokenizer.json"},
+	}
+	got := filterTransformersWeightDownload(files)
+	var names []string
+	for _, f := range got {
+		names = append(names, f.Name)
+	}
+	want := []string{"config.json", "tokenizer.json"}
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("got %v, want %v", names, want)
 	}
