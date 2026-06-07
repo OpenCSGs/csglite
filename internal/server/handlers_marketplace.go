@@ -44,6 +44,7 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 	}
 
 	requestedFramework := normalizeMarketplaceFramework(q.Get("framework"))
+	requestedTask := normalizeMarketplaceTask(q.Get("task"))
 	listParams := csghub.ModelListParams{
 		Search:         q.Get("search"),
 		Sort:           q.Get("sort"),
@@ -56,6 +57,10 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 	if requestedFramework != "" {
 		listParams.TagCategory = "framework"
 		listParams.TagName = requestedFramework
+	}
+	if requestedTask != "" {
+		listParams.TagCategory = "task"
+		listParams.TagName = requestedTask
 	}
 	cacheKey := marketplaceCacheKey("models", r.URL.RawQuery)
 	if body, ok := getFreshMarketplaceCache(cacheKey, time.Now()); ok {
@@ -531,6 +536,10 @@ func normalizeMarketplaceFramework(value string) string {
 	default:
 		return ""
 	}
+}
+
+func normalizeMarketplaceTask(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func marketplaceModelHasFramework(tags []csghub.Tag, framework string) bool {

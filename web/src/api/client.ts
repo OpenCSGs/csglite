@@ -1501,6 +1501,7 @@ export async function getMarketplaceModels(params: {
   search?: string;
   sort?: string;
   framework?: string;
+  task?: string;
   modelParamsMin?: string;
   modelParamsMax?: string;
   page?: number;
@@ -1510,6 +1511,7 @@ export async function getMarketplaceModels(params: {
   if (params.search) q.set("search", params.search);
   q.set("sort", params.sort || "trending");
   if (params.framework) q.set("framework", params.framework);
+  if (params.task) q.set("task", params.task);
   if (params.modelParamsMin) q.set("model_params_min", params.modelParamsMin);
   if (params.modelParamsMax) q.set("model_params_max", params.modelParamsMax);
   q.set("page", String(params.page || 1));

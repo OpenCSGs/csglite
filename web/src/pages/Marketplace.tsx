@@ -17,6 +17,7 @@ import {
 type Tab = "models" | "datasets";
 type ViewMode = "grid" | "list";
 type ModelFrameworkFilter = "" | "gguf" | "safetensors";
+type ModelTaskFilter = "" | "text-generation" | "feature-extraction" | "sentence-similarity" | "automatic-speech-recognition" | "text-to-image";
 type FilterOption<T extends string> = {
   value: T;
   label: string;
@@ -39,10 +40,19 @@ const modelFrameworkOptions: FilterOption<ModelFrameworkFilter>[] = [
   { value: "gguf", label: "mp.modelTypeGGUF" },
   { value: "safetensors", label: "mp.modelTypeSafeTensors" },
 ];
+const modelTaskOptions: FilterOption<ModelTaskFilter>[] = [
+  { value: "", label: "mp.allTaskTypes" },
+  { value: "text-generation", label: "mp.taskTextGeneration" },
+  { value: "feature-extraction", label: "mp.taskFeatureExtraction" },
+  { value: "sentence-similarity", label: "mp.taskSentenceSimilarity" },
+  { value: "automatic-speech-recognition", label: "mp.taskASR" },
+  { value: "text-to-image", label: "mp.taskTextToImage" },
+];
 const activeTab = signal<Tab>("models");
 const searchQuery = signal("");
 const sortBy = signal("trending");
 const frameworkFilter = signal<ModelFrameworkFilter>("");
+const taskFilter = signal<ModelTaskFilter>("");
 const modelParamsMin = signal(modelParamsMinLimit);
 const modelParamsMax = signal(modelParamsMaxLimit);
 const viewMode = signal<ViewMode>("grid");
@@ -80,6 +90,7 @@ async function loadData() {
         search: searchQuery.value,
         sort: sortBy.value,
         framework: frameworkFilter.value || undefined,
+        task: taskFilter.value || undefined,
         modelParamsMin: modelParamsMin.value > modelParamsMinLimit ? String(modelParamsMin.value) : undefined,
         modelParamsMax: modelParamsRangeActive ? formatModelParamsMax(modelParamsMax.value) : undefined,
         page: page.value,
@@ -117,7 +128,7 @@ export function Marketplace() {
   useEffect(() => {
     page.value = 1;
     loadData();
-  }, [activeTab.value, sortBy.value, frameworkFilter.value, modelParamsMin.value, modelParamsMax.value]);
+  }, [activeTab.value, sortBy.value, frameworkFilter.value, taskFilter.value, modelParamsMin.value, modelParamsMax.value]);
 
   useEffect(() => {
     if (activeTab.value !== "models") {
@@ -159,10 +170,12 @@ export function Marketplace() {
     });
   };
   const hasModelFilters = frameworkFilter.value !== ""
+    || taskFilter.value !== ""
     || modelParamsMin.value !== modelParamsMinLimit
     || modelParamsMax.value !== modelParamsMaxLimit;
   const clearModelFilters = () => {
     frameworkFilter.value = "";
+    taskFilter.value = "";
     modelParamsMin.value = modelParamsMinLimit;
     modelParamsMax.value = modelParamsMaxLimit;
   };
@@ -249,6 +262,12 @@ export function Marketplace() {
                     value={frameworkFilter.value}
                     options={modelFrameworkOptions.map((option) => ({ ...option, label: t(option.label) }))}
                     onChange={(value) => (frameworkFilter.value = value)}
+                  />
+                  <FilterPillGroup
+                    label={t("mp.taskType")}
+                    value={taskFilter.value}
+                    options={modelTaskOptions.map((option) => ({ ...option, label: t(option.label) }))}
+                    onChange={(value) => (taskFilter.value = value)}
                   />
                   <ModelParamsRangeSlider
                     min={modelParamsMin.value}

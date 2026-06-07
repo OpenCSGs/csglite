@@ -1655,6 +1655,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "description": "Optional task tag filter forwarded to CSGHub, such as `text-generation`.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {

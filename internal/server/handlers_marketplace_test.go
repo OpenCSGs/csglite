@@ -54,6 +54,43 @@ func TestHandleMarketplaceModelsMapsFrameworkToTagFilter(t *testing.T) {
 	}
 }
 
+func TestHandleMarketplaceModelsMapsTaskToTagFilter(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/models" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("tag_category"); got != "task" {
+			t.Fatalf("tag_category = %q, want %q", got, "task")
+		}
+		if got := r.URL.Query().Get("tag_name"); got != "text-generation" {
+			t.Fatalf("tag_name = %q, want %q", got, "text-generation")
+		}
+		if got := r.URL.Query().Get("task"); got != "" {
+			t.Fatalf("task = %q, want empty", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(csghub.ListResponse[csghub.Model]{
+			Msg:   "OK",
+			Data:  []csghub.Model{},
+			Total: 0,
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?task=text-generation", nil)
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModels(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
 func TestHandleMarketplaceModelsServesCachedListOnUpstreamRateLimit(t *testing.T) {
 	marketplaceListCache.Lock()
 	marketplaceListCache.entries = make(map[string]marketplaceListCacheEntry)
@@ -201,6 +238,76 @@ func TestHandleMarketplaceModelsFallbackFiltersFrameworkTags(t *testing.T) {
 	}
 	if resp.Total != 2 {
 		t.Fatalf("total = %d, want 2", resp.Total)
+	}
+}
+
+func TestHandleMarketplaceModelsFiltersFrameworkWithinTaskResults(t *testing.T) {
+	allModels := []csghub.Model{
+		{
+			ID:   1,
+			Path: "ns/safetensors-text",
+			Tags: []csghub.Tag{
+				{Name: "safetensors", Category: "framework", ShowName: "SafeTensors"},
+				{Name: "text-generation", Category: "task", ShowName: "Text Generation"},
+			},
+		},
+		{
+			ID:   2,
+			Path: "ns/gguf-text",
+			Tags: []csghub.Tag{
+				{Name: "gguf", Category: "framework", ShowName: "GGUF"},
+				{Name: "text-generation", Category: "task", ShowName: "Text Generation"},
+			},
+		},
+	}
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/models" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("tag_category"); got != "task" {
+			t.Fatalf("tag_category = %q, want %q", got, "task")
+		}
+		if got := r.URL.Query().Get("tag_name"); got != "text-generation" {
+			t.Fatalf("tag_name = %q, want %q", got, "text-generation")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(csghub.ListResponse[csghub.Model]{
+			Msg:   "OK",
+			Data:  allModels,
+			Total: len(allModels),
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?framework=gguf&task=text-generation&page=1&per=2", nil)
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModels(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp struct {
+		Data  []csghub.Model `json:"data"`
+		Total int            `json:"total"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("data len = %d, want 1", len(resp.Data))
+	}
+	if resp.Data[0].Path != "ns/gguf-text" {
+		t.Fatalf("model path = %q, want ns/gguf-text", resp.Data[0].Path)
+	}
+	if resp.Total != 1 {
+		t.Fatalf("total = %d, want 1", resp.Total)
 	}
 }
 
