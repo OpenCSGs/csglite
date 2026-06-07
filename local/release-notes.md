@@ -1,4 +1,4 @@
 ## Changes
 
-- Fix Marketplace model details so locally downloaded models such as `openai/openai_whisper-large-v3` are shown as downloaded.
-- Avoid downloading redundant Transformer weight files when SafeTensors weights are available, and skip unused FP32 PyTorch shard files.
+- Add task type filters to Marketplace model search, including text generation, embeddings, ASR, and text-to-image models.
+- Keep selected third-party provider models cached locally so provider model lists stay consistent between sessions.
