@@ -1,4 +1,4 @@
 ## Changes
 
-- Add task type filters to Marketplace model search, including text generation, embeddings, ASR, and text-to-image models.
-- Keep selected third-party provider models cached locally so provider model lists stay consistent between sessions.
+- Fix local ASR startup for Qwen3-ASR and GLM-ASR models by loading FunASR wrapper models from their local model directories.
+- Install the `qwen-asr` runtime dependency automatically when ASR support is repaired or installed.

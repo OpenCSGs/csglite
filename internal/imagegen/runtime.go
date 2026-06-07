@@ -45,6 +45,7 @@ var requiredASRPythonPackages = []string{
 	"fastapi",
 	"funasr",
 	"modelscope",
+	"qwen_asr",
 	"transformers",
 	"safetensors",
 	"soundfile",
@@ -456,7 +457,7 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 		}
 	}
 
-	asrPackages := []string{"fastapi", "funasr", "modelscope", "transformers", "safetensors", "soundfile", "librosa", "imageio-ffmpeg", "uvicorn"}
+	asrPackages := []string{"fastapi", "funasr", "modelscope", "qwen-asr", "transformers", "safetensors", "soundfile", "librosa", "imageio-ffmpeg", "uvicorn"}
 	asrMissing, err := missingPackages(ctx, python, requiredASRPythonPackages)
 	if err != nil {
 		return m.ASRStatus(ctx), err
@@ -501,7 +502,7 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 		UpdatedAt:   now,
 		TorchIndex:  torchSourceURL(indexes),
 		PyPIIndex:   indexes.PyPIIndexURL,
-		PackageSpec: append(torchPackageSpecs(DetectHardware(), indexes), "fastapi", "funasr", "modelscope", "transformers", "safetensors", "soundfile", "librosa", "imageio-ffmpeg", "uvicorn"),
+		PackageSpec: append(torchPackageSpecs(DetectHardware(), indexes), "fastapi", "funasr", "modelscope", "qwen-asr", "transformers", "safetensors", "soundfile", "librosa", "imageio-ffmpeg", "uvicorn"),
 	}
 	if err := writeManifest(filepath.Join(m.rootDir, manifestFileName), manifest); err != nil {
 		return m.ASRStatus(ctx), err

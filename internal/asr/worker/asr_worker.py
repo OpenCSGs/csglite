@@ -42,6 +42,48 @@ def _is_whisper_model(model_dir):
     return model_type == "whisper" or any("whisper" in x for x in archs)
 
 
+def _is_qwen3_asr_model(model_dir):
+    cfg = _load_config(model_dir)
+    model_type = str(cfg.get("model_type", "")).lower().replace("-", "_")
+    archs = [str(x) for x in cfg.get("architectures", [])]
+    return model_type == "qwen3_asr" or "Qwen3ASRForConditionalGeneration" in archs
+
+
+def _is_glm_asr_model(model_dir):
+    cfg = _load_config(model_dir)
+    model_type = str(cfg.get("model_type", "")).lower().replace("-", "_")
+    archs = [str(x) for x in cfg.get("architectures", [])]
+    return model_type in ("glm_asr", "glmasr") or any(
+        arch in ("GlmAsrForConditionalGeneration", "GlmasrModel") for arch in archs
+    )
+
+
+def _funasr_wrapper_model_key(model_dir, model_name):
+    if not _is_qwen3_asr_model(model_dir):
+        if _is_glm_asr_model(model_dir):
+            return _glm_asr_model_key(model_dir, model_name)
+        return ""
+    candidates = [model_name, os.path.basename(os.path.normpath(model_dir))]
+    for candidate in candidates:
+        candidate = (candidate or "").strip()
+        if candidate in ("Qwen/Qwen3-ASR-0.6B", "Qwen/Qwen3-ASR-1.7B"):
+            return candidate
+        if candidate in ("Qwen3-ASR-0.6B", "Qwen3-ASR-1.7B"):
+            return f"Qwen/{candidate}"
+    return "Qwen/Qwen3-ASR-1.7B"
+
+
+def _glm_asr_model_key(model_dir, model_name):
+    candidates = [model_name, os.path.basename(os.path.normpath(model_dir))]
+    for candidate in candidates:
+        candidate = (candidate or "").strip()
+        if candidate in ("zai-org/GLM-ASR-Nano-2512", "ZhipuAI/GLM-ASR-Nano-2512"):
+            return candidate
+        if candidate == "GLM-ASR-Nano-2512":
+            return "zai-org/GLM-ASR-Nano-2512"
+    return "zai-org/GLM-ASR-Nano-2512"
+
+
 def _safetensors_is_valid(model_dir):
     path = os.path.join(model_dir, "model.safetensors")
     if not os.path.exists(path):
@@ -134,18 +176,23 @@ class TransformersASREngine:
 
 
 class FunASREngine:
-    def __init__(self, model_dir, hardware):
+    def __init__(self, model_dir, model_name, hardware):
         _ensure_python_ffmpeg_on_path()
         from funasr import AutoModel
 
+        wrapper_model_key = _funasr_wrapper_model_key(model_dir, model_name)
+        model_kwargs = {
+            "model": wrapper_model_key or model_dir,
+            "trust_remote_code": _env_bool("FUNASR_TRUST_REMOTE_CODE", False),
+            "device": _device_for_funasr(hardware),
+            "disable_update": True,
+            "disable_pbar": True,
+        }
+        if wrapper_model_key:
+            model_kwargs["model_path"] = model_dir
+
         self.backend = "funasr"
-        self.model = AutoModel(
-            model=model_dir,
-            trust_remote_code=_env_bool("FUNASR_TRUST_REMOTE_CODE", False),
-            device=_device_for_funasr(hardware),
-            disable_update=True,
-            disable_pbar=True,
-        )
+        self.model = AutoModel(**model_kwargs)
 
     def transcribe(self, req):
         kwargs = {
@@ -179,11 +226,11 @@ class FunASREngine:
         }
 
 
-def load_engine(model_dir, hardware):
+def load_engine(model_dir, model_name, hardware):
     if _is_whisper_model(model_dir):
         return TransformersASREngine(model_dir, hardware)
     try:
-        return FunASREngine(model_dir, hardware)
+        return FunASREngine(model_dir, model_name, hardware)
     except Exception as funasr_error:
         try:
             return TransformersASREngine(model_dir, hardware)
@@ -224,7 +271,7 @@ def main():
     args = parser.parse_args()
 
     global ENGINE
-    ENGINE = load_engine(args.model_dir, args.hardware)
+    ENGINE = load_engine(args.model_dir, args.model_name, args.hardware)
     print(f"ASR worker ready model={args.model_name} backend={ENGINE.backend} port={args.port}", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 
