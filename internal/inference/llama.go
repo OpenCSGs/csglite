@@ -690,7 +690,7 @@ func min(a, b int) int {
 
 func (e *llamaEngine) Chat(ctx context.Context, messages []Message, opts Options, onToken TokenCallback) (string, error) {
 	if opts.MaxTokens == 0 {
-		opts = DefaultOptions()
+		opts.MaxTokens = DefaultOptions().MaxTokens
 	}
 
 	messages = e.sanitizeMessages(messages)

@@ -4,7 +4,7 @@ import { getDatasetTags, searchDatasets, getDatasetFiles, deleteDataset, getData
 import type { DatasetInfo, DatasetFileEntry, DatasetManifestResponse, DatasetDownloadFile } from "../api/client";
 import { t, locale } from "../i18n";
 import { DownloadTableCell } from "../components/DownloadProgressPanel";
-import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask } from "../downloads";
+import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 
 type View = { kind: "list" } | { kind: "detail"; dataset: string; path: string };
@@ -113,14 +113,9 @@ export function Datasets() {
 }
 
 function DatasetList() {
-  const completedDownloadsKey = getDownloadTasks("dataset")
-    .filter((task) => task.status === "success" && task.completedAt)
-    .map((task) => `${task.name}:${task.completedAt}`)
-    .join("|");
-
   useEffect(() => {
-    if (completedDownloadsKey) loadDatasets();
-  }, [completedDownloadsKey]);
+    if (downloadCompletionVersion.value > 0) loadDatasets();
+  }, [downloadCompletionVersion.value]);
 
   const handleDelete = async (name: string) => {
     if (hasActiveDownload.value) return;

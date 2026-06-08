@@ -119,8 +119,10 @@ func (e *remoteEngine) Chat(ctx context.Context, messages []Message, opts Option
 			Temperature: opts.Temperature,
 			TopP:        opts.TopP,
 			TopK:        opts.TopK,
-			MaxTokens:   opts.MaxTokens,
 		},
+	}
+	if opts.MaxTokens > 0 {
+		reqBody.Options.MaxTokens = opts.MaxTokens
 	}
 	if e.numCtx > 0 {
 		reqBody.Options.NumCtx = e.numCtx

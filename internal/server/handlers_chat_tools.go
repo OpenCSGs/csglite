@@ -166,8 +166,10 @@ func ollamaChatRequestToOpenAI(req api.ChatRequest, opts inference.Options) (map
 		"messages":    messages,
 		"temperature": opts.Temperature,
 		"top_p":       opts.TopP,
-		"max_tokens":  opts.MaxTokens,
 		"stream":      false,
+	}
+	if opts.MaxTokens > 0 {
+		body["max_tokens"] = opts.MaxTokens
 	}
 	if opts.Seed >= 0 {
 		body["seed"] = opts.Seed

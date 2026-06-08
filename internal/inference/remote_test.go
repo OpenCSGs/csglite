@@ -37,6 +37,9 @@ func TestRemoteEngineChatIncludesRequestedContextOptions(t *testing.T) {
 	if got.Options == nil {
 		t.Fatal("options missing from request")
 	}
+	if got.Options.MaxTokens != 0 {
+		t.Fatalf("max_tokens = %d, want omitted", got.Options.MaxTokens)
+	}
 	if got.Options.NumCtx != 131072 {
 		t.Fatalf("num_ctx = %d, want 131072", got.Options.NumCtx)
 	}

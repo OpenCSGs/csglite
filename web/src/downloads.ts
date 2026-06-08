@@ -145,6 +145,7 @@ function isInterruptedDownloadError(err: any): boolean {
 }
 
 export const downloadTasks = signal<Record<string, DownloadTask>>(loadTasks());
+export const downloadCompletionVersion = signal(0);
 export const downloadTaskList = computed(() =>
   Object.values(downloadTasks.value).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 );
@@ -235,6 +236,7 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
         });
         onComplete?.();
         removeTask(key);
+        downloadCompletionVersion.value += 1;
         return;
       }
       if (progress.status.startsWith("error")) {

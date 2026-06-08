@@ -395,8 +395,10 @@ func anthropicRequestToProxyBody(req api.AnthropicMessageRequest, opts inference
 		"messages":    messages,
 		"temperature": opts.Temperature,
 		"top_p":       opts.TopP,
-		"max_tokens":  opts.MaxTokens,
 		"stream":      stream,
+	}
+	if opts.MaxTokens > 0 {
+		body["max_tokens"] = opts.MaxTokens
 	}
 	if len(opts.Stop) > 0 {
 		body["stop"] = opts.Stop

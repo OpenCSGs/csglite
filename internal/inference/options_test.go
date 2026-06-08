@@ -14,8 +14,8 @@ func TestDefaultOptions(t *testing.T) {
 	if opts.TopK <= 0 {
 		t.Errorf("TopK = %d, want > 0", opts.TopK)
 	}
-	if opts.MaxTokens <= 0 {
-		t.Errorf("MaxTokens = %d, want > 0", opts.MaxTokens)
+	if opts.MaxTokens != -1 {
+		t.Errorf("MaxTokens = %d, want -1", opts.MaxTokens)
 	}
 	if opts.NumCtx <= 0 {
 		t.Errorf("NumCtx = %d, want > 0", opts.NumCtx)

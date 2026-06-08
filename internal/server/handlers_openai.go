@@ -349,8 +349,10 @@ func openAIChatRequestToProxyBody(req api.OpenAIChatRequest, opts inference.Opti
 		"messages":    messages,
 		"temperature": opts.Temperature,
 		"top_p":       opts.TopP,
-		"max_tokens":  opts.MaxTokens,
 		"stream":      stream,
+	}
+	if opts.MaxTokens > 0 {
+		body["max_tokens"] = opts.MaxTokens
 	}
 	if opts.Seed >= 0 {
 		body["seed"] = opts.Seed

@@ -14,13 +14,14 @@ type Options struct {
 	DisableThinking bool
 }
 
-// DefaultOptions returns sensible defaults.
+// DefaultOptions returns sensible defaults. MaxTokens follows Ollama and
+// llama.cpp semantics: -1 means no explicit generation cap.
 func DefaultOptions() Options {
 	return Options{
 		Temperature: 0.7,
 		TopP:        0.9,
 		TopK:        40,
-		MaxTokens:   2048,
+		MaxTokens:   -1,
 		Seed:        -1,
 		NumCtx:      4096,
 	}

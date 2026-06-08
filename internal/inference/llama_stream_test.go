@@ -117,6 +117,9 @@ func TestBuildLlamaChatRequestBodyDisablesThinkingForQwen3508B(t *testing.T) {
 	if got, ok := reqBody["stop"].([]string); !ok || len(got) != 1 || got[0] != "</stop>" {
 		t.Fatalf("stop = %#v, want [\"</stop>\"]", reqBody["stop"])
 	}
+	if got, ok := reqBody["max_tokens"].(int); !ok || got != -1 {
+		t.Fatalf("max_tokens = %#v, want -1", reqBody["max_tokens"])
+	}
 }
 
 func TestBuildLlamaChatRequestBodyDisablesThinkingForQwen3Family(t *testing.T) {

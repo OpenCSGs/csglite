@@ -164,8 +164,10 @@ func (e *openAIEngine) Chat(ctx context.Context, messages []Message, opts Option
 		"top_p":              opts.TopP,
 		"top_k":              topK,
 		"repetition_penalty": 1,
-		"max_tokens":         opts.MaxTokens,
 		"stream":             stream,
+	}
+	if opts.MaxTokens > 0 {
+		reqBody["max_tokens"] = opts.MaxTokens
 	}
 	if opts.Seed >= 0 {
 		reqBody["seed"] = opts.Seed

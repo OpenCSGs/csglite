@@ -5,7 +5,7 @@ import type { LoadModelOptions, LocalModelUploadFile, ModelInfo, RunningModel } 
 import { locale, t } from "../i18n";
 import { DownloadTableCell } from "../components/DownloadProgressPanel";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
-import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, pauseDownload, startDownload } from "../downloads";
+import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 
 type FormatFilter = "all" | "gguf" | "safetensors";
@@ -375,18 +375,14 @@ export function Library() {
   void locale.value;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
-  const completedDownloadsKey = getDownloadTasks("model")
-    .filter((task) => task.status === "success" && task.completedAt)
-    .map((task) => `${task.name}:${task.completedAt}`)
-    .join("|");
 
   useEffect(() => {
     loadRunningModels();
   }, []);
 
   useEffect(() => {
-    if (completedDownloadsKey) void loadModels();
-  }, [completedDownloadsKey]);
+    if (downloadCompletionVersion.value > 0) void loadModels();
+  }, [downloadCompletionVersion.value]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
