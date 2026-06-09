@@ -68,6 +68,7 @@ const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
 const parallelStorageKey = "csghub.chat.num_parallel";
 const parallelSteps = [1, 2, 4, 8];
 const selectedModelStorageKey = "csghub.chat.selected_model";
+const modelContextBoundaryStorageKey = "csghub.chat.model_context_boundary";
 const webSearchStorageKey = "csghub.chat.web_search.enabled";
 const legacyWebSearchModeStorageKey = "csghub.chat.web_search.mode";
 const providersChangedEvent = "csghub:providers-changed";
@@ -151,6 +152,62 @@ function saveSelectedModelKey(key: string) {
   } catch {
     /* ignore storage failures */
   }
+}
+
+interface ModelContextBoundary {
+  model: string;
+  start: number;
+}
+
+function readModelContextBoundaries(): Record<string, ModelContextBoundary> {
+  try {
+    const raw = localStorage.getItem(modelContextBoundaryStorageKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveModelContextBoundaries(boundaries: Record<string, ModelContextBoundary>) {
+  try {
+    localStorage.setItem(modelContextBoundaryStorageKey, JSON.stringify(boundaries));
+  } catch {
+    /* ignore storage failures */
+  }
+}
+
+function setModelContextBoundary(conversationId: string, model: string, start: number) {
+  if (!conversationId || !model) return;
+  const boundaries = readModelContextBoundaries();
+  boundaries[conversationId] = { model, start: Math.max(0, start) };
+  saveModelContextBoundaries(boundaries);
+}
+
+function clearModelContextBoundary(conversationId: string) {
+  if (!conversationId) return;
+  const boundaries = readModelContextBoundaries();
+  if (!(conversationId in boundaries)) return;
+  delete boundaries[conversationId];
+  saveModelContextBoundaries(boundaries);
+}
+
+function contextStartIndexForModel(conv: Conversation, currentModelKey: string): number {
+  if (!currentModelKey || conv.messages.length === 0) {
+    return 0;
+  }
+  if (conv.model && conv.model !== currentModelKey) {
+    return conv.messages.length;
+  }
+  const boundary = readModelContextBoundaries()[conv.id];
+  if (boundary?.model !== currentModelKey) {
+    return 0;
+  }
+  if (!Number.isFinite(boundary.start) || boundary.start <= 0 || boundary.start > conv.messages.length) {
+    return 0;
+  }
+  return boundary.start;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -769,6 +826,10 @@ export function Chat() {
   };
 
   const handleModelChange = (nextKey: string) => {
+    const conv = activeConversation.value;
+    if (conv && conv.messages.length > 0 && conv.model !== nextKey) {
+      setModelContextBoundary(conv.id, nextKey, conv.messages.length);
+    }
     selectedModelKey.value = nextKey;
     saveSelectedModelKey(nextKey);
     const model = availableModels.value.find((x) => modelKey(x) === nextKey);
@@ -1162,7 +1223,10 @@ export function Chat() {
       userContent = text;
       currentUserMessage = { role: "user", content: text };
     }
-    const apiMessages = buildChatContextMessages(conv.messages, currentUserMessage);
+    const currentModelKey = modelKey(currentModel);
+    const contextStartIndex = contextStartIndexForModel(conv, currentModelKey);
+    const apiHistory = contextStartIndex > 0 ? conv.messages.slice(contextStartIndex) : conv.messages;
+    const apiMessages = buildChatContextMessages(apiHistory, currentUserMessage);
 
     const userMessageIndex = conv.messages.length;
     conv.messages.push({ role: "user", content: userContent });
@@ -1177,7 +1241,10 @@ export function Chat() {
     if (conv.messages.length === 1) {
       conv.title = text.slice(0, 30) || (asrMode && audio ? audio.name.slice(0, 30) : "New Chat");
     }
-    conv.model = modelKey(currentModel);
+    conv.model = currentModelKey;
+    if (contextStartIndex > 0) {
+      setModelContextBoundary(conv.id, currentModelKey, contextStartIndex);
+    }
     activeConversation.value = { ...conv };
     inputText.value = "";
     pendingImages.value = [];
@@ -1448,6 +1515,7 @@ export function Chat() {
     if (!confirm(t("chat.clearConfirm"))) return;
     conv.messages = [];
     conv.title = "New Chat";
+    clearModelContextBoundary(conv.id);
     activeConversation.value = { ...conv };
     saveCurrentConversation();
   };
