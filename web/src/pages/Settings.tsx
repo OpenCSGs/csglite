@@ -9,6 +9,7 @@ import {
   checkUpgrade,
   clearCloudToken,
   getCloudAuthStatus,
+  getTags,
   installImageRuntime,
   getSettings,
   saveCloudToken,
@@ -70,6 +71,7 @@ const defaultCloudProviderName = signal("");
 const serviceUrlsError = signal("");
 const serviceUrlsMessage = signal("");
 const isSavingServiceUrls = signal(false);
+const isRefreshingCloudModels = signal(false);
 const isResettingDefaults = signal(false);
 const resetDefaultsMessage = signal("");
 const resetDefaultsError = signal("");
@@ -386,6 +388,22 @@ async function saveServiceURLs() {
   }
 }
 
+async function refreshCloudModels() {
+  if (isRefreshingCloudModels.value) return;
+  isRefreshingCloudModels.value = true;
+  serviceUrlsError.value = "";
+  serviceUrlsMessage.value = "";
+  try {
+    await getTags({ refresh: true });
+    notifyProvidersChanged();
+    serviceUrlsMessage.value = t("settings.cloudModelsRefreshSuccess");
+  } catch (err: any) {
+    serviceUrlsError.value = err?.message || t("settings.cloudModelsRefreshFailed");
+  } finally {
+    isRefreshingCloudModels.value = false;
+  }
+}
+
 async function upgradeDiffuser() {
   if (isUpgradingDiffuser.value) return;
   isUpgradingDiffuser.value = true;
@@ -668,19 +686,29 @@ export function Settings() {
             />
             <span class="mt-1 block text-xs text-gray-400">{t("settings.cloudProviderNameHint", defaultCloudProviderName.value || "csghub")}</span>
           </label>
-          <div class="flex items-center justify-between gap-3">
+          <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="text-sm">
               {serviceUrlsError.value && <span class="text-red-600">{serviceUrlsError.value}</span>}
               {serviceUrlsMessage.value && <span class="text-green-600">{serviceUrlsMessage.value}</span>}
             </div>
-            <button
-              type="button"
-              onClick={() => void saveServiceURLs()}
-              disabled={isSavingServiceUrls.value}
-              class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-            >
-              {isSavingServiceUrls.value ? "..." : t("settings.save")}
-            </button>
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void refreshCloudModels()}
+                disabled={isRefreshingCloudModels.value}
+                class="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-60 transition-colors"
+              >
+                {isRefreshingCloudModels.value ? t("settings.cloudModelsRefreshing") : t("settings.cloudModelsRefresh")}
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveServiceURLs()}
+                disabled={isSavingServiceUrls.value}
+                class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-60 transition-colors"
+              >
+                {isSavingServiceUrls.value ? "..." : t("settings.save")}
+              </button>
+            </div>
           </div>
         </div>
       </div>

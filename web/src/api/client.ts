@@ -256,6 +256,7 @@ export interface AudioTranscriptionResponse {
 
 export interface ImageGenerationRequest {
   model: string;
+  source?: string;
   prompt: string;
   n?: number;
   size?: string;

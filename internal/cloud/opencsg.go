@@ -62,6 +62,48 @@ type remoteModel struct {
 	Metadata        map[string]interface{} `json:"metadata"`
 }
 
+type cloudTaskSpec struct {
+	PipelineTag      string
+	InputModalities  []string
+	OutputModalities []string
+}
+
+var supportedCloudTasks = map[string]cloudTaskSpec{
+	"text-generation": {
+		PipelineTag:      "text-generation",
+		InputModalities:  []string{"text"},
+		OutputModalities: []string{"text"},
+	},
+	"image-text-to-text": {
+		PipelineTag:      "image-text-to-text",
+		InputModalities:  []string{"text", "image"},
+		OutputModalities: []string{"text"},
+	},
+	"text-to-image": {
+		PipelineTag:      "text-to-image",
+		InputModalities:  []string{"text"},
+		OutputModalities: []string{"image"},
+	},
+	"speech-to-text": {
+		PipelineTag:      "automatic-speech-recognition",
+		InputModalities:  []string{"audio"},
+		OutputModalities: []string{"transcription"},
+	},
+	"automatic-speech-recognition": {
+		PipelineTag:      "automatic-speech-recognition",
+		InputModalities:  []string{"audio"},
+		OutputModalities: []string{"transcription"},
+	},
+}
+
+var cloudTaskPriority = []string{
+	"text-generation",
+	"image-text-to-text",
+	"text-to-image",
+	"speech-to-text",
+	"automatic-speech-recognition",
+}
+
 func NewService(baseURL string) *Service {
 	return &Service{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -210,7 +252,8 @@ func (s *Service) currentAccessToken() string {
 }
 
 func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
-	if !supportsChat(item) {
+	spec, ok := cloudTaskSpecForModel(item)
+	if !ok {
 		return api.ModelInfo{}, false
 	}
 
@@ -221,8 +264,6 @@ func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
 	if displayName == "" {
 		displayName = strings.TrimSpace(item.ID)
 	}
-
-	pipelineTag := cloudPipelineTag(item)
 
 	var modifiedAt time.Time
 	if item.Created > 0 {
@@ -236,20 +277,22 @@ func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
 	pricing := extractPricing(item.Metadata)
 
 	return api.ModelInfo{
-		Name:          item.ID,
-		Model:         item.ID,
-		Format:        "cloud",
-		ModifiedAt:    modifiedAt,
-		Label:         displayName,
-		DisplayName:   displayName,
-		Source:        "cloud",
-		Provider:      provider,
-		PipelineTag:   pipelineTag,
-		HasMMProj:     hasCloudTask(item, "image-text-to-text"),
-		ContextWindow: int64(limits.MaxInputTokens),
-		LLMType:       llmType,
-		OwnedBy:       ownedBy,
-		Pricing:       pricing,
+		Name:             item.ID,
+		Model:            item.ID,
+		Format:           "cloud",
+		ModifiedAt:       modifiedAt,
+		Label:            displayName,
+		DisplayName:      displayName,
+		Source:           "cloud",
+		Provider:         provider,
+		PipelineTag:      spec.PipelineTag,
+		InputModalities:  cloneStringSlice(spec.InputModalities),
+		OutputModalities: cloneStringSlice(spec.OutputModalities),
+		HasMMProj:        hasCloudTask(item, "image-text-to-text"),
+		ContextWindow:    int64(limits.MaxInputTokens),
+		LLMType:          llmType,
+		OwnedBy:          ownedBy,
+		Pricing:          pricing,
 	}, true
 }
 
@@ -257,23 +300,29 @@ func cloudModelProvider(string) string {
 	return "csghub"
 }
 
-func supportsChat(item remoteModel) bool {
-	tasks := cloudTasks(item)
-	if len(tasks) == 0 {
-		return true
+func cloneStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return nil
 	}
-	return hasTask(tasks, "text-generation") || hasTask(tasks, "image-text-to-text")
+	return append([]string{}, values...)
 }
 
-func cloudPipelineTag(item remoteModel) string {
+func cloudTaskSpecForModel(item remoteModel) (cloudTaskSpec, bool) {
 	tasks := cloudTasks(item)
-	if len(tasks) == 0 || hasTask(tasks, "text-generation") {
-		return "text-generation"
+	if len(tasks) == 0 {
+		return supportedCloudTasks["text-generation"], true
 	}
-	if hasTask(tasks, "image-text-to-text") {
-		return "image-text-to-text"
+	for _, task := range cloudTaskPriority {
+		if hasTask(tasks, task) {
+			return supportedCloudTasks[task], true
+		}
 	}
-	return tasks[0]
+	for _, task := range tasks {
+		if spec, ok := supportedCloudTasks[task]; ok {
+			return spec, true
+		}
+	}
+	return cloudTaskSpec{}, false
 }
 
 func hasCloudTask(item remoteModel, want string) bool {

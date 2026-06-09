@@ -118,6 +118,57 @@ func TestHandleTagsSendsLoginTokenToCloudGateway(t *testing.T) {
 	}
 }
 
+func TestHandleTagsIncludesSupportedCloudInferenceTasks(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{"id": "chat/model", "task": "text-generation"},
+				{"id": "vision/model", "task": "image-text-to-text"},
+				{"id": "image/model", "task": "text-to-image"},
+				{"id": "asr/model", "task": "speech-to-text"},
+				{"id": "video/model", "task": "text-to-video"},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cloud = cloud.NewService(apiServer.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags?refresh=1", nil)
+	w := httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode tags response: %v", err)
+	}
+
+	byID := map[string]api.ModelInfo{}
+	for _, item := range resp.Models {
+		byID[item.Model] = item
+	}
+	if _, ok := byID["video/model"]; ok {
+		t.Fatalf("video/model should not be listed until text-to-video inference is supported: %#v", resp.Models)
+	}
+	for _, id := range []string{"chat/model", "vision/model", "image/model", "asr/model"} {
+		if _, ok := byID[id]; !ok {
+			t.Fatalf("model %q missing from /api/tags response: %#v", id, resp.Models)
+		}
+	}
+	if got := byID["image/model"]; got.PipelineTag != "text-to-image" || !sameStrings(got.OutputModalities, []string{"image"}) {
+		t.Fatalf("image metadata = %#v, want text-to-image output image", got)
+	}
+	if got := byID["asr/model"]; got.PipelineTag != "automatic-speech-recognition" || !sameStrings(got.InputModalities, []string{"audio"}) || !sameStrings(got.OutputModalities, []string{"transcription"}) {
+		t.Fatalf("asr metadata = %#v, want ASR audio->transcription", got)
+	}
+}
+
 func TestHandleTagsProviderFilterCloudModels(t *testing.T) {
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -164,12 +165,36 @@ func TestModelInfoFromRemote_AllowsCommaSeparatedChatTasksWithSpaces(t *testing.
 	}
 }
 
+func TestModelInfoFromRemote_AllowsSupportedInferenceTasks(t *testing.T) {
+	image, ok := modelInfoFromRemote(remoteModel{
+		ID:   "Qwen/Qwen-Image-2512:abc",
+		Task: "text-to-image",
+	})
+	if !ok {
+		t.Fatal("expected text-to-image model to be included")
+	}
+	if image.PipelineTag != "text-to-image" || !slices.Equal(image.InputModalities, []string{"text"}) || !slices.Equal(image.OutputModalities, []string{"image"}) {
+		t.Fatalf("image metadata = %#v, want text-to-image text->image", image)
+	}
+
+	asr, ok := modelInfoFromRemote(remoteModel{
+		ID:   "glm-asr-2512",
+		Task: "speech-to-text",
+	})
+	if !ok {
+		t.Fatal("expected speech-to-text model to be included")
+	}
+	if asr.PipelineTag != "automatic-speech-recognition" || !slices.Equal(asr.InputModalities, []string{"audio"}) || !slices.Equal(asr.OutputModalities, []string{"transcription"}) {
+		t.Fatalf("asr metadata = %#v, want ASR audio->transcription", asr)
+	}
+}
+
 func TestModelInfoFromRemote_FiltersUnsupportedTask(t *testing.T) {
 	if _, ok := modelInfoFromRemote(remoteModel{
-		ID:   "stabilityai/stable-diffusion-xl-base-1.0:abc",
-		Task: "text-to-image",
+		ID:   "video/model",
+		Task: "text-to-video",
 	}); ok {
-		t.Fatal("expected text-to-image model to be filtered from chat list")
+		t.Fatal("expected unsupported text-to-video model to be filtered")
 	}
 }
 

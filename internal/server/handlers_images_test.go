@@ -88,6 +88,56 @@ func TestHandleOpenAIImagesGenerations(t *testing.T) {
 	}
 }
 
+func TestHandleOpenAIImagesGenerationsSupportsCloudModels(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/generations" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Fatalf("Authorization = %q, want bearer test-key", got)
+		}
+		var raw map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if raw["model"] != "Qwen/Qwen-Image-2512:s-test" || raw["prompt"] != "a cat" || raw["size"] != "1024x1024" || raw["response_format"] != "b64_json" {
+			t.Fatalf("cloud request = %#v, want common image fields", raw)
+		}
+		for _, key := range []string{"source", "cfg_scale", "steps", "seed", "negative_prompt"} {
+			if _, ok := raw[key]; ok {
+				t.Fatalf("cloud request includes non-portable field %q: %#v", key, raw)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.OpenAIImagesGenerationResponse{
+			Created: 456,
+			Data: []api.OpenAIImage{{
+				B64JSON: "Y2xvdWQtcG5n",
+			}},
+		})
+	}))
+	defer apiServer.Close()
+
+	cfg := &config.Config{ModelDir: t.TempDir(), AIGatewayURL: apiServer.URL, OpenCSGAPIKey: "test-key"}
+	s := New(cfg, "test")
+	body := `{"model":"Qwen/Qwen-Image-2512:s-test","source":"cloud","prompt":"a cat","negative_prompt":"bad","size":"1024x1024","response_format":"b64_json","steps":8,"seed":123,"cfg_scale":7.5}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIImagesGenerations(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	var resp api.OpenAIImagesGenerationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].B64JSON != "Y2xvdWQtcG5n" {
+		t.Fatalf("response = %#v, want cloud image data", resp)
+	}
+}
+
 func TestHandleOpenAIImagesGenerationsRejectsTextModel(t *testing.T) {
 	cfg := &config.Config{ModelDir: t.TempDir()}
 	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
@@ -115,6 +165,55 @@ func TestHandleOpenAIImagesGenerationsRejectsTextModel(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleImageGenerationJobSupportsCloudModels(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/generations" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.OpenAIImagesGenerationResponse{
+			Created: 789,
+			Data: []api.OpenAIImage{{
+				B64JSON: "Y2xvdWQtam9i",
+			}},
+		})
+	}))
+	defer apiServer.Close()
+
+	cfg := &config.Config{ModelDir: t.TempDir(), AIGatewayURL: apiServer.URL, OpenCSGAPIKey: "test-key"}
+	s := New(cfg, "test")
+	body := `{"model":"Qwen/Qwen-Image-2512:s-test","source":"cloud","prompt":"a cat","size":"1024x1024","response_format":"b64_json"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/images/jobs", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleImageGenerationJobCreate(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d body=%s", w.Code, w.Body.String())
+	}
+	var job api.ImageGenerationJobResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		req = httptest.NewRequest(http.MethodGet, "/api/images/jobs/"+job.ID, nil)
+		req.SetPathValue("jobID", job.ID)
+		w = httptest.NewRecorder()
+		s.handleImageGenerationJobGet(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("get status = %d body=%s", w.Code, w.Body.String())
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+			t.Fatalf("decode get response: %v", err)
+		}
+		if job.Status == "succeeded" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if job.Status != "succeeded" || job.Result == nil || len(job.Result.Data) != 1 || job.Result.Data[0].B64JSON != "Y2xvdWQtam9i" {
+		t.Fatalf("job = %#v, want succeeded cloud image result", job)
 	}
 }
 

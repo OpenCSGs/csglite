@@ -136,19 +136,27 @@ func (s *Server) createImageGenerationJob(req api.OpenAIImagesGenerationRequest)
 func (s *Server) runImageGenerationJob(ctx context.Context, job *imageGenerationJob) {
 	job.setRunning()
 	log.Printf("IMAGE JOB %s: started model=%q", job.id, job.req.Model)
-	eng, err := s.getOrLoadImageEngine(ctx, job.req.Model)
-	if err == nil {
-		var resp *api.OpenAIImagesGenerationResponse
-		resp, err = eng.Generate(ctx, job.req)
-		if resp != nil && resp.Created == 0 {
-			resp.Created = time.Now().Unix()
-		}
+	var resp *api.OpenAIImagesGenerationResponse
+	var err error
+	if imageGenerationUsesCloud(job.req) {
+		resp, err = s.generateCloudImage(ctx, job.req)
+	} else {
+		var eng imagegen.Engine
+		eng, err = s.getOrLoadImageEngine(ctx, job.req.Model)
 		if err == nil {
-			s.touchImageEngine(job.req.Model)
-			job.setSucceeded(resp)
-			log.Printf("IMAGE JOB %s: succeeded model=%q", job.id, job.req.Model)
-			return
+			resp, err = eng.Generate(ctx, job.req)
+			if err == nil {
+				s.touchImageEngine(job.req.Model)
+			}
 		}
+	}
+	if resp != nil && resp.Created == 0 {
+		resp.Created = time.Now().Unix()
+	}
+	if err == nil {
+		job.setSucceeded(resp)
+		log.Printf("IMAGE JOB %s: succeeded model=%q", job.id, job.req.Model)
+		return
 	}
 	if ctx.Err() != nil {
 		job.setCancelled()

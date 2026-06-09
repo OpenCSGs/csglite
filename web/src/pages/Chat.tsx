@@ -1273,6 +1273,7 @@ export function Chat() {
       if (imageMode) {
         const job = await createImageGenerationJob({
           model: currentModel.model || currentModel.name,
+          source: currentModel.source,
           prompt: text,
         });
         let latest = job;
