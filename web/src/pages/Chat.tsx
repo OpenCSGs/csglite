@@ -4,7 +4,7 @@ import { signal, computed } from "@preact/signals";
 import {
   getTags, getPs, streamChat, getCloudAuthStatus, saveCloudToken,
   listConversations, searchConversations, getConversation, createConversation, updateConversation, deleteConversation,
-  getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob, transcribeAudio,
+  getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob, transcribeAudioStream,
 } from "../api/client";
 import type {
   ModelInfo, ChatMessage, ContentPart, CloudAuthStatus,
@@ -14,6 +14,7 @@ import type {
 import { t, locale } from "../i18n";
 import { parseReasoningText } from "../reasoning";
 import { buildChatContextMessages } from "../chatContext";
+import { isImageGenerationModel, isImageToImageModel, stripDataURL } from "../utils/imageModels";
 
 const availableModels = signal<ModelInfo[]>([]);
 const selectedModelKey = signal("");
@@ -93,10 +94,6 @@ function applyModelSamplingDefaults(model?: Pick<ModelInfo, "model" | "name" | "
   temperature.value = defaultTemperatureForModel(model);
 }
 
-function isTextToImageModel(model?: Pick<ModelInfo, "pipeline_tag"> | null): boolean {
-  return model?.pipeline_tag === "text-to-image";
-}
-
 function isASRModel(model?: Pick<ModelInfo, "pipeline_tag" | "input_modalities" | "output_modalities"> | null): boolean {
   const pipelineTag = (model?.pipeline_tag || "").toLowerCase();
   return pipelineTag === "automatic-speech-recognition" ||
@@ -108,7 +105,7 @@ type ChatModelMode = "chat" | "vision" | "image" | "asr";
 
 function getChatModelMode(model?: ModelInfo | null): ChatModelMode {
   if (!model) return "chat";
-  if (isTextToImageModel(model)) return "image";
+  if (isImageGenerationModel(model)) return "image";
   if (isASRModel(model)) return "asr";
   if (model.input_modalities?.includes("image")) return "vision";
   if (model.pipeline_tag === "image-text-to-text" && (model.source === "cloud" || model.has_mmproj === true)) {
@@ -1178,12 +1175,16 @@ export function Chat() {
     const currentModel = selectedModelInfo.value;
     const mode = getChatModelMode(currentModel);
     const imageMode = mode === "image";
+    const imageEditMode = imageMode && isImageToImageModel(currentModel);
     const asrMode = mode === "asr";
     const visionMode = mode === "vision";
     const audio = pendingAudio.value;
     if (!currentModel || isGenerating.value) return;
     if (asrMode) {
       if (!audio || isRecordingAudio.value) return;
+    } else if (imageEditMode && pendingImages.value.length === 0) {
+      chatError.value = t("image.inputImageRequired");
+      return;
     } else if (!text) {
       return;
     }
@@ -1233,6 +1234,14 @@ export function Chat() {
       apiParts.push({ type: "text" as const, text });
 
       currentUserMessage = { role: "user", content: apiParts };
+    } else if (imageEditMode && images.length > 0) {
+      const displayParts: ContentPart[] = images.map((img) => ({
+        type: "image_url" as const,
+        image_url: { url: img.thumb },
+      }));
+      displayParts.push({ type: "text" as const, text });
+      userContent = displayParts;
+      currentUserMessage = { role: "user", content: userContent };
     } else {
       userContent = text;
       currentUserMessage = { role: "user", content: text };
@@ -1285,10 +1294,13 @@ export function Chat() {
     const responseStartedAt = Date.now();
     try {
       if (imageMode) {
+        const encodedImages = images.map((img) => stripDataURL(img.full));
         const job = await createImageGenerationJob({
           model: currentModel.model || currentModel.name,
           source: currentModel.source,
           prompt: text,
+          image: encodedImages[0],
+          images: encodedImages.length > 1 ? encodedImages.slice(1) : undefined,
         });
         let latest = job;
         while (!ac.signal.aborted) {
@@ -1330,11 +1342,20 @@ export function Chat() {
         streamingContent.value = "";
       } else if (asrMode && audio) {
         streamingContent.value = t("chat.transcribingAudio");
-        const response = await transcribeAudio({
+        let receivedTranscriptChunk = false;
+        const response = await transcribeAudioStream({
           model: currentModel.model || currentModel.name,
           file: audio.file,
           prompt: text || undefined,
           response_format: "json",
+        }, (chunk) => {
+          if (chunk.text) {
+            if (!receivedTranscriptChunk) {
+              streamingContent.value = "";
+              receivedTranscriptChunk = true;
+            }
+            streamingContent.value += chunk.text;
+          }
         }, ac.signal);
         const transcript = response.text || "";
         conv.messages.push({
@@ -1548,11 +1569,14 @@ export function Chat() {
   const hasConversationSearch = conversationSearchQuery.value.trim().length > 0;
   const modelMode = selectedModelMode.value;
   const imageMode = modelMode === "image";
+  const imageEditMode = imageMode && isImageToImageModel(selectedModelInfo.value);
   const asrMode = modelMode === "asr";
   const visionMode = modelMode === "vision";
   const canSend = asrMode
     ? Boolean(pendingAudio.value && !isRecordingAudio.value && selectedModelInfo.value)
-    : Boolean(inputText.value.trim() && selectedModelInfo.value);
+    : imageEditMode
+      ? Boolean(inputText.value.trim() && pendingImages.value.length > 0 && selectedModelInfo.value)
+      : Boolean(inputText.value.trim() && selectedModelInfo.value);
 
   return (
     <div class="flex h-full min-h-0 gap-0 bg-[#f7f8fb] p-4">
@@ -1841,7 +1865,7 @@ export function Chat() {
               <textarea
                 class="min-h-[46px] w-full resize-none border-0 bg-transparent px-2 text-sm leading-6 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0"
                 rows={2}
-                placeholder={asrMode ? t("chat.askAudio") : visionMode ? t("chat.askImage") : t("chat.askHelp")}
+                placeholder={asrMode ? t("chat.askAudio") : imageEditMode ? t("chat.askImageEdit") : visionMode ? t("chat.askImage") : imageMode ? t("chat.askImageGenerate") : t("chat.askHelp")}
                 value={inputText.value}
                 onInput={(e) => (inputText.value = (e.target as HTMLTextAreaElement).value)}
                 onKeyDown={handleKeyDown}
@@ -1879,7 +1903,7 @@ export function Chat() {
                         </svg>
                       </button>
                     </>
-                  ) : visionMode ? (
+                  ) : visionMode || imageEditMode ? (
                     <label class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600" title={t("chat.uploadImage")}>
                       <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />

@@ -1,6 +1,7 @@
 package asr
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	_ "embed"
@@ -106,6 +107,49 @@ func (e *PythonEngine) Transcribe(ctx context.Context, req api.OpenAIAudioTransc
 		return nil, fmt.Errorf("decoding ASR worker response: %w", err)
 	}
 	return &out, nil
+}
+
+func (e *PythonEngine) TranscribeStream(ctx context.Context, req api.OpenAIAudioTranscriptionRequest, onChunk func(api.OpenAIAudioTranscriptionResponse) error) error {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, e.url("/transcribe_stream"), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := e.client.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return readErr
+		}
+		return fmt.Errorf("ASR worker error %d: %s", resp.StatusCode, string(respBody))
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var out api.OpenAIAudioTranscriptionResponse
+		if err := json.Unmarshal(line, &out); err != nil {
+			return fmt.Errorf("decoding ASR worker stream response: %w", err)
+		}
+		if err := onChunk(out); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("reading ASR worker stream response: %w", err)
+	}
+	return nil
 }
 
 func (e *PythonEngine) Close() error {

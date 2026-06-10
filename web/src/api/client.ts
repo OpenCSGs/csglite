@@ -237,6 +237,13 @@ export interface AudioTranscriptionRequest {
   itn?: boolean;
 }
 
+export interface AudioTranscriptionStreamChunk {
+  text?: string;
+  response?: AudioTranscriptionResponse;
+  done?: boolean;
+  error?: string;
+}
+
 export interface AudioTranscriptionSegment {
   id?: number;
   start?: number;
@@ -265,6 +272,8 @@ export interface ImageGenerationRequest {
   negative_prompt?: string;
   steps?: number;
   cfg_scale?: number;
+  image?: string;
+  images?: string[];
 }
 
 export interface ImageGenerationResponse {
@@ -475,6 +484,19 @@ export interface PullProgress {
   completed?: number;
   total_bytes?: number;
   completed_bytes?: number;
+}
+
+export interface PullJob {
+  id: string;
+  status: string;
+  kind: "model" | "dataset";
+  name: string;
+  quant?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+  progress: PullProgress;
+  error?: string;
 }
 
 function previewResponseBody(text: string): string {
@@ -812,6 +834,80 @@ export async function transcribeAudio(req: AudioTranscriptionRequest, signal?: A
   }
 }
 
+export function transcribeAudioStream(
+  req: AudioTranscriptionRequest,
+  onChunk: (chunk: AudioTranscriptionStreamChunk) => void,
+  signal?: AbortSignal
+): Promise<AudioTranscriptionResponse> {
+  const form = new FormData();
+  form.set("model", req.model);
+  form.set("file", req.file, req.file.name || "audio");
+  form.set("response_format", req.response_format || "json");
+  form.set("stream", "true");
+  if (req.language) form.set("language", req.language);
+  if (req.prompt) form.set("prompt", req.prompt);
+  if (typeof req.temperature === "number") form.set("temperature", String(req.temperature));
+  if (req.hotwords && req.hotwords.length > 0) form.set("hotwords", JSON.stringify(req.hotwords));
+  if (typeof req.itn === "boolean") form.set("itn", String(req.itn));
+
+  return new Promise((resolve, reject) => {
+    fetch("/v1/audio/transcriptions", withLocaleHeader({
+      method: "POST",
+      headers: { Accept: "text/event-stream" },
+      body: form,
+      signal,
+    }))
+      .then(async (resp) => {
+        const contentType = resp.headers.get("content-type") || "";
+        if (!resp.ok || !resp.body) {
+          const body = await resp.text();
+          reject(new Error(extractErrorMessage(body, contentType, resp.statusText || "transcription failed")));
+          return;
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        let finalText = "";
+
+        function processLine(line: string) {
+          if (!line.startsWith("data: ")) return;
+          const chunk = JSON.parse(line.slice(6)) as AudioTranscriptionStreamChunk;
+          if (chunk.error) {
+            throw new Error(chunk.error);
+          }
+          if (chunk.done) {
+            if (typeof chunk.text === "string") finalText = chunk.text;
+            return;
+          }
+          if (typeof chunk.text === "string") {
+            finalText += chunk.text;
+          }
+          onChunk(chunk);
+        }
+
+        function read(): Promise<void> {
+          return reader.read().then(({ done, value }) => {
+            if (done) {
+              resolve({ text: finalText });
+              return;
+            }
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() || "";
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              processLine(line);
+            }
+            return read();
+          });
+        }
+
+        return read();
+      })
+      .catch(reject);
+  });
+}
+
 export async function generateImage(req: ImageGenerationRequest): Promise<ImageGenerationResponse> {
   return fetchJSON<ImageGenerationResponse>("/v1/images/generations", {
     method: "POST",
@@ -1032,6 +1128,32 @@ export function pullModel(
         });
       })
       .catch(reject);
+  });
+}
+
+export async function createPullJob(model: string, quant?: string): Promise<PullJob> {
+  return fetchJSON<PullJob>("/api/pull/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, quant: quant || undefined }),
+  });
+}
+
+export async function createDatasetPullJob(dataset: string): Promise<PullJob> {
+  return fetchJSON<PullJob>("/api/datasets/pull/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataset }),
+  });
+}
+
+export async function getPullJob(jobId: string): Promise<PullJob> {
+  return fetchJSON<PullJob>(`/api/pull/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export async function cancelPullJob(jobId: string): Promise<PullJob> {
+  return fetchJSON<PullJob>(`/api/pull/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
   });
 }
 

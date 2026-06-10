@@ -983,6 +983,108 @@
         }
       }
     },
+    "/api/pull/jobs": {
+      "post": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Create asynchronous model download job",
+        "description": "Starts a model download in the background and returns a job that can be polled for progress. The download continues even if the client disconnects.",
+        "operationId": "createPullJob",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PullRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Pull job accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullJobResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/pull/jobs/{jobID}": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Get pull job",
+        "description": "Returns status and progress for a model or dataset pull job.",
+        "operationId": "getPullJob",
+        "parameters": [
+          {
+            "name": "jobID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pull job status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullJobResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Cancel pull job",
+        "operationId": "cancelPullJob",
+        "parameters": [
+          {
+            "name": "jobID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled pull job status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullJobResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/api/load": {
       "post": {
         "tags": [
@@ -1546,6 +1648,41 @@
                   "$ref": "#/components/schemas/EventStream"
                 },
                 "example": "data: {\"status\":\"pulling OpenCSG/demo-dataset\"}\n\ndata: {\"status\":\"downloading train.parquet\",\"digest\":\"train.parquet\",\"total\":123456,\"completed\":4096}\n\ndata: {\"status\":\"success\"}\n\n"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/datasets/pull/jobs": {
+      "post": {
+        "tags": [
+          "Datasets"
+        ],
+        "summary": "Create asynchronous dataset download job",
+        "description": "Starts a dataset download in the background and returns a job that can be polled for progress. The download continues even if the client disconnects.",
+        "operationId": "createDatasetPullJob",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DatasetPullRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Pull job accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullJobResponse"
+                }
               }
             }
           },
@@ -3413,6 +3550,54 @@
         "responses": {
           "200": {
             "description": "Generated image data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIImagesGenerationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "503": {
+            "description": "Diffusers runtime is not installed or not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeNotReadyError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/v1/images/edits": {
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible image edit",
+        "description": "OpenAI-compatible image editing endpoint. Accepts multipart/form-data with one or more input images and an edit prompt. Local Diffusers models such as Qwen-Image-Edit are supported through the shared image runtime.",
+        "operationId": "openAIImagesEdits",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIImagesEditRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Edited image data.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5399,6 +5584,65 @@
           }
         }
       },
+      "PullJobResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "status",
+          "kind",
+          "name",
+          "created_at",
+          "updated_at",
+          "progress"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "model",
+              "dataset"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "quant": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/PullResponse"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
       "DeleteRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -7043,6 +7287,82 @@
           },
           "cfg_scale": {
             "type": "number"
+          },
+          "image": {
+            "type": "string",
+            "description": "Internal field used by /api/images/jobs for base64 input images. Use POST /v1/images/edits for OpenAI-compatible image editing."
+          },
+          "images": {
+            "type": "array",
+            "description": "Internal field used by /api/images/jobs for additional base64 input images.",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "OpenAIImagesEditRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "prompt",
+          "image"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string",
+            "format": "binary",
+            "description": "Input image file. Repeat the field to provide multiple images."
+          },
+          "mask": {
+            "type": "string",
+            "format": "binary",
+            "description": "Optional mask image with alpha channel for inpainting."
+          },
+          "n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "default": 1
+          },
+          "size": {
+            "type": "string",
+            "description": "Output size in WIDTHxHEIGHT format when supported by the model."
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "b64_json",
+              "url"
+            ],
+            "default": "b64_json"
+          },
+          "source": {
+            "type": "string",
+            "description": "Optional csghub-lite routing hint. Use cloud to call a configured cloud provider."
+          },
+          "negative_prompt": {
+            "type": "string",
+            "description": "Local Diffusers extension."
+          },
+          "steps": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Local Diffusers extension."
+          },
+          "cfg_scale": {
+            "type": "number",
+            "description": "Local Diffusers extension."
+          },
+          "seed": {
+            "type": "integer",
+            "description": "Local Diffusers extension."
           }
         }
       },
@@ -8150,6 +8470,10 @@
           "itn": {
             "type": "boolean",
             "description": "Enable inverse text normalization for supported ASR models."
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "Stream transcription chunks as server-sent events while long audio is processed."
           }
         }
       },

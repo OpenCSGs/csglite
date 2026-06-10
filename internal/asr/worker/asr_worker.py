@@ -9,7 +9,7 @@ import tempfile
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 
 ENGINE = None
@@ -139,6 +139,16 @@ def _ensure_python_ffmpeg_on_path():
         pass
 
 
+def _audio_duration_seconds(path):
+    try:
+        import soundfile as sf
+
+        info = sf.info(path)
+        return float(info.duration or 0)
+    except Exception:
+        return 0.0
+
+
 class TransformersASREngine:
     def __init__(self, model_dir, hardware):
         from transformers import pipeline
@@ -193,12 +203,35 @@ class FunASREngine:
 
         self.backend = "funasr"
         self.model = AutoModel(**model_kwargs)
+        self.chunk_seconds = int(os.getenv("CSGHUB_ASR_CHUNK_SECONDS", "30"))
+        self.long_audio_threshold_seconds = int(os.getenv("CSGHUB_ASR_LONG_AUDIO_THRESHOLD_SECONDS", str(self.chunk_seconds)))
+        self.vad_model = None
+        self.vad_max_segment_ms = int(os.getenv("CSGHUB_ASR_VAD_MAX_SEGMENT_MS", "30000"))
+        if _env_bool("CSGHUB_ASR_USE_VAD", False):
+            self.vad_model = AutoModel(
+                model=os.getenv("CSGHUB_ASR_VAD_MODEL", "fsmn-vad"),
+                trust_remote_code=_env_bool("FUNASR_TRUST_REMOTE_CODE", False),
+                device=_device_for_funasr(hardware),
+                disable_update=True,
+                disable_pbar=True,
+                max_single_segment_time=self.vad_max_segment_ms,
+            )
 
     def transcribe(self, req):
+        file_path = req["file_path"]
+        duration = _audio_duration_seconds(file_path)
+        if duration > self.long_audio_threshold_seconds:
+            return self._transcribe_long_audio(req, duration)
+
         kwargs = {
-            "input": req["file_path"],
+            "input": file_path,
             "batch_size": 1,
         }
+        self._apply_request_options(kwargs, req)
+        result = self.model.generate(**kwargs)
+        return self._format_result(result, req)
+
+    def _apply_request_options(self, kwargs, req):
         language = (req.get("language") or "").strip()
         if language:
             kwargs["language"] = language
@@ -207,23 +240,132 @@ class FunASREngine:
         hotwords = req.get("hotwords") or []
         if hotwords:
             kwargs["hotwords"] = hotwords
-        result = self.model.generate(**kwargs)
+
+    def _format_result(self, result, req, offset_seconds=0.0):
         first = result[0] if result else {}
         text = _clean_text(first.get("text", "") if isinstance(first, dict) else str(first))
         segments = []
         for i, item in enumerate(first.get("sentence_info", []) if isinstance(first, dict) else []):
             segments.append({
                 "id": i,
-                "start": float(item.get("start", 0)) / 1000.0,
-                "end": float(item.get("end", 0)) / 1000.0,
+                "start": (float(item.get("start", 0)) / 1000.0) + offset_seconds,
+                "end": (float(item.get("end", 0)) / 1000.0) + offset_seconds,
                 "text": _clean_text(item.get("text", "")),
             })
         return {
             "text": text,
             "backend": self.backend,
-            "language": language,
+            "language": (req.get("language") or "").strip(),
             "segments": segments,
         }
+
+    def _transcribe_long_audio(self, req, duration):
+        text_parts = []
+        segments = []
+        segment_id = 0
+
+        for chunk in self._iter_long_audio_chunks(req, duration):
+            if chunk["text"]:
+                text_parts.append(chunk["text"])
+            for item in chunk.get("segments", []):
+                item["id"] = segment_id
+                segment_id += 1
+                segments.append(item)
+
+        return {
+            "text": "".join(text_parts),
+            "backend": self.backend,
+            "language": (req.get("language") or "").strip(),
+            "segments": segments,
+        }
+
+    def stream_transcribe(self, req):
+        file_path = req["file_path"]
+        duration = _audio_duration_seconds(file_path)
+        if duration > self.long_audio_threshold_seconds:
+            yield from self._iter_long_audio_chunks(req, duration)
+            return
+        yield self.transcribe(req)
+
+    def _iter_long_audio_chunks(self, req, duration):
+        try:
+            segments = self._vad_segments(req["file_path"])
+        except Exception as exc:
+            print(f"ASR worker VAD segmentation failed, falling back to fixed chunks: {exc}", file=sys.stderr)
+            segments = []
+        if segments:
+            yield from self._iter_audio_segments(req, segments)
+            return
+        yield from self._iter_fixed_audio_chunks(req, duration)
+
+    def _vad_segments(self, file_path):
+        if self.vad_model is None:
+            return []
+        result = self.vad_model.generate(input=file_path, cache={}, is_final=True)
+        first = result[0] if result else {}
+        segments = first.get("value", []) if isinstance(first, dict) else []
+        out = []
+        for item in segments:
+            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                continue
+            start_ms = max(0.0, float(item[0]))
+            end_ms = max(start_ms, float(item[1]))
+            if end_ms > start_ms:
+                out.append((start_ms / 1000.0, end_ms / 1000.0))
+        return out
+
+    def _iter_fixed_audio_chunks(self, req, duration):
+        chunk_seconds = max(10, self.chunk_seconds)
+        segments = []
+        for offset in range(0, int(duration) + 1, chunk_seconds):
+            remaining = duration - float(offset)
+            if remaining <= 0:
+                break
+            segments.append((float(offset), float(offset) + min(float(chunk_seconds), remaining)))
+        yield from self._iter_audio_segments(req, segments)
+
+    def _iter_audio_segments(self, req, segments):
+        import librosa
+        import soundfile as sf
+
+        for start, end in segments:
+            duration = max(0.0, float(end) - float(start))
+            if duration <= 0:
+                continue
+            audio, _ = librosa.load(
+                req["file_path"],
+                sr=16000,
+                mono=True,
+                offset=float(start),
+                duration=duration,
+            )
+            if audio.size == 0:
+                continue
+            chunk_path = ""
+            try:
+                fd, chunk_path = tempfile.mkstemp(prefix="csghub-asr-chunk-", suffix=".wav")
+                os.close(fd)
+                sf.write(chunk_path, audio, 16000)
+            except Exception:
+                if chunk_path:
+                    try:
+                        os.remove(chunk_path)
+                    except Exception:
+                        pass
+                raise
+            kwargs = {
+                "input": chunk_path,
+                "batch_size": 1,
+            }
+            try:
+                self._apply_request_options(kwargs, req)
+                result = self.model.generate(**kwargs)
+            finally:
+                try:
+                    os.remove(chunk_path)
+                except Exception:
+                    pass
+            yield self._format_result(result, req, offset_seconds=float(start))
 
 
 def load_engine(model_dir, model_name, hardware):
@@ -255,6 +397,27 @@ async def transcribe(request: Request):
         if not req.get("file_path"):
             raise HTTPException(status_code=400, detail="file_path is required")
         return JSONResponse(ENGINE.transcribe(req))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"ASR worker transcription error: {exc}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/transcribe_stream")
+async def transcribe_stream(request: Request):
+    if ENGINE is None:
+        raise HTTPException(status_code=503, detail="model is not loaded")
+    try:
+        req = await request.json()
+        if not req.get("file_path"):
+            raise HTTPException(status_code=400, detail="file_path is required")
+
+        def generate():
+            for chunk in ENGINE.stream_transcribe(req):
+                yield json.dumps(chunk, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(generate(), media_type="application/x-ndjson")
     except HTTPException:
         raise
     except Exception as exc:

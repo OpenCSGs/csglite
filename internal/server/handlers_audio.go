@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/opencsgs/csghub-lite/internal/asr"
 	"github.com/opencsgs/csghub-lite/internal/imagegen"
 	"github.com/opencsgs/csghub-lite/pkg/api"
 )
@@ -43,6 +44,7 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		ResponseFormat: normalizeAudioResponseFormat(r.FormValue("response_format")),
 		Hotwords:       parseAudioHotwords(r.FormValue("hotwords")),
 	}
+	stream := parseAudioStream(r.FormValue("stream")) || requestWantsSSE(r)
 	if value := strings.TrimSpace(r.FormValue("temperature")); value != "" {
 		temperature, err := strconv.ParseFloat(value, 64)
 		if err != nil {
@@ -82,6 +84,10 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		writeOpenAIError(w, http.StatusBadRequest, "model_not_found", err.Error())
 		return
 	}
+	if stream {
+		s.streamAudioTranscription(w, r, modelID, eng, req)
+		return
+	}
 	resp, err := eng.Transcribe(r.Context(), req)
 	if err != nil {
 		log.Printf("MODEL %s: ASR transcription failed, reloading worker once: %v", modelID, err)
@@ -110,6 +116,35 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) streamAudioTranscription(w http.ResponseWriter, r *http.Request, modelID string, eng asr.Engine, req api.OpenAIAudioTranscriptionRequest) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	var fullText strings.Builder
+	err := eng.TranscribeStream(r.Context(), req, func(chunk api.OpenAIAudioTranscriptionResponse) error {
+		fullText.WriteString(chunk.Text)
+		writeSSE(w, map[string]interface{}{
+			"text":     chunk.Text,
+			"response": chunk,
+			"done":     false,
+		})
+		return nil
+	})
+	if err != nil {
+		log.Printf("MODEL %s: ASR stream transcription failed: %v", modelID, err)
+		writeSSE(w, map[string]interface{}{
+			"error": err.Error(),
+			"done":  true,
+		})
+		return
+	}
+	s.touchASREngine(modelID)
+	writeSSE(w, map[string]interface{}{
+		"text": fullText.String(),
+		"done": true,
+	})
 }
 
 // GET /api/asr-runtime -- report the shared Python runtime ASR package status.
@@ -198,4 +233,9 @@ func parseAudioHotwords(value string) []string {
 		}
 	}
 	return out
+}
+
+func parseAudioStream(value string) bool {
+	value = strings.TrimSpace(strings.ToLower(value))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
