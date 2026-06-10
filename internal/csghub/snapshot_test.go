@@ -163,6 +163,28 @@ func TestDownloadLFSFileRemovesOversizedPartial(t *testing.T) {
 	}
 }
 
+func TestSnapshotProgressTrackerAggregatesBytes(t *testing.T) {
+	tracker := newSnapshotProgressTracker([]RepoFile{
+		{Type: "file", Path: "config.json", Name: "config.json", Size: 10},
+		{Type: "file", Path: "weights/model.safetensors", Name: "model.safetensors", Size: 30},
+	})
+
+	completed, total := tracker.update(1, 15, 30)
+	if completed != 15 || total != 40 {
+		t.Fatalf("after partial update completed=%d total=%d, want 15/40", completed, total)
+	}
+
+	completed, total = tracker.update(0, 10, 10)
+	if completed != 25 || total != 40 {
+		t.Fatalf("after second file update completed=%d total=%d, want 25/40", completed, total)
+	}
+
+	completed, total = tracker.update(1, 30, 30)
+	if completed != 40 || total != 40 {
+		t.Fatalf("after complete update completed=%d total=%d, want 40/40", completed, total)
+	}
+}
+
 func TestParseModelID(t *testing.T) {
 	tests := []struct {
 		name      string

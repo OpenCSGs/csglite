@@ -270,6 +270,17 @@ function imageModelLabel(model: ModelInfo): string {
   return `${label} [${source}]`;
 }
 
+function localizeImageErrorMessage(message: string, model?: ModelInfo): string {
+  const provider = model?.provider || t("chat.cloud");
+  if (/Cloud login required|save an API Key/i.test(message)) {
+    return t("chat.cloudAuthRequired", provider);
+  }
+  if (/Failed to load OpenCSG built-in API Key/i.test(message)) {
+    return t("chat.cloudBuiltinAPIKeyFailed", provider);
+  }
+  return message;
+}
+
 async function refreshImageModels() {
   const allModels = await getTags({ refresh: true });
   const imageModels = allModels.filter((model) => model.pipeline_tag === "text-to-image");
@@ -393,7 +404,7 @@ export function ImageGeneration() {
       }
       await refreshRuntime();
     } catch (err: any) {
-      error.value = err.message || String(err);
+      error.value = localizeImageErrorMessage(err.message || String(err), currentModel);
       await refreshRuntime();
     } finally {
       activeJobID.value = "";

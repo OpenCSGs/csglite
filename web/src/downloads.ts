@@ -109,13 +109,14 @@ function applyProgress(task: DownloadTask, p: PullProgress): DownloadTask {
     files[fileKey] = { completed: Math.max(0, p.completed || 0), total: p.total };
   }
   const aggregate = aggregateFiles(files);
-  const totalBytes = aggregate.total || task.totalBytes;
-  const completedBytes = aggregate.total ? aggregate.completed : task.completedBytes;
-  
-  // 当单个文件完成时（completed == total），直接计算百分比
-  // 不再强制限制为 99%，因为后端现在会在文件完成时报告最终进度
+  const hasRepositoryProgress = typeof p.total_bytes === "number" && p.total_bytes > 0;
+  const totalBytes = hasRepositoryProgress ? Math.max(0, p.total_bytes || 0) : aggregate.total || task.totalBytes;
+  const completedBytes = hasRepositoryProgress ? Math.max(0, p.completed_bytes || 0) : aggregate.total ? aggregate.completed : task.completedBytes;
+
+  // Prefer repository-level bytes from the API so multi-file downloads do not
+  // jump based on the current file's progress.
   let percent = totalBytes > 0 ? Math.min(100, Math.round((completedBytes / totalBytes) * 100)) : task.percent;
-  // 只有在总进度达到 100% 但还有文件未完成时才限制为 99%
+  // Keep the task open until the backend sends the final success event.
   if (percent >= 100 && completedBytes < totalBytes) {
     percent = 99;
   }

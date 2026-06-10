@@ -14,11 +14,13 @@ import (
 
 // SnapshotProgress reports progress for a multi-file download.
 type SnapshotProgress struct {
-	FileName       string
-	FileIndex      int
-	TotalFiles     int
-	BytesCompleted int64
-	BytesTotal     int64
+	FileName          string
+	FileIndex         int
+	TotalFiles        int
+	BytesCompleted    int64
+	BytesTotal        int64
+	BytesCompletedAll int64
+	BytesTotalAll     int64
 }
 
 // SnapshotProgressFunc is called for each file progress update.
@@ -63,6 +65,7 @@ func (c *Client) DatasetSnapshotDownload(ctx context.Context, namespace, name, d
 	sem := make(chan struct{}, maxConcurrentDownloads)
 	var mu sync.Mutex
 	var firstErr error
+	progressTracker := newSnapshotProgressTracker(downloadFiles)
 
 	var wg sync.WaitGroup
 	for i, f := range downloadFiles {
@@ -84,12 +87,15 @@ func (c *Client) DatasetSnapshotDownload(ctx context.Context, namespace, name, d
 
 			fileProgress := func(downloaded, total int64) {
 				if progress != nil {
+					completedAll, totalAll := progressTracker.update(idx, downloaded, total)
 					progress(SnapshotProgress{
-						FileName:       file.Name,
-						FileIndex:      idx,
-						TotalFiles:     len(downloadFiles),
-						BytesCompleted: downloaded,
-						BytesTotal:     total,
+						FileName:          file.Name,
+						FileIndex:         idx,
+						TotalFiles:        len(downloadFiles),
+						BytesCompleted:    downloaded,
+						BytesTotal:        total,
+						BytesCompletedAll: completedAll,
+						BytesTotalAll:     totalAll,
 					})
 				}
 			}
@@ -157,6 +163,7 @@ func (c *Client) downloadSnapshot(ctx context.Context, repoType, namespace, name
 	sem := make(chan struct{}, maxConcurrentDownloads)
 	var mu sync.Mutex
 	var firstErr error
+	progressTracker := newSnapshotProgressTracker(downloadFiles)
 
 	var wg sync.WaitGroup
 	for i, f := range downloadFiles {
@@ -178,12 +185,15 @@ func (c *Client) downloadSnapshot(ctx context.Context, repoType, namespace, name
 
 			fileProgress := func(downloaded, total int64) {
 				if progress != nil {
+					completedAll, totalAll := progressTracker.update(idx, downloaded, total)
 					progress(SnapshotProgress{
-						FileName:       file.Name,
-						FileIndex:      idx,
-						TotalFiles:     len(downloadFiles),
-						BytesCompleted: downloaded,
-						BytesTotal:     total,
+						FileName:          file.Name,
+						FileIndex:         idx,
+						TotalFiles:        len(downloadFiles),
+						BytesCompleted:    downloaded,
+						BytesTotal:        total,
+						BytesCompletedAll: completedAll,
+						BytesTotalAll:     totalAll,
 					})
 				}
 			}
@@ -204,6 +214,60 @@ func (c *Client) downloadSnapshot(ctx context.Context, repoType, namespace, name
 		return nil, firstErr
 	}
 	return downloadFiles, nil
+}
+
+type snapshotProgressTracker struct {
+	mu        sync.Mutex
+	completed []int64
+	totals    []int64
+	totalAll  int64
+}
+
+func newSnapshotProgressTracker(files []RepoFile) *snapshotProgressTracker {
+	tracker := &snapshotProgressTracker{
+		completed: make([]int64, len(files)),
+		totals:    make([]int64, len(files)),
+	}
+	for i, file := range files {
+		if file.Size > 0 {
+			tracker.totals[i] = file.Size
+			tracker.totalAll += file.Size
+		}
+	}
+	return tracker
+}
+
+func (t *snapshotProgressTracker) update(index int, completed, total int64) (int64, int64) {
+	if t == nil || index < 0 || index >= len(t.completed) {
+		return 0, 0
+	}
+	if completed < 0 {
+		completed = 0
+	}
+	if total < 0 {
+		total = 0
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if total > 0 && total != t.totals[index] {
+		t.totalAll += total - t.totals[index]
+		t.totals[index] = total
+	}
+	if t.totals[index] > 0 && completed > t.totals[index] {
+		completed = t.totals[index]
+	}
+	t.completed[index] = completed
+
+	var completedAll int64
+	for _, value := range t.completed {
+		completedAll += value
+	}
+	if t.totalAll > 0 && completedAll > t.totalAll {
+		completedAll = t.totalAll
+	}
+	return completedAll, t.totalAll
 }
 
 func repoFileBaseName(f RepoFile) string {

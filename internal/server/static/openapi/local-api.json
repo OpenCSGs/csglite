@@ -5388,6 +5388,14 @@
           },
           "completed": {
             "type": "integer"
+          },
+          "total_bytes": {
+            "type": "integer",
+            "description": "Total bytes across all files selected for this model download."
+          },
+          "completed_bytes": {
+            "type": "integer",
+            "description": "Downloaded bytes across all files selected for this model download."
           }
         }
       },

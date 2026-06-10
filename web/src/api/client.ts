@@ -473,6 +473,8 @@ export interface PullProgress {
   digest?: string;
   total?: number;
   completed?: number;
+  total_bytes?: number;
+  completed_bytes?: number;
 }
 
 function previewResponseBody(text: string): string {

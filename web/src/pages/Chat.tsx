@@ -134,6 +134,20 @@ function configuredCloudProviderName(): string {
   return cloudProviderName.value || t("chat.cloud");
 }
 
+function isCloudAuthErrorMessage(message: string): boolean {
+  return /(AUTH-ERR-1|AUTH-ERR-5|login first|inference error 401|Error 401|Cloud login required|login expired|save an API Key|Failed to load OpenCSG built-in API Key)/i.test(message);
+}
+
+function localizeChatErrorMessage(message: string, providerName = configuredCloudProviderName()): string {
+  if (/Cloud login required|save an API Key/i.test(message)) {
+    return t("chat.cloudAuthRequired", providerName);
+  }
+  if (/Failed to load OpenCSG built-in API Key/i.test(message)) {
+    return t("chat.cloudBuiltinAPIKeyFailed", providerName);
+  }
+  return message;
+}
+
 function readSelectedModelKey(): string {
   try {
     return localStorage.getItem(selectedModelStorageKey) || "";
@@ -1401,6 +1415,7 @@ export function Chat() {
       }
     } catch (e: any) {
       const errMessage = e?.message || t("chat.failedResp");
+      const localizedErrorMessage = localizeChatErrorMessage(errMessage, currentModel.provider || configuredCloudProviderName());
       if (streamingContent.value && !asrMode && (!ac.signal.aborted || !imageMode)) {
         const assistantContent = streamingContent.value;
         const sources = streamingSources.value;
@@ -1417,10 +1432,10 @@ export function Chat() {
         streamingSources.value = [];
         saveCurrentConversation();
       } else if (!ac.signal.aborted) {
-        if (currentModel.source === "cloud" && /(AUTH-ERR-1|AUTH-ERR-5|login first|Error 401|login expired|API Key)/i.test(errMessage)) {
-          await openCloudAuthDialog(t("chat.cloudLoginExpired", currentModel.provider || configuredCloudProviderName()));
+        if (currentModel.source === "cloud" && isCloudAuthErrorMessage(errMessage)) {
+          await openCloudAuthDialog(localizedErrorMessage);
         } else {
-          chatError.value = errMessage;
+          chatError.value = localizedErrorMessage;
         }
       }
     }

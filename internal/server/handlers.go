@@ -305,10 +305,12 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	lastProgressLog := time.Time{}
 	progress := func(p csghub.SnapshotProgress) {
 		safeSSE(api.PullResponse{
-			Status:    fmt.Sprintf("downloading %s", p.FileName),
-			Digest:    p.FileName,
-			Total:     p.BytesTotal,
-			Completed: p.BytesCompleted,
+			Status:         fmt.Sprintf("downloading %s", p.FileName),
+			Digest:         p.FileName,
+			Total:          p.BytesTotal,
+			Completed:      p.BytesCompleted,
+			TotalBytes:     p.BytesTotalAll,
+			CompletedBytes: p.BytesCompletedAll,
 		})
 		if time.Since(lastProgressLog) >= 5*time.Second || (p.BytesTotal > 0 && p.BytesCompleted >= p.BytesTotal) {
 			log.Printf("MODEL %s: pulling file=%s completed=%d total=%d", req.Model, p.FileName, p.BytesCompleted, p.BytesTotal)

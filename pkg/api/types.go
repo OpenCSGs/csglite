@@ -180,10 +180,12 @@ type ModelUploadResponse struct {
 }
 
 type PullResponse struct {
-	Status    string `json:"status"`
-	Digest    string `json:"digest,omitempty"`
-	Total     int64  `json:"total,omitempty"`
-	Completed int64  `json:"completed,omitempty"`
+	Status         string `json:"status"`
+	Digest         string `json:"digest,omitempty"`
+	Total          int64  `json:"total,omitempty"`
+	Completed      int64  `json:"completed,omitempty"`
+	TotalBytes     int64  `json:"total_bytes,omitempty"`
+	CompletedBytes int64  `json:"completed_bytes,omitempty"`
 }
 
 type PsResponse struct {
