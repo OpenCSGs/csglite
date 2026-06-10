@@ -152,6 +152,9 @@ func TestDiffusersPipelineTagFromClassName(t *testing.T) {
 	if got := diffusersPipelineTagFromClassName("FluxPipeline"); got != "text-to-image" {
 		t.Fatalf("tag = %q, want text-to-image", got)
 	}
+	if got := diffusersPipelineTagFromClassName("QwenImageEditPlusPipeline"); got != "image-to-image" {
+		t.Fatalf("tag = %q, want image-to-image", got)
+	}
 	if got := diffusersPipelineTagFromClassName("StableVideoDiffusionPipeline"); got != "image-to-video" {
 		t.Fatalf("tag = %q, want image-to-video", got)
 	}

@@ -274,10 +274,10 @@ func detectDiffusersPipelineTag(modelDir string) string {
 	switch {
 	case isUnsupportedDiffusersClass(className):
 		return "image-to-video"
-	case isTextToImageDiffusersClass(className):
-		return "text-to-image"
 	case isImageToImageDiffusersClass(className):
 		return "image-to-image"
+	case isTextToImageDiffusersClass(className):
+		return "text-to-image"
 	default:
 		// A Diffusers model_index.json is a stronger signal than the legacy
 		// text-model config checks below. Prefer trying the image runtime so

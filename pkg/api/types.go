@@ -585,6 +585,8 @@ type OpenAIImagesGenerationRequest struct {
 	Steps          *int     `json:"steps,omitempty"`
 	CFGScale       *float64 `json:"cfg_scale,omitempty"`
 	Source         string   `json:"source,omitempty"`
+	Image          string   `json:"image,omitempty"`
+	Images         []string `json:"images,omitempty"`
 }
 
 type OpenAIAudioTranscriptionRequest struct {

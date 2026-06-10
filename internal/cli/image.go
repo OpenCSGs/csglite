@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/opencsgs/csghub-lite/internal/config"
@@ -28,17 +30,22 @@ func newImageCmd() *cobra.Command {
 	var steps int
 	var cfgScale float64
 	var keepAlive string
+	var inputPath string
+	var extraInputs []string
 
 	cmd := &cobra.Command{
 		Use:   "image MODEL",
-		Short: "Generate an image with a local text-to-image model",
-		Long: `Generate image files with a local text-to-image model.
+		Short: "Generate or edit an image with a local Diffusers model",
+		Long: `Generate or edit image files with a local Diffusers model.
 
 The command starts the local server if needed, pulls the model if it is missing,
 loads the Diffusers image runtime, calls the OpenAI-compatible images API, and
-writes PNG files to disk.`,
+writes PNG files to disk.
+
+For image-to-image or editing models, pass one or more input images with --input.`,
 		Example: `  csghub-lite image Qwen/Qwen-Image-2512 --prompt "a cute cat" --output cat.png
-  csghub-lite image stabilityai/stable-diffusion-xl-base-1.0 --prompt "a mountain lake" --size 1024x1024 --steps 30`,
+  csghub-lite image stabilityai/stable-diffusion-xl-base-1.0 --prompt "a mountain lake" --size 1024x1024 --steps 30
+  csghub-lite image Qwen/Qwen-Image-Edit-2511 --prompt "make the sky sunset orange" --input photo.png --output edited.png`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := imageOptions{
@@ -48,6 +55,8 @@ writes PNG files to disk.`,
 				size:           size,
 				count:          count,
 				keepAlive:      keepAlive,
+				inputPath:      inputPath,
+				extraInputs:    extraInputs,
 			}
 			if cmd.Flags().Changed("seed") {
 				opts.seed = &seed
@@ -71,6 +80,8 @@ writes PNG files to disk.`,
 	cmd.Flags().IntVar(&steps, "steps", 0, "number of inference steps")
 	cmd.Flags().Float64Var(&cfgScale, "cfg-scale", 0, "classifier-free guidance scale")
 	cmd.Flags().StringVar(&keepAlive, "keep-alive", "", "keep the model loaded after generation (for example 5m, 1h, or -1)")
+	cmd.Flags().StringVar(&inputPath, "input", "", "input image path for image-to-image or editing models")
+	cmd.Flags().StringArrayVar(&extraInputs, "input-extra", nil, "additional input image paths for multi-image editing models")
 	return cmd
 }
 
@@ -84,6 +95,8 @@ type imageOptions struct {
 	steps          *int
 	cfgScale       *float64
 	keepAlive      string
+	inputPath      string
+	extraInputs    []string
 }
 
 func runImage(cmd *cobra.Command, modelID string, opts imageOptions) error {
@@ -141,9 +154,18 @@ func runImage(cmd *cobra.Command, modelID string, opts imageOptions) error {
 	if opts.cfgScale != nil {
 		req.CFGScale = opts.cfgScale
 	}
+	inputImages, err := loadInputImagePaths(opts.inputPath, opts.extraInputs)
+	if err != nil {
+		return err
+	}
 
 	fmt.Printf("Generating %d image(s)...\n", opts.count)
-	resp, err := generateImages(cmd.Context(), serverURL, req)
+	var resp *api.OpenAIImagesGenerationResponse
+	if len(inputImages) > 0 {
+		resp, err = editImages(cmd.Context(), serverURL, req, inputImages)
+	} else {
+		resp, err = generateImages(cmd.Context(), serverURL, req)
+	}
 	if err != nil {
 		return err
 	}
@@ -178,19 +200,74 @@ func generateImages(ctx context.Context, serverURL string, req api.OpenAIImagesG
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 0}
-	resp, err := client.Do(httpReq)
+	return doImageRequest(ctx, httpReq)
+}
+
+func editImages(ctx context.Context, serverURL string, req api.OpenAIImagesGenerationRequest, inputPaths []string) (*api.OpenAIImagesGenerationResponse, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("model", req.Model)
+	_ = writer.WriteField("prompt", req.Prompt)
+	_ = writer.WriteField("source", req.Source)
+	if req.N != nil {
+		_ = writer.WriteField("n", strconv.Itoa(*req.N))
+	}
+	if strings.TrimSpace(req.Size) != "" {
+		_ = writer.WriteField("size", req.Size)
+	}
+	if strings.TrimSpace(req.ResponseFormat) != "" {
+		_ = writer.WriteField("response_format", req.ResponseFormat)
+	}
+	if strings.TrimSpace(req.NegativePrompt) != "" {
+		_ = writer.WriteField("negative_prompt", req.NegativePrompt)
+	}
+	if req.Seed != nil {
+		_ = writer.WriteField("seed", strconv.Itoa(*req.Seed))
+	}
+	if req.Steps != nil {
+		_ = writer.WriteField("steps", strconv.Itoa(*req.Steps))
+	}
+	if req.CFGScale != nil {
+		_ = writer.WriteField("cfg_scale", strconv.FormatFloat(*req.CFGScale, 'f', -1, 64))
+	}
+	for _, path := range inputPaths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("reading input image %s: %w", path, err)
+		}
+		part, err := writer.CreateFormFile("image", filepath.Base(path))
+		if err != nil {
+			return nil, err
+		}
+		if _, err := part.Write(data); err != nil {
+			return nil, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL+"/v1/images/edits", &body)
 	if err != nil {
-		return nil, fmt.Errorf("image generation request failed: %w", err)
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
+	return doImageRequest(ctx, httpReq)
+}
+
+func doImageRequest(ctx context.Context, httpReq *http.Request) (*api.OpenAIImagesGenerationResponse, error) {
+	client := &http.Client{Timeout: 0}
+	resp, err := client.Do(httpReq.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("image request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("image generation failed: %s", strings.TrimSpace(string(errBody)))
+		return nil, fmt.Errorf("image request failed: %s", strings.TrimSpace(string(errBody)))
 	}
 	var genResp api.OpenAIImagesGenerationResponse
 	if err := json.NewDecoder(resp.Body).Decode(&genResp); err != nil {
-		return nil, fmt.Errorf("decoding image generation response: %w", err)
+		return nil, fmt.Errorf("decoding image response: %w", err)
 	}
 	return &genResp, nil
 }
@@ -205,4 +282,21 @@ func imageOutputPath(output string, index, total int) string {
 		ext = ".png"
 	}
 	return fmt.Sprintf("%s-%d%s", stem, index+1, ext)
+}
+
+func loadInputImagePaths(primary string, extras []string) ([]string, error) {
+	paths := make([]string, 0, 1+len(extras))
+	if strings.TrimSpace(primary) != "" {
+		paths = append(paths, strings.TrimSpace(primary))
+	}
+	for _, path := range extras {
+		path = strings.TrimSpace(path)
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	return paths, nil
 }

@@ -199,10 +199,10 @@ func diffusersPipelineTagFromClassName(className string) string {
 	switch {
 	case isUnsupportedDiffusersClass(className):
 		return "image-to-video"
-	case isTextToImageDiffusersClass(className):
-		return "text-to-image"
 	case isImageToImageDiffusersClass(className):
 		return "image-to-image"
+	case isTextToImageDiffusersClass(className):
+		return "text-to-image"
 	case strings.Contains(className, "pipeline"):
 		return "text-to-image"
 	default:

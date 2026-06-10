@@ -17,7 +17,7 @@ import {
 type Tab = "models" | "datasets";
 type ViewMode = "grid" | "list";
 type ModelFrameworkFilter = "" | "gguf" | "safetensors";
-type ModelTaskFilter = "" | "text-generation" | "feature-extraction" | "sentence-similarity" | "automatic-speech-recognition" | "text-to-image";
+type ModelTaskFilter = "" | "text-generation" | "feature-extraction" | "sentence-similarity" | "automatic-speech-recognition" | "text-to-image" | "image-to-image";
 type FilterOption<T extends string> = {
   value: T;
   label: string;
@@ -47,6 +47,7 @@ const modelTaskOptions: FilterOption<ModelTaskFilter>[] = [
   { value: "sentence-similarity", label: "mp.taskSentenceSimilarity" },
   { value: "automatic-speech-recognition", label: "mp.taskASR" },
   { value: "text-to-image", label: "mp.taskTextToImage" },
+  { value: "image-to-image", label: "mp.taskImageToImage" },
 ];
 const activeTab = signal<Tab>("models");
 const searchQuery = signal("");

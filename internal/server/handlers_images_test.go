@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,6 +87,82 @@ func TestHandleOpenAIImagesGenerations(t *testing.T) {
 	}
 	if fake.lastReq.Prompt != "a cat" {
 		t.Fatalf("prompt was not forwarded: %#v", fake.lastReq)
+	}
+}
+
+func TestHandleOpenAIImagesGenerationsRejectsInputImage(t *testing.T) {
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	s := New(cfg, "test")
+	body := `{"model":"Qwen/Qwen-Image-Edit-2511","prompt":"edit","image":"aW5wdXQ="}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIImagesGenerations(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "/v1/images/edits") {
+		t.Fatalf("body = %s, want edits redirect message", w.Body.String())
+	}
+}
+
+func TestHandleOpenAIImagesEditsForwardsInputImage(t *testing.T) {
+	oldNewDiffusersEngine := newDiffusersEngine
+	oldEnsureImageRuntimeReady := ensureImageRuntimeReady
+	defer func() { newDiffusersEngine = oldNewDiffusersEngine }()
+	defer func() { ensureImageRuntimeReady = oldEnsureImageRuntimeReady }()
+
+	fake := &fakeImageEngine{}
+	ensureImageRuntimeReady = func(context.Context, *imagegen.RuntimeManager, imagegen.ProgressFunc, bool) error {
+		return nil
+	}
+	newDiffusersEngine = func(context.Context, string, string, *imagegen.RuntimeManager) (imagegen.Engine, error) {
+		return fake, nil
+	}
+
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:    "Qwen",
+		Name:         "Qwen-Image-Edit-2511",
+		Format:       model.FormatSafeTensors,
+		Size:         1,
+		Files:        []string{"model_index.json"},
+		DownloadedAt: time.Now(),
+		PipelineTag:  "image-to-image",
+	}); err != nil {
+		t.Fatalf("save model manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "Qwen", "Qwen-Image-Edit-2511")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+
+	s := New(cfg, "test")
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("model", "Qwen/Qwen-Image-Edit-2511")
+	_ = writer.WriteField("prompt", "make the sky orange")
+	part, err := writer.CreateFormFile("image", "input.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("fake-png")); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	_ = writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIImagesEdits(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	if fake.lastReq.Image == "" {
+		t.Fatalf("input image was not forwarded: %#v", fake.lastReq)
 	}
 }
 

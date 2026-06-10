@@ -10,8 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"encoding/base64"
 	"github.com/opencsgs/csghub-lite/internal/imagegen"
 	"github.com/opencsgs/csghub-lite/pkg/api"
+	"strings"
 )
 
 const (
@@ -50,7 +52,7 @@ func (s *Server) handleImageGenerationJobCreate(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if errMsg := normalizeOpenAIImagesGenerationRequest(&req); errMsg != "" {
+	if errMsg := firstImageJobValidationError(&req); errMsg != "" {
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
@@ -139,7 +141,11 @@ func (s *Server) runImageGenerationJob(ctx context.Context, job *imageGeneration
 	var resp *api.OpenAIImagesGenerationResponse
 	var err error
 	if imageGenerationUsesCloud(job.req) {
-		resp, err = s.generateCloudImage(ctx, job.req)
+		if strings.TrimSpace(job.req.Image) != "" || len(job.req.Images) > 0 {
+			resp, err = s.generateCloudImageEdit(ctx, imageInferenceRequestFromJob(job.req))
+		} else {
+			resp, err = s.generateCloudImage(ctx, job.req)
+		}
 	} else {
 		var eng imagegen.Engine
 		eng, err = s.getOrLoadImageEngine(ctx, job.req.Model)
@@ -234,6 +240,32 @@ func (j *imageGenerationJob) setCancelled() {
 	j.status = imageJobCancelled
 	j.updatedAt = now
 	j.completedAt = &now
+}
+
+func firstImageJobValidationError(req *api.OpenAIImagesGenerationRequest) string {
+	if strings.TrimSpace(req.Image) != "" || len(req.Images) > 0 {
+		return normalizeOpenAIImagesEditRequest(req)
+	}
+	return normalizeOpenAIImagesGenerationRequest(req)
+}
+
+func imageInferenceRequestFromJob(req api.OpenAIImagesGenerationRequest) imageInferenceRequest {
+	out := imageInferenceRequest{OpenAIImagesGenerationRequest: req}
+	if strings.TrimSpace(req.Image) != "" {
+		if data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.Image)); err == nil {
+			out.images = append(out.images, data)
+		}
+	}
+	for _, encoded := range req.Images {
+		encoded = strings.TrimSpace(encoded)
+		if encoded == "" {
+			continue
+		}
+		if data, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+			out.images = append(out.images, data)
+		}
+	}
+	return out
 }
 
 func newImageGenerationJobID() (string, error) {

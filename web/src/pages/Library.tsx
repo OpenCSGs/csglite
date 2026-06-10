@@ -5,6 +5,7 @@ import type { LoadModelOptions, LocalModelUploadFile, ModelInfo, RunningModel } 
 import { locale, t } from "../i18n";
 import { DownloadTableCell } from "../components/DownloadProgressPanel";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
+import { isImageGenerationModel } from "../utils/imageModels";
 import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 
@@ -123,10 +124,6 @@ function buildLoadOptions(params: RunModelParams): LoadModelOptions {
     dtype: optionalText(params.dtype),
     keep_alive: optionalText(params.keepAlive),
   };
-}
-
-function isImageGenerationModel(model: Pick<ModelInfo, "pipeline_tag">): boolean {
-	return model.pipeline_tag === "text-to-image";
 }
 
 function isEmbeddingModel(model: Pick<ModelInfo, "pipeline_tag" | "category">): boolean {
@@ -728,6 +725,7 @@ export function Library() {
       {apiDialogModel.value && (
         <ApiInfoDialog
           model={apiDialogModel.value.name}
+          pipelineTag={apiDialogModel.value.pipeline_tag}
           isVision={isVisionModel(apiDialogModel.value)}
           isEmbedding={isEmbeddingModel(apiDialogModel.value)}
           isASR={isASRModel(apiDialogModel.value)}

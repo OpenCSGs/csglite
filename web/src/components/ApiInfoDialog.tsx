@@ -1,201 +1,31 @@
 import { signal } from "@preact/signals";
 import { t } from "../i18n";
+import { apiExampleModeFromPipelineTag, buildApiExamples } from "../utils/apiExamples";
 
 export function ApiInfoDialog({
   model,
+  pipelineTag,
   isVision,
   isEmbedding,
   isASR,
   onClose,
 }: {
   model: string;
+  pipelineTag?: string;
   isVision?: boolean;
   isEmbedding?: boolean;
   isASR?: boolean;
   onClose: () => void;
 }) {
   const baseUrl = `${location.protocol}//${location.host}`;
-
-  const textMsg = `{"role": "user", "content": "Hello!"}`;
-  const visionMsg = `{"role": "user", "content": [
-        {"type": "text", "text": "What is in this image?"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,<BASE64_DATA>"}}
-      ]}`;
-
-  const curlExample = isASR
-    ? `curl ${baseUrl}/v1/audio/transcriptions \\
-  -F model="${model}" \\
-  -F file="@audio.mp3" \\
-  -F response_format="json"`
+  const mode = isASR
+    ? "asr"
     : isEmbedding
-    ? `curl ${baseUrl}/v1/embeddings \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "${model}",
-    "input": ["Hello!"],
-    "encoding_format": "float"
-  }'`
-    : `curl ${baseUrl}/v1/chat/completions \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "${model}",
-    "messages": [
-      ${isVision ? visionMsg : textMsg}
-    ],
-    "stream": true
-  }'`;
-
-  const pythonTextMsg = `{"role": "user", "content": "Hello!"}`;
-  const pythonVisionMsg = `{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "What is in this image?"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{img_b64}"}
-                }
-            ]
-        }`;
-
-  const pythonExample = isASR
-    ? `from openai import OpenAI
-
-client = OpenAI(
-    base_url="${baseUrl}/v1",
-    api_key="unused"
-)
-
-with open("audio.mp3", "rb") as audio:
-    response = client.audio.transcriptions.create(
-        model="${model}",
-        file=audio,
-        response_format="json"
-    )
-
-print(response.text)`
-    : isEmbedding
-    ? `from openai import OpenAI
-
-client = OpenAI(
-    base_url="${baseUrl}/v1",
-    api_key="unused"
-)
-
-response = client.embeddings.create(
-    model="${model}",
-    input=["Hello!"],
-    encoding_format="float"
-)
-
-print(response.data[0].embedding)`
-    : isVision
-    ? `import base64
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="${baseUrl}/v1",
-    api_key="unused"
-)
-
-with open("image.png", "rb") as f:
-    img_b64 = base64.b64encode(f.read()).decode()
-
-response = client.chat.completions.create(
-    model="${model}",
-    messages=[
-        ${pythonVisionMsg}
-    ],
-    stream=True
-)
-
-for chunk in response:
-    if chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="")`
-    : `from openai import OpenAI
-
-client = OpenAI(
-    base_url="${baseUrl}/v1",
-    api_key="unused"
-)
-
-response = client.chat.completions.create(
-    model="${model}",
-    messages=[
-        ${pythonTextMsg}
-    ],
-    stream=True
-)
-
-for chunk in response:
-    if chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="")`;
-
-  const jsTextMsg = `{ role: "user", content: "Hello!" }`;
-  const jsVisionMsg = `{
-      role: "user",
-      content: [
-        { type: "text", text: "What is in this image?" },
-        { type: "image_url", image_url: { url: \`data:image/png;base64,\${imgBase64}\` } }
-      ]
-    }`;
-
-  const jsExample = isASR
-    ? `const form = new FormData();
-form.set("model", "${model}");
-form.set("file", audioFile); // File from <input type="file">
-form.set("response_format", "json");
-
-const response = await fetch("${baseUrl}/v1/audio/transcriptions", {
-  method: "POST",
-  body: form
-});
-
-const data = await response.json();
-console.log(data.text);`
-    : isEmbedding
-    ? `const response = await fetch("${baseUrl}/v1/embeddings", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    model: "${model}",
-    input: ["Hello!"],
-    encoding_format: "float"
-  })
-});
-
-const data = await response.json();
-console.log(data.data[0].embedding);`
-    : isVision
-    ? `const imgBase64 = "..."; // Base64-encoded image data
-
-const response = await fetch("${baseUrl}/v1/chat/completions", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    model: "${model}",
-    messages: [
-      ${jsVisionMsg}
-    ],
-    stream: false
-  })
-});
-
-const data = await response.json();
-console.log(data.choices[0].message.content);`
-    : `const response = await fetch("${baseUrl}/v1/chat/completions", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    model: "${model}",
-    messages: [
-      ${jsTextMsg}
-    ],
-    stream: false
-  })
-});
-
-const data = await response.json();
-console.log(data.choices[0].message.content);`;
+      ? "embedding"
+      : apiExampleModeFromPipelineTag(pipelineTag, isVision);
+  const examples = buildApiExamples(baseUrl, model, mode);
+  const isTextToImage = mode === "text-to-image";
+  const isImageToImage = mode === "image-to-image";
 
   return (
     <div
@@ -211,13 +41,15 @@ console.log(data.choices[0].message.content);`;
               {isVision && <span class="ml-2 px-1.5 py-0.5 text-xs bg-purple-50 text-purple-700 rounded">Vision</span>}
               {isEmbedding && <span class="ml-2 px-1.5 py-0.5 text-xs bg-emerald-50 text-emerald-700 rounded">Embedding</span>}
               {isASR && <span class="ml-2 px-1.5 py-0.5 text-xs bg-cyan-50 text-cyan-700 rounded">ASR</span>}
+              {isTextToImage && <span class="ml-2 px-1.5 py-0.5 text-xs bg-fuchsia-50 text-fuchsia-700 rounded">Text-to-Image</span>}
+              {isImageToImage && <span class="ml-2 px-1.5 py-0.5 text-xs bg-orange-50 text-orange-700 rounded">Image-to-Image</span>}
             </p>
           </div>
         </div>
         <div class="flex-1 overflow-auto px-6 py-4 space-y-5">
-          <CodeBlock title={t("dash.apiCurl")} code={curlExample} />
-          <CodeBlock title={t("dash.apiPython")} code={pythonExample} />
-          <CodeBlock title={t("dash.apiJs")} code={jsExample} />
+          <CodeBlock title={t("dash.apiCurl")} code={examples.curl} />
+          <CodeBlock title={t("dash.apiPython")} code={examples.python} />
+          <CodeBlock title={t("dash.apiJs")} code={examples.javascript} />
         </div>
       </div>
     </div>

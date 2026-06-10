@@ -43,6 +43,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/chat/completions", s.handleOpenAIChatCompletions)
 	mux.HandleFunc("POST /v1/embeddings", s.handleOpenAIEmbeddings)
 	mux.HandleFunc("POST /v1/images/generations", s.handleOpenAIImagesGenerations)
+	mux.HandleFunc("POST /v1/images/edits", s.handleOpenAIImagesEdits)
 	mux.HandleFunc("POST /v1/audio/transcriptions", s.handleOpenAIAudioTranscriptions)
 	mux.HandleFunc("POST /api/images/jobs", s.handleImageGenerationJobCreate)
 	mux.HandleFunc("GET /api/images/jobs/{jobID}", s.handleImageGenerationJobGet)

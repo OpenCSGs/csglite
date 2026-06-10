@@ -291,6 +291,24 @@ func TestDetectPipelineTagDiffusersFamilies(t *testing.T) {
 	}
 }
 
+func TestDetectPipelineTagDiffusersImageToImageFamilies(t *testing.T) {
+	for _, className := range []string{
+		"QwenImageEditPlusPipeline",
+		"StableDiffusionXLImg2ImgPipeline",
+		"FluxKontextPipeline",
+	} {
+		t.Run(className, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"`+className+`"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := DetectPipelineTag(dir); got != "image-to-image" {
+				t.Fatalf("DetectPipelineTag() = %q, want image-to-image", got)
+			}
+		})
+	}
+}
+
 func TestDetectPipelineTagStableVideoDiffusionImageToVideo(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"StableVideoDiffusionPipeline"}`), 0o644); err != nil {

@@ -179,11 +179,11 @@ currently supported for local inference.
 | Embeddings | Supported | llama.cpp | BGE, GTE, E5, Sentence Transformers-compatible embedding models |
 | Vision-language chat | Supported | llama.cpp multimodal | Qwen2.5-VL, Gemma 3 / 4 vision, Idefics-style multimodal models |
 | Text-to-image | Supported | Diffusers runtime | Qwen-Image, FLUX, Stable Diffusion, PixArt, Sana, CogView, Z-Image |
+| Image-to-image | Supported | Diffusers runtime | Qwen-Image-Edit, inpaint, img2img, editing pipelines |
 | Automatic speech recognition | Supported | Python ASR runtime | FunASR, Whisper, Wav2Vec2-family ASR models |
 | Image-to-video | Coming soon | - | Stable Video Diffusion, SV3D |
 | Text-to-video | Coming soon | - | Video generation Diffusers models |
 | Text-to-speech | Coming soon | - | Speech synthesis models |
-| Image-to-image | Coming soon | - | Inpaint, img2img, editing pipelines |
 
 ## Integrations
 

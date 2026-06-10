@@ -182,7 +182,7 @@ func isEmbeddingPipelineTag(pipelineTag string) bool {
 
 func isImageGenerationPipelineTag(pipelineTag string) bool {
 	switch strings.ToLower(strings.TrimSpace(pipelineTag)) {
-	case "text-to-image":
+	case "text-to-image", "image-to-image":
 		return true
 	default:
 		return false

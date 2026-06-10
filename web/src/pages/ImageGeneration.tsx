@@ -9,7 +9,9 @@ import {
   installImageRuntime,
 } from "../api/client";
 import type { ImageRuntimeStatus, ModelInfo } from "../api/client";
+import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { locale, t } from "../i18n";
+import { isImageToImageModel, stripDataURL } from "../utils/imageModels";
 
 const defaultWidth = "1024";
 const defaultHeight = "1024";
@@ -42,6 +44,8 @@ const jobStatus = signal("");
 const generationStartedAt = signal(0);
 const elapsedSeconds = signal(0);
 const negativeSuggestionsOpen = signal(false);
+const inputImages = signal<string[]>([]);
+const apiDialogOpen = signal(false);
 const providersChangedEvent = "csghub:providers-changed";
 
 interface GenerationHistoryItem {
@@ -256,6 +260,16 @@ function progressPercent(): number {
   return Math.min(92, Math.round((elapsedSeconds.value / estimate) * 100));
 }
 
+async function readInputImageFile(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("failed to read image"));
+    reader.readAsDataURL(file);
+  });
+  return stripDataURL(dataUrl);
+}
+
 function imageModelKey(model: ModelInfo): string {
   return `${model.source || "local"}:${model.model || model.name}`;
 }
@@ -267,7 +281,8 @@ function selectedModelInfo(): ModelInfo | undefined {
 function imageModelLabel(model: ModelInfo): string {
   const label = model.display_name || model.label || model.model || model.name;
   const source = model.source === "cloud" ? t("chat.cloud") : model.source?.startsWith("provider:") ? model.provider || t("chat.provider") : t("chat.local");
-  return `${label} [${source}]`;
+  const kind = isImageToImageModel(model) ? t("image.modelTypeEdit") : t("image.modelTypeGenerate");
+  return `${label} [${source} · ${kind}]`;
 }
 
 function localizeImageErrorMessage(message: string, model?: ModelInfo): string {
@@ -283,7 +298,7 @@ function localizeImageErrorMessage(message: string, model?: ModelInfo): string {
 
 async function refreshImageModels() {
   const allModels = await getTags({ refresh: true });
-  const imageModels = allModels.filter((model) => model.pipeline_tag === "text-to-image");
+  const imageModels = allModels.filter((model) => model.pipeline_tag === "text-to-image" || model.pipeline_tag === "image-to-image");
   models.value = imageModels;
   if (!selectedModel.value || !imageModels.some((model) => imageModelKey(model) === selectedModel.value)) {
     selectedModel.value = imageModels[0] ? imageModelKey(imageModels[0]) : "";
@@ -347,8 +362,13 @@ export function ImageGeneration() {
     if (!selectedModel.value || !prompt.value.trim()) return;
     const currentModel = selectedModelInfo();
     if (!currentModel) return;
-    const requestSize = currentSize();
-    if (!requestSize) {
+    const editing = isImageToImageModel(currentModel);
+    if (editing && inputImages.value.length === 0) {
+      error.value = t("image.inputImageRequired");
+      return;
+    }
+    const requestSize = editing ? undefined : currentSize();
+    if (!editing && !requestSize) {
       error.value = t("image.invalidSize", minSize, maxSize);
       return;
     }
@@ -367,10 +387,12 @@ export function ImageGeneration() {
         source: currentModel.source,
         prompt: prompt.value,
         negative_prompt: negativePrompt.value.trim() || undefined,
-        size: requestSize,
+        size: requestSize ?? undefined,
         steps: requestSteps,
         seed: requestSeed,
         cfg_scale: requestCFGScale,
+        image: inputImages.value[0],
+        images: inputImages.value.length > 1 ? inputImages.value.slice(1) : undefined,
       });
       activeJobID.value = job.id;
       let latest = job;
@@ -384,7 +406,7 @@ export function ImageGeneration() {
               images,
               prompt: prompt.value,
               negativePrompt: negativePrompt.value.trim(),
-              size: requestSize,
+              size: requestSize || "input",
               steps: requestSteps,
               seed: requestSeed,
               cfgScale: requestCFGScale,
@@ -427,14 +449,40 @@ export function ImageGeneration() {
   const rt = runtime.value;
   const currentModel = selectedModelInfo();
   const selectedModelIsCloud = currentModel?.source === "cloud";
+  const selectedModelIsEdit = isImageToImageModel(currentModel);
   const selectedSizeKey = sizePresets.find((preset) => preset.width === width.value && preset.height === height.value)?.key || "";
   const progress = progressPercent();
 
+  const handleInputImageChange = async (event: Event) => {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files || []);
+    input.value = "";
+    if (files.length === 0) return;
+    try {
+      const encoded = await Promise.all(files.map((file) => readInputImageFile(file)));
+      inputImages.value = [...inputImages.value, ...encoded];
+      error.value = "";
+    } catch (err: any) {
+      error.value = err.message || String(err);
+    }
+  };
+
   return (
     <div class="mx-auto max-w-6xl space-y-6 p-8">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-900">{t("image.title")}</h1>
-        <p class="mt-2 text-sm text-gray-500">{t("image.subtitle")}</p>
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">{t("image.title")}</h1>
+          <p class="mt-2 text-sm text-gray-500">{t("image.subtitle")}</p>
+        </div>
+        {currentModel && (
+          <button
+            type="button"
+            onClick={() => (apiDialogOpen.value = true)}
+            class="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            {t("dash.apiInfo")}
+          </button>
+        )}
       </div>
 
       {rt && !rt.ready && !selectedModelIsCloud && (
@@ -485,6 +533,39 @@ export function ImageGeneration() {
               placeholder={t("image.promptPlaceholder")}
             />
           </label>
+          {selectedModelIsEdit && (
+            <div class="block space-y-2">
+              <div>
+                <span class="text-sm font-medium text-gray-700">{t("image.inputImage")}</span>
+                <p class="mt-1 text-xs text-gray-500">{t("image.inputImageHint")}</p>
+              </div>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                multiple
+                onChange={handleInputImageChange}
+                class="block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
+              />
+              {inputImages.value.length > 0 && (
+                <div class="grid grid-cols-2 gap-2">
+                  {inputImages.value.map((image, index) => (
+                    <div key={`${index}-${image.slice(0, 16)}`} class="relative overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                      <img src={imageDataURL(image)} alt="" class="aspect-square w-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          inputImages.value = inputImages.value.filter((_, itemIndex) => itemIndex !== index);
+                        }}
+                        class="absolute right-2 top-2 rounded-md bg-white/90 px-2 py-1 text-xs font-medium text-gray-700 shadow hover:bg-white"
+                      >
+                        {t("image.removeInputImage")}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <label class="block">
             <span class="text-sm font-medium text-gray-700">{t("image.negativePrompt")}</span>
             <textarea
@@ -542,6 +623,7 @@ export function ImageGeneration() {
           </div>
 
           <div class="space-y-3">
+            {!selectedModelIsEdit && (
             <div>
               <div class="mb-2 flex items-center justify-between">
                 <span class="text-sm font-medium text-gray-700">{t("image.size")}</span>
@@ -569,6 +651,7 @@ export function ImageGeneration() {
                 <NumberField label={t("image.height")} value={height.value} min={minSize} max={maxSize} onInput={(v) => (height.value = v)} />
               </div>
             </div>
+            )}
 
             <NumberField
               label={t("image.steps")}
@@ -711,6 +794,13 @@ export function ImageGeneration() {
             <img src={previewImage.value.src} class="max-h-[78vh] max-w-full rounded-lg object-contain" />
           </div>
         </div>
+      )}
+      {apiDialogOpen.value && currentModel && (
+        <ApiInfoDialog
+          model={currentModel.model || currentModel.name}
+          pipelineTag={currentModel.pipeline_tag}
+          onClose={() => (apiDialogOpen.value = false)}
+        />
       )}
     </div>
   );
