@@ -845,9 +845,12 @@ export function Chat() {
     saveSelectedModelKey(nextKey);
     const model = availableModels.value.find((x) => modelKey(x) === nextKey);
     applyModelSamplingDefaults(model);
-    if (isASRModel(model)) {
+    const nextMode = getChatModelMode(model);
+    const acceptsImageInput = nextMode === "vision" || isImageToImageModel(model);
+    if (isASRModel(model) || !acceptsImageInput) {
       pendingImages.value = [];
-    } else {
+    }
+    if (!isASRModel(model)) {
       setPendingAudio(null);
     }
     if (model?.source === "cloud" && !hasCloudAuth(cloudAuth.value)) {
@@ -1294,12 +1297,12 @@ export function Chat() {
     const responseStartedAt = Date.now();
     try {
       if (imageMode) {
-        const encodedImages = images.map((img) => stripDataURL(img.full));
+        const encodedImages = imageEditMode ? images.map((img) => stripDataURL(img.full)) : [];
         const job = await createImageGenerationJob({
           model: currentModel.model || currentModel.name,
           source: currentModel.source,
           prompt: text,
-          image: encodedImages[0],
+          image: imageEditMode ? encodedImages[0] : undefined,
           images: encodedImages.length > 1 ? encodedImages.slice(1) : undefined,
         });
         let latest = job;
