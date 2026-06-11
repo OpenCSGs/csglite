@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/opencsgs/csghub-lite/internal/config"
@@ -99,7 +100,7 @@ func TestResolvePackageIndexesHonorsInternationalRegion(t *testing.T) {
 	}
 }
 
-func TestAliyunCUDAPinsTorchPackages(t *testing.T) {
+func TestAliyunCUDAUsesUnpinnedTorchPackages(t *testing.T) {
 	t.Setenv(mirrorModeEnv, "aliyun")
 	t.Setenv(torchIndexOverrideEnv, "")
 	t.Setenv(pypiIndexOverrideEnv, "")
@@ -107,9 +108,14 @@ func TestAliyunCUDAPinsTorchPackages(t *testing.T) {
 	manager := NewRuntimeManagerAt(t.TempDir())
 	cmd := manager.InstallCommand(HardwareCUDA)
 
-	for _, want := range aliyunCUDATorchPackages {
+	for _, want := range torchPackages {
 		if !hasString(cmd, want) {
 			t.Fatalf("InstallCommand(CUDA) missing %q in %#v", want, cmd)
+		}
+	}
+	for _, value := range cmd {
+		if hasTorchVersionPin(value) {
+			t.Fatalf("InstallCommand(CUDA) should not pin PyTorch package versions: %#v", cmd)
 		}
 	}
 	if !hasString(cmd, "--find-links") {
@@ -120,58 +126,21 @@ func TestAliyunCUDAPinsTorchPackages(t *testing.T) {
 	}
 }
 
-func TestOfficialCUDAUsesDefaultTorchPackages(t *testing.T) {
+func TestOfficialCUDAUsesUnpinnedTorchPackages(t *testing.T) {
 	t.Setenv(mirrorModeEnv, "official")
 	t.Setenv(torchIndexOverrideEnv, "")
 	t.Setenv(pypiIndexOverrideEnv, "")
 
 	got := torchPackageSpecs(HardwareCUDA, ResolvePackageIndexes(HardwareCUDA))
-	if len(got) != len(defaultTorchPackages) {
-		t.Fatalf("official CUDA packages = %#v, want %#v", got, defaultTorchPackages)
+	if len(got) != len(torchPackages) {
+		t.Fatalf("official CUDA packages = %#v, want %#v", got, torchPackages)
 	}
 	for i := range got {
-		if got[i] != defaultTorchPackages[i] {
-			t.Fatalf("official CUDA packages = %#v, want %#v", got, defaultTorchPackages)
+		if got[i] != torchPackages[i] {
+			t.Fatalf("official CUDA packages = %#v, want %#v", got, torchPackages)
 		}
-	}
-}
-
-func TestPython39CUDAUsesCompatibleTorchPackages(t *testing.T) {
-	indexes := PackageIndexes{
-		Mirror:            PackageMirrorAliyun,
-		TorchFindLinksURL: aliyunTorchRoot + "/cu128",
-		PyPIIndexURL:      aliyunPyPIIndex,
-	}
-	version := pythonVersion{Major: 3, Minor: 9}
-
-	gotIndexes := torchPackageIndexesForPython(HardwareCUDA, indexes, version)
-	if gotIndexes.TorchFindLinksURL != aliyunTorchRoot+"/cu124" {
-		t.Fatalf("Python 3.9 CUDA torch links = %q, want cu124", gotIndexes.TorchFindLinksURL)
-	}
-	gotPackages := torchPackageSpecsForPython(HardwareCUDA, gotIndexes, version)
-	for i, want := range python39AliyunCUDATorchPackages {
-		if gotPackages[i] != want {
-			t.Fatalf("Python 3.9 CUDA packages = %#v, want %#v", gotPackages, python39AliyunCUDATorchPackages)
-		}
-	}
-}
-
-func TestPython310CUDAKeepsModernTorchPackages(t *testing.T) {
-	indexes := PackageIndexes{
-		Mirror:            PackageMirrorAliyun,
-		TorchFindLinksURL: aliyunTorchRoot + "/cu128",
-		PyPIIndexURL:      aliyunPyPIIndex,
-	}
-	version := pythonVersion{Major: 3, Minor: 10}
-
-	gotIndexes := torchPackageIndexesForPython(HardwareCUDA, indexes, version)
-	if gotIndexes.TorchFindLinksURL != aliyunTorchRoot+"/cu128" {
-		t.Fatalf("Python 3.10 CUDA torch links = %q, want cu128", gotIndexes.TorchFindLinksURL)
-	}
-	gotPackages := torchPackageSpecsForPython(HardwareCUDA, gotIndexes, version)
-	for i, want := range aliyunCUDATorchPackages {
-		if gotPackages[i] != want {
-			t.Fatalf("Python 3.10 CUDA packages = %#v, want %#v", gotPackages, aliyunCUDATorchPackages)
+		if hasTorchVersionPin(got[i]) {
+			t.Fatalf("official CUDA packages should not pin versions: %#v", got)
 		}
 	}
 }
@@ -253,6 +222,11 @@ func TestBaseASRDependenciesExcludeQwenASR(t *testing.T) {
 	if !hasString(cmd, "funasr") {
 		t.Fatalf("ASR install command should include funasr: %#v", cmd)
 	}
+	for _, value := range cmd {
+		if hasTorchVersionPin(value) {
+			t.Fatalf("ASR install command should not pin PyTorch package versions: %#v", cmd)
+		}
+	}
 
 	status := manager.ASRStatus(context.Background())
 	if hasString(status.InstallCommand, "diffusers>=0.34.0") {
@@ -314,6 +288,12 @@ func hasString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func hasTorchVersionPin(value string) bool {
+	return strings.HasPrefix(value, "torch==") ||
+		strings.HasPrefix(value, "torchvision==") ||
+		strings.HasPrefix(value, "torchaudio==")
 }
 
 func TestTorchInstallIndexArgsAliyunCUDA(t *testing.T) {
