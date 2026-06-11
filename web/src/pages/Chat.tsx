@@ -4,7 +4,7 @@ import { signal, computed } from "@preact/signals";
 import {
   getTags, getPs, streamChat, getCloudAuthStatus, saveCloudToken,
   listConversations, searchConversations, getConversation, createConversation, updateConversation, deleteConversation,
-  getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob, transcribeAudioStream,
+  getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob, getASRRuntimeStatus, transcribeAudioStream,
 } from "../api/client";
 import type {
   ModelInfo, ChatMessage, ContentPart, CloudAuthStatus,
@@ -1344,7 +1344,13 @@ export function Chat() {
         }
         streamingContent.value = "";
       } else if (asrMode && audio) {
-        streamingContent.value = t("chat.transcribingAudio");
+        let asrRuntimeReady = true;
+        try {
+          asrRuntimeReady = (await getASRRuntimeStatus()).ready;
+        } catch {
+          // If the status probe fails, keep the existing transcription path and surface its error.
+        }
+        streamingContent.value = asrRuntimeReady ? t("chat.transcribingAudio") : t("chat.preparingASRRuntime");
         let receivedTranscriptChunk = false;
         const response = await transcribeAudioStream({
           model: currentModel.model || currentModel.name,

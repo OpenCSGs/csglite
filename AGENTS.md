@@ -50,5 +50,6 @@ Copilot, and Aider.
 - `docs/agent-guidelines/llama-cpp.md`
 - `docs/agent-guidelines/local-preview.md`
 - `docs/agent-guidelines/network-and-secrets.md`
+- `docs/agent-guidelines/python.md`
 - `docs/agent-guidelines/release-notes.md`
 - `docs/agent-guidelines/storage.md`

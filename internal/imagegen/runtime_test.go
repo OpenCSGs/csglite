@@ -136,6 +136,46 @@ func TestOfficialCUDAUsesDefaultTorchPackages(t *testing.T) {
 	}
 }
 
+func TestPython39CUDAUsesCompatibleTorchPackages(t *testing.T) {
+	indexes := PackageIndexes{
+		Mirror:            PackageMirrorAliyun,
+		TorchFindLinksURL: aliyunTorchRoot + "/cu128",
+		PyPIIndexURL:      aliyunPyPIIndex,
+	}
+	version := pythonVersion{Major: 3, Minor: 9}
+
+	gotIndexes := torchPackageIndexesForPython(HardwareCUDA, indexes, version)
+	if gotIndexes.TorchFindLinksURL != aliyunTorchRoot+"/cu124" {
+		t.Fatalf("Python 3.9 CUDA torch links = %q, want cu124", gotIndexes.TorchFindLinksURL)
+	}
+	gotPackages := torchPackageSpecsForPython(HardwareCUDA, gotIndexes, version)
+	for i, want := range python39AliyunCUDATorchPackages {
+		if gotPackages[i] != want {
+			t.Fatalf("Python 3.9 CUDA packages = %#v, want %#v", gotPackages, python39AliyunCUDATorchPackages)
+		}
+	}
+}
+
+func TestPython310CUDAKeepsModernTorchPackages(t *testing.T) {
+	indexes := PackageIndexes{
+		Mirror:            PackageMirrorAliyun,
+		TorchFindLinksURL: aliyunTorchRoot + "/cu128",
+		PyPIIndexURL:      aliyunPyPIIndex,
+	}
+	version := pythonVersion{Major: 3, Minor: 10}
+
+	gotIndexes := torchPackageIndexesForPython(HardwareCUDA, indexes, version)
+	if gotIndexes.TorchFindLinksURL != aliyunTorchRoot+"/cu128" {
+		t.Fatalf("Python 3.10 CUDA torch links = %q, want cu128", gotIndexes.TorchFindLinksURL)
+	}
+	gotPackages := torchPackageSpecsForPython(HardwareCUDA, gotIndexes, version)
+	for i, want := range aliyunCUDATorchPackages {
+		if gotPackages[i] != want {
+			t.Fatalf("Python 3.10 CUDA packages = %#v, want %#v", gotPackages, aliyunCUDATorchPackages)
+		}
+	}
+}
+
 func TestRuntimeStatusIsLazyAndDoesNotInstall(t *testing.T) {
 	manager := NewRuntimeManagerAt(t.TempDir())
 	status := manager.Status(context.Background())

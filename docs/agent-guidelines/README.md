@@ -24,5 +24,6 @@ this repository. They are written for any coding agent, not only Cursor.
   (`scripts/llama-build/` for Docker rebuilds).
 - `local-preview.md` - local preview port and redeploy workflow.
 - `network-and-secrets.md` - proxy, GitLab, and local secret handling.
+- `python.md` - Python 3.9+ compatibility for Python code and dependencies.
 - `release-notes.md` - commit, PR, and release note conventions.
 - `storage.md` - storage root and temporary file placement rules.

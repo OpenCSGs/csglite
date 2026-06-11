@@ -1,0 +1,12 @@
+---
+description: Python 3.9+ compatibility for Python code and dependencies
+globs: **/*.{py,pyi,toml,txt,in,lock}
+alwaysApply: false
+---
+
+# Python Compatibility
+
+Canonical rule: `docs/agent-guidelines/python.md`.
+
+Follow that file. Do not add duplicated rule text here; update the canonical
+guideline instead.

@@ -77,10 +77,22 @@ var defaultTorchPackages = []string{
 	"torchaudio==2.11.0",
 }
 
+var python39TorchPackages = []string{
+	"torch==2.5.1",
+	"torchvision==0.20.1",
+	"torchaudio==2.5.1",
+}
+
 var aliyunCUDATorchPackages = []string{
 	"torch==2.11.0+cu128",
 	"torchvision==0.26.0+cu128",
 	"torchaudio==2.11.0+cu128",
+}
+
+var python39AliyunCUDATorchPackages = []string{
+	"torch==2.5.1+cu124",
+	"torchvision==0.20.1+cu124",
+	"torchaudio==2.5.1+cu124",
 }
 
 // HardwareKind describes the PyTorch wheel/runtime family to use.
@@ -346,23 +358,28 @@ func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progres
 	}
 
 	python := m.PythonPath()
+	pythonVersion, err := detectPythonVersion(ctx, python)
+	if err != nil {
+		return m.Status(ctx), err
+	}
 	progress("prepare pip and uv", 4, 6)
 	if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
 		return m.Status(ctx), err
 	}
-	torchPackages := torchPackageSpecs(hardware, indexes)
-	if indexes.TorchIndexURL != "" {
-		progress("install PyTorch from "+indexes.TorchIndexURL, 5, 6)
-	} else if indexes.TorchFindLinksURL != "" && indexes.PyPIIndexURL != "" {
-		progress("install PyTorch from "+string(indexes.Mirror)+" mirror", 5, 6)
-	} else if indexes.TorchFindLinksURL != "" {
-		progress("install PyTorch from "+indexes.TorchFindLinksURL, 5, 6)
-	} else if indexes.PyPIIndexURL != "" {
-		progress("install PyTorch from "+indexes.PyPIIndexURL, 5, 6)
+	torchIndexes := torchPackageIndexesForPython(hardware, indexes, pythonVersion)
+	torchPackages := torchPackageSpecsForPython(hardware, torchIndexes, pythonVersion)
+	if torchIndexes.TorchIndexURL != "" {
+		progress("install PyTorch from "+torchIndexes.TorchIndexURL, 5, 6)
+	} else if torchIndexes.TorchFindLinksURL != "" && torchIndexes.PyPIIndexURL != "" {
+		progress("install PyTorch from "+string(torchIndexes.Mirror)+" mirror", 5, 6)
+	} else if torchIndexes.TorchFindLinksURL != "" {
+		progress("install PyTorch from "+torchIndexes.TorchFindLinksURL, 5, 6)
+	} else if torchIndexes.PyPIIndexURL != "" {
+		progress("install PyTorch from "+torchIndexes.PyPIIndexURL, 5, 6)
 	} else {
 		progress("install PyTorch", 5, 6)
 	}
-	if err := m.uvPipInstall(ctx, python, indexes, torchPackages, false, true); err != nil {
+	if err := m.uvPipInstall(ctx, python, torchIndexes, torchPackages, false, true); err != nil {
 		return m.Status(ctx), fmt.Errorf("installing PyTorch: %w", err)
 	}
 	diffusersDeps := []string{"diffusers>=0.34.0", "transformers>=4.48.0,<5.0", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow"}
@@ -391,7 +408,7 @@ func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progres
 		Hardware:    hardware,
 		CreatedAt:   now,
 		UpdatedAt:   now,
-		TorchIndex:  torchSourceURL(indexes),
+		TorchIndex:  torchSourceURL(torchIndexes),
 		PyPIIndex:   indexes.PyPIIndexURL,
 		PackageSpec: append(torchPackages, "diffusers", "transformers", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow"),
 	}
@@ -426,7 +443,12 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 		}
 	}
 
-	torchPackages := torchPackageSpecs(hardware, indexes)
+	pythonVersion, err := detectPythonVersion(ctx, python)
+	if err != nil {
+		return m.ASRStatus(ctx), err
+	}
+	torchIndexes := torchPackageIndexesForPython(hardware, indexes, pythonVersion)
+	torchPackages := torchPackageSpecsForPython(hardware, torchIndexes, pythonVersion)
 	torchMissing, err := missingPackages(ctx, python, []string{"torch", "torchaudio"})
 	if err != nil {
 		return m.ASRStatus(ctx), err
@@ -435,18 +457,18 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 		if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
 			return m.ASRStatus(ctx), err
 		}
-		if indexes.TorchIndexURL != "" {
-			progress("install PyTorch from "+indexes.TorchIndexURL, 4, 5)
-		} else if indexes.TorchFindLinksURL != "" && indexes.PyPIIndexURL != "" {
-			progress("install PyTorch from "+string(indexes.Mirror)+" mirror", 4, 5)
-		} else if indexes.TorchFindLinksURL != "" {
-			progress("install PyTorch from "+indexes.TorchFindLinksURL, 4, 5)
-		} else if indexes.PyPIIndexURL != "" {
-			progress("install PyTorch from "+indexes.PyPIIndexURL, 4, 5)
+		if torchIndexes.TorchIndexURL != "" {
+			progress("install PyTorch from "+torchIndexes.TorchIndexURL, 4, 5)
+		} else if torchIndexes.TorchFindLinksURL != "" && torchIndexes.PyPIIndexURL != "" {
+			progress("install PyTorch from "+string(torchIndexes.Mirror)+" mirror", 4, 5)
+		} else if torchIndexes.TorchFindLinksURL != "" {
+			progress("install PyTorch from "+torchIndexes.TorchFindLinksURL, 4, 5)
+		} else if torchIndexes.PyPIIndexURL != "" {
+			progress("install PyTorch from "+torchIndexes.PyPIIndexURL, 4, 5)
 		} else {
 			progress("install PyTorch", 4, 5)
 		}
-		if err := m.uvPipInstall(ctx, python, indexes, torchPackages, upgradePackages, true); err != nil {
+		if err := m.uvPipInstall(ctx, python, torchIndexes, torchPackages, upgradePackages, true); err != nil {
 			return m.ASRStatus(ctx), fmt.Errorf("installing PyTorch: %w", err)
 		}
 	}
@@ -490,9 +512,9 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 		Hardware:    DetectHardware(),
 		CreatedAt:   now,
 		UpdatedAt:   now,
-		TorchIndex:  torchSourceURL(indexes),
+		TorchIndex:  torchSourceURL(torchIndexes),
 		PyPIIndex:   indexes.PyPIIndexURL,
-		PackageSpec: append(torchPackageSpecs(DetectHardware(), indexes), asrPythonPackages...),
+		PackageSpec: append(torchPackages, asrPythonPackages...),
 	}
 	if err := writeManifest(filepath.Join(m.rootDir, manifestFileName), manifest); err != nil {
 		return m.ASRStatus(ctx), err
@@ -612,6 +634,33 @@ func torchPackageSpecs(hw HardwareKind, indexes PackageIndexes) []string {
 	return append([]string(nil), defaultTorchPackages...)
 }
 
+func torchPackageSpecsForPython(hw HardwareKind, indexes PackageIndexes, version pythonVersion) []string {
+	if !version.isPython39() {
+		return torchPackageSpecs(hw, indexes)
+	}
+	if indexes.Mirror == PackageMirrorAliyun && hw == HardwareCUDA && indexes.TorchFindLinksURL != "" {
+		return append([]string(nil), python39AliyunCUDATorchPackages...)
+	}
+	return append([]string(nil), python39TorchPackages...)
+}
+
+func torchPackageIndexesForPython(hw HardwareKind, indexes PackageIndexes, version pythonVersion) PackageIndexes {
+	if !version.isPython39() {
+		return indexes
+	}
+	adjusted := indexes
+	switch hw {
+	case HardwareCUDA:
+		if adjusted.TorchIndexURL == officialTorchRoot+"/cu128" {
+			adjusted.TorchIndexURL = officialTorchRoot + "/cu124"
+		}
+		if adjusted.TorchFindLinksURL == aliyunTorchRoot+"/cu128" {
+			adjusted.TorchFindLinksURL = aliyunTorchRoot + "/cu124"
+		}
+	}
+	return adjusted
+}
+
 func ResolvePackageIndexes(hw HardwareKind) PackageIndexes {
 	mirror := ResolvePackageMirror()
 	indexes := PackageIndexes{Mirror: mirror}
@@ -729,6 +778,31 @@ print(json.dumps(missing))
 		return nil, fmt.Errorf("decoding runtime package check: %w", err)
 	}
 	return missing, nil
+}
+
+type pythonVersion struct {
+	Major int `json:"major"`
+	Minor int `json:"minor"`
+}
+
+func (v pythonVersion) isPython39() bool {
+	return v.Major == 3 && v.Minor == 9
+}
+
+func detectPythonVersion(ctx context.Context, python string) (pythonVersion, error) {
+	script := `import json, sys
+print(json.dumps({"major": sys.version_info.major, "minor": sys.version_info.minor}))
+`
+	cmd := exec.CommandContext(ctx, python, "-c", script)
+	out, err := cmd.Output()
+	if err != nil {
+		return pythonVersion{}, fmt.Errorf("checking Python version: %w", err)
+	}
+	var version pythonVersion
+	if err := json.Unmarshal(out, &version); err != nil {
+		return pythonVersion{}, fmt.Errorf("decoding Python version: %w", err)
+	}
+	return version, nil
 }
 
 func (m *RuntimeManager) ensurePipAndUV(ctx context.Context, python string, indexes PackageIndexes) error {
