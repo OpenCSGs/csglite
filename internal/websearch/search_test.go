@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,8 +71,11 @@ func TestParseBuiltInProviderHTML(t *testing.T) {
 
 func TestSearchFallsBackAcrossProviders(t *testing.T) {
 	var hits []string
+	var hitsMu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsMu.Lock()
 		hits = append(hits, r.URL.Path)
+		hitsMu.Unlock()
 		switch r.URL.Path {
 		case "/bing":
 			http.Error(w, "blocked", http.StatusTooManyRequests)
@@ -100,9 +104,11 @@ func TestSearchFallsBackAcrossProviders(t *testing.T) {
 	if len(resp.Results) != 1 || resp.Results[0].URL != "https://example.com/fallback" {
 		t.Fatalf("results = %#v", resp.Results)
 	}
+	hitsMu.Lock()
 	gotHits := strings.Join(hits, ",")
+	hitsMu.Unlock()
 	if !strings.Contains(gotHits, "/bing") || !strings.Contains(gotHits, "/ddg") {
-		t.Fatalf("hits = %#v, want bing and ddg", hits)
+		t.Fatalf("hits = %q, want bing and ddg", gotHits)
 	}
 }
 
