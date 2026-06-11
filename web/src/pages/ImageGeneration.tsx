@@ -2,13 +2,17 @@ import { useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import {
   cancelImageGenerationJob,
+  clearCloudAPIKey,
   createImageGenerationJob,
   getImageGenerationJob,
   getImageRuntimeStatus,
+  getCloudAuthStatus,
   getTags,
   installImageRuntime,
+  listImageGenerationJobs,
+  saveCloudToken,
 } from "../api/client";
-import type { ImageRuntimeStatus, ModelInfo } from "../api/client";
+import type { CloudAuthStatus, ImageGenerationJobResponse, ImageRuntimeStatus, ModelInfo } from "../api/client";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { locale, t } from "../i18n";
 import { isImageToImageModel, stripDataURL } from "../utils/imageModels";
@@ -39,20 +43,30 @@ const loading = signal(false);
 const installing = signal(false);
 const error = signal("");
 const runtime = signal<ImageRuntimeStatus | null>(null);
-const history = signal<GenerationHistoryItem[]>([]);
+const imageJobs = signal<ImageGenerationJobResponse[]>([]);
 const previewImage = signal<PreviewImage | null>(null);
 const activeJobID = signal("");
+const currentResultJobID = signal("");
 const jobStatus = signal("");
 const generationStartedAt = signal(0);
 const elapsedSeconds = signal(0);
 const negativeSuggestionsOpen = signal(false);
+const advancedSettingsOpen = signal(false);
 const inputImages = signal<string[]>([]);
 const apiDialogOpen = signal(false);
+const cloudAuthDialogOpen = signal(false);
+const cloudAuth = signal<CloudAuthStatus | null>(null);
+const cloudAuthLoaded = signal(false);
+const cloudAuthError = signal("");
+const cloudTokenInput = signal("");
+const isSavingCloudToken = signal(false);
 const providersChangedEvent = "csghub:providers-changed";
 
 interface GenerationHistoryItem {
   id: string;
   createdAt: number;
+  model: string;
+  status: string;
   images: string[];
   prompt: string;
   negativePrompt: string;
@@ -60,6 +74,7 @@ interface GenerationHistoryItem {
   steps?: number;
   seed?: number;
   cfgScale?: number;
+  error?: string;
 }
 
 interface PreviewImage {
@@ -219,7 +234,21 @@ function appendNegativeTerm(term: string) {
 }
 
 function imageDataURL(image: string): string {
+  if (/^(https?:|blob:)/i.test(image)) return image;
   return image.startsWith("data:") ? image : `data:image/png;base64,${image}`;
+}
+
+function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
+  return Boolean(status?.authenticated || status?.has_api_key);
+}
+
+function isCloudAuthErrorMessage(message: string): boolean {
+  return /(AUTH-ERR-1|AUTH-ERR-5|login first|inference error 401|Error 401|Cloud login required|login expired|save an API Key|Failed to load OpenCSG built-in API Key|需要登录云端服务|保存 API Key)/i.test(message);
+}
+
+function openExternalURL(url?: string) {
+  if (!url) return;
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function historyGridClass(count: number): string {
@@ -277,6 +306,49 @@ function historySizeLabel(size: string): string {
   return size === "input" ? t("image.sizeFollowsInput") : size;
 }
 
+function isRunningImageJob(job: ImageGenerationJobResponse): boolean {
+  return job.status === "queued" || job.status === "running";
+}
+
+function jobStatusLabel(job: ImageGenerationJobResponse): string {
+  if (job.status === "queued") return t("image.jobQueued");
+  if (job.status === "running") return job.request.image || (job.request.images || []).length > 0 ? t("image.jobRunningEdit") : t("image.jobRunning");
+  if (job.status === "succeeded") return t("image.succeeded");
+  if (job.status === "failed") return t("image.failed");
+  if (job.status === "cancelled") return t("image.cancelled");
+  return job.status;
+}
+
+function jobElapsedSeconds(job: ImageGenerationJobResponse): number {
+  const start = new Date(job.created_at).getTime();
+  const end = job.completed_at ? new Date(job.completed_at).getTime() : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+  return Math.max(0, Math.floor((end - start) / 1000));
+}
+
+function imageJobToHistoryItem(job: ImageGenerationJobResponse): GenerationHistoryItem | null {
+  const images = (job.result?.data || [])
+    .map((item) => item.b64_json || item.url || "")
+    .filter(Boolean);
+  if (job.status === "succeeded" && images.length === 0) {
+    return null;
+  }
+  return {
+    id: job.id,
+    createdAt: new Date(job.created_at).getTime(),
+    model: job.request.model,
+    status: job.status,
+    images,
+    prompt: job.request.prompt,
+    negativePrompt: job.request.negative_prompt || "",
+    size: job.request.image || (job.request.images || []).length > 0 ? "input" : (job.request.size || "input"),
+    steps: job.request.steps,
+    seed: job.request.seed,
+    cfgScale: job.request.cfg_scale,
+    error: job.error,
+  };
+}
+
 async function readInputImageFile(file: File): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -305,10 +377,10 @@ function imageModelLabel(model: ModelInfo): string {
 function localizeImageErrorMessage(message: string, model?: ModelInfo): string {
   const provider = model?.provider || t("chat.cloud");
   if (/Cloud login required|save an API Key/i.test(message)) {
-    return t("chat.cloudAuthRequired", provider);
+    return t("image.cloudAuthRequired", provider);
   }
   if (/Failed to load OpenCSG built-in API Key/i.test(message)) {
-    return t("chat.cloudBuiltinAPIKeyFailed", provider);
+    return t("image.cloudBuiltinAPIKeyFailed", provider);
   }
   return message;
 }
@@ -330,6 +402,31 @@ async function refreshRuntime() {
   }
 }
 
+async function refreshImageJobs() {
+  const list = await listImageGenerationJobs();
+  imageJobs.value = list.jobs || [];
+}
+
+async function refreshCloudAuth(): Promise<CloudAuthStatus> {
+  try {
+    const status = await getCloudAuthStatus();
+    cloudAuth.value = status;
+    return status;
+  } finally {
+    cloudAuthLoaded.value = true;
+  }
+}
+
+async function openCloudAuthDialog(message = "") {
+  cloudAuthError.value = message;
+  cloudAuthDialogOpen.value = true;
+  try {
+    await refreshCloudAuth();
+  } catch {
+    /* ignore */
+  }
+}
+
 export function ImageGeneration() {
   void locale.value;
 
@@ -341,19 +438,29 @@ export function ImageGeneration() {
       })
       .catch((err) => (error.value = err.message || String(err)));
     refreshRuntime();
+    refreshImageJobs().catch((err) => (error.value = err.message || String(err)));
+    refreshCloudAuth().catch(() => {});
+    const jobsTimer = window.setInterval(() => {
+      refreshImageJobs().catch(() => {});
+    }, 3000);
     const onProvidersChanged = () => {
       refreshImageModels().catch((err) => (error.value = err.message || String(err)));
     };
     window.addEventListener(providersChangedEvent, onProvidersChanged);
     return () => {
       cancelled = true;
+      window.clearInterval(jobsTimer);
       window.removeEventListener(providersChangedEvent, onProvidersChanged);
     };
   }, []);
 
   useEffect(() => {
-    applyModelParameterDefaults(selectedModelInfo());
-  }, [selectedModel.value]);
+    const model = selectedModelInfo();
+    applyModelParameterDefaults(model);
+    if (model?.source === "cloud" && cloudAuthLoaded.value && !hasCloudAuth(cloudAuth.value)) {
+      void openCloudAuthDialog(t("chat.cloudLoginRequired", model.provider || t("chat.cloud")));
+    }
+  }, [selectedModel.value, cloudAuthLoaded.value, cloudAuth.value?.authenticated, cloudAuth.value?.has_api_key]);
 
   useEffect(() => {
     if (!loading.value || !generationStartedAt.value) return;
@@ -362,6 +469,13 @@ export function ImageGeneration() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [loading.value, generationStartedAt.value]);
+
+  useEffect(() => {
+    if (cloudAuthDialogOpen.value && hasCloudAuth(cloudAuth.value)) {
+      cloudAuthDialogOpen.value = false;
+      cloudAuthError.value = "";
+    }
+  }, [cloudAuth.value?.authenticated, cloudAuth.value?.has_api_key]);
 
   const runInstall = async () => {
     installing.value = true;
@@ -380,6 +494,19 @@ export function ImageGeneration() {
     if (!selectedModel.value || !prompt.value.trim()) return;
     const currentModel = selectedModelInfo();
     if (!currentModel) return;
+    if (currentModel.source === "cloud") {
+      const provider = currentModel.provider || t("chat.cloud");
+      try {
+        const status = cloudAuth.value || await refreshCloudAuth();
+        if (!hasCloudAuth(status)) {
+          await openCloudAuthDialog(t("chat.cloudLoginRequired", provider));
+          return;
+        }
+      } catch {
+        await openCloudAuthDialog(t("chat.cloudLoginRequired", provider));
+        return;
+      }
+    }
     const editing = isImageToImageModel(currentModel);
     if (editing && inputImages.value.length === 0) {
       error.value = t("image.inputImageRequired");
@@ -399,6 +526,7 @@ export function ImageGeneration() {
     jobStatus.value = t("image.jobQueued");
     generationStartedAt.value = Date.now();
     elapsedSeconds.value = 0;
+    currentResultJobID.value = "";
     try {
       const job = await createImageGenerationJob({
         model: currentModel.model || currentModel.name,
@@ -413,27 +541,20 @@ export function ImageGeneration() {
         images: inputImages.value.length > 1 ? inputImages.value.slice(1) : undefined,
       });
       activeJobID.value = job.id;
+      await refreshImageJobs();
       let latest = job;
       while (loading.value) {
         if (latest.status === "succeeded") {
-          const images = (latest.result?.data || []).map((item) => item.b64_json || "").filter(Boolean);
-          if (images.length > 0) {
-            history.value = [{
-              id: job.id,
-              createdAt: Date.now(),
-              images,
-              prompt: prompt.value,
-              negativePrompt: editing ? "" : negativePrompt.value.trim(),
-              size: requestSize || "input",
-              steps: requestSteps,
-              seed: requestSeed,
-              cfgScale: requestCFGScale,
-            }, ...history.value].slice(0, 24);
-          }
+          await refreshImageJobs();
+          currentResultJobID.value = latest.id;
           break;
         }
         if (latest.status === "failed") {
-          throw new Error(latest.error || t("image.failed"));
+          const message = latest.error || t("image.failed");
+          if (currentModel.source === "cloud" && isCloudAuthErrorMessage(message)) {
+            await openCloudAuthDialog(localizeImageErrorMessage(message, currentModel));
+          }
+          throw new Error(message);
         }
         if (latest.status === "cancelled") {
           throw new Error(t("image.cancelled"));
@@ -441,10 +562,17 @@ export function ImageGeneration() {
         jobStatus.value = latest.status === "queued" ? t("image.jobQueued") : (editing ? t("image.jobRunningEdit") : t("image.jobRunning"));
         await sleep(1500);
         latest = await getImageGenerationJob(job.id);
+        imageJobs.value = [latest, ...imageJobs.value.filter((item) => item.id !== latest.id)];
       }
       await refreshRuntime();
     } catch (err: any) {
-      error.value = localizeImageErrorMessage(err.message || String(err), currentModel);
+      const message = err.message || String(err);
+      const localizedMessage = localizeImageErrorMessage(message, currentModel);
+      if (currentModel.source === "cloud" && isCloudAuthErrorMessage(message)) {
+        await openCloudAuthDialog(localizedMessage);
+      } else {
+        error.value = localizedMessage;
+      }
       await refreshRuntime();
     } finally {
       activeJobID.value = "";
@@ -459,9 +587,40 @@ export function ImageGeneration() {
     if (id) {
       await cancelImageGenerationJob(id).catch(() => {});
     }
+    await refreshImageJobs().catch(() => {});
     loading.value = false;
     jobStatus.value = "";
     generationStartedAt.value = 0;
+  };
+
+  const handleSaveCloudToken = async () => {
+    const token = cloudTokenInput.value.trim();
+    if (!token) {
+      cloudAuthError.value = t("chat.cloudTokenEmpty");
+      return;
+    }
+    isSavingCloudToken.value = true;
+    cloudAuthError.value = "";
+    try {
+      const status = await saveCloudToken(token);
+      cloudAuth.value = status;
+      if (!status.authenticated) {
+        cloudAuthError.value = t("chat.cloudLoginExpired", currentModel?.provider || t("chat.cloud"));
+        return;
+      }
+      // The image dialog saves account tokens; clear any stale manual API key
+      // that may have been saved by older builds so cloud calls use the
+      // account's built-in API key.
+      cloudAuth.value = await clearCloudAPIKey();
+      cloudTokenInput.value = "";
+      cloudAuthDialogOpen.value = false;
+      error.value = "";
+      await refreshImageModels();
+    } catch (err: any) {
+      cloudAuthError.value = err?.message || t("chat.failedResp");
+    } finally {
+      isSavingCloudToken.value = false;
+    }
   };
 
   const rt = runtime.value;
@@ -470,6 +629,13 @@ export function ImageGeneration() {
   const selectedModelIsEdit = isImageToImageModel(currentModel);
   const selectedSizeKey = sizePresets.find((preset) => preset.width === width.value && preset.height === height.value)?.key || "";
   const progress = progressPercent();
+  const runningJobs = imageJobs.value.filter(isRunningImageJob);
+  const historyItems = imageJobs.value
+    .filter((job) => !isRunningImageJob(job))
+    .map(imageJobToHistoryItem)
+    .filter((item): item is GenerationHistoryItem => Boolean(item));
+  const latestResultJob = imageJobs.value.find((job) => job.id === currentResultJobID.value && job.status === "succeeded");
+  const latestResult = latestResultJob ? imageJobToHistoryItem(latestResultJob) : null;
 
   const handleInputImageChange = async (event: Event) => {
     const input = event.target as HTMLInputElement;
@@ -492,6 +658,13 @@ export function ImageGeneration() {
           <h1 class="text-2xl font-bold text-gray-900">{t("image.title")}</h1>
           <p class="mt-2 text-sm text-gray-500">{t("image.subtitle")}</p>
         </div>
+        <div class="flex items-center gap-2">
+          {historyItems.length > 0 && (
+            <a href="/images/history" class="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+              {t("image.history")}
+              <span class="ml-1 text-xs text-gray-400">({historyItems.length})</span>
+            </a>
+          )}
         {currentModel && (
           <button
             type="button"
@@ -501,6 +674,7 @@ export function ImageGeneration() {
             {t("dash.apiInfo")}
           </button>
         )}
+        </div>
       </div>
 
       {rt && !rt.ready && !selectedModelIsCloud && (
@@ -524,7 +698,20 @@ export function ImageGeneration() {
         </section>
       )}
 
-      {error.value && <div class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error.value}</div>}
+      {error.value && (
+        <div class="flex flex-col gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between">
+          <span>{error.value}</span>
+          {isCloudAuthErrorMessage(error.value) && (
+            <button
+              type="button"
+              onClick={() => openCloudAuthDialog(error.value)}
+              class="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+            >
+              {t("image.openCloudAuth")}
+            </button>
+          )}
+        </div>
+      )}
 
       <div class="grid gap-6 lg:grid-cols-[360px_1fr]">
         <section class="space-y-4 rounded-xl border border-gray-200 bg-white p-5">
@@ -584,6 +771,13 @@ export function ImageGeneration() {
               )}
             </div>
           )}
+          <details
+            class="rounded-xl border border-gray-200 bg-gray-50 p-3"
+            open={advancedSettingsOpen.value}
+            onToggle={(e) => (advancedSettingsOpen.value = (e.currentTarget as HTMLDetailsElement).open)}
+          >
+            <summary class="cursor-pointer text-sm font-medium text-gray-700">{t("image.advancedSettings")}</summary>
+            <div class="mt-4 space-y-4">
           {!selectedModelIsEdit && (
           <>
           <label class="block">
@@ -597,7 +791,7 @@ export function ImageGeneration() {
             <p class="mt-1 text-xs text-gray-500">{t("image.negativeHint")}</p>
           </label>
           <details
-            class="rounded-lg border border-gray-200 bg-gray-50 p-3"
+            class="rounded-lg border border-gray-200 bg-white p-3"
             open={negativeSuggestionsOpen.value}
             onToggle={(e) => (negativeSuggestionsOpen.value = (e.currentTarget as HTMLDetailsElement).open)}
           >
@@ -616,7 +810,7 @@ export function ImageGeneration() {
             </div>
           </details>
 
-          <div class="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+          <div class="space-y-3 rounded-xl border border-gray-200 bg-white p-3">
             <div class="flex items-center justify-between gap-3">
               <span class="text-sm font-medium text-gray-700">{t("image.presets")}</span>
               <button type="button" onClick={resetParameters} class="text-xs font-medium text-indigo-600 hover:text-indigo-700">
@@ -699,6 +893,8 @@ export function ImageGeneration() {
               hint={selectedModelIsEdit ? t("image.cfgHintEdit") : t("image.cfgHint")}
             />
           </div>
+            </div>
+          </details>
           <div class="space-y-2">
             <button
               onClick={runGenerate}
@@ -719,21 +915,19 @@ export function ImageGeneration() {
           </div>
         </section>
 
-        <section class="min-h-[520px] rounded-xl border border-gray-200 bg-white p-5">
-          <div class="mb-4 flex items-center justify-between gap-3">
+        <section class="min-h-[520px] space-y-5 rounded-xl border border-gray-200 bg-white p-5">
+          <div class="flex items-center justify-between gap-3">
             <div>
-              <h2 class="text-base font-semibold text-gray-900">{t("image.results")}</h2>
-              <p class="text-xs text-gray-500">{t("image.resultsHint")}</p>
+              <h2 class="text-base font-semibold text-gray-900">{t("image.jobs")}</h2>
+              <p class="text-xs text-gray-500">{t("image.jobsHint")}</p>
             </div>
-            {history.value.length > 0 && (
-              <button type="button" onClick={() => (history.value = [])} class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">
-                {t("image.clearHistory")}
-              </button>
-            )}
+            <button type="button" onClick={() => refreshImageJobs().catch((err) => (error.value = err.message || String(err)))} class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">
+              {t("image.refreshJobs")}
+            </button>
           </div>
 
           {loading.value && (
-            <div class="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+            <div class="rounded-xl border border-indigo-100 bg-indigo-50 p-4">
               <div class="flex items-center justify-between text-sm">
                 <span class="font-medium text-indigo-900">{jobStatus.value || (selectedModelIsEdit ? t("image.editing") : t("image.generating"))}</span>
                 <span class="text-indigo-700">{t("image.elapsed", formatClock(elapsedSeconds.value))}</span>
@@ -745,61 +939,98 @@ export function ImageGeneration() {
             </div>
           )}
 
-          {history.value.length === 0 ? (
-            <div class="flex h-full min-h-[420px] items-center justify-center rounded-xl border border-dashed border-gray-200 px-6 text-center text-sm text-gray-400">
-              {t("image.empty")}
+          {latestResult && latestResult.images.length > 0 && (
+            <article class="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+              <div class="space-y-3 border-b border-gray-100 bg-gray-50/60 p-4">
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div class="min-w-0 space-y-1">
+                    <span class="inline-flex rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700">{t("image.latestResult")}</span>
+                    <p class="line-clamp-2 text-sm font-semibold leading-6 text-gray-900">{latestResult.prompt}</p>
+                  </div>
+                  <time class="shrink-0 text-left text-xs text-gray-400 sm:text-right" dateTime={new Date(latestResult.createdAt).toISOString()}>
+                    {new Date(latestResult.createdAt).toLocaleString()}
+                  </time>
+                </div>
+                <div class="flex flex-wrap gap-2 text-xs text-gray-600">
+                  <span class="rounded-full bg-white px-2.5 py-1 ring-1 ring-gray-200">{historySizeLabel(latestResult.size)}</span>
+                  <span class="rounded-full bg-white px-2.5 py-1 ring-1 ring-gray-200">{t("image.steps")}: {latestResult.steps || "-"}</span>
+                  <span class="rounded-full bg-white px-2.5 py-1 ring-1 ring-gray-200">{t("image.seed")}: {latestResult.seed ?? t("image.random")}</span>
+                </div>
+              </div>
+              <div class={`p-4 ${historyGridClass(latestResult.images.length)}`}>
+                {latestResult.images.map((img, i) => (
+                  <div key={`${latestResult.id}-latest-${i}`} class="overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
+                    <button
+                      type="button"
+                      onClick={() => (previewImage.value = { src: imageDataURL(img), title: latestResult.prompt })}
+                      class={`block w-full overflow-hidden bg-gray-100 ${historyImageClass(latestResult.size)}`}
+                    >
+                      <img src={imageDataURL(img)} alt={latestResult.prompt} class="h-full w-full object-contain transition-opacity duration-200 hover:opacity-95" />
+                    </button>
+                    <div class="flex items-center justify-between gap-3 bg-white px-3 py-2">
+                      <span class="truncate text-xs text-gray-400">{latestResult.images.length > 1 ? `${i + 1}/${latestResult.images.length}` : historySizeLabel(latestResult.size)}</span>
+                      <button
+                        type="button"
+                        onClick={() => downloadImage(img, latestResult, i)}
+                        class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                      >
+                        {t("image.download")}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </article>
+          )}
+
+          {runningJobs.length > 0 && (
+          <div class="rounded-2xl border border-gray-200 bg-gray-50/60 p-4">
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-900">{t("image.runningJobs")}</h3>
+                <p class="text-xs text-gray-500">{t("image.runningJobsHint")}</p>
+              </div>
+              <span class="rounded-full bg-white px-2.5 py-1 text-xs text-gray-500 ring-1 ring-gray-200">{runningJobs.length}</span>
             </div>
-          ) : (
-            <div class="space-y-5">
-              {history.value.map((item) => (
-                <article key={item.id} class="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-                  <div class="space-y-3 border-b border-gray-100 bg-gray-50/60 p-4">
+            {runningJobs.length === 0 ? (
+              <div class="rounded-xl border border-dashed border-gray-200 bg-white px-4 py-6 text-center text-sm text-gray-400">
+                {t("image.noRunningJobs")}
+              </div>
+            ) : (
+              <div class="space-y-3">
+                {runningJobs.map((job) => (
+                  <article key={job.id} class="rounded-xl border border-indigo-100 bg-white p-4">
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div class="min-w-0 space-y-1">
-                        <p class="line-clamp-2 text-sm font-semibold leading-6 text-gray-900">{item.prompt}</p>
-                        {item.negativePrompt && (
-                          <p class="line-clamp-1 text-xs leading-5 text-gray-500">
-                            <span class="font-medium text-gray-600">{t("image.negativeLabel")}:</span> {item.negativePrompt}
-                          </p>
-                        )}
-                      </div>
-                      <time class="shrink-0 text-left text-xs text-gray-400 sm:text-right" dateTime={new Date(item.createdAt).toISOString()}>
-                        {new Date(item.createdAt).toLocaleString()}
-                      </time>
-                    </div>
-                    <div class="flex flex-wrap gap-2 text-xs text-gray-600">
-                      <span class="rounded-full bg-white px-2.5 py-1 ring-1 ring-gray-200">{historySizeLabel(item.size)}</span>
-                      <span class="rounded-full bg-white px-2.5 py-1 ring-1 ring-gray-200">{t("image.steps")}: {item.steps || "-"}</span>
-                      <span class="rounded-full bg-white px-2.5 py-1 ring-1 ring-gray-200">{t("image.cfgScale")}: {item.cfgScale || "-"}</span>
-                      <span class="rounded-full bg-white px-2.5 py-1 ring-1 ring-gray-200">{t("image.seed")}: {item.seed ?? t("image.random")}</span>
-                    </div>
-                  </div>
-                  <div class={`p-4 ${historyGridClass(item.images.length)}`}>
-                    {item.images.map((img, i) => (
-                      <div key={`${item.id}-${i}`} class="overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
-                        <button
-                          type="button"
-                          onClick={() => (previewImage.value = { src: imageDataURL(img), title: item.prompt })}
-                          class={`block w-full overflow-hidden bg-gray-100 ${historyImageClass(item.size)}`}
-                        >
-                          <img src={imageDataURL(img)} alt={item.prompt} class="h-full w-full object-contain transition-opacity duration-200 hover:opacity-95" />
-                        </button>
-                        <div class="flex items-center justify-between gap-3 bg-white px-3 py-2">
-                          <span class="truncate text-xs text-gray-400">{item.images.length > 1 ? `${i + 1}/${item.images.length}` : historySizeLabel(item.size)}</span>
-                          <button
-                            type="button"
-                            onClick={() => downloadImage(img, item, i)}
-                            class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
-                          >
-                            {t("image.download")}
-                          </button>
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">{jobStatusLabel(job)}</span>
+                          <span class="text-xs text-gray-400">{t("image.elapsed", formatClock(jobElapsedSeconds(job)))}</span>
                         </div>
+                        <p class="line-clamp-2 text-sm font-semibold text-gray-900">{job.request.prompt}</p>
+                        <p class="truncate text-xs text-gray-500">{t("image.model")}: {job.request.model}</p>
                       </div>
-                    ))}
-                  </div>
-                </article>
-              ))}
-            </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await cancelImageGenerationJob(job.id).catch(() => {});
+                          await refreshImageJobs().catch(() => {});
+                          if (activeJobID.value === job.id) {
+                            loading.value = false;
+                            activeJobID.value = "";
+                            jobStatus.value = "";
+                            generationStartedAt.value = 0;
+                          }
+                        }}
+                        class="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                      >
+                        {t("image.cancel")}
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
           )}
         </section>
       </div>
@@ -814,6 +1045,88 @@ export function ImageGeneration() {
               </button>
             </div>
             <img src={previewImage.value.src} class="max-h-[78vh] max-w-full rounded-lg object-contain" />
+          </div>
+        </div>
+      )}
+      {cloudAuthDialogOpen.value && (
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
+          <div class="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h3 class="text-lg font-semibold text-gray-900">{t("chat.cloudLoginTitle", currentModel?.provider || t("chat.cloud"))}</h3>
+                <p class="mt-2 text-sm leading-6 text-gray-500">{t("chat.cloudLoginDesc", currentModel?.provider || t("chat.cloud"))}</p>
+              </div>
+              <button
+                onClick={() => {
+                  cloudAuthDialogOpen.value = false;
+                  cloudAuthError.value = "";
+                }}
+                class="rounded-lg p-1 text-gray-400 hover:text-gray-600"
+                aria-label={t("chat.cloudCancel")}
+              >
+                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {cloudAuthError.value && (
+              <div class="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {cloudAuthError.value}
+              </div>
+            )}
+
+            <div class="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => openExternalURL(cloudAuth.value?.login_url)}
+                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                {t("chat.cloudOpenLogin")}
+              </button>
+              <button
+                type="button"
+                onClick={() => openExternalURL(cloudAuth.value?.access_token_url)}
+                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                {t("chat.cloudOpenTokenPage")}
+              </button>
+            </div>
+
+            <div class="mt-5">
+              <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudTokenLabel")}</label>
+              <input
+                type="password"
+                autoComplete="off"
+                spellcheck={false}
+                class="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder={t("chat.cloudTokenPlaceholder")}
+                value={cloudTokenInput.value}
+                onInput={(e) => (cloudTokenInput.value = (e.target as HTMLInputElement).value)}
+              />
+              <p class="mt-2 text-xs leading-5 text-gray-500">{t("chat.cloudTokenHint")}</p>
+            </div>
+
+            <div class="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  cloudAuthDialogOpen.value = false;
+                  cloudAuthError.value = "";
+                }}
+                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                {t("chat.cloudCancel")}
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveCloudToken}
+                disabled={isSavingCloudToken.value}
+                class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {isSavingCloudToken.value ? t("chat.cloudSavingToken") : t("chat.cloudSaveToken")}
+              </button>
+            </div>
           </div>
         </div>
       )}

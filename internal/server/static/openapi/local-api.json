@@ -2011,6 +2011,26 @@
       }
     },
     "/api/images/jobs": {
+      "get": {
+        "tags": [
+          "Images"
+        ],
+        "summary": "List image generation jobs",
+        "description": "Returns persisted image generation and editing jobs, including running jobs and retained completed history.",
+        "operationId": "listImageGenerationJobs",
+        "responses": {
+          "200": {
+            "description": "Image generation jobs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationJobListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "Images"
@@ -7396,6 +7416,21 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/OpenAIImage"
+            }
+          }
+        }
+      },
+      "ImageGenerationJobListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "jobs"
+        ],
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImageGenerationJobResponse"
             }
           }
         }

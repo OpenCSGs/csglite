@@ -7,6 +7,7 @@ import { LibraryModelDetail } from "./pages/LibraryModelDetail";
 import { Datasets } from "./pages/Datasets";
 import { Chat } from "./pages/Chat";
 import { ImageGeneration } from "./pages/ImageGeneration";
+import { ImageHistory } from "./pages/ImageHistory";
 import { Settings } from "./pages/Settings";
 import { Pricing } from "./pages/Pricing";
 import { AIApps } from "./pages/AIApps";
@@ -37,6 +38,7 @@ function AppRoutes() {
         <Route path="/library" component={Library} />
         <Route path="/datasets" component={Datasets} />
         <Route path="/chat" component={Chat} />
+        <Route path="/images/history" component={ImageHistory} />
         <Route path="/images" component={ImageGeneration} />
         <Route path="/ai-apps" component={AIApps} />
         <Route path="/ai-gateway" component={AIGateway} />

@@ -428,3 +428,87 @@ func TestHandleImageGenerationJobLifecycle(t *testing.T) {
 		t.Fatalf("result = %#v, want image data", result)
 	}
 }
+
+func TestHandleImageGenerationJobListPersistsHistory(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/generations" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.OpenAIImagesGenerationResponse{
+			Created: 999,
+			Data: []api.OpenAIImage{{
+				B64JSON: "cGVyc2lzdGVkLWltYWdl",
+			}},
+		})
+	}))
+	defer apiServer.Close()
+
+	storageDir := t.TempDir()
+	cfg := &config.Config{
+		ModelDir:      config.ModelDirForStorage(storageDir),
+		DatasetDir:    config.DatasetDirForStorage(storageDir),
+		AIGatewayURL:  apiServer.URL,
+		OpenCSGAPIKey: "test-key",
+	}
+	s := New(cfg, "test")
+	body := `{"model":"Qwen/Qwen-Image-2512:s-test","source":"cloud","prompt":"persist this","size":"1024x1024","response_format":"b64_json"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/images/jobs", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleImageGenerationJobCreate(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d body=%s", w.Code, w.Body.String())
+	}
+	var job api.ImageGenerationJobResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		req = httptest.NewRequest(http.MethodGet, "/api/images/jobs/"+job.ID, nil)
+		req.SetPathValue("jobID", job.ID)
+		w = httptest.NewRecorder()
+		s.handleImageGenerationJobGet(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("get status = %d body=%s", w.Code, w.Body.String())
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+			t.Fatalf("decode get response: %v", err)
+		}
+		if job.Status == "succeeded" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if job.Status != "succeeded" {
+		t.Fatalf("job status = %q, want succeeded", job.Status)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/images/jobs", nil)
+	w = httptest.NewRecorder()
+	s.handleImageGenerationJobList(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s", w.Code, w.Body.String())
+	}
+	var list api.ImageGenerationJobListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(list.Jobs) != 1 || list.Jobs[0].ID != job.ID || list.Jobs[0].Result == nil {
+		t.Fatalf("list = %#v, want persisted succeeded job", list)
+	}
+
+	reloaded := New(cfg, "test")
+	req = httptest.NewRequest(http.MethodGet, "/api/images/jobs", nil)
+	w = httptest.NewRecorder()
+	reloaded.handleImageGenerationJobList(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reloaded list status = %d body=%s", w.Code, w.Body.String())
+	}
+	list = api.ImageGenerationJobListResponse{}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode reloaded list response: %v", err)
+	}
+	if len(list.Jobs) != 1 || list.Jobs[0].ID != job.ID || list.Jobs[0].Result == nil || list.Jobs[0].Result.Data[0].B64JSON != "cGVyc2lzdGVkLWltYWdl" {
+		t.Fatalf("reloaded list = %#v, want persisted result", list)
+	}
+}

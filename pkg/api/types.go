@@ -662,6 +662,10 @@ type ImageGenerationJobResponse struct {
 	Error       string                          `json:"error,omitempty"`
 }
 
+type ImageGenerationJobListResponse struct {
+	Jobs []ImageGenerationJobResponse `json:"jobs"`
+}
+
 type OpenAIImage struct {
 	B64JSON       string `json:"b64_json,omitempty"`
 	URL           string `json:"url,omitempty"`

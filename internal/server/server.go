@@ -154,7 +154,7 @@ func New(cfg *config.Config, version string) *Server {
 		imageLoading:   make(map[string]*imageEngineLoadState),
 		asrEngines:     make(map[string]*managedASREngine),
 		asrLoading:     make(map[string]*asrEngineLoadState),
-		imageJobs:      newImageGenerationJobStore(),
+		imageJobs:      newImageGenerationJobStore(cfg.StorageDir()),
 		pullJobs:       newPullJobStore(),
 		logBuf:         logBuf,
 	}

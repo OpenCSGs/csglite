@@ -298,6 +298,10 @@ export interface ImageGenerationJobResponse {
   error?: string;
 }
 
+export interface ImageGenerationJobListResponse {
+  jobs: ImageGenerationJobResponse[];
+}
+
 export interface WebSearchResult {
   title: string;
   url: string;
@@ -926,6 +930,10 @@ export async function createImageGenerationJob(req: ImageGenerationRequest): Pro
 
 export async function getImageGenerationJob(id: string): Promise<ImageGenerationJobResponse> {
   return fetchJSON<ImageGenerationJobResponse>(`/api/images/jobs/${encodeURIComponent(id)}`);
+}
+
+export async function listImageGenerationJobs(): Promise<ImageGenerationJobListResponse> {
+  return fetchJSON<ImageGenerationJobListResponse>("/api/images/jobs");
 }
 
 export async function getImageGenerationJobResult(id: string): Promise<ImageGenerationResponse> {
