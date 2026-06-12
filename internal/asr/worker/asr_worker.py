@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -140,13 +141,67 @@ def _ensure_python_ffmpeg_on_path():
 
 
 def _audio_duration_seconds(path):
+    duration, _ = _soundfile_audio_info(path)
+    if duration > 0:
+        return duration
+    duration = _ffmpeg_duration_seconds(path)
+    if duration > 0:
+        return duration
+    try:
+        import librosa
+
+        return float(librosa.get_duration(path=path) or 0)
+    except Exception:
+        return 0.0
+
+
+def _soundfile_audio_info(path):
     try:
         import soundfile as sf
 
         info = sf.info(path)
-        return float(info.duration or 0)
+        return float(info.duration or 0), True
+    except Exception:
+        return 0.0, False
+
+
+def _audio_needs_wav_decode(path):
+    _, soundfile_readable = _soundfile_audio_info(path)
+    return not soundfile_readable
+
+
+def _ffmpeg_exe():
+    try:
+        import imageio_ffmpeg
+
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        if ffmpeg and os.path.exists(ffmpeg):
+            return ffmpeg
+    except Exception:
+        pass
+    return shutil.which("ffmpeg") or ""
+
+
+def _ffmpeg_duration_seconds(path):
+    ffmpeg = _ffmpeg_exe()
+    if not ffmpeg:
+        return 0.0
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=15,
+        )
     except Exception:
         return 0.0
+    output = (proc.stderr or "") + "\n" + (proc.stdout or "")
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
+    if not match:
+        return 0.0
+    hours, minutes, seconds = match.groups()
+    return (int(hours) * 3600) + (int(minutes) * 60) + float(seconds)
 
 
 class TransformersASREngine:
@@ -222,6 +277,8 @@ class FunASREngine:
         duration = _audio_duration_seconds(file_path)
         if duration > self.long_audio_threshold_seconds:
             return self._transcribe_long_audio(req, duration)
+        if _audio_needs_wav_decode(file_path):
+            return self._transcribe_decoded_audio(req, duration)
 
         kwargs = {
             "input": file_path,
@@ -285,6 +342,9 @@ class FunASREngine:
         if duration > self.long_audio_threshold_seconds:
             yield from self._iter_long_audio_chunks(req, duration)
             return
+        if _audio_needs_wav_decode(file_path):
+            yield self._transcribe_decoded_audio(req, duration)
+            return
         yield self.transcribe(req)
 
     def _iter_long_audio_chunks(self, req, duration):
@@ -325,47 +385,104 @@ class FunASREngine:
         yield from self._iter_audio_segments(req, segments)
 
     def _iter_audio_segments(self, req, segments):
-        import librosa
-        import soundfile as sf
-
         for start, end in segments:
             duration = max(0.0, float(end) - float(start))
             if duration <= 0:
                 continue
-            audio, _ = librosa.load(
-                req["file_path"],
-                sr=16000,
-                mono=True,
-                offset=float(start),
-                duration=duration,
-            )
-            if audio.size == 0:
+            chunk_path = _decode_audio_to_wav(req["file_path"], start=float(start), duration=duration)
+            if not chunk_path:
                 continue
-            chunk_path = ""
-            try:
-                fd, chunk_path = tempfile.mkstemp(prefix="csghub-asr-chunk-", suffix=".wav")
-                os.close(fd)
-                sf.write(chunk_path, audio, 16000)
-            except Exception:
-                if chunk_path:
-                    try:
-                        os.remove(chunk_path)
-                    except Exception:
-                        pass
-                raise
-            kwargs = {
-                "input": chunk_path,
-                "batch_size": 1,
-            }
-            try:
-                self._apply_request_options(kwargs, req)
-                result = self.model.generate(**kwargs)
-            finally:
-                try:
-                    os.remove(chunk_path)
-                except Exception:
-                    pass
+            result = self._transcribe_audio_path(req, chunk_path)
             yield self._format_result(result, req, offset_seconds=float(start))
+
+    def _transcribe_decoded_audio(self, req, duration):
+        decode_duration = float(duration) if duration > 0 else None
+        chunk_path = _decode_audio_to_wav(req["file_path"], start=0.0, duration=decode_duration)
+        if not chunk_path:
+            return {
+                "text": "",
+                "backend": self.backend,
+                "language": (req.get("language") or "").strip(),
+                "segments": [],
+            }
+        result = self._transcribe_audio_path(req, chunk_path)
+        return self._format_result(result, req)
+
+    def _transcribe_audio_path(self, req, audio_path):
+        kwargs = {
+            "input": audio_path,
+            "batch_size": 1,
+        }
+        try:
+            self._apply_request_options(kwargs, req)
+            return self.model.generate(**kwargs)
+        finally:
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+
+
+def _decode_audio_to_wav(path, start=0.0, duration=None):
+    chunk_path = _decode_audio_to_wav_with_ffmpeg(path, start=start, duration=duration)
+    if chunk_path:
+        return chunk_path
+
+    import librosa
+    import soundfile as sf
+
+    kwargs = {
+        "sr": 16000,
+        "mono": True,
+        "offset": float(start),
+    }
+    if duration is not None:
+        kwargs["duration"] = float(duration)
+    audio, _ = librosa.load(path, **kwargs)
+    if audio.size == 0:
+        return ""
+    chunk_path = ""
+    try:
+        fd, chunk_path = tempfile.mkstemp(prefix="csghub-asr-chunk-", suffix=".wav")
+        os.close(fd)
+        sf.write(chunk_path, audio, 16000)
+        return chunk_path
+    except Exception:
+        if chunk_path:
+            try:
+                os.remove(chunk_path)
+            except Exception:
+                pass
+        raise
+
+
+def _decode_audio_to_wav_with_ffmpeg(path, start=0.0, duration=None):
+    ffmpeg = _ffmpeg_exe()
+    if not ffmpeg:
+        return ""
+    chunk_path = ""
+    try:
+        fd, chunk_path = tempfile.mkstemp(prefix="csghub-asr-chunk-", suffix=".wav")
+        os.close(fd)
+        cmd = [ffmpeg, "-hide_banner", "-v", "error", "-y"]
+        if float(start) > 0:
+            cmd.extend(["-ss", str(float(start))])
+        cmd.extend(["-i", path])
+        if duration is not None:
+            cmd.extend(["-t", str(float(duration))])
+        cmd.extend(["-ar", "16000", "-ac", "1", "-f", "wav", chunk_path])
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=600)
+        if os.path.getsize(chunk_path) == 0:
+            os.remove(chunk_path)
+            return ""
+        return chunk_path
+    except Exception:
+        if chunk_path:
+            try:
+                os.remove(chunk_path)
+            except Exception:
+                pass
+        return ""
 
 
 def load_engine(model_dir, model_name, hardware):
