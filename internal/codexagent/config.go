@@ -173,7 +173,7 @@ func writeModelCatalog(models []api.ModelInfo) (string, error) {
 			SupportsParallelToolCalls:  false,
 			ExperimentalSupportedTools: []string{},
 			InputModalities:            []string{"text"},
-			ContextWindow:              m.ContextWindow,
+			ContextWindow:              ContextWindowForModel(m, DefaultLocalContextWindow, DefaultRemoteContextWindowFallback),
 		})
 	}
 

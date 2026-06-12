@@ -38,7 +38,7 @@ const (
 	aiAppShellWriteBatch    = 64 * 1024
 	openCodeWebProviderID   = "csghub-lite"
 	codexWebProviderID      = "csghub_lite"
-	codexCloudContextWindow = 272000
+	codexCloudContextWindow = 200000
 	codexLocalContextWindow = 8192
 	codexBaseInstructions   = "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals. Focus on practical, safe, concise help for software tasks."
 )
@@ -1100,8 +1100,11 @@ func (s *Server) codexContextWindowForModel(modelID string) int64 {
 		if modelDir, err := s.manager.ModelPath(modelID); err == nil {
 			return s.localModelContextWindow(modelID, modelDir)
 		}
+		if contextWindow, ok := codexagent.LookupContextWindow(modelID); ok {
+			return contextWindow
+		}
 	}
-	return codexCloudContextWindow
+	return codexagent.RemoteDefaultContextWindow(codexCloudContextWindow)
 }
 
 func (s *Server) codexShellConfigArgs(serverURL string, modelIDs []string) ([]string, error) {

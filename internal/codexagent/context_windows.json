@@ -1,0 +1,164 @@
+{
+  "remote_default_context_window": 200000,
+  "models": [
+    {
+      "id": "glm-5.1",
+      "context_window": 200000,
+      "aliases": ["ZhipuAI/GLM-5.1", "zai-org/glm-5.1"]
+    },
+    {
+      "id": "glm-5",
+      "context_window": 200000,
+      "aliases": ["ZhipuAI/GLM-5", "zai-org/glm-5"]
+    },
+    {
+      "id": "glm-4.7",
+      "context_window": 200000
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "context_window": 1000000
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "context_window": 1000000
+    },
+    {
+      "id": "deepseek-v3.2",
+      "context_window": 128000,
+      "aliases": ["deepseek-chat", "deepseek-v3", "deepseek-r1", "deepseek-reasoner"]
+    },
+    {
+      "id": "kimi-k2.6",
+      "context_window": 131072
+    },
+    {
+      "id": "kimi-k2.5",
+      "context_window": 131072,
+      "aliases": ["moonshotai/kimi-k2.5"]
+    },
+    {
+      "id": "kimi-for-coding",
+      "context_window": 131072
+    },
+    {
+      "id": "MiniMax-M2.7",
+      "context_window": 200000,
+      "aliases": ["minimax-m2.7", "Pro/MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M2.7"]
+    },
+    {
+      "id": "MiniMax-M2.5",
+      "context_window": 200000,
+      "aliases": ["minimax-m2.5", "minimax-m2"]
+    },
+    {
+      "id": "step-3.5-flash-2603",
+      "context_window": 262144
+    },
+    {
+      "id": "step-3.5-flash",
+      "context_window": 262144
+    },
+    {
+      "id": "ark-code-latest",
+      "context_window": 256000
+    },
+    {
+      "id": "doubao-seed-2-0-code-preview-latest",
+      "context_window": 128000
+    },
+    {
+      "id": "qwen3.5-plus",
+      "context_window": 32000
+    },
+    {
+      "id": "qwen3.6-plus",
+      "context_window": 200000
+    },
+    {
+      "id": "qwen3-coder-480b",
+      "context_window": 262144,
+      "aliases": ["qwen/qwen3-coder-480b", "Qwen/Qwen3-Coder-480B"]
+    },
+    {
+      "id": "KAT-Coder-Pro",
+      "context_window": 128000
+    },
+    {
+      "id": "LongCat-Flash-Chat",
+      "context_window": 128000
+    },
+    {
+      "id": "Ling-2.5-1T",
+      "context_window": 128000
+    },
+    {
+      "id": "mimo-v2.5-pro",
+      "context_window": 1048576
+    },
+    {
+      "id": "mimo-v2.5",
+      "context_window": 1048576
+    },
+    {
+      "id": "claude-opus-4-8",
+      "context_window": 1000000,
+      "aliases": ["anthropic/claude-opus-4.8", "anthropic/claude-opus-4-8", "global.anthropic.claude-opus-4-8"]
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "context_window": 1000000,
+      "aliases": ["anthropic/claude-sonnet-4.6", "anthropic/claude-sonnet-4-6", "global.anthropic.claude-sonnet-4-6"]
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "context_window": 200000,
+      "aliases": ["claude-haiku-4-5-20251001", "global.anthropic.claude-haiku-4-5-20251001-v1:0"]
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "context_window": 200000,
+      "aliases": ["claude-sonnet-4-5-20250929"]
+    },
+    {
+      "id": "claude-opus-4-5",
+      "context_window": 200000,
+      "aliases": ["claude-opus-4-5-20251101"]
+    },
+    {
+      "id": "gpt-5.5",
+      "context_window": 400000
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "context_window": 400000,
+      "aliases": ["openai/gpt-5.3-codex"]
+    },
+    {
+      "id": "gpt-5.2",
+      "context_window": 400000,
+      "aliases": ["openai/gpt-5.2"]
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "context_window": 1000000,
+      "aliases": ["google/gemini-3.5-flash"]
+    },
+    {
+      "id": "gemini-2.5-flash-lite",
+      "context_window": 1048576
+    },
+    {
+      "id": "us.amazon.nova-pro-v1:0",
+      "context_window": 300000
+    },
+    {
+      "id": "us.meta.llama4-maverick-17b-instruct-v1:0",
+      "context_window": 131072
+    },
+    {
+      "id": "us.deepseek.r1-v1:0",
+      "context_window": 131072
+    }
+  ]
+}

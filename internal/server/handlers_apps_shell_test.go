@@ -119,6 +119,24 @@ func TestDrainAIAppShellOutputStopsAtBatchLimit(t *testing.T) {
 	}
 }
 
+func TestCodexModelCatalogEntriesUseContextWindowPresets(t *testing.T) {
+	s := newTestServer(t)
+
+	entries := s.codexModelCatalogEntries([]string{
+		"openrouter/zai-org/glm-5.1-latest",
+		"unknown-remote-model",
+	})
+	if len(entries) != 2 {
+		t.Fatalf("entry count = %d, want 2", len(entries))
+	}
+	if entries[0].ContextWindow != 200000 {
+		t.Fatalf("glm context_window = %d, want 200000", entries[0].ContextWindow)
+	}
+	if entries[1].ContextWindow != 200000 {
+		t.Fatalf("remote default context_window = %d, want 200000", entries[1].ContextWindow)
+	}
+}
+
 func TestBroadcastDoesNotDropWhenSubscriberBufferIsFull(t *testing.T) {
 	session := &aiAppShellSession{
 		subs: make(map[chan aiAppShellEvent]struct{}),

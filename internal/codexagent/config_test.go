@@ -1,8 +1,13 @@
 package codexagent
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/opencsgs/csghub-lite/pkg/api"
 )
 
 func TestParseTomlFilePreservesMCPArgsArray(t *testing.T) {
@@ -83,5 +88,54 @@ quoted = "value"
 	}
 	if values["quoted"].isRaw || values["quoted"].strVal != "value" {
 		t.Fatalf("quoted string parsed incorrectly: %#v", values["quoted"])
+	}
+}
+
+func TestLookupContextWindowUsesContainingModelID(t *testing.T) {
+	got, ok := LookupContextWindow("provider/zai-org/glm-5.1-latest")
+	if !ok {
+		t.Fatal("LookupContextWindow did not match containing model ID")
+	}
+	if got != 200000 {
+		t.Fatalf("context window = %d, want 200000", got)
+	}
+}
+
+func TestWriteModelCatalogUsesContextWindowPresets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := writeModelCatalog([]api.ModelInfo{
+		{Model: "provider/zai-org/glm-5.1-latest", Source: "provider:test"},
+		{Model: "unknown-remote-model", Source: "cloud"},
+	})
+	if err != nil {
+		t.Fatalf("writeModelCatalog returned error: %v", err)
+	}
+	if filepath.Dir(path) == "" {
+		t.Fatalf("catalog path is empty: %q", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read catalog: %v", err)
+	}
+
+	var payload struct {
+		Models []struct {
+			Slug          string `json:"slug"`
+			ContextWindow int64  `json:"context_window"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode catalog: %v", err)
+	}
+	if len(payload.Models) != 2 {
+		t.Fatalf("model count = %d, want 2", len(payload.Models))
+	}
+	if payload.Models[0].ContextWindow != 200000 {
+		t.Fatalf("glm context_window = %d, want 200000", payload.Models[0].ContextWindow)
+	}
+	if payload.Models[1].ContextWindow != 200000 {
+		t.Fatalf("remote default context_window = %d, want 200000", payload.Models[1].ContextWindow)
 	}
 }

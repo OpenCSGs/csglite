@@ -329,12 +329,13 @@ func TestPrepareCodexLaunchIncludesModelCatalog(t *testing.T) {
 	}
 	var payload struct {
 		Models []struct {
-			Slug        string   `json:"slug"`
-			DisplayName string   `json:"display_name"`
-			Description string   `json:"description"`
-			Visibility  string   `json:"visibility"`
-			ShellType   string   `json:"shell_type"`
-			InputModes  []string `json:"input_modalities"`
+			Slug          string   `json:"slug"`
+			DisplayName   string   `json:"display_name"`
+			Description   string   `json:"description"`
+			Visibility    string   `json:"visibility"`
+			ShellType     string   `json:"shell_type"`
+			InputModes    []string `json:"input_modalities"`
+			ContextWindow int64    `json:"context_window"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
@@ -357,6 +358,9 @@ func TestPrepareCodexLaunchIncludesModelCatalog(t *testing.T) {
 	}
 	if !containsAll(payload.Models[0].InputModes, []string{"text"}) || !containsAll(payload.Models[1].InputModes, []string{"text"}) {
 		t.Fatalf("unexpected input modalities: %#v", payload.Models)
+	}
+	if payload.Models[1].ContextWindow != 200000 {
+		t.Fatalf("cloud context_window = %d, want remote default 200000", payload.Models[1].ContextWindow)
 	}
 }
 
