@@ -132,6 +132,7 @@ func (s *Server) streamAudioTranscription(w http.ResponseWriter, r *http.Request
 	})
 	if err != nil {
 		log.Printf("MODEL %s: ASR stream transcription failed: %v", modelID, err)
+		s.closeASREngine(modelID)
 		writeSSE(w, map[string]interface{}{
 			"error": err.Error(),
 			"done":  true,

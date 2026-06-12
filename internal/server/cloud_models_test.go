@@ -75,6 +75,47 @@ func TestHandleTagsWithoutTokenIncludesAndRefreshesCloudModels(t *testing.T) {
 	}
 }
 
+func TestHandleTagsRefreshesCloudModelsWhenCacheIsEmpty(t *testing.T) {
+	requests := 0
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		data := []map[string]any{}
+		if requests > 1 {
+			data = append(data, map[string]any{
+				"id":   "fallback/model",
+				"task": "text-generation",
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data":   data,
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cloud = cloud.NewService(apiServer.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags", nil)
+	w := httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode tags response: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want initial empty fetch plus fallback refresh", requests)
+	}
+	if len(resp.Models) != 1 || resp.Models[0].Model != "fallback/model" {
+		t.Fatalf("models = %#v, want fallback/model", resp.Models)
+	}
+}
+
 func TestHandleTagsSendsLoginTokenToCloudGateway(t *testing.T) {
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer access-token" {

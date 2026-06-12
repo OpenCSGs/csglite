@@ -1041,6 +1041,59 @@ func TestGetChatEnginePrefersThirdPartyWhenCloudLoginMissing(t *testing.T) {
 	}
 }
 
+func TestGetChatEngineFallsBackToThirdPartyWhenCloudListFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
+	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
+
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"provider ok"}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer providerServer.Close()
+	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "cloud unavailable", http.StatusInternalServerError)
+	}))
+	defer cloudServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.OpenCSGAPIKey = "cloud-key"
+	s.cloud = cloud.NewService(cloudServer.URL)
+	if err := config.SaveProviders([]config.ThirdPartyProvider{{
+		ID:      "provider1",
+		Name:    "OpenAI",
+		BaseURL: providerServer.URL + "/v1",
+		APIKey:  "secret",
+		Enabled: true,
+	}}); err != nil {
+		t.Fatalf("save providers: %v", err)
+	}
+	if err := config.ReplaceProviderModelAllowlist("provider1", []string{"deepseek-v4-pro"}); err != nil {
+		t.Fatalf("save provider model allowlist: %v", err)
+	}
+
+	eng, err := s.getChatEngine(context.Background(), "deepseek-v4-pro", "", 0, 0, -1, "", "", "")
+	if err != nil {
+		t.Fatalf("getChatEngine returned error: %v", err)
+	}
+	got, err := eng.Chat(context.Background(), nil, inference.DefaultOptions(), nil)
+	if err != nil {
+		t.Fatalf("chat returned error: %v", err)
+	}
+	if got != "provider ok" {
+		t.Fatalf("chat = %q, want provider ok", got)
+	}
+}
+
 func TestDisabledProviderExcludedFromTagsAndEngine(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

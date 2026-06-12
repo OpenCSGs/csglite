@@ -192,6 +192,9 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 
 	models, cloudErr := s.listCloudModels(ctx, false)
 	if cloudErr != nil {
+		if providerSource := s.thirdPartyProviderSourceForModel(ctx, modelID); providerSource != "" {
+			return newThirdPartyProviderEngine(providerSource, modelID)
+		}
 		return nil, err
 	}
 	if modelInfoListContains(models, modelID) {
@@ -203,6 +206,9 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 	}
 	models, cloudErr = s.cloud.RefreshChatModels(ctx)
 	if cloudErr != nil {
+		if providerSource := s.thirdPartyProviderSourceForModel(ctx, modelID); providerSource != "" {
+			return newThirdPartyProviderEngine(providerSource, modelID)
+		}
 		return nil, err
 	}
 	if modelInfoListContains(models, modelID) {

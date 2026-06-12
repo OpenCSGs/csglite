@@ -194,6 +194,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	go s.startEvictor(ctx)
+	go s.refreshCloudModelsOnStartup(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

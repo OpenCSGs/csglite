@@ -312,6 +312,42 @@ func TestRefreshChatModelsOmitsAuthorizationWithoutAccessToken(t *testing.T) {
 	}
 }
 
+func TestRefreshChatModelsFallsBackToPublicListWhenAccessTokenUnauthorized(t *testing.T) {
+	requests := 0
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.Header.Get("Authorization"); got != "" {
+			http.Error(w, "expired token", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{
+					"id":   "public/model",
+					"task": "text-generation",
+				},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	svc := NewService(apiServer.URL)
+	svc.SetAccessToken("expired-token")
+
+	models, err := svc.RefreshChatModels(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshChatModels returned error: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want authenticated request plus public fallback", requests)
+	}
+	if len(models) != 1 || models[0].Model != "public/model" {
+		t.Fatalf("models = %#v, want public/model", models)
+	}
+}
+
 func TestRefreshChatModelsBypassesCache(t *testing.T) {
 	requests := 0
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 )
 
 const forcedCloudModelRefreshInterval = 30 * time.Second
+const startupCloudModelRefreshTimeout = 20 * time.Second
 
 func requestWantsModelRefresh(r *http.Request) bool {
 	value := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("refresh")))
@@ -21,6 +23,21 @@ func requestWantsModelRefresh(r *http.Request) bool {
 	default:
 		return false
 	}
+}
+
+func (s *Server) refreshCloudModelsOnStartup(parent context.Context) {
+	if s == nil || s.cloud == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, startupCloudModelRefreshTimeout)
+	defer cancel()
+
+	models, err := s.refreshCloudChatModels(ctx)
+	if err != nil {
+		log.Printf("startup cloud model refresh failed: %v", err)
+		return
+	}
+	log.Printf("startup cloud model refresh complete: %d models", len(models))
 }
 
 func (s *Server) listAvailableModelsWithRefresh(ctx context.Context, refreshCloud bool) ([]api.ModelInfo, error) {
@@ -56,6 +73,8 @@ func (s *Server) listAvailableModelsWithRefresh(ctx context.Context, refreshClou
 			seen[modelID] = struct{}{}
 			out = append(out, item)
 		}
+	} else {
+		log.Printf("cloud model list unavailable: %v", err)
 	}
 
 	for _, item := range s.listSelectedThirdPartyProviderModels(ctx) {
@@ -88,6 +107,9 @@ func (s *Server) listCloudModels(ctx context.Context, refresh bool) ([]api.Model
 		return s.withConfiguredCloudProvider(models), err
 	}
 	models, err := s.cloud.ListChatModels(ctx)
+	if err == nil && len(models) == 0 {
+		models, err = s.refreshCloudChatModels(ctx)
+	}
 	return s.withConfiguredCloudProvider(models), err
 }
 

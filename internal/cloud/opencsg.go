@@ -197,29 +197,67 @@ func (s *Service) cachedModels() ([]api.ModelInfo, bool) {
 
 func (s *Service) refresh(ctx context.Context) ([]api.ModelInfo, error) {
 	baseURL := s.BaseURL()
+	token := s.currentAccessToken()
+	models, limits, err := fetchCloudModels(ctx, s.client, baseURL, token)
+	if err != nil && token != "" && isUnauthorizedStatus(err) {
+		models, limits, err = fetchCloudModels(ctx, s.client, baseURL, "")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	s.cached = cloneModels(models)
+	s.limits = limits
+	s.cachedAt = time.Now()
+	s.mu.Unlock()
+
+	return models, nil
+}
+
+type cloudModelListStatusError struct {
+	statusCode int
+	body       string
+}
+
+func (e cloudModelListStatusError) Error() string {
+	return fmt.Sprintf("cloud model list returned %d: %s", e.statusCode, e.body)
+}
+
+func isUnauthorizedStatus(err error) bool {
+	if statusErr, ok := err.(cloudModelListStatusError); ok {
+		return statusErr.statusCode == http.StatusUnauthorized || statusErr.statusCode == http.StatusForbidden
+	}
+	return false
+}
+
+func fetchCloudModels(ctx context.Context, client *http.Client, baseURL, token string) ([]api.ModelInfo, map[string]ModelTokenLimits, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models?page="+cloudModelListPage+"&per="+cloudModelListPer, nil)
 	if err != nil {
-		return nil, fmt.Errorf("creating cloud model request: %w", err)
+		return nil, nil, fmt.Errorf("creating cloud model request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	if token := s.currentAccessToken(); token != "" {
+	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := s.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching cloud models: %w", err)
+		return nil, nil, fmt.Errorf("fetching cloud models: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("cloud model list returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, nil, cloudModelListStatusError{
+			statusCode: resp.StatusCode,
+			body:       strings.TrimSpace(string(body)),
+		}
 	}
 
 	var payload modelListResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decoding cloud model list: %w", err)
+		return nil, nil, fmt.Errorf("decoding cloud model list: %w", err)
 	}
 
 	models := make([]api.ModelInfo, 0, len(payload.Data))
@@ -233,13 +271,7 @@ func (s *Service) refresh(ctx context.Context) ([]api.ModelInfo, error) {
 		limits[strings.TrimSpace(info.Model)] = modelTokenLimitsFromRemote(item)
 	}
 
-	s.mu.Lock()
-	s.cached = cloneModels(models)
-	s.limits = limits
-	s.cachedAt = time.Now()
-	s.mu.Unlock()
-
-	return models, nil
+	return models, limits, nil
 }
 
 func (s *Service) currentAccessToken() string {

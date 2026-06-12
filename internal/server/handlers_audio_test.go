@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/opencsgs/csghub-lite/internal/config"
+	"github.com/opencsgs/csghub-lite/pkg/api"
 )
 
 type zeroReader struct{}
@@ -19,6 +22,27 @@ type zeroReader struct{}
 func (zeroReader) Read(p []byte) (int, error) {
 	clear(p)
 	return len(p), nil
+}
+
+type failingStreamASREngine struct {
+	closed bool
+}
+
+func (e *failingStreamASREngine) Transcribe(context.Context, api.OpenAIAudioTranscriptionRequest) (*api.OpenAIAudioTranscriptionResponse, error) {
+	return nil, errors.New("not used")
+}
+
+func (e *failingStreamASREngine) TranscribeStream(context.Context, api.OpenAIAudioTranscriptionRequest, func(api.OpenAIAudioTranscriptionResponse) error) error {
+	return errors.New("worker exited")
+}
+
+func (e *failingStreamASREngine) Close() error {
+	e.closed = true
+	return nil
+}
+
+func (e *failingStreamASREngine) ModelName() string {
+	return "test-asr"
 }
 
 func TestHandleOpenAIAudioTranscriptionsUsesLiteTempDir(t *testing.T) {
@@ -98,5 +122,30 @@ func TestHandleOpenAIAudioTranscriptionsParsesFieldsFromStreamedMultipart(t *tes
 
 	if !strings.Contains(w.Body.String(), "model is required") {
 		t.Fatalf("expected streamed multipart fields to be parsed, got status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestStreamAudioTranscriptionClosesFailedWorker(t *testing.T) {
+	modelID := "AIWizards/Fun-ASR-Nano-2512"
+	engine := &failingStreamASREngine{}
+	s := New(&config.Config{
+		ModelDir:   config.ModelDirForStorage(t.TempDir()),
+		DatasetDir: config.DatasetDirForStorage(t.TempDir()),
+	}, "test")
+	s.asrEngines[modelID] = &managedASREngine{engine: engine}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", nil)
+	w := httptest.NewRecorder()
+
+	s.streamAudioTranscription(w, req, modelID, engine, api.OpenAIAudioTranscriptionRequest{})
+
+	if !engine.closed {
+		t.Fatal("expected failed ASR stream worker to be closed")
+	}
+	if _, ok := s.asrEngines[modelID]; ok {
+		t.Fatal("expected failed ASR stream worker to be removed from cache")
+	}
+	if !strings.Contains(w.Body.String(), "worker exited") {
+		t.Fatalf("expected SSE error response, got %q", w.Body.String())
 	}
 }
