@@ -871,7 +871,7 @@ export function Chat() {
       const status = await saveCloudToken(token);
       cloudAuth.value = status;
       if (!status.authenticated) {
-        cloudAuthError.value = t("chat.cloudLoginExpired");
+        cloudAuthError.value = t("chat.cloudLoginExpired", configuredCloudProviderName());
         return;
       }
       try {
