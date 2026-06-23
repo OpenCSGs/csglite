@@ -7,6 +7,7 @@ import { t, locale, type Locale } from "../i18n";
 const allModels = signal<ModelInfo[]>([]);
 const loading = signal(true);
 const error = signal("");
+const modelSearch = signal("");
 
 function loadPricing(refresh = false) {
   loading.value = true;
@@ -29,7 +30,7 @@ export function Pricing() {
     loadPricing();
   }, []);
 
-  const models = allModels.value;
+  const models = filterModels(allModels.value, modelSearch.value);
 
   const localModels = models.filter(isLocalModel);
   const cloudModels = models.filter((m) => m.source === "cloud");
@@ -62,6 +63,24 @@ export function Pricing() {
           {error.value}
         </div>
       )}
+
+      <div class="mb-6">
+        <div class="relative">
+          <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 110-15 7.5 7.5 0 010 15z" />
+          </svg>
+          <input
+            type="search"
+            value={modelSearch.value}
+            onInput={(event) => {
+              modelSearch.value = event.currentTarget.value;
+            }}
+            placeholder={t("pricing.searchPlaceholder")}
+            aria-label={t("pricing.searchPlaceholder")}
+            class="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-3 text-sm text-gray-900 outline-none transition focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+          />
+        </div>
+      </div>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <SummaryCard
@@ -108,7 +127,6 @@ export function Pricing() {
                   <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{t("pricing.type")}</th>
                   <th class="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">{t("pricing.input")}</th>
                   <th class="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">{t("pricing.output")}</th>
-                  <th class="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">{t("pricing.context")}</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-100">
@@ -129,9 +147,6 @@ export function Pricing() {
                     </td>
                     <td class="px-5 py-4 text-right whitespace-nowrap">
                       <PriceCell price={model.pricing?.output_token_price} />
-                    </td>
-                    <td class="px-5 py-4 text-right text-sm text-gray-600 whitespace-nowrap">
-                      {formatContext(model.context_window)}
                     </td>
                   </tr>
                 ))}
@@ -251,6 +266,25 @@ function hasPricing(model: ModelInfo): boolean {
   return Boolean(model.pricing?.input_token_price || model.pricing?.output_token_price);
 }
 
+function filterModels(models: ModelInfo[], query: string): ModelInfo[] {
+  const term = query.trim().toLowerCase();
+  if (!term) return models;
+  return models.filter((model) => {
+    const searchable = [
+      model.model,
+      model.display_name,
+      model.label,
+      model.owned_by,
+      model.source,
+      model.llm_type,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return searchable.includes(term);
+  });
+}
+
 function sortCloudModels(models: ModelInfo[]): ModelInfo[] {
   return [...models].sort((a, b) => {
     const aPriced = hasPricing(a) ? 0 : 1;
@@ -297,16 +331,4 @@ function formatTokenPrice(price: ModelTokenPrice, currentLocale: Locale): string
     maximumFractionDigits: 6,
   });
   return `${price.currency || ""}${number}`;
-}
-
-function formatContext(tokens?: number): string {
-  if (!tokens || tokens <= 0) return t("pricing.notAvailable");
-  if (tokens >= 1_000_000) return `${formatCompactNumber(tokens / 1_000_000)}M`;
-  if (tokens >= 1_000) return `${formatCompactNumber(tokens / 1_000)}K`;
-  return tokens.toLocaleString(locale.value === "zh" ? "zh-CN" : "en-US");
-}
-
-function formatCompactNumber(value: number): string {
-  if (Number.isInteger(value)) return String(value);
-  return value.toFixed(1).replace(/\.0$/, "");
 }
