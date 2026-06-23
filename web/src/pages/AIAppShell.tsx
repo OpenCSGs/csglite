@@ -320,7 +320,7 @@ export function AIAppShell() {
           setModelId(message.model_id || "");
           setWorkDir(message.work_dir || "");
           setWorkDirInput(message.work_dir || "");
-          document.title = message.title ? `${message.title} · CSGHub Lite` : "CSGHub Lite";
+          document.title = message.title ? `${message.title} · CSGLite` : "CSGLite";
           return;
         }
 

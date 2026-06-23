@@ -46,8 +46,8 @@ export function Layout({ children }: { children: ComponentChildren }) {
     <div class="flex h-screen overflow-hidden">
       <aside class="w-52 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col">
         <div class="flex items-center gap-2 px-5 py-5">
-          <img src="/favicon.svg" alt="CSGHub Lite" class="w-8 h-8" />
-          <span class="font-semibold text-base text-gray-900">CSGHub Lite</span>
+          <img src="/favicon.svg" alt="CSGLite" class="w-8 h-8" />
+          <span class="font-semibold text-base text-gray-900">CSGLite</span>
         </div>
         <nav class="flex-1 px-3 space-y-1 mt-2">
           {navKeys.map((item) => {
