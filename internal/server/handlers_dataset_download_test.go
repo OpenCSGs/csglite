@@ -34,6 +34,7 @@ func TestHandleDatasetManifest_BackfillsLegacyManifest(t *testing.T) {
 		Size:         int64(len("demo") + len("# demo")),
 		Files:        []string{"data.jsonl", "README.md"},
 		DownloadedAt: time.Unix(100, 0),
+		Origin:       dataset.LocalDatasetOriginMarketplace,
 		Description:  "Demo dataset",
 		License:      "cc-by-4.0",
 	})
@@ -55,6 +56,9 @@ func TestHandleDatasetManifest_BackfillsLegacyManifest(t *testing.T) {
 	}
 	if resp.Details.Dataset != "Acme/demo" {
 		t.Fatalf("details.dataset = %q, want Acme/demo", resp.Details.Dataset)
+	}
+	if resp.Details.Origin != string(dataset.LocalDatasetOriginMarketplace) {
+		t.Fatalf("details.origin = %q, want marketplace", resp.Details.Origin)
 	}
 	if len(resp.Files) != 2 {
 		t.Fatalf("files len = %d, want 2", len(resp.Files))

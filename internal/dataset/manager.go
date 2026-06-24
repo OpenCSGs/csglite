@@ -83,6 +83,7 @@ func (m *Manager) Pull(ctx context.Context, datasetID string, progress csghub.Sn
 		Files:        fileNames,
 		FileEntries:  fileEntries,
 		DownloadedAt: time.Now(),
+		Origin:       LocalDatasetOriginMarketplace,
 		Description:  info.Description,
 		License:      info.License,
 	}

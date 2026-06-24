@@ -73,6 +73,12 @@ function datasetRows(datasets: DatasetInfo[]): DatasetTableRow[] {
   return rows;
 }
 
+function datasetOriginLabel(origin?: string): string {
+  if (origin === "upload") return t("ds.originUpload");
+  if (origin === "marketplace") return t("ds.originMarketplace");
+  return t("ds.notAvailable");
+}
+
 async function loadFiles(dataset: string, path: string) {
   filesLoading.value = true;
   try {
@@ -176,6 +182,7 @@ function DatasetList() {
           <thead>
             <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
               <SortHeader label={t("ds.datasetName")} field="name" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
+              <th class="px-4 py-3 font-medium">{t("ds.origin")}</th>
               <SortHeader label={t("ds.fileSize")} field="size" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
               <th class="px-4 py-3 font-medium">{t("downloads.progress")}</th>
               <SortHeader label={t("ds.dateTime")} field="modified_at" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
@@ -185,7 +192,7 @@ function DatasetList() {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={5} class="text-center py-12 text-gray-400">
+                <td colSpan={6} class="text-center py-12 text-gray-400">
                   {t("ds.noDatasets")}
                 </td>
               </tr>
@@ -200,6 +207,9 @@ function DatasetList() {
                     >
                       {d.name}
                     </button>
+                  </td>
+                  <td class="px-4 py-3 text-gray-600 whitespace-nowrap">
+                    {downloadOnly ? "—" : datasetOriginLabel(d.origin)}
                   </td>
                   <td class="px-4 py-3">
                     <span class="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium">
@@ -326,8 +336,9 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
 
       {manifest && (
         <div class="space-y-6 mb-6">
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <SummaryTile label={t("ds.fileSize")} value={fmtSize(manifest.details.size)} />
+            <SummaryTile label={t("ds.origin")} value={datasetOriginLabel(manifest.details.origin)} />
             <SummaryTile label={t("ds.fileCount")} value={String(manifest.files.length)} />
             <SummaryTile label={t("ds.updated")} value={fmtDate(manifest.details.modified_at)} />
             <SummaryTile label={t("ds.licenseLabel")} value={manifest.details.license || t("ds.notAvailable")} />

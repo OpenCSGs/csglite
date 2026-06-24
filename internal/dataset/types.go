@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+type LocalDatasetOrigin string
+
+const (
+	LocalDatasetOriginUpload      LocalDatasetOrigin = "upload"
+	LocalDatasetOriginMarketplace LocalDatasetOrigin = "marketplace"
+)
+
 type LocalDataset struct {
 	Namespace    string             `json:"namespace"`
 	Name         string             `json:"name"`
@@ -13,6 +20,7 @@ type LocalDataset struct {
 	Files        []string           `json:"files"`
 	FileEntries  []LocalDatasetFile `json:"file_entries,omitempty"`
 	DownloadedAt time.Time          `json:"downloaded_at"`
+	Origin       LocalDatasetOrigin `json:"origin,omitempty"`
 	Description  string             `json:"description,omitempty"`
 	License      string             `json:"license,omitempty"`
 }

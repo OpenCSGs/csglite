@@ -18,6 +18,7 @@ func TestSaveAndLoadManifest(t *testing.T) {
 		Files:        []string{"train.jsonl", "meta/info.json"},
 		FileEntries:  []LocalDatasetFile{{Path: "train.jsonl", Size: 800}, {Path: "meta/info.json", Size: 224}},
 		DownloadedAt: time.Now().Truncate(time.Second),
+		Origin:       LocalDatasetOriginMarketplace,
 		Description:  "A test dataset",
 		License:      "MIT",
 	}
@@ -33,6 +34,9 @@ func TestSaveAndLoadManifest(t *testing.T) {
 
 	if loaded.Namespace != original.Namespace || loaded.Name != original.Name {
 		t.Fatalf("loaded = %#v, want namespace/name preserved", loaded)
+	}
+	if loaded.Origin != original.Origin {
+		t.Fatalf("origin = %q, want %q", loaded.Origin, original.Origin)
 	}
 	if len(loaded.FileEntries) != 2 {
 		t.Fatalf("file_entries len = %d, want 2", len(loaded.FileEntries))

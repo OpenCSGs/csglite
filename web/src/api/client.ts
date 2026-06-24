@@ -1496,6 +1496,7 @@ export interface DatasetInfo {
   size: number;
   files: number;
   modified_at: string;
+  origin?: string;
   description?: string;
   license?: string;
 }

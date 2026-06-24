@@ -209,7 +209,7 @@ func matchesDatasetSearch(item api.DatasetInfo, query string) bool {
 		return true
 	}
 	query = strings.ToLower(query)
-	fields := []string{item.Name, item.Dataset}
+	fields := []string{item.Name, item.Dataset, item.Origin}
 	for _, f := range fields {
 		if strings.Contains(strings.ToLower(f), query) {
 			return true
@@ -250,6 +250,7 @@ func localDatasetInfo(d *dataset.LocalDataset) api.DatasetInfo {
 		Size:        d.Size,
 		Files:       len(d.Files),
 		ModifiedAt:  d.DownloadedAt,
+		Origin:      string(d.Origin),
 		Description: strings.TrimSpace(d.Description),
 		License:     strings.TrimSpace(d.License),
 	}

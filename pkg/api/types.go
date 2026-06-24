@@ -325,6 +325,7 @@ type DatasetInfo struct {
 	Size        int64     `json:"size"`
 	Files       int       `json:"files"`
 	ModifiedAt  time.Time `json:"modified_at"`
+	Origin      string    `json:"origin,omitempty"`
 	Description string    `json:"description,omitempty"`
 	License     string    `json:"license,omitempty"`
 }
