@@ -606,9 +606,11 @@ type OpenAIImagesGenerationRequest struct {
 type OpenAIAudioTranscriptionRequest struct {
 	Model          string   `json:"model"`
 	FilePath       string   `json:"file_path"`
+	Source         string   `json:"source,omitempty"`
 	Language       string   `json:"language,omitempty"`
 	Prompt         string   `json:"prompt,omitempty"`
 	ResponseFormat string   `json:"response_format,omitempty"`
+	Stream         bool     `json:"stream,omitempty"`
 	Temperature    *float64 `json:"temperature,omitempty"`
 	Hotwords       []string `json:"hotwords,omitempty"`
 	ITN            *bool    `json:"itn,omitempty"`

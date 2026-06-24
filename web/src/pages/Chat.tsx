@@ -808,6 +808,16 @@ function isNearScrollBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_NEAR_BOTTOM_PX;
 }
 
+function formatElapsedWait(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes > 0) {
+    return `${minutes}m ${String(remainingSeconds).padStart(2, "0")}s`;
+  }
+  return `${remainingSeconds}s`;
+}
+
 export function Chat() {
   const messagesRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -1350,31 +1360,53 @@ export function Chat() {
         } catch {
           // If the status probe fails, keep the existing transcription path and surface its error.
         }
-        streamingContent.value = asrRuntimeReady ? t("chat.transcribingAudio") : t("chat.preparingASRRuntime");
+        const asrStatusBase = asrRuntimeReady ? t("chat.transcribingAudio") : t("chat.preparingASRRuntime");
         let receivedTranscriptChunk = false;
-        const response = await transcribeAudioStream({
-          model: currentModel.model || currentModel.name,
-          file: audio.file,
-          prompt: text || undefined,
-          response_format: "json",
-        }, (chunk) => {
-          if (chunk.text) {
-            if (!receivedTranscriptChunk) {
-              streamingContent.value = "";
-              receivedTranscriptChunk = true;
-            }
-            streamingContent.value += chunk.text;
+        let asrProgressTimer: number | null = null;
+        const updateASRProgress = () => {
+          if (!receivedTranscriptChunk && !ac.signal.aborted) {
+            streamingContent.value = `${asrStatusBase} ${formatElapsedWait(Date.now() - responseStartedAt)}`;
           }
-        }, ac.signal);
+        };
+        updateASRProgress();
+        asrProgressTimer = window.setInterval(updateASRProgress, 1000);
+        let response: Awaited<ReturnType<typeof transcribeAudioStream>>;
+        try {
+          response = await transcribeAudioStream({
+            model: currentModel.model || currentModel.name,
+            file: audio.file,
+            source: currentModel.source,
+            prompt: text || undefined,
+            response_format: "text",
+          }, (chunk) => {
+            if (chunk.text) {
+              if (!receivedTranscriptChunk) {
+                streamingContent.value = "";
+                receivedTranscriptChunk = true;
+                if (asrProgressTimer !== null) {
+                  window.clearInterval(asrProgressTimer);
+                  asrProgressTimer = null;
+                }
+              }
+              streamingContent.value += chunk.text;
+            }
+          }, ac.signal);
+        } finally {
+          if (asrProgressTimer !== null) {
+            window.clearInterval(asrProgressTimer);
+          }
+        }
         const transcript = response.text || "";
         conv.messages.push({
           role: "assistant",
           content: transcript || t("chat.emptyTranscription"),
           meta: buildResponseMeta(transcript || t("chat.emptyTranscription"), responseStartedAt),
         });
+        stickToBottomRef.current = true;
         activeConversation.value = { ...conv };
         streamingContent.value = "";
         saveCurrentConversation();
+        window.setTimeout(() => scrollMessagesToBottom(true), 0);
       } else {
         await streamChat(
         currentModel.model || currentModel.name,

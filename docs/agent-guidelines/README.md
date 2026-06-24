@@ -23,6 +23,7 @@ this repository. They are written for any coding agent, not only Cursor.
 - `llama-cpp.md` - llama.cpp version lockstep and CUDA mirror rules
   (`scripts/llama-build/` for Docker rebuilds).
 - `local-preview.md` - local preview port and redeploy workflow.
+- `model-source-routing.md` - preserve local/cloud model source across inference paths.
 - `network-and-secrets.md` - proxy, GitLab, and local secret handling.
 - `python.md` - Python 3.9+ compatibility for Python code and dependencies.
 - `release-notes.md` - commit, PR, and release note conventions.

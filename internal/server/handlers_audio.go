@@ -1,18 +1,25 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/opencsgs/csghub-lite/internal/asr"
 	"github.com/opencsgs/csghub-lite/internal/imagegen"
+	"github.com/opencsgs/csghub-lite/internal/inference"
 	"github.com/opencsgs/csghub-lite/pkg/api"
 )
 
@@ -33,16 +40,18 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
+	stream := parseAudioStream(form.Get("stream")) || requestWantsSSE(r)
 
 	req := api.OpenAIAudioTranscriptionRequest{
 		Model:          modelID,
 		FilePath:       audioPath,
+		Source:         strings.TrimSpace(form.Get("source")),
 		Language:       strings.TrimSpace(form.Get("language")),
 		Prompt:         strings.TrimSpace(form.Get("prompt")),
 		ResponseFormat: normalizeAudioResponseFormat(form.Get("response_format")),
+		Stream:         stream,
 		Hotwords:       parseAudioHotwords(form.Get("hotwords")),
 	}
-	stream := parseAudioStream(form.Get("stream")) || requestWantsSSE(r)
 	if value := strings.TrimSpace(form.Get("temperature")); value != "" {
 		temperature, err := strconv.ParseFloat(value, 64)
 		if err != nil {
@@ -63,6 +72,21 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 	case "json", "verbose_json", "text":
 	default:
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "response_format must be json, verbose_json, or text")
+		return
+	}
+	if audioTranscriptionUsesCloud(req) {
+		if stream {
+			if err := s.streamCloudAudioTranscription(w, r.Context(), req); err != nil {
+				log.Printf("MODEL %s: cloud ASR stream proxy failed: %v", req.Model, err)
+			}
+			return
+		}
+		resp, err := s.transcribeCloudAudio(r.Context(), req)
+		if err != nil {
+			writeOpenAIInferenceError(w, err)
+			return
+		}
+		writeAudioTranscriptionResponse(w, req, resp)
 		return
 	}
 
@@ -102,18 +126,7 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		}
 	}
 	s.touchASREngine(modelID)
-
-	if req.ResponseFormat == "text" {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, resp.Text)
-		return
-	}
-	if req.ResponseFormat == "json" {
-		writeJSON(w, http.StatusOK, map[string]string{"text": resp.Text})
-		return
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeAudioTranscriptionResponse(w, req, resp)
 }
 
 func (s *Server) streamAudioTranscription(w http.ResponseWriter, r *http.Request, modelID string, eng asr.Engine, req api.OpenAIAudioTranscriptionRequest) {
@@ -144,6 +157,324 @@ func (s *Server) streamAudioTranscription(w http.ResponseWriter, r *http.Request
 		"text": fullText.String(),
 		"done": true,
 	})
+}
+
+func writeAudioTranscriptionResponse(w http.ResponseWriter, req api.OpenAIAudioTranscriptionRequest, resp *api.OpenAIAudioTranscriptionResponse) {
+	if req.ResponseFormat == "text" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, resp.Text)
+		return
+	}
+	if req.ResponseFormat == "json" {
+		writeJSON(w, http.StatusOK, map[string]string{"text": resp.Text})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func writeCloudAudioTranscriptionStream(w http.ResponseWriter, resp *api.OpenAIAudioTranscriptionResponse) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	writeSSE(w, map[string]interface{}{
+		"text":     resp.Text,
+		"response": resp,
+		"done":     true,
+	})
+}
+
+func audioTranscriptionUsesCloud(req api.OpenAIAudioTranscriptionRequest) bool {
+	return strings.EqualFold(strings.TrimSpace(req.Source), "cloud")
+}
+
+func (s *Server) transcribeCloudAudio(ctx context.Context, req api.OpenAIAudioTranscriptionRequest) (*api.OpenAIAudioTranscriptionResponse, error) {
+	httpReq, err := s.newCloudAudioTranscriptionRequest(ctx, req, "application/json")
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("cloud audio transcription request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading cloud audio transcription response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(respBody))
+		log.Printf("MODEL %s: cloud ASR transcription failed: status=%d content_type=%q body=%q", req.Model, resp.StatusCode, resp.Header.Get("Content-Type"), truncateLogString(message, 2048))
+		return nil, inference.NewHTTPStatusError(resp.StatusCode, message)
+	}
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/plain") {
+		return &api.OpenAIAudioTranscriptionResponse{Text: string(respBody)}, nil
+	}
+	var out api.OpenAIAudioTranscriptionResponse
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		log.Printf("MODEL %s: cloud ASR response decode failed: content_type=%q body=%q err=%v", req.Model, resp.Header.Get("Content-Type"), truncateLogString(strings.TrimSpace(string(respBody)), 2048), err)
+		return nil, fmt.Errorf("decoding cloud audio transcription response: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *Server) streamCloudAudioTranscription(w http.ResponseWriter, ctx context.Context, req api.OpenAIAudioTranscriptionRequest) error {
+	req.Stream = true
+	httpReq, err := s.newCloudAudioTranscriptionRequest(ctx, req, "text/event-stream")
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("cloud audio transcription request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("reading cloud audio transcription error response: %w", readErr)
+		}
+		message := strings.TrimSpace(string(respBody))
+		log.Printf("MODEL %s: cloud ASR stream transcription failed: status=%d content_type=%q body=%q", req.Model, resp.StatusCode, resp.Header.Get("Content-Type"), truncateLogString(message, 2048))
+		return inference.NewHTTPStatusError(resp.StatusCode, message)
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	contentType := resp.Header.Get("Content-Type")
+	log.Printf("MODEL %s: cloud ASR stream response: content_type=%q transfer_encoding=%v", req.Model, contentType, resp.TransferEncoding)
+	if !strings.Contains(contentType, "text/event-stream") {
+		if strings.HasPrefix(contentType, "text/plain") {
+			return streamCloudPlainTextAudioTranscription(w, resp.Body)
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("reading cloud audio transcription response: %w", readErr)
+		}
+		var out api.OpenAIAudioTranscriptionResponse
+		if err := json.Unmarshal(respBody, &out); err != nil {
+			log.Printf("MODEL %s: cloud ASR stream response decode failed: content_type=%q body=%q err=%v", req.Model, contentType, truncateLogString(strings.TrimSpace(string(respBody)), 2048), err)
+			return fmt.Errorf("decoding cloud audio transcription response: %w", err)
+		}
+		writeCloudAudioTranscriptionStream(w, &out)
+		return nil
+	}
+
+	var fullText strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxAudioFormFieldBytes)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" {
+			continue
+		}
+		if payload == "[DONE]" {
+			break
+		}
+		text, done := cloudAudioStreamChunkText(payload)
+		if text != "" {
+			fullText.WriteString(text)
+			writeSSE(w, map[string]interface{}{
+				"text": text,
+				"done": false,
+			})
+		}
+		if done {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("reading cloud audio transcription stream: %w", err)
+	}
+	writeSSE(w, map[string]interface{}{
+		"text": fullText.String(),
+		"done": true,
+	})
+	return nil
+}
+
+func streamCloudPlainTextAudioTranscription(w http.ResponseWriter, r io.Reader) error {
+	var fullText strings.Builder
+	pending := make([]byte, 0, utf8.UTFMax)
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			chunkBytes := append(pending, buf[:n]...)
+			emitLen := validUTF8PrefixLength(chunkBytes)
+			if emitLen > 0 {
+				text := strings.ToValidUTF8(string(chunkBytes[:emitLen]), "")
+				if text != "" {
+					fullText.WriteString(text)
+					writeSSE(w, map[string]interface{}{
+						"text": text,
+						"done": false,
+					})
+				}
+			}
+			pending = append(pending[:0], chunkBytes[emitLen:]...)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("reading cloud audio transcription text stream: %w", err)
+		}
+	}
+	if len(pending) > 0 {
+		text := strings.ToValidUTF8(string(pending), "")
+		if text != "" {
+			fullText.WriteString(text)
+			writeSSE(w, map[string]interface{}{
+				"text": text,
+				"done": false,
+			})
+		}
+	}
+	writeSSE(w, map[string]interface{}{
+		"text": fullText.String(),
+		"done": true,
+	})
+	return nil
+}
+
+func validUTF8PrefixLength(data []byte) int {
+	i := 0
+	for i < len(data) {
+		r, size := utf8.DecodeRune(data[i:])
+		if r == utf8.RuneError && !utf8.FullRune(data[i:]) {
+			break
+		}
+		i += size
+	}
+	return i
+}
+
+func (s *Server) newCloudAudioTranscriptionRequest(ctx context.Context, req api.OpenAIAudioTranscriptionRequest, accept string) (*http.Request, error) {
+	apiKey, err := s.cloudAPIKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	baseURL := resolveCloudURL(s.cfg)
+	if s.cloud != nil && strings.TrimSpace(s.cloud.BaseURL()) != "" {
+		baseURL = s.cloud.BaseURL()
+	}
+
+	body, contentType, err := buildCloudAudioTranscriptionBody(req)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/v1/audio/transcriptions", body)
+	if err != nil {
+		return nil, fmt.Errorf("creating cloud audio transcription request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", contentType)
+	httpReq.Header.Set("Accept", accept)
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	return httpReq, nil
+}
+
+func cloudAudioStreamChunkText(payload string) (string, bool) {
+	var value interface{}
+	if err := json.Unmarshal([]byte(payload), &value); err != nil {
+		return payload, false
+	}
+	return cloudAudioStreamValueText(value)
+}
+
+func cloudAudioStreamValueText(value interface{}) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, false
+	case map[string]interface{}:
+		done, _ := v["done"].(bool)
+		if text, ok := v["text"].(string); ok {
+			return text, done
+		}
+		if response, ok := v["response"].(map[string]interface{}); ok {
+			if text, ok := response["text"].(string); ok {
+				return text, done
+			}
+		}
+		if delta, ok := v["delta"].(string); ok {
+			return delta, done
+		}
+		if delta, ok := v["delta"].(map[string]interface{}); ok {
+			if text, ok := delta["content"].(string); ok {
+				return text, done
+			}
+		}
+		if choices, ok := v["choices"].([]interface{}); ok && len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]interface{}); ok {
+				return cloudAudioStreamValueText(choice)
+			}
+		}
+	}
+	return "", false
+}
+
+func truncateLogString(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...(truncated)"
+}
+
+func buildCloudAudioTranscriptionBody(req api.OpenAIAudioTranscriptionRequest) (io.Reader, string, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	if err := writer.WriteField("model", req.Model); err != nil {
+		return nil, "", err
+	}
+	if req.Language != "" {
+		if err := writer.WriteField("language", req.Language); err != nil {
+			return nil, "", err
+		}
+	}
+	if req.Prompt != "" {
+		if err := writer.WriteField("prompt", req.Prompt); err != nil {
+			return nil, "", err
+		}
+	}
+	responseFormat := strings.TrimSpace(req.ResponseFormat)
+	if responseFormat == "" {
+		responseFormat = "json"
+	}
+	if err := writer.WriteField("response_format", responseFormat); err != nil {
+		return nil, "", err
+	}
+	if req.Stream {
+		if err := writer.WriteField("stream", "true"); err != nil {
+			return nil, "", err
+		}
+	}
+	if req.Temperature != nil {
+		if err := writer.WriteField("temperature", strconv.FormatFloat(*req.Temperature, 'f', -1, 64)); err != nil {
+			return nil, "", err
+		}
+	}
+
+	file, err := os.Open(req.FilePath)
+	if err != nil {
+		return nil, "", err
+	}
+	defer file.Close()
+	part, err := writer.CreateFormFile("file", filepath.Base(req.FilePath))
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return nil, "", err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return &buf, writer.FormDataContentType(), nil
 }
 
 // GET /api/asr-runtime -- report the shared Python runtime ASR package status.

@@ -8489,6 +8489,14 @@
           "model": {
             "type": "string"
           },
+          "source": {
+            "type": "string",
+            "enum": [
+              "local",
+              "cloud"
+            ],
+            "description": "Set to cloud to proxy transcription to the configured AI Gateway."
+          },
           "language": {
             "type": "string"
           },

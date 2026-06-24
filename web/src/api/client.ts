@@ -229,6 +229,7 @@ export type ASRRuntimeStatus = ImageRuntimeStatus;
 export interface AudioTranscriptionRequest {
   model: string;
   file: File;
+  source?: string;
   language?: string;
   prompt?: string;
   response_format?: "json" | "verbose_json" | "text";
@@ -809,6 +810,7 @@ export async function transcribeAudio(req: AudioTranscriptionRequest, signal?: A
   form.set("model", req.model);
   form.set("file", req.file, req.file.name || "audio");
   form.set("response_format", req.response_format || "json");
+  if (req.source) form.set("source", req.source);
   if (req.language) form.set("language", req.language);
   if (req.prompt) form.set("prompt", req.prompt);
   if (typeof req.temperature === "number") form.set("temperature", String(req.temperature));
@@ -848,6 +850,7 @@ export function transcribeAudioStream(
   form.set("file", req.file, req.file.name || "audio");
   form.set("response_format", req.response_format || "json");
   form.set("stream", "true");
+  if (req.source) form.set("source", req.source);
   if (req.language) form.set("language", req.language);
   if (req.prompt) form.set("prompt", req.prompt);
   if (typeof req.temperature === "number") form.set("temperature", String(req.temperature));
@@ -880,7 +883,12 @@ export function transcribeAudioStream(
             throw new Error(chunk.error);
           }
           if (chunk.done) {
-            if (typeof chunk.text === "string") finalText = chunk.text;
+            if (typeof chunk.text === "string") {
+              if (!finalText && chunk.text) {
+                onChunk({ ...chunk, done: false });
+              }
+              finalText = chunk.text;
+            }
             return;
           }
           if (typeof chunk.text === "string") {
