@@ -84,6 +84,11 @@ var supportedCloudTasks = map[string]cloudTaskSpec{
 		InputModalities:  []string{"text"},
 		OutputModalities: []string{"image"},
 	},
+	"image-to-image": {
+		PipelineTag:      "image-to-image",
+		InputModalities:  []string{"text", "image"},
+		OutputModalities: []string{"image"},
+	},
 	"speech-to-text": {
 		PipelineTag:      "automatic-speech-recognition",
 		InputModalities:  []string{"audio"},
@@ -100,6 +105,7 @@ var cloudTaskPriority = []string{
 	"text-generation",
 	"image-text-to-text",
 	"text-to-image",
+	"image-to-image",
 	"speech-to-text",
 	"automatic-speech-recognition",
 }

@@ -168,6 +168,7 @@ func TestHandleTagsIncludesSupportedCloudInferenceTasks(t *testing.T) {
 				{"id": "chat/model", "task": "text-generation"},
 				{"id": "vision/model", "task": "image-text-to-text"},
 				{"id": "image/model", "task": "text-to-image"},
+				{"id": "edit/model", "task": "image-to-image"},
 				{"id": "asr/model", "task": "speech-to-text"},
 				{"id": "video/model", "task": "text-to-video"},
 			},
@@ -197,13 +198,16 @@ func TestHandleTagsIncludesSupportedCloudInferenceTasks(t *testing.T) {
 	if _, ok := byID["video/model"]; ok {
 		t.Fatalf("video/model should not be listed until text-to-video inference is supported: %#v", resp.Models)
 	}
-	for _, id := range []string{"chat/model", "vision/model", "image/model", "asr/model"} {
+	for _, id := range []string{"chat/model", "vision/model", "image/model", "edit/model", "asr/model"} {
 		if _, ok := byID[id]; !ok {
 			t.Fatalf("model %q missing from /api/tags response: %#v", id, resp.Models)
 		}
 	}
 	if got := byID["image/model"]; got.PipelineTag != "text-to-image" || !sameStrings(got.OutputModalities, []string{"image"}) {
 		t.Fatalf("image metadata = %#v, want text-to-image output image", got)
+	}
+	if got := byID["edit/model"]; got.PipelineTag != "image-to-image" || !sameStrings(got.InputModalities, []string{"text", "image"}) || !sameStrings(got.OutputModalities, []string{"image"}) {
+		t.Fatalf("edit metadata = %#v, want image-to-image text+image->image", got)
 	}
 	if got := byID["asr/model"]; got.PipelineTag != "automatic-speech-recognition" || !sameStrings(got.InputModalities, []string{"audio"}) || !sameStrings(got.OutputModalities, []string{"transcription"}) {
 		t.Fatalf("asr metadata = %#v, want ASR audio->transcription", got)
