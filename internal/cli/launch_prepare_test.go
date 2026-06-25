@@ -585,10 +585,6 @@ func TestSyncOpenClawProfileRewritesStaleModelCatalog(t *testing.T) {
 }
 
 func TestPrepareCSGClawLaunchWritesConfigAndDefaultsToServe(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("csgclaw is not supported on Windows")
-	}
-
 	server := launchModelTestServer([]api.ModelInfo{
 		{Model: "Qwen/Qwen3.5-2B", Source: "local"},
 		{Model: "minimax-m2.5", Source: "cloud"},

@@ -343,8 +343,8 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     installMode: "script",
     progressMode: "percent",
     installHint: {
-      en: "Install the official CSGClaw release for macOS (arm64) and Linux (amd64/arm64). Windows is not currently supported.",
-      zh: "通过官方 CSGClaw 发布包完成安装，支持 macOS (arm64) 和 Linux (amd64/arm64)。暂不支持 Windows。",
+      en: "Install the official CSGClaw release for macOS (arm64), Linux (amd64/arm64), and Windows (amd64).",
+      zh: "通过官方 CSGClaw 发布包完成安装，支持 macOS (arm64)、Linux (amd64/arm64) 和 Windows (amd64)。",
     },
     cnInstallHint: {
       en: "By default the installer reads official CSGClaw releases; launch config uses the OpenCSG PicoClaw manager image, so there is no separate PicoClaw app sync step.",

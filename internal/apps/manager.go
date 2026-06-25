@@ -144,13 +144,6 @@ func NewManager(cfg *config.Config) *Manager {
 	return m
 }
 
-func csgclawDisabledReason() string {
-	if runtime.GOOS == "windows" {
-		return "windows_unsupported"
-	}
-	return ""
-}
-
 func codexAppSupported() bool {
 	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 }
@@ -248,13 +241,12 @@ func appSpecs() []appSpec {
 			},
 		},
 		{
-			id:             "csgclaw",
-			binaryName:     "csgclaw",
-			installMode:    "script",
-			progressMode:   progressModePercent,
-			supported:      runtime.GOOS != "windows",
-			disabledReason: csgclawDisabledReason(),
-			versionArgs:    []string{"--version"},
+			id:           "csgclaw",
+			binaryName:   "csgclaw",
+			installMode:  "script",
+			progressMode: progressModePercent,
+			supported:    true,
+			versionArgs:  []string{"--version"},
 			latest: &latestVersionSource{
 				baseURL: "https://csgclaw.opencsg.com/releases/latest",
 				envVar:  "CSGHUB_LITE_CSGCLAW_LATEST_URL",
@@ -264,8 +256,15 @@ func appSpecs() []appSpec {
 				mirrorURL:    "https://csgclaw.opencsg.com/install.sh",
 				embeddedPath: "scripts/csgclaw-install.sh",
 			},
+			windows: &scriptSource{
+				mirrorURL:    "https://csgclaw.opencsg.com/install.ps1",
+				embeddedPath: "scripts/csgclaw-install.ps1",
+			},
 			uninstallUnix: &scriptSource{
 				embeddedPath: "scripts/csgclaw-uninstall.sh",
+			},
+			uninstallWin: &scriptSource{
+				embeddedPath: "scripts/csgclaw-uninstall.ps1",
 			},
 		},
 		{
