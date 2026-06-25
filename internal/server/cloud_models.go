@@ -98,7 +98,7 @@ func (s *Server) listAvailableModelsWithRefresh(ctx context.Context, refreshClou
 
 // Public cloud model metadata can be listed without an access token.
 // Authentication is enforced later when a cloud inference engine is created.
-func (s *Server) listCloudModels(ctx context.Context, refresh bool) ([]api.ModelInfo, error) {
+func (s *Server) listCloudModelCatalog(ctx context.Context, refresh bool) ([]api.ModelInfo, error) {
 	if s == nil || s.cloud == nil {
 		return nil, nil
 	}
@@ -111,6 +111,14 @@ func (s *Server) listCloudModels(ctx context.Context, refresh bool) ([]api.Model
 		models, err = s.refreshCloudChatModels(ctx)
 	}
 	return s.withConfiguredCloudProvider(models), err
+}
+
+func (s *Server) listCloudModels(ctx context.Context, refresh bool) ([]api.ModelInfo, error) {
+	models, err := s.listCloudModelCatalog(ctx, refresh)
+	if err != nil {
+		return models, err
+	}
+	return s.applyCloudProviderModelSelections(models), nil
 }
 
 func (s *Server) refreshCloudChatModels(ctx context.Context) ([]api.ModelInfo, error) {
@@ -154,14 +162,73 @@ func (s *Server) refreshCloudChatModels(ctx context.Context) ([]api.ModelInfo, e
 }
 
 func (s *Server) withConfiguredCloudProvider(models []api.ModelInfo) []api.ModelInfo {
-	provider := config.DefaultCloudProviderName
-	if s != nil && s.cfg != nil {
-		provider = config.NormalizeCloudProviderName(s.cfg.CloudProviderName)
-	}
+	provider := s.cloudModelProviderDisplayName()
 	for i := range models {
 		models[i].Provider = provider
 	}
 	return models
+}
+
+func (s *Server) cloudModelProviderDisplayName() string {
+	if s != nil && s.cfg != nil {
+		return config.NormalizeCloudProviderName(s.cfg.CloudProviderName)
+	}
+	return config.DefaultCloudProviderName
+}
+
+func (s *Server) isCloudModelProviderAlias(provider string) bool {
+	provider = normalizeModelProvider(provider)
+	if provider == "" {
+		return false
+	}
+	if provider == config.DefaultCloudProviderName {
+		return true
+	}
+	return provider == normalizeModelProvider(s.cloudModelProviderDisplayName())
+}
+
+func (s *Server) applyCloudProviderModelSelections(models []api.ModelInfo) []api.ModelInfo {
+	selections := config.GetProviderModelSelections(config.DefaultCloudProviderName)
+	if len(selections) == 0 {
+		return models
+	}
+
+	byID := make(map[string]api.ModelInfo, len(models))
+	for _, model := range models {
+		modelID := strings.TrimSpace(model.Model)
+		if modelID != "" {
+			byID[modelID] = model
+		}
+	}
+
+	out := make([]api.ModelInfo, 0, len(selections))
+	for _, selection := range selections {
+		originalModel := providerModelOriginalID(selection)
+		if originalModel == "" {
+			continue
+		}
+		model, ok := byID[originalModel]
+		if !ok {
+			continue
+		}
+		out = append(out, applyProviderModelMetadata(model, selection))
+	}
+	return out
+}
+
+func (s *Server) resolveCloudOriginalModelID(modelID string) string {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return ""
+	}
+	for _, selection := range config.GetProviderModelSelections(config.DefaultCloudProviderName) {
+		if strings.TrimSpace(selection.Model) == modelID {
+			if original := providerModelOriginalID(selection); original != "" {
+				return original
+			}
+		}
+	}
+	return modelID
 }
 
 func sortModelsByPriority(models []api.ModelInfo) {

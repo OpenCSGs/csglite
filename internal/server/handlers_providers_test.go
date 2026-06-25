@@ -798,6 +798,81 @@ func TestProviderTagsManageReplaceModels(t *testing.T) {
 	}
 }
 
+func TestCloudProviderTagsManageModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviderModelAllowlist()
+	t.Cleanup(config.ResetProviderModelAllowlist)
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{"id": "cloud/model-a", "display_name": "Cloud A", "task": "text-generation", "owned_by": "OpenCSG"},
+				{"id": "cloud/model-b", "display_name": "Cloud B", "task": "text-generation", "owned_by": "OpenCSG"},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cloud = cloud.NewService(apiServer.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=csghub", nil)
+	w := httptest.NewRecorder()
+	s.handleProviderTagsManageList(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cloud manage list status = %d body=%s", w.Code, w.Body.String())
+	}
+	var resp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode cloud manage list: %v", err)
+	}
+	if len(resp.Models) != 2 {
+		t.Fatalf("cloud manage models = %#v, want two catalog models", resp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/tags/manage?provider=csghub", strings.NewReader(`{"models":[{"model":"cloud/model-a","display_name":"Renamed Cloud"}]}`))
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageReplace(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cloud replace status = %d body=%s", w.Code, w.Body.String())
+	}
+	selections := config.GetProviderModelSelections(config.DefaultCloudProviderName)
+	if len(selections) != 1 || selections[0].OriginalModel != "cloud/model-a" || selections[0].DisplayName != "Renamed Cloud" {
+		t.Fatalf("cloud selections = %#v, want renamed model-a", selections)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=csghub", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cloud selected tags status = %d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode selected cloud tags: %v", err)
+	}
+	if len(resp.Models) != 1 || resp.Models[0].Model != "cloud/model-a" || resp.Models[0].DisplayName != "Renamed Cloud" {
+		t.Fatalf("selected cloud models = %#v, want renamed model-a only", resp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/tags/manage?provider=csghub&model=cloud%2Fmodel-b", strings.NewReader(`{"model":"cloud-alias","display_name":"Cloud Alias"}`))
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageUpdate(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cloud upsert patch status = %d body=%s", w.Code, w.Body.String())
+	}
+	var patched api.ModelInfo
+	if err := json.NewDecoder(w.Body).Decode(&patched); err != nil {
+		t.Fatalf("decode cloud patched model: %v", err)
+	}
+	if patched.Model != "cloud-alias" || patched.Origin != "cloud/model-b" || patched.DisplayName != "Cloud Alias" {
+		t.Fatalf("patched cloud model = %#v, want alias with origin", patched)
+	}
+}
+
 func TestProviderModelAliasForwardsOriginalModelID(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

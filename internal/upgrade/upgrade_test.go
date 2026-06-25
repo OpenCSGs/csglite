@@ -4,6 +4,7 @@ package upgrade
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -133,6 +134,28 @@ func TestTempDirCreationWithValidTMPDIR(t *testing.T) {
 	// Verify
 	if _, err := os.Stat(tmpDir); err != nil {
 		t.Fatalf("created temp directory is not accessible: %v", err)
+	}
+}
+
+func TestWindowsRestartArgsDefaultsToServeWhenNoArgs(t *testing.T) {
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	os.Args = []string{"csghub-lite.exe"}
+	got := windowsRestartArgs()
+	want := []string{"serve"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("windowsRestartArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestWindowsRestartArgsSkipsCLIUpgradeCommand(t *testing.T) {
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	os.Args = []string{"csghub-lite.exe", "upgrade", "--yes"}
+	if got := windowsRestartArgs(); got != nil {
+		t.Fatalf("windowsRestartArgs() = %#v, want nil", got)
 	}
 }
 

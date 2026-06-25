@@ -167,22 +167,35 @@ func ensureCSGClawManagedConfig(baseURL, apiKey, modelID string, models []string
 }
 
 func defaultCSGClawConfig() string {
-	return `# Managed by csghub-lite for CSGClaw.
+	return strings.Join([]string{
+		"# Managed by csghub-lite for CSGClaw.",
+		"",
+		"[server]",
+		`listen_addr = "0.0.0.0:18080"`,
+		`advertise_base_url = ""`,
+		`access_token = "your_access_token"`,
+		"no_auth = false",
+		"",
+		"[bootstrap]",
+		`manager_image_override = ""`,
+		"",
+		"[sandbox]",
+		"provider = " + strconv.Quote(csgclawSandboxProvider()),
+		`home_dir_name = "boxlite"`,
+		"debian_registries_override = []",
+		"",
+	}, "\n")
+}
 
-[server]
-listen_addr = "0.0.0.0:18080"
-advertise_base_url = ""
-access_token = "your_access_token"
-no_auth = false
+func csgclawSandboxProvider() string {
+	return csgclawSandboxProviderForGOOS(runtime.GOOS)
+}
 
-[bootstrap]
-manager_image_override = ""
-
-[sandbox]
-provider = "boxlite-cli"
-home_dir_name = "boxlite"
-debian_registries_override = []
-`
+func csgclawSandboxProviderForGOOS(goos string) string {
+	if goos == "windows" {
+		return "csghub"
+	}
+	return "boxlite-cli"
 }
 
 func setCSGClawManagedModelConfig(input, baseURL, apiKey, modelID string, models []string) string {
@@ -194,7 +207,9 @@ func setCSGClawManagedModelConfig(input, baseURL, apiKey, modelID string, models
 	bootstrapFound := false
 	managerImageOverrideSet := false
 	sandboxFound := false
+	sandboxProviderSet := false
 	debianRegistriesOverrideSet := false
+	desiredSandboxProvider := csgclawSandboxProvider()
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -202,6 +217,10 @@ func setCSGClawManagedModelConfig(input, baseURL, apiKey, modelID string, models
 			if inBootstrap && !managerImageOverrideSet {
 				out = append(out, `manager_image_override = ""`)
 				managerImageOverrideSet = true
+			}
+			if inSandbox && !sandboxProviderSet {
+				out = append(out, "provider = "+strconv.Quote(desiredSandboxProvider))
+				sandboxProviderSet = true
 			}
 			if inSandbox && !debianRegistriesOverrideSet {
 				out = append(out, `debian_registries_override = []`)
@@ -233,6 +252,13 @@ func setCSGClawManagedModelConfig(input, baseURL, apiKey, modelID string, models
 		}
 		if inSandbox {
 			key, value, ok := parseCSGClawConfigKV(trimmed)
+			if ok && key == "provider" {
+				if !sandboxProviderSet {
+					out = append(out, "provider = "+strconv.Quote(desiredSandboxProvider))
+					sandboxProviderSet = true
+				}
+				continue
+			}
 			if ok && (key == "debian_registries" || key == "debian_registries_override") {
 				if !debianRegistriesOverrideSet {
 					if strings.TrimSpace(value) == "" {
@@ -249,6 +275,9 @@ func setCSGClawManagedModelConfig(input, baseURL, apiKey, modelID string, models
 	if inBootstrap && !managerImageOverrideSet {
 		out = append(out, `manager_image_override = ""`)
 	}
+	if inSandbox && !sandboxProviderSet {
+		out = append(out, "provider = "+strconv.Quote(desiredSandboxProvider))
+	}
 	if inSandbox && !debianRegistriesOverrideSet {
 		out = append(out, `debian_registries_override = []`)
 	}
@@ -256,7 +285,7 @@ func setCSGClawManagedModelConfig(input, baseURL, apiKey, modelID string, models
 		out = append(out, "", "[bootstrap]", `manager_image_override = ""`)
 	}
 	if !sandboxFound {
-		out = append(out, "", "[sandbox]", "provider = \"boxlite-cli\"", "home_dir_name = \"boxlite\"", "debian_registries_override = []")
+		out = append(out, "", "[sandbox]", "provider = "+strconv.Quote(desiredSandboxProvider), "home_dir_name = \"boxlite\"", "debian_registries_override = []")
 	}
 
 	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
@@ -602,6 +631,7 @@ func csgclawConfigNeedsManagerRecreate(baseURL, apiKey, modelID string) bool {
 	return strings.TrimSpace(cfg.DefaultSelector) != wantSelector ||
 		strings.TrimSpace(cfg.ManagerImageOverride) != "" ||
 		cfg.HasLegacyManagerImage ||
+		strings.TrimSpace(cfg.SandboxProvider) != csgclawSandboxProvider() ||
 		strings.TrimRight(provider.BaseURL, "/") != strings.TrimRight(baseURL, "/") ||
 		strings.TrimSpace(provider.APIKey) != strings.TrimSpace(apiKey) ||
 		!csgclawContainsModel(provider.Models, modelID)
@@ -611,6 +641,7 @@ type csgclawModelConfig struct {
 	DefaultSelector       string
 	ManagerImageOverride  string
 	HasLegacyManagerImage bool
+	SandboxProvider       string
 	Providers             map[string]csgclawModelProviderConfig
 }
 
@@ -678,6 +709,10 @@ func readCSGClawModelConfig() (csgclawModelConfig, error) {
 				cfg.HasLegacyManagerImage = true
 			case "manager_image_override":
 				cfg.ManagerImageOverride = value
+			}
+		case section == "sandbox":
+			if key == "provider" {
+				cfg.SandboxProvider = value
 			}
 		case section == "models":
 			if key == "default" {

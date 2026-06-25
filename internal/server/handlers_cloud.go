@@ -268,6 +268,7 @@ func (s *Server) newCloudEngine(ctx context.Context, modelID string) (inference.
 	if s.cloud != nil && strings.TrimSpace(s.cloud.BaseURL()) != "" {
 		baseURL = s.cloud.BaseURL()
 	}
+	modelID = s.resolveCloudOriginalModelID(modelID)
 	return inference.NewOpenAIEngine(baseURL, modelID, apiKey), nil
 }
 

@@ -286,3 +286,51 @@ func TestNewCloudEngineUsesBuiltinAPIKey(t *testing.T) {
 		t.Fatalf("response = %q, want ok", got)
 	}
 }
+
+func TestNewCloudEngineResolvesProviderModelAlias(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviderModelAllowlist()
+	t.Cleanup(config.ResetProviderModelAllowlist)
+
+	var upstreamModel string
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		upstreamModel, _ = body["model"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{"role": "assistant", "content": "ok"},
+			}},
+		})
+	}))
+	defer modelServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.OpenCSGAPIKey = "test-key"
+	s.cloud = cloud.NewService(modelServer.URL)
+	if err := config.AddProviderModelSelection(config.DefaultCloudProviderName, config.ProviderModelSelection{
+		Model:         "cloud-alias",
+		OriginalModel: "cloud/original",
+	}); err != nil {
+		t.Fatalf("save cloud model alias: %v", err)
+	}
+
+	eng, err := s.newCloudEngine(context.Background(), "cloud-alias")
+	if err != nil {
+		t.Fatalf("newCloudEngine error: %v", err)
+	}
+	if _, err := eng.Generate(context.Background(), "hi", inference.DefaultOptions(), nil); err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
+	if upstreamModel != "cloud/original" {
+		t.Fatalf("upstream model = %q, want cloud/original", upstreamModel)
+	}
+}

@@ -27,6 +27,7 @@ import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, Loca
 
 type GatewayTab = "apiKeys" | "providers" | "usage";
 type UsagePeriod = "week" | "month" | "year";
+type ManagedProvider = ThirdPartyProvider & { builtIn?: boolean; source?: "cloud" | "provider" };
 
 const activeGatewayTab = signal<GatewayTab>("apiKeys");
 const localAPIKeys = signal<LocalAPIKeysResponse | null>(null);
@@ -43,6 +44,7 @@ const localAPIUsageError = signal("");
 const localAPIUsagePeriod = signal<UsagePeriod>("week");
 const localAPIUsageProvider = signal("");
 const providers = signal<ThirdPartyProvider[]>([]);
+const cloudManagedProvider = signal<ManagedProvider | null>(null);
 const providersLoading = signal(false);
 const providersError = signal("");
 const cloudAuth = signal<CloudAuthStatus | null>(null);
@@ -63,7 +65,7 @@ const providerFormEnabled = signal(true);
 const providerFormError = signal("");
 const providerFormSaving = signal(false);
 const providerDialogStep = signal<"details" | "models">("details");
-const providerModelTarget = signal<ThirdPartyProvider | null>(null);
+const providerModelTarget = signal<ManagedProvider | null>(null);
 const providerModelCatalog = signal<ModelInfo[]>([]);
 const providerModelSelected = signal<Record<string, boolean>>({});
 const providerModelDisplayNames = signal<Record<string, string>>({});
@@ -72,7 +74,7 @@ const providerModelsSaving = signal(false);
 const providerModelsError = signal("");
 const providerSelectedModels = signal<Record<string, ModelInfo[]>>({});
 const isProviderModelEditOpen = signal(false);
-const providerModelEditProvider = signal<ThirdPartyProvider | null>(null);
+const providerModelEditProvider = signal<ManagedProvider | null>(null);
 const providerModelEditCurrentID = signal("");
 const providerModelEditID = signal("");
 const providerModelEditDisplayName = signal("");
@@ -154,10 +156,12 @@ function fetchCloudSettings() {
     .then((settings) => {
       cloudProviderName.value = settings.cloud_provider_name || settings.default_cloud_provider_name || "";
       cloudGatewayURL.value = settings.ai_gateway_url || settings.default_ai_gateway_url || "";
+			cloudManagedProvider.value = cloudProviderFromSettings(settings);
     })
     .catch(() => {
       cloudProviderName.value = "";
       cloudGatewayURL.value = "";
+			cloudManagedProvider.value = null;
     });
 }
 
@@ -165,12 +169,17 @@ async function fetchProviderOptions() {
   providersLoading.value = true;
   providersError.value = "";
   try {
-    const list = await getProviders();
+		const [list, settings] = await Promise.all([getProviders(), getSettings()]);
+		const cloudProvider = cloudProviderFromSettings(settings);
+		cloudProviderName.value = settings.cloud_provider_name || settings.default_cloud_provider_name || "";
+		cloudGatewayURL.value = settings.ai_gateway_url || settings.default_ai_gateway_url || "";
+		cloudManagedProvider.value = cloudProvider;
     providers.value = list;
+		const managedProviders = [cloudProvider, ...list];
     const entries = await Promise.all(
-      list.map(async (provider) => {
+			managedProviders.map(async (provider) => {
         try {
-          return [provider.id, await getProviderSelectedTags(provider.name || provider.id)] as const;
+					return [provider.id, await getProviderSelectedTags(provider.id)] as const;
         } catch {
           return [provider.id, []] as const;
         }
@@ -182,6 +191,23 @@ async function fetchProviderOptions() {
   } finally {
     providersLoading.value = false;
   }
+}
+
+function cloudProviderFromSettings(settings: Awaited<ReturnType<typeof getSettings>>): ManagedProvider {
+	return {
+		id: "csghub",
+		name: settings.cloud_provider_name || settings.default_cloud_provider_name || "csghub",
+		base_url: settings.ai_gateway_url || settings.default_ai_gateway_url || "",
+		provider: "csghub",
+		enabled: true,
+		builtIn: true,
+		source: "cloud",
+	};
+}
+
+function providerCards(): ManagedProvider[] {
+	const cloud = cloudManagedProvider.value;
+	return cloud ? [cloud, ...providers.value] : [...providers.value];
 }
 
 async function saveCloudAPIKeyForm() {
@@ -290,6 +316,18 @@ function openProviderDialog(provider?: ThirdPartyProvider) {
   isProviderDialogOpen.value = true;
 }
 
+function openProviderModelsDialog(provider: ManagedProvider) {
+	editingProvider.value = null;
+	providerModelTarget.value = provider;
+	providerDialogStep.value = "models";
+	providerModelCatalog.value = [];
+	providerModelSelected.value = {};
+	providerModelDisplayNames.value = {};
+	providerModelsError.value = "";
+	isProviderDialogOpen.value = true;
+	void loadProviderDialogModels(provider);
+}
+
 function closeProviderDialog() {
   if (providerFormSaving.value || providerModelsSaving.value) return;
   isProviderDialogOpen.value = false;
@@ -303,7 +341,7 @@ function closeProviderDialog() {
   providerFormError.value = "";
 }
 
-function openProviderModelEditDialog(provider: ThirdPartyProvider, model: ModelInfo) {
+function openProviderModelEditDialog(provider: ManagedProvider, model: ModelInfo) {
   providerModelEditProvider.value = provider;
   providerModelEditCurrentID.value = model.model;
   providerModelEditID.value = model.model;
@@ -383,15 +421,15 @@ async function saveProviderModelEdit() {
   }
 }
 
-async function loadProviderDialogModels(provider: ThirdPartyProvider) {
+async function loadProviderDialogModels(provider: ManagedProvider) {
   providerModelsLoading.value = true;
   providerModelsError.value = "";
   try {
     const [catalog, selected] = await Promise.all([
       getProviderManageTags(provider.id),
-      getProviderSelectedTags(provider.name || provider.id),
+			getProviderSelectedTags(provider.id),
     ]);
-    const selectedIDs = new Set(selected.map((model) => model.model));
+		const selectedIDs = new Set(selected.map((model) => model.origin || model.model));
     const defaultNames = Object.fromEntries(catalog.map((model) => [model.model, defaultProviderModelDisplayName(model)] as const));
     const selectedDisplayNames = Object.fromEntries(selected.flatMap((model) => {
       const displayName = defaultProviderModelDisplayName(model).trim();
@@ -1026,6 +1064,7 @@ function EndpointCard({ label, value, example }: { label: string; value: string;
 }
 
 function ProvidersSection() {
+	const cards = providerCards();
   return (
     <section class="rounded-2xl border border-gray-200 bg-white shadow-sm">
       <div class="flex flex-col gap-4 border-b border-gray-100 px-5 py-5 lg:flex-row lg:items-center lg:justify-between">
@@ -1050,13 +1089,13 @@ function ProvidersSection() {
       <div class="grid gap-4 p-5 lg:grid-cols-2">
         {providersLoading.value ? (
           <p class="text-sm text-gray-500">...</p>
-        ) : providers.value.length === 0 ? (
+				) : cards.length === 0 ? (
           <div class="rounded-2xl border border-dashed border-gray-200 p-6 text-center lg:col-span-2">
             <p class="text-sm font-medium text-gray-700">{t("settings.providersEmpty")}</p>
             <p class="mt-1 text-sm text-gray-500">{t("settings.providersHint")}</p>
           </div>
         ) : (
-          providers.value.map((provider) => {
+					cards.map((provider) => {
             const selectedModels = providerSelectedModels.value[provider.id] || [];
             return (
               <div key={provider.id} class="rounded-2xl border border-gray-100 bg-gray-50 p-4">
@@ -1067,19 +1106,26 @@ function ProvidersSection() {
                       <span class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${provider.enabled ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
                         {provider.enabled ? t("settings.providerEnabled") : t("settings.providerDisabled")}
                       </span>
+										{provider.builtIn && (
+											<span class="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+												{t("settings.providerBuiltIn")}
+											</span>
+										)}
                     </div>
                     <p class="mt-1 truncate text-xs text-gray-500">{provider.base_url}</p>
                     <p class="mt-1 text-[11px] uppercase tracking-wide text-gray-400">{provider.provider || "openai"}</p>
                   </div>
-                  <label class="relative inline-flex shrink-0 cursor-pointer items-center">
-                    <input
-                      type="checkbox"
-                      checked={provider.enabled}
-                      onChange={() => void toggleProviderEnabled(provider)}
-                      class="peer sr-only"
-                    />
-                    <div class="h-5 w-9 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300" />
-                  </label>
+								{!provider.builtIn && (
+									<label class="relative inline-flex shrink-0 cursor-pointer items-center">
+										<input
+											type="checkbox"
+											checked={provider.enabled}
+											onChange={() => void toggleProviderEnabled(provider)}
+											class="peer sr-only"
+										/>
+										<div class="h-5 w-9 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300" />
+									</label>
+								)}
                 </div>
                 <div class="mt-4 rounded-xl bg-white p-3">
                   <div class="mb-2 flex items-center justify-between gap-2">
@@ -1121,18 +1167,29 @@ function ProvidersSection() {
                 <div class="mt-4 flex justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => openProviderDialog(provider)}
+									onClick={() => openProviderModelsDialog(provider)}
                     class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 transition-colors hover:bg-gray-50"
                   >
-                    {t("settings.providerEdit")}
+									{t("settings.providerModelsManage")}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void removeProvider(provider)}
-                    class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs text-red-600 transition-colors hover:bg-red-50"
-                  >
-                    {t("settings.providerDelete")}
-                  </button>
+								{!provider.builtIn && (
+									<>
+										<button
+											type="button"
+											onClick={() => openProviderDialog(provider)}
+											class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 transition-colors hover:bg-gray-50"
+										>
+											{t("settings.providerEdit")}
+										</button>
+										<button
+											type="button"
+											onClick={() => void removeProvider(provider)}
+											class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs text-red-600 transition-colors hover:bg-red-50"
+										>
+											{t("settings.providerDelete")}
+										</button>
+									</>
+								)}
                 </div>
               </div>
             );
@@ -1419,7 +1476,7 @@ function ProviderDialog({
   enabled: boolean;
   error: string;
   saving: boolean;
-  modelTarget: ThirdPartyProvider | null;
+	modelTarget: ManagedProvider | null;
   modelCatalog: ModelInfo[];
   modelSelected: Record<string, boolean>;
   modelDisplayNames: Record<string, string>;

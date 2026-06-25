@@ -665,7 +665,7 @@ func (u *Updater) installBinaryWindows(newBinary, currentBinary string) error {
 
 func windowsRestartArgs() []string {
 	if len(os.Args) <= 1 {
-		return nil
+		return []string{"serve"}
 	}
 	first := strings.ToLower(os.Args[1])
 	if first == "upgrade" {

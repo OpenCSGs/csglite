@@ -3,12 +3,24 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/opencsgs/csghub-lite/internal/config"
 	"github.com/opencsgs/csghub-lite/pkg/api"
 )
+
+type modelManageProvider struct {
+	ID         string
+	Name       string
+	Source     string
+	ThirdParty config.ThirdPartyProvider
+}
+
+func (p modelManageProvider) IsCloud() bool {
+	return p.Source == "cloud"
+}
 
 func (s *Server) handleProviderTagsManageList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
@@ -17,7 +29,7 @@ func (s *Server) handleProviderTagsManageList(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	models, err := listOpenAICompatibleProviderModels(r.Context(), provider)
+	models, err := s.listProviderManageCatalogModels(r, provider)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to fetch provider models: "+err.Error())
 		return
@@ -41,7 +53,7 @@ func (s *Server) handleProviderTagsManageAdd(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	model, ok, err := providerModelFromCatalog(r, provider, req.Model)
+	model, ok, err := s.providerModelFromCatalog(r, provider, req.Model)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to fetch provider models: "+err.Error())
 		return
@@ -101,7 +113,7 @@ func (s *Server) handleProviderTagsManageReplace(w http.ResponseWriter, r *http.
 		return
 	}
 
-	catalog, err := listOpenAICompatibleProviderModels(r.Context(), provider)
+	catalog, err := s.listProviderManageCatalogModels(r, provider)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to fetch provider models: "+err.Error())
 		return
@@ -188,8 +200,20 @@ func (s *Server) handleProviderTagsManageUpdate(w http.ResponseWriter, r *http.R
 		return
 	}
 	if !found {
-		writeError(w, http.StatusNotFound, "provider model not selected")
-		return
+		if !provider.IsCloud() {
+			writeError(w, http.StatusNotFound, "provider model not selected")
+			return
+		}
+		created, ok, createErr := s.createCloudProviderModelSelectionForUpdate(r, provider, modelID, req)
+		if createErr != nil {
+			writeError(w, http.StatusBadRequest, "failed to fetch provider models: "+createErr.Error())
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusNotFound, "provider model not found")
+			return
+		}
+		selection = created
 	}
 
 	model := api.ModelInfo{
@@ -198,10 +222,10 @@ func (s *Server) handleProviderTagsManageUpdate(w http.ResponseWriter, r *http.R
 		Label:       selection.Model,
 		DisplayName: selection.Model,
 		Format:      "api",
-		Source:      providerSource(provider.ID),
-		Provider:    modelProviderIDFromProvider(provider),
+		Source:      providerManagedSource(provider),
+		Provider:    providerManagedModelProviderID(provider),
 	}
-	if catalogModel, ok, err := providerModelFromCatalog(r, provider, providerModelOriginalID(selection)); err == nil && ok {
+	if catalogModel, ok, err := s.providerModelFromCatalog(r, provider, providerModelOriginalID(selection)); err == nil && ok {
 		model = catalogModel
 	}
 	model = applyProviderModelMetadata(model, selection)
@@ -231,35 +255,89 @@ func (s *Server) handleProviderTagsManageDelete(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-func (s *Server) providerFromTagsManageRequest(w http.ResponseWriter, r *http.Request) (config.ThirdPartyProvider, bool) {
+func (s *Server) providerFromTagsManageRequest(w http.ResponseWriter, r *http.Request) (modelManageProvider, bool) {
 	providerName := normalizeModelProvider(r.URL.Query().Get("provider"))
 	if providerName == "" {
 		writeError(w, http.StatusBadRequest, "provider is required")
-		return config.ThirdPartyProvider{}, false
+		return modelManageProvider{}, false
+	}
+	if s.isCloudModelProviderAlias(providerName) {
+		return modelManageProvider{
+			ID:     config.DefaultCloudProviderName,
+			Name:   s.cloudModelProviderDisplayName(),
+			Source: "cloud",
+		}, true
 	}
 	provider, ok := getThirdPartyProviderByAlias(providerName)
 	if !ok {
 		writeError(w, http.StatusNotFound, "provider not found")
-		return config.ThirdPartyProvider{}, false
+		return modelManageProvider{}, false
 	}
 	if !provider.Enabled {
 		writeError(w, http.StatusForbidden, "provider is disabled")
-		return config.ThirdPartyProvider{}, false
+		return modelManageProvider{}, false
 	}
-	return provider, true
+	return modelManageProvider{
+		ID:         provider.ID,
+		Name:       provider.Name,
+		Source:     "provider",
+		ThirdParty: provider,
+	}, true
 }
 
-func providerModelFromCatalog(r *http.Request, provider config.ThirdPartyProvider, modelID string) (api.ModelInfo, bool, error) {
+func (s *Server) providerModelFromCatalog(r *http.Request, provider modelManageProvider, modelID string) (api.ModelInfo, bool, error) {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
 		return api.ModelInfo{}, false, nil
 	}
-	models, err := listOpenAICompatibleProviderModels(r.Context(), provider)
+	models, err := s.listProviderManageCatalogModels(r, provider)
 	if err != nil {
 		return api.ModelInfo{}, false, err
 	}
 	model, ok := findModelInfoByID(models, modelID)
 	return model, ok, nil
+}
+
+func (s *Server) listProviderManageCatalogModels(r *http.Request, provider modelManageProvider) ([]api.ModelInfo, error) {
+	if provider.IsCloud() {
+		return s.listCloudModelCatalog(r.Context(), requestWantsModelRefresh(r))
+	}
+	return listOpenAICompatibleProviderModels(r.Context(), provider.ThirdParty)
+}
+
+func (s *Server) createCloudProviderModelSelectionForUpdate(r *http.Request, provider modelManageProvider, modelID string, req api.ProviderTagModelUpdateRequest) (config.ProviderModelSelection, bool, error) {
+	model, ok, err := s.providerModelFromCatalog(r, provider, modelID)
+	if err != nil || !ok {
+		return config.ProviderModelSelection{}, ok, err
+	}
+	selection := config.ProviderModelSelection{
+		Model:              model.Model,
+		OriginalModel:      model.Model,
+		CatalogDisplayName: providerModelCatalogDisplayName(provider, model),
+		PipelineTag:        model.PipelineTag,
+		InputModalities:    model.InputModalities,
+		OutputModalities:   model.OutputModalities,
+	}
+	if req.Model != nil {
+		nextModel := strings.TrimSpace(*req.Model)
+		if nextModel != "" {
+			selection.Model = nextModel
+		}
+	}
+	if req.DisplayName != nil {
+		selection.DisplayName = strings.TrimSpace(*req.DisplayName)
+	}
+	if req.Description != nil {
+		selection.Description = strings.TrimSpace(*req.Description)
+	}
+	if err := config.AddProviderModelSelection(provider.ID, selection); err != nil {
+		return config.ProviderModelSelection{}, true, err
+	}
+	created, found := providerModelSelectionByOriginal(provider.ID, model.Model)
+	if !found {
+		return config.ProviderModelSelection{}, true, fmt.Errorf("saved cloud model selection was not found")
+	}
+	return created, true, nil
 }
 
 func findModelInfoByID(models []api.ModelInfo, modelID string) (api.ModelInfo, bool) {
@@ -314,6 +392,7 @@ func applyProviderModelMetadata(model api.ModelInfo, selection config.ProviderMo
 	if publicModel != "" {
 		model.Model = publicModel
 		if publicModel != originalModel {
+			model.Origin = originalModel
 			model.Name = publicModel
 			model.DisplayName = publicModel
 			model.Label = publicModel

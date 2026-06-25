@@ -631,6 +631,18 @@ func TestPrepareCSGClawLaunchWritesConfigAndDefaultsToServe(t *testing.T) {
 	}
 }
 
+func TestCSGClawLaunchSandboxProviderIsPlatformAware(t *testing.T) {
+	if got := csgClawLaunchSandboxProviderForGOOS("windows"); got != "csghub" {
+		t.Fatalf("windows sandbox provider = %q, want csghub", got)
+	}
+	if got := csgClawLaunchSandboxProviderForGOOS("darwin"); got != "boxlite-cli" {
+		t.Fatalf("darwin sandbox provider = %q, want boxlite-cli", got)
+	}
+	if got := csgClawLaunchSandboxProviderForGOOS("linux"); got != "boxlite-cli" {
+		t.Fatalf("linux sandbox provider = %q, want boxlite-cli", got)
+	}
+}
+
 func TestClaudeLaunchSettingsJSONIncludesAcceptEditsMode(t *testing.T) {
 	raw := claudeLaunchSettingsJSON("http://127.0.0.1:11435")
 

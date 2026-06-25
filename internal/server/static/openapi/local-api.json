@@ -96,7 +96,7 @@
           "Models"
         ],
         "summary": "List available models",
-        "description": "Returns local, CSGHub cloud, and selected third-party provider models. Use `provider` to filter by a model provider ID such as `local`, `csghub`, or a third-party provider ID. Third-party provider filters return only models selected through `/api/tags/manage`; configured third-party names are accepted as legacy aliases.",
+        "description": "Returns local, CSGHub cloud, and selected third-party provider models. Use `provider` to filter by a model provider ID such as `local`, `csghub`, or a third-party provider ID. Provider filters return selected models configured through `/api/tags/manage`; when no `csghub` cloud selection has been saved, all cloud catalog models are returned. Configured third-party names are accepted as legacy aliases.",
         "operationId": "getTags",
         "parameters": [
           {
@@ -179,14 +179,14 @@
           "Models"
         ],
         "summary": "List provider catalog models",
-        "description": "Returns all currently available models from a configured third-party provider. This catalog is used to choose which provider models appear in `/api/tags?provider=...`.",
+        "description": "Returns all currently available models from the built-in `csghub` cloud provider or a configured third-party provider. This catalog is used to choose which provider models appear in `/api/tags?provider=...`.",
         "operationId": "listProviderTagCatalog",
         "parameters": [
           {
             "name": "provider",
             "in": "query",
             "required": true,
-            "description": "Third-party provider ID or configured provider name.",
+            "description": "Provider ID or configured provider name. Use `csghub` for the built-in cloud provider.",
             "schema": {
               "type": "string"
             }
@@ -237,7 +237,7 @@
             "name": "provider",
             "in": "query",
             "required": true,
-            "description": "Third-party provider ID or configured provider name.",
+            "description": "Provider ID or configured provider name. Use `csghub` for the built-in cloud provider.",
             "schema": {
               "type": "string"
             }
@@ -293,7 +293,7 @@
             "name": "provider",
             "in": "query",
             "required": true,
-            "description": "Third-party provider ID or configured provider name.",
+            "description": "Provider ID or configured provider name. Use `csghub` for the built-in cloud provider.",
             "schema": {
               "type": "string"
             }
@@ -348,14 +348,14 @@
           "Models"
         ],
         "summary": "Update selected provider model metadata",
-        "description": "Updates metadata for a selected third-party provider model and can change the client-visible model ID. The original provider model ID is preserved internally for upstream inference calls. Use an empty string to clear an overridden display name or description.",
+        "description": "Updates metadata for a selected provider model and can change the client-visible model ID. The built-in `csghub` cloud provider also supports this endpoint; patching a default cloud catalog model creates a selection automatically. The original upstream model ID is preserved internally for inference calls. Use an empty string to clear an overridden display name or description.",
         "operationId": "updateProviderTagModel",
         "parameters": [
           {
             "name": "provider",
             "in": "query",
             "required": true,
-            "description": "Third-party provider ID or configured provider name.",
+            "description": "Provider ID or configured provider name. Use `csghub` for the built-in cloud provider.",
             "schema": {
               "type": "string"
             }
@@ -412,7 +412,7 @@
             "name": "provider",
             "in": "query",
             "required": true,
-            "description": "Third-party provider ID or configured provider name.",
+            "description": "Provider ID or configured provider name. Use `csghub` for the built-in cloud provider.",
             "schema": {
               "type": "string"
             }

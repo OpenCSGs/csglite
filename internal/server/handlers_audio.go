@@ -360,6 +360,7 @@ func (s *Server) newCloudAudioTranscriptionRequest(ctx context.Context, req api.
 	if err != nil {
 		return nil, err
 	}
+	req.Model = s.resolveCloudOriginalModelID(req.Model)
 	baseURL := resolveCloudURL(s.cfg)
 	if s.cloud != nil && strings.TrimSpace(s.cloud.BaseURL()) != "" {
 		baseURL = s.cloud.BaseURL()

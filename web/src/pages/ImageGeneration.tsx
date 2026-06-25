@@ -365,6 +365,12 @@ function imageModelKey(model: ModelInfo): string {
   return `${model.source || "local"}:${model.model || model.name}`;
 }
 
+function isLocalImageModel(model?: ModelInfo): boolean {
+  if (!model) return false;
+  const source = (model?.source || "local").trim().toLowerCase();
+  return source === "" || source === "local";
+}
+
 function selectedModelInfo(): ModelInfo | undefined {
   return models.value.find((model) => imageModelKey(model) === selectedModel.value);
 }
@@ -634,7 +640,7 @@ export function ImageGeneration() {
 
   const rt = runtime.value;
   const currentModel = selectedModelInfo();
-  const selectedModelIsCloud = currentModel?.source === "cloud";
+  const selectedModelIsLocal = isLocalImageModel(currentModel);
   const selectedModelIsEdit = isImageToImageModel(currentModel);
   const selectedSizeKey = sizePresets.find((preset) => preset.width === width.value && preset.height === height.value)?.key || "";
   const progress = progressPercent();
@@ -686,7 +692,7 @@ export function ImageGeneration() {
         </div>
       </div>
 
-      {rt && !rt.ready && !selectedModelIsCloud && (
+      {rt && !rt.ready && selectedModelIsLocal && (
         <section class="rounded-xl border border-amber-200 bg-amber-50 p-4">
           <div class="flex items-start justify-between gap-4">
             <div>

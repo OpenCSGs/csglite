@@ -414,6 +414,7 @@ function Check-Existing {
     $hasRunning = $false
     if ($procs) {
         $hasRunning = $true
+        $script:WasServerRunning = $true
         Warn "Running csghub-lite process(es) detected."
     }
 
@@ -508,25 +509,29 @@ function Start-CsghubLiteServer {
     }
 
     try {
-        Start-Process -FilePath $BinaryPath -ArgumentList "serve" -WindowStyle Hidden | Out-Null
+        Start-Process -FilePath $BinaryPath -ArgumentList "serve" -WorkingDirectory (Split-Path $BinaryPath -Parent) -WindowStyle Hidden | Out-Null
     } catch {
         Warn "Failed to launch background server: $($_.Exception.Message)"
         return
     }
 
-    Start-Sleep -Seconds 1
-    if (Test-CsghubLiteServerRunning -BinaryPath $BinaryPath) {
-        Info "Started csghub-lite server in background."
-        $script:ServerStartStatus = "started"
-    } else {
-        Warn "Could not verify background server startup. Try: csghub-lite serve"
-        $script:ServerStartStatus = "failed"
+    for ($i = 0; $i -lt 20; $i++) {
+        Start-Sleep -Milliseconds 500
+        if (Test-CsghubLiteServerRunning -BinaryPath $BinaryPath) {
+            Info "Started csghub-lite server in background."
+            $script:ServerStartStatus = "started"
+            return
+        }
     }
+
+    Warn "Could not verify background server startup. Try: csghub-lite serve"
+    $script:ServerStartStatus = "failed"
 }
 
 # ---- Main ----
 $script:Region = Detect-Region
 $script:ServerStartStatus = "failed"
+$script:WasServerRunning = $false
 Info "Detected region: $script:Region"
 
 Info "Checking for existing installation..."
@@ -541,6 +546,11 @@ if ($autoInstall -eq "1") {
 }
 
 Check-PythonOptional
+if ($script:WasServerRunning) {
+    Info "Restarting csghub-lite server after upgrade..."
+} else {
+    Info "Starting csghub-lite server..."
+}
 Start-CsghubLiteServer -BinaryPath (Join-Path $InstallDir "csghub-lite.exe")
 
 Write-Host ""

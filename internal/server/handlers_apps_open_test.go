@@ -548,6 +548,39 @@ models = ["glm-5"]
 	}
 }
 
+func TestCSGClawSandboxProviderIsPlatformAware(t *testing.T) {
+	if got := csgclawSandboxProviderForGOOS("windows"); got != "csghub" {
+		t.Fatalf("windows sandbox provider = %q, want csghub", got)
+	}
+	if got := csgclawSandboxProviderForGOOS("darwin"); got != "boxlite-cli" {
+		t.Fatalf("darwin sandbox provider = %q, want boxlite-cli", got)
+	}
+	if got := csgclawSandboxProviderForGOOS("linux"); got != "boxlite-cli" {
+		t.Fatalf("linux sandbox provider = %q, want boxlite-cli", got)
+	}
+}
+
+func TestSetCSGClawManagedModelConfigRewritesSandboxProvider(t *testing.T) {
+	input := `[server]
+listen_addr = "0.0.0.0:18080"
+
+[sandbox]
+provider = "unsupported-provider"
+home_dir_name = "boxlite"
+
+[models]
+default = "old.model"
+`
+	updated := setCSGClawManagedModelConfig(input, "http://127.0.0.1:11435/v1", "test-token", "glm-5", []string{"glm-5"})
+	want := "provider = " + strconv.Quote(csgclawSandboxProvider())
+	if !strings.Contains(updated, want) {
+		t.Fatalf("updated config missing %q:\n%s", want, updated)
+	}
+	if strings.Contains(updated, "unsupported-provider") {
+		t.Fatalf("updated config kept unsupported provider:\n%s", updated)
+	}
+}
+
 func TestCSGClawOrderedModelsPutsSelectedModelFirst(t *testing.T) {
 	got := csgclawOrderedModels("glm-5", []string{
 		"Qwen/Qwen3-0.6B-GGUF",

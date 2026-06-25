@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -892,22 +893,35 @@ func ensureCSGClawLaunchConfig(baseURL, apiKey, modelID string, models []string)
 }
 
 func defaultCSGClawLaunchConfig() string {
-	return `# Managed by csghub-lite for CSGClaw.
+	return strings.Join([]string{
+		"# Managed by csghub-lite for CSGClaw.",
+		"",
+		"[server]",
+		`listen_addr = "0.0.0.0:18080"`,
+		`advertise_base_url = ""`,
+		`access_token = "your_access_token"`,
+		"no_auth = false",
+		"",
+		"[bootstrap]",
+		`manager_image_override = ""`,
+		"",
+		"[sandbox]",
+		"provider = " + strconv.Quote(csgClawLaunchSandboxProvider()),
+		`home_dir_name = "boxlite"`,
+		"debian_registries_override = []",
+		"",
+	}, "\n")
+}
 
-[server]
-listen_addr = "0.0.0.0:18080"
-advertise_base_url = ""
-access_token = "your_access_token"
-no_auth = false
+func csgClawLaunchSandboxProvider() string {
+	return csgClawLaunchSandboxProviderForGOOS(runtime.GOOS)
+}
 
-[bootstrap]
-manager_image_override = ""
-
-[sandbox]
-provider = "boxlite-cli"
-home_dir_name = "boxlite"
-debian_registries_override = []
-`
+func csgClawLaunchSandboxProviderForGOOS(goos string) string {
+	if goos == "windows" {
+		return "csghub"
+	}
+	return "boxlite-cli"
 }
 
 func setCSGClawLaunchModelConfig(input, baseURL, apiKey, modelID string, models []string) string {
@@ -919,7 +933,9 @@ func setCSGClawLaunchModelConfig(input, baseURL, apiKey, modelID string, models 
 	bootstrapFound := false
 	managerImageOverrideSet := false
 	sandboxFound := false
+	sandboxProviderSet := false
 	debianRegistriesOverrideSet := false
+	desiredSandboxProvider := csgClawLaunchSandboxProvider()
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -927,6 +943,10 @@ func setCSGClawLaunchModelConfig(input, baseURL, apiKey, modelID string, models 
 			if inBootstrap && !managerImageOverrideSet {
 				out = append(out, `manager_image_override = ""`)
 				managerImageOverrideSet = true
+			}
+			if inSandbox && !sandboxProviderSet {
+				out = append(out, "provider = "+strconv.Quote(desiredSandboxProvider))
+				sandboxProviderSet = true
 			}
 			if inSandbox && !debianRegistriesOverrideSet {
 				out = append(out, `debian_registries_override = []`)
@@ -961,6 +981,13 @@ func setCSGClawLaunchModelConfig(input, baseURL, apiKey, modelID string, models 
 			key, value, ok := strings.Cut(trimmed, "=")
 			key = strings.TrimSpace(key)
 			value = strings.TrimSpace(value)
+			if ok && key == "provider" {
+				if !sandboxProviderSet {
+					out = append(out, "provider = "+strconv.Quote(desiredSandboxProvider))
+					sandboxProviderSet = true
+				}
+				continue
+			}
 			if ok && (key == "debian_registries" || key == "debian_registries_override") {
 				if !debianRegistriesOverrideSet {
 					if value == "" {
@@ -977,6 +1004,9 @@ func setCSGClawLaunchModelConfig(input, baseURL, apiKey, modelID string, models 
 	if inBootstrap && !managerImageOverrideSet {
 		out = append(out, `manager_image_override = ""`)
 	}
+	if inSandbox && !sandboxProviderSet {
+		out = append(out, "provider = "+strconv.Quote(desiredSandboxProvider))
+	}
 	if inSandbox && !debianRegistriesOverrideSet {
 		out = append(out, `debian_registries_override = []`)
 	}
@@ -984,7 +1014,7 @@ func setCSGClawLaunchModelConfig(input, baseURL, apiKey, modelID string, models 
 		out = append(out, "", "[bootstrap]", `manager_image_override = ""`)
 	}
 	if !sandboxFound {
-		out = append(out, "", "[sandbox]", "provider = \"boxlite-cli\"", "home_dir_name = \"boxlite\"", "debian_registries_override = []")
+		out = append(out, "", "[sandbox]", "provider = "+strconv.Quote(desiredSandboxProvider), "home_dir_name = \"boxlite\"", "debian_registries_override = []")
 	}
 
 	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {

@@ -381,6 +381,7 @@ func (s *Server) generateCloudImage(ctx context.Context, req api.OpenAIImagesGen
 	if err != nil {
 		return nil, err
 	}
+	req.Model = s.resolveCloudOriginalModelID(req.Model)
 	baseURL := resolveCloudURL(s.cfg)
 	if s.cloud != nil && strings.TrimSpace(s.cloud.BaseURL()) != "" {
 		baseURL = s.cloud.BaseURL()
@@ -423,6 +424,7 @@ func (s *Server) generateCloudImageEdit(ctx context.Context, req imageInferenceR
 	if err != nil {
 		return nil, err
 	}
+	req.Model = s.resolveCloudOriginalModelID(req.Model)
 	baseURL := resolveCloudURL(s.cfg)
 	if s.cloud != nil && strings.TrimSpace(s.cloud.BaseURL()) != "" {
 		baseURL = s.cloud.BaseURL()

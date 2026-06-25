@@ -129,7 +129,7 @@ func providerModelInfoFromSelection(provider config.ThirdPartyProvider, selectio
 	return applyProviderModelMetadata(model, selection)
 }
 
-func providerModelCatalogDisplayName(provider config.ThirdPartyProvider, model api.ModelInfo) string {
+func providerModelCatalogDisplayName(provider modelManageProvider, model api.ModelInfo) string {
 	modelID := strings.TrimSpace(model.Model)
 	for _, value := range []string{model.DisplayName, model.Label, model.Name} {
 		value = strings.TrimSpace(value)
@@ -145,6 +145,20 @@ func providerModelCatalogDisplayName(provider config.ThirdPartyProvider, model a
 		}
 	}
 	return ""
+}
+
+func providerManagedSource(provider modelManageProvider) string {
+	if provider.IsCloud() {
+		return "cloud"
+	}
+	return providerSource(provider.ID)
+}
+
+func providerManagedModelProviderID(provider modelManageProvider) string {
+	if provider.IsCloud() {
+		return provider.Name
+	}
+	return normalizeModelProvider(provider.ID)
 }
 
 func listOpenAICompatibleProviderModels(ctx context.Context, provider config.ThirdPartyProvider) ([]api.ModelInfo, error) {
