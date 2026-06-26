@@ -153,6 +153,50 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     },
   },
   {
+    id: "open-code-review",
+    name: "Open Code Review",
+    siteLabel: "@alibaba",
+    website: "https://github.com/alibaba/open-code-review",
+    detailsUrl: "https://github.com/alibaba/open-code-review#readme",
+    icon: "/apps/open-code-review.svg",
+    category: "coding",
+    description: {
+      en: "Alibaba's AI code review CLI that reviews Git diffs or full files with line-level findings.",
+      zh: "Alibaba 开源的 AI 代码审查 CLI，可审查 Git diff 或完整文件，并输出行级问题。",
+    },
+    installMode: "script",
+    progressMode: "percent",
+    installHint: {
+      en: "Install the mirrored Open Code Review binary for macOS, Linux, and Windows without Node or global npm.",
+      zh: "通过镜像的 Open Code Review 二进制完成安装，支持 macOS、Linux 和 Windows，不依赖 Node 或全局 npm。",
+    },
+    cnInstallHint: {
+      en: "By default the installer reads a versioned Open Code Review mirror and wires the ocr launcher locally; set CSGHUB_LITE_OPEN_CODE_REVIEW_DIST_BASE_URL only when testing another mirror.",
+      zh: "默认从版本化的 Open Code Review 镜像读取二进制并配置 ocr 启动命令；仅在测试其他镜像时才需要设置 CSGHUB_LITE_OPEN_CODE_REVIEW_DIST_BASE_URL。",
+    },
+    commandPreview: "curl -fsSL https://git-devops.opencsg.com/opensource/apps/-/raw/main/open-code-review/install.sh | bash",
+    liveLogsReady: true,
+    plannedSteps: [
+      {
+        en: "Resolve the requested Open Code Review version from the mirrored manifest.",
+        zh: "从镜像 manifest 中解析目标 Open Code Review 版本。",
+      },
+      {
+        en: "Download the mirrored binary for the current platform and verify its checksum.",
+        zh: "下载当前平台对应的镜像二进制，并校验 checksum。",
+      },
+      {
+        en: "Wire the ocr launcher and run reviews against the selected model. Reviews read Git diffs and may send code context to the model endpoint.",
+        zh: "配置 ocr 启动命令，并使用所选模型执行代码审查。审查会读取 Git diff，并可能将代码上下文发送到模型端点。",
+      },
+    ],
+    status: "idle",
+    statusText: {
+      en: "Ready to install latest",
+      zh: "可安装最新版本",
+    },
+  },
+  {
     id: "openclaw",
     name: "OpenClaw",
     siteLabel: "@openclaw.ai",

@@ -219,6 +219,32 @@ func appSpecs() []appSpec {
 			},
 		},
 		{
+			id:           "open-code-review",
+			binaryName:   "ocr",
+			installMode:  "script",
+			progressMode: progressModePercent,
+			supported:    true,
+			versionArgs:  []string{"version"},
+			latest: &latestVersionSource{
+				baseURL: "https://opencsg-public-resource.oss-cn-beijing.aliyuncs.com/open-code-review-releases",
+				envVar:  "CSGHUB_LITE_OPEN_CODE_REVIEW_DIST_BASE_URL",
+			},
+			unix: &scriptSource{
+				mirrorURL:    mirrorBaseURL + "/open-code-review/install.sh",
+				embeddedPath: "scripts/open-code-review-install.sh",
+			},
+			windows: &scriptSource{
+				mirrorURL:    mirrorBaseURL + "/open-code-review/install.ps1",
+				embeddedPath: "scripts/open-code-review-install.ps1",
+			},
+			uninstallUnix: &scriptSource{
+				embeddedPath: "scripts/open-code-review-uninstall.sh",
+			},
+			uninstallWin: &scriptSource{
+				embeddedPath: "scripts/open-code-review-uninstall.ps1",
+			},
+		},
+		{
 			id:           "openclaw",
 			binaryName:   "openclaw",
 			installMode:  "script",
@@ -1269,7 +1295,23 @@ func detectInstalled(ctx context.Context, spec appSpec) (string, string, bool) {
 			version = strings.TrimSpace(string(out))
 		}
 	}
+	version = appDisplayVersion(spec, version)
 	return path, version, true
+}
+
+func appDisplayVersion(spec appSpec, version string) string {
+	version = strings.TrimSpace(version)
+	if spec.id != "open-code-review" {
+		return version
+	}
+	match := versionTokenPattern.FindString(version)
+	if match == "" {
+		return version
+	}
+	if strings.HasPrefix(strings.ToLower(match), "v") {
+		return match
+	}
+	return "v" + match
 }
 
 func detectInstalledBinaryPath(binaryName string) (string, bool) {

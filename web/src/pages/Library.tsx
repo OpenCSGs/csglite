@@ -589,19 +589,29 @@ export function Library() {
       </div>
 
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
-              <SortHeader label={t("lib.modelName")} field="name" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
-              <th class="px-4 py-3 font-medium">{t("lib.format")}</th>
-              <th class="px-4 py-3 font-medium">{t("lib.origin")}</th>
-              <SortHeader label={t("lib.fileSize")} field="size" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
-              <th class="px-4 py-3 font-medium">{t("downloads.progress")}</th>
-              <SortHeader label={t("lib.dateTime")} field="modified_at" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
-              <th class="px-4 py-3 font-medium text-right w-[220px] min-w-[220px]">{t("lib.operation")}</th>
-            </tr>
-          </thead>
-          <tbody>
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[960px] table-fixed text-sm">
+            <colgroup>
+              <col class="w-[24%]" />
+              <col class="w-[7%]" />
+              <col class="w-[9%]" />
+              <col class="w-[9%]" />
+              <col class="w-[22%]" />
+              <col class="w-[9%]" />
+              <col class="w-[20%]" />
+            </colgroup>
+            <thead>
+              <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
+                <SortHeader label={t("lib.modelName")} field="name" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
+                <th class="px-4 py-3 font-medium">{t("lib.format")}</th>
+                <th class="px-4 py-3 font-medium">{t("lib.origin")}</th>
+                <SortHeader label={t("lib.fileSize")} field="size" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
+                <th class="px-4 py-3 font-medium">{t("downloads.progress")}</th>
+                <SortHeader label={t("lib.dateTime")} field="modified_at" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
+                <th class="px-4 py-3 font-medium text-right">{t("lib.operation")}</th>
+              </tr>
+            </thead>
+            <tbody>
             {modelsLoading.value ? (
               <tr>
                 <td colSpan={7} class="text-center py-12 text-gray-400">
@@ -617,7 +627,7 @@ export function Library() {
             ) : (
               rows.map(({ model: m, task, downloadOnly }) => (
                 <tr key={m.name} class="border-b border-gray-50 hover:bg-gray-50/50">
-                  <td class="px-4 py-3">
+                  <td class="px-4 py-3 min-w-0">
                     <a href={downloading || downloadOnly ? undefined : modelDetailHref(m.model)} class={`font-medium break-all ${downloading || downloadOnly ? "text-gray-400 cursor-not-allowed" : "text-indigo-600 hover:text-indigo-800 hover:underline"}`}>
                       {m.name}
                     </a>
@@ -639,13 +649,13 @@ export function Library() {
                       {fmtSize(m.size)}
                     </span>
                   </td>
-                  <td class="px-4 py-3">
+                  <td class="px-4 py-3 min-w-0">
                     <DownloadTableCell task={task} onComplete={() => void loadModels()} />
                   </td>
                   <td class="px-4 py-3 text-gray-500">
                     {new Date(m.modified_at).toLocaleDateString("en-US", { day: "numeric", month: "long" })}
                   </td>
-                  <td class="px-4 py-3 w-[220px] min-w-[220px]">
+                  <td class="px-4 py-3">
                     <div class="flex items-center justify-end gap-3 whitespace-nowrap">
                       <button
                         disabled={task?.status === "downloading"}
@@ -718,8 +728,9 @@ export function Library() {
                 </tr>
               ))
             )}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       </div>
       {runDialogModel.value && (
         <RunParamsDialog

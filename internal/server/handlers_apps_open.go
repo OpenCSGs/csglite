@@ -60,7 +60,7 @@ func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, modelSource, 
 			return "", err
 		}
 		return rewriteLoopbackURLHost(url, publicBaseURL), nil
-	case "claude-code", "open-code", "codex", "pi":
+	case "claude-code", "open-code", "open-code-review", "codex", "pi":
 		return s.openAIAppShellURL(ctx, appID, modelID, modelSource, workDir, publicBaseURL)
 	case "codex-app":
 		if _, err := s.ensureCodexAppLaunchConfig(ctx, modelID, modelSource); err != nil {

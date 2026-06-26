@@ -24,6 +24,7 @@ import (
 	"github.com/opencsgs/csghub-lite/internal/claudeagent"
 	"github.com/opencsgs/csghub-lite/internal/codexagent"
 	"github.com/opencsgs/csghub-lite/internal/config"
+	"github.com/opencsgs/csghub-lite/internal/ocreviewagent"
 	"github.com/opencsgs/csghub-lite/internal/opencodeagent"
 	"github.com/opencsgs/csghub-lite/internal/piagent"
 	"github.com/opencsgs/csghub-lite/pkg/api"
@@ -573,7 +574,7 @@ func (s *Server) resolveAIAppShellLaunchModels(ctx context.Context, appID, reque
 		return s.resolveAIAppLaunchModels(ctx, requestedModel, requestedSource)
 	}
 
-	preferredModel := s.localInferenceModelID(s.preferredAIAppModel(appID))
+	preferredModel := strings.TrimSpace(s.preferredAIAppModel(appID))
 	if preferredModel != "" {
 		modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, preferredModel, "")
 		if err == nil {
@@ -605,6 +606,12 @@ func resolveAIAppOpenTarget(appID string) (aiAppOpenTarget, error) {
 			AppID:       "open-code",
 			DisplayName: "OpenCode",
 			Binaries:    []string{"opencode"},
+		}, nil
+	case "open-code-review":
+		return aiAppOpenTarget{
+			AppID:       "open-code-review",
+			DisplayName: "Open Code Review",
+			Binaries:    []string{"ocr"},
 		}, nil
 	case "codex":
 		return aiAppOpenTarget{
@@ -652,7 +659,7 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 	requestedModel = strings.TrimSpace(requestedModel)
 	requestedSource = strings.TrimSpace(requestedSource)
 	if requestedModel != "" {
-		requestedModel = s.localInferenceModelID(requestedModel)
+		requestedModel = s.resolveAIAppRequestedModelID(seen, requestedModel)
 		if requestedSource != "" {
 			normalizedSource := strings.ToLower(requestedSource)
 			if (normalizedSource == "local" || normalizedSource == "cloud" || providerIDFromSource(requestedSource) != "") &&
@@ -706,6 +713,21 @@ func (s *Server) modelIDsFromInfos(models []api.ModelInfo) ([]string, map[string
 		}
 	}
 	return modelIDs, seen
+}
+
+func (s *Server) resolveAIAppRequestedModelID(seen map[string]struct{}, requestedModel string) string {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" {
+		return ""
+	}
+	if _, ok := seen[requestedModel]; ok {
+		return requestedModel
+	}
+	localID := s.localInferenceModelID(requestedModel)
+	if _, ok := seen[localID]; ok {
+		return localID
+	}
+	return requestedModel
 }
 
 func filterAIAppLaunchModels(models []api.ModelInfo) []api.ModelInfo {
@@ -808,7 +830,7 @@ func (s *Server) savePreferredAIAppModel(appID, modelID string) {
 	if s.cfg.AIAppPreferredModels == nil {
 		s.cfg.AIAppPreferredModels = map[string]string{}
 	}
-	s.cfg.AIAppPreferredModels[appID] = s.localInferenceModelID(modelID)
+	s.cfg.AIAppPreferredModels[appID] = modelID
 	_ = config.Save(s.cfg)
 }
 
@@ -839,11 +861,52 @@ func aiAppShellEnvOverrides(overrides map[string]string) map[string]string {
 		"FORCE_COLOR":  "1",
 		"CLICOLOR":     "1",
 		"TERM_PROGRAM": "csghub-lite",
+		"PATH":         prependMissingPathEntries(os.Getenv("PATH"), commonAIAppBinDirs()),
 	}
 	for key, value := range overrides {
 		merged[key] = value
 	}
 	return merged
+}
+
+func openCodeReviewShellLaunch(modelID string) (string, []string, map[string]string, error) {
+	lines := []string{
+		"Open Code Review is configured for csghub-lite.",
+		"Run a review command in this shell, for example:",
+		"  ocr review",
+		"  ocr review --from main --to feature-branch",
+		"  ocr review --commit abc123",
+	}
+	if strings.TrimSpace(modelID) != "" {
+		lines = append([]string{"Using model: " + strings.TrimSpace(modelID)}, lines...)
+	}
+
+	if runtime.GOOS == "windows" {
+		shell := strings.TrimSpace(os.Getenv("COMSPEC"))
+		if shell == "" {
+			var err error
+			shell, err = exec.LookPath("cmd")
+			if err != nil {
+				return "", nil, nil, fmt.Errorf("resolving Windows shell: %w", err)
+			}
+		}
+		commands := make([]string, 0, len(lines))
+		for _, line := range lines {
+			commands = append(commands, "echo "+line)
+		}
+		return shell, []string{"/K", strings.Join(commands, " & ")}, nil, nil
+	}
+
+	loginShell := strings.TrimSpace(os.Getenv("SHELL"))
+	if loginShell == "" {
+		loginShell = "/bin/sh"
+	}
+	if _, err := os.Stat(loginShell); err != nil {
+		loginShell = "/bin/sh"
+	}
+	script := "printf '%s\n' \"$@\"; exec \"$CSGHUB_LITE_USER_SHELL\" -l"
+	args := append([]string{"-lc", script, "csghub-lite-ocr"}, lines...)
+	return "/bin/sh", args, map[string]string{"CSGHUB_LITE_USER_SHELL": loginShell}, nil
 }
 
 func (s *Server) prepareAIAppShellLaunch(target aiAppOpenTarget, modelID string, modelIDs []string, requestedWorkDir string) (aiAppPreparedLaunch, error) {
@@ -889,6 +952,33 @@ func (s *Server) prepareAIAppShellLaunch(target aiAppOpenTarget, modelID string,
 		return aiAppPreparedLaunch{
 			Binary: binary,
 			Env:    envWithOverridesAndUnset(aiAppShellEnvOverrides(nil), "NO_COLOR"),
+			Dir:    workingDir,
+		}, nil
+	case "open-code-review":
+		if _, err := exec.LookPath("git"); err != nil {
+			return aiAppPreparedLaunch{}, fmt.Errorf("Open Code Review requires git on PATH")
+		}
+		models := make([]api.ModelInfo, 0, len(modelIDs))
+		for _, modelID := range modelIDs {
+			models = append(models, api.ModelInfo{Model: modelID})
+		}
+		if _, err := ocreviewagent.SyncConfig(s.cfg.StorageDir(), serverURL, openClawProviderAPIKey(s.cfg.Token), modelID, models); err != nil {
+			log.Printf("AI APP open-code-review: syncing config failed: %v", err)
+			return aiAppPreparedLaunch{}, err
+		}
+		shellBinary, shellArgs, shellEnv, err := openCodeReviewShellLaunch(modelID)
+		if err != nil {
+			return aiAppPreparedLaunch{}, err
+		}
+		envOverrides := aiAppShellEnvOverrides(ocreviewagent.EnvOverrides(s.cfg.StorageDir()))
+		for key, value := range shellEnv {
+			envOverrides[key] = value
+		}
+		unsetKeys := append([]string{"NO_COLOR"}, ocreviewagent.UnsetEnvKeys...)
+		return aiAppPreparedLaunch{
+			Binary: shellBinary,
+			Args:   shellArgs,
+			Env:    envWithOverridesAndUnset(envOverrides, unsetKeys...),
 			Dir:    workingDir,
 		}, nil
 	case "codex":

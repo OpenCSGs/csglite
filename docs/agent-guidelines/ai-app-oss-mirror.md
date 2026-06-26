@@ -8,6 +8,7 @@ This document covers mirroring AI app releases to the StarHub OSS bucket.
 |-----|--------|-------------|
 | claude-code | Anthropic GCS | `scripts/sync-claude-code-oss.sh` |
 | open-code | GitHub: anomalyco/opencode | `scripts/sync-ai-app-oss.sh --app open-code` |
+| open-code-review | GitHub: alibaba/open-code-review | `scripts/sync-ai-app-oss.sh --app open-code-review` |
 | codex | GitHub: openai/codex | `scripts/sync-ai-app-oss.sh --app codex` |
 | codex-app | OpenAI Codex desktop CDN + GitHub Windows desktop EXE | `scripts/sync-ai-app-oss.sh --app codex-app` |
 
@@ -25,6 +26,7 @@ This document covers mirroring AI app releases to the StarHub OSS bucket.
    
    # Check GitHub release version (for open-code, codex)
    gh release view --repo anomalyco/opencode --json tagName --jq '.tagName'
+   gh release view --repo alibaba/open-code-review --json tagName --jq '.tagName'
    gh release view --repo openai/codex --json tagName --jq '.tagName'
    ```
 
@@ -37,6 +39,7 @@ This document covers mirroring AI app releases to the StarHub OSS bucket.
    # Sync individual apps
    ./scripts/sync-ai-app-oss.sh --app claude-code
    ./scripts/sync-ai-app-oss.sh --app open-code
+   ./scripts/sync-ai-app-oss.sh --app open-code-review
    ./scripts/sync-ai-app-oss.sh --app codex
    ./scripts/sync-ai-app-oss.sh --app codex-app
    ```
@@ -69,6 +72,8 @@ Each app follows this versioned layout:
   win32-arm64, win32-x64)
 - **open-code**: darwin-arm64, darwin-x64, linux-arm64, linux-arm64-musl,
   linux-x64, linux-x64-musl, win32-arm64, win32-x64
+- **open-code-review**: darwin-arm64, darwin-x64, linux-arm64, linux-x64,
+  win32-arm64, win32-x64
 - **codex**: darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-arm64,
   win32-x64 (uses musl builds for Linux)
 - **codex-app**: darwin-arm64, darwin-x64, win32-arm64, win32-x64 (desktop

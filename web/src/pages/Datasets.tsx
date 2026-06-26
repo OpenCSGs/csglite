@@ -178,18 +178,27 @@ function DatasetList() {
       </div>
 
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
-              <SortHeader label={t("ds.datasetName")} field="name" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
-              <th class="px-4 py-3 font-medium">{t("ds.origin")}</th>
-              <SortHeader label={t("ds.fileSize")} field="size" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
-              <th class="px-4 py-3 font-medium">{t("downloads.progress")}</th>
-              <SortHeader label={t("ds.dateTime")} field="modified_at" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
-              <th class="px-4 py-3 font-medium text-right">{t("ds.operation")}</th>
-            </tr>
-          </thead>
-          <tbody>
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[760px] table-fixed text-sm">
+            <colgroup>
+              <col class="w-[30%]" />
+              <col class="w-[12%]" />
+              <col class="w-[12%]" />
+              <col class="w-[28%]" />
+              <col class="w-[10%]" />
+              <col class="w-[8%]" />
+            </colgroup>
+            <thead>
+              <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
+                <SortHeader label={t("ds.datasetName")} field="name" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
+                <th class="px-4 py-3 font-medium">{t("ds.origin")}</th>
+                <SortHeader label={t("ds.fileSize")} field="size" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
+                <th class="px-4 py-3 font-medium">{t("downloads.progress")}</th>
+                <SortHeader label={t("ds.dateTime")} field="modified_at" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
+                <th class="px-4 py-3 font-medium text-right">{t("ds.operation")}</th>
+              </tr>
+            </thead>
+            <tbody>
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={6} class="text-center py-12 text-gray-400">
@@ -199,7 +208,7 @@ function DatasetList() {
             ) : (
               rows.map(({ dataset: d, task, downloadOnly }) => (
                 <tr key={d.name} class="border-b border-gray-50 hover:bg-gray-50/50">
-                  <td class="px-4 py-3">
+                  <td class="px-4 py-3 min-w-0">
                     <button
                       onClick={() => handleDetails(d.name)}
                       disabled={downloading || downloadOnly}
@@ -216,7 +225,7 @@ function DatasetList() {
                       {fmtSize(d.size)}
                     </span>
                   </td>
-                  <td class="px-4 py-3">
+                  <td class="px-4 py-3 min-w-0">
                     <DownloadTableCell task={task} onComplete={loadDatasets} />
                   </td>
                   <td class="px-4 py-3 text-gray-500">
@@ -232,8 +241,9 @@ function DatasetList() {
                 </tr>
               ))
             )}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

@@ -429,6 +429,49 @@ func TestResolveAIAppLaunchModelsRefreshesRequestedCloudModelAfterCacheMiss(t *t
 	}
 }
 
+func TestResolveAIAppLaunchModelsPreservesCloudAlias(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviderModelAllowlist()
+	t.Cleanup(config.ResetProviderModelAllowlist)
+
+	requests := 0
+	currentModel := "glm-5.1"
+	apiServer := newCloudModelListServer(&requests, &currentModel)
+	defer apiServer.Close()
+
+	s := New(&config.Config{
+		ModelDir:             t.TempDir(),
+		ListenAddr:           ":11435",
+		Token:                "test-token",
+		AIAppPreferredModels: map[string]string{},
+	}, "test")
+	s.cloud = cloud.NewService(apiServer.URL)
+	if err := config.AddProviderModelSelection(config.DefaultCloudProviderName, config.ProviderModelSelection{
+		Model:         "glm-5.1-1",
+		OriginalModel: "glm-5.1",
+	}); err != nil {
+		t.Fatalf("save cloud alias: %v", err)
+	}
+
+	modelID, modelIDs, err := s.resolveAIAppLaunchModels(context.Background(), "glm-5.1-1", "")
+	if err != nil {
+		t.Fatalf("resolveAIAppLaunchModels returned error: %v", err)
+	}
+	if modelID != "glm-5.1-1" {
+		t.Fatalf("modelID = %q, want cloud alias", modelID)
+	}
+	if !containsModelID(modelIDs, "glm-5.1-1") {
+		t.Fatalf("modelIDs = %#v, want cloud alias", modelIDs)
+	}
+
+	s.savePreferredAIAppModel("open-code-review", modelID)
+	if got := s.preferredAIAppModel("open-code-review"); got != "glm-5.1-1" {
+		t.Fatalf("preferred model = %q, want cloud alias", got)
+	}
+}
+
 func TestResolveAIAppLaunchModelsUsesSelectedProviderModels(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

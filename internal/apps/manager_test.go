@@ -72,6 +72,39 @@ func TestClaudeInstallerMirrorURLsUseCurrentRepoScripts(t *testing.T) {
 	}
 }
 
+func TestOpenCodeReviewAppSpecUsesMirroredBinaryInstallers(t *testing.T) {
+	var spec appSpec
+	found := false
+	for _, candidate := range appSpecs() {
+		if candidate.id == "open-code-review" {
+			spec = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("open-code-review spec not found")
+	}
+	if spec.binaryName != "ocr" {
+		t.Fatalf("binaryName = %q, want ocr", spec.binaryName)
+	}
+	if spec.latest == nil || spec.latest.baseURL != "https://opencsg-public-resource.oss-cn-beijing.aliyuncs.com/open-code-review-releases" {
+		t.Fatalf("unexpected latest source: %#v", spec.latest)
+	}
+	if spec.unix == nil || spec.unix.embeddedPath != "scripts/open-code-review-install.sh" {
+		t.Fatalf("unexpected unix installer: %#v", spec.unix)
+	}
+	if spec.windows == nil || spec.windows.embeddedPath != "scripts/open-code-review-install.ps1" {
+		t.Fatalf("unexpected windows installer: %#v", spec.windows)
+	}
+	if spec.uninstallUnix == nil || spec.uninstallUnix.embeddedPath != "scripts/open-code-review-uninstall.sh" {
+		t.Fatalf("unexpected unix uninstaller: %#v", spec.uninstallUnix)
+	}
+	if spec.uninstallWin == nil || spec.uninstallWin.embeddedPath != "scripts/open-code-review-uninstall.ps1" {
+		t.Fatalf("unexpected windows uninstaller: %#v", spec.uninstallWin)
+	}
+}
+
 func TestDetectInstalledBinaryPathFallsBackToCommonDirs(t *testing.T) {
 	homeDir := setTempHome(t)
 	t.Setenv("PATH", "")
@@ -270,6 +303,13 @@ func TestAppUpdateAvailableComparesVersionOrder(t *testing.T) {
 				t.Fatalf("appUpdateAvailable(%q, %q) = %v, want %v", tt.installed, tt.latest, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestOpenCodeReviewDisplayVersionUsesShortSemver(t *testing.T) {
+	got := appDisplayVersion(appSpec{id: "open-code-review"}, "open-code-review v1.6.3 (7516027) darwin/arm64 built at: 2026-06-26")
+	if got != "v1.6.3" {
+		t.Fatalf("display version = %q, want v1.6.3", got)
 	}
 }
 

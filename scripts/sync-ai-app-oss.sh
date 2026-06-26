@@ -28,6 +28,7 @@ Mirror supported AI app release artifacts to the configured StarHub OSS bucket.
 Supported apps:
   - claude-code
   - open-code
+  - open-code-review
   - codex
   - codex-app
 
@@ -48,6 +49,10 @@ Optional environment variables:
   STARHUB_OSS_REGION              Default: cn-beijing
   STARHUB_OPEN_CODE_DIST_PREFIX   Default: open-code-releases
   STARHUB_OPEN_CODE_DIST_BASE_URL Public URL override for generated manifest
+  STARHUB_OPEN_CODE_REVIEW_DIST_PREFIX
+                                    Default: open-code-review-releases
+  STARHUB_OPEN_CODE_REVIEW_DIST_BASE_URL
+                                    Public URL override for generated manifest
   STARHUB_CODEX_DIST_PREFIX       Default: codex-releases
   STARHUB_CODEX_DIST_BASE_URL     Public URL override for generated manifest
   STARHUB_CODEX_APP_DIST_PREFIX   Default: codex-app-releases
@@ -55,7 +60,7 @@ Optional environment variables:
 
 Examples:
   ./scripts/sync-ai-app-oss.sh
-  ./scripts/sync-ai-app-oss.sh --app claude-code --app open-code --app codex
+  ./scripts/sync-ai-app-oss.sh --app claude-code --app open-code --app open-code-review --app codex
   ./scripts/sync-ai-app-oss.sh --app codex --version 0.118.0
   ./scripts/sync-ai-app-oss.sh --app codex-app
   ./scripts/sync-ai-app-oss.sh --app claude-code
@@ -93,7 +98,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${#APP_IDS[@]}" -eq 0 ]]; then
-  APP_IDS=(claude-code open-code codex)
+  APP_IDS=(claude-code open-code open-code-review codex)
 fi
 
 if [[ "$REQUESTED_VERSION" != "latest" && "${#APP_IDS[@]}" -ne 1 ]]; then
@@ -102,7 +107,7 @@ fi
 
 for app_id in "${APP_IDS[@]}"; do
   case "${app_id}" in
-    claude-code|open-code|codex|codex-app) ;;
+    claude-code|open-code|open-code-review|codex|codex-app) ;;
     *) die "unsupported app: ${app_id}" ;;
   esac
 done
@@ -265,6 +270,7 @@ resolve_public_base_url() {
 app_repo() {
   case "$1" in
     open-code) printf '%s\n' "anomalyco/opencode" ;;
+    open-code-review) printf '%s\n' "alibaba/open-code-review" ;;
     codex) printf '%s\n' "openai/codex" ;;
     *)
       die "unsupported release-backed app: $1"
@@ -275,6 +281,7 @@ app_repo() {
 app_prefix() {
   case "$1" in
     open-code) trim_trailing_slash "${STARHUB_OPEN_CODE_DIST_PREFIX:-open-code-releases}" ;;
+    open-code-review) trim_trailing_slash "${STARHUB_OPEN_CODE_REVIEW_DIST_PREFIX:-open-code-review-releases}" ;;
     codex) trim_trailing_slash "${STARHUB_CODEX_DIST_PREFIX:-codex-releases}" ;;
     *)
       die "unsupported release-backed app: $1"
@@ -285,6 +292,7 @@ app_prefix() {
 app_public_base_url() {
   case "$1" in
     open-code) resolve_public_base_url "$(app_prefix "$1")" "${STARHUB_OPEN_CODE_DIST_BASE_URL:-}" ;;
+    open-code-review) resolve_public_base_url "$(app_prefix "$1")" "${STARHUB_OPEN_CODE_REVIEW_DIST_BASE_URL:-}" ;;
     codex) resolve_public_base_url "$(app_prefix "$1")" "${STARHUB_CODEX_DIST_BASE_URL:-}" ;;
     *)
       die "unsupported release-backed app: $1"
@@ -296,7 +304,7 @@ normalize_app_version() {
   local app_id="$1"
   local value="$2"
   case "$app_id" in
-    open-code)
+    open-code|open-code-review)
       printf '%s\n' "${value#v}"
       ;;
     codex)
@@ -315,7 +323,7 @@ release_tag_for_version() {
   local normalized=""
   normalized="$(normalize_app_version "$app_id" "$value")"
   case "$app_id" in
-    open-code) printf 'v%s\n' "${normalized}" ;;
+    open-code|open-code-review) printf 'v%s\n' "${normalized}" ;;
     codex) printf 'rust-v%s\n' "${normalized}" ;;
     *)
       die "unsupported app for release tag resolution: $app_id"
@@ -420,6 +428,14 @@ config = {
         ("linux-x64-musl", "opencode-linux-x64-baseline-musl.tar.gz", "tar.gz", "opencode"),
         ("win32-arm64", "opencode-windows-arm64.zip", "zip", "opencode.exe"),
         ("win32-x64", "opencode-windows-x64-baseline.zip", "zip", "opencode.exe"),
+    ],
+    "open-code-review": [
+        ("darwin-arm64", "opencodereview-darwin-arm64", "binary", "ocr"),
+        ("darwin-x64", "opencodereview-darwin-amd64", "binary", "ocr"),
+        ("linux-arm64", "opencodereview-linux-arm64", "binary", "ocr"),
+        ("linux-x64", "opencodereview-linux-amd64", "binary", "ocr"),
+        ("win32-arm64", "opencodereview-windows-arm64.exe", "binary", "ocr.exe"),
+        ("win32-x64", "opencodereview-windows-amd64.exe", "binary", "ocr.exe"),
     ],
     "codex": [
         ("darwin-arm64", "codex-aarch64-apple-darwin.tar.gz", "tar.gz", "codex-aarch64-apple-darwin"),
@@ -749,7 +765,7 @@ for app_id in "${APP_IDS[@]}"; do
     claude-code)
       sync_claude_via_wrapper
       ;;
-    open-code|codex)
+    open-code|open-code-review|codex)
       sync_release_app "${app_id}"
       ;;
     codex-app)

@@ -1201,6 +1201,114 @@ func TestPrepareAIAppShellLaunchSetsTerminalEnvForClaudeCode(t *testing.T) {
 	}
 }
 
+func TestPrepareAIAppShellLaunchConfiguresOpenCodeReview(t *testing.T) {
+	storageRoot := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	cfg := &config.Config{
+		ModelDir:   filepath.Join(storageRoot, "models"),
+		DatasetDir: filepath.Join(storageRoot, "datasets"),
+		ListenAddr: ":11435",
+		Token:      "test-token",
+	}
+
+	binDir := t.TempDir()
+	for _, name := range []string{"ocr", "git"} {
+		commandPath := filepath.Join(binDir, name)
+		content := "#!/bin/sh\nexit 0\n"
+		if runtime.GOOS == "windows" {
+			commandPath = filepath.Join(binDir, name+".cmd")
+			content = "@echo off\r\nexit /b 0\r\n"
+		}
+		if err := os.WriteFile(commandPath, []byte(content), 0o755); err != nil {
+			t.Fatalf("write fake %s binary: %v", name, err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("OCR_LLM_URL", "https://example.invalid/v1")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "old-token")
+
+	s := New(cfg, "test")
+	workDir := t.TempDir()
+	modelIDs := []string{"Qwen/Qwen3.5-2B", "Qwen/Qwen2.5-Coder-1.5B"}
+	prepared, err := s.prepareAIAppShellLaunch(aiAppOpenTarget{
+		AppID:       "open-code-review",
+		DisplayName: "Open Code Review",
+		Binaries:    []string{"ocr"},
+	}, "Qwen/Qwen3.5-2B", modelIDs, workDir)
+	if err != nil {
+		t.Fatalf("prepareAIAppShellLaunch returned error: %v", err)
+	}
+	if prepared.Dir != workDir {
+		t.Fatalf("Dir = %q, want %q", prepared.Dir, workDir)
+	}
+	if prepared.Binary == "ocr" || strings.HasSuffix(prepared.Binary, string(os.PathSeparator)+"ocr") {
+		t.Fatalf("Open Code Review web shell should start a shell, not ocr directly: %#v", prepared)
+	}
+	joinedArgs := strings.Join(prepared.Args, " ")
+	for _, want := range []string{
+		"ocr review",
+		"ocr review --from main --to feature-branch",
+		"ocr review --commit abc123",
+	} {
+		if !strings.Contains(joinedArgs, want) {
+			t.Fatalf("args = %q, want OCR command hint %q", joinedArgs, want)
+		}
+	}
+	if got := envValue(prepared.Env, "HOME"); got != home {
+		t.Fatalf("HOME = %q, want user home %q", got, home)
+	}
+	if got := envValue(prepared.Env, "USERPROFILE"); got != home {
+		t.Fatalf("USERPROFILE = %q, want user home %q", got, home)
+	}
+	if got := envValue(prepared.Env, "TMPDIR"); got != filepath.Join(storageRoot, "tmp", "open-code-review") {
+		t.Fatalf("TMPDIR = %q, want app temp dir", got)
+	}
+	if envHasKey(prepared.Env, "OCR_LLM_URL") {
+		t.Fatalf("OCR_LLM_URL should be removed from Open Code Review env: %#v", prepared.Env)
+	}
+	if envHasKey(prepared.Env, "ANTHROPIC_AUTH_TOKEN") {
+		t.Fatalf("ANTHROPIC_AUTH_TOKEN should be removed from Open Code Review env: %#v", prepared.Env)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".opencodereview", "config.json"))
+	if err != nil {
+		t.Fatalf("read Open Code Review config: %v", err)
+	}
+	var payload struct {
+		Provider        string `json:"provider"`
+		Model           string `json:"model"`
+		CustomProviders map[string]struct {
+			URL      string   `json:"url"`
+			Protocol string   `json:"protocol"`
+			APIKey   string   `json:"api_key"`
+			Model    string   `json:"model"`
+			Models   []string `json:"models"`
+		} `json:"custom_providers"`
+		Telemetry map[string]bool `json:"telemetry"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode Open Code Review config: %v", err)
+	}
+	if payload.Provider != "csghub-lite" || payload.Model != "Qwen/Qwen3.5-2B" {
+		t.Fatalf("unexpected provider/model: %#v", payload)
+	}
+	provider := payload.CustomProviders["csghub-lite"]
+	if provider.URL != "http://127.0.0.1:11435/v1" || provider.Protocol != "openai" {
+		t.Fatalf("unexpected provider endpoint: %#v", provider)
+	}
+	if provider.APIKey == "" || provider.Model != "Qwen/Qwen3.5-2B" {
+		t.Fatalf("unexpected provider auth/model: %#v", provider)
+	}
+	if len(provider.Models) != 2 {
+		t.Fatalf("provider models = %#v, want two models", provider.Models)
+	}
+	if payload.Telemetry["enabled"] || payload.Telemetry["content_logging"] {
+		t.Fatalf("telemetry should be disabled: %#v", payload.Telemetry)
+	}
+}
+
 func TestPrepareAIAppShellLaunchUsesCustomProviderForCodex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

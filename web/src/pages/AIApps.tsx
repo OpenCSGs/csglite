@@ -1262,7 +1262,7 @@ function SummaryTile({ label, value }: { label: string; value: ComponentChildren
   return (
     <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
       <div class="text-[11px] uppercase tracking-wide text-gray-400 font-medium">{label}</div>
-      <div class="text-sm font-semibold text-gray-900 mt-1 break-all">{value}</div>
+      <div class="text-sm font-semibold text-gray-900 mt-1 truncate" title={typeof value === "string" ? value : undefined}>{value}</div>
     </div>
   );
 }
@@ -1455,7 +1455,7 @@ function canOpenAIApp(app: AIAppCatalogEntry, state: AIAppRuntimeState): boolean
       !state.disabled &&
       isLocalhostBrowserAccess();
   }
-  return ["openclaw", "csgclaw", "claude-code", "open-code", "codex", "pi"].includes(app.id) &&
+  return ["openclaw", "csgclaw", "claude-code", "open-code", "open-code-review", "codex", "pi"].includes(app.id) &&
     state.status === "installed" &&
     !state.disabled;
 }
@@ -1499,6 +1499,8 @@ function cliLaunchAppName(appID: string): string {
       return "claude";
     case "open-code":
       return "opencode";
+    case "open-code-review":
+      return "ocr";
     case "codex":
       return "codex";
     case "pi":
@@ -1513,7 +1515,7 @@ function cliLaunchAppName(appID: string): string {
 }
 
 function canSelectAIAppModel(app: AIAppCatalogEntry): boolean {
-  return ["claude-code", "open-code", "codex", "codex-app", "pi", "openclaw", "csgclaw"].includes(app.id);
+  return ["claude-code", "open-code", "open-code-review", "codex", "codex-app", "pi", "openclaw", "csgclaw"].includes(app.id);
 }
 
 function isDesktopAIApp(app: AIAppCatalogEntry): boolean {

@@ -33,7 +33,7 @@ type launchOptions struct {
 	Gateway     string
 }
 
-const launchSupportedApps = "claude-code, open-code, codex, pi, openclaw, csgclaw, dify, anythingllm"
+const launchSupportedApps = "claude-code, open-code, open-code-review/ocr, codex, pi, openclaw, csgclaw, dify, anythingllm"
 const claudeDangerouslySkipPermissionsFlag = "dangerously-skip-permissions"
 
 func newLaunchCmd() *cobra.Command {
@@ -54,6 +54,8 @@ Supported apps: ` + launchSupportedApps + `
 Use ` + "`--`" + ` to pass through arguments to the launched app binary.`,
 		Example: `  csghub-lite launch claude-code
   csghub-lite launch codex --model Qwen/Qwen2.5-Coder-7B
+  csghub-lite launch ocr --model glm-5.1-1
+  csghub-lite launch open-code-review -- review --format json
   csghub-lite launch pi
   csghub-lite launch csgclaw
   csghub-lite launch open-code -- --help
@@ -238,6 +240,12 @@ func resolveLaunchTarget(name string) (launchTarget, error) {
 			AppID:       "open-code",
 			DisplayName: "OpenCode",
 			Binaries:    []string{"opencode"},
+		}, nil
+	case "opencodereview", "openreview", "ocr":
+		return launchTarget{
+			AppID:       "open-code-review",
+			DisplayName: "Open Code Review",
+			Binaries:    []string{"ocr"},
 		}, nil
 	case "codex":
 		return launchTarget{

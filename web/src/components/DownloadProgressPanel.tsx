@@ -4,15 +4,16 @@ import type { DownloadTask } from "../downloads";
 
 export function DownloadInlineStatus({ task }: { task: DownloadTask }) {
   const isComplete = isDownloadComplete(task);
+  const label = downloadStatusLabel(task, false);
   return (
-    <div class="min-w-[120px]">
-      <div class="flex items-center justify-between mb-1">
+    <div class="w-full min-w-0">
+      <div class="flex items-center justify-between gap-2 mb-1">
         {!isComplete && (
-          <span class={`text-xs font-medium ${task.status === "error" ? "text-red-600" : task.kind === "dataset" ? "text-purple-600" : "text-indigo-600"}`}>
-            {downloadStatusLabel(task, false)}
+          <span title={label} class={`min-w-0 truncate text-xs font-medium ${task.status === "error" ? "text-red-600" : task.kind === "dataset" ? "text-purple-600" : "text-indigo-600"}`}>
+            {label}
           </span>
         )}
-        {(isComplete || task.percent > 0) && <span class="ml-auto text-xs text-gray-400">{displayPercent(task)}%</span>}
+        {(isComplete || task.percent > 0) && <span class="ml-auto shrink-0 text-xs text-gray-400">{displayPercent(task)}%</span>}
       </div>
       <ProgressBar task={task} />
     </div>
@@ -27,20 +28,21 @@ export function DownloadTableCell({ task, onComplete }: { task?: DownloadTask; o
   const isComplete = isDownloadComplete(task);
   const canResume = task.status === "paused" || task.status === "error";
   const isDownloading = task.status === "downloading";
+  const statusLabel = downloadStatusLabel(task, true);
   return (
-    <div class="min-w-[180px] max-w-[260px]">
-      <div class="flex items-center justify-between gap-2 mb-1">
+    <div class="w-full min-w-0 max-w-full">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
         {isComplete ? (
-          <span class="ml-auto text-xs text-gray-400">{displayPercent(task)}%</span>
+          <span class="ml-auto shrink-0 text-xs text-gray-400">{displayPercent(task)}%</span>
         ) : (
-          <span class={`text-xs font-medium ${task.status === "error" ? "text-red-600" : task.kind === "dataset" ? "text-purple-600" : "text-indigo-600"}`}>
-            {downloadStatusLabel(task, true)}
+          <span title={statusLabel} class={`min-w-0 flex-1 truncate text-xs font-medium ${task.status === "error" ? "text-red-600" : task.kind === "dataset" ? "text-purple-600" : "text-indigo-600"}`}>
+            {statusLabel}
           </span>
         )}
         {!isComplete && canResume && (
           <button
             onClick={() => startDownload(task.kind, task.name, onComplete)}
-            class="text-xs text-indigo-600 hover:text-indigo-700 font-medium"
+            class="shrink-0 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
           >
             {t("downloads.resume")}
           </button>
@@ -48,7 +50,7 @@ export function DownloadTableCell({ task, onComplete }: { task?: DownloadTask; o
         {!isComplete && isDownloading && (
           <button
             onClick={() => pauseDownload(task.kind, task.name)}
-            class="text-xs text-indigo-600 hover:text-indigo-700 font-medium"
+            class="shrink-0 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
           >
             {t("downloads.pause")}
           </button>
@@ -56,7 +58,7 @@ export function DownloadTableCell({ task, onComplete }: { task?: DownloadTask; o
         {!isComplete && !isDownloading && (
           <button
             onClick={() => clearDownloadTask(task)}
-            class="text-xs text-gray-400 hover:text-gray-600"
+            class="shrink-0 text-xs text-gray-400 hover:text-gray-600"
           >
             {t("downloads.clear")}
           </button>

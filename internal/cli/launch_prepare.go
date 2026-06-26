@@ -17,6 +17,7 @@ import (
 	"github.com/opencsgs/csghub-lite/internal/claudeagent"
 	"github.com/opencsgs/csghub-lite/internal/codexagent"
 	"github.com/opencsgs/csghub-lite/internal/config"
+	"github.com/opencsgs/csghub-lite/internal/ocreviewagent"
 	"github.com/opencsgs/csghub-lite/internal/opencodeagent"
 	"github.com/opencsgs/csghub-lite/internal/piagent"
 	"github.com/opencsgs/csghub-lite/pkg/api"
@@ -222,6 +223,8 @@ func prepareLaunchExecution(target launchTarget, serverURL, modelID string, user
 		return prepareClaudeLaunch(target, serverURL, modelID, userArgs)
 	case "open-code":
 		return prepareOpenCodeLaunch(target, serverURL, modelID, userArgs)
+	case "open-code-review":
+		return prepareOpenCodeReviewLaunch(target, serverURL, modelID, userArgs)
 	case "codex":
 		return prepareCodexLaunch(target, serverURL, modelID, userArgs)
 	case "pi":
@@ -272,6 +275,27 @@ func prepareOpenCodeLaunch(target launchTarget, serverURL, modelID string, userA
 	}
 
 	return preparedLaunch{Binary: binary, Args: append([]string{}, userArgs...), Env: envWithOverrides(nil)}, nil
+}
+
+func prepareOpenCodeReviewLaunch(target launchTarget, serverURL, modelID string, userArgs []string) (preparedLaunch, error) {
+	binary, err := resolveLaunchBinary(target.Binaries)
+	if err != nil {
+		return preparedLaunch{}, fmt.Errorf("%s is installed, but the launch command was not found on PATH", target.DisplayName)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		return preparedLaunch{}, fmt.Errorf("%s requires git on PATH", target.DisplayName)
+	}
+	models, err := getLaunchModels(serverURL)
+	if err != nil {
+		return preparedLaunch{}, err
+	}
+	cfg := config.Get()
+	if _, err := ocreviewagent.SyncConfig(cfg.StorageDir(), serverURL, openClawProviderAPIKey(cfg.Token), modelID, models); err != nil {
+		return preparedLaunch{}, fmt.Errorf("syncing Open Code Review config: %w", err)
+	}
+	args := ocreviewagent.DefaultArgs(userArgs)
+	env := envWithOverridesAndUnset(ocreviewagent.EnvOverrides(cfg.StorageDir()), ocreviewagent.UnsetEnvKeys...)
+	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
 }
 
 func prepareCodexLaunch(target launchTarget, serverURL, modelID string, userArgs []string) (preparedLaunch, error) {
