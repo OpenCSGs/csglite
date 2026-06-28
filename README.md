@@ -169,12 +169,18 @@ One-click setup for AI assistant applications:
 
 | App | Description | Setup |
 |---|---|---|
+| **Claude Code** | Anthropic agentic coding tool | `csghub-lite launch claude-code` or Web UI → AI Apps |
+| **OpenCode** | Open-source AI coding agent | `csghub-lite launch open-code` or Web UI → AI Apps |
+| **Open Code Review** | AI code review CLI | `csghub-lite launch ocr` or Web UI → AI Apps |
+| **Codex** | OpenAI coding agent CLI | `csghub-lite launch codex` or Web UI → AI Apps |
+| **Codex App** | OpenAI desktop coding app | Web UI → AI Apps |
+| **Pi** | Lightweight terminal coding agent | `csghub-lite launch pi` or Web UI → AI Apps |
 | **OpenClaw** | Open-source AI assistant with web UI | `csghub-lite launch openclaw` or Web UI → AI Apps |
 | **CSGClaw** | Enterprise AI assistant with advanced features | `csghub-lite launch csgclaw` or Web UI → AI Apps |
-| **Dify** | LLM app development platform | Web UI → AI Apps → Install |
-| **AnythingLLM** | Private document chat | Web UI → AI Apps → Install |
+| **Dify** | LLM app development platform | Web UI → AI Apps |
+| **AnythingLLM** | Private document chat | Web UI → AI Apps |
 
-All apps auto-configure to use csghub-lite's OpenAI-compatible API endpoint with your selected models.
+Managed apps auto-configure to use csghub-lite's OpenAI-compatible API endpoint with your selected models.
 
 ## CLI Commands
 
