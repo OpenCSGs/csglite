@@ -4,8 +4,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/inference"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func (s *Server) anthropicPreferredNumCtx(modelID string) int {

@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/convert"
-	"github.com/opencsgs/csghub-lite/internal/model"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/convert"
+	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 // FromLocalModel reports whether a downloaded model can run locally via llama.cpp

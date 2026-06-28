@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/csghub"
 )
 
 type ImportSourceKind string

@@ -3,7 +3,7 @@
 # Usage: curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh | sh
 set -eu
 
-REPO="${REPO:-OpenCSGs/csghub-lite}"
+REPO="${REPO:-OpenCSGs/csglite}"
 INSTALL_DIR="${INSTALL_DIR:-}"
 INSTALL_DIR_DEFAULT="/usr/local/bin"
 BINARY_NAME="${BINARY_NAME:-csghub-lite}"

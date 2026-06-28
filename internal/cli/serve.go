@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/internal/server"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/server"
 	"github.com/spf13/cobra"
 )
 

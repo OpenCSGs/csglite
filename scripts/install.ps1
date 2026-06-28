@@ -4,7 +4,7 @@ Param(
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "OpenCSGs/csghub-lite"
+$Repo = "OpenCSGs/csglite"
 $BinaryName = "csghub-lite.exe"
 $LlamaCppRepo = "ggml-org/llama.cpp"
 $LlamaCppDefaultTag = if ($env:CSGHUB_LITE_LLAMA_CPP_TAG) { $env:CSGHUB_LITE_LLAMA_CPP_TAG } else { "b9158" }

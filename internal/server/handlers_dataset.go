@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/opencsgs/csghub-lite/internal/csghub"
-	"github.com/opencsgs/csghub-lite/internal/dataset"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/dataset"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 // GET /api/datasets -- list local datasets

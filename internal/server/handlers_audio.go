@@ -17,10 +17,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/opencsgs/csghub-lite/internal/asr"
-	"github.com/opencsgs/csghub-lite/internal/imagegen"
-	"github.com/opencsgs/csghub-lite/internal/inference"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/asr"
+	"github.com/opencsgs/csglite/internal/imagegen"
+	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 const maxAudioUploadMemory = 32 << 20

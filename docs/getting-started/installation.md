@@ -6,7 +6,7 @@
 - **推理依赖**: [llama-server](https://github.com/ggml-org/llama.cpp)（模型推理必需）
 - **编译依赖**: Go 1.22+（仅源码编译需要）
 
-## 安装 csghub-lite
+## 安装 CSGLite
 
 ### 方式一：一键安装脚本（推荐）
 
@@ -55,13 +55,13 @@ $env:EE="1"; irm https://hub.opencsg.com/csghub-lite/install.ps1 | iex
 可选额外入口，主安装入口仍然推荐使用上面的 `curl ... | sh`。Linux 仍建议优先使用安装脚本、release 压缩包或系统包管理器。
 
 ```bash
-brew tap opencsgs/csghub-lite https://github.com/OpenCSGs/csghub-lite
-brew install opencsgs/csghub-lite/csghub-lite
+brew tap opencsgs/csglite https://github.com/OpenCSGs/csglite
+brew install opencsgs/csglite/csghub-lite
 ```
 
 ### 方式三：GitHub Releases 手动下载
 
-前往 [Releases](https://github.com/opencsgs/csghub-lite/releases) 页面，下载对应平台的压缩包：
+前往 [Releases](https://github.com/opencsgs/csglite/releases) 页面，下载对应平台的压缩包：
 
 | 平台 | 文件名 |
 |------|--------|
@@ -96,8 +96,8 @@ sudo rpm -i csghub-lite_*.rpm
 ### 方式五：从源码编译
 
 ```bash
-git clone https://github.com/opencsgs/csghub-lite.git
-cd csghub-lite
+git clone https://github.com/opencsgs/csglite.git
+cd csglite
 make build
 # 二进制文件位于 bin/csghub-lite
 ```
@@ -110,7 +110,7 @@ make build-all
 
 ## 安装 llama-server（推理依赖）
 
-csghub-lite 使用 llama.cpp 的 `llama-server` 进行模型推理。你需要单独安装它。
+CSGLite 使用 llama.cpp 的 `llama-server` 进行模型推理。你需要单独安装它。
 
 ### macOS
 

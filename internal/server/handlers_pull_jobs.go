@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/csghub"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/csghub"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 const (

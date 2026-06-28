@@ -12,8 +12,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/codexagent"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/codexagent"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 const codexAppLaunchTargetFile = "launch-target"

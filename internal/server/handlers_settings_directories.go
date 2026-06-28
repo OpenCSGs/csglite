@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 // POST /api/settings/directories -- browse local directories for settings fields

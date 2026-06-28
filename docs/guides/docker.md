@@ -1,6 +1,6 @@
 # Docker Runtime Images
 
-csghub-lite Docker images are bootstrap runtimes. They include the OS and GPU
+CSGLite Docker images are bootstrap runtimes. They include the OS and GPU
 runtime dependencies needed to start, then download `csghub-lite` and
 `llama-server` on container startup according to environment variables.
 
@@ -37,7 +37,7 @@ persisted binaries on later starts.
 Standard runtime:
 
 ```bash
-# The named volume persists csghub-lite, llama-server, models, settings, and logs.
+# The named volume persists CSGLite, llama-server, models, settings, and logs.
 docker run -d --name csghub-lite \
   -p 11435:11435 \
   -v csghub-lite-data:/root/.csghub-lite \

@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/csghub"
-	"github.com/opencsgs/csghub-lite/internal/imagegen"
-	"github.com/opencsgs/csghub-lite/internal/inference"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/imagegen"
+	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

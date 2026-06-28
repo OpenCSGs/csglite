@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 // remoteEngine implements Engine by forwarding requests to a csghub-lite

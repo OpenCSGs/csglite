@@ -3,7 +3,7 @@ package server
 import (
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/model"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 func (s *Server) resolveLocalModelStorageID(modelID string) string {

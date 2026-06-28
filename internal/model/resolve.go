@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/csghub"
 )
 
 // InferenceModelID returns the public model identifier used for local inference APIs.

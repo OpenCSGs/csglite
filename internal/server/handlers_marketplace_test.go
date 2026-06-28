@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/internal/csghub"
-	"github.com/opencsgs/csghub-lite/internal/model"
+	"github.com/opencsgs/csglite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 func TestHandleMarketplaceModelsMapsFrameworkToTagFilter(t *testing.T) {

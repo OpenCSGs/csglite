@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func TestParseTomlFilePreservesMCPArgsArray(t *testing.T) {

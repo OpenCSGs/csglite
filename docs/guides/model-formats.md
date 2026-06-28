@@ -1,6 +1,6 @@
 # 模型格式
 
-csghub-lite 支持下载和管理多种格式的模型，但仅 GGUF 格式可直接用于本地推理。
+CSGLite 支持下载和管理多种格式的模型，但仅 GGUF 格式可直接用于本地推理。
 
 ## 格式对照
 
@@ -15,7 +15,7 @@ GGUF（General GGML Universal Format）是 llama.cpp 项目的模型格式。特
 
 - **单文件**: 模型权重、词表、配置合并在一个 `.gguf` 文件中
 - **量化**: 支持多种量化精度（Q4_0、Q4_K_M、Q5_K_M、Q8_0、F16 等）
-- **即用**: csghub-lite 可直接加载推理
+- **即用**: CSGLite 可直接加载推理
 
 ### 量化级别参考
 
@@ -35,14 +35,14 @@ GGUF（General GGML Universal Format）是 llama.cpp 项目的模型格式。特
 
 ## SafeTensors 格式
 
-SafeTensors 是 Hugging Face 推出的模型存储格式。csghub-lite 支持下载但不支持直接推理。
+SafeTensors 是 Hugging Face 推出的模型存储格式。CSGLite 支持下载但不支持直接推理。
 
 ### 自动转换（内置脚本）
 
-首次推理时，csghub-lite 会把 `convert_hf_to_gguf.py` **随二进制打包**（来自固定版本的 llama.cpp），解压到 `~/.csghub-lite/tools/` 后调用本机 Python。升级 csghub-lite 后若脚本更新，会随 **`bundledConverterRevision`** 自动刷新缓存；如果系统 `gguf` 太旧，工具会按地区从对应的 `llama.cpp` 源拉取匹配的 `gguf-py`。
+首次推理时，CSGLite 会把 `convert_hf_to_gguf.py` **随二进制打包**（来自固定版本的 llama.cpp），解压到 `~/.csghub-lite/tools/` 后调用本机 Python。升级 CSGLite 后若脚本更新，会随 **`bundledConverterRevision`** 自动刷新缓存；如果系统 `gguf` 太旧，工具会按地区从对应的 `llama.cpp` 源拉取匹配的 `gguf-py`。
 
-- 如果检测到本机 `gguf` 版本过旧，csghub-lite 会自动按地区获取匹配当前 `llama.cpp` tag 的 `gguf-py` 后重试一次：`CSGHUB_LITE_REGION=CN` 优先走 `https://gitee.com/xzgan/llama.cpp`，其他地区优先走 GitHub。
-- 如果检测到本机 `transformers` 版本过旧，csghub-lite 会自动尝试执行 `python -m pip install -U transformers`，然后重试一次转换。
+- 如果检测到本机 `gguf` 版本过旧，CSGLite 会自动按地区获取匹配当前 `llama.cpp` tag 的 `gguf-py` 后重试一次：`CSGHUB_LITE_REGION=CN` 优先走 `https://gitee.com/xzgan/llama.cpp`，其他地区优先走 GitHub。
+- 如果检测到本机 `transformers` 版本过旧，CSGLite 会自动尝试执行 `python -m pip install -U transformers`，然后重试一次转换。
 - 使用镜像上的脚本：设置环境变量 **`CSGHUB_LITE_CONVERTER_URL`** 为 raw 地址（下载一次后按 URL 缓存）。
 - 维护者更新内置脚本：见 `internal/convert/data/README.md`。
 - 如需控制自动转换输出类型，可在 `run` / `chat` 时加 `--dtype`，例如：`csghub-lite run Qwen/Qwen3-0.6B --dtype q8_0`。支持的值与内置 llama.cpp 转换器 `--outtype` 对齐：`f32`、`f16`、`bf16`、`q8_0`、`tq1_0`、`tq2_0`、`auto`。如果模型包含视觉投影器，`mmproj` 也会按相同 `dtype` 一起转换。

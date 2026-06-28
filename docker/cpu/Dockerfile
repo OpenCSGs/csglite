@@ -2,7 +2,7 @@ FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.title="csghub-lite runtime"
 LABEL org.opencontainers.image.description="Ubuntu 24.04 image that downloads csghub-lite and llama-server on container start"
-LABEL org.opencontainers.image.source="https://github.com/OpenCSGs/csghub-lite"
+LABEL org.opencontainers.image.source="https://github.com/OpenCSGs/csglite"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     INSTALL_DIR=/root/.csghub-lite/bin \

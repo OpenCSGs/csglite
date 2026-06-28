@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/convert"
-	"github.com/opencsgs/csghub-lite/internal/model"
+	"github.com/opencsgs/csglite/internal/convert"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 var ErrUnsupportedFormat = errors.New("unsupported model format for inference")

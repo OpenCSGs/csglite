@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/internal/cloud"
-	"github.com/opencsgs/csghub-lite/internal/config"
+	"github.com/opencsgs/csglite/internal/cloud"
+	"github.com/opencsgs/csglite/internal/config"
 )
 
 func TestRunConfigSetStorageDir(t *testing.T) {

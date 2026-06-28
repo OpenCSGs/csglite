@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func TestStoreSearchConversations(t *testing.T) {

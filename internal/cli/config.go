@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/cloud"
-	"github.com/opencsgs/csghub-lite/internal/config"
+	"github.com/opencsgs/csglite/internal/cloud"
+	"github.com/opencsgs/csglite/internal/config"
 	"github.com/spf13/cobra"
 )
 

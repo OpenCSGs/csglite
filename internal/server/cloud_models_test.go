@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/internal/cloud"
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/cloud"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func newCloudModelListServer(requests *int, currentModel *string) *httptest.Server {

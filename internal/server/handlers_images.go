@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/imagegen"
-	"github.com/opencsgs/csghub-lite/internal/inference"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/imagegen"
+	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 const maxImageUploadMemory = 64 << 20

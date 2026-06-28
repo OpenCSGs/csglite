@@ -328,7 +328,7 @@ function openExternal(url?: string) {
   }
 }
 
-const feedbackURL = "https://github.com/opencsgs/csghub-lite";
+const feedbackURL = "https://github.com/opencsgs/csglite";
 
 async function saveStorageDir() {
   const newDir = storageDirInput.value.trim();

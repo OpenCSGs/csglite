@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/csghub"
-	"github.com/opencsgs/csghub-lite/internal/ggufpick"
-	"github.com/opencsgs/csghub-lite/internal/localinference"
-	"github.com/opencsgs/csghub-lite/internal/model"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/ggufpick"
+	"github.com/opencsgs/csglite/internal/localinference"
+	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 const marketplaceListCacheTTL = 2 * time.Minute

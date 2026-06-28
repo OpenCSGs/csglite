@@ -41,7 +41,7 @@
 ## 项目结构
 
 ```
-csghub-lite/
+csglite/
 ├── cmd/csghub-lite/         # 程序入口
 │   └── main.go              # main 函数，版本注入
 │

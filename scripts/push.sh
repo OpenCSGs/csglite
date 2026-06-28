@@ -11,7 +11,7 @@ if [ -z "${GITLAB_TOKEN:-}" ] && [ -f "${_REPO_ROOT}/local/secrets.env" ]; then
 fi
 
 BINARY_NAME="csghub-lite"
-GITHUB_REPO="OpenCSGs/csghub-lite"
+GITHUB_REPO="OpenCSGs/csglite"
 GITLAB_HOST="https://git-devops.opencsg.com"
 GITLAB_REMOTE_URL="https://git-devops.opencsg.com/opensource/csghub-lite.git"
 GITLAB_PROJECT_ID="392"

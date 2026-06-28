@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/internal/model"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 func TestLoadEngine_SafeTensorsAutoConvert(t *testing.T) {

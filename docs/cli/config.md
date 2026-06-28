@@ -1,6 +1,6 @@
 # csghub-lite config
 
-查看和管理 csghub-lite 的配置。
+查看和管理 CSGLite 的配置。
 
 ## 子命令
 

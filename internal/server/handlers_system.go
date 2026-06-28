@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/autostart"
-	"github.com/opencsgs/csghub-lite/internal/cloud"
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/internal/hardware"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/autostart"
+	"github.com/opencsgs/csglite/internal/cloud"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/hardware"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 // float2 is a float64 that marshals to JSON with at most 2 decimal places.

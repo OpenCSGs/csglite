@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/ggufpick"
+	"github.com/opencsgs/csglite/internal/ggufpick"
 )
 
 // Vision-related HuggingFace architecture suffixes/names.

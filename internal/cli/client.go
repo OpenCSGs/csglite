@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/internal/logutil"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/logutil"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 // ensureServer makes sure a csghub-lite API server is running and returns

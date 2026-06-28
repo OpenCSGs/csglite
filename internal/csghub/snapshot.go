@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/opencsgs/csghub-lite/internal/ggufpick"
+	"github.com/opencsgs/csglite/internal/ggufpick"
 )
 
 // SnapshotProgress reports progress for a multi-file download.

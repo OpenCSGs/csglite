@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/internal/model"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func TestHandleModelUpload_Files(t *testing.T) {

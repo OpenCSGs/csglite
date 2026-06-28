@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/csghub"
 )
 
 type Manager struct {

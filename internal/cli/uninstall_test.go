@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/internal/config"
+	"github.com/opencsgs/csglite/internal/config"
 )
 
 func TestNewUninstallCmdExposesAllFlag(t *testing.T) {

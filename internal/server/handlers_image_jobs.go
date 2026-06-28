@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"encoding/base64"
-	"github.com/opencsgs/csghub-lite/internal/imagegen"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/imagegen"
+	"github.com/opencsgs/csglite/pkg/api"
 	"strings"
 )
 

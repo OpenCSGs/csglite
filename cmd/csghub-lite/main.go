@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/opencsgs/csghub-lite/internal/cli"
-	"github.com/opencsgs/csghub-lite/internal/upgrade"
+	"github.com/opencsgs/csglite/internal/cli"
+	"github.com/opencsgs/csglite/internal/upgrade"
 )
 
 var version = "dev"

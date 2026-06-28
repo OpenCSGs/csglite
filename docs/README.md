@@ -1,6 +1,6 @@
-# csghub-lite 文档
+# CSGLite 文档
 
-csghub-lite 是一个轻量级的本地大语言模型运行工具，基于 [CSGHub](https://hub.opencsg.com) 平台的模型生态。
+CSGLite 是一个轻量级的本地大语言模型运行工具，基于 [CSGHub](https://hub.opencsg.com) 平台的模型生态。
 
 ## 文档目录
 

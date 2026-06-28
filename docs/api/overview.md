@@ -1,6 +1,6 @@
 # REST API 总览
 
-csghub-lite 提供 Ollama 兼容的 REST API，通过 `csghub-lite serve` 启动。
+CSGLite 提供 Ollama 兼容的 REST API，通过 `csghub-lite serve` 启动。
 
 ## 基本信息
 

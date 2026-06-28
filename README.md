@@ -65,19 +65,19 @@ irm https://hub.opencsg.com/csghub-lite/install.ps1 | iex
 ### From source
 
 ```bash
-git clone https://github.com/opencsgs/csghub-lite.git
-cd csghub-lite
+git clone https://github.com/opencsgs/csglite.git
+cd csglite
 make build
 # Binary is at bin/csghub-lite
 ```
 
 ### From GitHub Releases
 
-Download the latest binary for your platform from the [Releases](https://github.com/opencsgs/csghub-lite/releases) page.
+Download the latest binary for your platform from the [Releases](https://github.com/opencsgs/csglite/releases) page.
 
 ### Docker
 
-For Docker installation, see the [Docker guide](https://github.com/OpenCSGs/csghub-lite/blob/main/docs/guides/docker.md).
+For Docker installation, see the [Docker guide](https://github.com/OpenCSGs/csglite/blob/main/docs/guides/docker.md).
 
 ## Quick Start
 

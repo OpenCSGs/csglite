@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/upgrade"
+	"github.com/opencsgs/csglite/internal/upgrade"
 	"github.com/spf13/cobra"
 )
 

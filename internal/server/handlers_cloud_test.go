@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/internal/cloud"
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/internal/inference"
+	"github.com/opencsgs/csglite/internal/cloud"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/inference"
 )
 
 func newCloudAuthAPIServer(t *testing.T, token, username string) *httptest.Server {

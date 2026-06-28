@@ -1,4 +1,4 @@
-module github.com/opencsgs/csghub-lite
+module github.com/opencsgs/csglite
 
 go 1.24.2
 

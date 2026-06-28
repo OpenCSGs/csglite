@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/ggufpick"
-	"github.com/opencsgs/csghub-lite/internal/model"
+	"github.com/opencsgs/csglite/internal/ggufpick"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 // ProgressFunc reports conversion progress.

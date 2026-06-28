@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/internal/hardware"
-	"github.com/opencsgs/csghub-lite/internal/logutil"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/hardware"
+	"github.com/opencsgs/csglite/internal/logutil"
 )
 
 const (

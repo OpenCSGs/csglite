@@ -1,6 +1,6 @@
 # CLI 命令总览
 
-csghub-lite 提供以下命令：
+CSGLite 提供以下命令：
 
 ## 模型运行
 

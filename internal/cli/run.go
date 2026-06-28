@@ -7,11 +7,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/internal/convert"
-	"github.com/opencsgs/csghub-lite/internal/inference"
-	"github.com/opencsgs/csghub-lite/internal/model"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/convert"
+	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/pkg/api"
 	"github.com/spf13/cobra"
 )
 

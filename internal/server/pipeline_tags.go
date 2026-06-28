@@ -3,7 +3,7 @@ package server
 import (
 	"strings"
 
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 var supportedPipelineTagGroups = []api.PipelineTagGroup{

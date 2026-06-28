@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/upgrade"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/upgrade"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 // GET /api/upgrade/check - Check for updates

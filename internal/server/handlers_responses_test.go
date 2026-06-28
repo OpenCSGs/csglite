@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func TestNormalizeResponsesVisibleTextStripsThinkBlocks(t *testing.T) {

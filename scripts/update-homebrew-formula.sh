@@ -78,30 +78,30 @@ linux_amd64="$(lookup_checksum \
 cat > "$FORMULA_PATH" <<EOF
 class CsghubLite < Formula
   desc "Lightweight tool for running LLMs locally with CSGHub platform"
-  homepage "https://github.com/opencsgs/csghub-lite"
+  homepage "https://github.com/opencsgs/csglite"
   version "${VERSION}"
   license "Apache-2.0"
 
   on_macos do
     on_arm do
-      url "https://github.com/OpenCSGs/csghub-lite/releases/download/v#{version}/csghub-lite_#{version}_darwin-arm64.tar.gz"
+      url "https://github.com/OpenCSGs/csglite/releases/download/v#{version}/csghub-lite_#{version}_darwin-arm64.tar.gz"
       sha256 "${darwin_arm64}"
     end
 
     on_intel do
-      url "https://github.com/OpenCSGs/csghub-lite/releases/download/v#{version}/csghub-lite_#{version}_darwin-amd64.tar.gz"
+      url "https://github.com/OpenCSGs/csglite/releases/download/v#{version}/csghub-lite_#{version}_darwin-amd64.tar.gz"
       sha256 "${darwin_amd64}"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/OpenCSGs/csghub-lite/releases/download/v#{version}/csghub-lite_#{version}_linux-arm64.tar.gz"
+      url "https://github.com/OpenCSGs/csglite/releases/download/v#{version}/csghub-lite_#{version}_linux-arm64.tar.gz"
       sha256 "${linux_arm64}"
     end
 
     on_intel do
-      url "https://github.com/OpenCSGs/csghub-lite/releases/download/v#{version}/csghub-lite_#{version}_linux-amd64.tar.gz"
+      url "https://github.com/OpenCSGs/csglite/releases/download/v#{version}/csghub-lite_#{version}_linux-amd64.tar.gz"
       sha256 "${linux_amd64}"
     end
   end

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/internal/config"
+	"github.com/opencsgs/csglite/internal/config"
 )
 
 func TestManagerImport_Directory(t *testing.T) {

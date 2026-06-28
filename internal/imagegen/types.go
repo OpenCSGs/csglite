@@ -3,7 +3,7 @@ package imagegen
 import (
 	"context"
 
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 // Engine is the interface for local image generation backends.

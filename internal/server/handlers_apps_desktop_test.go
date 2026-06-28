@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opencsgs/csghub-lite/internal/cloud"
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/internal/codexagent"
-	"github.com/opencsgs/csghub-lite/internal/model"
+	"github.com/opencsgs/csglite/internal/cloud"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/codexagent"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 func TestIsLocalhostBrowserAccess(t *testing.T) {

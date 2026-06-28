@@ -42,7 +42,7 @@ nfpms:
   - id: packages
     package_name: csghub-lite
     vendor: OpenCSG
-    homepage: "https://github.com/opencsgs/csghub-lite"
+    homepage: "https://github.com/opencsgs/csglite"
     description: "Lightweight tool for running LLMs locally with CSGHub platform"
     license: "Apache-2.0"
     formats:
@@ -64,6 +64,6 @@ changelog:
 release:
   github:
     owner: opencsgs
-    name: csghub-lite
+    name: csglite
   extra_files:
     - glob: scripts/install.sh

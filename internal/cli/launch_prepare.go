@@ -14,13 +14,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/claudeagent"
-	"github.com/opencsgs/csghub-lite/internal/codexagent"
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/internal/ocreviewagent"
-	"github.com/opencsgs/csghub-lite/internal/opencodeagent"
-	"github.com/opencsgs/csghub-lite/internal/piagent"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/claudeagent"
+	"github.com/opencsgs/csglite/internal/codexagent"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/ocreviewagent"
+	"github.com/opencsgs/csglite/internal/opencodeagent"
+	"github.com/opencsgs/csglite/internal/piagent"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 const (

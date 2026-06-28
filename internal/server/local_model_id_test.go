@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/inference"
-	"github.com/opencsgs/csghub-lite/internal/model"
+	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 func TestResolveLocalModelStorageIDAcceptsShortName(t *testing.T) {

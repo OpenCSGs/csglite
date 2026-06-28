@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/chathistory"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/chathistory"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func (s *Server) handleConversationsList(w http.ResponseWriter, r *http.Request) {

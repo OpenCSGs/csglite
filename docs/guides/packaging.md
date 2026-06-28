@@ -1,13 +1,13 @@
 # 打包与发布
 
-csghub-lite 当前以本地 `make package` + `scripts/push.sh` 手动发布为主。GoReleaser 仍然保留用于定义归档格式、生成 GitHub Release 产物，以及执行本地 snapshot 验证，但不再负责 Homebrew tap 发布。
+CSGLite 当前以本地 `make package` + `scripts/push.sh` 手动发布为主。GoReleaser 仍然保留用于定义归档格式、生成 GitHub Release 产物，以及执行本地 snapshot 验证，但不再负责 Homebrew tap 发布。
 
 ## 支持的分发形式
 
 | 分发方式 | 平台 | 文件/命令 |
 |---------|------|-----------|
 | 一键安装脚本 | Linux / macOS | `curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh \| sh` |
-| Homebrew | macOS | `brew tap opencsgs/csghub-lite https://github.com/OpenCSGs/csghub-lite && brew install opencsgs/csghub-lite/csghub-lite` |
+| Homebrew | macOS | `brew tap opencsgs/csglite https://github.com/OpenCSGs/csglite && brew install opencsgs/csglite/csghub-lite` |
 | tar.gz | macOS / Linux | GitHub Releases |
 | zip | Windows | GitHub Releases |
 | deb | Debian / Ubuntu | GitHub Releases |
@@ -68,7 +68,7 @@ make package
 
 ## AI App OSS 镜像
 
-`csghub-lite` 内置的 AI 应用安装脚本默认读取 StarHub OSS 上的版本化镜像。镜像同步脚本位于 `scripts/sync-ai-app-oss.sh`，会自动读取 `local/secrets.env` 中的 `STARHUB_OSS_*` 配置。
+CSGLite 内置的 AI 应用安装脚本默认读取 StarHub OSS 上的版本化镜像。镜像同步脚本位于 `scripts/sync-ai-app-oss.sh`，会自动读取 `local/secrets.env` 中的 `STARHUB_OSS_*` 配置。
 
 支持的应用：
 
@@ -135,7 +135,7 @@ make package
 如果某个版本已经发到了 GitHub，但 GitLab 资产缺失，可以先把 release 文件拉回本地再补发：
 
 ```bash
-gh release download v0.5.10 --repo OpenCSGs/csghub-lite -D dist/
+gh release download v0.5.10 --repo OpenCSGs/csglite -D dist/
 ./scripts/rename-dist-for-gitlab.sh 0.5.10
 ./scripts/push.sh --skip-github --skip-build --skip-gitlab-git --tag v0.5.10
 ```
@@ -171,8 +171,8 @@ Linux 的正式安装文档仍以 `install.sh`、release 压缩包和 `deb/rpm` 
 用户先把主仓库 tap 进 Homebrew，再安装对应 formula：
 
 ```bash
-brew tap opencsgs/csghub-lite https://github.com/OpenCSGs/csghub-lite
-brew install opencsgs/csghub-lite/csghub-lite
+brew tap opencsgs/csglite https://github.com/OpenCSGs/csglite
+brew install opencsgs/csglite/csghub-lite
 ```
 
 ## GoReleaser 与 CI

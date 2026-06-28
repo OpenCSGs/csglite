@@ -13,16 +13,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/apps"
-	"github.com/opencsgs/csghub-lite/internal/asr"
-	"github.com/opencsgs/csghub-lite/internal/chathistory"
-	"github.com/opencsgs/csghub-lite/internal/cloud"
-	"github.com/opencsgs/csghub-lite/internal/config"
-	"github.com/opencsgs/csghub-lite/internal/convert"
-	"github.com/opencsgs/csghub-lite/internal/dataset"
-	"github.com/opencsgs/csghub-lite/internal/imagegen"
-	"github.com/opencsgs/csghub-lite/internal/inference"
-	"github.com/opencsgs/csghub-lite/internal/model"
+	"github.com/opencsgs/csglite/internal/apps"
+	"github.com/opencsgs/csglite/internal/asr"
+	"github.com/opencsgs/csglite/internal/chathistory"
+	"github.com/opencsgs/csglite/internal/cloud"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/convert"
+	"github.com/opencsgs/csglite/internal/dataset"
+	"github.com/opencsgs/csglite/internal/imagegen"
+	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 const (

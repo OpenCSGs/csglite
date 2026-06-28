@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/dataset"
-	"github.com/opencsgs/csghub-lite/pkg/api"
+	"github.com/opencsgs/csglite/internal/dataset"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func TestHandleDatasetManifest_BackfillsLegacyManifest(t *testing.T) {

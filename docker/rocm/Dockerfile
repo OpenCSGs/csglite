@@ -3,7 +3,7 @@ FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.title="csghub-lite ROCm runtime"
 LABEL org.opencontainers.image.description="ROCm 7.2.3 Ubuntu 24.04 image that downloads csghub-lite and ROCm llama-server on container start"
-LABEL org.opencontainers.image.source="https://github.com/OpenCSGs/csghub-lite"
+LABEL org.opencontainers.image.source="https://github.com/OpenCSGs/csglite"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     INSTALL_DIR=/root/.csghub-lite/bin \

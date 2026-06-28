@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/opencsgs/csghub-lite/internal/config"
+	"github.com/opencsgs/csglite/internal/config"
 )
 
 func TestResolveLocalModelByFullID(t *testing.T) {

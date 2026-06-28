@@ -528,7 +528,7 @@ export function Library() {
   const rows = modelRows(filtered.value);
 
   return (
-    <div class="p-8 max-w-5xl mx-auto">
+    <div class="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
       <div class="flex items-center justify-between mb-1">
         <div>
           <h1 class="text-2xl font-bold text-gray-900">{t("lib.title")}</h1>
@@ -590,18 +590,18 @@ export function Library() {
 
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[960px] table-fixed text-sm">
+          <table class="w-full min-w-[1080px] table-fixed text-sm">
             <colgroup>
-              <col class="w-[24%]" />
-              <col class="w-[7%]" />
-              <col class="w-[9%]" />
-              <col class="w-[9%]" />
               <col class="w-[22%]" />
-              <col class="w-[9%]" />
-              <col class="w-[20%]" />
+              <col class="w-[12%]" />
+              <col class="w-[11%]" />
+              <col class="w-[10%]" />
+              <col class="w-[19%]" />
+              <col class="w-[12%]" />
+              <col class="w-[14%]" />
             </colgroup>
             <thead>
-              <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
+              <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50 whitespace-nowrap">
                 <SortHeader label={t("lib.modelName")} field="name" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
                 <th class="px-4 py-3 font-medium">{t("lib.format")}</th>
                 <th class="px-4 py-3 font-medium">{t("lib.origin")}</th>
@@ -632,19 +632,22 @@ export function Library() {
                       {m.name}
                     </a>
                   </td>
-                  <td class="px-4 py-3">
+                  <td class="px-4 py-3 min-w-0">
                     <span
-                      class={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                      title={m.format?.toUpperCase() || (downloadOnly ? t("downloads.downloading") : "—")}
+                      class={`inline-flex max-w-full px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap truncate ${
                         m.format === "gguf" ? "bg-blue-50 text-blue-700" : "bg-purple-50 text-purple-700"
                       }`}
                     >
                       {m.format?.toUpperCase() || (downloadOnly ? t("downloads.downloading") : "—")}
                     </span>
                   </td>
-                  <td class="px-4 py-3 text-gray-600 whitespace-nowrap">
-                    {downloadOnly ? "—" : modelOriginLabel(m.origin)}
+                  <td class="px-4 py-3 min-w-0 text-gray-600">
+                    <span class="block truncate whitespace-nowrap" title={downloadOnly ? "—" : modelOriginLabel(m.origin)}>
+                      {downloadOnly ? "—" : modelOriginLabel(m.origin)}
+                    </span>
                   </td>
-                  <td class="px-4 py-3">
+                  <td class="px-4 py-3 whitespace-nowrap">
                     <span class="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium">
                       {fmtSize(m.size)}
                     </span>
@@ -652,7 +655,7 @@ export function Library() {
                   <td class="px-4 py-3 min-w-0">
                     <DownloadTableCell task={task} onComplete={() => void loadModels()} />
                   </td>
-                  <td class="px-4 py-3 text-gray-500">
+                  <td class="px-4 py-3 text-gray-500 whitespace-nowrap">
                     {new Date(m.modified_at).toLocaleDateString("en-US", { day: "numeric", month: "long" })}
                   </td>
                   <td class="px-4 py-3">

@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	githubRepo      = "OpenCSGs/csghub-lite"
+	githubRepo      = "OpenCSGs/csglite"
 	githubAPIURL    = "https://api.github.com/repos"
 	gitlabHost      = "https://git-devops.opencsg.com"
 	gitlabAPIURL    = gitlabHost + "/api/v4/projects"
