@@ -465,7 +465,7 @@ no_auth = false
 manager_image_override = ""
 
 [sandbox]
-provider = "boxlite-cli"
+provider = "boxlite"
 home_dir_name = "boxlite"
 debian_registries_override = []
 
@@ -552,11 +552,11 @@ func TestCSGClawSandboxProviderIsPlatformAware(t *testing.T) {
 	if got := csgclawSandboxProviderForGOOS("windows"); got != "docker" {
 		t.Fatalf("windows sandbox provider = %q, want docker", got)
 	}
-	if got := csgclawSandboxProviderForGOOS("darwin"); got != "boxlite-cli" {
-		t.Fatalf("darwin sandbox provider = %q, want boxlite-cli", got)
+	if got := csgclawSandboxProviderForGOOS("darwin"); got != "boxlite" {
+		t.Fatalf("darwin sandbox provider = %q, want boxlite", got)
 	}
-	if got := csgclawSandboxProviderForGOOS("linux"); got != "boxlite-cli" {
-		t.Fatalf("linux sandbox provider = %q, want boxlite-cli", got)
+	if got := csgclawSandboxProviderForGOOS("linux"); got != "boxlite" {
+		t.Fatalf("linux sandbox provider = %q, want boxlite", got)
 	}
 }
 

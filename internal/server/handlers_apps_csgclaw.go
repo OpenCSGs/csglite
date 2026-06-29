@@ -195,7 +195,7 @@ func csgclawSandboxProviderForGOOS(goos string) string {
 	if goos == "windows" {
 		return "docker"
 	}
-	return "boxlite-cli"
+	return "boxlite"
 }
 
 func setCSGClawManagedModelConfig(input, baseURL, apiKey, modelID string, models []string) string {

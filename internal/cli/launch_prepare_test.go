@@ -620,6 +620,7 @@ func TestPrepareCSGClawLaunchWritesConfigAndDefaultsToServe(t *testing.T) {
 	configText := string(data)
 	for _, want := range []string{
 		`manager_image_override = ""`,
+		`provider = "boxlite"`,
 		`default = "csghub-lite.minimax-m2.5"`,
 		`[models.providers.csghub-lite]`,
 		`base_url = "` + server.URL + `/v1"`,
@@ -635,11 +636,11 @@ func TestCSGClawLaunchSandboxProviderIsPlatformAware(t *testing.T) {
 	if got := csgClawLaunchSandboxProviderForGOOS("windows"); got != "docker" {
 		t.Fatalf("windows sandbox provider = %q, want docker", got)
 	}
-	if got := csgClawLaunchSandboxProviderForGOOS("darwin"); got != "boxlite-cli" {
-		t.Fatalf("darwin sandbox provider = %q, want boxlite-cli", got)
+	if got := csgClawLaunchSandboxProviderForGOOS("darwin"); got != "boxlite" {
+		t.Fatalf("darwin sandbox provider = %q, want boxlite", got)
 	}
-	if got := csgClawLaunchSandboxProviderForGOOS("linux"); got != "boxlite-cli" {
-		t.Fatalf("linux sandbox provider = %q, want boxlite-cli", got)
+	if got := csgClawLaunchSandboxProviderForGOOS("linux"); got != "boxlite" {
+		t.Fatalf("linux sandbox provider = %q, want boxlite", got)
 	}
 }
 
