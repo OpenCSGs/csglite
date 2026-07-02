@@ -3,10 +3,11 @@ import { signal, computed } from "@preact/signals";
 import {
   getMarketplaceModels,
   getMarketplaceDatasets,
+  getMarketplaceModelDetail,
   getTags,
   getDatasetTags,
 } from "../api/client";
-import type { MarketplaceModel, MarketplaceDataset } from "../api/client";
+import type { MarketplaceModel, MarketplaceDataset, MarketplaceModelQuantization } from "../api/client";
 import { t, locale } from "../i18n";
 import { startDownload, getDownloadTask } from "../downloads";
 import {
@@ -21,6 +22,10 @@ type ModelTaskFilter = "" | "text-generation" | "feature-extraction" | "sentence
 type FilterOption<T extends string> = {
   value: T;
   label: string;
+};
+type GGUFQuantSelection = {
+  modelPath: string;
+  quantizations: MarketplaceModelQuantization[];
 };
 const modelParamsMinLimit = 0;
 const modelParamsMaxLimit = 1000;
@@ -118,6 +123,8 @@ async function loadData() {
 export function Marketplace() {
   void locale.value;
   const [selectedModelPath, setSelectedModelPath] = useState("");
+  const [ggufSelection, setGGUFSelection] = useState<GGUFQuantSelection | null>(null);
+  const [downloadError, setDownloadError] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersRef = useRef<HTMLDivElement>(null);
 
@@ -159,10 +166,35 @@ export function Marketplace() {
     loadData();
   };
 
-  const handleDownload = (modelPath: string) => {
-    startDownload("model", modelPath, () => {
+  const beginModelDownload = (modelPath: string, quants?: string[]) => {
+    const started = startDownload("model", modelPath, () => {
       loadLocalModels();
+    }, { quants });
+    if (!started) {
+      setDownloadError(t("downloads.activeHint"));
+    }
+    return started;
+  };
+
+  const handleDownload = (modelPath: string) => {
+    setDownloadError("");
+    getMarketplaceModelDetail(modelPath).then((detail) => {
+      const quants = detail.quantizations || [];
+      if (quants.length > 1) {
+        setGGUFSelection({ modelPath, quantizations: quants });
+        return;
+      }
+      beginModelDownload(modelPath, quants.length === 1 ? [quants[0].name] : undefined);
+    }).catch(() => {
+      beginModelDownload(modelPath);
     });
+  };
+
+  const handleConfirmGGUFDownload = (quants: string[]) => {
+    if (!ggufSelection) return;
+    const modelPath = ggufSelection.modelPath;
+    setGGUFSelection(null);
+    beginModelDownload(modelPath, quants);
   };
 
   const handleDatasetDownload = (datasetPath: string) => {
@@ -391,6 +423,30 @@ export function Marketplace() {
         />
       )}
 
+      {ggufSelection && (
+        <GGUFQuantSelectionDialog
+          selection={ggufSelection}
+          onConfirm={handleConfirmGGUFDownload}
+          onClose={() => setGGUFSelection(null)}
+        />
+      )}
+
+      {downloadError && (
+        <div class="fixed bottom-4 right-4 z-50 max-w-sm rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 shadow-lg">
+          <div class="flex items-start gap-3">
+            <span class="flex-1">{downloadError}</span>
+            <button
+              type="button"
+              class="text-amber-600 hover:text-amber-900"
+              onClick={() => setDownloadError("")}
+              aria-label={t("dash.close")}
+            >
+              x
+            </button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -405,6 +461,118 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
     >
       {label}
     </button>
+  );
+}
+
+function GGUFQuantSelectionDialog({
+  selection,
+  onConfirm,
+  onClose,
+}: {
+  selection: GGUFQuantSelection;
+  onConfirm: (quants: string[]) => void;
+  onClose: () => void;
+}) {
+  void locale.value;
+  const defaultQuant = selection.quantizations[0]?.name || "";
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(defaultQuant ? [defaultQuant] : []));
+  const selectedList = selection.quantizations.map((item) => item.name).filter((name) => selected.has(name));
+
+  const toggleQuant = (name: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
+  };
+
+  return (
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+        <div class="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-5">
+          <div class="min-w-0">
+            <h2 class="text-lg font-bold text-gray-900">{t("mp.selectGGUFQuantizations")}</h2>
+            <p class="mt-1 break-all text-sm text-gray-500">{selection.modelPath}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+            aria-label={t("dash.close")}
+          >
+            x
+          </button>
+        </div>
+        <div class="px-6 py-5">
+          <p class="mb-4 text-sm text-gray-500">{t("mp.selectGGUFQuantizationsHint")}</p>
+          <div class="max-h-72 space-y-2 overflow-auto pr-1">
+            {selection.quantizations.map((item) => {
+              const checked = selected.has(item.name);
+              return (
+                <label
+                  key={item.name}
+                  class={`flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-4 py-3 transition-colors ${
+                    checked
+                      ? "border-indigo-200 bg-indigo-50"
+                      : "border-gray-200 bg-white hover:border-gray-300"
+                  }`}
+                >
+                  <div class="flex min-w-0 items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleQuant(item.name)}
+                      class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div class="min-w-0">
+                      <div class="font-medium text-gray-900">{item.name}</div>
+                      <div class="truncate text-xs text-gray-500" title={item.example_path}>
+                        {item.file_count > 1
+                          ? t("mp.quantizationFiles", item.file_count)
+                          : t("mp.quantizationFile")}
+                      </div>
+                    </div>
+                  </div>
+                  {item.name === defaultQuant && (
+                    <span class="flex-shrink-0 rounded-full bg-white px-2 py-0.5 text-xs font-medium text-indigo-600">
+                      {t("mp.defaultQuantization")}
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+        <div class="flex items-center justify-end gap-3 border-t border-gray-100 px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            class="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+          >
+            {t("settings.cancel")}
+          </button>
+          <button
+            type="button"
+            disabled={selectedList.length === 0}
+            onClick={() => onConfirm(selectedList)}
+            class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {t("mp.downloadSelectedQuantizations", selectedList.length)}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

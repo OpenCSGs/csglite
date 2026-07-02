@@ -18,6 +18,9 @@
 - Prefer additive changes for shipped APIs: add optional fields, new endpoints,
   or new enum values instead of renaming/removing fields or changing existing
   meanings.
+- When extending an existing API, keep old request shapes working and avoid
+  making clients depend on newly added response fields. Add compatibility tests
+  for legacy payloads whenever request parsing or response schemas change.
 - If a breaking API change is unavoidable, document the migration path in the
   same task and update OpenAPI, tests, and release notes accordingly.
 

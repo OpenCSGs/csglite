@@ -29,6 +29,8 @@ type PullRequest struct {
 	Model string `json:"model"`
 	// Quant selects a GGUF weight variant when multiple quantizations exist (e.g. Q4_K_M). Ignored for non-GGUF models.
 	Quant string `json:"quant,omitempty"`
+	// Quants selects one or more GGUF weight variants. When set, it takes precedence over Quant.
+	Quants []string `json:"quants,omitempty"`
 }
 
 type DeleteRequest struct {
@@ -194,6 +196,7 @@ type PullJobResponse struct {
 	Kind        string       `json:"kind"`
 	Name        string       `json:"name"`
 	Quant       string       `json:"quant,omitempty"`
+	Quants      []string     `json:"quants,omitempty"`
 	CreatedAt   time.Time    `json:"created_at"`
 	UpdatedAt   time.Time    `json:"updated_at"`
 	CompletedAt *time.Time   `json:"completed_at,omitempty"`

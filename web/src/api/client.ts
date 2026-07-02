@@ -498,6 +498,7 @@ export interface PullJob {
   kind: "model" | "dataset";
   name: string;
   quant?: string;
+  quants?: string[];
   created_at: string;
   updated_at: string;
   completed_at?: string;
@@ -1152,11 +1153,17 @@ export function pullModel(
   });
 }
 
-export async function createPullJob(model: string, quant?: string): Promise<PullJob> {
+export async function createPullJob(model: string, options?: string | { quant?: string; quants?: string[] }): Promise<PullJob> {
+  const normalizedOptions = typeof options === "string" ? { quant: options } : options;
+  const quants = normalizedOptions?.quants?.map((value) => value.trim()).filter(Boolean);
   return fetchJSON<PullJob>("/api/pull/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, quant: quant || undefined }),
+    body: JSON.stringify({
+      model,
+      quant: normalizedOptions?.quant || undefined,
+      quants: quants && quants.length > 0 ? quants : undefined,
+    }),
   });
 }
 

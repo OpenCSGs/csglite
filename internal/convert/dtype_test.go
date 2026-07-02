@@ -22,6 +22,16 @@ func TestNormalizeDTypeRejectsUnknownValues(t *testing.T) {
 	}
 }
 
+func TestNormalizeRuntimeDTypeAcceptsGGUFQuant(t *testing.T) {
+	got, err := NormalizeRuntimeDType("Q4_K_M")
+	if err != nil {
+		t.Fatalf("NormalizeRuntimeDType returned error: %v", err)
+	}
+	if got != "q4_k_m" {
+		t.Fatalf("NormalizeRuntimeDType = %q, want q4_k_m", got)
+	}
+}
+
 func TestResolveDTypeUsesDefaultWhenUnset(t *testing.T) {
 	got, err := ResolveDType("")
 	if err != nil {
@@ -46,19 +56,23 @@ func TestFindGGUFForDTypeMatchesRequestedQuant(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "model-f16.gguf"), []byte("f16"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "model-q8_0.gguf"), []byte("q8"), 0o644); err != nil {
+	q4Dir := filepath.Join(dir, "Q4_K_M")
+	if err := os.MkdirAll(q4Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(q4Dir, "model.gguf"), []byte("q4"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	got, ok, err := FindGGUFForDType(dir, "q8_0")
+	got, ok, err := FindGGUFForDType(dir, "q4_k_m")
 	if err != nil {
 		t.Fatalf("FindGGUFForDType returned error: %v", err)
 	}
 	if !ok {
-		t.Fatal("expected q8_0 GGUF match")
+		t.Fatal("expected q4_k_m GGUF match")
 	}
-	if filepath.Base(got) != "model-q8_0.gguf" {
-		t.Fatalf("FindGGUFForDType = %q, want model-q8_0.gguf", got)
+	if filepath.ToSlash(got) != filepath.ToSlash(filepath.Join(dir, "Q4_K_M", "model.gguf")) {
+		t.Fatalf("FindGGUFForDType = %q, want Q4_K_M/model.gguf", got)
 	}
 }
 
@@ -96,6 +110,16 @@ func TestNeedsConversionForDTypeChecksRequestedGGUF(t *testing.T) {
 	}
 	if needs {
 		t.Fatal("q8_0 should not need conversion when matching GGUF exists")
+	}
+}
+
+func TestNeedsConversionForDTypeRejectsRuntimeOnlyQuantForConversion(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "model.safetensors"), []byte("safetensors"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NeedsConversionForDType(dir, "q4_k_m"); err == nil {
+		t.Fatal("expected conversion dtype error for runtime-only GGUF quant")
 	}
 }
 

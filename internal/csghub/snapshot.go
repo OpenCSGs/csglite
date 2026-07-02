@@ -28,13 +28,13 @@ type SnapshotProgressFunc func(SnapshotProgress)
 
 // SnapshotDownload downloads all files in a model repository, similar to
 // pycsghub's snapshot_download.
-func (c *Client) SnapshotDownload(ctx context.Context, namespace, name, destDir string, quant string, progress SnapshotProgressFunc) ([]RepoFile, error) {
+func (c *Client) SnapshotDownload(ctx context.Context, namespace, name, destDir string, quants []string, progress SnapshotProgressFunc) ([]RepoFile, error) {
 	files, err := c.GetModelTree(ctx, namespace, name)
 	if err != nil {
 		return nil, fmt.Errorf("fetching file tree: %w", err)
 	}
 
-	return c.downloadSnapshot(ctx, "models", namespace, name, destDir, quant, files, progress)
+	return c.downloadSnapshot(ctx, "models", namespace, name, destDir, quants, files, progress)
 }
 
 const maxConcurrentDownloads = 3
@@ -136,7 +136,7 @@ func (c *Client) DatasetSnapshotDownload(ctx context.Context, namespace, name, d
 	return downloadFiles, nil
 }
 
-func (c *Client) downloadSnapshot(ctx context.Context, repoType, namespace, name, destDir, quant string, files []RepoFile, progress SnapshotProgressFunc) ([]RepoFile, error) {
+func (c *Client) downloadSnapshot(ctx context.Context, repoType, namespace, name, destDir string, quants []string, files []RepoFile, progress SnapshotProgressFunc) ([]RepoFile, error) {
 	var downloadFiles []RepoFile
 	for _, f := range files {
 		if f.Type == "file" {
@@ -146,7 +146,7 @@ func (c *Client) downloadSnapshot(ctx context.Context, repoType, namespace, name
 
 	if repoType == "models" {
 		var err error
-		downloadFiles, err = filterGGUFMultiQuantDownload(downloadFiles, quant)
+		downloadFiles, err = filterGGUFMultiQuantDownload(downloadFiles, quants)
 		if err != nil {
 			return nil, err
 		}
@@ -324,7 +324,7 @@ func entriesHaveQuantLabels(entries []ggufpick.FileEntry) bool {
 	return false
 }
 
-func filterGGUFMultiQuantDownload(files []RepoFile, quant string) ([]RepoFile, error) {
+func filterGGUFMultiQuantDownload(files []RepoFile, quants []string) ([]RepoFile, error) {
 	var weights []RepoFile
 	for _, f := range files {
 		if ggufpick.IsWeightGGUF(repoFileBaseName(f)) {
@@ -339,17 +339,20 @@ func filterGGUFMultiQuantDownload(files []RepoFile, quant string) ([]RepoFile, e
 		entries[i] = ggufpick.FileEntry{Path: f.Path, Name: repoFileBaseName(f), Size: f.Size}
 	}
 
-	quant = strings.TrimSpace(quant)
 	var filtered []ggufpick.FileEntry
-	if quant != "" {
-		filtered = ggufpick.FilterWeightGGUFFilesByQuant(entries, quant)
-		if len(filtered) == 0 {
-			if !entriesHaveQuantLabels(entries) {
-				filtered = ggufpick.FilterWeightGGUFFiles(entries)
-			} else {
+	quants = normalizeGGUFQuants(quants)
+	if len(quants) > 0 {
+		for _, quant := range quants {
+			matches := ggufpick.FilterWeightGGUFFilesByQuant(entries, quant)
+			if len(matches) == 0 {
+				if !entriesHaveQuantLabels(entries) {
+					filtered = ggufpick.FilterWeightGGUFFiles(entries)
+					break
+				}
 				return nil, fmt.Errorf("no GGUF weight files match quantization %q (available: %s)",
 					quant, strings.Join(distinctQuantLabels(entries), ", "))
 			}
+			filtered = append(filtered, matches...)
 		}
 	} else {
 		filtered = ggufpick.FilterWeightGGUFFiles(entries)
@@ -370,6 +373,23 @@ func filterGGUFMultiQuantDownload(files []RepoFile, quant string) ([]RepoFile, e
 		}
 	}
 	return out, nil
+}
+
+func normalizeGGUFQuants(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToUpper(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func filterTransformersWeightDownload(files []RepoFile) []RepoFile {

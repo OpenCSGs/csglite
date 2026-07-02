@@ -422,7 +422,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	if err != nil {
 		return nil, err
 	}
-	normalizedDType, err := convert.NormalizeDType(dtype)
+	normalizedDType, err := convert.NormalizeRuntimeDType(dtype)
 	if err != nil {
 		return nil, err
 	}

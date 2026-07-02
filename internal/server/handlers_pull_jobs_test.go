@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/pkg/api"
@@ -62,6 +64,43 @@ func TestPullJobCreateReturnsExistingActiveJob(t *testing.T) {
 	}
 	if second.ID != first.ID {
 		t.Fatalf("second job id = %q, want %q", second.ID, first.ID)
+	}
+}
+
+func TestPullJobNormalizeQuantsPrefersQuantsOverLegacyQuant(t *testing.T) {
+	got := normalizePullQuants("Q8_0", []string{" q4_0 ", "Q4_0", "q5_k_m"})
+	want := []string{"Q4_0", "Q5_K_M"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalizePullQuants = %#v, want %#v", got, want)
+	}
+}
+
+func TestPullJobNormalizeQuantsEmptyListOverridesLegacyQuant(t *testing.T) {
+	got := normalizePullQuants("Q8_0", []string{})
+	if len(got) != 0 {
+		t.Fatalf("normalizePullQuants = %#v, want empty", got)
+	}
+}
+
+func TestPullJobResponseIncludesSelectedQuants(t *testing.T) {
+	now := time.Now()
+	job := &pullJob{
+		id:        "job-1",
+		kind:      "model",
+		name:      "test/model",
+		quant:     "Q4_0",
+		quants:    []string{"Q4_0", "Q8_0"},
+		status:    pullJobQueued,
+		createdAt: now,
+		updatedAt: now,
+	}
+	got := pullJobResponse(job)
+	if got.Quant != "Q4_0" {
+		t.Fatalf("Quant = %q, want Q4_0", got.Quant)
+	}
+	want := []string{"Q4_0", "Q8_0"}
+	if !reflect.DeepEqual(got.Quants, want) {
+		t.Fatalf("Quants = %#v, want %#v", got.Quants, want)
 	}
 }
 

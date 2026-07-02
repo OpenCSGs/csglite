@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import { computed, signal } from "@preact/signals";
-import { deleteModel, getPs, loadModel, searchLocalModels, uploadLocalModel } from "../api/client";
-import type { LoadModelOptions, LocalModelUploadFile, ModelInfo, RunningModel } from "../api/client";
+import { deleteModel, getModelManifest, getPs, loadModel, searchLocalModels, uploadLocalModel } from "../api/client";
+import type { LoadModelOptions, LocalModelUploadFile, ModelFileEntry, ModelInfo, RunningModel } from "../api/client";
 import { locale, t } from "../i18n";
 import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
@@ -29,6 +29,44 @@ type UploadMode = "archive" | "directory" | "files";
 const RUN_PARAMS_STORAGE_KEY = "csghub-lite-run-params";
 const CACHE_TYPE_OPTIONS = ["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
 const DTYPE_OPTIONS = ["f32", "f16", "bf16", "q8_0", "tq1_0", "tq2_0", "auto"];
+const GGUF_QUANT_RANKS: Record<string, number> = {
+  f32: 1000,
+  bf16: 990,
+  f16: 980,
+  fp16: 980,
+  q8_0: 920,
+  q8_1: 915,
+  q6_k: 880,
+  q5_k_m: 860,
+  q5_k_s: 855,
+  q5_k: 850,
+  q5_1: 840,
+  q5_0: 835,
+  q4_k_m: 800,
+  q4_k_s: 795,
+  q4_k: 790,
+  q4_1: 785,
+  q4_0: 780,
+  q3_k_l: 750,
+  q3_k_m: 745,
+  q3_k_s: 740,
+  q3_k_xl: 738,
+  q3_k: 735,
+  q2_k: 700,
+  tq2_0: 680,
+  tq1_0: 670,
+  iq4_nl: 650,
+  iq4_xs: 640,
+  iq3_m: 620,
+  iq3_s: 610,
+  iq3_xs: 600,
+  iq3_xxs: 590,
+  iq2_m: 570,
+  iq2_xs: 560,
+  iq2_xxs: 550,
+  iq1_m: 520,
+  iq1_s: 510,
+};
 
 const allModels = signal<ModelInfo[]>([]);
 const runningModels = signal<RunningModel[]>([]);
@@ -43,6 +81,8 @@ const libraryError = signal<string>("");
 const runDialogModel = signal<ModelInfo | null>(null);
 const apiDialogModel = signal<ModelInfo | null>(null);
 const runDialogError = signal<string>("");
+const runDialogGGUFQuants = signal<string[]>([]);
+const runDialogQuantsLoading = signal(false);
 const runParams = signal<RunModelParams>(loadSavedRunParams());
 const uploadDialogOpen = signal(false);
 const uploadModelID = signal("");
@@ -159,6 +199,63 @@ function buildLoadOptionsForModel(model: ModelInfo, params: RunModelParams): Loa
 		};
 	}
 	return buildLoadOptions(params);
+}
+
+function collectGGUFQuantOptions(files: ModelFileEntry[]): string[] {
+  const found = new Set<string>();
+  for (const file of files) {
+    const path = String(file.path || "");
+    const name = path.split(/[\\/]/).pop() || path;
+    const lowerName = name.toLowerCase();
+    if (!lowerName.endsWith(".gguf") || lowerName.includes("mmproj")) {
+      continue;
+    }
+    const label = ggufQuantLabelFromPath(path);
+    if (label) {
+      found.add(label);
+    }
+  }
+  return [...found].sort((a, b) => {
+    const ar = GGUF_QUANT_RANKS[a.toLowerCase()] ?? -1;
+    const br = GGUF_QUANT_RANKS[b.toLowerCase()] ?? -1;
+    if (ar !== br) return br - ar;
+    return a.localeCompare(b);
+  });
+}
+
+function ggufQuantLabelFromPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/").trim();
+  if (!normalized) return "";
+  const parts = normalized.split("/").filter(Boolean);
+  const filename = parts[parts.length - 1] || "";
+  const fromName = ggufQuantLabelFromFilename(filename);
+  if (fromName) return fromName;
+  let best = "";
+  let bestRank = -1;
+  for (const part of parts.slice(0, -1)) {
+    const key = part.trim().toLowerCase();
+    const rank = GGUF_QUANT_RANKS[key];
+    if (rank !== undefined && rank > bestRank) {
+      best = key.toUpperCase();
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
+function ggufQuantLabelFromFilename(filename: string): string {
+  const lower = filename.toLowerCase();
+  if (!lower.endsWith(".gguf")) return "";
+  const stem = lower.slice(0, -".gguf".length).replace(/-\d+-of-\d+$/, "");
+  const tokens = stem.split("-");
+  for (let n = 3; n >= 1; n--) {
+    if (tokens.length < n) continue;
+    const key = tokens.slice(tokens.length - n).join("_");
+    if (GGUF_QUANT_RANKS[key] !== undefined) {
+      return key.toUpperCase();
+    }
+  }
+  return "";
 }
 
 function loadingLabelForModel(model: ModelInfo): string {
@@ -486,14 +583,34 @@ export function Library() {
     if (hasActiveDownload.value) return;
     runParams.value = loadSavedRunParams();
     runDialogError.value = "";
+    runDialogGGUFQuants.value = [];
+    runDialogQuantsLoading.value = model.format === "gguf";
     libraryError.value = "";
     runDialogModel.value = model;
+    if (model.format === "gguf") {
+      getModelManifest(model.name).then((manifest) => {
+        if (runDialogModel.value?.name !== model.name) return;
+        const quants = collectGGUFQuantOptions(manifest.files || []);
+        runDialogGGUFQuants.value = quants;
+        if (quants.length > 0 && (!runParams.value.dtype || !quants.includes(runParams.value.dtype.toUpperCase()))) {
+          runParams.value = { ...runParams.value, dtype: quants[0] };
+        }
+      }).catch(() => {
+        /* Keep default highest-precision behavior if manifest loading fails. */
+      }).finally(() => {
+        if (runDialogModel.value?.name === model.name) {
+          runDialogQuantsLoading.value = false;
+        }
+      });
+    }
   };
 
   const closeRunDialog = () => {
     if (loadingRun.value) return;
     runDialogModel.value = null;
     runDialogError.value = "";
+    runDialogGGUFQuants.value = [];
+    runDialogQuantsLoading.value = false;
   };
 
   const updateRunParam = (field: keyof RunModelParams, value: string) => {
@@ -751,6 +868,8 @@ export function Library() {
           model={runDialogModel.value}
           params={runParams.value}
           error={runDialogError.value}
+          ggufQuants={runDialogGGUFQuants.value}
+          quantsLoading={runDialogQuantsLoading.value}
           disabled={!!loadingRun.value}
           onChange={updateRunParam}
           onCancel={closeRunDialog}
@@ -950,6 +1069,8 @@ function RunParamsDialog({
   model,
   params,
   error,
+  ggufQuants,
+  quantsLoading,
   disabled,
   onChange,
   onCancel,
@@ -958,6 +1079,8 @@ function RunParamsDialog({
   model: ModelInfo;
   params: RunModelParams;
   error: string;
+  ggufQuants: string[];
+  quantsLoading: boolean;
   disabled: boolean;
   onChange: (field: keyof RunModelParams, value: string) => void;
   onCancel: () => void;
@@ -967,6 +1090,8 @@ function RunParamsDialog({
   const embeddingModel = isEmbeddingModel(model);
   const asrModel = isASRModel(model);
   const runtimeManagedModel = imageGenerationModel || asrModel;
+  const ggufModel = model.format === "gguf";
+  const dtypeOptions = ggufModel && ggufQuants.length > 0 ? ggufQuants : DTYPE_OPTIONS;
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
@@ -1024,10 +1149,13 @@ function RunParamsDialog({
                 onInput={(value) => onChange("nGpuLayers", value)}
               />
               <RunSelectField
-                label={t("lib.runParamDType")}
+                label={ggufModel ? t("lib.runParamGGUFQuant") : t("lib.runParamDType")}
                 value={params.dtype}
-                options={DTYPE_OPTIONS}
-                hint={t("lib.runParamDTypeHint")}
+                options={dtypeOptions}
+                defaultLabel={ggufModel ? t("lib.runParamGGUFQuantDefault") : undefined}
+                hint={ggufModel
+                  ? (quantsLoading ? t("lib.runParamGGUFQuantLoading") : t("lib.runParamGGUFQuantHint"))
+                  : t("lib.runParamDTypeHint")}
                 onInput={(value) => onChange("dtype", value)}
               />
               {!embeddingModel && (
@@ -1123,12 +1251,14 @@ function RunSelectField({
   label,
   value,
   options,
+  defaultLabel,
   hint,
   onInput,
 }: {
   label: string;
   value: string;
   options: string[];
+  defaultLabel?: string;
   hint: string;
   onInput: (value: string) => void;
 }) {
@@ -1140,7 +1270,7 @@ function RunSelectField({
         onInput={(e) => onInput((e.currentTarget as HTMLSelectElement).value)}
         class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
       >
-        <option value="">{t("lib.runParamDefault")}</option>
+        <option value="">{defaultLabel || t("lib.runParamDefault")}</option>
         {options.map((option) => (
           <option key={option} value={option}>
             {option}

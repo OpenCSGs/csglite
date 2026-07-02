@@ -65,7 +65,7 @@ func runPullModel(cmd *cobra.Command, args []string) error {
 
 	progress := snapshotProgress()
 
-	lm, err := mgr.Pull(cmd.Context(), modelID, quant, progress)
+	lm, err := mgr.Pull(cmd.Context(), modelID, cliPullQuants(quant), progress)
 	if err != nil {
 		return fmt.Errorf("pull failed: %w", err)
 	}
@@ -73,6 +73,14 @@ func runPullModel(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\nSuccessfully pulled model %s (%s, %s)\n",
 		lm.FullName(), lm.Format, formatBytes(lm.Size))
 	return nil
+}
+
+func cliPullQuants(quant string) []string {
+	quant = strings.TrimSpace(quant)
+	if quant == "" {
+		return nil
+	}
+	return []string{quant}
 }
 
 func runPullDataset(cmd *cobra.Command, args []string) error {

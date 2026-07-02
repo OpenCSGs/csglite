@@ -121,7 +121,7 @@ func runImage(cmd *cobra.Command, modelID string, opts imageOptions) error {
 	mgr := model.NewManager(cfg)
 	if !mgr.Exists(modelID) {
 		fmt.Printf("Model %s not found locally. Pulling from %s...\n", modelID, cfg.DisplayURL())
-		if _, err := mgr.Pull(cmd.Context(), modelID, "", snapshotProgress()); err != nil {
+		if _, err := mgr.Pull(cmd.Context(), modelID, nil, snapshotProgress()); err != nil {
 			return fmt.Errorf("pull failed: %w", err)
 		}
 		fmt.Println("Pull complete.")

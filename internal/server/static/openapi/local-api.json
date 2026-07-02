@@ -5573,6 +5573,13 @@
           "quant": {
             "type": "string",
             "description": "GGUF quantization when multiple weight variants exist (e.g. Q4_K_M). Ignored for non-GGUF models."
+          },
+          "quants": {
+            "type": "array",
+            "description": "GGUF quantizations to download when multiple weight variants exist. Takes precedence over quant.",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -5643,6 +5650,12 @@
           },
           "quant": {
             "type": "string"
+          },
+          "quants": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "created_at": {
             "type": "string",

@@ -74,7 +74,7 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 		modelName = lm.FullName()
 	}
 	log.Printf("INFERENCE %s: resolving model engine in %s dtype=%q", modelName, modelDir, dtype)
-	normalizedDType, err := convert.NormalizeDType(dtype)
+	normalizedDType, err := convert.NormalizeRuntimeDType(dtype)
 	if err != nil {
 		return nil, err
 	}

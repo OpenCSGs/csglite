@@ -27,6 +27,17 @@ var allowedConvertDTypeSet = func() map[string]struct{} {
 	return allowed
 }()
 
+var allowedRuntimeDTypeSet = func() map[string]struct{} {
+	allowed := make(map[string]struct{}, len(allowedConvertDTypes)+len(ggufpick.KnownQuantLabels()))
+	for _, v := range allowedConvertDTypes {
+		allowed[v] = struct{}{}
+	}
+	for _, v := range ggufpick.KnownQuantLabels() {
+		allowed[strings.ToLower(v)] = struct{}{}
+	}
+	return allowed
+}()
+
 // Convert converts HuggingFace model files in modelDir to a GGUF file.
 // It runs the llama.cpp convert_hf_to_gguf.py bundled in the binary (or from
 // CSGHUB_LITE_CONVERTER_URL when set); see convert_python.go.
@@ -53,6 +64,35 @@ func NormalizeDType(value string) (string, error) {
 		return normalized, nil
 	}
 	return "", fmt.Errorf("unsupported dtype %q (allowed: %s)", value, strings.Join(allowedConvertDTypes, ", "))
+}
+
+// NormalizeRuntimeDType returns a lower-case converter dtype or GGUF quant label, or "" when unset.
+func NormalizeRuntimeDType(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return "", nil
+	}
+	if _, ok := allowedRuntimeDTypeSet[normalized]; ok {
+		return normalized, nil
+	}
+	return "", fmt.Errorf("unsupported dtype %q (allowed: %s)", value, strings.Join(allowedRuntimeDTypes(), ", "))
+}
+
+func allowedRuntimeDTypes() []string {
+	out := append([]string(nil), allowedConvertDTypes...)
+	seen := make(map[string]struct{}, len(out))
+	for _, value := range out {
+		seen[value] = struct{}{}
+	}
+	for _, value := range ggufpick.KnownQuantLabels() {
+		value = strings.ToLower(value)
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 // ResolveDType returns the effective converter dtype, falling back to the
@@ -150,7 +190,7 @@ func NeedsConversion(modelDir string) bool {
 // the requested output dtype. When dtype is unset, it preserves the legacy
 // behavior of accepting any existing GGUF.
 func NeedsConversionForDType(modelDir, dtype string) (bool, error) {
-	normalized, err := NormalizeDType(dtype)
+	normalized, err := NormalizeRuntimeDType(dtype)
 	if err != nil {
 		return false, err
 	}
@@ -161,6 +201,9 @@ func NeedsConversionForDType(modelDir, dtype string) (bool, error) {
 		return false, err
 	} else if ok {
 		return false, nil
+	}
+	if _, err := NormalizeDType(normalized); err != nil && HasConvertibleHFWeights(modelDir) {
+		return false, err
 	}
 	return HasConvertibleHFWeights(modelDir), nil
 }
@@ -192,7 +235,7 @@ func generateOutputName(modelDir string, dtype string) string {
 // FindGGUFForDType returns an existing GGUF path that matches the requested dtype.
 // When dtype is empty or auto, it returns the highest precision GGUF chosen by model.FindModelFile.
 func FindGGUFForDType(modelDir, dtype string) (string, bool, error) {
-	normalized, err := NormalizeDType(dtype)
+	normalized, err := NormalizeRuntimeDType(dtype)
 	if err != nil {
 		return "", false, err
 	}
@@ -219,7 +262,7 @@ func FindGGUFForDType(modelDir, dtype string) (string, bool, error) {
 // FindMMProjForDType returns an existing mmproj GGUF path that matches the requested dtype.
 // When dtype is empty or auto, it returns the highest precision mmproj GGUF if present.
 func FindMMProjForDType(modelDir, dtype string) (string, bool, error) {
-	normalized, err := NormalizeDType(dtype)
+	normalized, err := NormalizeRuntimeDType(dtype)
 	if err != nil {
 		return "", false, err
 	}

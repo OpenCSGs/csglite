@@ -31,6 +31,7 @@ type pullJob struct {
 	kind        string
 	name        string
 	quant       string
+	quants      []string
 	status      string
 	createdAt   time.Time
 	updatedAt   time.Time
@@ -64,7 +65,7 @@ func (s *Server) handlePullJobCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "model is required")
 		return
 	}
-	job, err := s.createPullJob("model", req.Model, strings.TrimSpace(req.Quant))
+	job, err := s.createPullJob("model", req.Model, normalizePullQuants(req.Quant, req.Quants))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -83,7 +84,7 @@ func (s *Server) handleDatasetPullJobCreate(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "dataset is required")
 		return
 	}
-	job, err := s.createPullJob("dataset", req.Dataset, "")
+	job, err := s.createPullJob("dataset", req.Dataset, nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -119,8 +120,10 @@ func (s *Server) handlePullJobCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pullJobResponse(job))
 }
 
-func (s *Server) createPullJob(kind, name, quant string) (*pullJob, error) {
-	if existing := s.pullJobs.getActive(kind, name, quant); existing != nil {
+func (s *Server) createPullJob(kind, name string, quants []string) (*pullJob, error) {
+	quants = normalizePullQuants("", quants)
+	quant := firstPullQuant(quants)
+	if existing := s.pullJobs.getActive(kind, name, quants); existing != nil {
 		return existing, nil
 	}
 	id, err := newPullJobID()
@@ -134,6 +137,7 @@ func (s *Server) createPullJob(kind, name, quant string) (*pullJob, error) {
 		kind:      kind,
 		name:      name,
 		quant:     quant,
+		quants:    quants,
 		status:    pullJobQueued,
 		createdAt: now,
 		updatedAt: now,
@@ -172,7 +176,7 @@ func (s *Server) runPullJob(ctx context.Context, job *pullJob) {
 	var err error
 	switch job.kind {
 	case "model":
-		_, err = s.manager.Pull(ctx, job.name, job.quant, progress)
+		_, err = s.manager.Pull(ctx, job.name, job.quants, progress)
 	case "dataset":
 		_, err = s.datasetManager.Pull(ctx, job.name, progress)
 	default:
@@ -251,11 +255,39 @@ func errorString(err error) string {
 	return err.Error()
 }
 
+func normalizePullQuants(legacy string, values []string) []string {
+	source := values
+	if source == nil {
+		source = []string{legacy}
+	}
+	seen := make(map[string]struct{}, len(source))
+	out := make([]string, 0, len(source))
+	for _, value := range source {
+		value = strings.ToUpper(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func firstPullQuant(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
 func (s *pullJobStore) add(job *pullJob) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.jobs[job.id] = job
-	s.activeKey[pullJobActiveKey(job.kind, job.name, job.quant)] = job.id
+	s.activeKey[pullJobActiveKey(job.kind, job.name, job.quants)] = job.id
 }
 
 func (s *pullJobStore) get(id string) *pullJob {
@@ -264,16 +296,17 @@ func (s *pullJobStore) get(id string) *pullJob {
 	return s.jobs[id]
 }
 
-func (s *pullJobStore) getActive(kind, name, quant string) *pullJob {
+func (s *pullJobStore) getActive(kind, name string, quants []string) *pullJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	id := s.activeKey[pullJobActiveKey(kind, name, quant)]
+	key := pullJobActiveKey(kind, name, quants)
+	id := s.activeKey[key]
 	if id == "" {
 		return nil
 	}
 	job := s.jobs[id]
 	if job == nil {
-		delete(s.activeKey, pullJobActiveKey(kind, name, quant))
+		delete(s.activeKey, key)
 		return nil
 	}
 	job.mu.Lock()
@@ -282,22 +315,22 @@ func (s *pullJobStore) getActive(kind, name, quant string) *pullJob {
 	if status == pullJobQueued || status == pullJobRunning {
 		return job
 	}
-	delete(s.activeKey, pullJobActiveKey(kind, name, quant))
+	delete(s.activeKey, key)
 	return nil
 }
 
 func (s *pullJobStore) clearActive(job *pullJob) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := pullJobActiveKey(job.kind, job.name, job.quant)
+	key := pullJobActiveKey(job.kind, job.name, job.quants)
 	if s.activeKey[key] == job.id {
 		delete(s.activeKey, key)
 	}
 }
 
-func pullJobActiveKey(kind, name, quant string) string {
-	if kind == "model" && quant != "" {
-		return kind + ":" + name + "@" + quant
+func pullJobActiveKey(kind, name string, quants []string) string {
+	if kind == "model" && len(quants) > 0 {
+		return kind + ":" + name + "@" + strings.Join(quants, ",")
 	}
 	return kind + ":" + name
 }
@@ -311,6 +344,7 @@ func pullJobResponse(job *pullJob) api.PullJobResponse {
 		Kind:        job.kind,
 		Name:        job.name,
 		Quant:       job.quant,
+		Quants:      append([]string(nil), job.quants...),
 		CreatedAt:   job.createdAt,
 		UpdatedAt:   job.updatedAt,
 		CompletedAt: job.completedAt,

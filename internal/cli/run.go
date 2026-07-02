@@ -93,7 +93,7 @@ func validateInteractiveModelOverrides(numCtx, numParallel, nGPULayers int, cach
 	if _, err := inference.NormalizeCacheType(cacheTypeV); err != nil {
 		return fmt.Errorf("--cache-type-v %w", err)
 	}
-	if _, err := convert.NormalizeDType(dtype); err != nil {
+	if _, err := convert.NormalizeRuntimeDType(dtype); err != nil {
 		return fmt.Errorf("--dtype %w", err)
 	}
 	return nil
@@ -125,7 +125,7 @@ func runRun(cmd *cobra.Command, args []string, numCtx, numParallel, nGPULayers i
 	// Pull model if not present
 	if !mgr.Exists(modelID) {
 		fmt.Printf("Model %s not found locally. Pulling from %s...\n", modelID, cfg.DisplayURL())
-		if _, err := mgr.Pull(cmd.Context(), modelID, "", snapshotProgress()); err != nil {
+		if _, err := mgr.Pull(cmd.Context(), modelID, nil, snapshotProgress()); err != nil {
 			return fmt.Errorf("pull failed: %w", err)
 		}
 		fmt.Println("Pull complete.")

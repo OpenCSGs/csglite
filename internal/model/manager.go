@@ -24,9 +24,9 @@ func NewManager(cfg *config.Config) *Manager {
 }
 
 // Pull downloads a model from CSGHub.
-// quant selects a GGUF weight variant when the repository exposes multiple quantizations (for example Q4_K_M or Q8_0).
-// Empty quant keeps the default behavior (highest-precision GGUF variant). Non-GGUF models ignore quant.
-func (m *Manager) Pull(ctx context.Context, modelID string, quant string, progress csghub.SnapshotProgressFunc) (*LocalModel, error) {
+// quants selects GGUF weight variants when the repository exposes multiple quantizations (for example Q4_K_M or Q8_0).
+// Empty quants keeps the default behavior (highest-precision GGUF variant). Non-GGUF models ignore quants.
+func (m *Manager) Pull(ctx context.Context, modelID string, quants []string, progress csghub.SnapshotProgressFunc) (*LocalModel, error) {
 	namespace, name, err := csghub.ParseModelID(modelID)
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func (m *Manager) Pull(ctx context.Context, modelID string, quant string, progre
 		return nil, fmt.Errorf("fetching model info: %w", err)
 	}
 
-	downloadedFiles, err := client.SnapshotDownload(ctx, namespace, name, destDir, quant, progress)
+	downloadedFiles, err := client.SnapshotDownload(ctx, namespace, name, destDir, quants, progress)
 	if err != nil {
 		return nil, fmt.Errorf("downloading model: %w", err)
 	}

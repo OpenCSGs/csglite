@@ -41,12 +41,13 @@ func TestValidateInteractiveModelOverrides(t *testing.T) {
 	}{
 		{name: "unset", numCtx: 0, numParallel: 0, nGPULayers: -1},
 		{name: "valid explicit overrides", numCtx: 131072, numParallel: 1, nGPULayers: 40, cacheTypeK: "q8_0", cacheTypeV: "bf16", dtype: "q8_0"},
+		{name: "valid gguf quant dtype", dtype: "q4_k_m"},
 		{name: "reject too small ctx", numCtx: 512, numParallel: 0, wantErr: true},
 		{name: "reject negative parallel", numCtx: 0, numParallel: -1, nGPULayers: -1, wantErr: true},
 		{name: "reject invalid n gpu layers", nGPULayers: -2, wantErr: true},
 		{name: "reject invalid cache type k", cacheTypeK: "fp8", wantErr: true},
 		{name: "reject invalid cache type v", cacheTypeV: "int8", wantErr: true},
-		{name: "reject invalid dtype", dtype: "q4_k_m", wantErr: true},
+		{name: "reject invalid dtype", dtype: "q9_x", wantErr: true},
 	}
 
 	for _, tt := range tests {

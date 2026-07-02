@@ -22,6 +22,7 @@ export interface DownloadTask {
   totalBytes: number;
   error?: string;
   jobId?: string;
+  quants?: string[];
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -64,6 +65,9 @@ function normalizeTask(raw: any): DownloadTask | null {
     totalBytes: Math.max(0, Number(raw.totalBytes) || 0),
     error: typeof raw.error === "string" ? raw.error : undefined,
     jobId: typeof raw.jobId === "string" ? raw.jobId : undefined,
+    quants: Array.isArray(raw.quants)
+      ? raw.quants.map((value: any) => String(value || "").trim()).filter(Boolean)
+      : undefined,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : nowISO(),
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : nowISO(),
     completedAt: typeof raw.completedAt === "string" ? raw.completedAt : undefined,
@@ -269,7 +273,7 @@ async function syncDownloadsFromServer() {
 
     try {
       const job =
-        task.kind === "model" ? await createPullJob(task.name) : await createDatasetPullJob(task.name);
+        task.kind === "model" ? await createPullJob(task.name, { quants: task.quants }) : await createDatasetPullJob(task.name);
       if (job.status === "running" || job.status === "queued") {
         setTask(applyJobToTask({ ...task, status: "downloading" }, job));
         startPolling(task.key);
@@ -324,7 +328,7 @@ export function pauseDownload(kind: DownloadKind, name: string) {
   }
 }
 
-export function startDownload(kind: DownloadKind, name: string, onComplete?: () => void): boolean {
+export function startDownload(kind: DownloadKind, name: string, onComplete?: () => void, options?: { quants?: string[] }): boolean {
   const key = taskKey(kind, name);
   const existingActive = activeDownload.value;
   if (existingActive && existingActive.key !== key) {
@@ -337,6 +341,9 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
   const startedAt = nowISO();
   const base = downloadTasks.value[key];
   const resumableBase = base?.status === "success" ? undefined : base;
+  const quants = kind === "model"
+    ? options?.quants?.map((value) => value.trim()).filter(Boolean) || resumableBase?.quants
+    : undefined;
   const task: DownloadTask = {
     key,
     kind,
@@ -348,6 +355,7 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
     completedBytes: resumableBase?.completedBytes || 0,
     totalBytes: resumableBase?.totalBytes || 0,
     jobId: resumableBase?.jobId,
+    quants,
     createdAt: base?.createdAt || startedAt,
     updatedAt: startedAt,
     files: resumableBase?.files || {},
@@ -378,7 +386,7 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
       }
 
       const job =
-        kind === "model" ? await createPullJob(name) : await createDatasetPullJob(name);
+        kind === "model" ? await createPullJob(name, { quants }) : await createDatasetPullJob(name);
       setTask({
         ...(downloadTasks.value[key] || task),
         jobId: job.id,

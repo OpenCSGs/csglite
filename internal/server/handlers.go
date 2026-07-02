@@ -318,13 +318,15 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err := s.manager.Pull(r.Context(), req.Model, strings.TrimSpace(req.Quant), progress)
+	quants := normalizePullQuants(req.Quant, req.Quants)
+	_, err := s.manager.Pull(r.Context(), req.Model, quants, progress)
 	if err != nil {
 		log.Printf("pull %s failed: %v", req.Model, err)
 		s.reportModelDownloadFailure(&pullJob{
-			kind:  "model",
-			name:  req.Model,
-			quant: req.Quant,
+			kind:   "model",
+			name:   req.Model,
+			quant:  firstPullQuant(quants),
+			quants: quants,
 		}, err)
 		safeSSE(api.PullResponse{Status: "error: " + err.Error()})
 		return

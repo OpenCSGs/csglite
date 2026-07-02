@@ -643,7 +643,7 @@ func TestHandleLoad_InvalidCacheType(t *testing.T) {
 func TestHandleLoad_InvalidDType(t *testing.T) {
 	s := newTestServer(t)
 
-	body := `{"model":"test/model","dtype":"q4_k_m"}`
+	body := `{"model":"test/model","dtype":"q9_x"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/load", strings.NewReader(body))
 	w := httptest.NewRecorder()
 
@@ -834,7 +834,7 @@ func TestHandleGenerate_InvalidCacheType(t *testing.T) {
 func TestHandleGenerate_InvalidDType(t *testing.T) {
 	s := newTestServer(t)
 
-	body := `{"model":"test/model","prompt":"hello","options":{"dtype":"q4_k_m"}}`
+	body := `{"model":"test/model","prompt":"hello","options":{"dtype":"q9_x"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(body))
 	w := httptest.NewRecorder()
 
