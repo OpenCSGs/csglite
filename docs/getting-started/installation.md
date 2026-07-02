@@ -45,6 +45,7 @@ $env:EE="1"; irm https://hub.opencsg.com/csghub-lite/install.ps1 | iex
 | `CSGHUB_LITE_LLAMA_SERVER_INSTALL_DIR` | 指定 `llama-server` 安装目录。未设置时，macOS 默认跟随 `csghub-lite` 的安装目录。 |
 | `CSGHUB_LITE_LLAMA_CPP_TAG` | 指定要安装的 `llama.cpp` release tag。默认固定到与内置 `convert_hf_to_gguf.py` / `gguf-py` 对齐的 tag，确保三个版本一致。 |
 | `CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER` | 设为 `0` 可跳过自动安装/升级 `llama-server`。 |
+| `CSGHUB_LITE_AUTO_INSTALL_CUDA_LIBS` | Linux NVIDIA 环境安装 CUDA 版 `llama-server` 后，若缺少 `libcudart` / `libcublas`，默认通过 NVIDIA 官方 APT 源安装 `cuda-libraries-*`；设为 `0` 可关闭。 |
 | `CSGHUB_LITE_AUTO_INSTALL_PATCHELF` | Linux 上设为 `0` 可禁止自动 `apt/dnf/yum install patchelf`（用于为 `llama-server` 设置 `$ORIGIN`，使同目录 `.so` 可被直接加载）。 |
 | `CSGHUB_LITE_LLAMA_ROCM_VERSION` | Linux 上可显式指定优先尝试的 ROCm 资产版本（例如 `7.2`）。未设置时，安装脚本会尝试从本机 ROCm 环境自动识别版本，再回退到发布页中可用的其他 ROCm/Vulkan/CPU 包。 |
 

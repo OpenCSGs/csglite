@@ -159,6 +159,20 @@ Older layout references for comparison only:
    `LD_LIBRARY_PATH`, `llama-server --version` succeeds (no `GLIBC_2.38` / missing
    `GLIBCXX_3.4.32` on ref or new build).
 
+### Linux NVIDIA runtime dependencies
+
+The Ubuntu CUDA tarballs bundle llama.cpp / ggml shared libraries such as
+`libggml-cuda.so`, but they do **not** bundle NVIDIA CUDA runtime libraries such
+as `libcudart.so.*`, `libcublas.so.*`, or `libcublasLt.so.*`. A host can have a
+working driver and `nvidia-smi` while still missing these userspace libraries;
+llama.cpp then logs `no usable GPU found` and only lists CPU devices.
+
+`scripts/install.sh` should keep checking `libggml-cuda.so` with `ldd` after a
+Linux NVIDIA CUDA package install. If `libcudart` / `libcublas` are missing on a
+supported Ubuntu host, it may add NVIDIA's official CUDA APT repository and
+install `cuda-libraries-<major>-<minor>` unless
+`CSGHUB_LITE_AUTO_INSTALL_CUDA_LIBS=0`.
+
 ### Upload
 
 - Load `GITLAB_TOKEN` from `local/secrets.env` only; `unset` proxy before GitLab.

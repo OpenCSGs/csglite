@@ -281,6 +281,140 @@ has_rocm_runtime() {
     return 1
 }
 
+cuda_package_suffix_from_asset() {
+    _asset="$1"
+    _deps="${2:-}"
+    _version="$(printf "%s\n" "$_asset" | sed -n 's/.*ubuntu-cuda-\([0-9][0-9]*\)\(\.\([0-9][0-9]*\)\)\{0,1\}-.*/\1 \3/p' | sed -n '1p')"
+    if [ -n "$_version" ]; then
+        # shellcheck disable=SC2086
+        set -- $_version
+        printf "%s-%s\n" "$1" "${2:-0}"
+        return 0
+    fi
+
+    _major="$(printf "%s\n" "$_deps" | sed -n 's/.*libcudart\.so\.\([0-9][0-9]*\).*/\1/p' | sed -n '1p')"
+    [ -n "$_major" ] || _major="$(printf "%s\n" "$_deps" | sed -n 's/.*libcublas\.so\.\([0-9][0-9]*\).*/\1/p' | sed -n '1p')"
+    if [ -n "$_major" ]; then
+        printf "%s-0\n" "$_major"
+        return 0
+    fi
+    return 1
+}
+
+ubuntu_cuda_repo_id() {
+    _version_id=""
+    if [ -r /etc/os-release ]; then
+        _version_id="$(. /etc/os-release && printf "%s\n" "${VERSION_ID:-}")"
+    fi
+    case "$_version_id" in
+        22.04|24.04) printf "ubuntu%s\n" "$(printf "%s\n" "$_version_id" | tr -d '.')" ;;
+        *) return 1 ;;
+    esac
+}
+
+nvidia_cuda_repo_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64)  printf "x86_64\n" ;;
+        aarch64|arm64) printf "sbsa\n" ;;
+        *) return 1 ;;
+    esac
+}
+
+install_nvidia_cuda_keyring() {
+    _repo_id="$1"
+    _repo_arch="$2"
+    if dpkg -s cuda-keyring >/dev/null 2>&1; then
+        return 0
+    fi
+
+    _keyring_tmp="$(mktemp)"
+    _keyring_url="https://developer.download.nvidia.com/compute/cuda/repos/${_repo_id}/${_repo_arch}/cuda-keyring_1.1-1_all.deb"
+    info "Installing NVIDIA CUDA APT keyring (${_repo_id}/${_repo_arch})..."
+    if ! download "$_keyring_url" "$_keyring_tmp"; then
+        rm -f "$_keyring_tmp"
+        return 1
+    fi
+    if ! run_privileged dpkg -i "$_keyring_tmp"; then
+        rm -f "$_keyring_tmp"
+        return 1
+    fi
+    rm -f "$_keyring_tmp"
+    return 0
+}
+
+try_install_cuda_libraries() {
+    _cuda_pkg_suffix="$1"
+    _repo_id="$(ubuntu_cuda_repo_id || true)"
+    _repo_arch="$(nvidia_cuda_repo_arch || true)"
+    if [ -z "$_repo_id" ] || [ -z "$_repo_arch" ]; then
+        return 1
+    fi
+    if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg >/dev/null 2>&1; then
+        return 1
+    fi
+
+    install_nvidia_cuda_keyring "$_repo_id" "$_repo_arch" || return 1
+    info "Installing NVIDIA CUDA runtime libraries (cuda-libraries-${_cuda_pkg_suffix})..."
+    try_run_privileged apt-get update -qq >/dev/null 2>&1 || return 1
+    try_run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y "cuda-libraries-${_cuda_pkg_suffix}" >/dev/null 2>&1 || return 1
+    if command -v ldconfig >/dev/null 2>&1; then
+        try_run_privileged ldconfig >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+ensure_cuda_runtime_for_llama() {
+    _llama_dir="$1"
+    _llama_asset="$2"
+    case "$_llama_asset" in
+        *ubuntu-cuda*) ;;
+        *) return 0 ;;
+    esac
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        return 0
+    fi
+
+    _cuda_backend="${_llama_dir}/libggml-cuda.so"
+    if [ ! -f "$_cuda_backend" ]; then
+        warn "CUDA llama.cpp package installed, but ${_cuda_backend} is missing."
+        return 0
+    fi
+    if ! command -v ldd >/dev/null 2>&1; then
+        return 0
+    fi
+
+    _cuda_deps="$(env LD_LIBRARY_PATH="${_llama_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" ldd "$_cuda_backend" 2>/dev/null || true)"
+    _missing_cuda_deps="$(printf "%s\n" "$_cuda_deps" | grep -E 'lib(cudart|cublas).*not found' || true)"
+    if [ -z "$_missing_cuda_deps" ]; then
+        info "CUDA runtime libraries for llama.cpp are available."
+        return 0
+    fi
+
+    warn "CUDA llama.cpp package needs additional NVIDIA runtime libraries:"
+    printf "%s\n" "$_missing_cuda_deps" | while IFS= read -r _missing; do
+        [ -n "$_missing" ] && warn "  ${_missing}"
+    done
+
+    _auto_cuda="${CSGHUB_LITE_AUTO_INSTALL_CUDA_LIBS:-1}"
+    _cuda_pkg_suffix="$(cuda_package_suffix_from_asset "$_llama_asset" "$_cuda_deps" || true)"
+    if [ "$_auto_cuda" != "1" ] || [ -z "$_cuda_pkg_suffix" ]; then
+        warn "Install NVIDIA CUDA runtime libraries manually, then restart csghub-lite."
+        return 0
+    fi
+
+    if try_install_cuda_libraries "$_cuda_pkg_suffix"; then
+        _cuda_deps="$(env LD_LIBRARY_PATH="${_llama_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" ldd "$_cuda_backend" 2>/dev/null || true)"
+        _missing_cuda_deps="$(printf "%s\n" "$_cuda_deps" | grep -E 'lib(cudart|cublas).*not found' || true)"
+        if [ -z "$_missing_cuda_deps" ]; then
+            info "NVIDIA CUDA runtime libraries installed successfully."
+            return 0
+        fi
+    fi
+
+    warn "Could not install CUDA runtime libraries automatically."
+    warn "Try manually: apt-get install cuda-libraries-${_cuda_pkg_suffix}"
+}
+
 install_enterprise_license() {
     _install_dir="$1"
     if [ "$EE" != "1" ]; then
@@ -693,6 +827,7 @@ install_llama_server() {
     # Prefer patchelf $ORIGIN so `llama-server --version` works without LD_LIBRARY_PATH.
     if [ "$OS" = "linux" ]; then
         _llama_installed="${_llama_dir}/llama-server"
+        ensure_cuda_runtime_for_llama "$_llama_dir" "$_llama_asset"
         if [ -f "$_llama_installed" ] && ! command -v patchelf >/dev/null 2>&1; then
             if [ "${CSGHUB_LITE_AUTO_INSTALL_PATCHELF:-1}" = "1" ]; then
                 if command -v apt-get >/dev/null 2>&1; then

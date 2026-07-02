@@ -45,6 +45,9 @@ func TestLlamaInstallerCandidateCollectionCrossPlatform(t *testing.T) {
 		`llama-${_llama_tag}-bin-macos-arm64.tar.gz`,
 		`llama-${_llama_tag}-bin-ubuntu-cuda-12.4-${_arch_token}.tar.gz`,
 		`llama-${_llama_tag}-bin-ubuntu-${_arch_token}.tar.gz`,
+		`ensure_cuda_runtime_for_llama "$_llama_dir" "$_llama_asset"`,
+		`CSGHUB_LITE_AUTO_INSTALL_CUDA_LIBS`,
+		`cuda-libraries-${_cuda_pkg_suffix}`,
 	}
 	for _, want := range shellMustContain {
 		if !strings.Contains(shell, want) {
