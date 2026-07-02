@@ -220,6 +220,7 @@ type snapshotProgressTracker struct {
 	mu        sync.Mutex
 	completed []int64
 	totals    []int64
+	done      []bool
 	totalAll  int64
 }
 
@@ -227,6 +228,7 @@ func newSnapshotProgressTracker(files []RepoFile) *snapshotProgressTracker {
 	tracker := &snapshotProgressTracker{
 		completed: make([]int64, len(files)),
 		totals:    make([]int64, len(files)),
+		done:      make([]bool, len(files)),
 	}
 	for i, file := range files {
 		if file.Size > 0 {
@@ -259,6 +261,7 @@ func (t *snapshotProgressTracker) update(index int, completed, total int64) (int
 		completed = t.totals[index]
 	}
 	t.completed[index] = completed
+	t.done[index] = t.totals[index] > 0 && completed >= t.totals[index]
 
 	var completedAll int64
 	for _, value := range t.completed {
@@ -267,7 +270,19 @@ func (t *snapshotProgressTracker) update(index int, completed, total int64) (int
 	if t.totalAll > 0 && completedAll > t.totalAll {
 		completedAll = t.totalAll
 	}
+	if t.totalAll > 0 && completedAll >= t.totalAll && !t.allDone() {
+		completedAll = t.totalAll - 1
+	}
 	return completedAll, t.totalAll
+}
+
+func (t *snapshotProgressTracker) allDone() bool {
+	for _, done := range t.done {
+		if !done {
+			return false
+		}
+	}
+	return true
 }
 
 func repoFileBaseName(f RepoFile) string {

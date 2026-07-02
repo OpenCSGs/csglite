@@ -185,6 +185,18 @@ func TestSnapshotProgressTrackerAggregatesBytes(t *testing.T) {
 	}
 }
 
+func TestSnapshotProgressTrackerDoesNotCompleteBeforeUnknownFiles(t *testing.T) {
+	tracker := newSnapshotProgressTracker([]RepoFile{
+		{Type: "file", Path: ".gitattributes", Name: ".gitattributes", Size: 2548},
+		{Type: "file", Path: "raw/audio/ko/audio/ko_part4.zip", Name: "ko_part4.zip"},
+	})
+
+	completed, total := tracker.update(0, 2548, 2548)
+	if completed != 2547 || total != 2548 {
+		t.Fatalf("completed=%d total=%d, want capped 2547/2548 while another file is pending", completed, total)
+	}
+}
+
 func TestParseModelID(t *testing.T) {
 	tests := []struct {
 		name      string
