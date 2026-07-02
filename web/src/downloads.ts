@@ -171,6 +171,7 @@ function applyJobToTask(task: DownloadTask, job: PullJob): DownloadTask {
       jobId: job.id,
       status: "error",
       statusText: progress.status || "error",
+      percent: Math.min(task.percent, 99),
       error: job.error || progress.status.replace(/^error:\s*/, "") || "download failed",
       updatedAt: nowISO(),
     };

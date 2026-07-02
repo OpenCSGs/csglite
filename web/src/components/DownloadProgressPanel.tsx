@@ -20,7 +20,7 @@ export function DownloadInlineStatus({ task }: { task: DownloadTask }) {
   );
 }
 
-export function DownloadTableCell({ task, onComplete }: { task?: DownloadTask; onComplete?: () => void }) {
+export function DownloadTableCell({ task, onComplete, showActions = true }: { task?: DownloadTask; onComplete?: () => void; showActions?: boolean }) {
   void locale.value;
   if (!task) {
     return <span class="text-xs text-gray-300">{t("downloads.none")}</span>;
@@ -28,18 +28,11 @@ export function DownloadTableCell({ task, onComplete }: { task?: DownloadTask; o
   const isComplete = isDownloadComplete(task);
   const canResume = task.status === "paused" || task.status === "error";
   const isDownloading = task.status === "downloading";
-  const statusLabel = downloadStatusLabel(task, true);
   return (
     <div class="w-full min-w-0 max-w-full">
       <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
-        {isComplete ? (
-          <span class="ml-auto shrink-0 text-xs text-gray-400">{displayPercent(task)}%</span>
-        ) : (
-          <span title={statusLabel} class={`min-w-0 flex-1 truncate text-xs font-medium ${task.status === "error" ? "text-red-600" : task.kind === "dataset" ? "text-purple-600" : "text-indigo-600"}`}>
-            {statusLabel}
-          </span>
-        )}
-        {!isComplete && canResume && (
+        <span class="ml-auto shrink-0 text-xs text-gray-400">{displayPercent(task)}%</span>
+        {showActions && !isComplete && canResume && (
           <button
             onClick={() => startDownload(task.kind, task.name, onComplete)}
             class="shrink-0 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
@@ -47,7 +40,7 @@ export function DownloadTableCell({ task, onComplete }: { task?: DownloadTask; o
             {t("downloads.resume")}
           </button>
         )}
-        {!isComplete && isDownloading && (
+        {showActions && !isComplete && isDownloading && (
           <button
             onClick={() => pauseDownload(task.kind, task.name)}
             class="shrink-0 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
@@ -55,7 +48,7 @@ export function DownloadTableCell({ task, onComplete }: { task?: DownloadTask; o
             {t("downloads.pause")}
           </button>
         )}
-        {!isComplete && !isDownloading && (
+        {showActions && !isComplete && !isDownloading && (
           <button
             onClick={() => clearDownloadTask(task)}
             class="shrink-0 text-xs text-gray-400 hover:text-gray-600"
@@ -65,8 +58,38 @@ export function DownloadTableCell({ task, onComplete }: { task?: DownloadTask; o
         )}
       </div>
       <ProgressBar task={task} />
-      {task.error && <div class="mt-1 text-xs text-red-600 truncate" title={task.error}>{task.error}</div>}
     </div>
+  );
+}
+
+export function DownloadStatusCell({ task }: { task?: DownloadTask }) {
+  void locale.value;
+  if (!task) {
+    return <span class="text-xs text-gray-300">{t("downloads.none")}</span>;
+  }
+
+  const label = downloadStatusLabel(task, false);
+  const isError = task.status === "error";
+  const reason = task.error || task.statusText;
+  const color = isError ? "text-red-600" : task.kind === "dataset" ? "text-purple-600" : "text-indigo-600";
+
+  if (isError && reason) {
+    return (
+      <button
+        type="button"
+        title={reason}
+        onClick={() => window.alert(`${t("downloads.errorDetails")}\n\n${reason}`)}
+        class={`max-w-full truncate text-left text-xs font-medium underline decoration-dotted underline-offset-2 ${color}`}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <span title={label} class={`block max-w-full truncate text-xs font-medium ${color}`}>
+      {label}
+    </span>
   );
 }
 
@@ -80,10 +103,11 @@ function ProgressBar({ task }: { task: DownloadTask }) {
 }
 
 function isDownloadComplete(task: DownloadTask): boolean {
-  return task.status === "success" || (task.percent >= 100 && !task.error);
+  return task.status === "success" || (task.status !== "error" && task.percent >= 100 && !task.error);
 }
 
 function displayPercent(task: DownloadTask): number {
+  if (task.status === "error") return Math.min(task.percent, 99);
   return isDownloadComplete(task) ? 100 : task.percent;
 }
 

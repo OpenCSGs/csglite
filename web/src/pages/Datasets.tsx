@@ -3,7 +3,7 @@ import { signal } from "@preact/signals";
 import { getDatasetTags, searchDatasets, getDatasetFiles, deleteDataset, getDatasetManifest } from "../api/client";
 import type { DatasetInfo, DatasetFileEntry, DatasetManifestResponse, DatasetDownloadFile } from "../api/client";
 import { t, locale } from "../i18n";
-import { DownloadTableCell } from "../components/DownloadProgressPanel";
+import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
 import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 
@@ -123,13 +123,18 @@ function DatasetList() {
     if (downloadCompletionVersion.value > 0) loadDatasets();
   }, [downloadCompletionVersion.value]);
 
-  const handleDelete = async (name: string) => {
-    if (hasActiveDownload.value) return;
+  const handleDelete = async (name: string, task?: DownloadTask, downloadOnly = false) => {
     if (!confirm(t("ds.deleteConfirm", name))) return;
+    if (downloadOnly && task) {
+      clearDownloadTask(task);
+      allDatasets.value = allDatasets.value.filter((d) => d.name !== name);
+      return;
+    }
+    if (hasActiveDownload.value) return;
     await deleteDataset(name);
     // 清除对应的下载任务记录
-    const task = getDownloadTask("dataset", name);
-    if (task) clearDownloadTask(task);
+    const existingTask = getDownloadTask("dataset", name);
+    if (existingTask) clearDownloadTask(existingTask);
     allDatasets.value = allDatasets.value.filter((d) => d.name !== name);
   };
 
@@ -179,12 +184,13 @@ function DatasetList() {
 
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[760px] table-fixed text-sm">
+          <table class="w-full min-w-[860px] table-fixed text-sm">
             <colgroup>
-              <col class="w-[30%]" />
-              <col class="w-[12%]" />
-              <col class="w-[12%]" />
               <col class="w-[28%]" />
+              <col class="w-[12%]" />
+              <col class="w-[12%]" />
+              <col class="w-[16%]" />
+              <col class="w-[14%]" />
               <col class="w-[10%]" />
               <col class="w-[8%]" />
             </colgroup>
@@ -194,6 +200,7 @@ function DatasetList() {
                 <th class="px-4 py-3 font-medium">{t("ds.origin")}</th>
                 <SortHeader label={t("ds.fileSize")} field="size" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
                 <th class="px-4 py-3 font-medium">{t("downloads.progress")}</th>
+                <th class="px-4 py-3 font-medium">{t("downloads.status")}</th>
                 <SortHeader label={t("ds.dateTime")} field="modified_at" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
                 <th class="px-4 py-3 font-medium text-right">{t("ds.operation")}</th>
               </tr>
@@ -201,7 +208,7 @@ function DatasetList() {
             <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} class="text-center py-12 text-gray-400">
+                <td colSpan={7} class="text-center py-12 text-gray-400">
                   {t("ds.noDatasets")}
                 </td>
               </tr>
@@ -226,14 +233,17 @@ function DatasetList() {
                     </span>
                   </td>
                   <td class="px-4 py-3 min-w-0">
-                    <DownloadTableCell task={task} onComplete={loadDatasets} />
+                    <DownloadTableCell task={task} onComplete={loadDatasets} showActions={false} />
+                  </td>
+                  <td class="px-4 py-3 min-w-0">
+                    <DownloadStatusCell task={task} />
                   </td>
                   <td class="px-4 py-3 text-gray-500">
                     {new Date(d.modified_at).toLocaleDateString("en-US", { day: "numeric", month: "long" })}
                   </td>
                   <td class="px-4 py-3">
                     <div class="flex items-center justify-end gap-3">
-                      <button disabled={downloading || downloadOnly} onClick={() => handleDelete(d.name)} class="text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                      <button disabled={downloading && !downloadOnly} onClick={() => void handleDelete(d.name, task, downloadOnly)} class="text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                         {t("ds.delete")}
                       </button>
                     </div>

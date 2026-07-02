@@ -3,7 +3,7 @@ import { computed, signal } from "@preact/signals";
 import { deleteModel, getPs, loadModel, searchLocalModels, uploadLocalModel } from "../api/client";
 import type { LoadModelOptions, LocalModelUploadFile, ModelInfo, RunningModel } from "../api/client";
 import { locale, t } from "../i18n";
-import { DownloadTableCell } from "../components/DownloadProgressPanel";
+import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { isImageGenerationModel } from "../utils/imageModels";
 import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
@@ -394,9 +394,14 @@ export function Library() {
     return () => window.clearTimeout(timeout);
   }, [searchQuery.value, formatFilter.value]);
 
-  const handleDelete = async (name: string) => {
-    if (hasActiveDownload.value) return;
+  const handleDelete = async (name: string, task?: DownloadTask, downloadOnly = false) => {
     if (!confirm(t("lib.deleteConfirm", name))) return;
+    if (downloadOnly && task) {
+      clearDownloadTask(task);
+      await loadModels();
+      return;
+    }
+    if (hasActiveDownload.value) return;
     await deleteModel(name);
     for (const task of getDownloadTasks("model")) {
       if (task.name === name || localModelMatchesDownloadTask({ name, model: name }, task)) {
@@ -590,15 +595,16 @@ export function Library() {
 
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[1080px] table-fixed text-sm">
+          <table class="w-full min-w-[980px] table-fixed text-sm">
             <colgroup>
-              <col class="w-[22%]" />
-              <col class="w-[12%]" />
-              <col class="w-[11%]" />
+              <col class="w-[23%]" />
+              <col class="w-[9%]" />
               <col class="w-[10%]" />
-              <col class="w-[19%]" />
-              <col class="w-[12%]" />
-              <col class="w-[14%]" />
+              <col class="w-[9%]" />
+              <col class="w-[10%]" />
+              <col class="w-[10%]" />
+              <col class="w-[11%]" />
+              <col class="w-[18%]" />
             </colgroup>
             <thead>
               <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50 whitespace-nowrap">
@@ -607,6 +613,7 @@ export function Library() {
                 <th class="px-4 py-3 font-medium">{t("lib.origin")}</th>
                 <SortHeader label={t("lib.fileSize")} field="size" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
                 <th class="px-4 py-3 font-medium">{t("downloads.progress")}</th>
+                <th class="px-4 py-3 font-medium">{t("downloads.status")}</th>
                 <SortHeader label={t("lib.dateTime")} field="modified_at" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
                 <th class="px-4 py-3 font-medium text-right">{t("lib.operation")}</th>
               </tr>
@@ -614,13 +621,13 @@ export function Library() {
             <tbody>
             {modelsLoading.value ? (
               <tr>
-                <td colSpan={7} class="text-center py-12 text-gray-400">
+                <td colSpan={8} class="text-center py-12 text-gray-400">
                   {t("lib.searching")}
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={7} class="text-center py-12 text-gray-400">
+                <td colSpan={8} class="text-center py-12 text-gray-400">
                   {hasActiveFilters ? t("lib.noSearchResults") : t("lib.noModels")}
                 </td>
               </tr>
@@ -653,7 +660,10 @@ export function Library() {
                     </span>
                   </td>
                   <td class="px-4 py-3 min-w-0">
-                    <DownloadTableCell task={task} onComplete={() => void loadModels()} />
+                    <DownloadTableCell task={task} onComplete={() => void loadModels()} showActions={false} />
+                  </td>
+                  <td class="px-4 py-3 min-w-0">
+                    <DownloadStatusCell task={task} />
                   </td>
                   <td class="px-4 py-3 text-gray-500 whitespace-nowrap">
                     {new Date(m.modified_at).toLocaleDateString("en-US", { day: "numeric", month: "long" })}
@@ -661,12 +671,13 @@ export function Library() {
                   <td class="px-4 py-3">
                     <div class="flex items-center justify-end gap-3 whitespace-nowrap">
                       <button
-                        disabled={task?.status === "downloading"}
+                        disabled={!downloadOnly && task?.status === "downloading"}
                         onClick={() => {
-                          if (task && task.status !== "downloading") {
-                            clearDownloadTask(task);
+                          if (downloadOnly) {
+                            void handleDelete(m.name, task, true);
+                            return;
                           }
-                          handleDelete(m.name);
+                          void handleDelete(m.name);
                         }}
                         class="shrink-0 text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
