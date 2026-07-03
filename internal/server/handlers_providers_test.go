@@ -858,6 +858,26 @@ func TestCloudProviderTagsManageModels(t *testing.T) {
 		t.Fatalf("selected cloud models = %#v, want renamed model-a only", resp.Models)
 	}
 
+	req = httptest.NewRequest(http.MethodPut, "/api/tags/manage?provider=csghub", strings.NewReader(`{"models":[]}`))
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageReplace(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cloud clear selections status = %d body=%s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=csghub", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cloud selected tags after clear status = %d body=%s", w.Code, w.Body.String())
+	}
+	resp = api.TagsResponse{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode cleared cloud tags: %v", err)
+	}
+	if len(resp.Models) != 0 {
+		t.Fatalf("cleared cloud models = %#v, want none", resp.Models)
+	}
+
 	req = httptest.NewRequest(http.MethodPatch, "/api/tags/manage?provider=csghub&model=cloud%2Fmodel-b", strings.NewReader(`{"model":"cloud-alias","display_name":"Cloud Alias"}`))
 	w = httptest.NewRecorder()
 	s.handleProviderTagsManageUpdate(w, req)

@@ -189,7 +189,7 @@ func (s *Server) isCloudModelProviderAlias(provider string) bool {
 
 func (s *Server) applyCloudProviderModelSelections(models []api.ModelInfo) []api.ModelInfo {
 	selections := config.GetProviderModelSelections(config.DefaultCloudProviderName)
-	if len(selections) == 0 {
+	if len(selections) == 0 && !config.HasProviderModelSelections(config.DefaultCloudProviderName) {
 		return models
 	}
 

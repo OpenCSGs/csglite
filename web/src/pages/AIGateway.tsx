@@ -540,6 +540,20 @@ function toggleProviderModel(modelID: string, checked: boolean) {
   };
 }
 
+function selectAllProviderModels() {
+  providerModelSelected.value = {
+    ...providerModelSelected.value,
+    ...Object.fromEntries(providerModelCatalog.value.map((model) => [model.model, true])),
+  };
+}
+
+function invertProviderModels() {
+  providerModelSelected.value = {
+    ...providerModelSelected.value,
+    ...Object.fromEntries(providerModelCatalog.value.map((model) => [model.model, !providerModelSelected.value[model.model]])),
+  };
+}
+
 function changeProviderModelDisplayName(modelID: string, value: string) {
   providerModelDisplayNames.value = {
     ...providerModelDisplayNames.value,
@@ -681,6 +695,8 @@ export function AIGateway() {
         onSave={() => void saveProviderForm()}
         onSaveModels={() => void saveProviderModels()}
         onToggleModel={toggleProviderModel}
+        onSelectAllModels={selectAllProviderModels}
+        onInvertModels={invertProviderModels}
         onChangeModelDisplayName={changeProviderModelDisplayName}
         onChangeName={(value) => (providerFormName.value = value)}
         onChangeBaseURL={(value) => (providerFormBaseURL.value = value)}
@@ -1459,6 +1475,8 @@ function ProviderDialog({
   onSave,
   onSaveModels,
   onToggleModel,
+  onSelectAllModels,
+  onInvertModels,
   onChangeModelDisplayName,
   onChangeName,
   onChangeBaseURL,
@@ -1487,6 +1505,8 @@ function ProviderDialog({
   onSave: () => void;
   onSaveModels: () => void;
   onToggleModel: (modelID: string, checked: boolean) => void;
+  onSelectAllModels: () => void;
+  onInvertModels: () => void;
   onChangeModelDisplayName: (modelID: string, value: string) => void;
   onChangeName: (value: string) => void;
   onChangeBaseURL: (value: string) => void;
@@ -1571,31 +1591,49 @@ function ProviderDialog({
             ) : modelCatalog.length === 0 ? (
               <p class="text-sm text-gray-500">{modelsError || t("settings.providerModelsEmpty")}</p>
             ) : (
-              <div class="max-h-80 space-y-2 overflow-y-auto pr-1">
-                {modelCatalog.map((model) => (
-                  <div key={model.model} class="flex items-start gap-3 rounded-lg border border-gray-100 px-3 py-2 hover:bg-gray-50">
-                    <input
-                      type="checkbox"
-                      checked={!!modelSelected[model.model]}
-                      onChange={(e) => onToggleModel(model.model, (e.target as HTMLInputElement).checked)}
-                      class="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span class="min-w-0 flex-1">
-                      <span class="flex min-w-0 flex-wrap items-center gap-1.5">
-                        <span class="truncate text-sm font-medium text-gray-900">{providerModelLabel(model)}</span>
-                        <ProviderModelModalityBadges model={model} showPipelineTag showInputs showOutputs />
-                      </span>
-                      <span class="block truncate text-xs text-gray-500">{model.model}</span>
+              <div class="space-y-3">
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onSelectAllModels}
+                    class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    {t("settings.providerModelsSelectAll")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onInvertModels}
+                    class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 transition-colors hover:bg-gray-50"
+                  >
+                    {t("settings.providerModelsInvert")}
+                  </button>
+                </div>
+                <div class="max-h-80 space-y-2 overflow-y-auto pr-1">
+                  {modelCatalog.map((model) => (
+                    <div key={model.model} class="flex items-start gap-3 rounded-lg border border-gray-100 px-3 py-2 hover:bg-gray-50">
                       <input
-                        class="mt-2 w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
-                        value={modelDisplayNames[model.model] || ""}
-                        disabled={!modelSelected[model.model]}
-                        onInput={(e) => onChangeModelDisplayName(model.model, (e.target as HTMLInputElement).value)}
-                        placeholder={t("settings.providerModelDisplayNamePlaceholder")}
+                        type="checkbox"
+                        checked={!!modelSelected[model.model]}
+                        onChange={(e) => onToggleModel(model.model, (e.target as HTMLInputElement).checked)}
+                        class="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                       />
-                    </span>
-                  </div>
-                ))}
+                      <span class="min-w-0 flex-1">
+                        <span class="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <span class="truncate text-sm font-medium text-gray-900">{providerModelLabel(model)}</span>
+                          <ProviderModelModalityBadges model={model} showPipelineTag showInputs showOutputs />
+                        </span>
+                        <span class="block truncate text-xs text-gray-500">{model.model}</span>
+                        <input
+                          class="mt-2 w-full rounded-md border border-gray-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+                          value={modelDisplayNames[model.model] || ""}
+                          disabled={!modelSelected[model.model]}
+                          onInput={(e) => onChangeModelDisplayName(model.model, (e.target as HTMLInputElement).value)}
+                          placeholder={t("settings.providerModelDisplayNamePlaceholder")}
+                        />
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {modelsError && modelCatalog.length > 0 && <p class="mt-3 text-sm text-red-600">{modelsError}</p>}

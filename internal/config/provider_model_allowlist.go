@@ -98,6 +98,25 @@ func GetProviderModelSelections(providerID string) []ProviderModelSelection {
 	return copyProviderModelSelections(state.Providers[strings.TrimSpace(providerID)])
 }
 
+func HasProviderModelSelections(providerID string) bool {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return false
+	}
+
+	providerModelAllowlistMu.RLock()
+	if providerModelAllowlist.Providers != nil {
+		_, ok := providerModelAllowlist.Providers[providerID]
+		providerModelAllowlistMu.RUnlock()
+		return ok
+	}
+	providerModelAllowlistMu.RUnlock()
+
+	state, _ := LoadProviderModelAllowlist()
+	_, ok := state.Providers[providerID]
+	return ok
+}
+
 func ReplaceProviderModelAllowlist(providerID string, models []string) error {
 	selections := make([]ProviderModelSelection, 0, len(models))
 	for _, model := range models {
