@@ -178,14 +178,22 @@ func TestRuntimeManagersUseSeparateRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	embeddingRuntime, err := NewEmbeddingRuntimeManager()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	wantImage := filepath.Join(home, config.AppDir, runtimeDirName)
 	wantASR := filepath.Join(home, config.AppDir, asrRuntimeDirName)
+	wantEmbedding := filepath.Join(home, config.AppDir, embeddingRuntimeDirName)
 	if imageRuntime.RootDir() != wantImage {
 		t.Fatalf("image runtime root = %q, want %q", imageRuntime.RootDir(), wantImage)
 	}
 	if asrRuntime.RootDir() != wantASR {
 		t.Fatalf("ASR runtime root = %q, want %q", asrRuntime.RootDir(), wantASR)
+	}
+	if embeddingRuntime.RootDir() != wantEmbedding {
+		t.Fatalf("embedding runtime root = %q, want %q", embeddingRuntime.RootDir(), wantEmbedding)
 	}
 }
 
@@ -193,6 +201,7 @@ func TestRuntimeManagersShareUVCache(t *testing.T) {
 	root := t.TempDir()
 	imageRuntime := NewRuntimeManagerAt(filepath.Join(root, runtimeDirName))
 	asrRuntime := NewRuntimeManagerAt(filepath.Join(root, asrRuntimeDirName))
+	embeddingRuntime := NewRuntimeManagerAt(filepath.Join(root, embeddingRuntimeDirName))
 
 	want := "UV_CACHE_DIR=" + filepath.Join(root, uvCacheDirName)
 	if got := imageRuntime.uvInstallEnv(); len(got) != 1 || got[0] != want {
@@ -200,6 +209,24 @@ func TestRuntimeManagersShareUVCache(t *testing.T) {
 	}
 	if got := asrRuntime.uvInstallEnv(); len(got) != 1 || got[0] != want {
 		t.Fatalf("ASR runtime uv env = %#v, want %#v", got, []string{want})
+	}
+	if got := embeddingRuntime.uvInstallEnv(); len(got) != 1 || got[0] != want {
+		t.Fatalf("embedding runtime uv env = %#v, want %#v", got, []string{want})
+	}
+}
+
+func TestEmbeddingRuntimeInstallCommand(t *testing.T) {
+	manager := NewRuntimeManagerAt(filepath.Join(t.TempDir(), embeddingRuntimeDirName))
+	cmd := manager.EmbeddingInstallCommand(HardwareCPU)
+	for _, want := range []string{"transformers>=5.0", "peft", "pillow", "numpy", "librosa", "soundfile"} {
+		if !hasString(cmd, want) {
+			t.Fatalf("embedding install command missing %q: %#v", want, cmd)
+		}
+	}
+	for _, unwanted := range []string{"diffusers>=0.34.0", "funasr", "sentence-transformers", "vllm==0.20.1", "torchcodec"} {
+		if hasString(cmd, unwanted) {
+			t.Fatalf("embedding install command should not include %q by default: %#v", unwanted, cmd)
+		}
 	}
 }
 

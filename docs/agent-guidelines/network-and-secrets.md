@@ -30,9 +30,13 @@ Do not push to only one remote unless the user explicitly requests it.
 
 - When a task requires GitLab API authentication, always load the token from
   `local/secrets.env`.
-- Preferred source: `local/secrets.env` with `GITLAB_TOKEN="glpat-..."`.
+- Preferred source: the main checkout's `local/secrets.env` with
+  `GITLAB_TOKEN="glpat-..."`.
 - If `GITLAB_TOKEN` is unset, source `local/secrets.env` before running GitLab
   API or release upload commands.
+- When publishing from a clean release worktree or temporary checkout, source
+  the main branch checkout's `local/secrets.env` explicitly before GitLab API or
+  release upload commands.
 - Never hardcode, paste, or commit GitLab tokens in commands, code, docs, commit
   messages, or chat output.
 - Keep `local/secrets.env` local-only; it is gitignored.

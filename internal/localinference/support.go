@@ -99,6 +99,14 @@ func llamaSupport(format, architecture string) api.LocalInferenceSupport {
 				RuntimeArchitecture: runtimeArch,
 			}
 		}
+		if model.IsPythonEmbeddingArchitecture(normalizedArch) {
+			return api.LocalInferenceSupport{
+				Supported:    true,
+				Runtime:      "python-embedding",
+				Mode:         "embedding",
+				Architecture: normalizedArch,
+			}
+		}
 	}
 
 	return unsupported(normalizedArch)
@@ -111,9 +119,6 @@ func convertibleRuntimeArchitecture(architecture string) (string, bool) {
 	}
 	if runtimeArch, ok := convert.SupportedHFArchitecture(architecture); ok {
 		return runtimeArch, true
-	}
-	if model.IsEmbeddingArchitecture(architecture) || model.IsVisionArchitecture(architecture) {
-		return strings.ToLower(architecture), true
 	}
 	return "", false
 }

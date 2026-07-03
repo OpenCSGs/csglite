@@ -415,7 +415,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		} else if asrModel {
 			_, err = s.getOrLoadASREngine(context.Background(), req.Model)
 		} else if embeddingModel {
-			_, err = s.getOrLoadEmbeddingEngineWithOpts(req.Model, requestedNumCtx, requestedNGPULayers, requestedDType)
+			_, err = s.getOrLoadEmbeddingEngineWithOpts(r.Context(), req.Model, requestedNumCtx, requestedNGPULayers, requestedDType)
 		} else {
 			_, err = s.getOrLoadEngineFull(req.Model, nil, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
 		}
@@ -517,7 +517,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 			_, err = s.getOrLoadASREngine(context.Background(), req.Model)
 		}
 	} else if embeddingModel {
-		_, err = s.getOrLoadEngineFullMode(req.Model, progress, requestedNumCtx, 0, requestedNGPULayers, "", "", requestedDType, engineModeEmbed)
+		_, err = s.getOrLoadEmbeddingEngineWithProgress(context.Background(), req.Model, progress, requestedNumCtx, requestedNGPULayers, requestedDType)
 	} else {
 		_, err = s.getOrLoadEngineWithProgressAndOpts(req.Model, progress, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
 	}

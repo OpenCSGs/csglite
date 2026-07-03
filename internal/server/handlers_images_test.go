@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/model"
@@ -36,6 +37,34 @@ func (e *fakeImageEngine) Generate(_ context.Context, req api.OpenAIImagesGenera
 			B64JSON: "ZmFrZS1wbmc=",
 		}},
 	}, nil
+}
+
+func newCloudCatalogAndInferenceServer(t *testing.T, modelID, task, inferencePath string, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"object": "list",
+				"data": []map[string]any{
+					{
+						"id":           modelID,
+						"task":         task,
+						"display_name": modelID,
+					},
+				},
+			})
+		case inferencePath:
+			handler(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func attachCloudTestService(s *Server, baseURL string) {
+	s.cloud = cloud.NewService(baseURL)
 }
 
 func testPNGBase64(t *testing.T) string {
@@ -284,6 +313,72 @@ func TestHandleOpenAIImagesGenerationsSupportsCloudModels(t *testing.T) {
 	}
 }
 
+func TestHandleOpenAIImagesGenerationsFallsBackToCloudModelWithoutSource(t *testing.T) {
+	cloudRequests := 0
+	apiServer := newCloudCatalogAndInferenceServer(t, "Qwen/Qwen-Image-2512:s-test", "text-to-image", "/v1/images/generations", func(w http.ResponseWriter, r *http.Request) {
+		cloudRequests++
+		var raw map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if raw["model"] != "Qwen/Qwen-Image-2512:s-test" || raw["prompt"] != "a cat" {
+			t.Fatalf("cloud request = %#v, want image model and prompt", raw)
+		}
+		if _, ok := raw["source"]; ok {
+			t.Fatalf("cloud request should not forward source: %#v", raw)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.OpenAIImagesGenerationResponse{
+			Data: []api.OpenAIImage{{B64JSON: "YXV0by1jbG91ZC1wbmc="}},
+		})
+	})
+	defer apiServer.Close()
+
+	cfg := &config.Config{ModelDir: t.TempDir(), AIGatewayURL: apiServer.URL, OpenCSGAPIKey: "test-key"}
+	s := New(cfg, "test")
+	attachCloudTestService(s, apiServer.URL)
+	body := `{"model":"Qwen/Qwen-Image-2512:s-test","prompt":"a cat","size":"1024x1024"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIImagesGenerations(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	if cloudRequests != 1 {
+		t.Fatalf("cloud requests = %d, want 1", cloudRequests)
+	}
+	if !strings.Contains(w.Body.String(), "YXV0by1jbG91ZC1wbmc=") {
+		t.Fatalf("response body = %s", w.Body.String())
+	}
+}
+
+func TestHandleOpenAIImagesGenerationsLocalSourceDoesNotFallbackToCloudModel(t *testing.T) {
+	cloudRequests := 0
+	apiServer := newCloudCatalogAndInferenceServer(t, "Qwen/Qwen-Image-2512:s-test", "text-to-image", "/v1/images/generations", func(w http.ResponseWriter, r *http.Request) {
+		cloudRequests++
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	defer apiServer.Close()
+
+	cfg := &config.Config{ModelDir: t.TempDir(), AIGatewayURL: apiServer.URL, OpenCSGAPIKey: "test-key"}
+	s := New(cfg, "test")
+	attachCloudTestService(s, apiServer.URL)
+	body := `{"model":"Qwen/Qwen-Image-2512:s-test","source":"local","prompt":"a cat","size":"1024x1024"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIImagesGenerations(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	if cloudRequests != 0 {
+		t.Fatalf("cloud requests = %d, want 0", cloudRequests)
+	}
+}
+
 func TestHandleOpenAIImagesGenerationsRejectsTextModel(t *testing.T) {
 	cfg := &config.Config{ModelDir: t.TempDir()}
 	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
@@ -359,6 +454,50 @@ func TestHandleImageGenerationJobSupportsCloudModels(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if job.Status != "succeeded" || job.Result == nil || len(job.Result.Data) != 1 || job.Result.Data[0].B64JSON != "Y2xvdWQtam9i" {
+		t.Fatalf("job = %#v, want succeeded cloud image result", job)
+	}
+}
+
+func TestHandleImageGenerationJobFallsBackToCloudModelWithoutSource(t *testing.T) {
+	apiServer := newCloudCatalogAndInferenceServer(t, "Qwen/Qwen-Image-2512:s-test", "text-to-image", "/v1/images/generations", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.OpenAIImagesGenerationResponse{
+			Data: []api.OpenAIImage{{B64JSON: "YXV0by1jbG91ZC1qb2I="}},
+		})
+	})
+	defer apiServer.Close()
+
+	cfg := &config.Config{ModelDir: t.TempDir(), AIGatewayURL: apiServer.URL, OpenCSGAPIKey: "test-key"}
+	s := New(cfg, "test")
+	attachCloudTestService(s, apiServer.URL)
+	body := `{"model":"Qwen/Qwen-Image-2512:s-test","prompt":"a cat","size":"1024x1024","response_format":"b64_json"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/images/jobs", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleImageGenerationJobCreate(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d body=%s", w.Code, w.Body.String())
+	}
+	var job api.ImageGenerationJobResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		req = httptest.NewRequest(http.MethodGet, "/api/images/jobs/"+job.ID, nil)
+		req.SetPathValue("jobID", job.ID)
+		w = httptest.NewRecorder()
+		s.handleImageGenerationJobGet(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("get status = %d body=%s", w.Code, w.Body.String())
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+			t.Fatalf("decode get response: %v", err)
+		}
+		if job.Status == "succeeded" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if job.Status != "succeeded" || job.Result == nil || len(job.Result.Data) != 1 || job.Result.Data[0].B64JSON != "YXV0by1jbG91ZC1qb2I=" {
 		t.Fatalf("job = %#v, want succeeded cloud image result", job)
 	}
 }

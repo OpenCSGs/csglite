@@ -147,8 +147,8 @@ export interface MarketplaceLocalModelStatus {
 
 export interface LocalInferenceSupport {
   supported: boolean;
-  runtime?: "llama" | "diffusers" | "python-asr";
-  mode: "none" | "direct" | "convert" | "image" | "asr";
+  runtime?: "llama" | "diffusers" | "python-asr" | "python-embedding";
+  mode: "none" | "direct" | "convert" | "image" | "asr" | "embedding";
   architecture?: string;
   runtime_architecture?: string;
 }
@@ -226,6 +226,8 @@ export interface ImageRuntimeStatus {
 }
 
 export type ASRRuntimeStatus = ImageRuntimeStatus;
+
+export type EmbeddingRuntimeStatus = ImageRuntimeStatus;
 
 export interface AudioTranscriptionRequest {
   model: string;
@@ -801,6 +803,18 @@ export async function getASRRuntimeStatus(): Promise<ASRRuntimeStatus> {
 
 export async function installASRRuntime(options?: { upgrade_packages?: boolean }): Promise<ASRRuntimeStatus> {
   return fetchJSON<ASRRuntimeStatus>("/api/asr-runtime/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ upgrade_packages: options?.upgrade_packages || undefined }),
+  });
+}
+
+export async function getEmbeddingRuntimeStatus(): Promise<EmbeddingRuntimeStatus> {
+  return fetchJSON<EmbeddingRuntimeStatus>("/api/embedding-runtime");
+}
+
+export async function installEmbeddingRuntime(options?: { upgrade_packages?: boolean }): Promise<EmbeddingRuntimeStatus> {
+  return fetchJSON<EmbeddingRuntimeStatus>("/api/embedding-runtime/install", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ upgrade_packages: options?.upgrade_packages || undefined }),

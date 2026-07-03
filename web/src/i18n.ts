@@ -139,6 +139,7 @@ const en: Record<string, string> = {
   "mp.localInferenceConvert": "Supported (auto-converts on first run)",
   "mp.localInferenceImage": "Supported (text-to-image runtime)",
   "mp.localInferenceASR": "Supported (ASR runtime)",
+  "mp.localInferenceEmbedding": "Supported (embedding runtime)",
   "mp.localInferenceNone": "Not supported yet",
 
   // Downloads
@@ -669,6 +670,7 @@ const en: Record<string, string> = {
   "lib.localInferenceConvert": "Supported (auto-converts on first run)",
   "lib.localInferenceImage": "Supported (text-to-image runtime)",
   "lib.localInferenceASR": "Supported (ASR runtime)",
+  "lib.localInferenceEmbedding": "Supported (embedding runtime)",
   "lib.localInferenceNone": "Not supported yet",
   "lib.downloadMethods": "Download Methods",
   "lib.downloadHint": "Fetch the manifest first, then download each file using its download_url. File endpoints support HEAD and Range for resumable downloads.",
@@ -1132,6 +1134,7 @@ const zh: Record<string, string> = {
   "mp.localInferenceConvert": "支持（首次运行时会自动转换）",
   "mp.localInferenceImage": "支持（文生图运行时）",
   "mp.localInferenceASR": "支持（ASR 语音识别运行时）",
+  "mp.localInferenceEmbedding": "支持（Embedding 运行时）",
   "mp.localInferenceNone": "暂不支持",
 
   // Downloads
@@ -1660,6 +1663,7 @@ const zh: Record<string, string> = {
   "lib.localInferenceConvert": "支持（首次运行时会自动转换）",
   "lib.localInferenceImage": "支持（文生图运行时）",
   "lib.localInferenceASR": "支持（ASR 语音识别运行时）",
+  "lib.localInferenceEmbedding": "支持（Embedding 运行时）",
   "lib.localInferenceNone": "暂不支持",
   "lib.downloadMethods": "下载方式",
   "lib.downloadHint": "建议先获取 manifest，再根据其中每个文件的 download_url 逐个下载。文件接口支持 HEAD 和 Range，可用于断点续传。",

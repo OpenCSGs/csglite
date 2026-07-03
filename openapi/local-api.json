@@ -4057,6 +4057,60 @@
           }
         }
       }
+    },
+    "/api/embedding-runtime": {
+      "get": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Get embedding runtime status",
+        "operationId": "getEmbeddingRuntimeStatus",
+        "responses": {
+          "200": {
+            "description": "Shared Python embedding runtime status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/embedding-runtime/install": {
+      "post": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Install embedding runtime packages",
+        "operationId": "installEmbeddingRuntime",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageRuntimeInstallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated embedding runtime status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeStatus"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
     }
   },
   "components": {

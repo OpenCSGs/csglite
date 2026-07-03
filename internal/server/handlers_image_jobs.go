@@ -173,6 +173,7 @@ func (s *Server) runImageGenerationJob(ctx context.Context, job *imageGeneration
 	var resp *api.OpenAIImagesGenerationResponse
 	var err error
 	if imageGenerationUsesCloud(job.req) {
+		job.req.Source = "cloud"
 		if strings.TrimSpace(job.req.Image) != "" || len(job.req.Images) > 0 {
 			resp, err = s.generateCloudImageEdit(ctx, imageInferenceRequestFromJob(job.req))
 		} else {
@@ -185,6 +186,13 @@ func (s *Server) runImageGenerationJob(ctx context.Context, job *imageGeneration
 			resp, err = eng.Generate(ctx, job.req)
 			if err == nil {
 				s.touchImageEngine(job.req.Model)
+			}
+		} else if s.openAIImageInferenceCanFallbackToCloud(ctx, job.req, strings.TrimSpace(job.req.Image) != "" || len(job.req.Images) > 0) {
+			job.req.Source = "cloud"
+			if strings.TrimSpace(job.req.Image) != "" || len(job.req.Images) > 0 {
+				resp, err = s.generateCloudImageEdit(ctx, imageInferenceRequestFromJob(job.req))
+			} else {
+				resp, err = s.generateCloudImage(ctx, job.req)
 			}
 		}
 	}

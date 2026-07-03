@@ -85,9 +85,11 @@ func (s *Server) handleOpenAIImagesEdits(w http.ResponseWriter, r *http.Request)
 func (s *Server) runOpenAIImageInference(r *http.Request, inferenceReq imageInferenceRequest) (*api.OpenAIImagesGenerationResponse, error) {
 	req := inferenceReq.toWorkerRequest()
 	if imageGenerationUsesCloud(req) {
+		req.Source = "cloud"
 		var resp *api.OpenAIImagesGenerationResponse
 		var err error
 		if len(inferenceReq.images) > 0 {
+			inferenceReq.OpenAIImagesGenerationRequest.Source = "cloud"
 			resp, err = s.generateCloudImageEdit(r.Context(), inferenceReq)
 		} else {
 			resp, err = s.generateCloudImage(r.Context(), req)
@@ -104,6 +106,24 @@ func (s *Server) runOpenAIImageInference(r *http.Request, inferenceReq imageInfe
 
 	eng, err := s.getOrLoadImageEngine(r.Context(), req.Model)
 	if err != nil {
+		if s.openAIImageInferenceCanFallbackToCloud(r.Context(), req, len(inferenceReq.images) > 0) {
+			req.Source = "cloud"
+			var resp *api.OpenAIImagesGenerationResponse
+			if len(inferenceReq.images) > 0 {
+				inferenceReq.OpenAIImagesGenerationRequest.Source = "cloud"
+				resp, err = s.generateCloudImageEdit(r.Context(), inferenceReq)
+			} else {
+				resp, err = s.generateCloudImage(r.Context(), req)
+			}
+			if err != nil {
+				return nil, err
+			}
+			if resp.Created == 0 {
+				resp.Created = time.Now().Unix()
+			}
+			s.recordAPIUsage(r, req.Model, req.Source, 0, 0)
+			return resp, nil
+		}
 		return nil, err
 	}
 	resp, err := eng.Generate(r.Context(), req)
@@ -376,6 +396,21 @@ func imageGenerationUsesCloud(req api.OpenAIImagesGenerationRequest) bool {
 	return strings.EqualFold(strings.TrimSpace(req.Source), "cloud")
 }
 
+func imageGenerationForcesLocal(req api.OpenAIImagesGenerationRequest) bool {
+	return strings.EqualFold(strings.TrimSpace(req.Source), "local")
+}
+
+func (s *Server) openAIImageInferenceCanFallbackToCloud(ctx context.Context, req api.OpenAIImagesGenerationRequest, editing bool) bool {
+	if imageGenerationForcesLocal(req) {
+		return false
+	}
+	pipelineTag := "text-to-image"
+	if editing {
+		pipelineTag = "image-to-image"
+	}
+	return s.cloudModelListContainsMatching(ctx, req.Model, cloudPipelineTagMatcher(pipelineTag))
+}
+
 func (s *Server) generateCloudImage(ctx context.Context, req api.OpenAIImagesGenerationRequest) (*api.OpenAIImagesGenerationResponse, error) {
 	apiKey, err := s.cloudAPIKey(ctx)
 	if err != nil {
@@ -550,6 +585,38 @@ func (s *Server) handleImageRuntimeInstall(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	status, err := manager.InstallWithProgressOptions(r.Context(), nil, req.UpgradePackages)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error":  err.Error(),
+			"status": status,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+// GET /api/embedding-runtime -- report the lazy embedding runtime status.
+func (s *Server) handleEmbeddingRuntimeStatus(w http.ResponseWriter, r *http.Request) {
+	manager, err := imagegen.NewEmbeddingRuntimeManager()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, manager.EmbeddingStatus(r.Context()))
+}
+
+// POST /api/embedding-runtime/install -- install or repair the embedding runtime.
+func (s *Server) handleEmbeddingRuntimeInstall(w http.ResponseWriter, r *http.Request) {
+	var req api.ImageRuntimeInstallRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	manager, err := imagegen.NewEmbeddingRuntimeManager()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	status, err := manager.InstallEmbeddingWithProgressOptions(r.Context(), nil, req.UpgradePackages)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error":  err.Error(),

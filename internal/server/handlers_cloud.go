@@ -232,7 +232,7 @@ func (s *Server) getEmbeddingEngine(ctx context.Context, modelID, source string,
 		return s.newCloudEngine(ctx, modelID)
 	}
 
-	eng, err := s.getOrLoadEmbeddingEngineWithOpts(modelID, numCtx, nGPULayers, dtype)
+	eng, err := s.getOrLoadEmbeddingEngineWithOpts(ctx, modelID, numCtx, nGPULayers, dtype)
 	if err == nil {
 		return eng, nil
 	}
@@ -339,4 +339,43 @@ func modelInfoListContains(models []api.ModelInfo, modelID string) bool {
 		}
 	}
 	return false
+}
+
+func (s *Server) cloudModelListContainsMatching(ctx context.Context, modelID string, matches func(api.ModelInfo) bool) bool {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return false
+	}
+	contains := func(models []api.ModelInfo) bool {
+		for _, item := range models {
+			if strings.TrimSpace(item.Model) == modelID && matches(item) {
+				return true
+			}
+		}
+		return false
+	}
+
+	models, err := s.listCloudModels(ctx, false)
+	if err == nil && contains(models) {
+		return true
+	}
+	if s == nil || s.cloud == nil {
+		return false
+	}
+	models, err = s.cloud.RefreshChatModels(ctx)
+	return err == nil && contains(models)
+}
+
+func cloudPipelineTagMatcher(pipelineTags ...string) func(api.ModelInfo) bool {
+	allowed := make(map[string]struct{}, len(pipelineTags))
+	for _, tag := range pipelineTags {
+		tag = strings.TrimSpace(strings.ToLower(tag))
+		if tag != "" {
+			allowed[tag] = struct{}{}
+		}
+	}
+	return func(item api.ModelInfo) bool {
+		_, ok := allowed[strings.TrimSpace(strings.ToLower(item.PipelineTag))]
+		return ok
+	}
 }

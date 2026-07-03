@@ -191,6 +191,23 @@ func TestDetectPipelineTagRegisteredEmbeddingArchitecture(t *testing.T) {
 	}
 }
 
+func TestPythonEmbeddingArchitectures(t *testing.T) {
+	for _, arch := range []string{
+		"JinaEmbeddingsV5Model",
+		"JinaEmbeddingsV5OmniModel",
+		"LlavaEuroBertAudioForEmbedding",
+	} {
+		t.Run(arch, func(t *testing.T) {
+			if !IsPythonEmbeddingArchitecture(arch) {
+				t.Fatalf("IsPythonEmbeddingArchitecture(%q) = false, want true", arch)
+			}
+		})
+	}
+	if IsPythonEmbeddingArchitecture("BertModel") {
+		t.Fatal("BertModel should keep using the llama.cpp embedding path")
+	}
+}
+
 func TestDetectPipelineTagRegisteredVisionArchitecture(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["Idefics3ForConditionalGeneration"]}`), 0o644); err != nil {

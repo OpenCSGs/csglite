@@ -2,12 +2,15 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,6 +23,7 @@ import (
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/convert"
 	"github.com/opencsgs/csglite/internal/dataset"
+	"github.com/opencsgs/csglite/internal/embedding"
 	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
@@ -389,6 +393,16 @@ func loadedDTypeMatchesRequest(loaded, requested string) bool {
 
 var loadEngineWithProgress = inference.LoadEngineWithProgress
 var loadEmbeddingEngineWithProgress = inference.LoadEmbeddingEngineWithProgress
+var newPythonEmbeddingEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (inference.Engine, error) {
+	return embedding.NewPythonEngine(ctx, modelName, modelDir, runtimeManager)
+}
+var ensureEmbeddingRuntimeReady = func(ctx context.Context, runtimeManager *imagegen.RuntimeManager, progress imagegen.ProgressFunc, upgradePackages bool) error {
+	if status := runtimeManager.EmbeddingStatus(ctx); status.Ready && !upgradePackages {
+		return nil
+	}
+	_, err := runtimeManager.InstallEmbeddingWithProgressOptions(ctx, progress, upgradePackages)
+	return err
+}
 var newDiffusersEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (imagegen.Engine, error) {
 	return imagegen.NewDiffusersEngine(ctx, modelName, modelDir, runtimeManager)
 }
@@ -404,8 +418,131 @@ func (s *Server) getOrLoadEngineFull(modelID string, progress inference.ConvertP
 	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, engineModeChat)
 }
 
-func (s *Server) getOrLoadEmbeddingEngineWithOpts(modelID string, numCtx, nGPULayers int, dtype string) (inference.Engine, error) {
-	return s.getOrLoadEngineFullMode(modelID, nil, numCtx, 0, nGPULayers, "", "", dtype, engineModeEmbed)
+func (s *Server) getOrLoadEmbeddingEngineWithOpts(ctx context.Context, modelID string, numCtx, nGPULayers int, dtype string) (inference.Engine, error) {
+	return s.getOrLoadEmbeddingEngineWithProgress(ctx, modelID, nil, numCtx, nGPULayers, dtype)
+}
+
+func (s *Server) getOrLoadEmbeddingEngineWithProgress(ctx context.Context, modelID string, progress inference.ConvertProgressFunc, numCtx, nGPULayers int, dtype string) (inference.Engine, error) {
+	if s.shouldUsePythonEmbeddingRuntime(modelID) {
+		return s.getOrLoadPythonEmbeddingEngine(ctx, modelID)
+	}
+	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, 0, nGPULayers, "", "", dtype, engineModeEmbed)
+}
+
+func (s *Server) shouldUsePythonEmbeddingRuntime(modelID string) bool {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	modelDir, err := s.manager.ModelPath(modelID)
+	if err != nil {
+		return false
+	}
+	lm, err := s.manager.Get(modelID)
+	if err != nil || lm == nil {
+		return false
+	}
+	pipelineTag := s.resolvedLocalPipelineTag(modelID, strings.TrimSpace(lm.PipelineTag))
+	if !isEmbeddingPipelineTag(pipelineTag) {
+		return false
+	}
+	if lm.Format == model.FormatGGUF {
+		return false
+	}
+	if !convert.HasConvertibleHFWeights(modelDir) {
+		return false
+	}
+	arch := readLocalModelArchitecture(modelDir)
+	if arch == "" {
+		return false
+	}
+	return model.IsPythonEmbeddingArchitecture(arch) && !convert.IsSupportedHFArchitecture(arch)
+}
+
+func readLocalModelArchitecture(modelDir string) string {
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return ""
+	}
+	for _, arch := range cfg.Architectures {
+		if arch = strings.TrimSpace(arch); arch != "" {
+			return arch
+		}
+	}
+	return ""
+}
+
+func (s *Server) getOrLoadPythonEmbeddingEngine(ctx context.Context, modelID string) (inference.Engine, error) {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	cacheKey := engineCacheKey(modelID, engineModeEmbed)
+
+	s.mu.RLock()
+	me, ok := s.engines[cacheKey]
+	s.mu.RUnlock()
+	if ok {
+		return me.engine, nil
+	}
+
+	modelDir, err := s.manager.ModelPath(modelID)
+	if err != nil {
+		return nil, fmt.Errorf("model %q not found locally; use 'csghub-lite pull %s' first", modelID, modelID)
+	}
+
+	for {
+		s.mu.Lock()
+		if me, ok := s.engines[cacheKey]; ok {
+			eng := me.engine
+			s.mu.Unlock()
+			return eng, nil
+		}
+		if state, ok := s.loading[cacheKey]; ok {
+			log.Printf("MODEL %s: waiting for in-flight python embedding load", modelID)
+			s.mu.Unlock()
+			<-state.done
+			if state.err != nil {
+				return nil, state.err
+			}
+			if state.engine != nil {
+				return state.engine, nil
+			}
+			continue
+		}
+		state := &engineLoadState{done: make(chan struct{})}
+		s.loading[cacheKey] = state
+		s.mu.Unlock()
+
+		log.Printf("MODEL %s: python embedding engine load started", modelID)
+		runtimeManager, err := imagegen.NewEmbeddingRuntimeManager()
+		if err == nil {
+			err = ensureEmbeddingRuntimeReady(ctx, runtimeManager, nil, false)
+			if err == nil {
+				state.engine, err = newPythonEmbeddingEngine(ctx, modelID, modelDir, runtimeManager)
+			}
+		}
+		state.err = err
+
+		s.mu.Lock()
+		delete(s.loading, cacheKey)
+		if state.err == nil {
+			s.engines[cacheKey] = &managedEngine{
+				engine:    state.engine,
+				lastUsed:  time.Now(),
+				keepAlive: DefaultKeepAlive,
+			}
+		}
+		close(state.done)
+		s.mu.Unlock()
+
+		if state.err != nil {
+			log.Printf("MODEL %s: python embedding engine load failed: %v", modelID, state.err)
+			return nil, state.err
+		}
+		log.Printf("MODEL %s: python embedding engine load complete", modelID)
+		return state.engine, nil
+	}
 }
 
 func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype, mode string) (inference.Engine, error) {

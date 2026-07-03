@@ -16,6 +16,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
@@ -243,6 +244,182 @@ func TestHandleOpenAIEmbeddingsProxiesLocalEmbeddingEngine(t *testing.T) {
 	}
 	if _, ok := engine.lastReq["source"]; ok {
 		t.Fatalf("source should not be forwarded upstream: %#v", engine.lastReq)
+	}
+}
+
+func TestHandleOpenAIEmbeddingsRoutesUnsupportedHFEmbeddingToPythonRuntime(t *testing.T) {
+	oldNewPythonEmbeddingEngine := newPythonEmbeddingEngine
+	oldEnsureEmbeddingRuntimeReady := ensureEmbeddingRuntimeReady
+	defer func() {
+		newPythonEmbeddingEngine = oldNewPythonEmbeddingEngine
+		ensureEmbeddingRuntimeReady = oldEnsureEmbeddingRuntimeReady
+	}()
+
+	engine := &fakeEmbeddingsEngine{
+		resp: api.OpenAIEmbeddingsResponse{
+			Object: "list",
+			Model:  "jinaai/jina-embeddings-v5-omni-nano",
+			Data: []api.OpenAIEmbeddingObject{{
+				Object:    "embedding",
+				Embedding: []float64{0.1, 0.2, 0.3},
+				Index:     0,
+			}},
+			Usage: api.OpenAIUsage{PromptTokens: 1, TotalTokens: 1},
+		},
+	}
+	called := false
+	ensureEmbeddingRuntimeReady = func(context.Context, *imagegen.RuntimeManager, imagegen.ProgressFunc, bool) error {
+		return nil
+	}
+	newPythonEmbeddingEngine = func(_ context.Context, modelName, modelDir string, _ *imagegen.RuntimeManager) (inference.Engine, error) {
+		called = true
+		if modelName != "jinaai/jina-embeddings-v5-omni-nano" {
+			t.Fatalf("modelName = %q", modelName)
+		}
+		if !strings.HasSuffix(modelDir, filepath.Join("jinaai", "jina-embeddings-v5-omni-nano")) {
+			t.Fatalf("modelDir = %q", modelDir)
+		}
+		return engine, nil
+	}
+
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	modelID := "jinaai/jina-embeddings-v5-omni-nano"
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:   "jinaai",
+		Name:        "jina-embeddings-v5-omni-nano",
+		Format:      model.FormatSafeTensors,
+		Files:       []string{"model.safetensors", "config.json"},
+		PipelineTag: "feature-extraction",
+	}); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "jinaai", "jina-embeddings-v5-omni-nano")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model.safetensors"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("write weights: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"architectures":["JinaEmbeddingsV5OmniModel"]}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	s := New(cfg, "test")
+	body := `{"model":"` + modelID + `","input":{"text":"hello"},"source":"local"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIEmbeddings(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	if !called {
+		t.Fatal("python embedding loader was not called")
+	}
+}
+
+func TestHandleLoadStreamRoutesShortUnsupportedHFEmbeddingToPythonRuntime(t *testing.T) {
+	oldNewPythonEmbeddingEngine := newPythonEmbeddingEngine
+	oldEnsureEmbeddingRuntimeReady := ensureEmbeddingRuntimeReady
+	defer func() {
+		newPythonEmbeddingEngine = oldNewPythonEmbeddingEngine
+		ensureEmbeddingRuntimeReady = oldEnsureEmbeddingRuntimeReady
+	}()
+
+	called := false
+	ensureEmbeddingRuntimeReady = func(context.Context, *imagegen.RuntimeManager, imagegen.ProgressFunc, bool) error {
+		return nil
+	}
+	newPythonEmbeddingEngine = func(_ context.Context, modelName, modelDir string, _ *imagegen.RuntimeManager) (inference.Engine, error) {
+		called = true
+		if modelName != "jinaai/jina-embeddings-v5-omni-nano" {
+			t.Fatalf("modelName = %q", modelName)
+		}
+		if !strings.HasSuffix(modelDir, filepath.Join("jinaai", "jina-embeddings-v5-omni-nano")) {
+			t.Fatalf("modelDir = %q", modelDir)
+		}
+		return &fakeEmbeddingsEngine{}, nil
+	}
+
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:   "jinaai",
+		Name:        "jina-embeddings-v5-omni-nano",
+		Format:      model.FormatSafeTensors,
+		Files:       []string{"model.safetensors", "config.json"},
+		PipelineTag: "feature-extraction",
+	}); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "jinaai", "jina-embeddings-v5-omni-nano")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model.safetensors"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("write weights: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"architectures":["JinaEmbeddingsV5OmniModel"]}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	s := New(cfg, "test")
+	body := `{"model":"jina-embeddings-v5-omni-nano","stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/load", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleLoad(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	if !called {
+		t.Fatal("python embedding loader was not called")
+	}
+	if !strings.Contains(w.Body.String(), `"status":"ready"`) {
+		t.Fatalf("body = %q, want ready SSE", w.Body.String())
+	}
+}
+
+func TestUnsupportedHFEmbeddingDoesNotUsePythonRuntimeWithoutCompatibleArchitecture(t *testing.T) {
+	oldNewPythonEmbeddingEngine := newPythonEmbeddingEngine
+	defer func() {
+		newPythonEmbeddingEngine = oldNewPythonEmbeddingEngine
+	}()
+
+	called := false
+	newPythonEmbeddingEngine = func(_ context.Context, modelName, modelDir string, _ *imagegen.RuntimeManager) (inference.Engine, error) {
+		called = true
+		return &fakeEmbeddingsEngine{}, nil
+	}
+
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:   "example",
+		Name:        "unsupported-embedding",
+		Format:      model.FormatSafeTensors,
+		Files:       []string{"model.safetensors", "config.json"},
+		PipelineTag: "feature-extraction",
+	}); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "example", "unsupported-embedding")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model.safetensors"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("write weights: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"architectures":["SomeUnsupportedEmbeddingModel"]}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	s := New(cfg, "test")
+	if s.shouldUsePythonEmbeddingRuntime("unsupported-embedding") {
+		t.Fatal("unknown embedding architecture should not use Python embedding runtime without an explicit compatible worker path")
+	}
+	if called {
+		t.Fatal("python embedding loader should not be called")
 	}
 }
 

@@ -2,11 +2,13 @@ package inference
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/opencsgs/csglite/internal/convert"
@@ -108,6 +110,9 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 			return newLlamaEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
 		}
 		if convert.HasConvertibleHFWeights(modelDir) {
+			if err := ensureConvertibleHFArchitecture(modelDir); err != nil {
+				return nil, err
+			}
 			log.Printf("INFERENCE %s: HuggingFace weights detected; converting to GGUF dtype=%q", modelName, normalizedDType)
 			ggufPath, err := convertSafeTensors(modelDir, progress, normalizedDType)
 			if err != nil {
@@ -158,6 +163,9 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 		return newLlamaEngine(modelFile, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
 
 	case model.FormatSafeTensors, model.FormatPyTorch:
+		if err := ensureConvertibleHFArchitecture(modelDir); err != nil {
+			return nil, err
+		}
 		log.Printf("INFERENCE %s: HuggingFace weights detected; converting to GGUF dtype=%q", modelName, normalizedDType)
 		ggufPath, err := convertSafeTensors(modelDir, progress, normalizedDType)
 		if err != nil {
@@ -185,6 +193,43 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFormat, format)
 	}
+}
+
+func ensureConvertibleHFArchitecture(modelDir string) error {
+	arch, ok, err := readHFArchitecture(modelDir)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	if _, supported := convert.SupportedHFArchitecture(arch); supported {
+		return nil
+	}
+	log.Printf("CONVERT: unsupported HuggingFace architecture %q in %s", arch, modelDir)
+	return fmt.Errorf("%w: HuggingFace architecture %q is not supported by bundled llama.cpp GGUF converter", ErrUnsupportedFormat, arch)
+}
+
+func readHFArchitecture(modelDir string) (string, bool, error) {
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("reading HuggingFace config: %w", err)
+	}
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", false, fmt.Errorf("parsing HuggingFace config: %w", err)
+	}
+	for _, arch := range cfg.Architectures {
+		if arch = strings.TrimSpace(arch); arch != "" {
+			return arch, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 func convertSafeTensors(modelDir string, progress ConvertProgressFunc, dtype string) (string, error) {

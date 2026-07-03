@@ -286,6 +286,115 @@ func TestHandleOpenAIAudioTranscriptionsProxiesCloudSource(t *testing.T) {
 	}
 }
 
+func TestHandleOpenAIAudioTranscriptionsFallsBackToCloudModelWithoutSource(t *testing.T) {
+	cloudRequests := 0
+	apiServer := newCloudCatalogAndInferenceServer(t, "FunAudioLLM/Fun-ASR-Nano-2512:s-test", "automatic-speech-recognition", "/v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) {
+		cloudRequests++
+		if err := r.ParseMultipartForm(maxAudioUploadMemory); err != nil {
+			t.Fatalf("parse cloud multipart form: %v", err)
+		}
+		if got := r.FormValue("model"); got != "FunAudioLLM/Fun-ASR-Nano-2512:s-test" {
+			t.Fatalf("model = %q", got)
+		}
+		if got := r.FormValue("source"); got != "" {
+			t.Fatalf("source should not be forwarded upstream, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.OpenAIAudioTranscriptionResponse{Text: "auto cloud transcript"})
+	})
+	defer apiServer.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("model", "FunAudioLLM/Fun-ASR-Nano-2512:s-test"); err != nil {
+		t.Fatalf("write model field: %v", err)
+	}
+	if err := writer.WriteField("response_format", "json"); err != nil {
+		t.Fatalf("write response_format field: %v", err)
+	}
+	part, err := writer.CreateFormFile("file", "clip.mp3")
+	if err != nil {
+		t.Fatalf("create file part: %v", err)
+	}
+	if _, err := part.Write([]byte("audio bytes")); err != nil {
+		t.Fatalf("write file part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	s := New(&config.Config{
+		ModelDir:      config.ModelDirForStorage(t.TempDir()),
+		DatasetDir:    config.DatasetDirForStorage(t.TempDir()),
+		AIGatewayURL:  apiServer.URL,
+		OpenCSGAPIKey: "test-key",
+	}, "test")
+	attachCloudTestService(s, apiServer.URL)
+	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIAudioTranscriptions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if cloudRequests != 1 {
+		t.Fatalf("cloud requests = %d, want 1", cloudRequests)
+	}
+	if !strings.Contains(w.Body.String(), "auto cloud transcript") {
+		t.Fatalf("response body = %s", w.Body.String())
+	}
+}
+
+func TestHandleOpenAIAudioTranscriptionsLocalSourceDoesNotFallbackToCloudModel(t *testing.T) {
+	cloudRequests := 0
+	apiServer := newCloudCatalogAndInferenceServer(t, "FunAudioLLM/Fun-ASR-Nano-2512:s-test", "automatic-speech-recognition", "/v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) {
+		cloudRequests++
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	defer apiServer.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("model", "FunAudioLLM/Fun-ASR-Nano-2512:s-test"); err != nil {
+		t.Fatalf("write model field: %v", err)
+	}
+	if err := writer.WriteField("source", "local"); err != nil {
+		t.Fatalf("write source field: %v", err)
+	}
+	part, err := writer.CreateFormFile("file", "clip.mp3")
+	if err != nil {
+		t.Fatalf("create file part: %v", err)
+	}
+	if _, err := part.Write([]byte("audio bytes")); err != nil {
+		t.Fatalf("write file part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	s := New(&config.Config{
+		ModelDir:      config.ModelDirForStorage(t.TempDir()),
+		DatasetDir:    config.DatasetDirForStorage(t.TempDir()),
+		AIGatewayURL:  apiServer.URL,
+		OpenCSGAPIKey: "test-key",
+	}, "test")
+	attachCloudTestService(s, apiServer.URL)
+	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIAudioTranscriptions(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if cloudRequests != 0 {
+		t.Fatalf("cloud requests = %d, want 0", cloudRequests)
+	}
+}
+
 func TestHandleOpenAIAudioTranscriptionsStreamsCloudSource(t *testing.T) {
 	var gotAccept string
 	var gotStream string

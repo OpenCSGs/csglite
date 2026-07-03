@@ -76,6 +76,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/image-runtime/install", s.handleImageRuntimeInstall)
 	mux.HandleFunc("GET /api/asr-runtime", s.handleASRRuntimeStatus)
 	mux.HandleFunc("POST /api/asr-runtime/install", s.handleASRRuntimeInstall)
+	mux.HandleFunc("GET /api/embedding-runtime", s.handleEmbeddingRuntimeStatus)
+	mux.HandleFunc("POST /api/embedding-runtime/install", s.handleEmbeddingRuntimeInstall)
 	mux.HandleFunc("GET /api/api-keys", s.handleAPIKeysList)
 	mux.HandleFunc("POST /api/api-keys/settings", s.handleAPIKeysSettingsUpdate)
 	mux.HandleFunc("POST /api/api-keys", s.handleAPIKeyCreate)

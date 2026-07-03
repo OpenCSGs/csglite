@@ -32,6 +32,36 @@ func TestLoadEngine_SafeTensorsAutoConvert(t *testing.T) {
 	t.Errorf("unexpected error: %v", err)
 }
 
+func TestLoadEngine_UnsupportedSafeTensorsArchitectureDoesNotConvert(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "model.safetensors"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("write weights: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["JinaEmbeddingsV5OmniModel"]}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	lm := &model.LocalModel{
+		Namespace: "jinaai",
+		Name:      "jina-embeddings-v5-omni-nano",
+		Format:    model.FormatSafeTensors,
+	}
+
+	_, err := LoadEmbeddingEngineWithProgress(dir, lm, nil, false, 0, 0, -1, "", "", "")
+	if err == nil {
+		t.Fatal("expected unsupported architecture error")
+	}
+	if !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("error = %v, want ErrUnsupportedFormat", err)
+	}
+	if !strings.Contains(err.Error(), "JinaEmbeddingsV5OmniModel") {
+		t.Fatalf("error = %q, want architecture name", err.Error())
+	}
+	if strings.Contains(err.Error(), "auto-converting SafeTensors") {
+		t.Fatalf("error = %q, should fail before conversion", err.Error())
+	}
+}
+
 func TestLoadEngine_NoModelFile(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}"), 0o644)

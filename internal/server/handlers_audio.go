@@ -75,6 +75,7 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		return
 	}
 	if audioTranscriptionUsesCloud(req) {
+		req.Source = "cloud"
 		if stream {
 			if err := s.streamCloudAudioTranscription(w, r.Context(), req); err != nil {
 				log.Printf("MODEL %s: cloud ASR stream proxy failed: %v", req.Model, err)
@@ -92,6 +93,22 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 
 	eng, err := s.getOrLoadASREngine(r.Context(), modelID)
 	if err != nil {
+		if s.audioTranscriptionCanFallbackToCloud(r.Context(), req) {
+			req.Source = "cloud"
+			if stream {
+				if err := s.streamCloudAudioTranscription(w, r.Context(), req); err != nil {
+					log.Printf("MODEL %s: cloud ASR stream proxy failed: %v", req.Model, err)
+				}
+				return
+			}
+			resp, cloudErr := s.transcribeCloudAudio(r.Context(), req)
+			if cloudErr != nil {
+				writeOpenAIInferenceError(w, cloudErr)
+				return
+			}
+			writeAudioTranscriptionResponse(w, req, resp)
+			return
+		}
 		if status, ok := imagegen.RuntimeStatusFromError(err); ok {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 				"errorCode": http.StatusServiceUnavailable,
@@ -186,6 +203,17 @@ func writeCloudAudioTranscriptionStream(w http.ResponseWriter, resp *api.OpenAIA
 
 func audioTranscriptionUsesCloud(req api.OpenAIAudioTranscriptionRequest) bool {
 	return strings.EqualFold(strings.TrimSpace(req.Source), "cloud")
+}
+
+func audioTranscriptionForcesLocal(req api.OpenAIAudioTranscriptionRequest) bool {
+	return strings.EqualFold(strings.TrimSpace(req.Source), "local")
+}
+
+func (s *Server) audioTranscriptionCanFallbackToCloud(ctx context.Context, req api.OpenAIAudioTranscriptionRequest) bool {
+	if audioTranscriptionForcesLocal(req) {
+		return false
+	}
+	return s.cloudModelListContainsMatching(ctx, req.Model, cloudPipelineTagMatcher("automatic-speech-recognition"))
 }
 
 func (s *Server) transcribeCloudAudio(ctx context.Context, req api.OpenAIAudioTranscriptionRequest) (*api.OpenAIAudioTranscriptionResponse, error) {
