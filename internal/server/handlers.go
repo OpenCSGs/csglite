@@ -99,8 +99,19 @@ func runWithLocalInferenceSelfHeal[T any](
 	run func(inference.Engine) (T, error),
 	reload func() (inference.Engine, error),
 ) (T, error) {
+	return runWithLocalInferenceSelfHealWhen(s, source, modelID, mode, current, run, func() bool { return true }, reload)
+}
+
+func runWithLocalInferenceSelfHealWhen[T any](
+	s *Server,
+	source, modelID, mode string,
+	current inference.Engine,
+	run func(inference.Engine) (T, error),
+	canRetry func() bool,
+	reload func() (inference.Engine, error),
+) (T, error) {
 	result, err := run(current)
-	if err == nil || !shouldSelfHealLocalInference(source, err) {
+	if err == nil || !canRetry() || !shouldSelfHealLocalInference(source, err) {
 		return result, err
 	}
 
@@ -111,7 +122,7 @@ func runWithLocalInferenceSelfHeal[T any](
 
 	if eng, reloadErr := reload(); reloadErr == nil {
 		result, err = run(eng)
-		if err == nil || !shouldSelfHealLocalInference(source, err) {
+		if err == nil || !canRetry() || !shouldSelfHealLocalInference(source, err) {
 			return result, err
 		}
 		lastErr = err
@@ -837,7 +848,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 
-			fullResp, err := eng.Chat(r.Context(), messages, opts, onToken)
+			fullResp, err := runWithLocalInferenceSelfHealWhen(s, req.Source, req.Model, engineModeChat, eng,
+				func(engine inference.Engine) (string, error) {
+					return engine.Chat(r.Context(), messages, opts, onToken)
+				},
+				func() bool {
+					return !wroteChunk
+				},
+				func() (inference.Engine, error) {
+					return s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+				},
+			)
 			if err != nil {
 				if !wroteChunk {
 					writeInferenceError(w, err)
@@ -889,7 +910,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		_, err := eng.Chat(r.Context(), messages, opts, onToken)
+		_, err := runWithLocalInferenceSelfHealWhen(s, req.Source, req.Model, engineModeChat, eng,
+			func(engine inference.Engine) (string, error) {
+				return engine.Chat(r.Context(), messages, opts, onToken)
+			},
+			func() bool {
+				return !wroteChunk
+			},
+			func() (inference.Engine, error) {
+				return s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+			},
+		)
 		if err != nil {
 			if !wroteChunk {
 				writeInferenceError(w, err)

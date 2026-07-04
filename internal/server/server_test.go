@@ -128,6 +128,44 @@ func TestRunWithLocalInferenceSelfHealReloadsAndRetries(t *testing.T) {
 	}
 }
 
+func TestRunWithLocalInferenceSelfHealSkipsRetryWhenCannotRetry(t *testing.T) {
+	s := newTestServer(t)
+	streamErr := errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
+	initial := &scriptedChatEngine{
+		chatResponses: []scriptedChatResponse{{err: streamErr}},
+	}
+	s.engines["test/model"] = &managedEngine{
+		engine:    initial,
+		lastUsed:  time.Now(),
+		keepAlive: DefaultKeepAlive,
+	}
+
+	reloadCalls := 0
+	wroteChunk := false
+	_, err := runWithLocalInferenceSelfHealWhen(s, "local", "test/model", engineModeChat, initial,
+		func(engine inference.Engine) (string, error) {
+			wroteChunk = true
+			return engine.Chat(context.Background(), nil, inference.DefaultOptions(), nil)
+		},
+		func() bool {
+			return !wroteChunk
+		},
+		func() (inference.Engine, error) {
+			reloadCalls++
+			return &scriptedChatEngine{}, nil
+		},
+	)
+	if !errors.Is(err, streamErr) {
+		t.Fatalf("runWithLocalInferenceSelfHealWhen() error = %v, want %v", err, streamErr)
+	}
+	if reloadCalls != 0 {
+		t.Fatalf("reloadCalls = %d, want 0", reloadCalls)
+	}
+	if initial.closeCalls != 0 {
+		t.Fatalf("initial closeCalls = %d, want 0", initial.closeCalls)
+	}
+}
+
 func TestRunWithLocalInferenceSelfHealFallsBackAfterSecondFailure(t *testing.T) {
 	s := newTestServer(t)
 	initial := &scriptedChatEngine{
