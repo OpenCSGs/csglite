@@ -52,7 +52,7 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if proxy, ok := eng.(inference.ChatCompletionProxier); ok {
-		s.handleAnthropicMessagesProxy(w, r, req, proxy, opts, inputTokens, id)
+		s.handleAnthropicMessagesProxy(w, r, req, eng, proxy, opts, inputTokens, id)
 		return
 	}
 
@@ -113,7 +113,14 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	response, err := eng.Chat(r.Context(), messages, opts, nil)
+	response, err := runWithLocalInferenceSelfHeal(s, "", req.Model, engineModeChat, eng,
+		func(engine inference.Engine) (string, error) {
+			return engine.Chat(r.Context(), messages, opts, nil)
+		},
+		func() (inference.Engine, error) {
+			return s.getChatEngine(r.Context(), req.Model, "", s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
+		},
+	)
 	if err != nil {
 		writeAnthropicInferenceError(w, err)
 		return
@@ -128,6 +135,7 @@ func (s *Server) handleAnthropicMessagesProxy(
 	w http.ResponseWriter,
 	r *http.Request,
 	req api.AnthropicMessageRequest,
+	eng inference.Engine,
 	proxy inference.ChatCompletionProxier,
 	opts inference.Options,
 	inputTokens int,
@@ -139,7 +147,18 @@ func (s *Server) handleAnthropicMessagesProxy(
 		return
 	}
 
-	resp, err := proxy.ChatCompletion(r.Context(), reqBody)
+	resp, err := runWithLocalInferenceSelfHeal(s, "", req.Model, engineModeChat, eng,
+		func(engine inference.Engine) (*http.Response, error) {
+			proxyEngine, ok := engine.(inference.ChatCompletionProxier)
+			if !ok {
+				return nil, fmt.Errorf("selected model backend does not support Anthropic proxying")
+			}
+			return proxyEngine.ChatCompletion(r.Context(), reqBody)
+		},
+		func() (inference.Engine, error) {
+			return s.getChatEngine(r.Context(), req.Model, "", s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
+		},
+	)
 	if err != nil {
 		if req.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -205,7 +224,7 @@ func (s *Server) handleAnthropicMessagesWithTools(
 	inputTokens int,
 	id string,
 ) {
-	proxy, ok := eng.(inference.ChatCompletionProxier)
+	_, ok := eng.(inference.ChatCompletionProxier)
 	if !ok {
 		writeAnthropicErrorWithType(w, http.StatusBadRequest, "invalid_request_error", "selected model backend does not support tool calling")
 		return
@@ -217,7 +236,18 @@ func (s *Server) handleAnthropicMessagesWithTools(
 		return
 	}
 
-	resp, err := proxy.ChatCompletion(r.Context(), reqBody)
+	resp, err := runWithLocalInferenceSelfHeal(s, "", req.Model, engineModeChat, eng,
+		func(engine inference.Engine) (*http.Response, error) {
+			proxyEngine, ok := engine.(inference.ChatCompletionProxier)
+			if !ok {
+				return nil, fmt.Errorf("selected model backend does not support tool calling")
+			}
+			return proxyEngine.ChatCompletion(r.Context(), reqBody)
+		},
+		func() (inference.Engine, error) {
+			return s.getChatEngine(r.Context(), req.Model, "", s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
+		},
+	)
 	if err != nil {
 		if req.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,6 +32,36 @@ func (f *fakeEngine) Chat(context.Context, []inference.Message, inference.Option
 func (f *fakeEngine) Close() error { return nil }
 
 func (f *fakeEngine) ModelName() string { return "fake" }
+
+type scriptedChatEngine struct {
+	chatResponses []scriptedChatResponse
+	closeCalls    int
+}
+
+type scriptedChatResponse struct {
+	text string
+	err  error
+}
+
+func (e *scriptedChatEngine) Generate(context.Context, string, inference.Options, inference.TokenCallback) (string, error) {
+	return "", nil
+}
+
+func (e *scriptedChatEngine) Chat(context.Context, []inference.Message, inference.Options, inference.TokenCallback) (string, error) {
+	if len(e.chatResponses) == 0 {
+		return "", nil
+	}
+	resp := e.chatResponses[0]
+	e.chatResponses = e.chatResponses[1:]
+	return resp.text, resp.err
+}
+
+func (e *scriptedChatEngine) Close() error {
+	e.closeCalls++
+	return nil
+}
+
+func (e *scriptedChatEngine) ModelName() string { return "scripted" }
 
 func TestMain(m *testing.M) {
 	_ = os.Setenv(config.DisableFileLoggingEnv, "1")
@@ -62,6 +93,109 @@ func newTestServer(t *testing.T) *Server {
 	s := New(cfg, "test")
 	s.cloud = cloud.NewService("")
 	return s
+}
+
+func TestRunWithLocalInferenceSelfHealReloadsAndRetries(t *testing.T) {
+	s := newTestServer(t)
+	initial := &scriptedChatEngine{
+		chatResponses: []scriptedChatResponse{{err: errors.New("dial tcp 127.0.0.1:1: connect: connection refused")}},
+	}
+	reloaded := &scriptedChatEngine{
+		chatResponses: []scriptedChatResponse{{text: "healed"}},
+	}
+	s.engines["test/model"] = &managedEngine{
+		engine:    initial,
+		lastUsed:  time.Now(),
+		keepAlive: DefaultKeepAlive,
+	}
+
+	got, err := runWithLocalInferenceSelfHeal(s, "local", "test/model", engineModeChat, initial,
+		func(engine inference.Engine) (string, error) {
+			return engine.Chat(context.Background(), nil, inference.DefaultOptions(), nil)
+		},
+		func() (inference.Engine, error) {
+			return reloaded, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runWithLocalInferenceSelfHeal() error = %v", err)
+	}
+	if got != "healed" {
+		t.Fatalf("runWithLocalInferenceSelfHeal() = %q, want healed", got)
+	}
+	if initial.closeCalls != 1 {
+		t.Fatalf("initial closeCalls = %d, want 1", initial.closeCalls)
+	}
+}
+
+func TestRunWithLocalInferenceSelfHealFallsBackAfterSecondFailure(t *testing.T) {
+	s := newTestServer(t)
+	initial := &scriptedChatEngine{
+		chatResponses: []scriptedChatResponse{{err: errors.New("dial tcp 127.0.0.1:1: connect: connection refused")}},
+	}
+	firstReload := &scriptedChatEngine{
+		chatResponses: []scriptedChatResponse{{err: errors.New("read tcp 127.0.0.1:2->127.0.0.1:3: read: connection reset by peer")}},
+	}
+	secondReload := &scriptedChatEngine{
+		chatResponses: []scriptedChatResponse{{text: "recovered-after-fallback"}},
+	}
+	survivor := &scriptedChatEngine{}
+	s.engines["test/model"] = &managedEngine{
+		engine:    initial,
+		lastUsed:  time.Now(),
+		keepAlive: DefaultKeepAlive,
+	}
+	s.engines["other/model"] = &managedEngine{
+		engine:    survivor,
+		lastUsed:  time.Now(),
+		keepAlive: DefaultKeepAlive,
+	}
+
+	reloadCalls := 0
+	got, err := runWithLocalInferenceSelfHeal(s, "local", "test/model", engineModeChat, initial,
+		func(engine inference.Engine) (string, error) {
+			return engine.Chat(context.Background(), nil, inference.DefaultOptions(), nil)
+		},
+		func() (inference.Engine, error) {
+			reloadCalls++
+			switch reloadCalls {
+			case 1:
+				s.engines["test/model"] = &managedEngine{
+					engine:    firstReload,
+					lastUsed:  time.Now(),
+					keepAlive: DefaultKeepAlive,
+				}
+				return firstReload, nil
+			case 2:
+				s.engines["test/model"] = &managedEngine{
+					engine:    secondReload,
+					lastUsed:  time.Now(),
+					keepAlive: DefaultKeepAlive,
+				}
+				return secondReload, nil
+			default:
+				return nil, errors.New("unexpected reload")
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("runWithLocalInferenceSelfHeal() error = %v", err)
+	}
+	if got != "recovered-after-fallback" {
+		t.Fatalf("runWithLocalInferenceSelfHeal() = %q, want recovered-after-fallback", got)
+	}
+	if reloadCalls != 2 {
+		t.Fatalf("reloadCalls = %d, want 2", reloadCalls)
+	}
+	if initial.closeCalls != 1 {
+		t.Fatalf("initial closeCalls = %d, want 1", initial.closeCalls)
+	}
+	if firstReload.closeCalls != 1 {
+		t.Fatalf("firstReload closeCalls = %d, want 1", firstReload.closeCalls)
+	}
+	if survivor.closeCalls != 1 {
+		t.Fatalf("survivor closeCalls = %d, want 1", survivor.closeCalls)
+	}
 }
 
 func TestHandleHealth(t *testing.T) {

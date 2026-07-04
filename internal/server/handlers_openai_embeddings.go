@@ -41,28 +41,45 @@ func (s *Server) handleEmbeddingChat(w http.ResponseWriter, r *http.Request, req
 		writeInferenceError(w, err)
 		return
 	}
-	proxy, ok := eng.(inference.EmbeddingsProxier)
+	_, ok := eng.(inference.EmbeddingsProxier)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "selected model backend does not support embeddings")
 		return
 	}
 	defer s.touchEngineKey(engineCacheKey(s.resolveLocalModelStorageID(req.Model), engineModeEmbed))
 
-	resp, err := proxy.Embeddings(r.Context(), map[string]interface{}{
-		"model": req.Model,
-		"input": input,
-	})
+	type embeddingChatResult struct {
+		body []byte
+	}
+	result, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeEmbed, eng,
+		func(engine inference.Engine) (embeddingChatResult, error) {
+			proxyEngine, ok := engine.(inference.EmbeddingsProxier)
+			if !ok {
+				return embeddingChatResult{}, fmt.Errorf("selected model backend does not support embeddings")
+			}
+			resp, err := proxyEngine.Embeddings(r.Context(), map[string]interface{}{
+				"model": req.Model,
+				"input": input,
+			})
+			if err != nil {
+				return embeddingChatResult{}, err
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return embeddingChatResult{}, err
+			}
+			return embeddingChatResult{body: body}, nil
+		},
+		func() (inference.Engine, error) {
+			return s.getEmbeddingEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNGPULayers, requestedDType)
+		},
+	)
 	if err != nil {
 		writeInferenceError(w, err)
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "reading embeddings response: "+err.Error())
-		return
-	}
+	body := result.body
 	content := formatEmbeddingChatContent(body)
 	s.recordAPIUsage(r, req.Model, req.Source, openAIEmbeddingPromptTokens(body, input), 0)
 
@@ -167,7 +184,7 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 		writeOpenAIError(w, http.StatusBadRequest, "model_not_found", err.Error())
 		return
 	}
-	proxy, ok := eng.(inference.EmbeddingsProxier)
+	_, ok := eng.(inference.EmbeddingsProxier)
 	if !ok {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "selected model backend does not support embeddings")
 		return
@@ -180,23 +197,45 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp, err := proxy.Embeddings(r.Context(), reqBody)
+	type embeddingResponse struct {
+		body        []byte
+		contentType string
+	}
+	result, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeEmbed, eng,
+		func(engine inference.Engine) (embeddingResponse, error) {
+			proxyEngine, ok := engine.(inference.EmbeddingsProxier)
+			if !ok {
+				return embeddingResponse{}, fmt.Errorf("selected model backend does not support embeddings")
+			}
+			resp, err := proxyEngine.Embeddings(r.Context(), reqBody)
+			if err != nil {
+				return embeddingResponse{}, err
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return embeddingResponse{}, err
+			}
+			return embeddingResponse{
+				body:        body,
+				contentType: strings.TrimSpace(resp.Header.Get("Content-Type")),
+			}, nil
+		},
+		func() (inference.Engine, error) {
+			return s.getEmbeddingEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNGPULayers, requestedDType)
+		},
+	)
 	if err != nil {
 		writeOpenAIInferenceError(w, err)
 		return
 	}
-	defer resp.Body.Close()
-
-	if contentType := strings.TrimSpace(resp.Header.Get("Content-Type")); contentType != "" {
+	if contentType := result.contentType; contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 	}
 	w.WriteHeader(http.StatusOK)
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return
-	}
+	body := result.body
 	s.recordAPIUsage(r, req.Model, req.Source, openAIEmbeddingPromptTokens(body, req.Input), 0)
 	_, _ = w.Write(body)
 }

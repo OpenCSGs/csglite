@@ -310,6 +310,34 @@ func (s *Server) touchEngineKey(key string) {
 	s.mu.Unlock()
 }
 
+// closeEngineKey removes a text inference engine from the cache and closes it.
+// The Close call happens outside the cache lock.
+func (s *Server) closeEngineKey(key string) {
+	s.mu.Lock()
+	me, ok := s.engines[key]
+	if ok {
+		delete(s.engines, key)
+	}
+	s.mu.Unlock()
+	if ok && me != nil && me.engine != nil {
+		_ = me.engine.Close()
+	}
+}
+
+// closeAllInferenceEngines closes and clears only text inference engines.
+// It does not affect image or ASR engines.
+func (s *Server) closeAllInferenceEngines() {
+	s.mu.Lock()
+	engines := s.engines
+	s.engines = make(map[string]*managedEngine)
+	s.mu.Unlock()
+	for _, me := range engines {
+		if me != nil && me.engine != nil {
+			_ = me.engine.Close()
+		}
+	}
+}
+
 func (s *Server) setEngineKeepAlive(modelID string, keepAlive time.Duration) {
 	modelID = s.resolveLocalModelStorageID(modelID)
 	s.mu.Lock()

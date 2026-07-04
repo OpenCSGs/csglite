@@ -83,11 +83,11 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 
 	stream := req.Stream != nil && *req.Stream
 	if openAIChatRequestHasToolFeatures(req) {
-		s.handleOpenAIChatCompletionsWithTools(w, r, req, eng, opts, stream)
+		s.handleOpenAIChatCompletionsWithTools(w, r, req, eng, opts, stream, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
 		return
 	}
 	if proxy, ok := eng.(inference.ChatCompletionProxier); ok {
-		s.handleOpenAIChatCompletionsProxy(w, r, req, proxy, opts, stream)
+		s.handleOpenAIChatCompletionsProxy(w, r, req, eng, proxy, opts, stream, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
 		return
 	}
 
@@ -145,7 +145,14 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 			f.Flush()
 		}
 	} else {
-		response, err := eng.Chat(r.Context(), messages, opts, nil)
+		response, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
+			func(engine inference.Engine) (string, error) {
+				return engine.Chat(r.Context(), messages, opts, nil)
+			},
+			func() (inference.Engine, error) {
+				return s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+			},
+		)
 		if err != nil {
 			writeOpenAIInferenceError(w, err)
 			return
@@ -171,9 +178,12 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	w http.ResponseWriter,
 	r *http.Request,
 	req api.OpenAIChatRequest,
+	eng inference.Engine,
 	proxy inference.ChatCompletionProxier,
 	opts inference.Options,
 	stream bool,
+	requestedNumCtx, requestedNumParallel, requestedNGPULayers int,
+	requestedCacheTypeK, requestedCacheTypeV, requestedDType string,
 ) {
 	reqBody, err := openAIChatRequestToProxyBody(req, opts, stream)
 	if err != nil {
@@ -181,7 +191,18 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 		return
 	}
 
-	resp, err := proxy.ChatCompletion(r.Context(), reqBody)
+	resp, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
+		func(engine inference.Engine) (*http.Response, error) {
+			proxyEngine, ok := engine.(inference.ChatCompletionProxier)
+			if !ok {
+				return nil, fmt.Errorf("selected model backend does not support chat completions proxying")
+			}
+			return proxyEngine.ChatCompletion(r.Context(), reqBody)
+		},
+		func() (inference.Engine, error) {
+			return s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+		},
+	)
 	if err != nil {
 		writeOpenAIInferenceError(w, err)
 		return
@@ -236,8 +257,10 @@ func (s *Server) handleOpenAIChatCompletionsWithTools(
 	eng inference.Engine,
 	opts inference.Options,
 	stream bool,
+	requestedNumCtx, requestedNumParallel, requestedNGPULayers int,
+	requestedCacheTypeK, requestedCacheTypeV, requestedDType string,
 ) {
-	proxy, ok := eng.(inference.ChatCompletionProxier)
+	_, ok := eng.(inference.ChatCompletionProxier)
 	if !ok {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "selected model backend does not support tool calling")
 		return
@@ -249,7 +272,18 @@ func (s *Server) handleOpenAIChatCompletionsWithTools(
 		return
 	}
 
-	resp, err := proxy.ChatCompletion(r.Context(), reqBody)
+	resp, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
+		func(engine inference.Engine) (*http.Response, error) {
+			proxyEngine, ok := engine.(inference.ChatCompletionProxier)
+			if !ok {
+				return nil, fmt.Errorf("selected model backend does not support tool calling")
+			}
+			return proxyEngine.ChatCompletion(r.Context(), reqBody)
+		},
+		func() (inference.Engine, error) {
+			return s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+		},
+	)
 	if err != nil {
 		if stream {
 			w.Header().Set("Content-Type", "text/event-stream")

@@ -64,7 +64,7 @@ func (s *Server) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if proxy, ok := eng.(inference.ChatCompletionProxier); ok {
-		s.handleOpenAIResponsesProxy(w, r, req, proxy, opts)
+		s.handleOpenAIResponsesProxy(w, r, req, eng, proxy, opts)
 		return
 	}
 
@@ -174,7 +174,14 @@ func (s *Server) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, err := eng.Chat(r.Context(), messages, opts, nil)
+	text, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
+		func(engine inference.Engine) (string, error) {
+			return engine.Chat(r.Context(), messages, opts, nil)
+		},
+		func() (inference.Engine, error) {
+			return s.getChatEngine(r.Context(), req.Model, req.Source, 0, 0, -1, "", "", "")
+		},
+	)
 	if err != nil {
 		writeOpenAIInferenceError(w, err)
 		return
@@ -189,6 +196,7 @@ func (s *Server) handleOpenAIResponsesProxy(
 	w http.ResponseWriter,
 	r *http.Request,
 	req openAIResponsesRequest,
+	eng inference.Engine,
 	proxy inference.ChatCompletionProxier,
 	opts inference.Options,
 ) {
@@ -203,7 +211,18 @@ func (s *Server) handleOpenAIResponsesProxy(
 		return
 	}
 
-	resp, err := proxy.ChatCompletion(r.Context(), reqBody)
+	resp, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
+		func(engine inference.Engine) (*http.Response, error) {
+			proxyEngine, ok := engine.(inference.ChatCompletionProxier)
+			if !ok {
+				return nil, fmt.Errorf("selected model backend does not support responses proxying")
+			}
+			return proxyEngine.ChatCompletion(r.Context(), reqBody)
+		},
+		func() (inference.Engine, error) {
+			return s.getChatEngine(r.Context(), req.Model, req.Source, 0, 0, -1, "", "", "")
+		},
+	)
 	if err != nil {
 		writeOpenAIInferenceError(w, err)
 		return
@@ -258,7 +277,7 @@ func (s *Server) handleOpenAIResponsesWithTools(
 	eng inference.Engine,
 	opts inference.Options,
 ) {
-	proxy, ok := eng.(inference.ChatCompletionProxier)
+	_, ok := eng.(inference.ChatCompletionProxier)
 	if !ok {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "selected model backend does not support tool calling")
 		return
@@ -275,7 +294,18 @@ func (s *Server) handleOpenAIResponsesWithTools(
 		return
 	}
 
-	resp, err := proxy.ChatCompletion(r.Context(), reqBody)
+	resp, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
+		func(engine inference.Engine) (*http.Response, error) {
+			proxyEngine, ok := engine.(inference.ChatCompletionProxier)
+			if !ok {
+				return nil, fmt.Errorf("selected model backend does not support tool calling")
+			}
+			return proxyEngine.ChatCompletion(r.Context(), reqBody)
+		},
+		func() (inference.Engine, error) {
+			return s.getChatEngine(r.Context(), req.Model, req.Source, 0, 0, -1, "", "", "")
+		},
+	)
 	if err != nil {
 		writeOpenAIInferenceError(w, err)
 		return

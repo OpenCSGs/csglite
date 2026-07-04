@@ -537,6 +537,9 @@ func (s *Server) openAIAppShellURL(ctx context.Context, appID, requestedModel, r
 	if err != nil {
 		return "", err
 	}
+	// AI app shells store the public (inference) model ID so it stays stable even
+	// when the local storage ID includes a namespace prefix.
+	defaultModel = s.localInferenceModelID(defaultModel)
 	log.Printf("AI APP %s: preparing shell launch model=%q models=%d work_dir=%q", appID, defaultModel, len(modelIDs), requestedWorkDir)
 
 	prepared, err := s.prepareAIAppShellLaunch(target, defaultModel, modelIDs, requestedWorkDir)

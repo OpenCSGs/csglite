@@ -67,6 +67,65 @@ func requestDisablesThinking(r *http.Request) bool {
 	return value == "1" || value == "true"
 }
 
+func shouldSelfHealLocalInference(source string, err error) bool {
+	if err == nil {
+		return false
+	}
+	source = strings.ToLower(strings.TrimSpace(source))
+	if source != "" && source != "local" {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	markers := []string{
+		"connection refused",
+		"connection reset",
+		"broken pipe",
+		"unexpected eof",
+		"unexpected end of json input",
+		"client connection closed",
+	}
+	for _, m := range markers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
+
+func runWithLocalInferenceSelfHeal[T any](
+	s *Server,
+	source, modelID, mode string,
+	current inference.Engine,
+	run func(inference.Engine) (T, error),
+	reload func() (inference.Engine, error),
+) (T, error) {
+	result, err := run(current)
+	if err == nil || !shouldSelfHealLocalInference(source, err) {
+		return result, err
+	}
+
+	lastErr := err
+	cacheKey := engineCacheKey(s.resolveLocalModelStorageID(modelID), mode)
+	log.Printf("MODEL %s: %s failed; evicting engine and retrying once: %v", modelID, mode, err)
+	s.closeEngineKey(cacheKey)
+
+	if eng, reloadErr := reload(); reloadErr == nil {
+		result, err = run(eng)
+		if err == nil || !shouldSelfHealLocalInference(source, err) {
+			return result, err
+		}
+		lastErr = err
+		log.Printf("MODEL %s: %s retry failed; fallback close-all + reload: %v", modelID, mode, err)
+		s.closeAllInferenceEngines()
+		if eng, reloadErr = reload(); reloadErr == nil {
+			return run(eng)
+		}
+	}
+
+	var zero T
+	return zero, lastErr
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -648,7 +707,14 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: time.Now(),
 		})
 	} else {
-		response, err := eng.Generate(r.Context(), req.Prompt, opts, nil)
+		response, err := runWithLocalInferenceSelfHeal(s, "", req.Model, engineModeChat, eng,
+			func(engine inference.Engine) (string, error) {
+				return engine.Generate(r.Context(), req.Prompt, opts, nil)
+			},
+			func() (inference.Engine, error) {
+				return s.getOrLoadEngineWithOpts(req.Model, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+			},
+		)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -853,7 +919,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	} else {
 		messages, searchContext := s.augmentChatMessagesWithWebSearch(r.Context(), req, messages, eng, nil)
 		inputTokens += estimateAnthropicTokens(searchContext)
-		response, err := eng.Chat(r.Context(), messages, opts, nil)
+		response, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
+			func(engine inference.Engine) (string, error) {
+				return engine.Chat(r.Context(), messages, opts, nil)
+			},
+			func() (inference.Engine, error) {
+				return s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+			},
+		)
 		if err != nil {
 			writeInferenceError(w, err)
 			return
