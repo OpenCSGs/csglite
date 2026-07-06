@@ -1,6 +1,8 @@
 package inference
 
 import (
+	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -68,6 +70,22 @@ func TestHandleStreamSameChunkDuplicateContentAndReasoning(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("onToken called %d times, want 1 (no duplicate fields)", n)
+	}
+}
+
+func TestHandleStreamMissingDoneReturnsUnexpectedEOF(t *testing.T) {
+	e := &llamaEngine{}
+	var tokens strings.Builder
+	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"
+
+	full, err := e.handleStream(strings.NewReader(sse), func(s string) {
+		tokens.WriteString(s)
+	}, DefaultOptions())
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("handleStream() error = %v, want unexpected EOF", err)
+	}
+	if full != "partial" || tokens.String() != "partial" {
+		t.Fatalf("streamed = (%q, %q), want partial", full, tokens.String())
 	}
 }
 

@@ -128,7 +128,7 @@ func TestRunWithLocalInferenceSelfHealReloadsAndRetries(t *testing.T) {
 	}
 }
 
-func TestRunWithLocalInferenceSelfHealSkipsRetryWhenCannotRetry(t *testing.T) {
+func TestRunWithLocalInferenceSelfHealEvictsWithoutRetryWhenCannotRetry(t *testing.T) {
 	s := newTestServer(t)
 	streamErr := errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
 	initial := &scriptedChatEngine{
@@ -161,8 +161,8 @@ func TestRunWithLocalInferenceSelfHealSkipsRetryWhenCannotRetry(t *testing.T) {
 	if reloadCalls != 0 {
 		t.Fatalf("reloadCalls = %d, want 0", reloadCalls)
 	}
-	if initial.closeCalls != 0 {
-		t.Fatalf("initial closeCalls = %d, want 0", initial.closeCalls)
+	if initial.closeCalls != 1 {
+		t.Fatalf("initial closeCalls = %d, want 1", initial.closeCalls)
 	}
 }
 

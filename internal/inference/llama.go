@@ -791,6 +791,7 @@ func (e *llamaEngine) handleStream(body io.Reader, onToken TokenCallback, opts O
 	scanner := bufio.NewScanner(body)
 	var full strings.Builder
 	debugCount := 0
+	sawDone := false
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -799,6 +800,7 @@ func (e *llamaEngine) handleStream(body io.Reader, onToken TokenCallback, opts O
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
+			sawDone = true
 			break
 		}
 
@@ -839,7 +841,13 @@ func (e *llamaEngine) handleStream(body io.Reader, onToken TokenCallback, opts O
 		}
 	}
 
-	return full.String(), scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return full.String(), err
+	}
+	if !sawDone {
+		return full.String(), io.ErrUnexpectedEOF
+	}
+	return full.String(), nil
 }
 
 func (e *llamaEngine) handleNonStream(body io.Reader, opts Options) (string, error) {

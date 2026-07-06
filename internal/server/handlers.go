@@ -111,21 +111,35 @@ func runWithLocalInferenceSelfHealWhen[T any](
 	reload func() (inference.Engine, error),
 ) (T, error) {
 	result, err := run(current)
-	if err == nil || !canRetry() || !shouldSelfHealLocalInference(source, err) {
+	if err == nil {
+		return result, nil
+	}
+	healable := shouldSelfHealLocalInference(source, err)
+	if !healable {
 		return result, err
 	}
 
 	lastErr := err
 	cacheKey := engineCacheKey(s.resolveLocalModelStorageID(modelID), mode)
+	if !canRetry() {
+		log.Printf("MODEL %s: %s failed after response started; evicting engine without retry: %v", modelID, mode, err)
+		s.closeEngineKey(cacheKey)
+		return result, err
+	}
 	log.Printf("MODEL %s: %s failed; evicting engine and retrying once: %v", modelID, mode, err)
 	s.closeEngineKey(cacheKey)
 
 	if eng, reloadErr := reload(); reloadErr == nil {
 		result, err = run(eng)
-		if err == nil || !canRetry() || !shouldSelfHealLocalInference(source, err) {
+		if err == nil || !shouldSelfHealLocalInference(source, err) {
 			return result, err
 		}
 		lastErr = err
+		if !canRetry() {
+			log.Printf("MODEL %s: %s retry failed after response started; evicting engine without fallback: %v", modelID, mode, err)
+			s.closeEngineKey(cacheKey)
+			return result, err
+		}
 		log.Printf("MODEL %s: %s retry failed; fallback close-all + reload: %v", modelID, mode, err)
 		s.closeAllInferenceEngines()
 		if eng, reloadErr = reload(); reloadErr == nil {
