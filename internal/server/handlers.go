@@ -112,6 +112,7 @@ func runWithLocalInferenceSelfHealWhen[T any](
 ) (T, error) {
 	result, err := run(current)
 	if err == nil {
+		s.resetSelfHealBreaker(engineCacheKey(s.resolveLocalModelStorageID(modelID), mode))
 		return result, nil
 	}
 	healable := shouldSelfHealLocalInference(source, err)
@@ -126,12 +127,22 @@ func runWithLocalInferenceSelfHealWhen[T any](
 		s.closeEngineKey(cacheKey)
 		return result, err
 	}
+	if count, throttled := s.recordSelfHealFailure(cacheKey, time.Now()); throttled {
+		log.Printf("MODEL %s: %s self-heal breaker open after %d failures in %s; evicting engine without restart: %v", modelID, mode, count, selfHealBreakerWindow, err)
+		s.closeEngineKey(cacheKey)
+		var zero T
+		return zero, fmt.Errorf("local inference backend is repeatedly crashing; automatic restart stopped after %d failures in %s. Avoid loading multiple local models on ROCm or set %s=0 to disable ROCm single-engine mode: %w", count, selfHealBreakerWindow, inference.ROCMSingleEngineEnv, err)
+	}
 	log.Printf("MODEL %s: %s failed; evicting engine and retrying once: %v", modelID, mode, err)
 	s.closeEngineKey(cacheKey)
 
 	if eng, reloadErr := reload(); reloadErr == nil {
 		result, err = run(eng)
-		if err == nil || !shouldSelfHealLocalInference(source, err) {
+		if err == nil {
+			s.resetSelfHealBreaker(cacheKey)
+			return result, nil
+		}
+		if !shouldSelfHealLocalInference(source, err) {
 			return result, err
 		}
 		lastErr = err
@@ -140,10 +151,20 @@ func runWithLocalInferenceSelfHealWhen[T any](
 			s.closeEngineKey(cacheKey)
 			return result, err
 		}
+		if count, throttled := s.recordSelfHealFailure(cacheKey, time.Now()); throttled {
+			log.Printf("MODEL %s: %s self-heal breaker open after retry failure %d in %s; evicting engine without fallback: %v", modelID, mode, count, selfHealBreakerWindow, err)
+			s.closeEngineKey(cacheKey)
+			var zero T
+			return zero, fmt.Errorf("local inference backend is repeatedly crashing; automatic restart stopped after %d failures in %s. Avoid loading multiple local models on ROCm or set %s=0 to disable ROCm single-engine mode: %w", count, selfHealBreakerWindow, inference.ROCMSingleEngineEnv, err)
+		}
 		log.Printf("MODEL %s: %s retry failed; fallback close-all + reload: %v", modelID, mode, err)
 		s.closeAllInferenceEngines()
 		if eng, reloadErr = reload(); reloadErr == nil {
-			return run(eng)
+			result, err = run(eng)
+			if err == nil {
+				s.resetSelfHealBreaker(cacheKey)
+			}
+			return result, err
 		}
 	}
 

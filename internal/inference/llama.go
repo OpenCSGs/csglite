@@ -452,6 +452,9 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	case "windows":
 		env = appendLibPath(env, "PATH", binDir)
 	}
+	if IsROCMHost() {
+		env = appendEnvDefault(env, "GGML_CUDA_DISABLE_GRAPHS", "1")
+	}
 	engine.cmd.Env = env
 
 	if err := engine.cmd.Start(); err != nil {
@@ -989,4 +992,13 @@ func appendLibPath(env []string, key, dir string) []string {
 		}
 	}
 	return append(env, key+"="+dir)
+}
+
+func appendEnvDefault(env []string, key, value string) []string {
+	for _, e := range env {
+		if strings.HasPrefix(e, key+"=") {
+			return env
+		}
+	}
+	return append(env, key+"="+value)
 }

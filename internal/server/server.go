@@ -30,10 +30,12 @@ import (
 )
 
 const (
-	DefaultKeepAlive = 5 * time.Minute
-	evictorInterval  = 30 * time.Second
-	engineModeChat   = "chat"
-	engineModeEmbed  = "embedding"
+	DefaultKeepAlive       = 5 * time.Minute
+	evictorInterval        = 30 * time.Second
+	engineModeChat         = "chat"
+	engineModeEmbed        = "embedding"
+	selfHealBreakerWindow  = 2 * time.Minute
+	selfHealBreakerMaxHits = 3
 )
 
 type managedEngine struct {
@@ -52,6 +54,11 @@ type engineLoadState struct {
 	done   chan struct{}
 	engine inference.Engine
 	err    error
+}
+
+type selfHealBreakerState struct {
+	first time.Time
+	count int
 }
 
 type managedImageEngine struct {
@@ -117,6 +124,7 @@ type Server struct {
 	mu           sync.RWMutex
 	engines      map[string]*managedEngine
 	loading      map[string]*engineLoadState
+	selfHeal     map[string]selfHealBreakerState
 	imageEngines map[string]*managedImageEngine
 	imageLoading map[string]*imageEngineLoadState
 	asrEngines   map[string]*managedASREngine
@@ -154,6 +162,7 @@ func New(cfg *config.Config, version string) *Server {
 		cloud:          cloudSvc,
 		engines:        make(map[string]*managedEngine),
 		loading:        make(map[string]*engineLoadState),
+		selfHeal:       make(map[string]selfHealBreakerState),
 		imageEngines:   make(map[string]*managedImageEngine),
 		imageLoading:   make(map[string]*imageEngineLoadState),
 		asrEngines:     make(map[string]*managedASREngine),
@@ -338,6 +347,61 @@ func (s *Server) closeAllInferenceEngines() {
 	}
 }
 
+func (s *Server) closeOtherInferenceEnginesLocked(keepKey string) []inference.Engine {
+	closed := make([]inference.Engine, 0, len(s.engines))
+	for key, me := range s.engines {
+		if key == keepKey {
+			continue
+		}
+		if me != nil && me.engine != nil {
+			log.Printf("ROCm single-engine mode: closing text engine %s before loading %s", key, keepKey)
+			closed = append(closed, me.engine)
+		}
+		delete(s.engines, key)
+	}
+	return closed
+}
+
+func closeInferenceEngines(engines []inference.Engine) {
+	for _, eng := range engines {
+		if eng != nil {
+			_ = eng.Close()
+		}
+	}
+}
+
+func (s *Server) otherInferenceLoadLocked(cacheKey string) (string, chan struct{}) {
+	for key, state := range s.loading {
+		if key == cacheKey || state == nil {
+			continue
+		}
+		return key, state.done
+	}
+	return "", nil
+}
+
+func (s *Server) resetSelfHealBreaker(cacheKey string) {
+	s.mu.Lock()
+	delete(s.selfHeal, cacheKey)
+	s.mu.Unlock()
+}
+
+func (s *Server) recordSelfHealFailure(cacheKey string, now time.Time) (int, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.selfHeal == nil {
+		s.selfHeal = make(map[string]selfHealBreakerState)
+	}
+	state := s.selfHeal[cacheKey]
+	if state.first.IsZero() || now.Sub(state.first) > selfHealBreakerWindow {
+		state = selfHealBreakerState{first: now, count: 1}
+	} else {
+		state.count++
+	}
+	s.selfHeal[cacheKey] = state
+	return state.count, state.count >= selfHealBreakerMaxHits
+}
+
 func (s *Server) setEngineKeepAlive(modelID string, keepAlive time.Duration) {
 	modelID = s.resolveLocalModelStorageID(modelID)
 	s.mu.Lock()
@@ -421,6 +485,7 @@ func loadedDTypeMatchesRequest(loaded, requested string) bool {
 
 var loadEngineWithProgress = inference.LoadEngineWithProgress
 var loadEmbeddingEngineWithProgress = inference.LoadEmbeddingEngineWithProgress
+var rocmSingleEngineMode = inference.ROCMSingleEngineMode
 var newPythonEmbeddingEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (inference.Engine, error) {
 	return embedding.NewPythonEngine(ctx, modelName, modelDir, runtimeManager)
 }
@@ -648,12 +713,25 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 			continue
 		}
 
+		if rocmSingleEngineMode() {
+			if loadingKey, done := s.otherInferenceLoadLocked(cacheKey); done != nil {
+				log.Printf("ROCm single-engine mode: waiting for in-flight text engine load %s before loading %s", loadingKey, cacheKey)
+				s.mu.Unlock()
+				<-done
+				continue
+			}
+		}
+
 		state := &engineLoadState{done: make(chan struct{})}
 		s.loading[cacheKey] = state
 		log.Printf("MODEL %s: %s engine load started num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q", modelID, mode, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType)
 
 		var oldEngine inference.Engine
+		var closedEngines []inference.Engine
 		nextKeepAlive := DefaultKeepAlive
+		if rocmSingleEngineMode() {
+			closedEngines = s.closeOtherInferenceEnginesLocked(cacheKey)
+		}
 		if me, ok := s.engines[cacheKey]; ok {
 			log.Printf("reloading model %s %s engine due to config change (num_ctx %d->%d, parallel %d->%d, n_gpu_layers %d->%d, cache_type_k %q->%q, cache_type_v %q->%q, dtype %q->%q)", modelID, mode, me.numCtx, effectiveNumCtx, me.numParallel, effectiveNumParallel, me.nGPULayers, effectiveNGPULayers, me.cacheTypeK, normalizedCacheTypeK, me.cacheTypeV, normalizedCacheTypeV, me.dtype, normalizedDType)
 			oldEngine = me.engine
@@ -662,6 +740,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		}
 		s.mu.Unlock()
 
+		closeInferenceEngines(closedEngines)
 		if oldEngine != nil {
 			oldEngine.Close()
 		}

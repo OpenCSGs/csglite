@@ -236,6 +236,32 @@ func TestRunWithLocalInferenceSelfHealFallsBackAfterSecondFailure(t *testing.T) 
 	}
 }
 
+func TestRunWithLocalInferenceSelfHealBreakerStopsRestartStorm(t *testing.T) {
+	s := newTestServer(t)
+	reloadCalls := 0
+	run := func(engine inference.Engine) (string, error) {
+		return "", errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
+	}
+	reload := func() (inference.Engine, error) {
+		reloadCalls++
+		return nil, errors.New("reload failed")
+	}
+
+	for i := 0; i < selfHealBreakerMaxHits-1; i++ {
+		_, _ = runWithLocalInferenceSelfHeal(s, "local", "test/model", engineModeChat, &scriptedChatEngine{}, run, reload)
+	}
+	_, err := runWithLocalInferenceSelfHeal(s, "local", "test/model", engineModeChat, &scriptedChatEngine{}, run, reload)
+	if err == nil {
+		t.Fatal("expected self-heal breaker error")
+	}
+	if !strings.Contains(err.Error(), "automatic restart stopped") {
+		t.Fatalf("error = %q, want breaker message", err.Error())
+	}
+	if reloadCalls != selfHealBreakerMaxHits-1 {
+		t.Fatalf("reloadCalls = %d, want %d", reloadCalls, selfHealBreakerMaxHits-1)
+	}
+}
+
 func TestHandleHealth(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -570,6 +596,73 @@ func TestConcurrentLoadsShareSingleInFlightLoad(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("loadEngineWithProgress call count = %d, want 1", calls)
+	}
+}
+
+func TestROCMSingleEngineModeClosesOtherTextEnginesBeforeLoad(t *testing.T) {
+	s := newTestServer(t)
+	for _, name := range []string{"first", "second"} {
+		lm := &model.LocalModel{
+			Namespace: "test",
+			Name:      name,
+			Format:    model.FormatGGUF,
+			Size:      123,
+			Files:     []string{"model.gguf"},
+		}
+		if err := model.SaveManifest(s.cfg.ModelDir, lm); err != nil {
+			t.Fatalf("SaveManifest(%s) error = %v", name, err)
+		}
+		modelDir := filepath.Join(s.cfg.ModelDir, "test", name)
+		if err := os.MkdirAll(modelDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", name, err)
+		}
+	}
+
+	origLoader := loadEngineWithProgress
+	origEmbeddingLoader := loadEmbeddingEngineWithProgress
+	origROCM := rocmSingleEngineMode
+	defer func() {
+		loadEngineWithProgress = origLoader
+		loadEmbeddingEngineWithProgress = origEmbeddingLoader
+		rocmSingleEngineMode = origROCM
+	}()
+
+	firstEngine := &scriptedChatEngine{}
+	secondEngine := &scriptedChatEngine{}
+	loadEngineWithProgress = func(_ string, lm *model.LocalModel, _ inference.ConvertProgressFunc, _ bool, _ int, _ int, _ int, _ string, _ string, _ string) (inference.Engine, error) {
+		switch lm.Name {
+		case "first":
+			return firstEngine, nil
+		case "second":
+			return secondEngine, nil
+		default:
+			t.Fatalf("unexpected model %s", lm.Name)
+			return nil, nil
+		}
+	}
+	loadEmbeddingEngineWithProgress = func(_ string, lm *model.LocalModel, _ inference.ConvertProgressFunc, _ bool, _ int, _ int, _ int, _ string, _ string, _ string) (inference.Engine, error) {
+		if lm.Name != "second" {
+			t.Fatalf("unexpected embedding model %s", lm.Name)
+		}
+		return secondEngine, nil
+	}
+	rocmSingleEngineMode = func() bool { return true }
+
+	if _, err := s.getOrLoadEngineWithOpts("test/first", 0, 0, -1, "", "", ""); err != nil {
+		t.Fatalf("load first error = %v", err)
+	}
+	if _, err := s.getOrLoadEmbeddingEngineWithOpts(context.Background(), "test/second", 0, -1, ""); err != nil {
+		t.Fatalf("load second embedding error = %v", err)
+	}
+
+	if firstEngine.closeCalls != 1 {
+		t.Fatalf("first closeCalls = %d, want 1", firstEngine.closeCalls)
+	}
+	if _, ok := s.engines[engineCacheKey("test/first", engineModeChat)]; ok {
+		t.Fatal("first chat engine should have been evicted")
+	}
+	if got := s.engines[engineCacheKey("test/second", engineModeEmbed)].engine; got != secondEngine {
+		t.Fatalf("second engine = %#v, want %#v", got, secondEngine)
 	}
 }
 
