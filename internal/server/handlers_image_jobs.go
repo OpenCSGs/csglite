@@ -169,30 +169,33 @@ func (s *Server) createImageGenerationJob(req api.OpenAIImagesGenerationRequest)
 
 func (s *Server) runImageGenerationJob(ctx context.Context, job *imageGenerationJob) {
 	job.setRunning()
-	log.Printf("IMAGE JOB %s: started model=%q", job.id, job.req.Model)
+	req := job.request()
+	log.Printf("IMAGE JOB %s: started model=%q", job.id, req.Model)
 	var resp *api.OpenAIImagesGenerationResponse
 	var err error
-	if imageGenerationUsesCloud(job.req) {
-		job.req.Source = "cloud"
-		if strings.TrimSpace(job.req.Image) != "" || len(job.req.Images) > 0 {
-			resp, err = s.generateCloudImageEdit(ctx, imageInferenceRequestFromJob(job.req))
+	if imageGenerationUsesCloud(req) {
+		req.Source = "cloud"
+		job.setRequest(req)
+		if strings.TrimSpace(req.Image) != "" || len(req.Images) > 0 {
+			resp, err = s.generateCloudImageEdit(ctx, imageInferenceRequestFromJob(req))
 		} else {
-			resp, err = s.generateCloudImage(ctx, job.req)
+			resp, err = s.generateCloudImage(ctx, req)
 		}
 	} else {
 		var eng imagegen.Engine
-		eng, err = s.getOrLoadImageEngine(ctx, job.req.Model)
+		eng, err = s.getOrLoadImageEngine(ctx, req.Model)
 		if err == nil {
-			resp, err = eng.Generate(ctx, job.req)
+			resp, err = eng.Generate(ctx, req)
 			if err == nil {
-				s.touchImageEngine(job.req.Model)
+				s.touchImageEngine(req.Model)
 			}
-		} else if s.openAIImageInferenceCanFallbackToCloud(ctx, job.req, strings.TrimSpace(job.req.Image) != "" || len(job.req.Images) > 0) {
-			job.req.Source = "cloud"
-			if strings.TrimSpace(job.req.Image) != "" || len(job.req.Images) > 0 {
-				resp, err = s.generateCloudImageEdit(ctx, imageInferenceRequestFromJob(job.req))
+		} else if s.openAIImageInferenceCanFallbackToCloud(ctx, req, strings.TrimSpace(req.Image) != "" || len(req.Images) > 0) {
+			req.Source = "cloud"
+			job.setRequest(req)
+			if strings.TrimSpace(req.Image) != "" || len(req.Images) > 0 {
+				resp, err = s.generateCloudImageEdit(ctx, imageInferenceRequestFromJob(req))
 			} else {
-				resp, err = s.generateCloudImage(ctx, job.req)
+				resp, err = s.generateCloudImage(ctx, req)
 			}
 		}
 	}
@@ -201,12 +204,12 @@ func (s *Server) runImageGenerationJob(ctx context.Context, job *imageGeneration
 	}
 	if err == nil {
 		job.setSucceeded(resp)
-		log.Printf("IMAGE JOB %s: succeeded model=%q", job.id, job.req.Model)
+		log.Printf("IMAGE JOB %s: succeeded model=%q", job.id, req.Model)
 		return
 	}
 	if ctx.Err() != nil {
 		job.setCancelled()
-		log.Printf("IMAGE JOB %s: cancelled model=%q", job.id, job.req.Model)
+		log.Printf("IMAGE JOB %s: cancelled model=%q", job.id, req.Model)
 		return
 	}
 	job.setFailed(err)
@@ -214,7 +217,7 @@ func (s *Server) runImageGenerationJob(ctx context.Context, job *imageGeneration
 		log.Printf("IMAGE JOB %s: failed runtime not ready ready=%t error=%v", job.id, status.Ready, err)
 		return
 	}
-	log.Printf("IMAGE JOB %s: failed model=%q error=%v", job.id, job.req.Model, err)
+	log.Printf("IMAGE JOB %s: failed model=%q error=%v", job.id, req.Model, err)
 }
 
 func (s *imageGenerationJobStore) add(job *imageGenerationJob) {
@@ -304,6 +307,19 @@ func imageJobResponseWithThumbnail(job *imageGenerationJob, store *imageGenerati
 		resp.Result = store.thumbnailResult(job, resp.Result, resp.UpdatedAt)
 	}
 	return resp
+}
+
+func (j *imageGenerationJob) request() api.OpenAIImagesGenerationRequest {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.req
+}
+
+func (j *imageGenerationJob) setRequest(req api.OpenAIImagesGenerationRequest) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.req = req
+	j.updatedAt = time.Now()
 }
 
 func (s *imageGenerationJobStore) thumbnailResult(job *imageGenerationJob, result *api.OpenAIImagesGenerationResponse, updatedAt time.Time) *api.OpenAIImagesGenerationResponse {

@@ -1304,12 +1304,15 @@ func detectInstalledBinaryPath(binaryName string) (string, bool) {
 
 func commonInstallerBinDirs() []string {
 	home, _ := os.UserHomeDir()
-	dirs := []string{"/opt/homebrew/bin", "/usr/local/bin"}
+	dirs := []string{}
 	if home != "" {
 		dirs = append([]string{
 			filepath.Join(home, "bin"),
 			filepath.Join(home, ".local", "bin"),
 		}, dirs...)
+	}
+	if os.Getenv("PATH") != "" {
+		dirs = append(dirs, "/opt/homebrew/bin", "/usr/local/bin")
 	}
 	if runtime.GOOS == "windows" {
 		if appData := os.Getenv("APPDATA"); appData != "" {
