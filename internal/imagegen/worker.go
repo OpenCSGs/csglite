@@ -7,14 +7,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/logutil"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -29,6 +33,8 @@ type DiffusersEngine struct {
 	exitCh    chan error
 	port      int
 	client    *http.Client
+	logBuf    *logutil.TailWriter
+	logFile   *os.File
 }
 
 func NewDiffusersEngine(ctx context.Context, modelName, modelDir string, runtimeManager *RuntimeManager) (*DiffusersEngine, error) {
@@ -51,9 +57,27 @@ func NewDiffusersEngine(ctx context.Context, modelName, modelDir string, runtime
 	}
 	workerPath := filepath.Join(runtimeManager.RootDir(), "diffusers_worker.py")
 	cmd := exec.CommandContext(ctx, runtimeManager.PythonPath(), workerPath, "--model-dir", modelDir, "--model-name", modelName, "--port", strconv.Itoa(port))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	logBuf := logutil.NewTailWriter(64 * 1024)
+	stdout := io.Writer(logBuf)
+	stderr := io.Writer(logBuf)
+	var logFile *os.File
+	if config.FileLoggingEnabled() {
+		if path, err := config.DiffusersWorkerLogPath(); err != nil {
+			log.Printf("warning: could not resolve Diffusers worker log path: %v", err)
+		} else if file, err := logutil.OpenAppendFile(path); err != nil {
+			log.Printf("warning: could not open Diffusers worker log file %s: %v", path, err)
+		} else {
+			logFile = file
+			stdout = io.MultiWriter(stdout, file)
+			stderr = io.MultiWriter(stderr, file)
+		}
+	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
 		return nil, fmt.Errorf("starting Diffusers worker: %w", err)
 	}
 	exitCh := make(chan error, 1)
@@ -69,6 +93,8 @@ func NewDiffusersEngine(ctx context.Context, modelName, modelDir string, runtime
 		exitCh:    exitCh,
 		port:      port,
 		client:    &http.Client{Timeout: 5 * time.Minute},
+		logBuf:    logBuf,
+		logFile:   logFile,
 	}
 	if err := engine.waitReady(ctx); err != nil {
 		_ = engine.Close()
@@ -117,6 +143,10 @@ func (e *DiffusersEngine) Close() error {
 		case <-time.After(5 * time.Second):
 		}
 	}
+	if e.logFile != nil {
+		_ = e.logFile.Close()
+		e.logFile = nil
+	}
 	return nil
 }
 
@@ -132,9 +162,9 @@ func (e *DiffusersEngine) waitReady(ctx context.Context) error {
 			return ctx.Err()
 		case err := <-e.exitCh:
 			if err != nil {
-				return fmt.Errorf("Diffusers worker exited before becoming ready: %w", err)
+				return fmt.Errorf("%s", e.workerStartError("Diffusers worker exited before becoming ready: "+err.Error()))
 			}
-			return fmt.Errorf("Diffusers worker exited before becoming ready")
+			return fmt.Errorf("%s", e.workerStartError("Diffusers worker exited before becoming ready"))
 		default:
 		}
 		resp, err := e.client.Get(e.url("/health"))
@@ -146,11 +176,20 @@ func (e *DiffusersEngine) waitReady(ctx context.Context) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("timeout waiting for Diffusers worker")
+	return fmt.Errorf("%s", e.workerStartError("timeout waiting for Diffusers worker"))
 }
 
 func (e *DiffusersEngine) url(path string) string {
 	return fmt.Sprintf("http://127.0.0.1:%d%s", e.port, path)
+}
+
+func (e *DiffusersEngine) workerStartError(msg string) string {
+	if e.logBuf != nil {
+		if tail := strings.TrimSpace(e.logBuf.String()); tail != "" {
+			msg += "\n\nDiffusers worker output:\n" + tail
+		}
+	}
+	return msg
 }
 
 func writeWorkerScript(runtimeDir string) error {

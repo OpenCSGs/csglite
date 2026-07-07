@@ -34,4 +34,20 @@ func TestLogPaths(t *testing.T) {
 	if want := filepath.Join(logDir, LlamaServerLogFileName); llamaLogPath != want {
 		t.Fatalf("LlamaServerLogPath() = %q, want %q", llamaLogPath, want)
 	}
+
+	embeddingLogPath, err := EmbeddingWorkerLogPath()
+	if err != nil {
+		t.Fatalf("EmbeddingWorkerLogPath() error: %v", err)
+	}
+	if want := filepath.Join(logDir, EmbeddingWorkerLogFileName); embeddingLogPath != want {
+		t.Fatalf("EmbeddingWorkerLogPath() = %q, want %q", embeddingLogPath, want)
+	}
+
+	diffusersLogPath, err := DiffusersWorkerLogPath()
+	if err != nil {
+		t.Fatalf("DiffusersWorkerLogPath() error: %v", err)
+	}
+	if want := filepath.Join(logDir, DiffusersWorkerLogFileName); diffusersLogPath != want {
+		t.Fatalf("DiffusersWorkerLogPath() = %q, want %q", diffusersLogPath, want)
+	}
 }

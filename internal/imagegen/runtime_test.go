@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -230,6 +232,49 @@ func TestEmbeddingRuntimeInstallCommand(t *testing.T) {
 	}
 }
 
+func TestEmbeddingTorchPackagesByOS(t *testing.T) {
+	windowsPackages := embeddingTorchPackagesForGOOS("windows")
+	for _, unwanted := range []string{"torchaudio"} {
+		if hasString(windowsPackages, unwanted) {
+			t.Fatalf("Windows embedding torch packages should not include %q: %#v", unwanted, windowsPackages)
+		}
+	}
+	for _, want := range []string{"torch", "torchvision"} {
+		if !hasString(windowsPackages, want) {
+			t.Fatalf("Windows embedding torch packages missing %q: %#v", want, windowsPackages)
+		}
+	}
+
+	linuxPackages := embeddingTorchPackagesForGOOS("linux")
+	if len(linuxPackages) != len(torchPackages) {
+		t.Fatalf("Linux embedding torch packages = %#v, want %#v", linuxPackages, torchPackages)
+	}
+	for i := range torchPackages {
+		if linuxPackages[i] != torchPackages[i] {
+			t.Fatalf("Linux embedding torch packages = %#v, want %#v", linuxPackages, torchPackages)
+		}
+	}
+}
+
+func TestVerifyImportsWithFakePython(t *testing.T) {
+	ctx := context.Background()
+	if err := verifyImports(ctx, fakePython(t, 0, ""), []string{"torch"}); err != nil {
+		t.Fatalf("verifyImports success returned error: %v", err)
+	}
+
+	err := verifyImports(ctx, fakePython(t, 1, strings.Repeat("x", 2200)+"libtorchaudio.pyd failed"), []string{"torch"})
+	if err == nil {
+		t.Fatal("verifyImports failure returned nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "libtorchaudio.pyd failed") {
+		t.Fatalf("verifyImports error missing output tail: %q", msg)
+	}
+	if len(msg) > len("python import check failed: ")+2048 {
+		t.Fatalf("verifyImports error was not truncated: length=%d", len(msg))
+	}
+}
+
 func TestBaseASRDependenciesExcludeQwenASR(t *testing.T) {
 	for _, pkg := range requiredASRPythonPackages {
 		if pkg == "qwen_asr" {
@@ -321,6 +366,33 @@ func hasTorchVersionPin(value string) bool {
 	return strings.HasPrefix(value, "torch==") ||
 		strings.HasPrefix(value, "torchvision==") ||
 		strings.HasPrefix(value, "torchaudio==")
+}
+
+func fakePython(t *testing.T, exitCode int, output string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		path := filepath.Join(dir, "python.cmd")
+		script := "@echo off\r\n"
+		if output != "" {
+			script += "echo " + output + " 1>&2\r\n"
+		}
+		script += "exit /b " + strconv.Itoa(exitCode) + "\r\n"
+		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	path := filepath.Join(dir, "python")
+	script := "#!/bin/sh\n"
+	if output != "" {
+		script += "printf '%s' '" + output + "' >&2\n"
+	}
+	script += "exit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestTorchInstallIndexArgsAliyunCUDA(t *testing.T) {
