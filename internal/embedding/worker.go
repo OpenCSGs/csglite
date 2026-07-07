@@ -7,17 +7,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/logutil"
 )
 
 //go:embed worker/embedding_worker.py
@@ -31,6 +34,8 @@ type PythonEngine struct {
 	exitCh    chan error
 	port      int
 	client    *http.Client
+	logBuf    *logutil.TailWriter
+	logFile   *os.File
 }
 
 func NewPythonEngine(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (*PythonEngine, error) {
@@ -59,9 +64,27 @@ func NewPythonEngine(ctx context.Context, modelName, modelDir string, runtimeMan
 	storageRoot := storageRootFromModelDir(modelDir)
 	cmd := exec.Command(runtimeManager.PythonPath(), workerPath, "--model-dir", modelDir, "--model-name", modelName, "--port", strconv.Itoa(port), "--storage-root", storageRoot, "--temp-dir", tempDir)
 	cmd.Env = withTempDir(os.Environ(), tempDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	logBuf := logutil.NewTailWriter(64 * 1024)
+	stdout := io.Writer(logBuf)
+	stderr := io.Writer(logBuf)
+	var logFile *os.File
+	if config.FileLoggingEnabled() {
+		if path, err := config.EmbeddingWorkerLogPath(); err != nil {
+			log.Printf("warning: could not resolve embedding worker log path: %v", err)
+		} else if file, err := logutil.OpenAppendFile(path); err != nil {
+			log.Printf("warning: could not open embedding worker log file %s: %v", path, err)
+		} else {
+			logFile = file
+			stdout = io.MultiWriter(stdout, file)
+			stderr = io.MultiWriter(stderr, file)
+		}
+	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
 		return nil, fmt.Errorf("starting embedding worker: %w", err)
 	}
 	exitCh := make(chan error, 1)
@@ -77,6 +100,8 @@ func NewPythonEngine(ctx context.Context, modelName, modelDir string, runtimeMan
 		exitCh:    exitCh,
 		port:      port,
 		client:    &http.Client{Timeout: 30 * time.Minute},
+		logBuf:    logBuf,
+		logFile:   logFile,
 	}
 	if err := engine.waitReady(ctx); err != nil {
 		_ = engine.Close()
@@ -127,6 +152,10 @@ func (e *PythonEngine) Close() error {
 		case <-time.After(5 * time.Second):
 		}
 	}
+	if e.logFile != nil {
+		_ = e.logFile.Close()
+		e.logFile = nil
+	}
 	return nil
 }
 
@@ -142,9 +171,9 @@ func (e *PythonEngine) waitReady(ctx context.Context) error {
 			return ctx.Err()
 		case err := <-e.exitCh:
 			if err != nil {
-				return fmt.Errorf("embedding worker exited before becoming ready: %w", err)
+				return fmt.Errorf("%s", e.workerStartError("embedding worker exited before becoming ready: "+err.Error()))
 			}
-			return fmt.Errorf("embedding worker exited before becoming ready")
+			return fmt.Errorf("%s", e.workerStartError("embedding worker exited before becoming ready"))
 		default:
 		}
 		resp, err := e.client.Get(e.url("/health"))
@@ -156,11 +185,20 @@ func (e *PythonEngine) waitReady(ctx context.Context) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("timeout waiting for embedding worker")
+	return fmt.Errorf("%s", e.workerStartError("timeout waiting for embedding worker"))
 }
 
 func (e *PythonEngine) url(path string) string {
 	return fmt.Sprintf("http://127.0.0.1:%d%s", e.port, path)
+}
+
+func (e *PythonEngine) workerStartError(msg string) string {
+	if e.logBuf != nil {
+		if tail := strings.TrimSpace(e.logBuf.String()); tail != "" {
+			msg += "\n\nembedding worker output:\n" + tail
+		}
+	}
+	return msg
 }
 
 func writeEmbeddingWorkerScript(runtimeDir string) error {

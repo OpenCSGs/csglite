@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,6 +95,17 @@ var torchPackages = []string{
 	"torch",
 	"torchvision",
 	"torchaudio",
+}
+
+func embeddingTorchPackages() []string {
+	return embeddingTorchPackagesForGOOS(runtime.GOOS)
+}
+
+func embeddingTorchPackagesForGOOS(goos string) []string {
+	if goos == "windows" {
+		return []string{"torch", "torchvision"}
+	}
+	return torchPackages
 }
 
 // HardwareKind describes the PyTorch wheel/runtime family to use.
@@ -341,6 +353,13 @@ func (m *RuntimeManager) EmbeddingStatus(ctx context.Context) RuntimeStatus {
 	status.Ready = len(missing) == 0
 	if !status.Ready {
 		status.Error = "Embedding runtime is missing Python packages"
+		return status
+	}
+	if runtime.GOOS == "windows" {
+		if err := verifyImports(ctx, status.Python, []string{"torch", "transformers"}); err != nil {
+			status.Ready = false
+			status.Error = windowsEmbeddingImportError(err)
+		}
 	}
 	return status
 }
@@ -604,8 +623,13 @@ func (m *RuntimeManager) InstallEmbeddingWithProgressOptions(ctx context.Context
 		} else {
 			progress("install PyTorch", 4, 5)
 		}
-		if err := m.uvPipInstall(ctx, python, indexes, torchPackages, upgradePackages, true); err != nil {
+		if err := m.uvPipInstall(ctx, python, indexes, embeddingTorchPackages(), upgradePackages, true); err != nil {
 			return m.EmbeddingStatus(ctx), fmt.Errorf("installing PyTorch: %w", err)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		if err := m.uninstallBrokenWindowsTorchaudio(ctx, python, indexes); err != nil {
+			return m.EmbeddingStatus(ctx), err
 		}
 	}
 
@@ -650,7 +674,7 @@ func (m *RuntimeManager) InstallEmbeddingWithProgressOptions(ctx context.Context
 		UpdatedAt:   now,
 		TorchIndex:  torchSourceURL(indexes),
 		PyPIIndex:   indexes.PyPIIndexURL,
-		PackageSpec: append(torchPackages, embeddingPythonPackages...),
+		PackageSpec: append(embeddingTorchPackages(), embeddingPythonPackages...),
 	}
 	if err := writeManifest(filepath.Join(m.rootDir, manifestFileName), manifest); err != nil {
 		return m.EmbeddingStatus(ctx), err
@@ -772,7 +796,7 @@ func (m *RuntimeManager) EmbeddingInstallCommand(hw HardwareKind) []string {
 		cmd = append(cmd, "-i", indexes.PyPIIndexURL)
 	}
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
-	cmd = append(cmd, torchPackageSpecs(hw, indexes)...)
+	cmd = append(cmd, embeddingTorchPackages()...)
 	cmd = append(cmd, torchInstallIndexArgs(indexes)...)
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
 	cmd = append(cmd, embeddingPythonPackages...)
@@ -899,19 +923,73 @@ func isChinaLocale() bool {
 }
 
 func findHostPython() (string, error) {
-	candidates := []string{"python3", "python"}
 	if runtime.GOOS == "windows" {
-		candidates = []string{"py", "python"}
+		return findWindowsHostPython()
 	}
+	candidates := []string{"python3", "python"}
 	for _, candidate := range candidates {
 		if path, err := exec.LookPath(candidate); err == nil {
-			if runtime.GOOS == "windows" && candidate == "py" {
-				return path, nil
-			}
+			log.Printf("PYTHON: selected host interpreter path=%s", path)
 			return path, nil
 		}
 	}
-	return "", errors.New("Python 3.10 or 3.11 is required to install the Diffusers runtime")
+	return "", errors.New("Python 3.10, 3.11, or 3.12 is required to install the Diffusers runtime")
+}
+
+func findWindowsHostPython() (string, error) {
+	candidates := []struct {
+		name string
+		args []string
+	}{
+		{name: "py", args: []string{"-3.12"}},
+		{name: "py", args: []string{"-3.11"}},
+		{name: "py", args: []string{"-3.10"}},
+		{name: "python"},
+	}
+	var detectedVersion string
+	for _, candidate := range candidates {
+		if _, err := exec.LookPath(candidate.name); err != nil {
+			continue
+		}
+		path, version, err := probePython(candidate.name, candidate.args...)
+		if err != nil {
+			continue
+		}
+		if detectedVersion == "" {
+			detectedVersion = version
+		}
+		if windowsPythonVersionSupported(version) {
+			log.Printf("PYTHON: selected host interpreter path=%s version=%s", path, version)
+			return path, nil
+		}
+	}
+	if detectedVersion != "" {
+		return "", fmt.Errorf("检测到 Python %s，其 Windows wheel 生态尚不完整，请安装 Python 3.10-3.12", detectedVersion)
+	}
+	return "", errors.New("Python 3.10, 3.11, or 3.12 is required to install the Diffusers runtime")
+}
+
+func probePython(name string, args ...string) (string, string, error) {
+	script := "import sys\nprint(sys.executable)\nprint(f'{sys.version_info[0]}.{sys.version_info[1]}')\n"
+	cmdArgs := append(append([]string{}, args...), "-c", script)
+	out, err := exec.Command(name, cmdArgs...).Output()
+	if err != nil {
+		return "", "", err
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return "", "", fmt.Errorf("unexpected Python probe output: %q", strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), nil
+}
+
+func windowsPythonVersionSupported(version string) bool {
+	switch version {
+	case "3.10", "3.11", "3.12":
+		return true
+	default:
+		return false
+	}
 }
 
 func missingPackages(ctx context.Context, python string, packages []string) ([]string, error) {
@@ -930,6 +1008,49 @@ print(json.dumps(missing))
 		return nil, fmt.Errorf("decoding runtime package check: %w", err)
 	}
 	return missing, nil
+}
+
+func verifyImports(ctx context.Context, python string, modules []string) error {
+	script := "import importlib, sys\nfor n in sys.argv[1:]:\n    importlib.import_module(n)\n"
+	cmd := exec.CommandContext(ctx, python, append([]string{"-c", script}, modules...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		tail := string(out)
+		if len(tail) > 2048 {
+			tail = tail[len(tail)-2048:]
+		}
+		return fmt.Errorf("python import check failed: %s", strings.TrimSpace(tail))
+	}
+	return nil
+}
+
+func windowsEmbeddingImportError(err error) string {
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	if strings.Contains(msg, "WinError 126") || strings.Contains(lower, "libtorchaudio") {
+		msg += "\n提示: Windows 上检测到 torchaudio 动态库加载失败。请安装 Microsoft Visual C++ Redistributable；csghub-lite 会在准备 embedding runtime 时自动移除 torchaudio。\nHint: torchaudio failed to load on Windows. Install the Microsoft Visual C++ Redistributable; csghub-lite will automatically remove torchaudio when preparing the embedding runtime."
+	}
+	return msg
+}
+
+func (m *RuntimeManager) uninstallBrokenWindowsTorchaudio(ctx context.Context, python string, indexes PackageIndexes) error {
+	missing, err := missingPackages(ctx, python, []string{"torchaudio"})
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		return nil
+	}
+	if err := runCommand(ctx, python, "-c", "import torchaudio"); err == nil {
+		return nil
+	}
+	if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
+		return err
+	}
+	if err := runCommandEnv(ctx, m.uvInstallEnv(), m.uvPath(), "pip", "uninstall", "--python", python, "-y", "torchaudio"); err != nil {
+		return fmt.Errorf("removing broken torchaudio from embedding runtime: %w", err)
+	}
+	return nil
 }
 
 func (m *RuntimeManager) ensurePipAndUV(ctx context.Context, python string, indexes PackageIndexes) error {

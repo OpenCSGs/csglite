@@ -7,9 +7,11 @@ import (
 )
 
 const (
-	LogsDir                = "logs"
-	ServerLogFileName      = "csghub-lite.log"
-	LlamaServerLogFileName = "llama-server.log"
+	LogsDir                    = "logs"
+	ServerLogFileName          = "csghub-lite.log"
+	LlamaServerLogFileName     = "llama-server.log"
+	EmbeddingWorkerLogFileName = "embedding-worker.log"
+	DiffusersWorkerLogFileName = "diffusers-worker.log"
 
 	LogStderrEnv          = "CSGHUB_LITE_LOG_STDERR"
 	DisableFileLoggingEnv = "CSGHUB_LITE_DISABLE_FILE_LOGGING"
@@ -29,6 +31,14 @@ func ServerLogPath() (string, error) {
 
 func LlamaServerLogPath() (string, error) {
 	return logPath(LlamaServerLogFileName)
+}
+
+func EmbeddingWorkerLogPath() (string, error) {
+	return logPath(EmbeddingWorkerLogFileName)
+}
+
+func DiffusersWorkerLogPath() (string, error) {
+	return logPath(DiffusersWorkerLogFileName)
 }
 
 func LogStderrEnabled() bool {
