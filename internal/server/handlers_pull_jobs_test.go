@@ -104,6 +104,45 @@ func TestPullJobResponseIncludesSelectedQuants(t *testing.T) {
 	}
 }
 
+func TestPullJobStoreClaimsAtMostMaxQueuedJobs(t *testing.T) {
+	store := newPullJobStore()
+	now := time.Now()
+	for i := 0; i < 5; i++ {
+		store.add(&pullJob{
+			id:        string(rune('a' + i)),
+			kind:      "model",
+			name:      "test/model-" + string(rune('a'+i)),
+			status:    pullJobQueued,
+			createdAt: now,
+			updatedAt: now,
+		})
+	}
+
+	for i := 0; i < maxConcurrentPullJobs; i++ {
+		job := store.claimNextQueued(maxConcurrentPullJobs)
+		if job == nil {
+			t.Fatalf("claim %d returned nil, want job", i)
+		}
+		got := pullJobResponse(job)
+		if got.Status != pullJobRunning {
+			t.Fatalf("claimed job status = %q, want %q", got.Status, pullJobRunning)
+		}
+	}
+	if job := store.claimNextQueued(maxConcurrentPullJobs); job != nil {
+		t.Fatalf("claim with full slots returned %q, want nil", job.id)
+	}
+
+	first := store.get("a")
+	first.setSucceeded()
+	job := store.claimNextQueued(maxConcurrentPullJobs)
+	if job == nil {
+		t.Fatal("claim after releasing one slot returned nil, want job")
+	}
+	if job.id != "d" {
+		t.Fatalf("claimed job id = %q, want d", job.id)
+	}
+}
+
 func TestPullJobCancel(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/pull/jobs", strings.NewReader(`{"model":"test/model"}`))

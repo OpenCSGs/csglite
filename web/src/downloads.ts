@@ -8,7 +8,7 @@ import {
 import type { PullJob, PullProgress } from "./api/client";
 
 export type DownloadKind = "model" | "dataset";
-export type DownloadStatus = "downloading" | "paused" | "success" | "error";
+export type DownloadStatus = "queued" | "downloading" | "paused" | "success" | "error";
 
 export interface DownloadTask {
   key: string;
@@ -47,7 +47,7 @@ function normalizeTask(raw: any): DownloadTask | null {
     return null;
   }
   const status: DownloadStatus =
-    raw.status === "success" || raw.status === "error" || raw.status === "downloading"
+    raw.status === "success" || raw.status === "error" || raw.status === "downloading" || raw.status === "queued"
       ? raw.status
       : "paused";
   return {
@@ -156,6 +156,15 @@ function applyProgress(task: DownloadTask, p: PullProgress): DownloadTask {
 
 function applyJobToTask(task: DownloadTask, job: PullJob): DownloadTask {
   const progress = job.progress || { status: job.status };
+  if (job.status === "queued") {
+    return {
+      ...task,
+      jobId: job.id,
+      status: "queued",
+      statusText: progress.status || "queued",
+      updatedAt: nowISO(),
+    };
+  }
   if (job.status === "succeeded" || progress.status === "success") {
     const completed = job.completed_at || nowISO();
     return {
@@ -250,7 +259,7 @@ async function syncDownloadsFromServer() {
       try {
         const job = await getPullJob(task.jobId);
         if (job.status === "running" || job.status === "queued") {
-          setTask(applyJobToTask({ ...task, status: "downloading" }, job));
+          setTask(applyJobToTask(task, job));
           startPolling(task.key);
           continue;
         }
@@ -275,7 +284,7 @@ async function syncDownloadsFromServer() {
       const job =
         task.kind === "model" ? await createPullJob(task.name, { quants: task.quants }) : await createDatasetPullJob(task.name);
       if (job.status === "running" || job.status === "queued") {
-        setTask(applyJobToTask({ ...task, status: "downloading" }, job));
+        setTask(applyJobToTask(task, job));
         startPolling(task.key);
       }
     } catch {
@@ -303,7 +312,7 @@ export function getDownloadTasks(kind?: DownloadKind): DownloadTask[] {
 }
 
 export function clearDownloadTask(task: DownloadTask) {
-  if (task.status === "downloading") {
+  if (task.status === "downloading" || task.status === "queued") {
     pauseDownload(task.kind, task.name);
   }
   removeTask(task.key);
@@ -318,7 +327,7 @@ export function pauseDownload(kind: DownloadKind, name: string) {
   if (current?.jobId) {
     void cancelPullJob(current.jobId).catch(() => {});
   }
-  if (current && current.status === "downloading") {
+  if (current && (current.status === "downloading" || current.status === "queued")) {
     setTask({
       ...current,
       status: "paused",
@@ -330,10 +339,6 @@ export function pauseDownload(kind: DownloadKind, name: string) {
 
 export function startDownload(kind: DownloadKind, name: string, onComplete?: () => void, options?: { quants?: string[] }): boolean {
   const key = taskKey(kind, name);
-  const existingActive = activeDownload.value;
-  if (existingActive && existingActive.key !== key) {
-    return false;
-  }
   if (activePollers.has(key)) {
     return true;
   }
@@ -387,12 +392,7 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
 
       const job =
         kind === "model" ? await createPullJob(name, { quants }) : await createDatasetPullJob(name);
-      setTask({
-        ...(downloadTasks.value[key] || task),
-        jobId: job.id,
-        status: "downloading",
-        updatedAt: nowISO(),
-      });
+      setTask(applyJobToTask(downloadTasks.value[key] || task, job));
       startPolling(key);
     } catch (err: any) {
       const current = downloadTasks.value[key] || task;

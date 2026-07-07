@@ -148,6 +148,7 @@ const en: Record<string, string> = {
   "downloads.progress": "Download Progress",
   "downloads.status": "Status",
   "downloads.none": "—",
+  "downloads.queued": "Queued",
   "downloads.downloading": "Downloading",
   "downloads.downloadingPercent": "Downloading {0}%",
   "downloads.interrupted": "Interrupted",
@@ -157,7 +158,7 @@ const en: Record<string, string> = {
   "downloads.resume": "Continue",
   "downloads.pause": "Pause",
   "downloads.clear": "Clear",
-  "downloads.activeHint": "Another download is already running. Please wait or pause it first.",
+  "downloads.activeHint": "The download has been queued.",
 
   // AI Apps
   "aiApps.title": "AI Apps",
@@ -1143,6 +1144,7 @@ const zh: Record<string, string> = {
   "downloads.progress": "下载进度",
   "downloads.status": "状态",
   "downloads.none": "—",
+  "downloads.queued": "排队中",
   "downloads.downloading": "下载中",
   "downloads.downloadingPercent": "下载中 {0}%",
   "downloads.interrupted": "已中断",
@@ -1152,7 +1154,7 @@ const zh: Record<string, string> = {
   "downloads.resume": "继续下载",
   "downloads.pause": "暂停",
   "downloads.clear": "清除",
-  "downloads.activeHint": "已有下载任务正在进行，请等待完成或先暂停。",
+  "downloads.activeHint": "下载任务已加入队列。",
 
   // AI Apps
   "aiApps.title": "应用",

@@ -18,6 +18,8 @@ import (
 )
 
 const (
+	maxConcurrentPullJobs = 3
+
 	pullJobQueued    = "queued"
 	pullJobRunning   = "running"
 	pullJobSucceeded = "succeeded"
@@ -38,6 +40,7 @@ type pullJob struct {
 	completedAt *time.Time
 	progress    api.PullResponse
 	err         string
+	ctx         context.Context
 	cancel      context.CancelFunc
 }
 
@@ -45,12 +48,14 @@ type pullJobStore struct {
 	mu        sync.Mutex
 	jobs      map[string]*pullJob
 	activeKey map[string]string
+	queue     []string
 }
 
 func newPullJobStore() *pullJobStore {
 	return &pullJobStore{
 		jobs:      map[string]*pullJob{},
 		activeKey: map[string]string{},
+		queue:     []string{},
 	}
 }
 
@@ -108,6 +113,7 @@ func (s *Server) handlePullJobCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	job.mu.Lock()
+	status := job.status
 	if job.cancel != nil && job.status != pullJobSucceeded && job.status != pullJobFailed && job.status != pullJobCancelled {
 		job.cancel()
 		job.status = pullJobCancelled
@@ -117,6 +123,9 @@ func (s *Server) handlePullJobCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	job.mu.Unlock()
 	s.pullJobs.clearActive(job)
+	if status == pullJobQueued {
+		s.startQueuedPullJobs()
+	}
 	writeJSON(w, http.StatusOK, pullJobResponse(job))
 }
 
@@ -144,16 +153,27 @@ func (s *Server) createPullJob(kind, name string, quants []string) (*pullJob, er
 		progress: api.PullResponse{
 			Status: fmt.Sprintf("pulling %s", name),
 		},
+		ctx:    ctx,
 		cancel: cancel,
 	}
 	s.pullJobs.add(job)
 	log.Printf("PULL JOB %s: queued kind=%s name=%q", id, kind, name)
-	go s.runPullJob(ctx, job)
+	s.startQueuedPullJobs()
 	return job, nil
 }
 
-func (s *Server) runPullJob(ctx context.Context, job *pullJob) {
-	job.setRunning()
+func (s *Server) startQueuedPullJobs() {
+	for {
+		job := s.pullJobs.claimNextQueued(maxConcurrentPullJobs)
+		if job == nil {
+			return
+		}
+		go s.runPullJob(job)
+	}
+}
+
+func (s *Server) runPullJob(job *pullJob) {
+	ctx := job.ctx
 	log.Printf("PULL JOB %s: started kind=%s name=%q", job.id, job.kind, job.name)
 
 	lastProgressLog := time.Time{}
@@ -184,6 +204,7 @@ func (s *Server) runPullJob(ctx context.Context, job *pullJob) {
 	}
 
 	s.pullJobs.clearActive(job)
+	defer s.startQueuedPullJobs()
 	if err == nil {
 		job.setSucceeded()
 		log.Printf("PULL JOB %s: succeeded kind=%s name=%q", job.id, job.kind, job.name)
@@ -288,6 +309,7 @@ func (s *pullJobStore) add(job *pullJob) {
 	defer s.mu.Unlock()
 	s.jobs[job.id] = job
 	s.activeKey[pullJobActiveKey(job.kind, job.name, job.quants)] = job.id
+	s.queue = append(s.queue, job.id)
 }
 
 func (s *pullJobStore) get(id string) *pullJob {
@@ -326,6 +348,44 @@ func (s *pullJobStore) clearActive(job *pullJob) {
 	if s.activeKey[key] == job.id {
 		delete(s.activeKey, key)
 	}
+}
+
+func (s *pullJobStore) claimNextQueued(maxRunning int) *pullJob {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runningCountLocked() >= maxRunning {
+		return nil
+	}
+	for len(s.queue) > 0 {
+		id := s.queue[0]
+		s.queue = s.queue[1:]
+		job := s.jobs[id]
+		if job == nil {
+			continue
+		}
+		job.mu.Lock()
+		if job.status != pullJobQueued {
+			job.mu.Unlock()
+			continue
+		}
+		job.status = pullJobRunning
+		job.updatedAt = time.Now()
+		job.mu.Unlock()
+		return job
+	}
+	return nil
+}
+
+func (s *pullJobStore) runningCountLocked() int {
+	running := 0
+	for _, job := range s.jobs {
+		job.mu.Lock()
+		if job.status == pullJobRunning {
+			running++
+		}
+		job.mu.Unlock()
+	}
+	return running
 }
 
 func pullJobActiveKey(kind, name string, quants []string) string {

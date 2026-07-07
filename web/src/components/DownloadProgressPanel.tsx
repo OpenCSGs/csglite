@@ -107,6 +107,7 @@ function isDownloadComplete(task: DownloadTask): boolean {
 }
 
 function displayPercent(task: DownloadTask): number {
+  if (task.status === "queued") return 0;
   if (task.status === "error") return Math.min(task.percent, 99);
   return isDownloadComplete(task) ? 100 : task.percent;
 }
@@ -115,6 +116,7 @@ function downloadStatusLabel(task: DownloadTask, includePercent: boolean): strin
   if (isDownloadComplete(task)) return t("downloads.done");
   if (task.status === "error") return t("downloads.failed");
   if (task.status === "paused") return t("downloads.interrupted");
+  if (task.status === "queued") return t("downloads.queued");
   if (includePercent && task.percent > 0) return t("downloads.downloadingPercent", task.percent);
   return t("downloads.downloading");
 }

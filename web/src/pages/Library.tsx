@@ -6,7 +6,7 @@ import { locale, t } from "../i18n";
 import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { isImageGenerationModel } from "../utils/imageModels";
-import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
+import { getDownloadTask, getDownloadTasks, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 
 type FormatFilter = "all" | "gguf" | "safetensors";
@@ -266,6 +266,10 @@ function loadingLabelForModel(model: ModelInfo): string {
 	return t("lib.loadingModel");
 }
 
+function compactLoadingLabel(label: string): string {
+  return label.trim().split(/\s+/).slice(0, 2).join(" ") || label;
+}
+
 const filtered = computed(() => {
   const list = allModels.value;
   const field = sortField.value;
@@ -498,7 +502,6 @@ export function Library() {
       await loadModels();
       return;
     }
-    if (hasActiveDownload.value) return;
     await deleteModel(name);
     for (const task of getDownloadTasks("model")) {
       if (task.name === name || localModelMatchesDownloadTask({ name, model: name }, task)) {
@@ -534,7 +537,7 @@ export function Library() {
   };
 
   const openUploadDialog = () => {
-    if (hasActiveDownload.value || uploadBusy.value) return;
+    if (uploadBusy.value) return;
     uploadDialogOpen.value = true;
     uploadError.value = "";
     uploadProgress.value = 0;
@@ -580,7 +583,6 @@ export function Library() {
   };
 
   const openRunDialog = (model: ModelInfo) => {
-    if (hasActiveDownload.value) return;
     runParams.value = loadSavedRunParams();
     runDialogError.value = "";
     runDialogGGUFQuants.value = [];
@@ -645,8 +647,7 @@ export function Library() {
 
   const runningStatus = (name: string) => runningModels.value.find((m) => m.name === name)?.status || "";
   const hasActiveFilters = searchQuery.value.trim().length > 0 || formatFilter.value !== "all";
-  const downloading = hasActiveDownload.value;
-  const uploadDisabled = downloading || uploadBusy.value;
+  const uploadDisabled = uploadBusy.value;
   const rows = modelRows(filtered.value);
 
   return (
@@ -752,7 +753,7 @@ export function Library() {
               rows.map(({ model: m, task, downloadOnly }) => (
                 <tr key={m.name} class="border-b border-gray-50 hover:bg-gray-50/50">
                   <td class="px-4 py-3 min-w-0">
-                    <a href={downloading || downloadOnly ? undefined : modelDetailHref(m.model)} class={`font-medium break-all ${downloading || downloadOnly ? "text-gray-400 cursor-not-allowed" : "text-indigo-600 hover:text-indigo-800 hover:underline"}`}>
+                    <a href={downloadOnly ? undefined : modelDetailHref(m.model)} class={`font-medium break-all ${downloadOnly ? "text-gray-400 cursor-not-allowed" : "text-indigo-600 hover:text-indigo-800 hover:underline"}`}>
                       {m.name}
                     </a>
                   </td>
@@ -785,10 +786,10 @@ export function Library() {
                   <td class="px-4 py-3 text-gray-500 whitespace-nowrap">
                     {new Date(m.modified_at).toLocaleDateString("en-US", { day: "numeric", month: "long" })}
                   </td>
-                  <td class="px-4 py-3">
-                    <div class="flex items-center justify-end gap-3 whitespace-nowrap">
+                  <td class="px-4 py-3 min-w-0">
+                    <div class="flex min-w-0 max-w-full items-center justify-end gap-3 whitespace-nowrap">
                       <button
-                        disabled={!downloadOnly && task?.status === "downloading"}
+                        disabled={!downloadOnly && (task?.status === "downloading" || task?.status === "queued")}
                         onClick={() => {
                           if (downloadOnly) {
                             void handleDelete(m.name, task, true);
@@ -800,7 +801,7 @@ export function Library() {
                       >
                         {t("lib.delete")}
                       </button>
-                      {task?.status === "downloading" ? (
+                      {task?.status === "downloading" || task?.status === "queued" ? (
                         <button
                           onClick={() => pauseDownload(task.kind, task.name)}
                           class="inline-flex shrink-0 items-center justify-center w-16 px-3 py-1 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-700 transition-colors font-medium"
@@ -810,7 +811,6 @@ export function Library() {
                       ) : task?.status === "paused" || task?.status === "error" ? (
                         <button
                           onClick={() => startDownload(task.kind, task.name, () => void loadModels())}
-                          disabled={hasActiveDownload.value && getDownloadTask("model", task.name)?.status !== "paused"}
                           class="inline-flex shrink-0 items-center justify-center w-16 px-3 py-1 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors font-medium"
                         >
                           {t("downloads.resume")}
@@ -832,23 +832,23 @@ export function Library() {
                           </span>
                         </>
                       ) : runningStatus(m.name) === "loading" ? (
-                        <div class="flex items-center gap-2">
-                          <span class="text-xs text-gray-500 max-w-[200px] truncate">
-                            {loadingLabelForModel(m)}
+                        <div class="flex min-w-0 max-w-[8rem] items-center gap-2">
+                          <span class="block min-w-0 truncate text-xs text-gray-500" title={loadingLabelForModel(m)}>
+                            {compactLoadingLabel(loadingLabelForModel(m))}
                           </span>
-                          <span class="inline-block w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                          <span class="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin" />
                         </div>
                       ) : loadingRun.value === m.name ? (
-                        <div class="flex items-center gap-2">
-                          <span class="text-xs text-gray-500 max-w-[200px] truncate">
-                            {loadingLabelForModel(m)}
+                        <div class="flex min-w-0 max-w-[8rem] items-center gap-2">
+                          <span class="block min-w-0 truncate text-xs text-gray-500" title={loadingLabelForModel(m)}>
+                            {compactLoadingLabel(loadingLabelForModel(m))}
                           </span>
-                          <span class="inline-block w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                          <span class="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin" />
                         </div>
                       ) : (
                         <button
                           onClick={() => openRunDialog(m)}
-                          disabled={!!loadingRun.value || hasActiveDownload.value}
+                          disabled={!!loadingRun.value}
                           class="inline-flex shrink-0 items-center justify-center w-16 px-3 py-1 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors font-medium"
                         >
                           {t("lib.run")}
