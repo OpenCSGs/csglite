@@ -105,6 +105,9 @@ func NewPythonEngine(ctx context.Context, modelName, modelDir string, runtimeMan
 	}
 	if err := engine.waitReady(ctx); err != nil {
 		_ = engine.Close()
+		// The runtime passed its readiness check but the worker still died;
+		// force the next attempt to re-run the real import verification.
+		runtimeManager.InvalidateEmbeddingImportCheck()
 		return nil, err
 	}
 	return engine, nil

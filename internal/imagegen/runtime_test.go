@@ -256,22 +256,150 @@ func TestEmbeddingTorchPackagesByOS(t *testing.T) {
 	}
 }
 
-func TestVerifyImportsWithFakePython(t *testing.T) {
+func TestVerifyPythonScriptWithFakePython(t *testing.T) {
 	ctx := context.Background()
-	if err := verifyImports(ctx, fakePython(t, 0, ""), []string{"torch"}); err != nil {
-		t.Fatalf("verifyImports success returned error: %v", err)
+	if err := verifyPythonScript(ctx, fakePython(t, 0, ""), "import torch"); err != nil {
+		t.Fatalf("verifyPythonScript success returned error: %v", err)
 	}
 
-	err := verifyImports(ctx, fakePython(t, 1, strings.Repeat("x", 2200)+"libtorchaudio.pyd failed"), []string{"torch"})
+	err := verifyPythonScript(ctx, fakePython(t, 1, strings.Repeat("x", 2200)+"libtorchaudio.pyd failed"), "import torch")
 	if err == nil {
-		t.Fatal("verifyImports failure returned nil")
+		t.Fatal("verifyPythonScript failure returned nil")
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "libtorchaudio.pyd failed") {
-		t.Fatalf("verifyImports error missing output tail: %q", msg)
+		t.Fatalf("verifyPythonScript error missing output tail: %q", msg)
 	}
 	if len(msg) > len("python import check failed: ")+2048 {
-		t.Fatalf("verifyImports error was not truncated: length=%d", len(msg))
+		t.Fatalf("verifyPythonScript error was not truncated: length=%d", len(msg))
+	}
+}
+
+// The Windows readiness check must reproduce the worker's exact import block:
+// a bare `import transformers` passes even with a broken torchaudio because
+// transformers lazy-loads its submodules (issue #54).
+func TestWindowsEmbeddingImportCheckScriptMatchesWorker(t *testing.T) {
+	if !strings.Contains(windowsEmbeddingWorkerImportCheckScript, "from transformers import AutoModel, AutoProcessor, WhisperFeatureExtractor") {
+		t.Fatalf("check script must expand transformers lazy modules the same way the worker does:\n%s", windowsEmbeddingWorkerImportCheckScript)
+	}
+	data, err := os.ReadFile(filepath.Join("..", "embedding", "worker", "embedding_worker.py"))
+	if err != nil {
+		t.Fatalf("reading embedding worker script: %v", err)
+	}
+	worker := string(data)
+	for _, line := range strings.Split(strings.TrimSpace(windowsEmbeddingWorkerImportCheckScript), "\n") {
+		if !strings.Contains(worker, line) {
+			t.Fatalf("check script line %q not found in embedding_worker.py; keep both in sync", line)
+		}
+	}
+}
+
+func writeFakePythonAt(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifyEmbeddingWorkerImportsGatingCacheAndHint(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake python")
+	}
+	ctx := context.Background()
+	m := NewRuntimeManagerAt(t.TempDir())
+	pythonPath := m.PythonPath()
+
+	// Non-Windows hosts skip the check entirely, even without a venv.
+	if err := m.verifyEmbeddingWorkerImports(ctx, "linux"); err != nil {
+		t.Fatalf("non-windows verify returned error: %v", err)
+	}
+
+	writeFakePythonAt(t, pythonPath, "printf '%s' 'OSError: Could not load this library: libtorchaudio.pyd' >&2\nexit 1\n")
+	err := m.verifyEmbeddingWorkerImports(ctx, "windows")
+	if err == nil {
+		t.Fatal("expected verify failure with broken python")
+	}
+	if !strings.Contains(err.Error(), "libtorchaudio") {
+		t.Fatalf("verify error missing traceback tail: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "Visual C++") {
+		t.Fatalf("verify error missing actionable hint: %q", err.Error())
+	}
+
+	// A passing check is cached per runtime root...
+	writeFakePythonAt(t, pythonPath, "exit 0\n")
+	if err := m.verifyEmbeddingWorkerImports(ctx, "windows"); err != nil {
+		t.Fatalf("verify with healthy python returned error: %v", err)
+	}
+	writeFakePythonAt(t, pythonPath, "exit 1\n")
+	if err := m.verifyEmbeddingWorkerImports(ctx, "windows"); err != nil {
+		t.Fatalf("cached verify should not re-run python: %v", err)
+	}
+	// ...until invalidated (install ran or the worker failed to start).
+	m.InvalidateEmbeddingImportCheck()
+	if err := m.verifyEmbeddingWorkerImports(ctx, "windows"); err == nil {
+		t.Fatal("expected verify failure after invalidation")
+	}
+}
+
+func TestUninstallBrokenWindowsTorchaudio(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake python")
+	}
+	ctx := context.Background()
+	m := NewRuntimeManagerAt(t.TempDir())
+	marker := filepath.Join(t.TempDir(), "uninstalled")
+	t.Setenv("TEST_UNINSTALL_MARKER", marker)
+
+	brokenPython := filepath.Join(t.TempDir(), "python")
+	writeFakePythonAt(t, brokenPython, `case "$*" in
+  *importlib.util*) echo '[]' ;;
+  *"import torchaudio"*) exit 1 ;;
+  *"pip uninstall"*) : > "$TEST_UNINSTALL_MARKER" ;;
+esac
+exit 0
+`)
+	if err := m.uninstallBrokenWindowsTorchaudio(ctx, brokenPython); err != nil {
+		t.Fatalf("uninstallBrokenWindowsTorchaudio error = %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("broken torchaudio should have been uninstalled via pip")
+	}
+
+	// Healthy torchaudio must be left alone.
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	healthyPython := filepath.Join(t.TempDir(), "python")
+	writeFakePythonAt(t, healthyPython, `case "$*" in
+  *importlib.util*) echo '[]' ;;
+  *"pip uninstall"*) : > "$TEST_UNINSTALL_MARKER" ;;
+esac
+exit 0
+`)
+	if err := m.uninstallBrokenWindowsTorchaudio(ctx, healthyPython); err != nil {
+		t.Fatalf("uninstallBrokenWindowsTorchaudio error = %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("healthy torchaudio should not be uninstalled")
+	}
+
+	// Missing torchaudio: nothing to probe or uninstall.
+	missingPython := filepath.Join(t.TempDir(), "python")
+	writeFakePythonAt(t, missingPython, `case "$*" in
+  *importlib.util*) echo '["torchaudio"]' ;;
+  *) : > "$TEST_UNINSTALL_MARKER" ;;
+esac
+exit 0
+`)
+	if err := m.uninstallBrokenWindowsTorchaudio(ctx, missingPython); err != nil {
+		t.Fatalf("uninstallBrokenWindowsTorchaudio error = %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("missing torchaudio should be a no-op")
 	}
 }
 

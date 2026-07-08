@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
@@ -355,11 +356,9 @@ func (m *RuntimeManager) EmbeddingStatus(ctx context.Context) RuntimeStatus {
 		status.Error = "Embedding runtime is missing Python packages"
 		return status
 	}
-	if runtime.GOOS == "windows" {
-		if err := verifyImports(ctx, status.Python, []string{"torch", "transformers"}); err != nil {
-			status.Ready = false
-			status.Error = windowsEmbeddingImportError(err)
-		}
+	if err := m.verifyEmbeddingWorkerImports(ctx, runtime.GOOS); err != nil {
+		status.Ready = false
+		status.Error = err.Error()
 	}
 	return status
 }
@@ -583,6 +582,9 @@ func (m *RuntimeManager) InstallEmbeddingWithProgressOptions(ctx context.Context
 	if progress == nil {
 		progress = func(string, int, int) {}
 	}
+	// The install may change the environment; make the final EmbeddingStatus
+	// re-run the real import verification instead of trusting a cached pass.
+	m.InvalidateEmbeddingImportCheck()
 
 	hardware := DetectHardware()
 	indexes := ResolvePackageIndexes(hardware)
@@ -628,7 +630,7 @@ func (m *RuntimeManager) InstallEmbeddingWithProgressOptions(ctx context.Context
 		}
 	}
 	if runtime.GOOS == "windows" {
-		if err := m.uninstallBrokenWindowsTorchaudio(ctx, python, indexes); err != nil {
+		if err := m.uninstallBrokenWindowsTorchaudio(ctx, python); err != nil {
 			return m.EmbeddingStatus(ctx), err
 		}
 	}
@@ -1010,16 +1012,62 @@ print(json.dumps(missing))
 	return missing, nil
 }
 
-func verifyImports(ctx context.Context, python string, modules []string) error {
-	script := "import importlib, sys\nfor n in sys.argv[1:]:\n    importlib.import_module(n)\n"
-	cmd := exec.CommandContext(ctx, python, append([]string{"-c", script}, modules...)...)
+// windowsEmbeddingWorkerImportCheckScript mirrors the import block at the top
+// of internal/embedding/worker/embedding_worker.py. A bare `import
+// transformers` is not enough: transformers lazy-loads submodules, so a broken
+// torchaudio only surfaces when the worker's real `from transformers import
+// AutoModel, ...` line expands the lazy module and pulls in the parakeet loss
+// chain (issue #54). Keep this script in sync with the worker imports; a test
+// enforces that.
+const windowsEmbeddingWorkerImportCheckScript = `import librosa
+import torch
+from PIL import Image
+from transformers import AutoModel, AutoProcessor, WhisperFeatureExtractor
+`
+
+// embeddingImportCheckPassed caches successful Windows embedding import checks
+// per runtime root so hot paths (status endpoint, engine reloads) do not pay
+// the multi-second torch+transformers import on every call.
+var embeddingImportCheckPassed sync.Map
+
+// VerifyEmbeddingWorkerImports runs the embedding worker's real import block on
+// Windows and reports a readable error when it fails. It is a no-op elsewhere.
+func (m *RuntimeManager) VerifyEmbeddingWorkerImports(ctx context.Context) error {
+	return m.verifyEmbeddingWorkerImports(ctx, runtime.GOOS)
+}
+
+func (m *RuntimeManager) verifyEmbeddingWorkerImports(ctx context.Context, goos string) error {
+	if goos != "windows" {
+		return nil
+	}
+	if _, ok := embeddingImportCheckPassed.Load(m.rootDir); ok {
+		return nil
+	}
+	log.Printf("EMBEDDING RUNTIME: verifying worker imports python=%s", m.PythonPath())
+	if err := verifyPythonScript(ctx, m.PythonPath(), windowsEmbeddingWorkerImportCheckScript); err != nil {
+		log.Printf("EMBEDDING RUNTIME: worker import verification failed: %v", err)
+		return errors.New(windowsEmbeddingImportError(err))
+	}
+	log.Printf("EMBEDDING RUNTIME: worker import verification passed")
+	embeddingImportCheckPassed.Store(m.rootDir, struct{}{})
+	return nil
+}
+
+// InvalidateEmbeddingImportCheck forces the next readiness check to re-run the
+// real import verification, e.g. after the worker failed to start.
+func (m *RuntimeManager) InvalidateEmbeddingImportCheck() {
+	embeddingImportCheckPassed.Delete(m.rootDir)
+}
+
+func verifyPythonScript(ctx context.Context, python, script string) error {
+	cmd := exec.CommandContext(ctx, python, "-c", script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		tail := string(out)
+		tail := strings.TrimSpace(string(out))
 		if len(tail) > 2048 {
 			tail = tail[len(tail)-2048:]
 		}
-		return fmt.Errorf("python import check failed: %s", strings.TrimSpace(tail))
+		return fmt.Errorf("python import check failed: %s", tail)
 	}
 	return nil
 }
@@ -1033,7 +1081,7 @@ func windowsEmbeddingImportError(err error) string {
 	return msg
 }
 
-func (m *RuntimeManager) uninstallBrokenWindowsTorchaudio(ctx context.Context, python string, indexes PackageIndexes) error {
+func (m *RuntimeManager) uninstallBrokenWindowsTorchaudio(ctx context.Context, python string) error {
 	missing, err := missingPackages(ctx, python, []string{"torchaudio"})
 	if err != nil {
 		return err
@@ -1044,12 +1092,18 @@ func (m *RuntimeManager) uninstallBrokenWindowsTorchaudio(ctx context.Context, p
 	if err := runCommand(ctx, python, "-c", "import torchaudio"); err == nil {
 		return nil
 	}
-	if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
-		return err
+	log.Printf("EMBEDDING RUNTIME: torchaudio is installed but fails to import; removing it (see issue #54)")
+	// Use the venv's own pip so removal works offline; fall back to ensurepip
+	// once if the venv somehow lacks pip.
+	if err := runCommand(ctx, python, "-m", "pip", "uninstall", "-y", "torchaudio"); err != nil {
+		if bootErr := runCommand(ctx, python, "-m", "ensurepip", "--upgrade"); bootErr != nil {
+			return fmt.Errorf("removing broken torchaudio from embedding runtime: %w", err)
+		}
+		if err := runCommand(ctx, python, "-m", "pip", "uninstall", "-y", "torchaudio"); err != nil {
+			return fmt.Errorf("removing broken torchaudio from embedding runtime: %w", err)
+		}
 	}
-	if err := runCommandEnv(ctx, m.uvInstallEnv(), m.uvPath(), "pip", "uninstall", "--python", python, "-y", "torchaudio"); err != nil {
-		return fmt.Errorf("removing broken torchaudio from embedding runtime: %w", err)
-	}
+	log.Printf("EMBEDDING RUNTIME: removed broken torchaudio")
 	return nil
 }
 

@@ -493,8 +493,19 @@ var ensureEmbeddingRuntimeReady = func(ctx context.Context, runtimeManager *imag
 	if status := runtimeManager.EmbeddingStatus(ctx); status.Ready && !upgradePackages {
 		return nil
 	}
-	_, err := runtimeManager.InstallEmbeddingWithProgressOptions(ctx, progress, upgradePackages)
-	return err
+	status, err := runtimeManager.InstallEmbeddingWithProgressOptions(ctx, progress, upgradePackages)
+	if err != nil {
+		return err
+	}
+	// Never hand a broken runtime to the worker: the post-install status runs
+	// the real import verification on Windows (issue #54).
+	if !status.Ready {
+		if status.Error != "" {
+			return errors.New(status.Error)
+		}
+		return errors.New("embedding runtime is not ready after install")
+	}
+	return nil
 }
 var newDiffusersEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (imagegen.Engine, error) {
 	return imagegen.NewDiffusersEngine(ctx, modelName, modelDir, runtimeManager)
