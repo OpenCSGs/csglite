@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -65,6 +66,28 @@ type windowsProcessorInfo struct {
 type windowsMemoryInfo struct {
 	TotalVisibleMemorySize uint64 `json:"TotalVisibleMemorySize"`
 	FreePhysicalMemory     uint64 `json:"FreePhysicalMemory"`
+}
+
+type windowsGPUPayload struct {
+	Controllers   []windowsVideoController  `json:"Controllers"`
+	Registry      []windowsGPURegistryEntry `json:"Registry"`
+	AdapterMemory []windowsGPUAdapterMemory `json:"AdapterMemory"`
+}
+
+type windowsVideoController struct {
+	Name        string  `json:"Name"`
+	AdapterRAM  *uint64 `json:"AdapterRAM"`
+	PNPDeviceID string  `json:"PNPDeviceID"`
+}
+
+type windowsGPURegistryEntry struct {
+	MatchingDeviceID string  `json:"MatchingDeviceId"`
+	MemorySize       *uint64 `json:"MemorySize"`
+}
+
+type windowsGPUAdapterMemory struct {
+	DedicatedUsage uint64 `json:"DedicatedUsage"`
+	SharedUsage    uint64 `json:"SharedUsage"`
 }
 
 // GET /api/settings -- application settings (version, model directory, etc.)
@@ -473,8 +496,13 @@ func getGPUInfo(systemMemoryTotal uint64) gpuInfo {
 	if info, ok := getNVIDIAGPUInfo(systemMemoryTotal); ok {
 		return info
 	}
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		return getDarwinGPUInfo(systemMemoryTotal)
+	case "windows":
+		if info, ok := getWindowsGPUInfo(systemMemoryTotal); ok {
+			return info
+		}
 	}
 	return gpuInfo{}
 }
@@ -534,6 +562,105 @@ func parseNVIDIASMIOutput(out []byte) (gpuInfo, bool) {
 	return gpuInfo{}, false
 }
 
+// windowsGPUQuery collects, in one PowerShell round trip:
+//   - video controllers (name, WMI AdapterRAM, PNP device id)
+//   - the display class registry entries, whose qwMemorySize is the real
+//     dedicated VRAM (AdapterRAM is a uint32 and caps at 4 GB)
+//   - GPU adapter memory performance counters (same source Task Manager uses)
+const windowsGPUQuery = `$controllers = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Select-Object Name, AdapterRAM, PNPDeviceID); $registry = @(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0*' -ErrorAction SilentlyContinue | Select-Object MatchingDeviceId, @{n='MemorySize';e={$_.'HardwareInformation.qwMemorySize'}}); $memory = @(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory -ErrorAction SilentlyContinue | Select-Object DedicatedUsage, SharedUsage); [pscustomobject]@{ Controllers = $controllers; Registry = $registry; AdapterMemory = $memory } | ConvertTo-Json -Compress -Depth 4`
+
+// Dedicated VRAM below this means the adapter is an integrated GPU that
+// renders out of shared system memory (e.g. AMD Radeon 780M, Intel Iris).
+const windowsSharedVRAMThreshold = 1 << 30 // 1 GiB
+
+func getWindowsGPUInfo(systemMemoryTotal uint64) (gpuInfo, bool) {
+	out, err := runPowerShellCommand(windowsGPUQuery)
+	if err != nil {
+		return gpuInfo{}, false
+	}
+	return parseWindowsGPUInfo(out, systemMemoryTotal)
+}
+
+func parseWindowsGPUInfo(out []byte, systemMemoryTotal uint64) (gpuInfo, bool) {
+	var payload windowsGPUPayload
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return gpuInfo{}, false
+	}
+
+	var name string
+	var vramTotal uint64
+	for _, controller := range payload.Controllers {
+		ctrlName := strings.TrimSpace(controller.Name)
+		if ctrlName == "" || isWindowsVirtualDisplayAdapter(ctrlName) {
+			continue
+		}
+		total := windowsControllerVRAM(controller, payload.Registry)
+		if name == "" || total > vramTotal {
+			name = ctrlName
+			vramTotal = total
+		}
+	}
+	if name == "" {
+		return gpuInfo{}, false
+	}
+
+	var dedicatedUsed, sharedUsed uint64
+	for _, mem := range payload.AdapterMemory {
+		dedicatedUsed += mem.DedicatedUsage
+		sharedUsed += mem.SharedUsage
+	}
+	usageAvailable := len(payload.AdapterMemory) > 0
+
+	info := gpuInfo{
+		Name:           name,
+		VRAMTotal:      vramTotal,
+		UsageAvailable: usageAvailable,
+	}
+	if vramTotal < windowsSharedVRAMThreshold && systemMemoryTotal > 0 {
+		// Integrated GPU: mirror Task Manager, which caps the shared GPU
+		// memory limit at half of system RAM.
+		info.SharedMemory = true
+		info.VRAMTotal = systemMemoryTotal / 2
+		info.VRAMUsed = dedicatedUsed + sharedUsed
+	} else {
+		info.VRAMUsed = dedicatedUsed
+	}
+	if !usageAvailable {
+		info.VRAMUsed = 0
+	}
+	if info.VRAMUsed > info.VRAMTotal {
+		info.VRAMUsed = info.VRAMTotal
+	}
+	return info, true
+}
+
+func windowsControllerVRAM(controller windowsVideoController, registry []windowsGPURegistryEntry) uint64 {
+	pnp := strings.ToUpper(strings.TrimSpace(controller.PNPDeviceID))
+	if pnp != "" {
+		for _, entry := range registry {
+			if entry.MemorySize == nil || *entry.MemorySize == 0 {
+				continue
+			}
+			match := strings.ToUpper(strings.TrimSpace(entry.MatchingDeviceID))
+			if match != "" && strings.HasPrefix(pnp, match) {
+				return *entry.MemorySize
+			}
+		}
+	}
+	if controller.AdapterRAM != nil {
+		return *controller.AdapterRAM
+	}
+	return 0
+}
+
+func isWindowsVirtualDisplayAdapter(name string) bool {
+	name = strings.ToLower(name)
+	return strings.Contains(name, "microsoft basic display") ||
+		strings.Contains(name, "microsoft remote display") ||
+		strings.Contains(name, "microsoft hyper-v video") ||
+		strings.Contains(name, "virtual")
+}
+
 func getDarwinGPUInfo(systemMemoryTotal uint64) gpuInfo {
 	out, err := exec.Command("system_profiler", "-json", "SPDisplaysDataType").Output()
 	if err != nil {
@@ -548,12 +675,53 @@ func getDarwinGPUInfo(systemMemoryTotal uint64) gpuInfo {
 		return gpuInfo{}
 	}
 
-	return gpuInfo{
-		Name:           name,
-		VRAMTotal:      total,
-		UsageAvailable: false,
-		SharedMemory:   shared,
+	info := gpuInfo{
+		Name:         name,
+		VRAMTotal:    total,
+		SharedMemory: shared,
 	}
+	if used, ok := getDarwinGPUMemoryUsed(); ok {
+		if total > 0 && used > total {
+			used = total
+		}
+		info.VRAMUsed = used
+		info.UsageAvailable = true
+	}
+	return info
+}
+
+func getDarwinGPUMemoryUsed() (uint64, bool) {
+	out, err := exec.Command("ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator").Output()
+	if err != nil {
+		return 0, false
+	}
+	return parseDarwinIORegGPUMemory(out)
+}
+
+// GPU memory keys exposed by IOAccelerator PerformanceStatistics; the first
+// key with any match wins. "In use system memory" is Apple Silicon unified
+// memory, the others appear on Intel Macs with discrete GPUs.
+var darwinIORegGPUMemoryPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`"In use system memory"\s*=\s*(\d+)`),
+	regexp.MustCompile(`"vramUsedBytes"\s*=\s*(\d+)`),
+	regexp.MustCompile(`"In use vid memory"\s*=\s*(\d+)`),
+}
+
+func parseDarwinIORegGPUMemory(out []byte) (uint64, bool) {
+	for _, pattern := range darwinIORegGPUMemoryPatterns {
+		matches := pattern.FindAllSubmatch(out, -1)
+		if len(matches) == 0 {
+			continue
+		}
+		var used uint64
+		for _, match := range matches {
+			if value, err := strconv.ParseUint(string(match[1]), 10, 64); err == nil {
+				used += value
+			}
+		}
+		return used, true
+	}
+	return 0, false
 }
 
 func parseDarwinSystemProfilerOutput(out []byte) (name string, total uint64, shared bool) {
