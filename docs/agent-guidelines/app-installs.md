@@ -83,8 +83,20 @@ Desktop apps use `installDetectMode=desktop`. Codex App detection order:
 4. Windows managed runtime exe under
    `~/.local/share/codex-app/versions/*/*.exe` when launcher metadata is
    missing.
+5. Windows external installs:
+   - Registry Uninstall entries (`HKCU`/`HKLM`, including `WOW6432Node`) whose
+     `DisplayName` contains "codex", resolved via `DisplayIcon` or
+     `InstallLocation`.
+   - Common install directories: `%LOCALAPPDATA%\Programs\Codex`,
+     `%LOCALAPPDATA%\Programs\codex-app`, `%LOCALAPPDATA%\Codex`,
+     `%ProgramFiles%\Codex`, `%ProgramFiles(x86)%\Codex`.
 
 `CodexAppLaunchTarget()` uses the same resolution order for the Open action.
+
+Manual override: `POST /api/apps/path` (UI: "Specify Install Location" in the
+Codex App drawer) writes the user-provided path to
+`~/.local/share/codex-app/launch-target`, which sits near the top of the
+detection order. Manual paths stay `managed=false`.
 
 ### Adding A New App
 

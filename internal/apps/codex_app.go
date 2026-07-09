@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -30,8 +31,56 @@ func CodexAppLaunchTarget() (string, error) {
 	if binary, _, ok := findWindowsCodexAppBinary(home); ok {
 		return binary, nil
 	}
+	if binary, _, ok := findWindowsExternalCodexApp(); ok {
+		return binary, nil
+	}
 
 	return "", fmt.Errorf("Codex App is installed, but no launch target was found")
+}
+
+// SetCodexAppLaunchTarget records a user-specified Codex App location in the
+// launch-target file, which sits at the top of the detection and launch
+// resolution order. This is the manual escape hatch for installs that live
+// outside every scanned location.
+func SetCodexAppLaunchTarget(target string) error {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return fmt.Errorf("path is required")
+	}
+	target = filepath.Clean(target)
+	info, err := os.Stat(target)
+	if err != nil {
+		return fmt.Errorf("path not found: %s", target)
+	}
+	if err := validateCodexAppLaunchTarget(target, info.IsDir()); err != nil {
+		return err
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return fmt.Errorf("user home directory was not found")
+	}
+	runtimeRoot := codexAppRuntimeRoot(home)
+	if err := os.MkdirAll(runtimeRoot, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", runtimeRoot, err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeRoot, "launch-target"), []byte(target+"\n"), 0o644); err != nil {
+		return fmt.Errorf("saving launch target: %w", err)
+	}
+	return nil
+}
+
+func validateCodexAppLaunchTarget(target string, isDir bool) error {
+	if isDir {
+		if strings.HasSuffix(strings.ToLower(target), ".app") {
+			return nil
+		}
+		return fmt.Errorf("path must be an executable file or a macOS .app bundle: %s", target)
+	}
+	if runtime.GOOS == "windows" && !strings.EqualFold(filepath.Ext(target), ".exe") {
+		return fmt.Errorf("path must point to a Windows .exe file: %s", target)
+	}
+	return nil
 }
 
 func codexAppRuntimeRoot(home string) string {
@@ -92,7 +141,139 @@ func detectCodexAppInstall() (string, string, bool) {
 	if binary, version, ok := findWindowsCodexAppBinary(home); ok {
 		return binary, version, true
 	}
+	if binary, version, ok := findWindowsExternalCodexApp(); ok {
+		return binary, version, true
+	}
 	return "", "", false
+}
+
+// windowsUninstallEntry mirrors the relevant values of a Windows registry
+// Uninstall entry (HK{CU,LM}\...\CurrentVersion\Uninstall\<key>).
+type windowsUninstallEntry struct {
+	DisplayName     string
+	DisplayVersion  string
+	InstallLocation string
+	DisplayIcon     string
+}
+
+// findWindowsExternalCodexApp discovers a Codex App that the user installed
+// outside the managed flow: first via registry Uninstall entries, then by
+// scanning common per-user and system install directories.
+func findWindowsExternalCodexApp() (string, string, bool) {
+	if runtime.GOOS != "windows" {
+		return "", "", false
+	}
+	if binary, version, ok := resolveCodexAppFromUninstallEntries(readWindowsCodexUninstallEntries()); ok {
+		return binary, version, ok
+	}
+	if binary, ok := findCodexAppExeInDirs(windowsCodexAppDirCandidates(os.Getenv)); ok {
+		return binary, binary, true
+	}
+	return "", "", false
+}
+
+func resolveCodexAppFromUninstallEntries(entries []windowsUninstallEntry) (string, string, bool) {
+	for _, entry := range entries {
+		name := strings.ToLower(strings.TrimSpace(entry.DisplayName))
+		if !strings.Contains(name, "codex") {
+			continue
+		}
+		version := strings.TrimSpace(entry.DisplayVersion)
+
+		if icon := windowsDisplayIconPath(entry.DisplayIcon); icon != "" {
+			if info, err := os.Stat(icon); err == nil && !info.IsDir() {
+				if version == "" {
+					version = icon
+				}
+				return icon, version, true
+			}
+		}
+
+		location := strings.TrimSpace(entry.InstallLocation)
+		if location == "" {
+			continue
+		}
+		if binary, ok := findCodexAppExeInDirs([]string{location}); ok {
+			if version == "" {
+				version = binary
+			}
+			return binary, version, true
+		}
+	}
+	return "", "", false
+}
+
+// windowsDisplayIconPath extracts the executable path from a DisplayIcon
+// value, which may carry an icon index suffix such as `C:\...\Codex.exe,0`.
+func windowsDisplayIconPath(displayIcon string) string {
+	icon := strings.Trim(strings.TrimSpace(displayIcon), `"`)
+	if idx := strings.LastIndex(icon, ","); idx >= 0 {
+		if _, err := strconv.Atoi(strings.TrimSpace(icon[idx+1:])); err == nil {
+			icon = strings.TrimSpace(icon[:idx])
+		}
+	}
+	icon = strings.Trim(icon, `"`)
+	if !strings.EqualFold(filepath.Ext(icon), ".exe") {
+		return ""
+	}
+	return icon
+}
+
+func windowsCodexAppDirCandidates(getenv func(string) string) []string {
+	var candidates []string
+	appendDirs := func(base string) {
+		if base == "" {
+			return
+		}
+		candidates = append(candidates,
+			filepath.Join(base, "Programs", "Codex"),
+			filepath.Join(base, "Programs", "codex-app"),
+			filepath.Join(base, "Codex"),
+		)
+	}
+	appendDirs(getenv("LOCALAPPDATA"))
+	for _, env := range []string{"ProgramFiles", "ProgramFiles(x86)"} {
+		if base := getenv(env); base != "" {
+			candidates = append(candidates, filepath.Join(base, "Codex"))
+		}
+	}
+	return candidates
+}
+
+func findCodexAppExeInDirs(dirs []string) (string, bool) {
+	for _, dir := range dirs {
+		if binary, ok := findCodexAppExeInDir(dir); ok {
+			return binary, true
+		}
+	}
+	return "", false
+}
+
+func findCodexAppExeInDir(dir string) (string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	var fallback string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := strings.ToLower(entry.Name())
+		if !strings.HasSuffix(name, ".exe") || strings.Contains(name, "unins") {
+			continue
+		}
+		if name == "codex.exe" || name == "codex-app.exe" {
+			return filepath.Join(dir, entry.Name()), true
+		}
+		if fallback == "" && strings.HasPrefix(name, "codex") {
+			fallback = filepath.Join(dir, entry.Name())
+		}
+	}
+	if fallback != "" {
+		return fallback, true
+	}
+	return "", false
 }
 
 func readCodexAppTargetVersion(target string) string {

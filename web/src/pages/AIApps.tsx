@@ -9,6 +9,7 @@ import {
   openAIApp,
   saveAIAppModel,
   saveCloudToken,
+  setAIAppPath,
   stopAIApp,
   streamAIAppLogs,
   uninstallAIApp,
@@ -572,6 +573,9 @@ function LiveLogsDrawer({
   const [cloudAuthError, setCloudAuthError] = useState("");
   const [cloudTokenInput, setCloudTokenInput] = useState("");
   const [isSavingCloudToken, setIsSavingCloudToken] = useState(false);
+  const [manualPathInput, setManualPathInput] = useState("");
+  const [isSavingManualPath, setIsSavingManualPath] = useState(false);
+  const [manualPathNotice, setManualPathNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const selectedModelParts = selectedModel ? parseAIAppModelKey(selectedModel) : null;
   const currentModelID = selectedModelParts?.model || state.modelID?.trim() || "";
   const currentModelInfo = selectedModelParts
@@ -718,11 +722,36 @@ function LiveLogsDrawer({
   useEffect(() => {
     setSelectedModel("");
     setCopiedModel(false);
+    setManualPathInput("");
+    setManualPathNotice(null);
     if (copyResetRef.current !== null) {
       window.clearTimeout(copyResetRef.current);
       copyResetRef.current = null;
     }
   }, [app.id]);
+
+  const handleSaveManualPath = async () => {
+    const path = manualPathInput.trim();
+    if (!path) {
+      return;
+    }
+    setIsSavingManualPath(true);
+    setManualPathNotice(null);
+    try {
+      const info = await setAIAppPath(app.id, path);
+      mergeAppStates([info]);
+      setManualPathInput("");
+      setManualPathNotice({ ok: true, text: t("aiApps.manualPathSaved") });
+    } catch (error) {
+      const message = (error as Error).message?.trim();
+      setManualPathNotice({
+        ok: false,
+        text: message ? `${t("aiApps.manualPathFailed")}: ${message}` : t("aiApps.manualPathFailed"),
+      });
+    } finally {
+      setIsSavingManualPath(false);
+    }
+  };
 
   const handleCopyModel = async () => {
     if (!currentModelID) {
@@ -882,6 +911,43 @@ function LiveLogsDrawer({
               <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600 font-mono break-all">
                 {state.installPath}
               </div>
+            </section>
+          )}
+
+          {isDesktopAIApp(app) && !state.disabled && !isWorking && (
+            <section class="space-y-2">
+              <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.manualPath")}</h3>
+              <p class="text-sm text-gray-500">{t("aiApps.manualPathHint")}</p>
+              <div class="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={manualPathInput}
+                  onInput={(e) => setManualPathInput((e.currentTarget as HTMLInputElement).value)}
+                  placeholder={t("aiApps.manualPathPlaceholder")}
+                  spellcheck={false}
+                  class="flex-1 min-w-0 rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+                <button
+                  onClick={() => void handleSaveManualPath()}
+                  disabled={isSavingManualPath || !manualPathInput.trim()}
+                  class={`rounded-lg border px-3 py-2 text-sm whitespace-nowrap transition-colors ${
+                    isSavingManualPath || !manualPathInput.trim()
+                      ? "border-gray-200 text-gray-300 cursor-not-allowed"
+                      : "border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                  }`}
+                >
+                  {isSavingManualPath ? t("aiApps.manualPathSaving") : t("aiApps.manualPathSave")}
+                </button>
+              </div>
+              {manualPathNotice && (
+                <div class={`rounded-lg border px-3 py-2 text-sm ${
+                  manualPathNotice.ok
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-red-200 bg-red-50 text-red-700"
+                }`}>
+                  {manualPathNotice.text}
+                </div>
+              )}
             </section>
           )}
 

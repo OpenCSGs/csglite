@@ -527,6 +527,13 @@ type AIAppUninstallRequest = AIAppActionRequest
 
 type AIAppOpenRequest = AIAppActionRequest
 
+// AIAppPathRequest sets a manual install location for an AI app whose
+// automatic detection missed the user's custom install path.
+type AIAppPathRequest struct {
+	AppID string `json:"app_id"`
+	Path  string `json:"path"`
+}
+
 type AIAppInfo struct {
 	ID               string    `json:"id"`
 	Installed        bool      `json:"installed"`

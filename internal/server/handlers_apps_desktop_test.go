@@ -45,6 +45,48 @@ func TestIsLocalhostBrowserAccess(t *testing.T) {
 	}
 }
 
+func TestHandleAppSetPathRejectsUnsupportedApp(t *testing.T) {
+	s := newTestServer(t)
+
+	body := `{"app_id":"claude-code","path":"/tmp/claude"}`
+	req := httptest.NewRequest("POST", "/api/apps/path", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	s.handleAppSetPath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestHandleAppSetPathRequiresFields(t *testing.T) {
+	s := newTestServer(t)
+
+	body := `{"app_id":"codex-app"}`
+	req := httptest.NewRequest("POST", "/api/apps/path", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	s.handleAppSetPath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestHandleAppSetPathRejectsMissingTarget(t *testing.T) {
+	s := newTestServer(t)
+
+	body := `{"app_id":"codex-app","path":"/definitely/missing/Codex.app"}`
+	req := httptest.NewRequest("POST", "/api/apps/path", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	s.handleAppSetPath(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
 func TestHandleAppOpenCodexAppRequiresLocalhost(t *testing.T) {
 	s := newTestServer(t)
 

@@ -1768,6 +1768,14 @@ export async function openAIApp(appId: string, modelId?: string, workDir?: strin
   });
 }
 
+export async function setAIAppPath(appId: string, path: string): Promise<AIAppInfo> {
+  return fetchJSON<AIAppInfo>("/api/apps/path", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ app_id: appId, path }),
+  });
+}
+
 export async function saveAIAppModel(appId: string, modelId: string, source?: string): Promise<void> {
   await fetch("/api/apps/model", {
     method: "POST",

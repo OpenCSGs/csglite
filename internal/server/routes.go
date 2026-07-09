@@ -103,6 +103,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/apps/stop", s.handleAppStop)
 	mux.HandleFunc("POST /api/apps/open", s.handleAppOpen)
 	mux.HandleFunc("POST /api/apps/model", s.handleAppModelSave)
+	mux.HandleFunc("POST /api/apps/path", s.handleAppSetPath)
 	mux.HandleFunc("GET /api/apps/logs", s.handleAppLogs)
 	mux.HandleFunc("GET /api/apps/shell/{id}/ws", s.handleAppShellWS)
 	mux.HandleFunc("POST /api/apps/shell/{id}/close", s.handleAppShellClose)

@@ -3379,6 +3379,45 @@
         }
       }
     },
+    "/api/apps/path": {
+      "post": {
+        "tags": [
+          "AI Apps"
+        ],
+        "summary": "Set a manual install path for an AI App",
+        "description": "Records a user-specified install location for an AI App whose automatic detection missed a custom install path. Currently only codex-app is supported. Returns the refreshed app state.",
+        "operationId": "setAIAppPath",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AIAppPathRequest"
+              },
+              "example": {
+                "app_id": "codex-app",
+                "path": "D:\\Tools\\Codex\\Codex.exe"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Manual install path saved; refreshed app state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIAppInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
     "/api/apps/logs": {
       "get": {
         "tags": [
@@ -6692,6 +6731,24 @@
         "properties": {
           "api_key": {
             "type": "string"
+          }
+        }
+      },
+      "AIAppPathRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "app_id",
+          "path"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string",
+            "description": "AI App identifier. Currently only codex-app supports manual paths."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute path to the installed app (Windows .exe or macOS .app bundle)."
           }
         }
       },

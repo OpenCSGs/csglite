@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opencsgs/csglite/internal/apps"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -163,6 +164,39 @@ func (s *Server) handleAppModelSave(w http.ResponseWriter, r *http.Request) {
 	}
 	s.savePreferredAIAppModel(req.AppID, req.ModelID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleAppSetPath(w http.ResponseWriter, r *http.Request) {
+	var req api.AIAppPathRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	appID := strings.TrimSpace(req.AppID)
+	path := strings.TrimSpace(req.Path)
+	if appID == "" || path == "" {
+		writeError(w, http.StatusBadRequest, "app_id and path are required")
+		return
+	}
+	if appID != "codex-app" {
+		writeError(w, http.StatusBadRequest, "manual install path is only supported for codex-app")
+		return
+	}
+
+	log.Printf("AI APP %s: manual install path requested path=%q", appID, path)
+	if err := apps.SetCodexAppLaunchTarget(path); err != nil {
+		log.Printf("AI APP %s: manual install path rejected: %v", appID, err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	info, err := s.appManager.Get(r.Context(), appID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.enrichAIApp(r.Context(), &info)
+	writeJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) handleAppOpen(w http.ResponseWriter, r *http.Request) {
