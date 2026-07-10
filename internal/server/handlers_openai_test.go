@@ -27,6 +27,29 @@ type fakeChatCompletionEngine struct {
 	lastReq map[string]interface{}
 }
 
+type chunkedOpenAIStreamReader struct {
+	chunks []string
+}
+
+func (r *chunkedOpenAIStreamReader) Read(p []byte) (int, error) {
+	if len(r.chunks) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.chunks[0])
+	r.chunks = r.chunks[1:]
+	return n, nil
+}
+
+type trackingFlushResponseWriter struct {
+	*httptest.ResponseRecorder
+	flushedBodies []string
+}
+
+func (w *trackingFlushResponseWriter) Flush() {
+	w.flushedBodies = append(w.flushedBodies, w.Body.String())
+	w.ResponseRecorder.Flush()
+}
+
 func (e *fakeChatCompletionEngine) Generate(context.Context, string, inference.Options, inference.TokenCallback) (string, error) {
 	return "", nil
 }
@@ -50,6 +73,28 @@ func (e *fakeChatCompletionEngine) ChatCompletion(_ context.Context, reqBody map
 		Body:       io.NopCloser(bytes.NewReader(data)),
 		Header:     make(http.Header),
 	}, nil
+}
+
+func TestOpenAIStreamWriterFlushesEachUpstreamChunk(t *testing.T) {
+	reader := &chunkedOpenAIStreamReader{chunks: []string{
+		"data: first\n\n",
+		"data: second\n\n",
+		"data: [DONE]\n\n",
+	}}
+	recorder := &trackingFlushResponseWriter{ResponseRecorder: httptest.NewRecorder()}
+
+	if _, err := io.Copy(openAIStreamWriter{ResponseWriter: recorder}, reader); err != nil {
+		t.Fatalf("copy stream: %v", err)
+	}
+
+	if len(recorder.flushedBodies) != 3 {
+		t.Fatalf("flush count = %d, want 3", len(recorder.flushedBodies))
+	}
+	for i, want := range []string{"data: first\n\n", "data: second\n\n", "data: [DONE]\n\n"} {
+		if !strings.HasSuffix(recorder.flushedBodies[i], want) {
+			t.Fatalf("flush %d body = %q, want suffix %q", i, recorder.flushedBodies[i], want)
+		}
+	}
 }
 
 type fakeEmbeddingsEngine struct {

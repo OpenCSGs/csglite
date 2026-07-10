@@ -222,7 +222,7 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	}
 	w.WriteHeader(http.StatusOK)
 	if stream {
-		_, _ = io.Copy(w, resp.Body)
+		_, _ = io.Copy(openAIStreamWriter{ResponseWriter: w}, resp.Body)
 		s.recordAPIUsage(r, req.Model, req.Source, countMessageTokens(req.Messages), 0)
 	} else {
 		body, err := io.ReadAll(resp.Body)
@@ -244,6 +244,20 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+type openAIStreamWriter struct {
+	http.ResponseWriter
+}
+
+func (w openAIStreamWriter) Write(p []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(p)
+	if n > 0 {
+		if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+	return n, err
 }
 
 func openAIChatRequestHasToolFeatures(req api.OpenAIChatRequest) bool {
