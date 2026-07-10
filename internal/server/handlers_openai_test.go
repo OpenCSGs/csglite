@@ -97,6 +97,30 @@ func TestOpenAIStreamWriterFlushesEachUpstreamChunk(t *testing.T) {
 	}
 }
 
+func TestOpenAIStreamEnabled(t *testing.T) {
+	enabled := true
+	disabled := false
+	tests := []struct {
+		name           string
+		requested      *bool
+		defaultEnabled bool
+		want           bool
+	}{
+		{name: "omitted uses disabled default", requested: nil, defaultEnabled: false, want: false},
+		{name: "omitted uses enabled default", requested: nil, defaultEnabled: true, want: true},
+		{name: "explicit true overrides default", requested: &enabled, defaultEnabled: false, want: true},
+		{name: "explicit false overrides default", requested: &disabled, defaultEnabled: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := openAIStreamEnabled(tt.requested, tt.defaultEnabled); got != tt.want {
+				t.Fatalf("openAIStreamEnabled() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
 type fakeEmbeddingsEngine struct {
 	resp    api.OpenAIEmbeddingsResponse
 	lastReq map[string]interface{}

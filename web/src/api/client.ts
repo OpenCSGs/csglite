@@ -692,6 +692,9 @@ export function uploadLocalModel(
   return uploadLocalModelSession(options, onProgress);
 }
 
+const MODEL_UPLOAD_CHUNK_SIZE = 32 * 1024 * 1024;
+const MODEL_UPLOAD_CHUNK_RETRIES = 3;
+
 async function uploadLocalModelSession(
   options: LocalModelUploadOptions,
   onProgress?: (percent: number) => void
@@ -735,11 +738,64 @@ async function uploadLocalModelSession(
   }
 }
 
-function uploadLocalModelSessionFile(
+async function uploadLocalModelSessionFile(
   uploadID: string,
   item: LocalModelUploadFile,
   onProgress?: (loaded: number) => void
 ): Promise<void> {
+  if (item.file.size === 0) {
+    await uploadLocalModelChunk(uploadID, item, item.file, 0, 0);
+    onProgress?.(0);
+    return;
+  }
+
+  let offset = 0;
+  while (offset < item.file.size) {
+    const end = Math.min(offset + MODEL_UPLOAD_CHUNK_SIZE, item.file.size);
+    const chunk = item.file.slice(offset, end);
+    let response: ModelUploadChunkResponse | null = null;
+    for (let attempt = 0; attempt <= MODEL_UPLOAD_CHUNK_RETRIES; attempt += 1) {
+      try {
+        response = await uploadLocalModelChunk(uploadID, item, chunk, offset, item.file.size, (loaded) => {
+          onProgress?.(Math.min(item.file.size, offset + loaded));
+        });
+        break;
+      } catch (err) {
+        if (!(err instanceof ModelUploadTransportError) || attempt === MODEL_UPLOAD_CHUNK_RETRIES) {
+          throw err;
+        }
+        await delayModelUploadRetry(250 * 2 ** attempt);
+      }
+    }
+    if (!response || response.next_offset !== end) {
+      throw new Error(`upload offset mismatch: expected ${end}, received ${response?.next_offset ?? "none"}`);
+    }
+    offset = response.next_offset;
+    onProgress?.(offset);
+  }
+}
+
+type ModelUploadChunkResponse = {
+  status: string;
+  bytes: number;
+  next_offset: number;
+  complete: boolean;
+};
+
+class ModelUploadTransportError extends Error {}
+
+function delayModelUploadRetry(delayMs: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, delayMs));
+}
+
+function uploadLocalModelChunk(
+  uploadID: string,
+  item: LocalModelUploadFile,
+  chunk: Blob,
+  offset: number,
+  total: number,
+  onProgress?: (loaded: number) => void
+): Promise<ModelUploadChunkResponse> {
   return new Promise((resolve, reject) => {
     const path = item.path || item.file.name;
     const params = new URLSearchParams();
@@ -747,6 +803,9 @@ function uploadLocalModelSessionFile(
     params.set("filename", item.file.name);
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", `/api/models/upload/${encodeURIComponent(uploadID)}/file?${params.toString()}`);
+    if (total > 0) {
+      xhr.setRequestHeader("Content-Range", `bytes ${offset}-${offset + chunk.size - 1}/${total}`);
+    }
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
         onProgress?.(event.loaded);
@@ -754,7 +813,11 @@ function uploadLocalModelSessionFile(
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
+        try {
+          resolve(JSON.parse(xhr.responseText) as ModelUploadChunkResponse);
+        } catch {
+          reject(new Error("upload returned an invalid response"));
+        }
         return;
       }
       let data: any = null;
@@ -763,12 +826,26 @@ function uploadLocalModelSessionFile(
       } catch {
         /* ignore parse errors */
       }
+      const committedOffset = offset + chunk.size;
+      if (xhr.status === 409 && data?.expected_offset === committedOffset) {
+        resolve({
+          status: "ok",
+          bytes: chunk.size,
+          next_offset: committedOffset,
+          complete: committedOffset === total,
+        });
+        return;
+      }
+      if (xhr.status >= 500) {
+        reject(new ModelUploadTransportError(data?.error || data?.message || `upload failed (${xhr.status})`));
+        return;
+      }
       reject(new Error(data?.error || data?.message || "upload failed"));
     };
-    xhr.onerror = () => reject(new Error("upload connection failed"));
+    xhr.onerror = () => reject(new ModelUploadTransportError("upload connection failed"));
     xhr.onabort = () => reject(new Error("upload aborted"));
-    xhr.ontimeout = () => reject(new Error("upload timed out"));
-    xhr.send(item.file);
+    xhr.ontimeout = () => reject(new ModelUploadTransportError("upload timed out"));
+    xhr.send(chunk);
   });
 }
 

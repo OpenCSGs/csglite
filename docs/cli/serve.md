@@ -13,6 +13,9 @@ csghub-lite serve [flags]
 | 选项 | 说明 | 默认值 |
 |------|------|--------|
 | `--listen <addr>` | 监听地址 | `:11435`（来自配置文件） |
+| `--openai-stream-default` | 当请求未传 `stream` 时，默认以 SSE 返回 `/v1/chat/completions` | `false` |
+
+也可以通过环境变量 `CSGHUB_LITE_OPENAI_STREAM_DEFAULT=true` 启用。请求体显式传入的 `stream: true` 或 `stream: false` 优先于启动配置。
 
 ## 说明
 
@@ -36,6 +39,9 @@ csghub-lite serve
 
 # 指定端口
 csghub-lite serve --listen :8080
+
+# 让 OpenAI Chat Completions 在省略 stream 时默认使用流式响应
+csghub-lite serve --openai-stream-default
 
 # 后台运行
 csghub-lite serve &

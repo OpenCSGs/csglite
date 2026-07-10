@@ -4,10 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +30,8 @@ type modelUploadSession struct {
 	FileCount int
 	Bytes     int64
 	CreatedAt time.Time
+	Completed map[string]bool
+	Pending   map[string]int64
 }
 
 var modelUploadSessions = struct {
@@ -71,6 +76,8 @@ func (s *Server) handleModelUploadStart(w http.ResponseWriter, r *http.Request) 
 		Root:      root,
 		Source:    filepath.Join(root, "files"),
 		CreatedAt: time.Now(),
+		Completed: map[string]bool{},
+		Pending:   map[string]int64{},
 	}
 	if err := os.MkdirAll(sess.Source, 0o755); err != nil {
 		_ = os.RemoveAll(root)
@@ -105,7 +112,7 @@ func (s *Server) handleModelUploadFile(w http.ResponseWriter, r *http.Request) {
 	if sess.ModelID == "" {
 		sess.ModelID = deriveUploadModelID(fileName)
 	}
-	var target string
+	var target, pathKey string
 	if sess.Mode == "archive" {
 		if sess.FileCount > 0 {
 			writeError(w, http.StatusBadRequest, "archive upload requires exactly one file")
@@ -116,6 +123,7 @@ func (s *Server) handleModelUploadFile(w http.ResponseWriter, r *http.Request) {
 			name = "model"
 		}
 		target = filepath.Join(sess.Root, name)
+		pathKey = name
 		sess.Source = target
 	} else {
 		cleanRel, err := cleanUploadRelativePath(relPath)
@@ -124,6 +132,33 @@ func (s *Server) handleModelUploadFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		target = filepath.Join(sess.Source, filepath.FromSlash(cleanRel))
+		pathKey = cleanRel
+	}
+	contentRange, chunked, err := parseUploadContentRange(r.Header.Get("Content-Range"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if sess.Completed[pathKey] {
+		if chunked {
+			currentSize, sizeErr := uploadTargetSize(target)
+			if sizeErr != nil {
+				writeError(w, http.StatusInternalServerError, "checking uploaded file: "+sizeErr.Error())
+				return
+			}
+			writeJSON(w, http.StatusConflict, map[string]interface{}{
+				"error":           "file upload is already complete",
+				"errorCode":       http.StatusConflict,
+				"expected_offset": currentSize,
+			})
+			return
+		}
+		writeError(w, http.StatusConflict, "file upload is already complete")
+		return
+	}
+	if chunked {
+		s.handleModelUploadChunk(w, r, sess, index, relPath, pathKey, target, contentRange)
+		return
 	}
 	start := time.Now()
 	log.Printf("MODEL UPLOAD %s: raw file started index=%d model=%q path=%q size=%d target=%q", sess.ID, index, sess.ModelID, relPath, r.ContentLength, target)
@@ -135,8 +170,182 @@ func (s *Server) handleModelUploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	sess.FileCount++
 	sess.Bytes += n
+	sess.Completed[pathKey] = true
 	log.Printf("MODEL UPLOAD %s: raw file complete index=%d path=%q bytes=%d elapsed=%s total_bytes=%d", sess.ID, index, relPath, n, time.Since(start).Round(time.Millisecond), sess.Bytes)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "bytes": n})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "bytes": n, "next_offset": n, "complete": true})
+}
+
+type uploadContentRange struct {
+	start int64
+	end   int64
+	total int64
+}
+
+func (r uploadContentRange) size() int64 {
+	return r.end - r.start + 1
+}
+
+func (r uploadContentRange) complete() bool {
+	return r.end+1 == r.total
+}
+
+func parseUploadContentRange(raw string) (uploadContentRange, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return uploadContentRange{}, false, nil
+	}
+	if !strings.HasPrefix(strings.ToLower(raw), "bytes ") {
+		return uploadContentRange{}, true, fmt.Errorf("invalid Content-Range %q", raw)
+	}
+	value := strings.TrimSpace(raw[len("bytes "):])
+	rangeAndTotal := strings.Split(value, "/")
+	if len(rangeAndTotal) != 2 {
+		return uploadContentRange{}, true, fmt.Errorf("invalid Content-Range %q", raw)
+	}
+	bounds := strings.Split(rangeAndTotal[0], "-")
+	if len(bounds) != 2 {
+		return uploadContentRange{}, true, fmt.Errorf("invalid Content-Range %q", raw)
+	}
+	start, err := strconv.ParseInt(bounds[0], 10, 64)
+	if err != nil {
+		return uploadContentRange{}, true, fmt.Errorf("invalid Content-Range %q", raw)
+	}
+	end, err := strconv.ParseInt(bounds[1], 10, 64)
+	if err != nil {
+		return uploadContentRange{}, true, fmt.Errorf("invalid Content-Range %q", raw)
+	}
+	total, err := strconv.ParseInt(rangeAndTotal[1], 10, 64)
+	if err != nil || start < 0 || end < start || total <= 0 || end >= total {
+		return uploadContentRange{}, true, fmt.Errorf("invalid Content-Range %q", raw)
+	}
+	return uploadContentRange{start: start, end: end, total: total}, true, nil
+}
+
+func (s *Server) handleModelUploadChunk(
+	w http.ResponseWriter,
+	r *http.Request,
+	sess *modelUploadSession,
+	index int,
+	relPath, pathKey, target string,
+	contentRange uploadContentRange,
+) {
+	if total, ok := sess.Pending[pathKey]; ok && total != contentRange.total {
+		writeError(w, http.StatusConflict, "upload total size changed")
+		return
+	}
+	currentSize, err := uploadTargetSize(target)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "checking uploaded file: "+err.Error())
+		return
+	}
+	if currentSize != contentRange.start {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"error":           "upload offset does not match the stored file",
+			"errorCode":       http.StatusConflict,
+			"expected_offset": currentSize,
+		})
+		return
+	}
+	if r.ContentLength >= 0 && r.ContentLength != contentRange.size() {
+		writeError(w, http.StatusBadRequest, "Content-Range size does not match request body")
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "creating upload directory: "+err.Error())
+		return
+	}
+	chunkFile, err := os.CreateTemp(sess.Root, ".upload-chunk-*")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "creating upload chunk: "+err.Error())
+		return
+	}
+	chunkPath := chunkFile.Name()
+	if err := chunkFile.Close(); err != nil {
+		_ = os.Remove(chunkPath)
+		writeError(w, http.StatusInternalServerError, "creating upload chunk: "+err.Error())
+		return
+	}
+	defer os.Remove(chunkPath)
+
+	start := time.Now()
+	log.Printf("MODEL UPLOAD %s: chunk started index=%d model=%q path=%q range=%d-%d/%d", sess.ID, index, sess.ModelID, relPath, contentRange.start, contentRange.end, contentRange.total)
+	n, err := saveUploadPart(io.LimitReader(r.Body, contentRange.size()+1), chunkPath, uploadLogModelID(sess.ModelID), index, relPath)
+	if err != nil {
+		log.Printf("MODEL UPLOAD %s: chunk stream failed index=%d path=%q bytes=%d elapsed=%s: %v", sess.ID, index, relPath, n, time.Since(start).Round(time.Millisecond), err)
+		writeError(w, http.StatusInternalServerError, "saving upload chunk: "+err.Error())
+		return
+	}
+	if n != contentRange.size() {
+		writeError(w, http.StatusBadRequest, "Content-Range size does not match request body")
+		return
+	}
+	if err := appendUploadChunk(chunkPath, target, contentRange.start); err != nil {
+		writeError(w, http.StatusInternalServerError, "committing upload chunk: "+err.Error())
+		return
+	}
+
+	sess.Bytes += n
+	if contentRange.complete() {
+		sess.FileCount++
+		sess.Completed[pathKey] = true
+		delete(sess.Pending, pathKey)
+	} else {
+		sess.Pending[pathKey] = contentRange.total
+	}
+	log.Printf("MODEL UPLOAD %s: chunk complete index=%d path=%q bytes=%d next_offset=%d complete=%t elapsed=%s total_bytes=%d", sess.ID, index, relPath, n, contentRange.end+1, contentRange.complete(), time.Since(start).Round(time.Millisecond), sess.Bytes)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":      "ok",
+		"bytes":       n,
+		"next_offset": contentRange.end + 1,
+		"complete":    contentRange.complete(),
+	})
+}
+
+func uploadTargetSize(target string) (int64, error) {
+	info, err := os.Stat(target)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("upload target is not a regular file")
+	}
+	return info.Size(), nil
+}
+
+func appendUploadChunk(chunkPath, target string, offset int64) (retErr error) {
+	currentSize, err := uploadTargetSize(target)
+	if err != nil {
+		return err
+	}
+	if currentSize != offset {
+		return fmt.Errorf("upload offset changed: got %d, want %d", currentSize, offset)
+	}
+	src, err := os.Open(chunkPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := dst.Close(); retErr == nil {
+			retErr = closeErr
+		}
+		if retErr != nil {
+			_ = os.Truncate(target, offset)
+		}
+	}()
+	if _, err := dst.Seek(offset, io.SeekStart); err != nil {
+		return err
+	}
+	_, err = io.Copy(dst, src)
+	return err
 }
 
 func (s *Server) handleModelUploadComplete(w http.ResponseWriter, r *http.Request) {
@@ -146,12 +355,16 @@ func (s *Server) handleModelUploadComplete(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusNotFound, "upload session not found")
 		return
 	}
-	defer cleanupModelUploadSession(uploadID)
 
 	sess.mu.Lock()
 	if sess.FileCount == 0 {
 		sess.mu.Unlock()
 		writeError(w, http.StatusBadRequest, "at least one file is required")
+		return
+	}
+	if len(sess.Pending) > 0 {
+		sess.mu.Unlock()
+		writeError(w, http.StatusBadRequest, "all upload chunks must be completed before import")
 		return
 	}
 	opts := model.ImportOptions{
@@ -164,6 +377,7 @@ func (s *Server) handleModelUploadComplete(w http.ResponseWriter, r *http.Reques
 		opts.Kind = model.ImportSourceArchive
 	}
 	sess.mu.Unlock()
+	defer cleanupModelUploadSession(uploadID)
 
 	start := time.Now()
 	log.Printf("MODEL UPLOAD %s: complete import started model=%q mode=%s files=%d bytes=%d", uploadID, opts.ModelID, sess.Mode, sess.FileCount, sess.Bytes)

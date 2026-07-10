@@ -4,11 +4,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/opencsgs/csglite/internal/model"
@@ -130,6 +132,168 @@ func TestHandleModelUpload_RejectsConflictUnlessOverwrite(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("overwrite status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
 	}
+}
+
+func TestHandleModelUploadSession_AssemblesChunks(t *testing.T) {
+	s := newTestServer(t)
+	uploadID := startModelUploadSession(t, s, "local/chunked")
+
+	first := uploadModelSessionChunk(t, s, uploadID, "model.gguf", "abc", "bytes 0-2/7")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first chunk status = %d: %s", first.Code, first.Body.String())
+	}
+	var firstResp struct {
+		NextOffset int64 `json:"next_offset"`
+		Complete   bool  `json:"complete"`
+	}
+	if err := json.NewDecoder(first.Body).Decode(&firstResp); err != nil {
+		t.Fatalf("decode first chunk response: %v", err)
+	}
+	if firstResp.NextOffset != 3 || firstResp.Complete {
+		t.Fatalf("first chunk response = %#v, want offset 3 incomplete", firstResp)
+	}
+
+	second := uploadModelSessionChunk(t, s, uploadID, "model.gguf", "defg", "bytes 3-6/7")
+	if second.Code != http.StatusOK {
+		t.Fatalf("second chunk status = %d: %s", second.Code, second.Body.String())
+	}
+	var secondResp struct {
+		NextOffset int64 `json:"next_offset"`
+		Complete   bool  `json:"complete"`
+	}
+	if err := json.NewDecoder(second.Body).Decode(&secondResp); err != nil {
+		t.Fatalf("decode second chunk response: %v", err)
+	}
+	if secondResp.NextOffset != 7 || !secondResp.Complete {
+		t.Fatalf("second chunk response = %#v, want offset 7 complete", secondResp)
+	}
+
+	completeModelUploadSession(t, s, uploadID)
+	data, err := os.ReadFile(filepath.Join(s.cfg.ModelDir, "local", "chunked", "model.gguf"))
+	if err != nil {
+		t.Fatalf("read imported model: %v", err)
+	}
+	if string(data) != "abcdefg" {
+		t.Fatalf("imported model = %q, want %q", data, "abcdefg")
+	}
+	assertNoUploadStagingDirs(t, s.cfg.TempDir())
+}
+
+func TestHandleModelUploadSession_RejectsWrongChunkOffset(t *testing.T) {
+	s := newTestServer(t)
+	uploadID := startModelUploadSession(t, s, "local/offset")
+	t.Cleanup(func() { cancelModelUploadSession(s, uploadID) })
+
+	first := uploadModelSessionChunk(t, s, uploadID, "model.gguf", "abc", "bytes 0-2/6")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first chunk status = %d: %s", first.Code, first.Body.String())
+	}
+	completeReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/models/upload/%s/complete", uploadID), nil)
+	completeResp := httptest.NewRecorder()
+	s.routes().ServeHTTP(completeResp, completeReq)
+	if completeResp.Code != http.StatusBadRequest {
+		t.Fatalf("incomplete file completion status = %d, want %d", completeResp.Code, http.StatusBadRequest)
+	}
+	if getModelUploadSession(uploadID) == nil {
+		t.Fatal("incomplete completion unexpectedly cleaned the upload session")
+	}
+	wrong := uploadModelSessionChunk(t, s, uploadID, "model.gguf", "def", "bytes 2-4/6")
+	if wrong.Code != http.StatusConflict {
+		t.Fatalf("wrong offset status = %d, want %d: %s", wrong.Code, http.StatusConflict, wrong.Body.String())
+	}
+	if !strings.Contains(wrong.Body.String(), `"expected_offset":3`) {
+		t.Fatalf("wrong offset response = %s", wrong.Body.String())
+	}
+
+	sess := getModelUploadSession(uploadID)
+	data, err := os.ReadFile(filepath.Join(sess.Source, "model.gguf"))
+	if err != nil {
+		t.Fatalf("read staged model: %v", err)
+	}
+	if string(data) != "abc" {
+		t.Fatalf("staged model = %q, want abc", data)
+	}
+}
+
+func TestHandleModelUploadSession_DiscardsIncompleteChunk(t *testing.T) {
+	s := newTestServer(t)
+	uploadID := startModelUploadSession(t, s, "local/incomplete")
+	t.Cleanup(func() { cancelModelUploadSession(s, uploadID) })
+
+	resp := uploadModelSessionChunk(t, s, uploadID, "model.gguf", "abc", "bytes 0-4/5")
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("incomplete chunk status = %d, want %d: %s", resp.Code, http.StatusBadRequest, resp.Body.String())
+	}
+	sess := getModelUploadSession(uploadID)
+	chunks, err := filepath.Glob(filepath.Join(sess.Root, ".upload-chunk-*"))
+	if err != nil {
+		t.Fatalf("glob chunks: %v", err)
+	}
+	if len(chunks) != 0 {
+		t.Fatalf("temporary chunks were not cleaned up: %#v", chunks)
+	}
+	if _, err := os.Stat(filepath.Join(sess.Source, "model.gguf")); !os.IsNotExist(err) {
+		t.Fatalf("partial target exists, stat error = %v", err)
+	}
+}
+
+func TestHandleModelUploadSession_PreservesWholeFilePUT(t *testing.T) {
+	s := newTestServer(t)
+	uploadID := startModelUploadSession(t, s, "local/legacy")
+
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/models/upload/%s/file?path=model.gguf&filename=model.gguf", uploadID), strings.NewReader("legacy"))
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("legacy upload status = %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"complete":true`) {
+		t.Fatalf("legacy upload response = %s", w.Body.String())
+	}
+	completeModelUploadSession(t, s, uploadID)
+}
+
+func startModelUploadSession(t *testing.T, s *Server, modelID string) string {
+	t.Helper()
+	body := fmt.Sprintf(`{"model":%q,"mode":"files"}`, modelID)
+	req := httptest.NewRequest(http.MethodPost, "/api/models/upload/start", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("start upload status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp api.ModelUploadStartResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode start response: %v", err)
+	}
+	t.Cleanup(func() { cancelModelUploadSession(s, resp.UploadID) })
+	return resp.UploadID
+}
+
+func uploadModelSessionChunk(t *testing.T, s *Server, uploadID, path, body, contentRange string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/models/upload/%s/file?path=%s&filename=%s", uploadID, path, path), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Range", contentRange)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	return w
+}
+
+func completeModelUploadSession(t *testing.T, s *Server, uploadID string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/models/upload/%s/complete", uploadID), nil)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("complete upload status = %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func cancelModelUploadSession(s *Server, uploadID string) {
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/models/upload/%s", uploadID), nil)
+	s.routes().ServeHTTP(httptest.NewRecorder(), req)
 }
 
 type uploadTestFile struct {

@@ -16,6 +16,7 @@ const (
 	EnvServerURL             = "CSGHUB_LITE_SERVER_URL"
 	EnvAIGatewayURL          = "CSGHUB_LITE_AI_GATEWAY_URL"
 	EnvCloudProviderName     = "CSGHUB_LITE_CLOUD_PROVIDER_NAME"
+	EnvOpenAIStreamDefault   = "CSGHUB_LITE_OPENAI_STREAM_DEFAULT"
 	AppDir                   = ".csghub-lite"
 	ConfigFile               = "config.json"
 	ModelsDir                = "models"
@@ -47,6 +48,7 @@ type Config struct {
 	ListenAddr           string            `json:"listen_addr"`
 	ModelDir             string            `json:"model_dir"`
 	DatasetDir           string            `json:"dataset_dir"`
+	OpenAIStreamDefault  bool              `json:"-"`
 	AIAppPreferredModels map[string]string `json:"ai_app_preferred_models,omitempty"`
 	WebSearch            WebSearchConfig   `json:"web_search,omitempty"`
 }
@@ -219,6 +221,18 @@ func ApplyEnvironmentDefaults(cfg *Config) {
 	}
 	if value := strings.TrimSpace(os.Getenv(EnvCloudProviderName)); value != "" && strings.TrimSpace(cfg.CloudProviderName) == "" {
 		cfg.CloudProviderName = NormalizeCloudProviderName(value)
+	}
+	cfg.OpenAIStreamDefault = environmentBool(EnvOpenAIStreamDefault, cfg.OpenAIStreamDefault)
+}
+
+func environmentBool(name string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
 	}
 }
 

@@ -18,6 +18,7 @@ func clearCloudServiceEnv(t *testing.T) {
 	t.Setenv(EnvServerURL, "")
 	t.Setenv(EnvAIGatewayURL, "")
 	t.Setenv(EnvCloudProviderName, "")
+	t.Setenv(EnvOpenAIStreamDefault, "")
 }
 
 func TestDefaultValues(t *testing.T) {
@@ -63,6 +64,29 @@ func TestLoadAppliesCloudServiceEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.CloudProviderName != "Example Hub" {
 		t.Fatalf("CloudProviderName = %q, want environment override", cfg.CloudProviderName)
+	}
+}
+
+func TestLoadAppliesOpenAIStreamDefaultEnvironmentOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv(EnvOpenAIStreamDefault, "true")
+	Reset()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !cfg.OpenAIStreamDefault {
+		t.Fatal("OpenAIStreamDefault = false, want environment override")
+	}
+}
+
+func TestEnvironmentBoolKeepsFallbackForInvalidValue(t *testing.T) {
+	t.Setenv(EnvOpenAIStreamDefault, "invalid")
+	if !environmentBool(EnvOpenAIStreamDefault, true) {
+		t.Fatal("environmentBool() = false, want fallback true")
 	}
 }
 

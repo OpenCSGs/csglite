@@ -710,6 +710,7 @@
           "Models"
         ],
         "summary": "Upload a file to a model upload session",
+        "description": "Uploads a model file as raw bytes. For large files, send sequential chunks with `Content-Range: bytes start-end/total`; the server validates and returns the next accepted offset. Omitting `Content-Range` preserves whole-file PUT compatibility.",
         "operationId": "uploadModelSessionFile",
         "parameters": [
           {
@@ -735,6 +736,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "Content-Range",
+            "in": "header",
+            "required": false,
+            "description": "Byte range for this chunk, for example `bytes 0-33554431/1073741824`.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -750,7 +760,20 @@
         },
         "responses": {
           "200": {
-            "description": "File uploaded."
+            "description": "File or chunk accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelUploadChunkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "description": "The supplied chunk offset does not match the stored file offset."
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -3529,7 +3552,7 @@
           "Compatibility"
         ],
         "summary": "OpenAI-compatible chat completions",
-        "description": "Compatibility layer for OpenAI Chat Completions. When `stream` is true the server streams SSE chunks and ends with `data: [DONE]`.",
+        "description": "Compatibility layer for OpenAI Chat Completions. When `stream` is true the server streams SSE chunks and ends with `data: [DONE]`. If `stream` is omitted, deployments can opt into streaming by starting the server with `--openai-stream-default` or setting `CSGHUB_LITE_OPENAI_STREAM_DEFAULT=true`.",
         "operationId": "openAIChatCompletions",
         "requestBody": {
           "required": true,
@@ -6301,6 +6324,36 @@
           }
         }
       },
+      "ModelUploadChunkResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "bytes",
+          "next_offset",
+          "complete"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes accepted from this request."
+          },
+          "next_offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Next byte offset the client should upload."
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "Whether the complete file has been received."
+          }
+        }
+      },
       "DatasetPullRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -7800,7 +7853,8 @@
           },
           "stream": {
             "type": "boolean",
-            "default": false
+            "default": false,
+            "description": "Whether to stream SSE chunks. When omitted, the server startup configuration controls the default; the standard default is false."
           },
           "temperature": {
             "type": "number"

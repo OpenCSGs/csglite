@@ -11,6 +11,7 @@ import (
 
 func newServeCmd(version string) *cobra.Command {
 	var listenAddr string
+	var openAIStreamDefault bool
 
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -23,6 +24,9 @@ func newServeCmd(version string) *cobra.Command {
 			if listenAddr != "" {
 				cfg.ListenAddr = listenAddr
 			}
+			if cmd.Flags().Changed("openai-stream-default") {
+				cfg.OpenAIStreamDefault = openAIStreamDefault
+			}
 			if err := writePIDFile(os.Getpid()); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: could not write PID file: %v\n", err)
 			}
@@ -33,5 +37,6 @@ func newServeCmd(version string) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&listenAddr, "listen", "", "address to listen on (default :11435)")
+	cmd.Flags().BoolVar(&openAIStreamDefault, "openai-stream-default", false, "stream OpenAI chat completions by default when stream is omitted")
 	return cmd
 }

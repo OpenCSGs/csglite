@@ -81,7 +81,7 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 	}
 	defer s.touchEngine(req.Model)
 
-	stream := req.Stream != nil && *req.Stream
+	stream := openAIStreamEnabled(req.Stream, s.cfg.OpenAIStreamDefault)
 	if openAIChatRequestHasToolFeatures(req) {
 		s.handleOpenAIChatCompletionsWithTools(w, r, req, eng, opts, stream, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
 		return
@@ -244,6 +244,13 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+func openAIStreamEnabled(requested *bool, defaultEnabled bool) bool {
+	if requested != nil {
+		return *requested
+	}
+	return defaultEnabled
 }
 
 type openAIStreamWriter struct {
