@@ -40,7 +40,11 @@ const (
 	installerPTYRows           = 36
 )
 
-var versionTokenPattern = regexp.MustCompile(`(?i)v?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?`)
+var (
+	versionTokenPattern       = regexp.MustCompile(`(?i)v?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?`)
+	versionPageReleasePattern = regexp.MustCompile(`(?i)Release\s+v?(\d+(?:\.\d+)+)`)
+	versionPageBadgePattern   = regexp.MustCompile(`(?is)>(\d+(?:\.\d+)+)<.{0,256}?Released`)
+)
 
 //go:embed scripts/*
 var embeddedScripts embed.FS
@@ -346,6 +350,30 @@ func appSpecs() []appSpec {
 			},
 		},
 		{
+			id:           "zcode",
+			binaryName:   "zcode",
+			installMode:  "script",
+			progressMode: progressModePercent,
+			supported:    true,
+			latest: &latestVersionSource{
+				baseURL: "https://zcode.z.ai/en/changelog",
+				envVar:  "CSGHUB_LITE_ZCODE_SITE_URL",
+				format:  "version-page",
+			},
+			unix: &scriptSource{
+				embeddedPath: "scripts/zcode-install.sh",
+			},
+			windows: &scriptSource{
+				embeddedPath: "scripts/zcode-install.ps1",
+			},
+			uninstallUnix: &scriptSource{
+				embeddedPath: "scripts/zcode-uninstall.sh",
+			},
+			uninstallWin: &scriptSource{
+				embeddedPath: "scripts/zcode-uninstall.ps1",
+			},
+		},
+		{
 			id:           "pi",
 			binaryName:   "pi",
 			installMode:  "script",
@@ -640,7 +668,7 @@ func (m *Manager) fetchLatestVersion(ctx context.Context, spec appSpec) (string,
 	reqCtx, cancel := context.WithTimeout(ctx, latestVersionTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL+"/latest", nil)
-	if spec.latest.format == "github-release" || spec.latest.format == "version-json" {
+	if spec.latest.format == "github-release" || spec.latest.format == "version-json" || spec.latest.format == "version-page" {
 		req, err = http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL, nil)
 	}
 	if err != nil {
@@ -676,7 +704,24 @@ func (m *Manager) fetchLatestVersion(ctx context.Context, spec appSpec) (string,
 		}
 		return strings.TrimSpace(payload.Version), nil
 	}
+	if spec.latest.format == "version-page" {
+		version := versionPageMatch(data)
+		if version == "" {
+			return "", fmt.Errorf("version page did not contain a version")
+		}
+		return version, nil
+	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+func versionPageMatch(data []byte) string {
+	for _, pattern := range []*regexp.Regexp{versionPageBadgePattern, versionPageReleasePattern} {
+		match := pattern.FindSubmatch(data)
+		if len(match) > 1 {
+			return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(string(match[1]))), "v")
+		}
+	}
+	return ""
 }
 
 func appUpdateAvailable(installedVersion, latestVersion string) bool {
@@ -810,6 +855,23 @@ func (m *Manager) runAction(ctx context.Context, spec appSpec, action string) {
 	}
 	cmd = exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
 	cmd.Env = append(os.Environ(), cmd.Env...)
+	if spec.id == "zcode" {
+		tmpDir, err := m.appTempDir(spec.id)
+		if err != nil {
+			m.failAction(spec, action, fmt.Sprintf("resolve app temp directory: %v", err))
+			return
+		}
+		if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+			m.failAction(spec, action, fmt.Sprintf("prepare app temp directory: %v", err))
+			return
+		}
+		cmd.Env = append(cmd.Env,
+			"CSGHUB_LITE_TMPDIR="+tmpDir,
+			"TMPDIR="+tmpDir,
+			"TMP="+tmpDir,
+			"TEMP="+tmpDir,
+		)
+	}
 	if err := m.runScriptCommand(ctx, spec.id, source, cmd, logFile); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			m.failAction(spec, action, fmt.Sprintf("%s timed out after %s", runnerName, installTimeout))
@@ -1416,6 +1478,8 @@ func inferLegacyManagedInstall(spec appSpec, installPath string) bool {
 		return looksLikeLegacyRuntimeInstall(installPath, spec.binaryName, "codex")
 	case "codex-app":
 		return looksLikeCodexAppInstall(installPath)
+	case "zcode":
+		return looksLikeZCodeInstall(installPath)
 	case "openclaw":
 		return looksLikeLegacyOpenClawInstall(installPath)
 	default:
@@ -1584,6 +1648,17 @@ func (m *Manager) logPath(appID string) string {
 		return filepath.Join(os.TempDir(), appID+".log")
 	}
 	return filepath.Join(home, "apps", "logs", appID+".log")
+}
+
+func (m *Manager) appTempDir(appID string) (string, error) {
+	if m.cfg != nil {
+		return filepath.Join(m.cfg.TempDir(), "apps", appID), nil
+	}
+	home, err := config.AppHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, config.TmpDir, "apps", appID), nil
 }
 
 func (m *Manager) specStateLocked(appID string) (appSpec, *appState, error) {

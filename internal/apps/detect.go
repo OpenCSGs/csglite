@@ -34,6 +34,7 @@ var installDetectProfiles = map[string]installDetectProfile{
 	"csgclaw":          {mode: installDetectCLI, libBundleName: "csgclaw"},
 	"codex":            {mode: installDetectCLI, versionedShare: "codex"},
 	"codex-app":        {mode: installDetectDesktop},
+	"zcode":            {mode: installDetectDesktop},
 	"pi":               {mode: installDetectCLI, shareBinRel: "pi-coding-agent/bin"},
 }
 
@@ -57,7 +58,14 @@ func detectInstalled(ctx context.Context, spec appSpec) (string, string, bool) {
 	}
 	switch profile.mode {
 	case installDetectDesktop:
-		return detectCodexAppInstall()
+		switch spec.id {
+		case "codex-app":
+			return detectCodexAppInstall()
+		case "zcode":
+			return detectZCodeInstall()
+		default:
+			return "", "", false
+		}
 	default:
 		return detectInstalledCLI(ctx, spec, profile)
 	}

@@ -212,8 +212,8 @@ func (s *Server) handleAppOpen(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("AI APP %s: open requested model=%q source=%q work_dir=%q", req.AppID, req.ModelID, req.Source, req.WorkDir)
 	ctx := withLocalhostBrowserAccess(r.Context(), r)
-	if req.AppID == "codex-app" && !isLocalhostBrowserAccess(r) {
-		writeError(w, http.StatusForbidden, "Codex App can only be opened from localhost")
+	if isDesktopAIAppID(req.AppID) && !isLocalhostBrowserAccess(r) {
+		writeError(w, http.StatusForbidden, "Desktop apps can only be opened from localhost")
 		return
 	}
 	url, err := s.openAIAppURL(ctx, req.AppID, req.ModelID, req.Source, req.WorkDir, aiAppPublicBaseURL(r))
@@ -228,7 +228,7 @@ func (s *Server) handleAppOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mode := "url"
-	if req.AppID == "codex-app" {
+	if isDesktopAIAppID(req.AppID) {
 		mode = "desktop"
 		log.Printf("AI APP %s: desktop launch ready", req.AppID)
 	} else {
@@ -301,7 +301,7 @@ func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 	)
 
 	switch info.ID {
-	case "claude-code", "open-code", "codex", "pi":
+	case "claude-code", "open-code", "codex", "pi", "zcode":
 		modelID, _, err = s.resolveAIAppShellLaunchModels(ctx, info.ID, "", "")
 	case "openclaw", "csgclaw":
 		preferred := s.preferredAIAppModel(info.ID)

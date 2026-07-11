@@ -191,12 +191,12 @@ export function AIApps() {
   const handleOpenApp = async (appId: string, modelId?: string, source?: string) => {
     pendingOpenId.value = appId;
     actionError.value = "";
-    if (appId === "codex-app" && !isLocalhostBrowserAccess()) {
+    const opensDesktopApp = Boolean(aiAppsCatalog.find((app) => app.id === appId)?.desktop);
+    if (opensDesktopApp && !isLocalhostBrowserAccess()) {
       actionError.value = t("aiApps.error.localhostRequired");
       pendingOpenId.value = "";
       return;
     }
-    const opensDesktopApp = appId === "codex-app";
     const popup = opensDesktopApp ? null : openAppPopup();
     try {
       const response = await openAIApp(appId, modelId, undefined, source);
@@ -1048,10 +1048,23 @@ function LiveLogsDrawer({
           {isDesktopAIApp(app) && state.status === "installed" && !state.disabled && (
             <section class="space-y-2">
               <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.desktopLaunch")}</h3>
-              <p class="text-sm text-gray-500">{t("aiApps.desktopLaunchHint")}</p>
-              <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600 font-mono break-all">
-                ~/.codex/config.toml
-              </div>
+              <p class="text-sm text-gray-500">
+                {app.id === "codex-app"
+                  ? t("aiApps.codexDesktopLaunchHint")
+                  : app.id === "zcode"
+                    ? t("aiApps.zcodeDesktopLaunchHint")
+                    : t("aiApps.desktopLaunchHint")}
+              </p>
+              {app.id === "codex-app" && (
+                <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600 font-mono break-all">
+                  ~/.codex/config.toml
+                </div>
+              )}
+              {app.id === "zcode" && (
+                <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600 font-mono break-all">
+                  ~/.zcode/v2/config.json
+                </div>
+              )}
               {canOpenChat && (
                 <button
                   onClick={() => void handleOpenCurrentApp()}
@@ -1516,7 +1529,7 @@ function drawerNotice(app: AIAppCatalogEntry, state: AIAppRuntimeState): string 
 }
 
 function canOpenAIApp(app: AIAppCatalogEntry, state: AIAppRuntimeState): boolean {
-  if (app.id === "codex-app") {
+  if (isDesktopAIApp(app)) {
     return state.status === "installed" &&
       !state.disabled &&
       isLocalhostBrowserAccess();
@@ -1581,11 +1594,11 @@ function cliLaunchAppName(appID: string): string {
 }
 
 function canSelectAIAppModel(app: AIAppCatalogEntry): boolean {
-  return ["claude-code", "open-code", "open-code-review", "codex", "codex-app", "pi", "openclaw", "csgclaw"].includes(app.id);
+  return ["claude-code", "open-code", "open-code-review", "codex", "codex-app", "zcode", "pi", "openclaw", "csgclaw"].includes(app.id);
 }
 
 function isDesktopAIApp(app: AIAppCatalogEntry): boolean {
-  return app.id === "codex-app";
+  return Boolean(app.desktop);
 }
 
 function openActionLabel(app: AIAppCatalogEntry, pending: boolean): string {
@@ -1624,7 +1637,7 @@ function localizeAIAppErrorMessage(message: string, fallback: string): string {
   }
 
   const normalized = trimmed.toLowerCase();
-  if (normalized.includes("codex app can only be opened from localhost")) {
+  if (normalized.includes("can only be opened from localhost")) {
     return t("aiApps.error.localhostRequired");
   }
   if (normalized.includes("no local models were found") && normalized.includes("access token")) {

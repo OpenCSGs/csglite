@@ -25,6 +25,7 @@ export interface AIAppCatalogEntry {
   cnInstallHint: LocalizedText;
   commandPreview: string;
   liveLogsReady: boolean;
+  desktop?: boolean;
   plannedSteps: LocalizedText[];
   status: AIAppStatus;
   progress?: number;
@@ -308,6 +309,7 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     },
     commandPreview: "curl -fsSL https://git-devops.opencsg.com/opensource/apps/-/raw/main/codex-app/install.sh | bash",
     liveLogsReady: true,
+    desktop: true,
     plannedSteps: [
       {
         en: "Resolve the requested Codex App version from the mirrored manifest.",
@@ -320,6 +322,51 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
       {
         en: "Install Codex.app or the Windows desktop binary locally, then open it directly from AI Apps on localhost.",
         zh: "将 Codex.app 或 Windows 桌面程序安装到本地，并在 localhost 访问时直接从应用页打开。",
+      },
+    ],
+    status: "idle",
+    statusText: {
+      en: "Ready to install",
+      zh: "可安装",
+    },
+  },
+  {
+    id: "zcode",
+    name: "ZCode",
+    siteLabel: "@z.ai",
+    website: "https://zcode.z.ai/en",
+    detailsUrl: "https://zcode.z.ai/en/docs/install",
+    icon: "/apps/zcode.svg",
+    category: "coding",
+    description: {
+      en: "Z.ai's desktop coding agent for planning, coding, reviewing, and deploying from one workspace.",
+      zh: "Z.ai 的桌面编程 Agent，可在统一工作区中完成规划、编码、审查与部署。",
+    },
+    installMode: "script",
+    progressMode: "percent",
+    installHint: {
+      en: "Install ZCode for macOS, Linux, or Windows directly from Z.ai's official domestic CDN.",
+      zh: "直接从 Z.ai 官方国内 CDN 安装 ZCode，支持 macOS、Linux 和 Windows。",
+    },
+    cnInstallHint: {
+      en: "The installer downloads the platform-specific desktop package directly from cdn-zcode.z.ai; no third-party mirror is used.",
+      zh: "安装器会直接从 cdn-zcode.z.ai 下载当前平台对应的桌面安装包，不经过第三方镜像。",
+    },
+    commandPreview: "curl -fsSL https://git-devops.opencsg.com/opensource/csghub-lite/-/raw/main/internal/apps/scripts/zcode-install.sh | bash",
+    liveLogsReady: true,
+    desktop: true,
+    plannedSteps: [
+      {
+        en: "Resolve the latest ZCode desktop release for the current platform.",
+        zh: "解析当前平台适用的最新 ZCode 桌面版本。",
+      },
+      {
+        en: "Download the macOS, Linux, or Windows package directly from the official domestic CDN.",
+        zh: "从官方国内 CDN 直接下载 macOS、Linux 或 Windows 安装包。",
+      },
+      {
+        en: "Register the selected csghub-lite model as a local provider, then launch ZCode from AI Apps on localhost.",
+        zh: "将选中的 csghub-lite 模型注册为本地 provider，再通过 localhost 上的应用页启动 ZCode。",
       },
     ],
     status: "idle",

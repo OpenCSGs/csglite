@@ -203,6 +203,32 @@ func TestInstallReturnsExistingExternalAppWithoutRunningInstaller(t *testing.T) 
 	}
 }
 
+func TestUninstallLeavesExternalAppUntouched(t *testing.T) {
+	homeDir := setTempHome(t)
+	t.Setenv("PATH", "")
+
+	binDir := filepath.Join(homeDir, ".local", "bin")
+	binaryPath := writeFakeBinary(t, binDir, "claude")
+
+	mgr := NewManager(nil)
+	info, err := mgr.Uninstall("claude-code")
+	if err != nil {
+		t.Fatalf("Uninstall returned error: %v", err)
+	}
+	if !info.Installed || info.Managed {
+		t.Fatalf("external app state = installed:%v managed:%v, want true/false", info.Installed, info.Managed)
+	}
+	if _, err := os.Stat(binaryPath); err != nil {
+		t.Fatalf("external binary was changed or removed: %v", err)
+	}
+	if _, err := os.Stat(info.LogPath); !os.IsNotExist(err) {
+		t.Fatalf("expected uninstaller not to create a log file, stat err = %v", err)
+	}
+	if state := mgr.states["claude-code"]; state != nil && state.running {
+		t.Fatal("expected uninstaller to short-circuit for unmanaged external app")
+	}
+}
+
 func TestEnrichLatestVersionReportsMirrorUpdate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/latest" {
@@ -363,6 +389,32 @@ func TestFetchLatestVersionParsesVersionJSON(t *testing.T) {
 	}
 	if latest != "v0.2.8" {
 		t.Fatalf("latest = %q, want v0.2.8", latest)
+	}
+}
+
+func TestFetchLatestVersionParsesVersionPage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/en/changelog" {
+			t.Fatalf("latest path = %q, want /en/changelog", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<link rel="icon" href="/icon.svg?v=3.0.0"><main><h2>3.3.4</h2><span>Released Jul 10, 2026</span><h2>Release v3.3.3</h2></main>`))
+	}))
+	defer server.Close()
+
+	mgr := NewManager(nil)
+	latest, err := mgr.fetchLatestVersion(context.Background(), appSpec{
+		id: "zcode",
+		latest: &latestVersionSource{
+			baseURL: server.URL + "/en/changelog",
+			format:  "version-page",
+		},
+	})
+	if err != nil {
+		t.Fatalf("fetchLatestVersion returned error: %v", err)
+	}
+	if latest != "3.3.4" {
+		t.Fatalf("latest = %q, want 3.3.4", latest)
 	}
 }
 

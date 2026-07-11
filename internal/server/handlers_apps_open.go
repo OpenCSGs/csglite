@@ -70,6 +70,14 @@ func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, modelSource, 
 			return "", err
 		}
 		return "", nil
+	case "zcode":
+		if _, err := s.ensureZCodeLaunchConfig(ctx, modelID, modelSource); err != nil {
+			return "", err
+		}
+		if err := s.launchZCodeDesktopApp(ctx); err != nil {
+			return "", err
+		}
+		return "", nil
 	default:
 		return "", fmt.Errorf("%s does not provide a direct chat entry yet", appID)
 	}

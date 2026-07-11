@@ -35,7 +35,7 @@ Inspired by [Ollama](https://ollama.com), CSGLite provides model download, local
 
 - **Third-Party Providers** — integrate OpenAI, DeepSeek, MiMo, Kimi, BigModel, Qianfan, MiniMax, OpenRouter, and any OpenAI-compatible API
 - **Coding Agents** — one-click config for Claude Code, Codex, Pi, OpenCode, and Open Code Review
-- **AI Applications** — one-click setup for Claude Code, OpenCode, Open Code Review, Codex, Codex App, Pi, OpenClaw, CSGClaw, Dify, and AnythingLLM
+- **AI Applications** — one-click setup for Claude Code, OpenCode, Open Code Review, Codex, Codex App, ZCode, Pi, OpenClaw, CSGClaw, Dify, and AnythingLLM
 
 ### Dataset Support
 
@@ -146,6 +146,7 @@ One-click configuration for popular coding agents. Models from local, OpenCSG, o
 |---|---|---|
 | **Claude Code** | `~/.claude/settings.json` | `csghub-lite launch claude-code --model <model>` |
 | **Codex** | `~/.codex/config.toml` | `csghub-lite launch codex --model <model>` |
+| **ZCode** | `~/.zcode/v2/config.json` | Web UI → AI Apps → select model → Launch |
 | **Pi** | `~/.pi/agent/settings.json` | `csghub-lite launch pi --model <model>` |
 | **OpenCode** | `~/.opencode.json` | `csghub-lite launch open-code --model <model>` |
 
@@ -174,6 +175,7 @@ One-click setup for AI assistant applications:
 | **Open Code Review** | AI code review CLI | `csghub-lite launch ocr` or Web UI → AI Apps |
 | **Codex** | OpenAI coding agent CLI | `csghub-lite launch codex` or Web UI → AI Apps |
 | **Codex App** | OpenAI desktop coding app | Web UI → AI Apps |
+| **ZCode** | Z.ai cross-platform desktop coding app | Web UI → AI Apps |
 | **Pi** | Lightweight terminal coding agent | `csghub-lite launch pi` or Web UI → AI Apps |
 | **OpenClaw** | Open-source AI assistant with web UI | `csghub-lite launch openclaw` or Web UI → AI Apps |
 | **CSGClaw** | Enterprise AI assistant with advanced features | `csghub-lite launch csgclaw` or Web UI → AI Apps |

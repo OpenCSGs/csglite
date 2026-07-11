@@ -36,7 +36,9 @@ present.
 
 - Detection profiles live in `internal/apps/detect.go` as
   `installDetectProfiles`.
-- Desktop launch resolution for Codex App lives in `internal/apps/codex_app.go`.
+- Desktop launch resolution lives in dedicated helpers:
+  - Codex App: `internal/apps/codex_app.go`
+  - ZCode: `internal/apps/zcode_app.go`
 - Every supported script-based app must have a profile entry. The test
   `TestInstallDetectProfilesCoverSupportedApps` enforces this.
 
@@ -70,7 +72,9 @@ Current CLI apps:
 
 ### Desktop Apps
 
-Desktop apps use `installDetectMode=desktop`. Codex App detection order:
+Desktop apps use `installDetectMode=desktop`.
+
+Codex App detection order:
 
 1. Managed launcher in `~/.local/bin`:
    - macOS/Linux: `codex-app`
@@ -98,6 +102,27 @@ Codex App drawer) writes the user-provided path to
 `~/.local/share/codex-app/launch-target`, which sits near the top of the
 detection order. Manual paths stay `managed=false`.
 
+ZCode detection order:
+
+1. Managed `~/.local/share/zcode/launch-target` when the target still exists.
+2. Managed launcher in `~/.local/bin` (`zcode` or `zcode.cmd`).
+3. Platform-native external installs:
+   - macOS: `~/Applications/ZCode.app`, `/Applications/ZCode.app`
+   - Windows: `%LOCALAPPDATA%/Programs/ZCode/ZCode.exe`
+   - Linux: `zcode` on `PATH`, common AppImage/package locations, then
+     `zcode.desktop`
+
+`ZCodeLaunchTarget()` uses the same resolution order. Managed ZCode versions
+live under `~/.local/share/zcode/versions/<version>`. The installer downloads
+directly from ZCode's domestic CDN rather than the StarHub OSS mirror.
+Before Launch, csghub-lite gracefully stops ZCode, merges its OpenAI-compatible
+provider and the selected model into `~/.zcode/v2/config.json`, then starts
+ZCode again so the externally written configuration is loaded. It also updates
+only `modelProviderFamilySelectedKeys` in `~/.zcode/v2/setting.json` so the
+chosen model is active for both Z.ai and BigModel domains. Existing providers,
+unrelated settings, and unknown family keys must be preserved; derived caches
+must not be edited.
+
 ### Adding A New App
 
 When adding a script-based AI app:
@@ -122,5 +147,5 @@ Homebrew, vendor installers, drag-and-drop, or manual PATH setup.
 
 ```bash
 go test ./internal/apps/...
-go test ./internal/server/... -run 'CodexApp|AppOpen'
+go test ./internal/server/... -run 'CodexApp|ZCode|AppOpen'
 ```

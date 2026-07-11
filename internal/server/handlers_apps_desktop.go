@@ -9,11 +9,15 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/opencsgs/csglite/internal/apps"
 	"github.com/opencsgs/csglite/internal/codexagent"
+	"github.com/opencsgs/csglite/internal/zcodeagent"
 	"github.com/opencsgs/csglite/pkg/api"
 )
+
+var stopZCodeForConfigReloadFunc = stopZCodeForConfigReload
 
 func isLocalhostBrowserAccess(r *http.Request) bool {
 	if r == nil {
@@ -99,6 +103,109 @@ func (s *Server) launchCodexDesktopApp(ctx context.Context) error {
 		return fmt.Errorf("Codex App is only available on macOS and Windows")
 	}
 	return nil
+}
+
+func isDesktopAIAppID(appID string) bool {
+	return appID == "codex-app" || appID == "zcode"
+}
+
+func (s *Server) ensureZCodeLaunchConfig(ctx context.Context, requestedModelID, requestedSource string) (string, error) {
+	modelID, modelIDs, err := s.resolveAIAppShellLaunchModels(ctx, "zcode", requestedModelID, requestedSource)
+	if err != nil {
+		return "", err
+	}
+	// ZCode persists in-memory provider state while exiting. Stop it completely
+	// before editing config.json so the old state cannot overwrite our merge.
+	if err := stopZCodeForConfigReloadFunc(); err != nil {
+		return "", err
+	}
+	if err := zcodeagent.SyncConfig(s.localBaseURL(), openClawProviderAPIKey(s.cfg.Token), modelID, modelIDs); err != nil {
+		return "", fmt.Errorf("syncing ZCode config: %w", err)
+	}
+	configPath, err := zcodeagent.ConfigPath()
+	if err != nil {
+		return "", err
+	}
+	log.Printf("AI APP zcode: synced local model provider selected_model=%q models=%d path=%s", modelID, len(modelIDs), configPath)
+	s.savePreferredAIAppModel("zcode", modelID)
+	return modelID, nil
+}
+
+func (s *Server) launchZCodeDesktopApp(ctx context.Context) error {
+	if !isLocalhostBrowserAccessFromContext(ctx) {
+		return fmt.Errorf("ZCode can only be opened from localhost")
+	}
+	target, err := apps.ZCodeLaunchTarget()
+	if err != nil {
+		return err
+	}
+
+	log.Printf("AI APP zcode: launching desktop target=%s", target)
+	switch runtime.GOOS {
+	case "darwin":
+		if out, err := exec.CommandContext(ctx, "open", target).CombinedOutput(); err != nil {
+			return desktopLaunchError("ZCode", out, err)
+		}
+	case "windows":
+		if out, err := exec.CommandContext(ctx, "cmd", "/c", "start", "", target).CombinedOutput(); err != nil {
+			return desktopLaunchError("ZCode", out, err)
+		}
+	case "linux":
+		cmd := exec.Command(target)
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("launching ZCode: %w", err)
+		}
+		if err := cmd.Process.Release(); err != nil {
+			return fmt.Errorf("releasing ZCode process: %w", err)
+		}
+	default:
+		return fmt.Errorf("ZCode is not available on %s", runtime.GOOS)
+	}
+	return nil
+}
+
+func stopZCodeForConfigReload() error {
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("osascript", "-e", `if application "ZCode" is running then tell application "ZCode" to quit`).Run()
+	case "windows":
+		script := `Get-Process ZCode -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }`
+		_ = exec.Command("powershell", "-NoProfile", "-Command", script).Run()
+	case "linux":
+		_ = exec.Command("pkill", "-TERM", "-x", "ZCode").Run()
+		_ = exec.Command("pkill", "-TERM", "-x", "zcode").Run()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for zcodeProcessRunning() {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("ZCode is still running; close it and try Launch again")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil
+}
+
+func zcodeProcessRunning() bool {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("pgrep", "-x", "ZCode").Run() == nil
+	case "windows":
+		script := `if (Get-Process ZCode -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }`
+		return exec.Command("powershell", "-NoProfile", "-Command", script).Run() == nil
+	case "linux":
+		return exec.Command("pgrep", "-x", "ZCode").Run() == nil ||
+			exec.Command("pgrep", "-x", "zcode").Run() == nil
+	default:
+		return false
+	}
+}
+
+func desktopLaunchError(appName string, output []byte, launchErr error) error {
+	msg := strings.TrimSpace(string(output))
+	if msg == "" {
+		msg = launchErr.Error()
+	}
+	return fmt.Errorf("launching %s: %s", appName, msg)
 }
 
 type localhostAccessContextKey struct{}
