@@ -1,5 +1,5 @@
 ## Changes
 
-- Fix local ASR startup for Qwen3-ASR and GLM-ASR models by loading FunASR wrapper models from their local model directories.
-- Install the `qwen-asr` runtime dependency automatically when ASR support is repaired or installed.
-- Clear completed download tasks so deleted models do not reappear as stale download rows.
+- Add one-click ZCode desktop installation and launch support for macOS, Linux, and Windows using the official domestic CDN.
+- Detect existing user-managed ZCode installations without taking ownership or exposing uninstall actions.
+- Configure the selected CSGLite model in ZCode before launch while preserving existing providers and settings.
