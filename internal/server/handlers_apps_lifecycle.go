@@ -10,7 +10,7 @@ import (
 
 func aiAppSupportsRuntimeLifecycle(appID string) bool {
 	switch strings.TrimSpace(appID) {
-	case "openclaw", "csgclaw":
+	case "openclaw", "csgclaw", "xiaozhi":
 		return true
 	default:
 		return false
@@ -33,6 +33,13 @@ func (s *Server) startAIAppRuntime(ctx context.Context, appID, modelID, modelSou
 		}
 	case "csgclaw":
 		if _, err := s.openCSGClawURL(ctx, modelID, modelSource); err != nil {
+			return api.AIAppInfo{}, err
+		}
+	case "xiaozhi":
+		if err := s.prepareXiaozhiLaunch(ctx); err != nil {
+			return api.AIAppInfo{}, err
+		}
+		if err := s.appManager.StartXiaozhi(ctx); err != nil {
 			return api.AIAppInfo{}, err
 		}
 	default:
@@ -73,6 +80,10 @@ func (s *Server) stopAIAppRuntime(ctx context.Context, appID string) (api.AIAppI
 		if err := stopCSGClawServe(binary); err != nil {
 			return api.AIAppInfo{}, err
 		}
+	case "xiaozhi":
+		if err := s.appManager.StopXiaozhi(ctx); err != nil {
+			return api.AIAppInfo{}, err
+		}
 	default:
 		return api.AIAppInfo{}, fmt.Errorf("%s does not support start/stop actions", appID)
 	}
@@ -108,6 +119,8 @@ func (s *Server) aiAppRuntimeRunning(ctx context.Context, appID string) (bool, e
 		return openClawGatewayRunning(ctx, binary), nil
 	case "csgclaw":
 		return csgclawReachable(), nil
+	case "xiaozhi":
+		return s.appManager.XiaozhiRunning(ctx)
 	default:
 		return false, fmt.Errorf("%s does not support start/stop actions", appID)
 	}

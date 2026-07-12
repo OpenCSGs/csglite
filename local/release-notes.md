@@ -1,5 +1,5 @@
 ## Changes
 
-- Add one-click ZCode desktop installation and launch support for macOS, Linux, and Windows using the official domestic CDN.
-- Detect existing user-managed ZCode installations without taking ownership or exposing uninstall actions.
-- Configure the selected CSGLite model in ZCode before launch while preserving existing providers and settings.
+- Add one-click Xiaozhi installation and lifecycle management with a storage-root-managed Docker Compose stack.
+- Configure task-specific language, speech recognition, embedding, and image generation models before launch.
+- Support Apple Silicon through Docker amd64 emulation and initialize a local administrator with a private Workspace.

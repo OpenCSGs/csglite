@@ -101,6 +101,10 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "app_id is required")
 		return
 	}
+	if info, err := s.appManager.Get(r.Context(), req.AppID); err == nil && info.Disabled {
+		writeJSON(w, http.StatusConflict, info)
+		return
+	}
 
 	log.Printf("AI APP %s: start requested model=%q source=%q", req.AppID, req.ModelID, req.Source)
 	info, err := s.startAIAppRuntime(r.Context(), req.AppID, req.ModelID, req.Source)
@@ -149,11 +153,30 @@ func (s *Server) handleAppModelSave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if strings.TrimSpace(req.AppID) == "" || strings.TrimSpace(req.ModelID) == "" {
+	appID := strings.TrimSpace(req.AppID)
+	if appID == "" {
+		writeError(w, http.StatusBadRequest, "app_id is required")
+		return
+	}
+	if appID == xiaozhiAppID {
+		if err := s.saveXiaozhiModelBindings(r.Context(), req.ModelBindings); err != nil {
+			log.Printf("AI APP xiaozhi: model binding save failed: %v", err)
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.syncXiaozhiConfig(); err != nil {
+			log.Printf("AI APP xiaozhi: config sync failed: %v", err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if strings.TrimSpace(req.ModelID) == "" {
 		writeError(w, http.StatusBadRequest, "app_id and model_id are required")
 		return
 	}
-	if strings.TrimSpace(req.AppID) == "csgclaw" {
+	if appID == "csgclaw" {
 		if err := s.saveCSGClawModel(r.Context(), req.ModelID, req.Source); err != nil {
 			log.Printf("AI APP csgclaw: model switch failed: %v", err)
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -281,6 +304,10 @@ func (s *Server) enrichAIAppListItem(ctx context.Context, info *api.AIAppInfo) {
 	}
 	s.appManager.EnrichCachedLatestVersion(info)
 	s.appManager.RefreshLatestVersionAsync(*info)
+	if info.ID == xiaozhiAppID {
+		s.enrichXiaozhiModelSlots(ctx, info)
+		return
+	}
 	info.ModelID = s.preferredAIAppModel(info.ID)
 }
 
@@ -294,6 +321,10 @@ func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 	}
 
 	s.appManager.EnrichLatestVersion(ctx, info)
+	if info.ID == xiaozhiAppID {
+		s.enrichXiaozhiModelSlots(ctx, info)
+		return
+	}
 
 	var (
 		modelID string

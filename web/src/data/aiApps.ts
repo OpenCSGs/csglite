@@ -46,11 +46,18 @@ export interface AIAppRuntimeState {
   latestVersion?: string;
   updateAvailable?: boolean;
   modelID?: string;
+  modelBindings?: Array<{ task: string; model_id: string; source: string }>;
+  modelSlots?: Array<{
+    task: string;
+    required: boolean;
+    binding?: { task: string; model_id: string; source: string };
+  }>;
   runtimeSupported: boolean;
   runtimeRunning: boolean;
   runtimeStatus?: "running" | "stopped";
   logPath?: string;
   lastError?: string;
+  disabledReason?: string;
   logLines: string[];
 }
 
@@ -464,6 +471,50 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     },
   },
   {
+    id: "xiaozhi",
+    name: "小智 (Xiaozhi)",
+    siteLabel: "@xiaozhi.cognitoaigo.com",
+    website: "https://xiaozhi.cognitoaigo.com",
+    detailsUrl: "https://xiaozhi.cognitoaigo.com",
+    icon: "/apps/xiaozhi.svg",
+    category: "automation",
+    description: {
+      en: "A self-hosted intelligent workspace with configurable language, speech recognition, embedding, and image generation scenarios.",
+      zh: "可自托管的智能工作空间，支持配置语言、语音识别、Embedding 与图像生成场景。",
+    },
+    installMode: "docker",
+    progressMode: "indeterminate",
+    installHint: {
+      en: "Install and run Xiaozhi with its managed Docker Compose stack.",
+      zh: "通过托管的 Docker Compose 服务栈安装并运行小智。",
+    },
+    cnInstallHint: {
+      en: "Configure Docker registry acceleration if image downloads are slow in your network.",
+      zh: "如果当前网络拉取镜像较慢，请提前配置 Docker 镜像加速。",
+    },
+    commandPreview: "docker compose up -d",
+    liveLogsReady: true,
+    plannedSteps: [
+      {
+        en: "Check Docker, Docker Compose, daemon connectivity, and the current architecture.",
+        zh: "检查 Docker、Docker Compose、daemon 连接与当前系统架构。",
+      },
+      {
+        en: "Prepare the managed Xiaozhi compose files and pull the required images.",
+        zh: "准备托管的小智 compose 文件并拉取所需镜像。",
+      },
+      {
+        en: "Save model bindings for each pipeline and start the Xiaozhi services.",
+        zh: "保存各流水线的模型绑定并启动小智服务。",
+      },
+    ],
+    status: "idle",
+    statusText: {
+      en: "Ready to install",
+      zh: "可安装",
+    },
+  },
+  {
     id: "dify",
     name: "Dify",
     siteLabel: "@dify.ai",
@@ -564,18 +615,20 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
 ];
 
 export const initialAIAppStates = aiAppsCatalog.reduce<Record<string, AIAppRuntimeState>>((acc, app) => {
+  const isStaticallyDisabled = app.status === "disabled";
+  const runtimeSupported = ["openclaw", "csgclaw", "xiaozhi"].includes(app.id);
   acc[app.id] = {
     status: app.status,
-    phase: app.status === "disabled" ? "docker_disabled" : "ready",
+    phase: isStaticallyDisabled ? "docker_disabled" : "ready",
     progressMode: app.progressMode,
-    progress: app.status === "disabled" ? 0 : undefined,
+    progress: isStaticallyDisabled ? 0 : undefined,
     managed: false,
-    supported: app.installMode !== "docker",
-    disabled: app.installMode === "docker",
+    supported: !isStaticallyDisabled,
+    disabled: isStaticallyDisabled,
     liveLogsReady: app.liveLogsReady,
-    runtimeSupported: ["openclaw", "csgclaw"].includes(app.id),
+    runtimeSupported,
     runtimeRunning: false,
-    runtimeStatus: ["openclaw", "csgclaw"].includes(app.id) ? "stopped" : undefined,
+    runtimeStatus: runtimeSupported ? "stopped" : undefined,
     logLines: [],
   };
   return acc;

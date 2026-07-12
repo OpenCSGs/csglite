@@ -3251,7 +3251,7 @@
           "AI Apps"
         ],
         "summary": "Start an AI App runtime",
-        "description": "Starts the long-running runtime for AI Apps that expose one, currently OpenClaw and CSGClaw.",
+        "description": "Starts the long-running runtime for AI Apps that expose one, including OpenClaw, CSGClaw, and Xiaozhi.",
         "operationId": "startAIApp",
         "requestBody": {
           "required": true,
@@ -3283,6 +3283,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           }
         }
       }
@@ -3293,7 +3296,7 @@
           "AI Apps"
         ],
         "summary": "Stop an AI App runtime",
-        "description": "Stops the long-running runtime for AI Apps that expose one, currently OpenClaw and CSGClaw.",
+        "description": "Stops the long-running runtime for AI Apps that expose one, including OpenClaw, CSGClaw, and Xiaozhi.",
         "operationId": "stopAIApp",
         "requestBody": {
           "required": true,
@@ -6822,6 +6825,13 @@
             "type": "string",
             "description": "Model source such as local, cloud, or provider:<id>."
           },
+          "model_bindings": {
+            "type": "array",
+            "description": "Task-specific model selections used by multi-model apps such as Xiaozhi.",
+            "items": {
+              "$ref": "#/components/schemas/AIAppModelBinding"
+            }
+          },
           "work_dir": {
             "type": "string",
             "description": "Working directory used for shell-based AI App launches."
@@ -6898,6 +6908,18 @@
           "model_id": {
             "type": "string"
           },
+          "model_bindings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AIAppModelBinding"
+            }
+          },
+          "model_slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AIAppModelSlot"
+            }
+          },
           "runtime_supported": {
             "type": "boolean",
             "description": "Whether this app exposes a long-running runtime that can be started or stopped."
@@ -6925,6 +6947,52 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "AIAppModelBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task",
+          "model_id",
+          "source"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "enum": [
+              "language_model",
+              "speech_recognition",
+              "embedding",
+              "image_generation"
+            ]
+          },
+          "model_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Model source such as local, cloud, or provider:<id>."
+          }
+        }
+      },
+      "AIAppModelSlot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task",
+          "required"
+        ],
+        "properties": {
+          "task": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/AIAppModelBinding"
           }
         }
       },

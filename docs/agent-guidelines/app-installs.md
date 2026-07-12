@@ -143,6 +143,27 @@ When adding a script-based AI app:
 Do not rely only on the managed launcher existing. Users commonly install via
 Homebrew, vendor installers, drag-and-drop, or manual PATH setup.
 
+### Docker Compose Apps
+
+Docker applications use an app-specific lifecycle driver rather than a fake
+CLI binary or script detection profile. The driver must:
+
+- dynamically distinguish a missing Docker CLI, missing Compose v2, an
+  unavailable daemon, and an unsupported image architecture;
+- keep Compose files, environment files, bind-mounted data, logs, and
+  subprocess temporary output below the configured csghub-lite storage root;
+- pin reviewed images by immutable digest and never inject secrets into the
+  image, command line, or logs;
+- treat installation and runtime state separately;
+- make install, start, and stop idempotent; and
+- preserve bind-mounted user data on ordinary uninstall. Destructive data
+  removal requires a separate, explicit confirmation.
+
+Xiaozhi is the reference implementation in `internal/apps/xiaozhi.go`. Its
+current image set is Linux `amd64` only. Native `amd64` hosts and Apple Silicon
+Docker Desktop are supported; other architectures must be reported as
+unsupported unless their emulation path has been verified.
+
 ### Tests To Run
 
 ```bash

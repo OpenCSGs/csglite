@@ -10,10 +10,12 @@ import {
   saveAIAppModel,
   saveCloudToken,
   setAIAppPath,
+  startAIApp,
   stopAIApp,
   streamAIAppLogs,
   uninstallAIApp,
   type AIAppInfo as RemoteAIAppInfo,
+  type AIAppModelBindings,
   type CloudAuthStatus,
   type ModelInfo,
 } from "../api/client";
@@ -32,6 +34,14 @@ import { locale, t, type Locale } from "../i18n";
 
 type AIAppFilter = "all" | AIAppCategory;
 type DrawerMode = "details" | "install";
+type XiaozhiModelSlot = "language_model" | "speech_recognition" | "embedding" | "image_generation";
+
+const xiaozhiModelSlots: XiaozhiModelSlot[] = [
+  "language_model",
+  "speech_recognition",
+  "embedding",
+  "image_generation",
+];
 
 const searchQuery = signal("");
 const categoryFilter = signal<AIAppFilter>("all");
@@ -46,6 +56,7 @@ const actionError = signal("");
 const pendingInstallId = signal("");
 const pendingUninstallId = signal("");
 const pendingOpenId = signal("");
+const pendingStartId = signal("");
 const pendingStopId = signal("");
 const visibleError = computed(() => actionError.value || loadError.value);
 const providersChangedEvent = "csghub:providers-changed";
@@ -235,6 +246,19 @@ export function AIApps() {
     }
   };
 
+  const handleStartApp = async (appId: string) => {
+    pendingStartId.value = appId;
+    actionError.value = "";
+    try {
+      const state = await startAIApp(appId);
+      mergeAppStates([state]);
+    } catch (error) {
+      actionError.value = localizeAIAppErrorMessage((error as Error).message, t("aiApps.startFailed"));
+    } finally {
+      pendingStartId.value = "";
+    }
+  };
+
   const grouped = groupedApps.value;
 
   return (
@@ -345,8 +369,10 @@ export function AIApps() {
           pendingInstall={pendingInstallId.value === selectedApp.value.id}
           pendingUninstall={pendingUninstallId.value === selectedApp.value.id}
           pendingOpen={pendingOpenId.value === selectedApp.value.id}
+          pendingStart={pendingStartId.value === selectedApp.value.id}
           pendingStop={pendingStopId.value === selectedApp.value.id}
           onOpenChat={(modelId?: string, source?: string) => handleOpenApp(selectedApp.value!.id, modelId, source)}
+          onStart={() => handleStartApp(selectedApp.value!.id)}
           onStop={() => handleStopApp(selectedApp.value!.id)}
         />
       )}
@@ -534,8 +560,10 @@ function LiveLogsDrawer({
   pendingInstall,
   pendingUninstall,
   pendingOpen,
+  pendingStart,
   pendingStop,
   onOpenChat,
+  onStart,
   onStop,
 }: {
   app: AIAppCatalogEntry;
@@ -547,8 +575,10 @@ function LiveLogsDrawer({
   pendingInstall: boolean;
   pendingUninstall: boolean;
   pendingOpen: boolean;
+  pendingStart: boolean;
   pendingStop: boolean;
   onOpenChat: (modelId?: string, source?: string) => void;
+  onStart: () => void;
   onStop: () => void;
 }) {
   void locale.value;
@@ -559,14 +589,19 @@ function LiveLogsDrawer({
   const isUninstalling = state.status === "uninstalling";
   const isWorking = isInstalling || isUninstalling;
   const showTaskLogs = state.liveLogsReady && (mode === "install" || isWorking);
-  const requestPending = pendingInstall || pendingUninstall || pendingStop;
+  const requestPending = pendingInstall || pendingUninstall || pendingStart || pendingStop;
   const canOpenChat = canOpenAIApp(app, state);
   const canSelectModel = canSelectAIAppModel(app);
+  const isXiaozhi = app.id === "xiaozhi";
   const showProgressSummary = !state.disabled && isWorking;
   const showRuntimeSummary = canControlAIAppRuntime(state);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
+  const [xiaozhiBindings, setXiaozhiBindings] = useState<Record<XiaozhiModelSlot, string>>(emptyXiaozhiBindings());
+  const [xiaozhiManualSlots, setXiaozhiManualSlots] = useState<Set<XiaozhiModelSlot>>(new Set());
+  const [xiaozhiSaving, setXiaozhiSaving] = useState(false);
+  const [xiaozhiSaveNotice, setXiaozhiSaveNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [copiedModel, setCopiedModel] = useState(false);
   const [cloudAuth, setCloudAuth] = useState<CloudAuthStatus | null>(null);
   const [showCloudAuthDialog, setShowCloudAuthDialog] = useState(false);
@@ -582,6 +617,7 @@ function LiveLogsDrawer({
     ? models.find((item) => aiAppModelKey(item) === selectedModel)
     : models.find((item) => item.model === currentModelID);
   const launchPreview = cliLaunchPreview(app, currentModelID);
+  const xiaozhiSavedBindingsKey = JSON.stringify(state.modelBindings || {});
 
   useEffect(() => {
     if (!showTaskLogs) {
@@ -712,6 +748,30 @@ function LiveLogsDrawer({
   }, [app.id, canSelectModel, state.modelID, models]);
 
   useEffect(() => {
+    if (!isXiaozhi) {
+      setXiaozhiBindings(emptyXiaozhiBindings());
+      return;
+    }
+    setXiaozhiBindings((current) => {
+      const next = emptyXiaozhiBindings();
+      for (const slot of xiaozhiModelSlots) {
+        const candidates = xiaozhiModelsForSlot(models, slot);
+        const saved = state.modelBindings?.find((binding) => binding.task === slot) ||
+          state.modelSlots?.find((modelSlot) => modelSlot.task === slot)?.binding;
+        const savedKey = saved ? aiAppModelKey({ model: saved.model_id, source: saved.source }) : "";
+        if (xiaozhiManualSlots.has(slot) && candidates.some((model) => aiAppModelKey(model) === current[slot])) {
+          next[slot] = current[slot];
+        } else if (savedKey && candidates.some((model) => aiAppModelKey(model) === savedKey)) {
+          next[slot] = savedKey;
+        } else {
+          next[slot] = candidates[0] ? aiAppModelKey(candidates[0]) : "";
+        }
+      }
+      return next;
+    });
+  }, [app.id, isXiaozhi, models, xiaozhiSavedBindingsKey, xiaozhiManualSlots]);
+
+  useEffect(() => {
     return () => {
       if (copyResetRef.current !== null) {
         window.clearTimeout(copyResetRef.current);
@@ -721,6 +781,9 @@ function LiveLogsDrawer({
 
   useEffect(() => {
     setSelectedModel("");
+    setXiaozhiBindings(emptyXiaozhiBindings());
+    setXiaozhiManualSlots(new Set());
+    setXiaozhiSaveNotice(null);
     setCopiedModel(false);
     setManualPathInput("");
     setManualPathNotice(null);
@@ -813,6 +876,66 @@ function LiveLogsDrawer({
       void saveAIAppModel(app.id, nextModel.model, nextModel.source);
     }
     void ensureCloudAuthForModel(nextModel);
+  };
+
+  const handleXiaozhiBindingChange = (slot: XiaozhiModelSlot, value: string) => {
+    setXiaozhiBindings((current) => ({ ...current, [slot]: value }));
+    setXiaozhiManualSlots((current) => new Set(current).add(slot));
+    setXiaozhiSaveNotice(null);
+    const model = models.find((item) => aiAppModelKey(item) === value);
+    void ensureCloudAuthForModel(model);
+  };
+
+  const handleSaveXiaozhiBindings = async (): Promise<boolean> => {
+    const bindings: AIAppModelBindings = [];
+    for (const slot of xiaozhiModelSlots) {
+      const key = xiaozhiBindings[slot];
+      if (!key) continue;
+      const selected = models.find((model) => aiAppModelKey(model) === key);
+      const parts = selected
+        ? { model: selected.model, source: selected.source || "local" }
+        : parseAIAppModelKey(key);
+      if (!(await ensureCloudAuthForModel(selected))) {
+        return false;
+      }
+      bindings.push({
+        task: slot,
+        model_id: parts.model,
+        source: parts.source || "",
+      });
+    }
+    if (!bindings.some((binding) => binding.task === "language_model")) {
+      setXiaozhiSaveNotice({ ok: false, text: t("aiApps.xiaozhi.noBindings") });
+      return false;
+    }
+    setXiaozhiSaving(true);
+    setXiaozhiSaveNotice(null);
+    try {
+      await saveAIAppModel(app.id, undefined, undefined, bindings);
+      appStates.value = {
+        ...appStates.value,
+        [app.id]: { ...appStates.value[app.id], modelBindings: bindings },
+      };
+      setXiaozhiManualSlots(new Set());
+      setXiaozhiSaveNotice({ ok: true, text: t("aiApps.xiaozhi.bindingsSaved") });
+      return true;
+    } catch (error) {
+      const message = (error as Error).message?.trim();
+      setXiaozhiSaveNotice({
+        ok: false,
+        text: message ? `${t("aiApps.xiaozhi.bindingsSaveFailed")}: ${message}` : t("aiApps.xiaozhi.bindingsSaveFailed"),
+      });
+      return false;
+    } finally {
+      setXiaozhiSaving(false);
+    }
+  };
+
+  const handleStartCurrentApp = async () => {
+    if (isXiaozhi && !(await handleSaveXiaozhiBindings())) {
+      return;
+    }
+    onStart();
   };
 
   const handleOpenCurrentApp = async () => {
@@ -969,7 +1092,81 @@ function LiveLogsDrawer({
             </section>
           )}
 
-          {(canSelectModel || currentModelID) && (
+          {isXiaozhi && canSelectModel && (
+            <section class="space-y-3">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.xiaozhi.modelBindings")}</h3>
+                <p class="mt-1 text-sm text-gray-500">{t("aiApps.xiaozhi.modelBindingsHint")}</p>
+              </div>
+              <div class="space-y-3">
+                {xiaozhiModelSlots.map((slot) => {
+                  const candidates = xiaozhiModelsForSlot(models, slot);
+                  const saved = Boolean(
+                    state.modelBindings?.some((binding) => binding.task === slot) ||
+                    state.modelSlots?.some((modelSlot) => modelSlot.task === slot && modelSlot.binding)
+                  );
+                  return (
+                    <div key={slot} class="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                      <div class="mb-2 flex items-center justify-between gap-3">
+                        <label class="text-sm font-medium text-gray-800">{xiaozhiSlotLabel(slot)}</label>
+                        <span class="text-[11px] text-gray-400">
+                          {xiaozhiManualSlots.has(slot)
+                            ? t("aiApps.xiaozhi.manualOverride")
+                            : saved
+                              ? t("aiApps.xiaozhi.savedBinding")
+                              : t("aiApps.xiaozhi.autoDefault")}
+                        </span>
+                      </div>
+                      <div class="relative">
+                        <select
+                          value={xiaozhiBindings[slot]}
+                          onChange={(event) => handleXiaozhiBindingChange(slot, (event.currentTarget as HTMLSelectElement).value)}
+                          disabled={modelsLoading || candidates.length === 0}
+                          class={`appearance-none w-full rounded-lg border bg-white py-2.5 pl-3 pr-9 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+                            modelsLoading || candidates.length === 0 ? "border-gray-200 text-gray-400" : "border-gray-200 text-gray-700"
+                          }`}
+                          aria-label={xiaozhiSlotLabel(slot)}
+                        >
+                          {modelsLoading ? (
+                            <option value="">{t("aiApps.modelLoading")}</option>
+                          ) : candidates.length === 0 ? (
+                            <option value="">{t("aiApps.xiaozhi.noCompatibleModels")}</option>
+                          ) : (
+                            candidates.map((model) => (
+                              <option key={aiAppModelKey(model)} value={aiAppModelKey(model)}>
+                                {formatXiaozhiModelLabel(model)}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                        <svg class="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {xiaozhiSaveNotice && (
+                <div class={`rounded-lg border px-3 py-2 text-sm ${
+                  xiaozhiSaveNotice.ok
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-red-200 bg-red-50 text-red-700"
+                }`}>
+                  {xiaozhiSaveNotice.text}
+                </div>
+              )}
+              <button
+                onClick={() => void handleSaveXiaozhiBindings()}
+                disabled={xiaozhiSaving || modelsLoading || !xiaozhiBindings.language_model}
+                class="inline-flex items-center justify-center rounded-lg border border-indigo-200 px-4 py-2 text-sm font-medium text-indigo-600 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+              >
+                {xiaozhiSaving ? t("aiApps.xiaozhi.savingBindings") : t("aiApps.xiaozhi.saveBindings")}
+              </button>
+            </section>
+          )}
+
+          {!isXiaozhi && (canSelectModel || currentModelID) && (
             <section class="space-y-2">
               <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.currentModelId")}</h3>
               <div class="flex items-center gap-3 flex-wrap">
@@ -1151,7 +1348,20 @@ function LiveLogsDrawer({
             )}
           </div>
           <div class="flex items-center gap-3">
-            {showRuntimeSummary && !isWorking && state.runtimeRunning && (
+            {showRuntimeSummary && !isWorking && !(state.runtimeRunning || state.runtimeStatus === "running") && (
+              <button
+                onClick={() => void handleStartCurrentApp()}
+                disabled={pendingStart || xiaozhiSaving}
+                class={`inline-flex items-center justify-center rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                  pendingStart || xiaozhiSaving
+                    ? "border-gray-200 text-gray-300 cursor-not-allowed"
+                    : "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+                }`}
+              >
+                {pendingStart || xiaozhiSaving ? t("aiApps.starting") : t("aiApps.start")}
+              </button>
+            )}
+            {showRuntimeSummary && !isWorking && (state.runtimeRunning || state.runtimeStatus === "running") && (
                 <button
                   onClick={onStop}
                   disabled={pendingStop}
@@ -1409,11 +1619,14 @@ function mergeAppStates(remoteApps: RemoteAIAppInfo[]) {
       latestVersion: remote.latest_version,
       updateAvailable: Boolean(remote.update_available),
       modelID: remote.model_id || "",
+      modelBindings: remote.model_bindings || prev.modelBindings,
+      modelSlots: remote.model_slots || prev.modelSlots,
       runtimeSupported: Boolean(remote.runtime_supported),
       runtimeRunning: Boolean(remote.runtime_running),
       runtimeStatus: remote.runtime_status || (remote.runtime_supported ? "stopped" : undefined),
       logPath: remote.log_path,
       lastError: remote.last_error,
+      disabledReason: remote.disabled_reason,
     };
   }
 
@@ -1493,11 +1706,18 @@ function drawerNotice(app: AIAppCatalogEntry, state: AIAppRuntimeState): string 
     return t("aiApps.error.localhostRequired");
   }
   if (state.disabled) {
+    const reasonKey = state.disabledReason || state.phase;
+    if (["docker_not_found", "docker_compose_unavailable", "docker_daemon_unavailable", "architecture_unsupported"].includes(reasonKey)) {
+      return t(`aiApps.disabledReason.${reasonKey}`);
+    }
     if (state.phase === "linux_unsupported") {
       return t("aiApps.disabledLinuxNotice");
     }
     if (state.phase === "windows_unsupported") {
       return t("aiApps.disabledWindowsNotice");
+    }
+    if (state.disabledReason) {
+      return state.disabledReason;
     }
     return t("aiApps.disabledDockerNotice");
   }
@@ -1533,6 +1753,11 @@ function canOpenAIApp(app: AIAppCatalogEntry, state: AIAppRuntimeState): boolean
     return state.status === "installed" &&
       !state.disabled &&
       isLocalhostBrowserAccess();
+  }
+  if (app.id === "xiaozhi") {
+    return state.status === "installed" &&
+      !state.disabled &&
+      (state.runtimeRunning || state.runtimeStatus === "running");
   }
   return ["openclaw", "csgclaw", "claude-code", "open-code", "open-code-review", "codex", "pi"].includes(app.id) &&
     state.status === "installed" &&
@@ -1594,7 +1819,7 @@ function cliLaunchAppName(appID: string): string {
 }
 
 function canSelectAIAppModel(app: AIAppCatalogEntry): boolean {
-  return ["claude-code", "open-code", "open-code-review", "codex", "codex-app", "zcode", "pi", "openclaw", "csgclaw"].includes(app.id);
+  return ["claude-code", "open-code", "open-code-review", "codex", "codex-app", "zcode", "pi", "openclaw", "csgclaw", "xiaozhi"].includes(app.id);
 }
 
 function isDesktopAIApp(app: AIAppCatalogEntry): boolean {
@@ -1628,6 +1853,33 @@ function isAIAppLaunchModel(model: ModelInfo): boolean {
     return true;
   }
   return model.model?.trim().toLowerCase() !== "opus4.7";
+}
+
+function emptyXiaozhiBindings(): Record<XiaozhiModelSlot, string> {
+  return {
+    language_model: "",
+    speech_recognition: "",
+    embedding: "",
+    image_generation: "",
+  };
+}
+
+function xiaozhiModelsForSlot(models: ModelInfo[], slot: XiaozhiModelSlot): ModelInfo[] {
+  return models.filter((model) => {
+    const tag = (model.pipeline_tag || "").trim().toLowerCase();
+    const category = (model.category || "").trim().toLowerCase().replace(/-/g, "_");
+    const tagsBySlot: Record<XiaozhiModelSlot, string[]> = {
+      language_model: ["text-generation", "conversational", "text2text-generation", "fill-mask"],
+      speech_recognition: ["automatic-speech-recognition"],
+      embedding: ["feature-extraction", "sentence-similarity", "text-embedding", "embedding"],
+      image_generation: ["text-to-image", "image-to-image"],
+    };
+    return category === slot || tagsBySlot[slot].includes(tag);
+  });
+}
+
+function xiaozhiSlotLabel(slot: XiaozhiModelSlot): string {
+  return t(`aiApps.xiaozhi.slot.${slot}`);
 }
 
 function localizeAIAppErrorMessage(message: string, fallback: string): string {
@@ -1681,6 +1933,18 @@ function formatAIAppModelLabel(model: ModelInfo): string {
   }
   if (src.startsWith("provider:")) {
     return name;
+  }
+  return `${name} [${t("aiApps.modelSourceLocal")}]`;
+}
+
+function formatXiaozhiModelLabel(model: ModelInfo): string {
+  const name = model.display_name || model.model;
+  const source = model.source || "local";
+  if (source === "cloud") {
+    return `${name} [${t("aiApps.modelSourceCloud")}]`;
+  }
+  if (source.startsWith("provider:")) {
+    return `${name} [${source.slice("provider:".length)}]`;
   }
   return `${name} [${t("aiApps.modelSourceLocal")}]`;
 }

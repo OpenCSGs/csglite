@@ -515,10 +515,11 @@ type DirectoryBrowseResponse struct {
 // -- AI Apps request/response types --
 
 type AIAppActionRequest struct {
-	AppID   string `json:"app_id"`
-	ModelID string `json:"model_id,omitempty"`
-	Source  string `json:"source,omitempty"`
-	WorkDir string `json:"work_dir,omitempty"`
+	AppID         string              `json:"app_id"`
+	ModelID       string              `json:"model_id,omitempty"`
+	Source        string              `json:"source,omitempty"`
+	ModelBindings []AIAppModelBinding `json:"model_bindings,omitempty"`
+	WorkDir       string              `json:"work_dir,omitempty"`
 }
 
 type AIAppInstallRequest = AIAppActionRequest
@@ -535,27 +536,45 @@ type AIAppPathRequest struct {
 }
 
 type AIAppInfo struct {
-	ID               string    `json:"id"`
-	Installed        bool      `json:"installed"`
-	Managed          bool      `json:"managed"`
-	Supported        bool      `json:"supported"`
-	Disabled         bool      `json:"disabled"`
-	Status           string    `json:"status"`
-	Phase            string    `json:"phase,omitempty"`
-	ProgressMode     string    `json:"progress_mode"`
-	Progress         int       `json:"progress,omitempty"`
-	InstallPath      string    `json:"install_path,omitempty"`
-	Version          string    `json:"version,omitempty"`
-	LatestVersion    string    `json:"latest_version,omitempty"`
-	UpdateAvailable  bool      `json:"update_available,omitempty"`
-	ModelID          string    `json:"model_id,omitempty"`
-	RuntimeSupported bool      `json:"runtime_supported"`
-	RuntimeRunning   bool      `json:"runtime_running"`
-	RuntimeStatus    string    `json:"runtime_status,omitempty"`
-	LogPath          string    `json:"log_path,omitempty"`
-	LastError        string    `json:"last_error,omitempty"`
-	DisabledReason   string    `json:"disabled_reason,omitempty"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID               string              `json:"id"`
+	Installed        bool                `json:"installed"`
+	Managed          bool                `json:"managed"`
+	Supported        bool                `json:"supported"`
+	Disabled         bool                `json:"disabled"`
+	Status           string              `json:"status"`
+	Phase            string              `json:"phase,omitempty"`
+	ProgressMode     string              `json:"progress_mode"`
+	Progress         int                 `json:"progress,omitempty"`
+	InstallPath      string              `json:"install_path,omitempty"`
+	Version          string              `json:"version,omitempty"`
+	LatestVersion    string              `json:"latest_version,omitempty"`
+	UpdateAvailable  bool                `json:"update_available,omitempty"`
+	ModelID          string              `json:"model_id,omitempty"`
+	ModelBindings    []AIAppModelBinding `json:"model_bindings,omitempty"`
+	ModelSlots       []AIAppModelSlot    `json:"model_slots,omitempty"`
+	RuntimeSupported bool                `json:"runtime_supported"`
+	RuntimeRunning   bool                `json:"runtime_running"`
+	RuntimeStatus    string              `json:"runtime_status,omitempty"`
+	LogPath          string              `json:"log_path,omitempty"`
+	LastError        string              `json:"last_error,omitempty"`
+	DisabledReason   string              `json:"disabled_reason,omitempty"`
+	UpdatedAt        time.Time           `json:"updated_at"`
+}
+
+// AIAppModelBinding selects one model, including its source when model IDs are
+// shared by multiple sources, for a task exposed by an AI app.
+type AIAppModelBinding struct {
+	Task    string `json:"task"`
+	ModelID string `json:"model_id"`
+	Source  string `json:"source"`
+}
+
+// AIAppModelSlot describes a model task supported by an AI app and its current
+// saved or recommended binding.
+type AIAppModelSlot struct {
+	Task     string             `json:"task"`
+	Required bool               `json:"required"`
+	Binding  *AIAppModelBinding `json:"binding,omitempty"`
 }
 
 type AIAppsResponse struct {

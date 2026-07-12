@@ -99,6 +99,9 @@ type Manager struct {
 	latestMu    sync.Mutex
 	latestCache map[string]latestVersionCacheEntry
 	latestJobs  map[string]struct{}
+
+	xiaozhiAvailability        xiaozhiAvailability
+	xiaozhiAvailabilityExpires time.Time
 }
 
 type installDetectionState struct {
@@ -394,6 +397,12 @@ func appSpecs() []appSpec {
 			},
 		},
 		{
+			id:           "xiaozhi",
+			installMode:  "docker",
+			progressMode: progressModeIndeterminate,
+			supported:    true,
+		},
+		{
 			id:             "dify",
 			installMode:    "docker",
 			progressMode:   progressModeIndeterminate,
@@ -446,7 +455,16 @@ func (m *Manager) RefreshAll(ctx context.Context) error {
 
 	for _, spec := range m.specs {
 		st := m.states[spec.id]
-		if st == nil || st.running || !spec.supported {
+		if st == nil {
+			continue
+		}
+		if spec.id == xiaozhiAppID {
+			if !st.running {
+				m.refreshXiaozhiStateLocked(ctx, st)
+			}
+			continue
+		}
+		if st.running || !spec.supported {
 			continue
 		}
 
@@ -464,6 +482,9 @@ func (m *Manager) Uninstall(appID string) (api.AIAppInfo, error) {
 }
 
 func (m *Manager) startAction(appID, action string) (api.AIAppInfo, error) {
+	if appID == xiaozhiAppID {
+		return m.startXiaozhiAction(action)
+	}
 	m.mu.Lock()
 	spec, st, err := m.specStateLocked(appID)
 	if err != nil {
@@ -1643,6 +1664,11 @@ func (m *Manager) clearManagedInstallMarker(appID string) error {
 }
 
 func (m *Manager) logPath(appID string) string {
+	if appID == xiaozhiAppID {
+		if root, err := m.xiaozhiRoot(); err == nil {
+			return filepath.Join(root, "logs", "install.log")
+		}
+	}
 	home, err := config.AppHome()
 	if err != nil {
 		return filepath.Join(os.TempDir(), appID+".log")

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opencsgs/csglite/internal/apps"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
@@ -60,6 +61,15 @@ func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, modelSource, 
 			return "", err
 		}
 		return rewriteLoopbackURLHost(url, publicBaseURL), nil
+	case "xiaozhi":
+		running, err := s.appManager.XiaozhiRunning(ctx)
+		if err != nil {
+			return "", err
+		}
+		if !running {
+			return "", fmt.Errorf("Xiaozhi is not running yet")
+		}
+		return rewriteLoopbackURLHost(apps.XiaozhiURL(), publicBaseURL), nil
 	case "claude-code", "open-code", "open-code-review", "codex", "pi":
 		return s.openAIAppShellURL(ctx, appID, modelID, modelSource, workDir, publicBaseURL)
 	case "codex-app":

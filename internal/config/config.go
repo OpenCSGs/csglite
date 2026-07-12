@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 const (
@@ -40,17 +42,18 @@ func (c *Config) TempDir() string {
 }
 
 type Config struct {
-	ServerURL            string            `json:"server_url"`
-	AIGatewayURL         string            `json:"ai_gateway_url,omitempty"`
-	CloudProviderName    string            `json:"cloud_provider_name,omitempty"`
-	Token                string            `json:"token,omitempty"`
-	OpenCSGAPIKey        string            `json:"opencsg_api_key,omitempty"`
-	ListenAddr           string            `json:"listen_addr"`
-	ModelDir             string            `json:"model_dir"`
-	DatasetDir           string            `json:"dataset_dir"`
-	OpenAIStreamDefault  bool              `json:"-"`
-	AIAppPreferredModels map[string]string `json:"ai_app_preferred_models,omitempty"`
-	WebSearch            WebSearchConfig   `json:"web_search,omitempty"`
+	ServerURL            string                             `json:"server_url"`
+	AIGatewayURL         string                             `json:"ai_gateway_url,omitempty"`
+	CloudProviderName    string                             `json:"cloud_provider_name,omitempty"`
+	Token                string                             `json:"token,omitempty"`
+	OpenCSGAPIKey        string                             `json:"opencsg_api_key,omitempty"`
+	ListenAddr           string                             `json:"listen_addr"`
+	ModelDir             string                             `json:"model_dir"`
+	DatasetDir           string                             `json:"dataset_dir"`
+	OpenAIStreamDefault  bool                               `json:"-"`
+	AIAppPreferredModels map[string]string                  `json:"ai_app_preferred_models,omitempty"`
+	AIAppModelBindings   map[string][]api.AIAppModelBinding `json:"ai_app_model_bindings,omitempty"`
+	WebSearch            WebSearchConfig                    `json:"web_search,omitempty"`
 }
 
 type WebSearchConfig struct {
@@ -151,6 +154,7 @@ func Load() (*Config, error) {
 		globalConfig = &Config{
 			ListenAddr:           DefaultListenAddr,
 			AIAppPreferredModels: map[string]string{},
+			AIAppModelBindings:   map[string][]api.AIAppModelBinding{},
 			WebSearch:            DefaultWebSearchConfig(),
 		}
 
@@ -203,6 +207,9 @@ func Load() (*Config, error) {
 		}
 		if globalConfig.AIAppPreferredModels == nil {
 			globalConfig.AIAppPreferredModels = map[string]string{}
+		}
+		if globalConfig.AIAppModelBindings == nil {
+			globalConfig.AIAppModelBindings = map[string][]api.AIAppModelBinding{}
 		}
 		globalConfig.WebSearch = NormalizeWebSearchConfig(globalConfig.WebSearch)
 	})

@@ -428,6 +428,8 @@ export interface AIAppInfo {
   latest_version?: string;
   update_available?: boolean;
   model_id?: string;
+  model_bindings?: AIAppModelBindings;
+  model_slots?: AIAppModelSlot[];
   runtime_supported: boolean;
   runtime_running: boolean;
   runtime_status?: "running" | "stopped";
@@ -435,6 +437,20 @@ export interface AIAppInfo {
   last_error?: string;
   disabled_reason?: string;
   updated_at: string;
+}
+
+export interface AIAppModelBinding {
+  task: string;
+  model_id: string;
+  source: string;
+}
+
+export type AIAppModelBindings = AIAppModelBinding[];
+
+export interface AIAppModelSlot {
+  task: string;
+  required: boolean;
+  binding?: AIAppModelBinding;
 }
 
 export interface AIAppOpenResponse {
@@ -1853,12 +1869,27 @@ export async function setAIAppPath(appId: string, path: string): Promise<AIAppIn
   });
 }
 
-export async function saveAIAppModel(appId: string, modelId: string, source?: string): Promise<void> {
-  await fetch("/api/apps/model", {
+export async function saveAIAppModel(
+  appId: string,
+  modelId?: string,
+  source?: string,
+  modelBindings?: AIAppModelBindings
+): Promise<void> {
+  const resp = await fetch("/api/apps/model", withLocaleHeader({
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ app_id: appId, model_id: modelId, source: source || undefined }),
-  });
+    body: JSON.stringify({
+      app_id: appId,
+      model_id: modelId || undefined,
+      source: source || undefined,
+      model_bindings: modelBindings,
+    }),
+  }));
+  if (!resp.ok) {
+    const contentType = resp.headers.get("content-type") || "";
+    const body = await resp.text();
+    throw new Error(extractErrorMessage(body, contentType, resp.statusText || "failed to save app model"));
+  }
 }
 
 export function streamLogs(
