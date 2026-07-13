@@ -42,6 +42,8 @@ const xiaozhiModelSlots: XiaozhiModelSlot[] = [
   "embedding",
   "image_generation",
 ];
+const xiaozhiDefaultEmail = "csglite@opencsg.com";
+const xiaozhiDefaultPassword = "csglite";
 
 const searchQuery = signal("");
 const categoryFilter = signal<AIAppFilter>("all");
@@ -602,6 +604,7 @@ function LiveLogsDrawer({
   const [xiaozhiManualSlots, setXiaozhiManualSlots] = useState<Set<XiaozhiModelSlot>>(new Set());
   const [xiaozhiSaving, setXiaozhiSaving] = useState(false);
   const [xiaozhiSaveNotice, setXiaozhiSaveNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [copiedXiaozhiCredentials, setCopiedXiaozhiCredentials] = useState(false);
   const [copiedModel, setCopiedModel] = useState(false);
   const [cloudAuth, setCloudAuth] = useState<CloudAuthStatus | null>(null);
   const [showCloudAuthDialog, setShowCloudAuthDialog] = useState(false);
@@ -784,6 +787,7 @@ function LiveLogsDrawer({
     setXiaozhiBindings(emptyXiaozhiBindings());
     setXiaozhiManualSlots(new Set());
     setXiaozhiSaveNotice(null);
+    setCopiedXiaozhiCredentials(false);
     setCopiedModel(false);
     setManualPathInput("");
     setManualPathNotice(null);
@@ -832,6 +836,24 @@ function LiveLogsDrawer({
       }, 1500);
     } catch {
       // Ignore clipboard failures so the drawer keeps working.
+    }
+  };
+
+  const handleCopyXiaozhiCredentials = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        `${t("aiApps.xiaozhi.defaultEmail")}: ${xiaozhiDefaultEmail}\n${t("aiApps.xiaozhi.defaultPassword")}: ${xiaozhiDefaultPassword}`
+      );
+      setCopiedXiaozhiCredentials(true);
+      if (copyResetRef.current !== null) {
+        window.clearTimeout(copyResetRef.current);
+      }
+      copyResetRef.current = window.setTimeout(() => {
+        setCopiedXiaozhiCredentials(false);
+        copyResetRef.current = null;
+      }, 1500);
+    } catch {
+      // Ignore clipboard failures so the credentials remain visible.
     }
   };
 
@@ -1088,6 +1110,33 @@ function LiveLogsDrawer({
               <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.lastError")}</h3>
               <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 whitespace-pre-wrap">
                 {state.lastError}
+              </div>
+            </section>
+          )}
+
+          {isXiaozhi && state.status === "installed" && (
+            <section class="space-y-3">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.xiaozhi.defaultCredentials")}</h3>
+                <p class="mt-1 text-sm text-gray-500">{t("aiApps.xiaozhi.defaultCredentialsHint")}</p>
+              </div>
+              <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <dl class="grid gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <dt class="text-xs font-medium text-amber-700">{t("aiApps.xiaozhi.defaultEmail")}</dt>
+                    <dd class="mt-1 break-all font-mono text-gray-900">{xiaozhiDefaultEmail}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs font-medium text-amber-700">{t("aiApps.xiaozhi.defaultPassword")}</dt>
+                    <dd class="mt-1 font-mono text-gray-900">{xiaozhiDefaultPassword}</dd>
+                  </div>
+                </dl>
+                <button
+                  onClick={() => void handleCopyXiaozhiCredentials()}
+                  class="mt-4 inline-flex items-center justify-center rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-100"
+                >
+                  {copiedXiaozhiCredentials ? t("dash.copied") : t("aiApps.xiaozhi.copyCredentials")}
+                </button>
               </div>
             </section>
           )}

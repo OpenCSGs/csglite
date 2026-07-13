@@ -1,5 +1,4 @@
 ## Changes
 
-- Add one-click Xiaozhi installation and lifecycle management with a storage-root-managed Docker Compose stack.
-- Configure task-specific language, speech recognition, embedding, and image generation models before launch.
-- Support Apple Silicon through Docker amd64 emulation and initialize a local administrator with a private Workspace.
+- Show Xiaozhi's default administrator email and password in the app details panel.
+- Add one-click copying of the local login credentials with localized guidance.
