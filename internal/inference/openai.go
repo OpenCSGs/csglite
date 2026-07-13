@@ -282,6 +282,13 @@ func (e *openAIEngine) handleJSONResponse(body io.Reader) (string, error) {
 	return openAIContentString(chatResp.Choices[0].Message.Content), nil
 }
 
+// SupportsNativeToolStreaming reports that cloud and third-party
+// OpenAI-compatible backends return standard streaming tool-call deltas,
+// so tool requests do not need local aggregation and normalization.
+func (e *openAIEngine) SupportsNativeToolStreaming() bool {
+	return true
+}
+
 func (e *openAIEngine) Close() error {
 	return nil
 }

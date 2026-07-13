@@ -1,4 +1,3 @@
 ## Changes
 
-- Show Xiaozhi's default administrator email and password in the app details panel.
-- Add one-click copying of the local login credentials with localized guidance.
+- Fix missing streaming output when tool-calling clients (such as OpenClaw) chat with cloud or third-party provider models through `/v1/chat/completions`: responses now stream incrementally over SSE instead of arriving in one chunk after the full completion (#59).

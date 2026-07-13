@@ -1060,6 +1060,70 @@ func TestHandleOpenAIChatCompletionsCloudStreamPreservesReasoningContent(t *test
 	}
 }
 
+func TestHandleOpenAIChatCompletionsCloudStreamWithToolsProxiesSSE(t *testing.T) {
+	cfg := &config.Config{ModelDir: t.TempDir(), OpenCSGAPIKey: "test-token"}
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"hy3","object":"model","created":456,"owned_by":"opencsg"}]}`))
+		case "/v1/chat/completions":
+			var body map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode upstream request: %v", err)
+			}
+			if body["stream"] != true {
+				t.Fatalf("stream = %#v, want true", body["stream"])
+			}
+			if _, ok := body["tools"]; !ok {
+				t.Fatalf("upstream request missing tools: %#v", body)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"partial\"}}]}\n\n")
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_time\",\"arguments\":\"{}\"}}]}}]}\n\n")
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n")
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := New(cfg, "test")
+	s.cloud = cloud.NewService(apiServer.URL)
+
+	body := `{
+	  "model": "hy3",
+	  "messages": [{"role":"user","content":"what time is it"}],
+	  "tools": [{
+	    "type":"function",
+	    "function":{"name":"get_time","description":"Get current time","parameters":{"type":"object","properties":{}}}
+	  }],
+	  "stream": true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want text/event-stream", got)
+	}
+	respBody := w.Body.String()
+	if !strings.Contains(respBody, `"content":"partial"`) {
+		t.Fatalf("stream body missing upstream content chunk: %s", respBody)
+	}
+	if !strings.Contains(respBody, `"name":"get_time"`) {
+		t.Fatalf("stream body missing upstream tool_calls delta: %s", respBody)
+	}
+	if !strings.Contains(respBody, "data: [DONE]") {
+		t.Fatalf("stream body missing [DONE]: %s", respBody)
+	}
+}
+
 func TestHandleOpenAIChatCompletionsCloudWithoutTokenReturnsUnauthorized(t *testing.T) {
 	s := newTestServer(t)
 	apiServer := newCloudOpenAIAPIServer(t, "")

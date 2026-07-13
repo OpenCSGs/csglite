@@ -281,9 +281,20 @@ func (s *Server) handleOpenAIChatCompletionsWithTools(
 	requestedNumCtx, requestedNumParallel, requestedNGPULayers int,
 	requestedCacheTypeK, requestedCacheTypeV, requestedDType string,
 ) {
-	_, ok := eng.(inference.ChatCompletionProxier)
+	proxy, ok := eng.(inference.ChatCompletionProxier)
 	if !ok {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "selected model backend does not support tool calling")
+		return
+	}
+
+	// Cloud and third-party OpenAI-compatible backends emit standard
+	// streaming tool-call deltas, so proxy the SSE stream directly instead
+	// of aggregating the full completion first (which would break streaming
+	// for tool-using clients such as coding agents). Local llama backends
+	// keep the aggregate-and-normalize path because they may return tool
+	// calls as plain text that needs synthesis.
+	if stream && inference.SupportsNativeToolStreaming(eng) {
+		s.handleOpenAIChatCompletionsProxy(w, r, req, eng, proxy, opts, stream, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
 		return
 	}
 

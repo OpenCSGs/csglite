@@ -45,6 +45,21 @@ type EmbeddingsProxier interface {
 	Embeddings(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error)
 }
 
+// NativeToolStreamer marks engines whose backend natively emits
+// OpenAI-compatible streaming tool-call deltas, so tool requests can be
+// proxied with stream enabled instead of being aggregated and normalized
+// locally after the full completion.
+type NativeToolStreamer interface {
+	SupportsNativeToolStreaming() bool
+}
+
+// SupportsNativeToolStreaming reports whether eng can stream tool-call
+// responses directly from its backend.
+func SupportsNativeToolStreaming(eng Engine) bool {
+	streamer, ok := eng.(NativeToolStreamer)
+	return ok && streamer.SupportsNativeToolStreaming()
+}
+
 // ConvertProgressFunc receives conversion progress updates.
 // If nil, conversion progress is not reported.
 type ConvertProgressFunc func(step string, current, total int)
