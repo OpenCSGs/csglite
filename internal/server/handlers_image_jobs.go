@@ -173,10 +173,13 @@ func (s *Server) runImageGenerationJob(ctx context.Context, job *imageGeneration
 	log.Printf("IMAGE JOB %s: started model=%q", job.id, req.Model)
 	var resp *api.OpenAIImagesGenerationResponse
 	var err error
-	if imageGenerationUsesCloud(req) {
+	editing := strings.TrimSpace(req.Image) != "" || len(req.Images) > 0
+	if providerSource := imageGenerationProviderSource(req); providerSource != "" {
+		resp, err = s.generateThirdPartyProviderImageForJob(ctx, providerSource, req)
+	} else if imageGenerationUsesCloud(req) {
 		req.Source = "cloud"
 		job.setRequest(req)
-		if strings.TrimSpace(req.Image) != "" || len(req.Images) > 0 {
+		if editing {
 			resp, err = s.generateCloudImageEdit(ctx, imageInferenceRequestFromJob(req))
 		} else {
 			resp, err = s.generateCloudImage(ctx, req)
@@ -189,10 +192,14 @@ func (s *Server) runImageGenerationJob(ctx context.Context, job *imageGeneration
 			if err == nil {
 				s.touchImageEngine(req.Model)
 			}
-		} else if s.openAIImageInferenceCanFallbackToCloud(ctx, req, strings.TrimSpace(req.Image) != "" || len(req.Images) > 0) {
+		} else if providerSource := s.openAIImageInferenceProviderFallbackSource(ctx, req, editing); providerSource != "" {
+			req.Source = providerSource
+			job.setRequest(req)
+			resp, err = s.generateThirdPartyProviderImageForJob(ctx, providerSource, req)
+		} else if s.openAIImageInferenceCanFallbackToCloud(ctx, req, editing) {
 			req.Source = "cloud"
 			job.setRequest(req)
-			if strings.TrimSpace(req.Image) != "" || len(req.Images) > 0 {
+			if editing {
 				resp, err = s.generateCloudImageEdit(ctx, imageInferenceRequestFromJob(req))
 			} else {
 				resp, err = s.generateCloudImage(ctx, req)
@@ -583,6 +590,13 @@ func firstImageJobValidationError(req *api.OpenAIImagesGenerationRequest) string
 		return normalizeOpenAIImagesEditRequest(req)
 	}
 	return normalizeOpenAIImagesGenerationRequest(req)
+}
+
+func (s *Server) generateThirdPartyProviderImageForJob(ctx context.Context, source string, req api.OpenAIImagesGenerationRequest) (*api.OpenAIImagesGenerationResponse, error) {
+	if strings.TrimSpace(req.Image) != "" || len(req.Images) > 0 {
+		return s.generateThirdPartyProviderImageEdit(ctx, source, imageInferenceRequestFromJob(req))
+	}
+	return s.generateThirdPartyProviderImage(ctx, source, req)
 }
 
 func imageInferenceRequestFromJob(req api.OpenAIImagesGenerationRequest) imageInferenceRequest {

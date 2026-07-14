@@ -409,6 +409,125 @@ func TestHandleOpenAIImagesGenerationsRejectsTextModel(t *testing.T) {
 	}
 }
 
+func TestHandleOpenAIImagesGenerationsSupportsThirdPartyProviderModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	t.Cleanup(config.ResetProviders)
+
+	var gotPath, gotAuth string
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		var raw map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if raw["model"] != "gpt-image-2" || raw["prompt"] != "a cat" {
+			t.Fatalf("provider request = %#v, want image model and prompt", raw)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.OpenAIImagesGenerationResponse{
+			Data: []api.OpenAIImage{{B64JSON: "cHJvdmlkZXItcG5n"}},
+		})
+	}))
+	defer apiServer.Close()
+
+	if err := config.SaveProviders([]config.ThirdPartyProvider{{
+		ID:      "provider1",
+		Name:    "OpenAI",
+		BaseURL: apiServer.URL + "/v1",
+		APIKey:  "provider-key",
+		Enabled: true,
+	}}); err != nil {
+		t.Fatalf("save providers: %v", err)
+	}
+
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	s := New(cfg, "test")
+	body := `{"model":"gpt-image-2","source":"provider:provider1","prompt":"a cat","size":"1024x1024"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIImagesGenerations(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	if gotPath != "/v1/images/generations" {
+		t.Fatalf("provider path = %q, want /v1/images/generations", gotPath)
+	}
+	if gotAuth != "Bearer provider-key" {
+		t.Fatalf("Authorization = %q, want bearer provider-key", gotAuth)
+	}
+	if !strings.Contains(w.Body.String(), "cHJvdmlkZXItcG5n") {
+		t.Fatalf("response body = %s", w.Body.String())
+	}
+}
+
+func TestHandleImageGenerationJobSupportsThirdPartyProviderModels(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	t.Cleanup(config.ResetProviders)
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/generations" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.OpenAIImagesGenerationResponse{
+			Data: []api.OpenAIImage{{B64JSON: "cHJvdmlkZXItam9i"}},
+		})
+	}))
+	defer apiServer.Close()
+
+	if err := config.SaveProviders([]config.ThirdPartyProvider{{
+		ID:      "provider1",
+		Name:    "OpenAI",
+		BaseURL: apiServer.URL + "/v1",
+		APIKey:  "provider-key",
+		Enabled: true,
+	}}); err != nil {
+		t.Fatalf("save providers: %v", err)
+	}
+
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	s := New(cfg, "test")
+	body := `{"model":"gpt-image-2","source":"provider:provider1","prompt":"a cat","size":"1024x1024"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/images/jobs", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleImageGenerationJobCreate(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d body=%s", w.Code, w.Body.String())
+	}
+	var job api.ImageGenerationJobResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		req = httptest.NewRequest(http.MethodGet, "/api/images/jobs/"+job.ID, nil)
+		req.SetPathValue("jobID", job.ID)
+		w = httptest.NewRecorder()
+		s.handleImageGenerationJobGet(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("get status = %d body=%s", w.Code, w.Body.String())
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+			t.Fatalf("decode get response: %v", err)
+		}
+		if job.Status == "succeeded" || job.Status == "failed" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if job.Status != "succeeded" || job.Result == nil || len(job.Result.Data) != 1 || job.Result.Data[0].B64JSON != "cHJvdmlkZXItam9i" {
+		t.Fatalf("job = %#v, want succeeded provider image result", job)
+	}
+}
+
 func TestHandleImageGenerationJobSupportsCloudModels(t *testing.T) {
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/images/generations" {

@@ -84,6 +84,9 @@ func (s *Server) handleOpenAIImagesEdits(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) runOpenAIImageInference(r *http.Request, inferenceReq imageInferenceRequest) (*api.OpenAIImagesGenerationResponse, error) {
 	req := inferenceReq.toWorkerRequest()
+	if providerSource := imageGenerationProviderSource(req); providerSource != "" {
+		return s.runThirdPartyProviderImageInference(r, providerSource, req, inferenceReq)
+	}
 	if imageGenerationUsesCloud(req) {
 		req.Source = "cloud"
 		var resp *api.OpenAIImagesGenerationResponse
@@ -106,6 +109,9 @@ func (s *Server) runOpenAIImageInference(r *http.Request, inferenceReq imageInfe
 
 	eng, err := s.getOrLoadImageEngine(r.Context(), req.Model)
 	if err != nil {
+		if providerSource := s.openAIImageInferenceProviderFallbackSource(r.Context(), req, len(inferenceReq.images) > 0); providerSource != "" {
+			return s.runThirdPartyProviderImageInference(r, providerSource, req, inferenceReq)
+		}
 		if s.openAIImageInferenceCanFallbackToCloud(r.Context(), req, len(inferenceReq.images) > 0) {
 			req.Source = "cloud"
 			var resp *api.OpenAIImagesGenerationResponse
@@ -396,6 +402,14 @@ func imageGenerationUsesCloud(req api.OpenAIImagesGenerationRequest) bool {
 	return strings.EqualFold(strings.TrimSpace(req.Source), "cloud")
 }
 
+func imageGenerationProviderSource(req api.OpenAIImagesGenerationRequest) string {
+	source := strings.TrimSpace(req.Source)
+	if providerIDFromSource(source) != "" {
+		return source
+	}
+	return ""
+}
+
 func imageGenerationForcesLocal(req api.OpenAIImagesGenerationRequest) bool {
 	return strings.EqualFold(strings.TrimSpace(req.Source), "local")
 }
@@ -409,6 +423,144 @@ func (s *Server) openAIImageInferenceCanFallbackToCloud(ctx context.Context, req
 		pipelineTag = "image-to-image"
 	}
 	return s.cloudModelListContainsMatching(ctx, req.Model, cloudPipelineTagMatcher(pipelineTag))
+}
+
+// openAIImageInferenceProviderFallbackSource finds a selected third-party
+// provider image model matching the requested model ID so requests without an
+// explicit source can still route to that provider.
+func (s *Server) openAIImageInferenceProviderFallbackSource(ctx context.Context, req api.OpenAIImagesGenerationRequest, editing bool) string {
+	if imageGenerationForcesLocal(req) {
+		return ""
+	}
+	modelID := strings.TrimSpace(req.Model)
+	if modelID == "" {
+		return ""
+	}
+	for _, item := range s.listSelectedThirdPartyProviderModels(ctx) {
+		if strings.TrimSpace(item.Model) != modelID {
+			continue
+		}
+		tag := strings.TrimSpace(strings.ToLower(item.PipelineTag))
+		if tag == "text-to-image" || tag == "image-to-image" {
+			return strings.TrimSpace(item.Source)
+		}
+	}
+	return ""
+}
+
+func (s *Server) runThirdPartyProviderImageInference(r *http.Request, source string, req api.OpenAIImagesGenerationRequest, inferenceReq imageInferenceRequest) (*api.OpenAIImagesGenerationResponse, error) {
+	req.Source = source
+	var resp *api.OpenAIImagesGenerationResponse
+	var err error
+	if len(inferenceReq.images) > 0 {
+		inferenceReq.OpenAIImagesGenerationRequest.Source = source
+		resp, err = s.generateThirdPartyProviderImageEdit(r.Context(), source, inferenceReq)
+	} else {
+		resp, err = s.generateThirdPartyProviderImage(r.Context(), source, req)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if resp.Created == 0 {
+		resp.Created = time.Now().Unix()
+	}
+	s.recordAPIUsage(r, req.Model, source, 0, 0)
+	return resp, nil
+}
+
+func thirdPartyProviderImageTarget(source, modelID string) (baseURL, apiKey, originalModel string, err error) {
+	providerID := providerIDFromSource(source)
+	provider, ok := getThirdPartyProvider(providerID)
+	if !ok {
+		return "", "", "", inference.NewHTTPStatusError(http.StatusNotFound, "third-party provider not found")
+	}
+	if !provider.Enabled {
+		return "", "", "", inference.NewHTTPStatusError(http.StatusForbidden, "third-party provider is disabled")
+	}
+	baseURL = normalizeThirdPartyProviderBaseURL(provider)
+	apiKey = strings.TrimSpace(provider.APIKey)
+	if baseURL == "" || apiKey == "" {
+		return "", "", "", inference.NewHTTPStatusError(http.StatusBadRequest, "third-party provider is missing base URL or API key")
+	}
+	return baseURL, apiKey, providerOriginalModelID(provider.ID, modelID), nil
+}
+
+func (s *Server) generateThirdPartyProviderImage(ctx context.Context, source string, req api.OpenAIImagesGenerationRequest) (*api.OpenAIImagesGenerationResponse, error) {
+	baseURL, apiKey, originalModel, err := thirdPartyProviderImageTarget(source, req.Model)
+	if err != nil {
+		return nil, err
+	}
+	req.Model = originalModel
+
+	body, err := json.Marshal(cloudImageGenerationRequest(req))
+	if err != nil {
+		return nil, fmt.Errorf("marshaling provider image request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/images/generations", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating provider image request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("provider image generation request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading provider image response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, inference.NewHTTPStatusError(resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	var out api.OpenAIImagesGenerationResponse
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return nil, fmt.Errorf("decoding provider image response: %w", err)
+	}
+	return &out, nil
+}
+
+func (s *Server) generateThirdPartyProviderImageEdit(ctx context.Context, source string, req imageInferenceRequest) (*api.OpenAIImagesGenerationResponse, error) {
+	baseURL, apiKey, originalModel, err := thirdPartyProviderImageTarget(source, req.Model)
+	if err != nil {
+		return nil, err
+	}
+	req.Model = originalModel
+
+	body, contentType, err := buildCloudImageEditBody(req)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/images/edits", body)
+	if err != nil {
+		return nil, fmt.Errorf("creating provider image edit request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", contentType)
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("provider image edit request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading provider image edit response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, inference.NewHTTPStatusError(resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	var out api.OpenAIImagesGenerationResponse
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return nil, fmt.Errorf("decoding provider image edit response: %w", err)
+	}
+	return &out, nil
 }
 
 func (s *Server) generateCloudImage(ctx context.Context, req api.OpenAIImagesGenerationRequest) (*api.OpenAIImagesGenerationResponse, error) {
