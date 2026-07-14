@@ -4,6 +4,9 @@
 
 - For every commit, PR, and release note, describe the specific new feature, fix,
   or behavior change in this work.
+- When a commit fixes or relates to a GitHub issue, reference the issue in the
+  commit message (for example `Fixes #60.`) so GitHub links the commit to the
+  issue automatically.
 - Do not use `Full Changelog` style summaries by default.
 - GitHub release notes must include explicit user-facing feature and fix
   bullets. Do not publish a GitHub release that only contains auto-generated
