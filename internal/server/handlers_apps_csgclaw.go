@@ -198,6 +198,19 @@ func csgclawSandboxProviderForGOOS(goos string) string {
 	return "boxlite"
 }
 
+// csgclawNormalizedSandboxProvider returns the provider value when it is a
+// supported CSGClaw sandbox provider, or "" otherwise. User-selected supported
+// providers (for example docker) must be preserved during config syncs.
+func csgclawNormalizedSandboxProvider(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	switch value {
+	case "boxlite", "docker":
+		return value
+	default:
+		return ""
+	}
+}
+
 func setCSGClawManagedModelConfig(input, baseURL, apiKey, modelID string, models []string) string {
 	lines := strings.Split(strings.ReplaceAll(input, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines)+12)
@@ -254,7 +267,11 @@ func setCSGClawManagedModelConfig(input, baseURL, apiKey, modelID string, models
 			key, value, ok := parseCSGClawConfigKV(trimmed)
 			if ok && key == "provider" {
 				if !sandboxProviderSet {
-					out = append(out, "provider = "+strconv.Quote(desiredSandboxProvider))
+					provider := csgclawNormalizedSandboxProvider(value)
+					if provider == "" {
+						provider = desiredSandboxProvider
+					}
+					out = append(out, "provider = "+strconv.Quote(provider))
 					sandboxProviderSet = true
 				}
 				continue
@@ -631,7 +648,7 @@ func csgclawConfigNeedsManagerRecreate(baseURL, apiKey, modelID string) bool {
 	return strings.TrimSpace(cfg.DefaultSelector) != wantSelector ||
 		strings.TrimSpace(cfg.ManagerImageOverride) != "" ||
 		cfg.HasLegacyManagerImage ||
-		strings.TrimSpace(cfg.SandboxProvider) != csgclawSandboxProvider() ||
+		csgclawNormalizedSandboxProvider(cfg.SandboxProvider) == "" ||
 		strings.TrimRight(provider.BaseURL, "/") != strings.TrimRight(baseURL, "/") ||
 		strings.TrimSpace(provider.APIKey) != strings.TrimSpace(apiKey) ||
 		!csgclawContainsModel(provider.Models, modelID)

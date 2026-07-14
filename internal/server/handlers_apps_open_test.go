@@ -581,6 +581,56 @@ default = "old.model"
 	}
 }
 
+func TestSetCSGClawManagedModelConfigPreservesDockerSandboxProvider(t *testing.T) {
+	input := `[server]
+listen_addr = "0.0.0.0:18080"
+
+[sandbox]
+provider = "docker"
+home_dir_name = "boxlite"
+
+[models]
+default = "old.model"
+`
+	updated := setCSGClawManagedModelConfig(input, "http://127.0.0.1:11435/v1", "test-token", "glm-5", []string{"glm-5"})
+	if !strings.Contains(updated, `provider = "docker"`) {
+		t.Fatalf("updated config lost user-selected docker sandbox provider:\n%s", updated)
+	}
+}
+
+func TestCSGClawConfigNeedsManagerRecreateKeepsUserSandboxProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfgDir := filepath.Join(home, ".csgclaw")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	configTOML := `[bootstrap]
+manager_image_override = ""
+
+[sandbox]
+provider = "docker"
+home_dir_name = "boxlite"
+debian_registries_override = []
+
+[models]
+default = "csghub-lite.glm-5"
+
+[models.providers.csghub-lite]
+base_url = "http://192.168.10.215:11435/v1"
+api_key = "test-token"
+models = ["glm-5"]
+`
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.toml"), []byte(configTOML), 0o644); err != nil {
+		t.Fatalf("write config.toml: %v", err)
+	}
+
+	if csgclawConfigNeedsManagerRecreate("http://192.168.10.215:11435/v1", "test-token", "glm-5") {
+		t.Fatal("expected user-selected docker sandbox provider to skip manager recreation")
+	}
+}
+
 func TestCSGClawOrderedModelsPutsSelectedModelFirst(t *testing.T) {
 	got := csgclawOrderedModels("glm-5", []string{
 		"Qwen/Qwen3-0.6B-GGUF",
