@@ -53,18 +53,29 @@ function Get-ManifestMetadata([string]$ManifestPath, [string]$AssetName) {
     return $null
 }
 
-function Verify-Asset([string]$AssetPath, [string]$AssetName, [string]$Version) {
+function Verify-Asset(
+    [string]$AssetPath,
+    [string]$AssetName,
+    [string]$ReleaseUrl,
+    [string]$LegacyReleaseUrl
+) {
     $asset = Get-Item -LiteralPath $AssetPath
     if ($asset.Length -le 0) {
         throw "downloaded asset is empty"
     }
 
     $manifestPath = Join-Path $WorkDir "latest.yml"
-    try {
-        Invoke-WebRequest -Uri "$($DistBaseUrl.TrimEnd('/'))/$Version/latest.yml" -OutFile $manifestPath -UseBasicParsing -ErrorAction Stop
-        $metadata = Get-ManifestMetadata -ManifestPath $manifestPath -AssetName $AssetName
-    } catch {
-        $metadata = $null
+    $metadata = $null
+    foreach ($manifestUrl in @("$ReleaseUrl/latest.yml", "$LegacyReleaseUrl/latest.yml")) {
+        try {
+            Invoke-WebRequest -Uri $manifestUrl -OutFile $manifestPath -UseBasicParsing -ErrorAction Stop
+            $metadata = Get-ManifestMetadata -ManifestPath $manifestPath -AssetName $AssetName
+        } catch {
+            $metadata = $null
+        }
+        if ($metadata) {
+            break
+        }
     }
 
     if ($metadata) {
@@ -88,6 +99,21 @@ function Verify-Asset([string]$AssetPath, [string]$AssetName, [string]$Version) 
         Write-Output "INFO: verified size and SHA-512 from latest.yml"
     } else {
         Write-Output "INFO: no matching checksum metadata; validated the non-empty asset size"
+    }
+}
+
+function Remove-DirectoryWithRetry([string]$Path) {
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            return
+        } catch {
+            if ($attempt -eq 5) {
+                Write-Warning "could not remove temporary directory ${Path}: $($_.Exception.Message)"
+                return
+            }
+            Start-Sleep -Milliseconds (200 * $attempt)
+        }
     }
 }
 
@@ -134,13 +160,20 @@ try {
     $versionDir = Join-Path (Join-Path $RuntimeRoot "versions") $version
     $launcherDir = Join-Path $HomeDir ".local\bin"
     $launcherPath = Join-Path $launcherDir "zcode.cmd"
+    $legacyReleaseUrl = "$($DistBaseUrl.TrimEnd('/'))/$version"
+    $releaseUrl = "$legacyReleaseUrl/windows-$arch"
 
     Emit-Progress 50 "downloading_asset"
     Write-Output "INFO: downloading $assetName"
-    Invoke-WebRequest -Uri "$($DistBaseUrl.TrimEnd('/'))/$version/$assetName" -OutFile $assetPath -UseBasicParsing -ErrorAction Stop
+    try {
+        Invoke-WebRequest -Uri "$releaseUrl/$assetName" -OutFile $assetPath -UseBasicParsing -ErrorAction Stop
+    } catch {
+        Write-Output "INFO: platform release path unavailable; trying legacy release path"
+        Invoke-WebRequest -Uri "$legacyReleaseUrl/$assetName" -OutFile $assetPath -UseBasicParsing -ErrorAction Stop
+    }
 
     Emit-Progress 70 "verifying_asset"
-    Verify-Asset -AssetPath $assetPath -AssetName $assetName -Version $version
+    Verify-Asset -AssetPath $assetPath -AssetName $assetName -ReleaseUrl $releaseUrl -LegacyReleaseUrl $legacyReleaseUrl
     $header = New-Object byte[] 2
     $headerStream = [IO.File]::OpenRead($assetPath)
     try {
@@ -159,9 +192,9 @@ try {
     New-Item -ItemType Directory -Force -Path $versionDir | Out-Null
     New-Item -ItemType Directory -Force -Path $launcherDir | Out-Null
 
-    & $assetPath "/S" "/currentuser" "/D=$versionDir"
-    if ($LASTEXITCODE -ne 0) {
-        throw "ZCode installer exited with code $LASTEXITCODE"
+    $installer = Start-Process -FilePath $assetPath -ArgumentList @("/S", "/currentuser", "/D=$versionDir") -Wait -PassThru
+    if ($installer.ExitCode -ne 0) {
+        throw "ZCode installer exited with code $($installer.ExitCode)"
     }
 
     $installedExe = Get-ChildItem -LiteralPath $versionDir -Filter "ZCode.exe" -File -Recurse |
@@ -190,6 +223,6 @@ try {
     Write-Output "INFO: installed ZCode $version to $versionDir"
 } finally {
     if (Test-Path -LiteralPath $WorkDir) {
-        Remove-Item -LiteralPath $WorkDir -Recurse -Force
+        Remove-DirectoryWithRetry -Path $WorkDir
     }
 }

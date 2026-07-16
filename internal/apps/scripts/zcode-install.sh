@@ -7,7 +7,6 @@ DIST_BASE_URL="${CSGHUB_LITE_ZCODE_DIST_BASE_URL:-https://cdn-zcode.z.ai/zcode/e
 TMP_ROOT="${CSGHUB_LITE_TMPDIR:-${HOME}/.csghub-lite/tmp/apps/zcode}"
 RUNTIME_ROOT="${HOME}/.local/share/zcode"
 WORKDIR=""
-MOUNT_DIR=""
 DOWNLOADER=""
 
 emit_progress() {
@@ -20,9 +19,6 @@ die() {
 }
 
 cleanup() {
-  if [[ -n "$MOUNT_DIR" && -d "$MOUNT_DIR" ]]; then
-    hdiutil detach "$MOUNT_DIR" -quiet >/dev/null 2>&1 || true
-  fi
   if [[ -n "$WORKDIR" && -d "$WORKDIR" ]]; then
     rm -rf "$WORKDIR"
   fi
@@ -147,21 +143,25 @@ PY
 }
 
 verify_asset() {
-  local asset_path="$1" asset_name="$2" manifest_name="$3"
-  local manifest_path="${WORKDIR}/${manifest_name}" fields expected_sha expected_size actual_size actual_sha
+  local asset_path="$1" asset_name="$2"
+  local manifest_path="${WORKDIR}/latest.yml" fields expected_sha expected_size actual_size actual_sha
   actual_size="$(file_size "$asset_path")"
   [[ "$actual_size" =~ ^[0-9]+$ && "$actual_size" -gt 0 ]] || die "downloaded asset is empty"
 
-  if try_download_file "$(trim_trailing_slash "$DIST_BASE_URL")/${VERSION}/${manifest_name}" "$manifest_path"; then
+  if try_download_file "${RELEASE_URL}/latest.yml" "$manifest_path" 2>/dev/null; then
     fields="$(manifest_fields "$manifest_path" "$asset_name")"
-    if [[ -n "$fields" ]]; then
-      IFS=$'\t' read -r expected_sha expected_size <<< "$fields"
-      [[ "$actual_size" == "$expected_size" ]] || die "asset size verification failed"
-      actual_sha="$(sha512_base64 "$asset_path")"
-      [[ "$actual_sha" == "$expected_sha" ]] || die "asset SHA-512 verification failed"
-      printf 'INFO: verified size and SHA-512 from %s\n' "$manifest_name"
-      return
-    fi
+  fi
+  if [[ -z "${fields:-}" ]] &&
+     try_download_file "${LEGACY_RELEASE_URL}/${LEGACY_MANIFEST_NAME}" "$manifest_path" 2>/dev/null; then
+    fields="$(manifest_fields "$manifest_path" "$asset_name")"
+  fi
+  if [[ -n "${fields:-}" ]]; then
+    IFS=$'\t' read -r expected_sha expected_size <<< "$fields"
+    [[ "$actual_size" == "$expected_size" ]] || die "asset size verification failed"
+    actual_sha="$(sha512_base64 "$asset_path")"
+    [[ "$actual_sha" == "$expected_sha" ]] || die "asset SHA-512 verification failed"
+    printf 'INFO: verified size and SHA-512 from latest.yml\n'
+    return
   fi
   printf 'INFO: no matching checksum metadata; validated the non-empty asset size\n'
 }
@@ -196,8 +196,8 @@ select_downloader
 
 emit_progress 10 detecting_platform
 case "$(uname -s)" in
-  Darwin) PLATFORM="mac"; MANIFEST_NAME="latest.yml"; EXTENSION="dmg" ;;
-  Linux) PLATFORM="linux"; MANIFEST_NAME="latest-linux.yml"; EXTENSION="AppImage" ;;
+  Darwin) PLATFORM="mac"; RELEASE_PLATFORM="macos"; LEGACY_MANIFEST_NAME="latest.yml"; EXTENSION="zip" ;;
+  Linux) PLATFORM="linux"; RELEASE_PLATFORM="linux"; LEGACY_MANIFEST_NAME="latest-linux.yml"; EXTENSION="AppImage" ;;
   *) die "unsupported operating system $(uname -s)" ;;
 esac
 case "$(uname -m)" in
@@ -217,13 +217,18 @@ ASSET_NAME="ZCode-${VERSION}-${PLATFORM}-${ARCH}.${EXTENSION}"
 ASSET_PATH="${WORKDIR}/${ASSET_NAME}"
 VERSION_DIR="${RUNTIME_ROOT}/versions/${VERSION}"
 LAUNCHER_DIR="${HOME}/.local/bin"
+LEGACY_RELEASE_URL="$(trim_trailing_slash "$DIST_BASE_URL")/${VERSION}"
+RELEASE_URL="${LEGACY_RELEASE_URL}/${RELEASE_PLATFORM}-${ARCH}"
 
 emit_progress 50 downloading_asset
 printf 'INFO: downloading %s\n' "$ASSET_NAME"
-download_file "$(trim_trailing_slash "$DIST_BASE_URL")/${VERSION}/${ASSET_NAME}" "$ASSET_PATH"
+if ! try_download_file "${RELEASE_URL}/${ASSET_NAME}" "$ASSET_PATH" 2>/dev/null; then
+  printf 'INFO: platform release path unavailable; trying legacy release path\n'
+  download_file "${LEGACY_RELEASE_URL}/${ASSET_NAME}" "$ASSET_PATH"
+fi
 
 emit_progress 70 verifying_asset
-verify_asset "$ASSET_PATH" "$ASSET_NAME" "$MANIFEST_NAME"
+verify_asset "$ASSET_PATH" "$ASSET_NAME"
 
 emit_progress 85 installing_runtime
 mkdir -p "${RUNTIME_ROOT}/versions" "$LAUNCHER_DIR"
@@ -231,15 +236,10 @@ rm -rf "$VERSION_DIR"
 mkdir -p "$VERSION_DIR"
 
 if [[ "$PLATFORM" == "mac" ]]; then
-  command -v hdiutil >/dev/null 2>&1 || die "hdiutil is required to install the DMG"
-  MOUNT_DIR="$(mktemp -d "${TMP_ROOT%/}/zcode-mount.XXXXXX")"
-  hdiutil attach "$ASSET_PATH" -nobrowse -readonly -mountpoint "$MOUNT_DIR" -quiet
-  [[ -d "${MOUNT_DIR}/ZCode.app" && -x "${MOUNT_DIR}/ZCode.app/Contents/MacOS/ZCode" ]] ||
-    die "the DMG does not contain a runnable ZCode.app"
-  cp -R "${MOUNT_DIR}/ZCode.app" "$VERSION_DIR/"
-  hdiutil detach "$MOUNT_DIR" -quiet
-  rmdir "$MOUNT_DIR"
-  MOUNT_DIR=""
+  command -v ditto >/dev/null 2>&1 || die "ditto is required to install the ZIP"
+  ditto -x -k "$ASSET_PATH" "$VERSION_DIR"
+  [[ -d "${VERSION_DIR}/ZCode.app" && -x "${VERSION_DIR}/ZCode.app/Contents/MacOS/ZCode" ]] ||
+    die "the ZIP does not contain a runnable ZCode.app"
   LAUNCH_TARGET="${VERSION_DIR}/ZCode.app"
   xattr -cr "$LAUNCH_TARGET" >/dev/null 2>&1 || true
 else

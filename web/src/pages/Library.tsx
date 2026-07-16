@@ -315,7 +315,11 @@ function modelRows(models: ModelInfo[]): ModelTableRow[] {
     downloadOnly: false,
   }));
   const known = new Set(models.map((model) => model.name));
-  for (const task of getDownloadTasks("model")) {
+  const downloadTasks = [...getDownloadTasks("model")].sort((a, b) => {
+    const createdAtDiff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    return createdAtDiff || a.name.localeCompare(b.name);
+  });
+  for (const task of downloadTasks) {
     if (known.has(task.name) || (task.status === "success" && models.some((model) => localModelMatchesDownloadTask(model, task)))) continue;
     rows.push({
       model: {
