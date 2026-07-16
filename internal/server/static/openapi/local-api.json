@@ -3405,6 +3405,49 @@
         }
       }
     },
+    "/api/apps/provider": {
+      "post": {
+        "tags": [
+          "AI Apps"
+        ],
+        "summary": "Switch an AI App model provider",
+        "description": "Switches Codex or Claude Code between its native provider configuration and OpenCSG. Codex CLI and Codex App share one provider state.",
+        "operationId": "switchAIAppProvider",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AIAppActionRequest"
+              },
+              "example": {
+                "app_id": "codex-app",
+                "provider_mode": "opencsg",
+                "model_id": "Qwen/Qwen3-0.6B-GGUF"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Provider switched; refreshed app state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIAppInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "description": "The app configuration changed after OpenCSG was enabled and was not overwritten."
+          }
+        }
+      }
+    },
     "/api/apps/path": {
       "post": {
         "tags": [
@@ -6825,6 +6868,14 @@
             "type": "string",
             "description": "Model source such as local, cloud, or provider:<id>."
           },
+          "provider_mode": {
+            "type": "string",
+            "enum": [
+              "native",
+              "opencsg"
+            ],
+            "description": "Provider mode requested for apps that support explicit source switching."
+          },
           "model_bindings": {
             "type": "array",
             "description": "Task-specific model selections used by multi-model apps such as Xiaozhi.",
@@ -6907,6 +6958,24 @@
           },
           "model_id": {
             "type": "string"
+          },
+          "provider_mode": {
+            "type": "string",
+            "enum": [
+              "native",
+              "opencsg"
+            ]
+          },
+          "provider_group": {
+            "type": "string",
+            "description": "Shared provider state group. Codex CLI and Codex App both use codex."
+          },
+          "provider_switch_supported": {
+            "type": "boolean"
+          },
+          "provider_drifted": {
+            "type": "boolean",
+            "description": "Whether the live app configuration changed after OpenCSG was enabled."
           },
           "model_bindings": {
             "type": "array",

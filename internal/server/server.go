@@ -116,6 +116,7 @@ type Server struct {
 	manager        *model.Manager
 	datasetManager *dataset.Manager
 	appManager     *apps.Manager
+	sourceSwitches *apps.SourceSwitchManager
 	appShells      *aiAppShellManager
 	cloud          *cloud.Service
 	http           *http.Server
@@ -152,6 +153,12 @@ func New(cfg *config.Config, version string) *Server {
 
 	cloudSvc := cloud.NewService(resolveCloudURL(cfg))
 	cloudSvc.SetAccessToken(cfg.Token)
+	storageRoot := cfg.StorageDir()
+	if storageRoot == "" {
+		if defaultRoot, err := config.DefaultStorageDir(); err == nil {
+			storageRoot = defaultRoot
+		}
+	}
 
 	s := &Server{
 		cfg:            cfg,
@@ -159,6 +166,7 @@ func New(cfg *config.Config, version string) *Server {
 		manager:        mgr,
 		datasetManager: dsMgr,
 		appManager:     apps.NewManager(cfg),
+		sourceSwitches: apps.NewSourceSwitchManager(storageRoot),
 		cloud:          cloudSvc,
 		engines:        make(map[string]*managedEngine),
 		loading:        make(map[string]*engineLoadState),

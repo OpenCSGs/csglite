@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/opencsgs/csglite/internal/safefile"
 )
 
 const (
@@ -42,6 +44,73 @@ func SyncConfig(serverURL, apiKey, modelID string) error {
 	return syncClaudeDotJSONOnboardingComplete()
 }
 
+func IsManagedConfigData(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return false
+	}
+	env, _ := doc["env"].(map[string]interface{})
+	return envString(env, "ANTHROPIC_API_KEY") == "csghub-lite" ||
+		envString(env, "CLAUDE_API_KEY") == "csghub-lite"
+}
+
+// RemoveManagedConfig removes settings written by legacy csghub-lite launches
+// when no exact pre-switch snapshot is available.
+func RemoveManagedConfig() error {
+	path, err := SettingsPath()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return err
+	}
+	if !IsManagedConfigData(data) {
+		return nil
+	}
+
+	delete(doc, "model")
+	if env, ok := doc["env"].(map[string]interface{}); ok {
+		for _, key := range []string{
+			"ANTHROPIC_BASE_URL",
+			"ANTHROPIC_API_KEY",
+			"CLAUDE_API_BASE_URL",
+			"CLAUDE_API_KEY",
+			"CLAUDE_CODE_ATTRIBUTION_HEADER",
+		} {
+			delete(env, key)
+		}
+		if len(env) == 0 {
+			delete(doc, "env")
+		}
+	}
+
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	return safefile.Write(path, out, 0o644)
+}
+
+func envString(env map[string]interface{}, key string) string {
+	if env == nil {
+		return ""
+	}
+	value, _ := env[key].(string)
+	return strings.TrimSpace(value)
+}
+
 // SettingsPath returns the path to Claude Code's settings.json.
 func SettingsPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -71,7 +140,7 @@ func syncJSONFile(path string, mutate func(map[string]interface{})) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return safefile.Write(path, data, 0o644)
 }
 
 func ensureObject(parent map[string]interface{}, key string) map[string]interface{} {
@@ -111,5 +180,5 @@ func syncClaudeDotJSONOnboardingComplete() error {
 		return err
 	}
 	out = append(out, '\n')
-	return os.WriteFile(path, out, 0o644)
+	return safefile.Write(path, out, 0o644)
 }

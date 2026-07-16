@@ -73,8 +73,12 @@ func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, modelSource, 
 	case "claude-code", "open-code", "open-code-review", "codex", "pi":
 		return s.openAIAppShellURL(ctx, appID, modelID, modelSource, workDir, publicBaseURL)
 	case "codex-app":
-		if _, err := s.ensureCodexAppLaunchConfig(ctx, modelID, modelSource); err != nil {
+		status, _, err := s.aiAppProviderStatus(appID)
+		if err != nil {
 			return "", err
+		}
+		if status.Mode == apps.ProviderModeOpenCSG && status.Drifted {
+			return "", fmt.Errorf("Codex configuration changed after OpenCSG was enabled; review or restore the provider before launching")
 		}
 		if err := s.launchCodexDesktopApp(ctx); err != nil {
 			return "", err

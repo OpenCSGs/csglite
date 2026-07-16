@@ -16,7 +16,7 @@ import (
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
-func TestHandleAppsIncludesPreferredModelIDWithoutResolvingModels(t *testing.T) {
+func TestHandleAppsHidesPreferredModelIDInNativeProviderMode(t *testing.T) {
 	cfg := &config.Config{
 		ModelDir:   t.TempDir(),
 		ListenAddr: ":11435",
@@ -64,8 +64,8 @@ func TestHandleAppsIncludesPreferredModelIDWithoutResolvingModels(t *testing.T) 
 	}
 
 	info := findAIAppInfo(t, resp.Apps, "claude-code")
-	if info.ModelID != "Qwen/Qwen2.5-Coder-1.5B" {
-		t.Fatalf("claude-code model_id = %q, want preferred coder model", info.ModelID)
+	if info.ModelID != "" {
+		t.Fatalf("claude-code model_id = %q, want empty in native provider mode", info.ModelID)
 	}
 }
 

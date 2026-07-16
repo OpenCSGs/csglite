@@ -13,6 +13,7 @@ import {
   startAIApp,
   stopAIApp,
   streamAIAppLogs,
+  switchAIAppProvider,
   uninstallAIApp,
   type AIAppInfo as RemoteAIAppInfo,
   type AIAppModelBindings,
@@ -593,7 +594,8 @@ function LiveLogsDrawer({
   const showTaskLogs = state.liveLogsReady && (mode === "install" || isWorking);
   const requestPending = pendingInstall || pendingUninstall || pendingStart || pendingStop;
   const canOpenChat = canOpenAIApp(app, state);
-  const canSelectModel = canSelectAIAppModel(app);
+  const canLoadModels = canSelectAIAppModel(app);
+  const canSelectModel = canLoadModels && (!state.providerSwitchSupported || state.providerMode === "opencsg");
   const isXiaozhi = app.id === "xiaozhi";
   const showProgressSummary = !state.disabled && isWorking;
   const showRuntimeSummary = canControlAIAppRuntime(state);
@@ -614,6 +616,8 @@ function LiveLogsDrawer({
   const [manualPathInput, setManualPathInput] = useState("");
   const [isSavingManualPath, setIsSavingManualPath] = useState(false);
   const [manualPathNotice, setManualPathNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [providerSwitching, setProviderSwitching] = useState(false);
+  const [providerNotice, setProviderNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const selectedModelParts = selectedModel ? parseAIAppModelKey(selectedModel) : null;
   const currentModelID = selectedModelParts?.model || state.modelID?.trim() || "";
   const currentModelInfo = selectedModelParts
@@ -659,7 +663,7 @@ function LiveLogsDrawer({
   }, [app.id, showTaskLogs]);
 
   useEffect(() => {
-    if (!canSelectModel) {
+    if (!canLoadModels) {
       setModels([]);
       setModelsLoading(false);
       return;
@@ -705,10 +709,10 @@ function LiveLogsDrawer({
       window.removeEventListener(providersChangedEvent, handleProvidersChanged);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [app.id, canSelectModel]);
+  }, [app.id, canLoadModels]);
 
   useEffect(() => {
-    if (!canSelectModel) {
+    if (!canLoadModels) {
       setCloudAuth(null);
       return;
     }
@@ -727,10 +731,10 @@ function LiveLogsDrawer({
     return () => {
       disposed = true;
     };
-  }, [app.id, canSelectModel]);
+  }, [app.id, canLoadModels]);
 
   useEffect(() => {
-    if (!canSelectModel) {
+    if (!canLoadModels) {
       setSelectedModel("");
       return;
     }
@@ -748,7 +752,7 @@ function LiveLogsDrawer({
       }
       return models[0] ? aiAppModelKey(models[0]) : "";
     });
-  }, [app.id, canSelectModel, state.modelID, models]);
+  }, [app.id, canLoadModels, state.modelID, models]);
 
   useEffect(() => {
     if (!isXiaozhi) {
@@ -791,6 +795,7 @@ function LiveLogsDrawer({
     setCopiedModel(false);
     setManualPathInput("");
     setManualPathNotice(null);
+    setProviderNotice(null);
     if (copyResetRef.current !== null) {
       window.clearTimeout(copyResetRef.current);
       copyResetRef.current = null;
@@ -889,6 +894,43 @@ function LiveLogsDrawer({
 
     await openCloudAuthDialog(t("chat.cloudLoginRequired"));
     return false;
+  };
+
+  const handleProviderSwitch = async (providerMode: "native" | "opencsg") => {
+    if (providerSwitching || providerMode === state.providerMode) {
+      return;
+    }
+    const model = currentModelInfo || models[0];
+    if (providerMode === "opencsg" && !model) {
+      setProviderNotice({ ok: false, text: t("aiApps.provider.noModels") });
+      return;
+    }
+    if (providerMode === "opencsg" && !(await ensureCloudAuthForModel(model))) {
+      return;
+    }
+    setProviderSwitching(true);
+    setProviderNotice(null);
+    try {
+      const info = await switchAIAppProvider(app.id, providerMode, model?.model, model?.source);
+      mergeAppStates([info]);
+      if (providerMode === "opencsg" && model) {
+        setSelectedModel(aiAppModelKey(model));
+      }
+      setProviderNotice({
+        ok: true,
+        text: providerMode === "opencsg"
+          ? t("aiApps.provider.openCSGEnabled")
+          : t("aiApps.provider.nativeEnabled"),
+      });
+    } catch (error) {
+      const message = (error as Error).message?.trim();
+      setProviderNotice({
+        ok: false,
+        text: message || t("aiApps.provider.switchFailed"),
+      });
+    } finally {
+      setProviderSwitching(false);
+    }
   };
 
   const handleModelChange = (value: string) => {
@@ -1215,7 +1257,64 @@ function LiveLogsDrawer({
             </section>
           )}
 
-          {!isXiaozhi && (canSelectModel || currentModelID) && (
+          {state.providerSwitchSupported && state.status === "installed" && !state.disabled && (
+            <section class="space-y-3">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.provider.title")}</h3>
+                <p class="mt-1 text-sm text-gray-500">{t("aiApps.provider.hint")}</p>
+              </div>
+              <div class="inline-grid grid-cols-2 gap-2">
+                {(["native", "opencsg"] as const).map((providerMode) => {
+                  const selected = (state.providerMode || "native") === providerMode;
+                  return (
+                    <button
+                      key={providerMode}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => void handleProviderSwitch(providerMode)}
+                      disabled={providerSwitching || selected || (providerMode === "opencsg" && modelsLoading)}
+                      class={`flex min-w-28 items-center gap-2 rounded-lg border px-3 py-2.5 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
+                        selected
+                          ? "border-indigo-500 bg-indigo-50"
+                          : "border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40"
+                      } disabled:cursor-not-allowed disabled:opacity-70`}
+                    >
+                      <span class={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                        selected ? "border-indigo-600" : "border-gray-300"
+                      }`}>
+                        {selected && <span class="h-2 w-2 rounded-full bg-indigo-600" />}
+                      </span>
+                      <span class={`text-sm font-medium ${
+                        selected ? "text-indigo-800" : "text-gray-700"
+                      }`}>
+                        {providerMode === "native"
+                          ? t("aiApps.provider.native")
+                          : t("aiApps.provider.openCSG")}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {state.providerDrifted && (
+                <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                  {t("aiApps.provider.drifted")}
+                </div>
+              )}
+              {providerNotice && (
+                <div class={`rounded-lg border px-3 py-2 text-sm ${
+                  providerNotice.ok
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-red-200 bg-red-50 text-red-700"
+                }`}>
+                  {providerNotice.text}
+                </div>
+              )}
+            </section>
+          )}
+
+          {!isXiaozhi &&
+            (!state.providerSwitchSupported || state.providerMode === "opencsg") &&
+            (canSelectModel || currentModelID) && (
             <section class="space-y-2">
               <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.currentModelId")}</h3>
               <div class="flex items-center gap-3 flex-wrap">
@@ -1310,19 +1409,6 @@ function LiveLogsDrawer({
                 <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600 font-mono break-all">
                   ~/.zcode/v2/config.json
                 </div>
-              )}
-              {canOpenChat && (
-                <button
-                  onClick={() => void handleOpenCurrentApp()}
-                  disabled={pendingOpen}
-                  class={`inline-flex items-center justify-center rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
-                    pendingOpen
-                      ? "border-gray-200 text-gray-300 cursor-not-allowed"
-                      : "border-indigo-200 text-indigo-600 hover:bg-indigo-50"
-                  }`}
-                >
-                  {openActionLabel(app, pendingOpen)}
-                </button>
               )}
             </section>
           )}
@@ -1668,6 +1754,10 @@ function mergeAppStates(remoteApps: RemoteAIAppInfo[]) {
       latestVersion: remote.latest_version,
       updateAvailable: Boolean(remote.update_available),
       modelID: remote.model_id || "",
+      providerMode: remote.provider_mode || "native",
+      providerGroup: remote.provider_group,
+      providerSwitchSupported: Boolean(remote.provider_switch_supported),
+      providerDrifted: Boolean(remote.provider_drifted),
       modelBindings: remote.model_bindings || prev.modelBindings,
       modelSlots: remote.model_slots || prev.modelSlots,
       runtimeSupported: Boolean(remote.runtime_supported),

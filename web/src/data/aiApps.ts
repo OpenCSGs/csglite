@@ -46,6 +46,10 @@ export interface AIAppRuntimeState {
   latestVersion?: string;
   updateAvailable?: boolean;
   modelID?: string;
+  providerMode?: "native" | "opencsg";
+  providerGroup?: string;
+  providerSwitchSupported: boolean;
+  providerDrifted: boolean;
   modelBindings?: Array<{ task: string; model_id: string; source: string }>;
   modelSlots?: Array<{
     task: string;
@@ -626,6 +630,8 @@ export const initialAIAppStates = aiAppsCatalog.reduce<Record<string, AIAppRunti
     supported: !isStaticallyDisabled,
     disabled: isStaticallyDisabled,
     liveLogsReady: app.liveLogsReady,
+    providerSwitchSupported: false,
+    providerDrifted: false,
     runtimeSupported,
     runtimeRunning: false,
     runtimeStatus: runtimeSupported ? "stopped" : undefined,

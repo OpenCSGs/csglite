@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/opencsgs/csglite/internal/safefile"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -49,6 +50,72 @@ func SyncConfig(serverURL, apiKey, selectedModelID string, models []api.ModelInf
 	}
 	existing["model_catalog_json"] = stringVal(modelCatalogPath)
 
+	return writeConfigValues(configPath, existing)
+}
+
+// IsManagedConfig reports whether the live Codex config currently selects the
+// provider owned by csghub-lite.
+func IsManagedConfig() bool {
+	configPath, err := ConfigPath()
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+	return IsManagedConfigData(data)
+}
+
+func IsManagedConfigData(data []byte) bool {
+	existing := make(map[string]tomlValue)
+	parseTomlFile(string(data), existing)
+	return tomlString(existing["model_provider"]) == ProviderID
+}
+
+// RemoveManagedConfig removes only fields owned by legacy csghub-lite
+// integrations. It is used when no pre-switch snapshot exists.
+func RemoveManagedConfig() error {
+	configPath, err := ConfigPath()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(configPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	existing := make(map[string]tomlValue)
+	parseTomlFile(string(data), existing)
+
+	if tomlString(existing["model_provider"]) == ProviderID {
+		delete(existing, "model_provider")
+		delete(existing, "model")
+	}
+	if configDir, err := ConfigDir(); err == nil {
+		catalogPath := filepath.Join(configDir, "csghub-lite", "models.json")
+		if filepath.Clean(tomlString(existing["model_catalog_json"])) == filepath.Clean(catalogPath) {
+			delete(existing, "model_catalog_json")
+		}
+	}
+	for key := range existing {
+		if strings.HasPrefix(key, "model_providers."+ProviderID+".") {
+			delete(existing, key)
+		}
+	}
+	return writeConfigValues(configPath, existing)
+}
+
+func tomlString(value tomlValue) string {
+	if value.isBool || value.isRaw {
+		return ""
+	}
+	return strings.TrimSpace(value.strVal)
+}
+
+func writeConfigValues(configPath string, existing map[string]tomlValue) error {
 	// Build TOML content, grouping dotted keys into sections
 	var buf strings.Builder
 	topLevel := make(map[string]tomlValue)
@@ -96,7 +163,7 @@ func SyncConfig(serverURL, apiKey, selectedModelID string, models []api.ModelInf
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, data, 0o644)
+	return safefile.Write(configPath, data, 0o644)
 }
 
 type tomlValue struct {
@@ -184,7 +251,7 @@ func writeModelCatalog(models []api.ModelInfo) (string, error) {
 	}
 
 	path := filepath.Join(catalogDir, "models.json")
-	return path, os.WriteFile(path, data, 0o644)
+	return path, safefile.Write(path, data, 0o644)
 }
 
 func ConfigDir() (string, error) {

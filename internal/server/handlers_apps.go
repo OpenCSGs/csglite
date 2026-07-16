@@ -185,6 +185,18 @@ func (s *Server) handleAppModelSave(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if status, supported, err := s.aiAppProviderStatus(appID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if supported && status.Mode == apps.ProviderModeOpenCSG {
+		if err := s.switchAIAppProvider(r.Context(), appID, apps.ProviderModeOpenCSG, req.ModelID, req.Source); err != nil {
+			log.Printf("AI APP %s: OpenCSG model update failed: %v", appID, err)
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	s.savePreferredAIAppModel(req.AppID, req.ModelID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -299,11 +311,16 @@ func (s *Server) enrichAIAppListItem(ctx context.Context, info *api.AIAppInfo) {
 		return
 	}
 	s.enrichAIAppRuntime(ctx, info)
+	s.enrichAIAppProvider(info)
 	if !info.Supported || info.Disabled {
 		return
 	}
 	s.appManager.EnrichCachedLatestVersion(info)
 	s.appManager.RefreshLatestVersionAsync(*info)
+	if info.ProviderSwitchSupported && info.ProviderMode == apps.ProviderModeNative {
+		info.ModelID = ""
+		return
+	}
 	if info.ID == xiaozhiAppID {
 		s.enrichXiaozhiModelSlots(ctx, info)
 		return
@@ -316,11 +333,16 @@ func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 		return
 	}
 	s.enrichAIAppRuntime(ctx, info)
+	s.enrichAIAppProvider(info)
 	if !info.Supported || info.Disabled {
 		return
 	}
 
 	s.appManager.EnrichLatestVersion(ctx, info)
+	if info.ProviderSwitchSupported && info.ProviderMode == apps.ProviderModeNative {
+		info.ModelID = ""
+		return
+	}
 	if info.ID == xiaozhiAppID {
 		s.enrichXiaozhiModelSlots(ctx, info)
 		return

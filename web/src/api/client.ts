@@ -428,6 +428,10 @@ export interface AIAppInfo {
   latest_version?: string;
   update_available?: boolean;
   model_id?: string;
+  provider_mode?: "native" | "opencsg";
+  provider_group?: string;
+  provider_switch_supported?: boolean;
+  provider_drifted?: boolean;
   model_bindings?: AIAppModelBindings;
   model_slots?: AIAppModelSlot[];
   runtime_supported: boolean;
@@ -1857,6 +1861,24 @@ export async function openAIApp(appId: string, modelId?: string, workDir?: strin
       model_id: modelId || undefined,
       source: source || undefined,
       work_dir: workDir || undefined,
+    }),
+  });
+}
+
+export async function switchAIAppProvider(
+  appId: string,
+  providerMode: "native" | "opencsg",
+  modelId?: string,
+  source?: string
+): Promise<AIAppInfo> {
+  return fetchJSON<AIAppInfo>("/api/apps/provider", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      app_id: appId,
+      provider_mode: providerMode,
+      model_id: modelId || undefined,
+      source: source || undefined,
     }),
   });
 }

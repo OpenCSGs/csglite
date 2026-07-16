@@ -16,11 +16,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opencsgs/csglite/internal/claudeagent"
 	"github.com/opencsgs/csglite/internal/cloud"
+	"github.com/opencsgs/csglite/internal/codexagent"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
 )
+
+func enableOpenCSGProviderForTest(t *testing.T, s *Server, appID string, apply func() error) {
+	t.Helper()
+	group, supported := providerGroupForApp(appID)
+	if !supported {
+		t.Fatalf("provider switching is not supported for %s", appID)
+	}
+	targetPath, isManaged, _, err := sourceSwitchAdapter(group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.sourceSwitches.UseOpenCSG(group, targetPath, isManaged, apply); err != nil {
+		t.Fatalf("enable OpenCSG provider for %s: %v", appID, err)
+	}
+}
 
 func TestExtractDashboardURL(t *testing.T) {
 	output := []byte("Using model Qwen/Qwen3.5-2B\nDashboard URL: http://127.0.0.1:18789/#token=abc123\nBrowser launch disabled (--no-open).\n")
@@ -927,6 +944,9 @@ func TestOpenAIAppShellURLRemembersRequestedModel(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	s := New(cfg, "test")
+	if err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "Qwen/Qwen2.5-Coder-1.5B", ""); err != nil {
+		t.Fatalf("switchAIAppProvider returned error: %v", err)
+	}
 
 	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "Qwen/Qwen2.5-Coder-1.5B", "", "")
 	if err != nil {
@@ -998,6 +1018,9 @@ func TestOpenAIAppShellURLUsesRememberedModelWhenRequestOmitted(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	s := New(cfg, "test")
+	if err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "", ""); err != nil {
+		t.Fatalf("switchAIAppProvider returned error: %v", err)
+	}
 
 	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "", "", "")
 	if err != nil {
@@ -1161,9 +1184,9 @@ func TestOpenAIAppShellURLMissingCloudTokenShowsSettingsHint(t *testing.T) {
 
 	s := New(cfg, "test")
 
-	_, err := s.openAIAppShellURL(context.Background(), "claude-code", "afrideva/Qwen2-0.5B-Instruct-GGUF:fh23aijhzx8g", "", "")
+	err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "afrideva/Qwen2-0.5B-Instruct-GGUF:fh23aijhzx8g", "")
 	if err == nil {
-		t.Fatal("openAIAppShellURL returned nil error, want settings hint")
+		t.Fatal("switchAIAppProvider returned nil error, want settings hint")
 	}
 	if got := err.Error(); !strings.Contains(got, "open csghub-lite Settings to sign in to OpenCSG or save an API Key first") {
 		t.Fatalf("error = %q, want settings hint", got)
@@ -1176,9 +1199,9 @@ func TestOpenAIAppShellURLWithoutLocalModelsShowsOpenCSGLoginHint(t *testing.T) 
 		ListenAddr: ":11435",
 	}, "test")
 
-	_, err := s.openAIAppShellURL(context.Background(), "codex", "", "", "")
+	err := s.switchAIAppProvider(context.Background(), "codex", "opencsg", "", "")
 	if err == nil {
-		t.Fatal("openAIAppShellURL returned nil error, want OpenCSG login hint")
+		t.Fatal("switchAIAppProvider returned nil error, want OpenCSG login hint")
 	}
 	if got := err.Error(); !strings.Contains(got, "open csghub-lite Settings to sign in to OpenCSG or save an API Key") {
 		t.Fatalf("error = %q, want OpenCSG login hint", got)
@@ -1186,6 +1209,9 @@ func TestOpenAIAppShellURLWithoutLocalModelsShowsOpenCSGLoginHint(t *testing.T) 
 }
 
 func TestPrepareAIAppShellLaunchSetsTerminalEnvForClaudeCode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	binDir := t.TempDir()
 	commandPath := filepath.Join(binDir, "claude")
 	content := "#!/bin/sh\nexit 0\n"
@@ -1200,7 +1226,13 @@ func TestPrepareAIAppShellLaunchSetsTerminalEnvForClaudeCode(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "old-token")
 
-	s := New(&config.Config{ListenAddr: ":11435"}, "test")
+	s := New(&config.Config{
+		ListenAddr: ":11435",
+		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
+	}, "test")
+	enableOpenCSGProviderForTest(t, s, "claude-code", func() error {
+		return claudeagent.SyncConfig(s.localBaseURL(), "csghub-lite", "Qwen/Qwen3.5-2B")
+	})
 	workDir := t.TempDir()
 	prepared, err := s.prepareAIAppShellLaunch(aiAppOpenTarget{
 		AppID:       "claude-code",
@@ -1385,12 +1417,27 @@ mcp_servers.remotion-documentation.args = ["@remotion/mcp@latest"]
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := New(&config.Config{ListenAddr: ":11435"}, "test")
+	s := New(&config.Config{
+		ListenAddr: ":11435",
+		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
+	}, "test")
 	workDir := t.TempDir()
 	modelIDs := []string{
 		"Qwen/Qwen3.5-2B",
 		"afrideva/Qwen2-0.5B-Instruct-GGUF:fh23aijhzx8g",
 	}
+	models := make([]api.ModelInfo, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		models = append(models, api.ModelInfo{Model: modelID})
+	}
+	enableOpenCSGProviderForTest(t, s, "codex", func() error {
+		return codexagent.SyncConfig(
+			s.localBaseURL(),
+			openClawProviderAPIKey(s.cfg.Token),
+			"Qwen/Qwen3.5-2B",
+			models,
+		)
+	})
 	prepared, err := s.prepareAIAppShellLaunch(aiAppOpenTarget{
 		AppID:       "codex",
 		DisplayName: "Codex",
@@ -1463,6 +1510,55 @@ mcp_servers.remotion-documentation.args = ["@remotion/mcp@latest"]
 	}
 	if envHasKey(prepared.Env, "OPENAI_API_KEY") {
 		t.Fatalf("OPENAI_API_KEY should not be set for Codex custom provider: %#v", prepared.Env)
+	}
+}
+
+func TestPrepareAIAppShellLaunchPreservesNativeCodexConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("model = \"gpt-5\"\n")
+	if err := os.WriteFile(configPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "codex")
+	content := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		commandPath = filepath.Join(binDir, "codex.cmd")
+		content = "@echo off\r\nexit /b 0\r\n"
+	}
+	if err := os.WriteFile(commandPath, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := New(&config.Config{
+		ListenAddr: ":11435",
+		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
+	}, "test")
+	prepared, err := s.prepareAIAppShellLaunch(aiAppOpenTarget{
+		AppID:       "codex",
+		DisplayName: "Codex",
+		Binaries:    []string{"codex"},
+	}, "Qwen/Qwen3.5-2B", []string{"Qwen/Qwen3.5-2B"}, t.TempDir())
+	if err != nil {
+		t.Fatalf("prepareAIAppShellLaunch returned error: %v", err)
+	}
+	if hasConfigPrefix(prepared.Args, "model=") || slices.Contains(prepared.Args, "--model") {
+		t.Fatalf("native Codex launch should not select an OpenCSG model: %#v", prepared.Args)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("native Codex config changed: got %q, want %q", got, original)
 	}
 }
 

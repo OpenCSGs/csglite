@@ -22,7 +22,6 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/opencsgs/csglite/internal/apps"
-	"github.com/opencsgs/csglite/internal/claudeagent"
 	"github.com/opencsgs/csglite/internal/codexagent"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/ocreviewagent"
@@ -533,9 +532,17 @@ func (s *Server) openAIAppShellURL(ctx context.Context, appID, requestedModel, r
 		return "", err
 	}
 
-	defaultModel, modelIDs, err := s.resolveAIAppShellLaunchModels(ctx, appID, requestedModel, requestedSource)
+	var defaultModel string
+	var modelIDs []string
+	providerStatus, providerSwitchSupported, err := s.aiAppProviderStatus(appID)
 	if err != nil {
 		return "", err
+	}
+	if !providerSwitchSupported || providerStatus.Mode == apps.ProviderModeOpenCSG {
+		defaultModel, modelIDs, err = s.resolveAIAppShellLaunchModels(ctx, appID, requestedModel, requestedSource)
+		if err != nil {
+			return "", err
+		}
 	}
 	// AI app shells store the public (inference) model ID so it stays stable even
 	// when the local storage ID includes a namespace prefix.
@@ -551,7 +558,7 @@ func (s *Server) openAIAppShellURL(ctx context.Context, appID, requestedModel, r
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(requestedModel) != "" {
+	if strings.TrimSpace(requestedModel) != "" && (!providerSwitchSupported || providerStatus.Mode == apps.ProviderModeOpenCSG) {
 		s.savePreferredAIAppModel(appID, defaultModel)
 	}
 
@@ -927,8 +934,19 @@ func (s *Server) prepareAIAppShellLaunch(target aiAppOpenTarget, modelID string,
 
 	switch target.AppID {
 	case "claude-code":
-		if err := claudeagent.SyncConfig(serverURL, "csghub-lite", modelID); err != nil {
-			log.Printf("AI APP claude-code: syncing config failed: %v", err)
+		status, _, err := s.aiAppProviderStatus(target.AppID)
+		if err != nil {
+			return aiAppPreparedLaunch{}, err
+		}
+		if status.Mode == apps.ProviderModeNative {
+			return aiAppPreparedLaunch{
+				Binary: binary,
+				Env:    envWithOverridesAndUnset(aiAppShellEnvOverrides(nil), "NO_COLOR"),
+				Dir:    workingDir,
+			}, nil
+		}
+		if status.Drifted {
+			return aiAppPreparedLaunch{}, fmt.Errorf("Claude Code configuration changed after OpenCSG was enabled; review or restore the provider before launching")
 		}
 		return aiAppPreparedLaunch{
 			Binary: binary,
@@ -986,12 +1004,20 @@ func (s *Server) prepareAIAppShellLaunch(target aiAppOpenTarget, modelID string,
 			Dir:    workingDir,
 		}, nil
 	case "codex":
-		models := make([]api.ModelInfo, 0, len(modelIDs))
-		for _, modelID := range modelIDs {
-			models = append(models, api.ModelInfo{Model: modelID})
+		status, _, err := s.aiAppProviderStatus(target.AppID)
+		if err != nil {
+			return aiAppPreparedLaunch{}, err
 		}
-		if err := codexagent.SyncConfig(serverURL, openClawProviderAPIKey(s.cfg.Token), modelID, models); err != nil {
-			log.Printf("AI APP codex: syncing config failed: %v", err)
+		if status.Mode == apps.ProviderModeNative {
+			return aiAppPreparedLaunch{
+				Binary: binary,
+				Args:   []string{"--no-alt-screen"},
+				Env:    envWithOverridesAndUnset(aiAppShellEnvOverrides(nil), "NO_COLOR"),
+				Dir:    workingDir,
+			}, nil
+		}
+		if status.Drifted {
+			return aiAppPreparedLaunch{}, fmt.Errorf("Codex configuration changed after OpenCSG was enabled; review or restore the provider before launching")
 		}
 		return aiAppPreparedLaunch{
 			Binary: binary,

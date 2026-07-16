@@ -518,6 +518,7 @@ type AIAppActionRequest struct {
 	AppID         string              `json:"app_id"`
 	ModelID       string              `json:"model_id,omitempty"`
 	Source        string              `json:"source,omitempty"`
+	ProviderMode  string              `json:"provider_mode,omitempty"`
 	ModelBindings []AIAppModelBinding `json:"model_bindings,omitempty"`
 	WorkDir       string              `json:"work_dir,omitempty"`
 }
@@ -528,6 +529,8 @@ type AIAppUninstallRequest = AIAppActionRequest
 
 type AIAppOpenRequest = AIAppActionRequest
 
+type AIAppProviderRequest = AIAppActionRequest
+
 // AIAppPathRequest sets a manual install location for an AI app whose
 // automatic detection missed the user's custom install path.
 type AIAppPathRequest struct {
@@ -536,29 +539,33 @@ type AIAppPathRequest struct {
 }
 
 type AIAppInfo struct {
-	ID               string              `json:"id"`
-	Installed        bool                `json:"installed"`
-	Managed          bool                `json:"managed"`
-	Supported        bool                `json:"supported"`
-	Disabled         bool                `json:"disabled"`
-	Status           string              `json:"status"`
-	Phase            string              `json:"phase,omitempty"`
-	ProgressMode     string              `json:"progress_mode"`
-	Progress         int                 `json:"progress,omitempty"`
-	InstallPath      string              `json:"install_path,omitempty"`
-	Version          string              `json:"version,omitempty"`
-	LatestVersion    string              `json:"latest_version,omitempty"`
-	UpdateAvailable  bool                `json:"update_available,omitempty"`
-	ModelID          string              `json:"model_id,omitempty"`
-	ModelBindings    []AIAppModelBinding `json:"model_bindings,omitempty"`
-	ModelSlots       []AIAppModelSlot    `json:"model_slots,omitempty"`
-	RuntimeSupported bool                `json:"runtime_supported"`
-	RuntimeRunning   bool                `json:"runtime_running"`
-	RuntimeStatus    string              `json:"runtime_status,omitempty"`
-	LogPath          string              `json:"log_path,omitempty"`
-	LastError        string              `json:"last_error,omitempty"`
-	DisabledReason   string              `json:"disabled_reason,omitempty"`
-	UpdatedAt        time.Time           `json:"updated_at"`
+	ID                      string              `json:"id"`
+	Installed               bool                `json:"installed"`
+	Managed                 bool                `json:"managed"`
+	Supported               bool                `json:"supported"`
+	Disabled                bool                `json:"disabled"`
+	Status                  string              `json:"status"`
+	Phase                   string              `json:"phase,omitempty"`
+	ProgressMode            string              `json:"progress_mode"`
+	Progress                int                 `json:"progress,omitempty"`
+	InstallPath             string              `json:"install_path,omitempty"`
+	Version                 string              `json:"version,omitempty"`
+	LatestVersion           string              `json:"latest_version,omitempty"`
+	UpdateAvailable         bool                `json:"update_available,omitempty"`
+	ModelID                 string              `json:"model_id,omitempty"`
+	ProviderMode            string              `json:"provider_mode,omitempty"`
+	ProviderGroup           string              `json:"provider_group,omitempty"`
+	ProviderSwitchSupported bool                `json:"provider_switch_supported,omitempty"`
+	ProviderDrifted         bool                `json:"provider_drifted,omitempty"`
+	ModelBindings           []AIAppModelBinding `json:"model_bindings,omitempty"`
+	ModelSlots              []AIAppModelSlot    `json:"model_slots,omitempty"`
+	RuntimeSupported        bool                `json:"runtime_supported"`
+	RuntimeRunning          bool                `json:"runtime_running"`
+	RuntimeStatus           string              `json:"runtime_status,omitempty"`
+	LogPath                 string              `json:"log_path,omitempty"`
+	LastError               string              `json:"last_error,omitempty"`
+	DisabledReason          string              `json:"disabled_reason,omitempty"`
+	UpdatedAt               time.Time           `json:"updated_at"`
 }
 
 // AIAppModelBinding selects one model, including its source when model IDs are
