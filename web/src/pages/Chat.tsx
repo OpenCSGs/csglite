@@ -748,11 +748,32 @@ async function refreshConversationList() {
   }
 }
 
+// Keep the model selector in sync with the conversation being opened so
+// continuing an old chat uses the model it was created with (issue #70).
+function syncModelSelectionToConversation(conv: Conversation) {
+  const key = (conv.model || "").trim();
+  if (!key || key === selectedModelKey.value) return;
+  const model = availableModels.value.find((x) => modelKey(x) === key);
+  if (!model) return;
+  selectedModelKey.value = key;
+  saveSelectedModelKey(key);
+  applyModelSamplingDefaults(model);
+  const mode = getChatModelMode(model);
+  const acceptsImageInput = mode === "vision" || isImageToImageModel(model);
+  if (isASRModel(model) || !acceptsImageInput) {
+    pendingImages.value = [];
+  }
+  if (!isASRModel(model)) {
+    setPendingAudio(null);
+  }
+}
+
 async function loadConversation(id: string) {
   try {
     const conv = await getConversation(id);
     activeConversation.value = conv;
     activeSessionId.value = conv.id;
+    syncModelSelectionToConversation(conv);
   } catch {
     /* ignore */
   }
