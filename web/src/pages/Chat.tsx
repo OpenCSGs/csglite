@@ -750,13 +750,16 @@ async function refreshConversationList() {
 
 // Keep the model selector in sync with the conversation being opened so
 // continuing an old chat uses the model it was created with (issue #70).
+// The sync is view-local: it never overwrites the user's manually saved
+// preference, and conversations without a recorded model (and new chats)
+// fall back to that saved preference.
 function syncModelSelectionToConversation(conv: Conversation) {
-  const key = (conv.model || "").trim();
-  if (!key || key === selectedModelKey.value) return;
-  const model = availableModels.value.find((x) => modelKey(x) === key);
-  if (!model) return;
-  selectedModelKey.value = key;
-  saveSelectedModelKey(key);
+  const isAvailable = (key: string) => Boolean(key) && availableModels.value.some((x) => modelKey(x) === key);
+  const recorded = (conv.model || "").trim();
+  const target = isAvailable(recorded) ? recorded : readSelectedModelKey();
+  if (!target || target === selectedModelKey.value || !isAvailable(target)) return;
+  const model = availableModels.value.find((x) => modelKey(x) === target);
+  selectedModelKey.value = target;
   applyModelSamplingDefaults(model);
   const mode = getChatModelMode(model);
   const acceptsImageInput = mode === "vision" || isImageToImageModel(model);
@@ -1544,6 +1547,7 @@ export function Chat() {
       const conv = await createConversation({});
       activeConversation.value = conv;
       activeSessionId.value = conv.id;
+      syncModelSelectionToConversation(conv);
       await refreshConversationList();
     } catch {
       /* ignore */
