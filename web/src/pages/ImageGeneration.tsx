@@ -29,6 +29,9 @@ const minSteps = 1;
 const maxSteps = 80;
 const minCFGScale = 1;
 const maxCFGScale = 20;
+// Above roughly 1.5 megapixels local generation starts to risk running out of
+// GPU/VRAM memory on common consumer hardware, so surface a warning (issue #71).
+const vramWarningPixels = 1_500_000;
 
 const models = signal<ModelInfo[]>([]);
 const selectedModel = signal("");
@@ -203,7 +206,12 @@ function applySizePreset(preset: SizePreset) {
 
 function applyParameterPreset(preset: ParameterPreset) {
   if (preset.promptKey) {
-    prompt.value = t(preset.promptKey);
+    const presetPrompt = t(preset.promptKey);
+    const current = prompt.value.trim();
+    // Never silently discard a hand-written prompt (issue #71).
+    if (!current || current === presetPrompt.trim() || confirm(t("image.presetOverwritePromptConfirm"))) {
+      prompt.value = presetPrompt;
+    }
   }
   width.value = preset.width;
   height.value = preset.height;
@@ -643,6 +651,10 @@ export function ImageGeneration() {
   const selectedModelIsLocal = isLocalImageModel(currentModel);
   const selectedModelIsEdit = isImageToImageModel(currentModel);
   const selectedSizeKey = sizePresets.find((preset) => preset.width === width.value && preset.height === height.value)?.key || "";
+  const customWidth = dimensionValue(width.value);
+  const customHeight = dimensionValue(height.value);
+  const sizeOutOfRange = customWidth === undefined || customHeight === undefined;
+  const sizeVramRisk = !sizeOutOfRange && selectedModelIsLocal && customWidth * customHeight > vramWarningPixels;
   const progress = progressPercent();
   const runningJobs = imageJobs.value.filter(isRunningImageJob);
   const historyItems = imageJobs.value
@@ -881,6 +893,12 @@ export function ImageGeneration() {
                 <NumberField label={t("image.width")} value={width.value} min={minSize} max={maxSize} onInput={(v) => (width.value = v)} />
                 <NumberField label={t("image.height")} value={height.value} min={minSize} max={maxSize} onInput={(v) => (height.value = v)} />
               </div>
+              {sizeOutOfRange && (
+                <p class="mt-2 text-xs font-medium text-red-600">{t("image.invalidSize", minSize, maxSize)}</p>
+              )}
+              {sizeVramRisk && (
+                <p class="mt-2 text-xs font-medium text-amber-600">{t("image.sizeVramWarning")}</p>
+              )}
             </div>
             )}
 
@@ -913,7 +931,7 @@ export function ImageGeneration() {
           <div class="space-y-2">
             <button
               onClick={runGenerate}
-              disabled={loading.value || !selectedModel.value || !prompt.value.trim()}
+              disabled={loading.value || !selectedModel.value || !prompt.value.trim() || (!selectedModelIsEdit && sizeOutOfRange)}
               class="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
             >
               {loading.value ? (jobStatus.value || (selectedModelIsEdit ? t("image.editing") : t("image.generating"))) : (selectedModelIsEdit ? t("image.edit") : t("image.generate"))}
