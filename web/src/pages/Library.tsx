@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "preact/hooks";
-import { computed, signal } from "@preact/signals";
+import { signal } from "@preact/signals";
 import { deleteModel, getModelManifest, getPs, loadModel, searchLocalModels, uploadLocalModel } from "../api/client";
 import type { LoadModelOptions, LocalModelUploadFile, ModelFileEntry, ModelInfo, RunningModel } from "../api/client";
 import { locale, t } from "../i18n";
@@ -270,18 +270,26 @@ function compactLoadingLabel(label: string): string {
   return label.trim().split(/\s+/).slice(0, 2).join(" ") || label;
 }
 
-const filtered = computed(() => {
-  const list = allModels.value;
+// Sort the combined rows (local models plus download-only task rows) so that
+// toggling a header also reorders in-progress downloads (issue #67).
+function sortModelRows(rows: ModelTableRow[]): ModelTableRow[] {
   const field = sortField.value;
   const asc = sortAsc.value;
-  return [...list].sort((a, b) => {
+  return [...rows].sort((a, b) => {
     let cmp = 0;
-    if (field === "name") cmp = a.name.localeCompare(b.name);
-    else if (field === "size") cmp = a.size - b.size;
-    else cmp = new Date(a.modified_at).getTime() - new Date(b.modified_at).getTime();
+    if (field === "name") {
+      cmp = a.model.name.localeCompare(b.model.name);
+    } else if (field === "size") {
+      cmp = (a.model.size || 0) - (b.model.size || 0);
+    } else {
+      const at = new Date(a.model.modified_at).getTime() || 0;
+      const bt = new Date(b.model.modified_at).getTime() || 0;
+      cmp = at - bt;
+    }
+    if (cmp === 0) cmp = a.model.name.localeCompare(b.model.name);
     return asc ? cmp : -cmp;
   });
-});
+}
 
 function isCloudModel(model: Pick<ModelInfo, "source">): boolean {
   return model.source === "cloud";
@@ -652,7 +660,7 @@ export function Library() {
   const runningStatus = (name: string) => runningModels.value.find((m) => m.name === name)?.status || "";
   const hasActiveFilters = searchQuery.value.trim().length > 0 || formatFilter.value !== "all";
   const uploadDisabled = uploadBusy.value;
-  const rows = modelRows(filtered.value);
+  const rows = sortModelRows(modelRows(allModels.value));
 
   return (
     <div class="p-8 max-w-6xl mx-auto">

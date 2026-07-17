@@ -37,14 +37,23 @@ function loadDatasets() {
     });
 }
 
-function sortedDatasets(): DatasetInfo[] {
+// Sort the combined rows (local datasets plus download-only task rows) so that
+// toggling a header also reorders in-progress downloads (issue #67).
+function sortDatasetRows(rows: DatasetTableRow[]): DatasetTableRow[] {
   const field = sortField.value;
   const asc = sortAsc.value;
-  return [...allDatasets.value].sort((a, b) => {
+  return [...rows].sort((a, b) => {
     let cmp = 0;
-    if (field === "name") cmp = a.name.localeCompare(b.name);
-    else if (field === "size") cmp = a.size - b.size;
-    else cmp = new Date(a.modified_at).getTime() - new Date(b.modified_at).getTime();
+    if (field === "name") {
+      cmp = a.dataset.name.localeCompare(b.dataset.name);
+    } else if (field === "size") {
+      cmp = (a.dataset.size || 0) - (b.dataset.size || 0);
+    } else {
+      const at = new Date(a.dataset.modified_at).getTime() || 0;
+      const bt = new Date(b.dataset.modified_at).getTime() || 0;
+      cmp = at - bt;
+    }
+    if (cmp === 0) cmp = a.dataset.name.localeCompare(b.dataset.name);
     return asc ? cmp : -cmp;
   });
 }
@@ -153,7 +162,7 @@ function DatasetList() {
     }
   };
 
-  const rows = datasetRows(sortedDatasets());
+  const rows = sortDatasetRows(datasetRows(allDatasets.value));
   const downloading = hasActiveDownload.value;
 
   return (
