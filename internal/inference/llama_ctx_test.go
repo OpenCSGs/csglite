@@ -89,6 +89,20 @@ func TestResolveNGPULayersUsesExplicitRequest(t *testing.T) {
 	}
 }
 
+func TestResolveNGPULayersKeepsZeroForCPUOnly(t *testing.T) {
+	if got := ResolveNGPULayers(0); got != 0 {
+		t.Fatalf("ResolveNGPULayers returned %d, want 0", got)
+	}
+}
+
+func TestResolveNGPULayersLeavesUnsetForAutoFit(t *testing.T) {
+	// Unset must stay -1 so llama-server's fit feature can auto-adjust
+	// GPU offload; forcing a value disables that adjustment.
+	if got := ResolveNGPULayers(-1); got != unsetNGPULayers {
+		t.Fatalf("ResolveNGPULayers returned %d, want %d", got, unsetNGPULayers)
+	}
+}
+
 func TestNormalizeNGPULayersRejectsLessThanUnset(t *testing.T) {
 	if _, err := NormalizeNGPULayers(-2); err == nil {
 		t.Fatal("expected invalid n_gpu_layers error")

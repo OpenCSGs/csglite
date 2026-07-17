@@ -36,7 +36,7 @@ Content-Type: application/json
 | `stream` | bool | 否 | 是否流式输出（默认 `true`） |
 | `options` | object | 否 | 生成参数 |
 
-`options` 支持 `temperature`、`top_p`、`top_k`、`max_tokens`、`seed`、`num_ctx`、`num_parallel`、`n_gpu_layers`、`cache_type_k`、`cache_type_v`、`dtype`。其中 `n_gpu_layers` 与 `llama-server --n-gpu-layers` 保持一致，可用于限制 GPU offload 层数；`cache_type_k` / `cache_type_v` 与 `llama-server --cache-type-k` / `--cache-type-v` 保持一致，可用于在显存紧张时压缩 KV cache；`dtype` 用于控制 SafeTensors -> GGUF 自动转换的输出类型，视觉模型的 `mmproj` 也会跟随同一 `dtype` 一起转换。
+`options` 支持 `temperature`、`top_p`、`top_k`、`max_tokens`、`seed`、`num_ctx`、`num_parallel`、`n_gpu_layers`、`cache_type_k`、`cache_type_v`、`dtype`。其中 `n_gpu_layers` 与 `llama-server --n-gpu-layers` 保持一致，可用于限制 GPU offload 层数；不设置时不向 llama-server 传递该参数，由其按空闲显存自动适配 offload 层数；`cache_type_k` / `cache_type_v` 与 `llama-server --cache-type-k` / `--cache-type-v` 保持一致，可用于在显存紧张时压缩 KV cache；`dtype` 用于控制 SafeTensors -> GGUF 自动转换的输出类型，视觉模型的 `mmproj` 也会跟随同一 `dtype` 一起转换。
 
 ## 响应
 

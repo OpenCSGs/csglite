@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
-	"github.com/opencsgs/csglite/internal/hardware"
 	"github.com/opencsgs/csglite/internal/logutil"
 )
 
@@ -30,7 +29,6 @@ const (
 	autoExpandedLlamaCtxSize = 16384
 	defaultLlamaParallel     = 1
 	unsetNGPULayers          = -1
-	defaultNGPULayers        = 9999
 )
 
 var allowedLlamaCacheTypes = []string{
@@ -282,16 +280,15 @@ func normalizeEmbeddingModelName(modelName string) string {
 }
 
 // ResolveNGPULayers returns the effective llama-server GPU layer offload count.
-// Explicit requests win; otherwise GPU-capable hosts default to offloading all
-// layers and CPU-only hosts leave the flag unset.
+// Explicit requests win; otherwise the flag stays unset (-1) so llama-server's
+// built-in fit feature can auto-adjust GPU offload to the free device memory.
+// Passing an explicit -ngl disables that auto-fit, which broke large models on
+// small-VRAM hosts (e.g. AMD APUs) when we always forced 9999.
 func ResolveNGPULayers(requested int) int {
 	if requested >= 0 {
 		return requested
 	}
-	if hasGPU() {
-		return defaultNGPULayers
-	}
-	return 0
+	return unsetNGPULayers
 }
 
 // NormalizeNGPULayers accepts -1 (unset) or any non-negative llama-server
@@ -402,7 +399,9 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		args = append(args, "--mmproj", mmproj[0])
 		engine.hasMultimodal = true
 	}
-	if effectiveNGPULayers > 0 {
+	// Only pass -ngl for explicit requests: llama-server treats a user-set
+	// value as fixed and skips its fit-to-free-memory auto-adjustment.
+	if effectiveNGPULayers >= 0 {
 		args = append(args, "-ngl", strconv.Itoa(effectiveNGPULayers))
 	}
 
@@ -970,18 +969,6 @@ func (e *llamaEngine) Close() error {
 
 func (e *llamaEngine) ModelName() string {
 	return e.modelName
-}
-
-func hasGPU() bool {
-	if _, err := hardware.ResolveNVIDIASMI(); err == nil {
-		return true
-	}
-	if runtime.GOOS == "linux" {
-		if _, err := os.Stat("/dev/kfd"); err == nil {
-			return true
-		}
-	}
-	return false
 }
 
 func appendLibPath(env []string, key, dir string) []string {
