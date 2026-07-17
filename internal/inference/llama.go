@@ -454,6 +454,11 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	if IsROCMHost() {
 		env = appendEnvDefault(env, "GGML_CUDA_DISABLE_GRAPHS", "1")
 	}
+	if ROCMUnifiedMemoryMode() {
+		// ggml only checks for the variable's presence, so it must stay
+		// completely unset on hosts where unified memory is not wanted.
+		env = appendEnvDefault(env, "GGML_CUDA_ENABLE_UNIFIED_MEMORY", "1")
+	}
 	engine.cmd.Env = env
 
 	if err := engine.cmd.Start(); err != nil {
