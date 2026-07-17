@@ -2489,7 +2489,7 @@
           {
             "name": "source",
             "in": "query",
-            "description": "Provider list source. `model` returns model filter providers; `third_party` returns configured provider settings.",
+            "description": "Provider list source. `model` returns model filter providers; `third_party` returns configured provider settings including the stored `api_key`.",
             "schema": {
               "type": "string",
               "enum": [
@@ -4449,6 +4449,10 @@
           "base_url": {
             "type": "string",
             "format": "uri"
+          },
+          "api_key": {
+            "type": "string",
+            "description": "Configured provider API key. Returned by the third_party provider list; omitted from create and update responses."
           },
           "provider": {
             "type": "string",

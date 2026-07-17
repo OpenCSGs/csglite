@@ -17,7 +17,7 @@ import (
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
-func TestProviderCRUDDoesNotExposeAPIKey(t *testing.T) {
+func TestProviderListReturnsAPIKeyForLocalConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -53,14 +53,21 @@ func TestProviderCRUDDoesNotExposeAPIKey(t *testing.T) {
 		t.Fatalf("create response exposed API key: %s", w.Body.String())
 	}
 
-	listReq := httptest.NewRequest(http.MethodGet, "/api/providers", nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/api/providers?source=third_party", nil)
 	w = httptest.NewRecorder()
 	s.handleProvidersList(w, listReq)
 	if w.Code != http.StatusOK {
 		t.Fatalf("list status = %d body=%s", w.Code, w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "secret") {
-		t.Fatalf("list response exposed API key: %s", w.Body.String())
+	var listResp api.ThirdPartyProvidersResponse
+	if err := json.NewDecoder(w.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(listResp.Providers) != 1 {
+		t.Fatalf("providers = %#v, want one provider", listResp.Providers)
+	}
+	if got := listResp.Providers[0].APIKey; got != "secret" {
+		t.Fatalf("api_key = %q, want configured key returned in list", got)
 	}
 }
 

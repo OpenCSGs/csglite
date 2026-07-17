@@ -32,9 +32,9 @@ func (s *Server) handleThirdPartyProvidersList(w http.ResponseWriter, r *http.Re
 			ID:       p.ID,
 			Name:     p.Name,
 			BaseURL:  normalizeThirdPartyProviderBaseURL(p),
+			APIKey:   p.APIKey,
 			Provider: p.Provider,
 			Enabled:  p.Enabled,
-			// APIKey is intentionally not returned for security
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
