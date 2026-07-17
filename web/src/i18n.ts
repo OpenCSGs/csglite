@@ -637,6 +637,7 @@ const en: Record<string, string> = {
   "lib.all": "All",
   "lib.search": "Search local models...",
   "lib.results": "{0} models",
+  "lib.totalCount": "{0} models in total",
   "lib.searching": "Searching...",
   "lib.modelName": "Model Name",
   "lib.format": "Format",
@@ -786,6 +787,15 @@ const en: Record<string, string> = {
   "ds.failedLoadDetail": "Failed to load dataset details",
   "ds.detailSubtitle": "View file list and download commands for this local dataset.",
   "ds.back": "Back",
+  "ds.totalCount": "{0} datasets in total",
+
+  // Pagination
+  "pager.first": "First page",
+  "pager.prev": "Prev",
+  "pager.next": "Next",
+  "pager.last": "Last page",
+  "pager.pageSize": "{0} / page",
+  "pager.pageSizeAll": "All",
 
   // Chat
   "chat.newChat": "New Chat",
@@ -1681,6 +1691,7 @@ const zh: Record<string, string> = {
   "lib.all": "全部",
   "lib.search": "搜索本地模型...",
   "lib.results": "{0} 个模型",
+  "lib.totalCount": "共 {0} 个模型",
   "lib.searching": "搜索中...",
   "lib.modelName": "模型名称",
   "lib.format": "格式",
@@ -1830,6 +1841,15 @@ const zh: Record<string, string> = {
   "ds.failedLoadDetail": "加载数据集详情失败",
   "ds.detailSubtitle": "查看这个本地数据集的文件列表和下载命令。",
   "ds.back": "返回",
+  "ds.totalCount": "共 {0} 个数据集",
+
+  // Pagination
+  "pager.first": "首页",
+  "pager.prev": "上一页",
+  "pager.next": "下一页",
+  "pager.last": "尾页",
+  "pager.pageSize": "{0} 条/页",
+  "pager.pageSizeAll": "全部",
 
   // Chat
   "chat.newChat": "新对话",

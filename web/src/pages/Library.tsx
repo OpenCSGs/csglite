@@ -5,6 +5,8 @@ import type { LoadModelOptions, LocalModelUploadFile, ModelFileEntry, ModelInfo,
 import { locale, t } from "../i18n";
 import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
+import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../components/Pagination";
+import type { PageSize } from "../components/Pagination";
 import { isImageGenerationModel } from "../utils/imageModels";
 import { getDownloadTask, getDownloadTasks, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
@@ -74,6 +76,8 @@ const searchQuery = signal("");
 const formatFilter = signal<FormatFilter>("all");
 const sortField = signal<"name" | "size" | "modified_at">("name");
 const sortAsc = signal(true);
+const currentPage = signal(1);
+const pageSize = signal<PageSize>(DEFAULT_PAGE_SIZE);
 const modelsLoading = signal(false);
 const loadingRun = signal<string>("");
 const loadProgress = signal<string>("");
@@ -501,6 +505,7 @@ export function Library() {
   }, [downloadCompletionVersion.value]);
 
   useEffect(() => {
+    currentPage.value = 1;
     const timeout = window.setTimeout(() => {
       void loadModels();
     }, searchQuery.value.trim() ? 250 : 0);
@@ -655,12 +660,14 @@ export function Library() {
       sortField.value = field;
       sortAsc.value = true;
     }
+    currentPage.value = 1;
   };
 
   const runningStatus = (name: string) => runningModels.value.find((m) => m.name === name)?.status || "";
   const hasActiveFilters = searchQuery.value.trim().length > 0 || formatFilter.value !== "all";
   const uploadDisabled = uploadBusy.value;
   const rows = sortModelRows(modelRows(allModels.value));
+  const pagedRows = paginate(rows, currentPage.value, pageSize.value);
 
   return (
     <div class="p-8 max-w-6xl mx-auto">
@@ -762,7 +769,7 @@ export function Library() {
                 </td>
               </tr>
             ) : (
-              rows.map(({ model: m, task, downloadOnly }) => (
+              pagedRows.map(({ model: m, task, downloadOnly }) => (
                 <tr key={m.name} class="border-b border-gray-50 hover:bg-gray-50/50">
                   <td class="px-4 py-3 min-w-0">
                     <a href={downloadOnly ? undefined : modelDetailHref(m.model)} class={`font-medium break-all ${downloadOnly ? "text-gray-400 cursor-not-allowed" : "text-indigo-600 hover:text-indigo-800 hover:underline"}`}>
@@ -874,6 +881,19 @@ export function Library() {
             </tbody>
           </table>
         </div>
+        {rows.length > 0 && (
+          <Pagination
+            total={rows.length}
+            totalLabel={t("lib.totalCount", rows.length)}
+            page={currentPage.value}
+            pageSize={pageSize.value}
+            onPageChange={(page) => (currentPage.value = clampPage(page, rows.length, pageSize.value))}
+            onPageSizeChange={(size) => {
+              pageSize.value = size;
+              currentPage.value = 1;
+            }}
+          />
+        )}
       </div>
       {runDialogModel.value && (
         <RunParamsDialog

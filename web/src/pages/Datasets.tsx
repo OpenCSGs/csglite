@@ -4,6 +4,8 @@ import { getDatasetTags, searchDatasets, getDatasetFiles, deleteDataset, getData
 import type { DatasetInfo, DatasetFileEntry, DatasetManifestResponse, DatasetDownloadFile } from "../api/client";
 import { t, locale } from "../i18n";
 import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
+import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../components/Pagination";
+import type { PageSize } from "../components/Pagination";
 import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 
@@ -18,6 +20,8 @@ const allDatasets = signal<DatasetInfo[]>([]);
 const searchQuery = signal("");
 const sortField = signal<"name" | "size" | "modified_at">("name");
 const sortAsc = signal(true);
+const currentPage = signal(1);
+const pageSize = signal<PageSize>(DEFAULT_PAGE_SIZE);
 const currentView = signal<View>({ kind: "list" });
 const fileEntries = signal<DatasetFileEntry[]>([]);
 const filesLoading = signal(false);
@@ -114,6 +118,7 @@ export function Datasets() {
   }, []);
 
   useEffect(() => {
+    currentPage.value = 1;
     const timer = setTimeout(() => {
       loadDatasets();
     }, searchQuery.value.trim() ? 250 : 0);
@@ -160,9 +165,11 @@ function DatasetList() {
       sortField.value = field;
       sortAsc.value = true;
     }
+    currentPage.value = 1;
   };
 
   const rows = sortDatasetRows(datasetRows(allDatasets.value));
+  const pagedRows = paginate(rows, currentPage.value, pageSize.value);
   const downloading = hasActiveDownload.value;
 
   return (
@@ -222,7 +229,7 @@ function DatasetList() {
                 </td>
               </tr>
             ) : (
-              rows.map(({ dataset: d, task, downloadOnly }) => (
+              pagedRows.map(({ dataset: d, task, downloadOnly }) => (
                 <tr key={d.name} class="border-b border-gray-50 hover:bg-gray-50/50">
                   <td class="px-4 py-3 min-w-0">
                     <button
@@ -263,6 +270,19 @@ function DatasetList() {
             </tbody>
           </table>
         </div>
+        {rows.length > 0 && (
+          <Pagination
+            total={rows.length}
+            totalLabel={t("ds.totalCount", rows.length)}
+            page={currentPage.value}
+            pageSize={pageSize.value}
+            onPageChange={(page) => (currentPage.value = clampPage(page, rows.length, pageSize.value))}
+            onPageSizeChange={(size) => {
+              pageSize.value = size;
+              currentPage.value = 1;
+            }}
+          />
+        )}
       </div>
     </div>
   );
