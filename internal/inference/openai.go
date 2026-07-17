@@ -20,19 +20,25 @@ type openAIEngine struct {
 	modelName          string
 	token              string
 	disableThinking    bool
-	client             *http.Client
+	// extendedSamplingParams controls whether non-standard OpenAI sampling
+	// parameters (top_k, repetition_penalty) are sent. Only the CSGHub cloud
+	// gateway accepts them; strict third-party OpenAI providers reject
+	// requests containing unknown arguments (issue #68).
+	extendedSamplingParams bool
+	client                 *http.Client
 }
 
 func NewOpenAIEngine(baseURL, modelName, token string) Engine {
 	baseURL = strings.TrimRight(baseURL, "/")
 	return &openAIEngine{
-		baseURL:            baseURL,
-		chatCompletionsURL: openAIChatCompletionsURL(baseURL),
-		embeddingsURL:      openAIEmbeddingsURL(baseURL),
-		modelName:          modelName,
-		token:              strings.TrimSpace(token),
-		disableThinking:    true,
-		client:             &http.Client{Timeout: 0},
+		baseURL:                baseURL,
+		chatCompletionsURL:     openAIChatCompletionsURL(baseURL),
+		embeddingsURL:          openAIEmbeddingsURL(baseURL),
+		modelName:              modelName,
+		token:                  strings.TrimSpace(token),
+		disableThinking:        true,
+		extendedSamplingParams: true,
+		client:                 &http.Client{Timeout: 0},
 	}
 }
 
@@ -153,18 +159,20 @@ func (e *openAIEngine) Generate(ctx context.Context, prompt string, opts Options
 
 func (e *openAIEngine) Chat(ctx context.Context, messages []Message, opts Options, onToken TokenCallback) (string, error) {
 	stream := onToken != nil
-	topK := opts.TopK
-	if topK <= 0 || topK == DefaultOptions().TopK {
-		topK = 10
-	}
 	reqBody := map[string]interface{}{
-		"model":              e.modelName,
-		"messages":           messagesToOpenAI(messages),
-		"temperature":        opts.Temperature,
-		"top_p":              opts.TopP,
-		"top_k":              topK,
-		"repetition_penalty": 1,
-		"stream":             stream,
+		"model":       e.modelName,
+		"messages":    messagesToOpenAI(messages),
+		"temperature": opts.Temperature,
+		"top_p":       opts.TopP,
+		"stream":      stream,
+	}
+	if e.extendedSamplingParams {
+		topK := opts.TopK
+		if topK <= 0 || topK == DefaultOptions().TopK {
+			topK = 10
+		}
+		reqBody["top_k"] = topK
+		reqBody["repetition_penalty"] = 1
 	}
 	if opts.MaxTokens > 0 {
 		reqBody["max_tokens"] = opts.MaxTokens

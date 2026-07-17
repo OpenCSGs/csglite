@@ -137,6 +137,45 @@ func TestOpenAIEngineChatRequestBodyMatchesCloudDefaults(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleEngineChatOmitsNonStandardSamplingParams(t *testing.T) {
+	var got map[string]interface{}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	}))
+	defer ts.Close()
+
+	eng := NewOpenAICompatibleEngine(ts.URL, "gpt-4o-2024-05-13", "test-token")
+	opts := DefaultOptions()
+	opts.Temperature = 0.2
+	opts.TopP = 0.9
+	opts.TopK = 40
+
+	_, err := eng.Chat(context.Background(), []Message{
+		{Role: "user", Content: "hi"},
+	}, opts, nil)
+	if err != nil {
+		t.Fatalf("Chat returned error: %v", err)
+	}
+
+	if _, ok := got["top_k"]; ok {
+		t.Fatalf("top_k = %v, want omitted for third-party OpenAI providers", got["top_k"])
+	}
+	if _, ok := got["repetition_penalty"]; ok {
+		t.Fatalf("repetition_penalty = %v, want omitted for third-party OpenAI providers", got["repetition_penalty"])
+	}
+	if got["temperature"] != 0.2 {
+		t.Fatalf("temperature = %v, want 0.2", got["temperature"])
+	}
+	if got["top_p"] != 0.9 {
+		t.Fatalf("top_p = %v, want 0.9", got["top_p"])
+	}
+}
+
 func TestOpenAIEngineChatRequestBodyDropsTopPForClaudeModels(t *testing.T) {
 	var got map[string]interface{}
 
