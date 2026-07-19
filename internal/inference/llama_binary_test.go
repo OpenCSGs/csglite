@@ -6,6 +6,20 @@ import (
 	"testing"
 )
 
+func TestLlamaBinarySiblingPath(t *testing.T) {
+	wantName := "llama-server"
+	if runtime.GOOS == "windows" {
+		wantName += ".exe"
+	}
+	want := filepath.Join("opt", "csghub-lite", wantName)
+	if got := llamaBinarySiblingPath(filepath.Join("opt", "csghub-lite", "csghub-lite"), runtime.GOOS); got != want {
+		t.Fatalf("llamaBinarySiblingPath() = %q, want %q", got, want)
+	}
+	if got := llamaBinarySiblingPath("", runtime.GOOS); got != "" {
+		t.Fatalf("llamaBinarySiblingPath(empty) = %q, want empty", got)
+	}
+}
+
 func TestLlamaBinaryCandidatePathsIncludesInstallerLocations(t *testing.T) {
 	home := filepath.Join("Users", "james")
 	exePath := filepath.Join(home, ".local", "bin", "csghub-lite")

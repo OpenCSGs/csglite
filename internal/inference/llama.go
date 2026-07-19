@@ -111,6 +111,17 @@ func findLlamaBinary() string {
 		}
 	}
 
+	// Prefer a llama-server installed next to csghub-lite. Background services
+	// often receive a smaller or differently ordered PATH than the interactive
+	// shell that ran the installer; searching PATH first can therefore select a
+	// stale system-wide llama-server instead of the matching co-located release.
+	exePath, _ := os.Executable()
+	if sibling := llamaBinarySiblingPath(exePath, runtime.GOOS); sibling != "" {
+		if _, err := os.Stat(sibling); err == nil {
+			return sibling
+		}
+	}
+
 	// Search common names in PATH
 	names := []string{"llama-server", "llama.cpp-server", "llamacpp-server"}
 	for _, name := range names {
@@ -120,13 +131,23 @@ func findLlamaBinary() string {
 	}
 	// Check common install locations
 	home, _ := os.UserHomeDir()
-	exePath, _ := os.Executable()
 	for _, loc := range llamaBinaryCandidatePaths(home, exePath, runtime.GOOS) {
 		if _, err := os.Stat(loc); err == nil {
 			return loc
 		}
 	}
 	return ""
+}
+
+func llamaBinarySiblingPath(exePath, goos string) string {
+	if strings.TrimSpace(exePath) == "" {
+		return ""
+	}
+	name := "llama-server"
+	if goos == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(filepath.Dir(exePath), name)
 }
 
 func llamaBinaryCandidatePaths(home, exePath, goos string) []string {
