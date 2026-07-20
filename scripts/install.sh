@@ -799,12 +799,17 @@ install_llama_server() {
     # @rpath against those compatibility names, not just the versioned payload files.
     if [ -w "$_llama_dir" ]; then
         find "$_tmpdir" \( -type f -o -type l \) \( -name "*.dylib" -o -name "*.so" -o -name "*.so.*" \) | while read -r _lib; do
+            # mv may follow an existing destination symlink instead of replacing
+            # it, leaving compatibility links pinned to the previous release.
+            # Remove only the exact incoming basename before installing it.
+            rm -f "${_llama_dir}/$(basename "$_lib")"
             mv "$_lib" "$_llama_dir/"
         done
         mv "$_llama_bin" "$_llama_dir/"
     else
         info "Requires root privileges to install llama-server."
         find "$_tmpdir" \( -type f -o -type l \) \( -name "*.dylib" -o -name "*.so" -o -name "*.so.*" \) | while read -r _lib; do
+            run_privileged rm -f "${_llama_dir}/$(basename "$_lib")"
             run_privileged mv "$_lib" "$_llama_dir/"
         done
         run_privileged mv "$_llama_bin" "$_llama_dir/"
