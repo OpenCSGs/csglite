@@ -215,6 +215,11 @@ type RunningModel struct {
 	Format    string    `json:"format"`
 	Status    string    `json:"status,omitempty"`
 	ExpiresAt time.Time `json:"expires_at"`
+	// Step describes the current load/conversion step for models whose
+	// status is "loading" (e.g. "Installing CPU PyTorch for model conversion").
+	Step        string `json:"step,omitempty"`
+	StepCurrent int    `json:"step_current,omitempty"`
+	StepTotal   int    `json:"step_total,omitempty"`
 }
 
 // -- Shared types --
@@ -402,6 +407,7 @@ type SettingsResponse struct {
 	DefaultAIGatewayURL      string            `json:"default_ai_gateway_url"`
 	Autostart                bool              `json:"autostart"`
 	WebSearch                WebSearchSettings `json:"web_search"`
+	HiddenNavItems           []string          `json:"hidden_nav_items"`
 }
 
 type SettingsUpdateRequest struct {

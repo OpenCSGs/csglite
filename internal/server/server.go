@@ -50,6 +50,37 @@ type managedEngine struct {
 	keepAlive   time.Duration
 }
 
+// loadStepState records the latest load/conversion progress step for a model
+// so that /api/ps can report what a "loading" model is actually doing
+// (e.g. installing PyTorch, converting to GGUF) instead of a generic status.
+type loadStepState struct {
+	step    string
+	current int
+	total   int
+}
+
+func (s *Server) setLoadStep(modelID, step string, current, total int) {
+	if modelID == "" || step == "" {
+		return
+	}
+	s.loadStepMu.Lock()
+	s.loadSteps[modelID] = loadStepState{step: step, current: current, total: total}
+	s.loadStepMu.Unlock()
+}
+
+func (s *Server) clearLoadStep(modelID string) {
+	s.loadStepMu.Lock()
+	delete(s.loadSteps, modelID)
+	s.loadStepMu.Unlock()
+}
+
+func (s *Server) loadStepFor(modelID string) (loadStepState, bool) {
+	s.loadStepMu.Lock()
+	state, ok := s.loadSteps[modelID]
+	s.loadStepMu.Unlock()
+	return state, ok
+}
+
 type engineLoadState struct {
 	done   chan struct{}
 	engine inference.Engine
@@ -132,6 +163,8 @@ type Server struct {
 	asrLoading   map[string]*asrEngineLoadState
 	imageJobs    *imageGenerationJobStore
 	pullJobs     *pullJobStore
+	loadStepMu   sync.Mutex
+	loadSteps    map[string]loadStepState
 	prefsMu      sync.Mutex
 	openclawMu   sync.Mutex
 	csgclawMu    sync.Mutex
@@ -177,6 +210,7 @@ func New(cfg *config.Config, version string) *Server {
 		asrLoading:     make(map[string]*asrEngineLoadState),
 		imageJobs:      newImageGenerationJobStore(cfg.StorageDir()),
 		pullJobs:       newPullJobStore(),
+		loadSteps:      make(map[string]loadStepState),
 		logBuf:         logBuf,
 	}
 	s.appShells = newAIAppShellManager()

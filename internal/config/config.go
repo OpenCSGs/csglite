@@ -19,6 +19,7 @@ const (
 	EnvAIGatewayURL          = "CSGHUB_LITE_AI_GATEWAY_URL"
 	EnvCloudProviderName     = "CSGHUB_LITE_CLOUD_PROVIDER_NAME"
 	EnvOpenAIStreamDefault   = "CSGHUB_LITE_OPENAI_STREAM_DEFAULT"
+	EnvHiddenNavItems        = "CSGHUB_LITE_HIDDEN_NAV_ITEMS"
 	AppDir                   = ".csghub-lite"
 	ConfigFile               = "config.json"
 	ModelsDir                = "models"
@@ -51,6 +52,7 @@ type Config struct {
 	ModelDir             string                             `json:"model_dir"`
 	DatasetDir           string                             `json:"dataset_dir"`
 	OpenAIStreamDefault  bool                               `json:"-"`
+	HiddenNavItems       []string                           `json:"-"`
 	AIAppPreferredModels map[string]string                  `json:"ai_app_preferred_models,omitempty"`
 	AIAppModelBindings   map[string][]api.AIAppModelBinding `json:"ai_app_model_bindings,omitempty"`
 	WebSearch            WebSearchConfig                    `json:"web_search,omitempty"`
@@ -230,6 +232,24 @@ func ApplyEnvironmentDefaults(cfg *Config) {
 		cfg.CloudProviderName = NormalizeCloudProviderName(value)
 	}
 	cfg.OpenAIStreamDefault = environmentBool(EnvOpenAIStreamDefault, cfg.OpenAIStreamDefault)
+	cfg.HiddenNavItems = parseHiddenNavItems(os.Getenv(EnvHiddenNavItems))
+}
+
+func parseHiddenNavItems(value string) []string {
+	items := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, raw := range strings.Split(value, ",") {
+		item := strings.ToLower(strings.TrimSpace(raw))
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		items = append(items, item)
+	}
+	return items
 }
 
 func environmentBool(name string, fallback bool) bool {

@@ -4,6 +4,7 @@ import { getPs, getTags, getSystemInfo, stopModel, streamLogs } from "../api/cli
 import type { RunningModel, ModelInfo, SystemInfo } from "../api/client";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { t, locale } from "../i18n";
+import { formatLoadStep } from "../utils/loadSteps";
 
 const runningModels = signal<RunningModel[]>([]);
 const allModels = signal<ModelInfo[]>([]);
@@ -145,6 +146,14 @@ export function Dashboard() {
                   <td class="py-3">
                     <div class="font-medium text-gray-900">{m.name}</div>
                     <div class="text-xs text-gray-400">{t("dash.format")}: {m.format}</div>
+                    {m.status === "loading" && (
+                      <div class="mt-0.5 flex items-center gap-1.5 text-xs text-indigo-600">
+                        <span class="inline-block h-2.5 w-2.5 shrink-0 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin" />
+                        <span class="truncate" title={m.step || ""}>
+                          {m.step ? formatLoadStep(m.step, m.step_current, m.step_total) : t("lib.loadingModel")}
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td class="py-3 text-gray-600">{new Date(m.expires_at).toLocaleTimeString()}</td>
                   <td class="py-3 text-right space-x-2">

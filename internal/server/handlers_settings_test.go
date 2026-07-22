@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/opencsgs/csglite/internal/cloud"
@@ -16,6 +17,7 @@ import (
 
 func TestHandleSettingsReturnsStorageDir(t *testing.T) {
 	s := newTestServer(t)
+	s.cfg.HiddenNavItems = []string{"datasets", "ai-apps"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
 	w := httptest.NewRecorder()
@@ -49,6 +51,9 @@ func TestHandleSettingsReturnsStorageDir(t *testing.T) {
 	}
 	if resp.CloudProviderName != config.DefaultCloudProviderName || resp.DefaultCloudProviderName != config.DefaultCloudProviderName {
 		t.Fatalf("cloud provider names = %q/%q, want default %q", resp.CloudProviderName, resp.DefaultCloudProviderName, config.DefaultCloudProviderName)
+	}
+	if got, want := strings.Join(resp.HiddenNavItems, ","), "datasets,ai-apps"; got != want {
+		t.Fatalf("hidden_nav_items = %q, want %q", got, want)
 	}
 }
 

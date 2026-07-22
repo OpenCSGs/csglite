@@ -53,6 +53,10 @@ export interface RunningModel {
   format: string;
   status?: "running" | "loading" | string;
   expires_at: string;
+  /** Current load/conversion step for models in the loading state. */
+  step?: string;
+  step_current?: number;
+  step_total?: number;
 }
 
 export interface ModelFileEntry {
@@ -200,6 +204,7 @@ export interface AppSettings {
   default_cloud_provider_name: string;
   autostart: boolean;
   web_search: WebSearchSettings;
+  hidden_nav_items: string[];
 }
 
 export interface WebSearchSettings {

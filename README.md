@@ -295,6 +295,19 @@ The CLI and Web UI expose a convenience `storage_dir` setting. When you set it, 
 | `listen_addr` | `:11435` | API server listen address |
 | `token` | (none) | CSGHub access token |
 
+To hide one or more left navigation items in the Web UI, set the
+`CSGHUB_LITE_HIDDEN_NAV_ITEMS` environment variable to a comma-separated list
+and restart the server:
+
+```bash
+CSGHUB_LITE_HIDDEN_NAV_ITEMS=marketplace,datasets,ai-apps,pricing,help csghub-lite serve
+```
+
+Supported item IDs are `dashboard`, `marketplace`, `library`, `datasets`,
+`chat`, `images`, `ai-apps`, `ai-gateway`, `settings`, `pricing`, and `help`.
+This only hides navigation entries; the corresponding page URLs remain
+accessible.
+
 Switch to a private CSGHub deployment:
 
 ```bash

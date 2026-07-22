@@ -120,6 +120,53 @@ func TestFilterGGUFMultiQuantDownload_explicitMultipleQuants(t *testing.T) {
 	}
 }
 
+// Issue #75: dot-separated quant tokens (Model.Q5_K_M.gguf) must be recognized
+// so a selected quant downloads only its files instead of the whole repo.
+func TestFilterGGUFMultiQuantDownload_dotSeparatedQuantNames(t *testing.T) {
+	files := []RepoFile{
+		{Type: "file", Path: "README.md", Name: "README.md"},
+		{Type: "file", Path: "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf", Name: "Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf", LFS: true},
+		{Type: "file", Path: "Qwen.Qwen3-VL-Embedding-2B.Q4_K_M.gguf", Name: "Qwen.Qwen3-VL-Embedding-2B.Q4_K_M.gguf", LFS: true},
+		{Type: "file", Path: "Qwen.Qwen3-VL-Embedding-2B.f16.gguf", Name: "Qwen.Qwen3-VL-Embedding-2B.f16.gguf", LFS: true},
+		{Type: "file", Path: "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf", Name: "mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf", LFS: true},
+	}
+
+	got, err := filterGGUFMultiQuantDownload(files, []string{"Q5_K_M"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, f := range got {
+		paths = append(paths, f.Path)
+	}
+	want := []string{
+		"README.md",
+		"Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf",
+		"mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf",
+	}
+	if !reflect.DeepEqual(paths, want) {
+		t.Errorf("explicit quant: got %v, want %v", paths, want)
+	}
+
+	// Without an explicit quant, only the highest-precision variant is kept.
+	got, err = filterGGUFMultiQuantDownload(files, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths = nil
+	for _, f := range got {
+		paths = append(paths, f.Path)
+	}
+	want = []string{
+		"README.md",
+		"Qwen.Qwen3-VL-Embedding-2B.f16.gguf",
+		"mmproj-Qwen.Qwen3-VL-Embedding-2B.f16.gguf",
+	}
+	if !reflect.DeepEqual(paths, want) {
+		t.Errorf("default quant: got %v, want %v", paths, want)
+	}
+}
+
 func TestFilterTransformersWeightDownloadPrefersSafeTensors(t *testing.T) {
 	files := []RepoFile{
 		{Type: "file", Path: "config.json", Name: "config.json"},

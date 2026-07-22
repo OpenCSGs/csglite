@@ -4749,7 +4749,8 @@
           "default_ai_gateway_url",
           "default_cloud_provider_name",
           "autostart",
-          "web_search"
+          "web_search",
+          "hidden_nav_items"
         ],
         "properties": {
           "version": {
@@ -4788,6 +4789,13 @@
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"
+          },
+          "hidden_nav_items": {
+            "type": "array",
+            "description": "Stable IDs of left navigation items hidden by the runtime environment configuration.",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -6194,6 +6202,16 @@
           "expires_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "step": {
+            "type": "string",
+            "description": "Current load/conversion step for models in the loading state (e.g. installing PyTorch, converting to GGUF)."
+          },
+          "step_current": {
+            "type": "integer"
+          },
+          "step_total": {
+            "type": "integer"
           }
         }
       },

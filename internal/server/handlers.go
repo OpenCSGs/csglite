@@ -252,13 +252,19 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		models = append(models, api.RunningModel{
+		rm := api.RunningModel{
 			Name:   s.localInferenceModelID(lm.FullName()),
 			Model:  s.localInferenceModelID(lm.FullName()),
 			Size:   lm.Size,
 			Format: string(lm.Format),
 			Status: "loading",
-		})
+		}
+		if step, ok := s.loadStepFor(modelID); ok {
+			rm.Step = step.step
+			rm.StepCurrent = step.current
+			rm.StepTotal = step.total
+		}
+		models = append(models, rm)
 	}
 	for id, me := range s.imageEngines {
 		lm, err := s.manager.Get(id)
@@ -282,13 +288,19 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		models = append(models, api.RunningModel{
+		rm := api.RunningModel{
 			Name:   s.localInferenceModelID(lm.FullName()),
 			Model:  s.localInferenceModelID(lm.FullName()),
 			Size:   lm.Size,
 			Format: string(lm.Format),
 			Status: "loading",
-		})
+		}
+		if step, ok := s.loadStepFor(id); ok {
+			rm.Step = step.step
+			rm.StepCurrent = step.current
+			rm.StepTotal = step.total
+		}
+		models = append(models, rm)
 	}
 	for id, me := range s.asrEngines {
 		lm, err := s.manager.Get(id)
@@ -316,13 +328,19 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		models = append(models, api.RunningModel{
+		rm := api.RunningModel{
 			Name:   s.localInferenceModelID(lm.FullName()),
 			Model:  s.localInferenceModelID(lm.FullName()),
 			Size:   lm.Size,
 			Format: string(lm.Format),
 			Status: "loading",
-		})
+		}
+		if step, ok := s.loadStepFor(id); ok {
+			rm.Step = step.step
+			rm.StepCurrent = step.current
+			rm.StepTotal = step.total
+		}
+		models = append(models, rm)
 	}
 
 	writeJSON(w, http.StatusOK, api.PsResponse{Models: models})
@@ -574,8 +592,12 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	safeSSE(api.LoadResponse{Status: "loading " + req.Model})
 	log.Printf("MODEL %s: load requested stream=true num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q", req.Model, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
 
+	stepModelID := s.resolveLocalModelStorageID(req.Model)
+	defer s.clearLoadStep(stepModelID)
+
 	lastLoadProgressLog := time.Time{}
 	progress := func(step string, current, total int) {
+		s.setLoadStep(stepModelID, step, current, total)
 		safeSSE(api.LoadResponse{
 			Status:  "converting",
 			Step:    step,
@@ -590,6 +612,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 
 	if imageGenerationModel {
 		imageProgress := func(step string, current, total int) {
+			s.setLoadStep(stepModelID, step, current, total)
 			safeSSE(api.LoadResponse{
 				Status:  "installing image runtime",
 				Step:    step,
@@ -604,6 +627,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		_, err = s.getOrLoadImageEngineWithProgress(context.Background(), req.Model, imageProgress, false)
 	} else if asrModel {
 		asrProgress := func(step string, current, total int) {
+			s.setLoadStep(stepModelID, step, current, total)
 			safeSSE(api.LoadResponse{
 				Status:  "installing asr runtime",
 				Step:    step,

@@ -168,6 +168,10 @@ func normalizeGGUFStem(basename string) string {
 	stem := basename[:len(basename)-len(".gguf")]
 	stem = strings.ToLower(stem)
 	stem = shardSuffixRe.ReplaceAllString(stem, "")
+	// Some repos separate the quant token with dots instead of hyphens
+	// (e.g. Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf); normalize so the
+	// hyphen-based tokenizer below can find the quant label.
+	stem = strings.ReplaceAll(stem, ".", "-")
 	return stem
 }
 

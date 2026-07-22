@@ -17,6 +17,9 @@ func TestQuantRank(t *testing.T) {
 		{"weights-f16.gguf", quantRanks["f16"]},
 		{"x-bf16.gguf", quantRanks["bf16"]},
 		{"x-f32.gguf", quantRanks["f32"]},
+		// Dot-separated quant tokens (issue #75).
+		{"Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf", quantRanks["q5_k_m"]},
+		{"Qwen.Qwen3-VL-Embedding-2B.f16.gguf", quantRanks["f16"]},
 		{"unknown.gguf", -1},
 	}
 	for _, tt := range tests {
@@ -94,6 +97,9 @@ func TestQuantRankFromRepoPath(t *testing.T) {
 func TestQuantLabel(t *testing.T) {
 	if g := QuantLabel("Qwen3-0.6B-Q8_0.gguf"); g != "Q8_0" {
 		t.Fatalf("QuantLabel = %q, want Q8_0", g)
+	}
+	if g := QuantLabel("Qwen.Qwen3-VL-Embedding-2B.Q5_K_M.gguf"); g != "Q5_K_M" {
+		t.Fatalf("QuantLabel(dot separated) = %q, want Q5_K_M", g)
 	}
 	if g := QuantLabel("model.gguf"); g != "" {
 		t.Fatalf("QuantLabel = %q, want empty", g)

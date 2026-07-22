@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,7 @@ func clearCloudServiceEnv(t *testing.T) {
 	t.Setenv(EnvAIGatewayURL, "")
 	t.Setenv(EnvCloudProviderName, "")
 	t.Setenv(EnvOpenAIStreamDefault, "")
+	t.Setenv(EnvHiddenNavItems, "")
 }
 
 func TestDefaultValues(t *testing.T) {
@@ -80,6 +82,28 @@ func TestLoadAppliesOpenAIStreamDefaultEnvironmentOverride(t *testing.T) {
 	}
 	if !cfg.OpenAIStreamDefault {
 		t.Fatal("OpenAIStreamDefault = false, want environment override")
+	}
+}
+
+func TestLoadAppliesHiddenNavItemsEnvironmentOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv(EnvHiddenNavItems, " Marketplace, datasets,AI-APPS,marketplace ,, ")
+	Reset()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got, want := strings.Join(cfg.HiddenNavItems, ","), "marketplace,datasets,ai-apps"; got != want {
+		t.Fatalf("HiddenNavItems = %q, want %q", got, want)
+	}
+}
+
+func TestParseHiddenNavItemsEmptyValue(t *testing.T) {
+	if got := parseHiddenNavItems(" , "); len(got) != 0 {
+		t.Fatalf("parseHiddenNavItems() = %#v, want empty", got)
 	}
 }
 

@@ -105,6 +105,30 @@ csghub-lite config set model_dir /data/models
 csghub-lite config set dataset_dir /data/datasets
 ```
 
+## 隐藏左侧导航节点
+
+部署方可以通过运行时环境变量 `CSGHUB_LITE_HIDDEN_NAV_ITEMS` 隐藏一个或多个左侧导航节点。多个节点 ID 使用英文逗号分隔，修改后需重启服务：
+
+```bash
+CSGHUB_LITE_HIDDEN_NAV_ITEMS=marketplace,datasets,ai-apps csghub-lite serve
+```
+
+支持的节点 ID：
+
+- `dashboard`
+- `marketplace`
+- `library`
+- `datasets`
+- `chat`
+- `images`
+- `ai-apps`
+- `ai-gateway`
+- `settings`
+- `pricing`
+- `help`
+
+节点 ID 不区分大小写，前后空白及重复项会被忽略。未设置或设置为空时显示全部节点，未知 ID 不会影响启动。此变量只隐藏导航入口，不禁用页面路由，用户仍可直接访问对应 URL。
+
 ## 管理命令
 
 ```bash

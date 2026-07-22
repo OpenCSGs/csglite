@@ -1,16 +1,18 @@
 import { ComponentChildren } from "preact";
 import { useLocation } from "preact-iso";
+import { useEffect, useState } from "preact/hooks";
+import { getSettings } from "../api/client";
 import { t, locale } from "../i18n";
 
 const navKeys = [
-  { path: "/", key: "nav.dashboard", icon: DashboardIcon },
-  { path: "/marketplace", key: "nav.marketplace", icon: MarketplaceIcon },
-  { path: "/library", key: "nav.library", icon: LibraryIcon },
-  { path: "/datasets", key: "nav.datasets", icon: DatasetsIcon },
-  { path: "/chat", key: "nav.chat", icon: ChatIcon },
-  { path: "/images", key: "nav.images", icon: ImagesIcon },
-  { path: "/ai-apps", key: "nav.aiApps", icon: AIAppsIcon },
-  { path: "/ai-gateway", key: "nav.aiGateway", icon: AIGatewayIcon },
+  { id: "dashboard", path: "/", key: "nav.dashboard", icon: DashboardIcon },
+  { id: "marketplace", path: "/marketplace", key: "nav.marketplace", icon: MarketplaceIcon },
+  { id: "library", path: "/library", key: "nav.library", icon: LibraryIcon },
+  { id: "datasets", path: "/datasets", key: "nav.datasets", icon: DatasetsIcon },
+  { id: "chat", path: "/chat", key: "nav.chat", icon: ChatIcon },
+  { id: "images", path: "/images", key: "nav.images", icon: ImagesIcon },
+  { id: "ai-apps", path: "/ai-apps", key: "nav.aiApps", icon: AIAppsIcon },
+  { id: "ai-gateway", path: "/ai-gateway", key: "nav.aiGateway", icon: AIGatewayIcon },
 ];
 
 function SettingsIcon({ active }: { active: boolean }) {
@@ -40,7 +42,24 @@ function PricingIcon({ active }: { active: boolean }) {
 
 export function Layout({ children }: { children: ComponentChildren }) {
   const { path, route } = useLocation();
+  const [hiddenNavItems, setHiddenNavItems] = useState<Set<string> | null>(null);
   void locale.value;
+
+  useEffect(() => {
+    let active = true;
+    getSettings()
+      .then((settings) => {
+        if (active) setHiddenNavItems(new Set(settings.hidden_nav_items ?? []));
+      })
+      .catch(() => {
+        if (active) setHiddenNavItems(new Set());
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const showNavItem = (id: string) => hiddenNavItems !== null && !hiddenNavItems.has(id);
 
   return (
     <div class="flex h-screen overflow-hidden">
@@ -50,7 +69,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
           <span class="font-semibold text-base text-gray-900">CSGLite</span>
         </div>
         <nav class="flex-1 px-3 space-y-1 mt-2">
-          {navKeys.map((item) => {
+          {navKeys.filter((item) => showNavItem(item.id)).map((item) => {
             const active = path === item.path || (item.path !== "/" && path.startsWith(item.path));
             return (
               <a
@@ -72,7 +91,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
             );
           })}
         </nav>
-        {(() => {
+        {showNavItem("settings") && (() => {
           const active = path === "/settings";
           return (
             <a
@@ -92,7 +111,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
             </a>
           );
         })()}
-        {(() => {
+        {showNavItem("pricing") && (() => {
           const active = path === "/pricing";
           return (
             <a
@@ -112,15 +131,17 @@ export function Layout({ children }: { children: ComponentChildren }) {
             </a>
           );
         })()}
-        <a
-          href="https://opencsg.com/docs/csghub/101/function/csghub-lite/intro"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="flex items-center gap-3 mx-3 mb-4 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-        >
-          <HelpIcon />
-          {t("nav.help")}
-        </a>
+        {showNavItem("help") && (
+          <a
+            href="https://opencsg.com/docs/csghub/101/function/csghub-lite/intro"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="flex items-center gap-3 mx-3 mb-4 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+          >
+            <HelpIcon />
+            {t("nav.help")}
+          </a>
+        )}
       </aside>
       <main class="flex min-h-0 flex-1 flex-col overflow-hidden bg-gray-50">
         <div class="min-h-0 flex-1 overflow-auto">{children}</div>

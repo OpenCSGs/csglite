@@ -8,6 +8,7 @@ import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../components/Pagination";
 import type { PageSize } from "../components/Pagination";
 import { isImageGenerationModel } from "../utils/imageModels";
+import { formatLoadStep } from "../utils/loadSteps";
 import { getDownloadTask, getDownloadTasks, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 
@@ -80,7 +81,8 @@ const currentPage = signal(1);
 const pageSize = signal<PageSize>(DEFAULT_PAGE_SIZE);
 const modelsLoading = signal(false);
 const loadingRun = signal<string>("");
-const loadProgress = signal<string>("");
+type LoadStepProgress = { step?: string; status?: string; current?: number; total?: number };
+const loadProgress = signal<LoadStepProgress | null>(null);
 const libraryError = signal<string>("");
 const runDialogModel = signal<ModelInfo | null>(null);
 const apiDialogModel = signal<ModelInfo | null>(null);
@@ -250,7 +252,9 @@ function ggufQuantLabelFromPath(path: string): string {
 function ggufQuantLabelFromFilename(filename: string): string {
   const lower = filename.toLowerCase();
   if (!lower.endsWith(".gguf")) return "";
-  const stem = lower.slice(0, -".gguf".length).replace(/-\d+-of-\d+$/, "");
+  // Normalize dot separators (e.g. Model.Q5_K_M.gguf) so the hyphen-based
+  // tokenizer below can find the quant label (issue #75).
+  const stem = lower.slice(0, -".gguf".length).replace(/-\d+-of-\d+$/, "").replace(/\./g, "-");
   const tokens = stem.split("-");
   for (let n = 3; n >= 1; n--) {
     if (tokens.length < n) continue;
@@ -263,15 +267,23 @@ function ggufQuantLabelFromFilename(filename: string): string {
 }
 
 function loadingLabelForModel(model: ModelInfo): string {
-	if (loadProgress.value) return loadProgress.value;
-	if (isImageGenerationModel(model)) return t("lib.loadingImageRuntime");
-	if (isASRModel(model)) return t("lib.loadingASRRuntime");
-	if (model.format !== "gguf") return t("lib.converting");
-	return t("lib.loadingModel");
-}
-
-function compactLoadingLabel(label: string): string {
-  return label.trim().split(/\s+/).slice(0, 2).join(" ") || label;
+  // Live SSE progress for the model launched from this page (issue #73:
+  // surface the actual conversion step instead of a generic "Converting...").
+  if (loadingRun.value === model.name && loadProgress.value) {
+    const p = loadProgress.value;
+    const label = p.step ? formatLoadStep(p.step, p.current, p.total) : p.status || "";
+    if (label) return label;
+  }
+  // Load started elsewhere (or page reloaded): use the step reported by /api/ps.
+  const running = runningModels.value.find((m) => m.name === model.name);
+  if (running?.step) {
+    const label = formatLoadStep(running.step, running.step_current, running.step_total);
+    if (label) return label;
+  }
+  if (isImageGenerationModel(model)) return t("lib.loadingImageRuntime");
+  if (isASRModel(model)) return t("lib.loadingASRRuntime");
+  if (model.format !== "gguf") return t("lib.converting");
+  return t("lib.loadingModel");
 }
 
 // Sort the combined rows (local models plus download-only task rows) so that
@@ -498,6 +510,14 @@ export function Library() {
 
   useEffect(() => {
     loadRunningModels();
+    // Poll /api/ps while a model is loading so the current conversion step
+    // stays visible even after a page reload (issue #73).
+    const interval = window.setInterval(() => {
+      if (loadingRun.value || runningModels.value.some((m) => m.status === "loading")) {
+        loadRunningModels();
+      }
+    }, 3000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -531,17 +551,12 @@ export function Library() {
 
   const handleRun = async (name: string, options: LoadModelOptions) => {
     loadingRun.value = name;
-    loadProgress.value = "";
+    loadProgress.value = null;
     libraryError.value = "";
     try {
       await loadModel(name, (p) => {
-        if (p.step && p.total && p.total > 0 && p.current) {
-          const pct = Math.round((p.current / p.total) * 100);
-          loadProgress.value = `${p.step} (${p.current}/${p.total}) ${pct}%`;
-        } else if (p.step) {
-          loadProgress.value = p.step;
-        } else if (p.status) {
-          loadProgress.value = p.status;
+        if (p.step || p.status) {
+          loadProgress.value = { step: p.step, status: p.status, current: p.current, total: p.total };
         }
       }, options);
       await loadModels();
@@ -550,7 +565,7 @@ export function Library() {
       libraryError.value = e?.message || t("lib.failedLoad");
     }
     loadingRun.value = "";
-    loadProgress.value = "";
+    loadProgress.value = null;
   };
 
   const openUploadDialog = () => {
@@ -613,6 +628,10 @@ export function Library() {
         runDialogGGUFQuants.value = quants;
         if (quants.length > 0 && (!runParams.value.dtype || !quants.includes(runParams.value.dtype.toUpperCase()))) {
           runParams.value = { ...runParams.value, dtype: quants[0] };
+        } else if (quants.length === 0 && runParams.value.dtype) {
+          // No labeled quants locally: fall back to default (highest precision)
+          // instead of carrying over a dtype saved from another model.
+          runParams.value = { ...runParams.value, dtype: "" };
         }
       }).catch(() => {
         /* Keep default highest-precision behavior if manifest loading fails. */
@@ -851,16 +870,16 @@ export function Library() {
                           </span>
                         </>
                       ) : runningStatus(m.name) === "loading" ? (
-                        <div class="flex min-w-0 max-w-[8rem] items-center gap-2">
+                        <div class="flex min-w-0 max-w-[18rem] items-center gap-2">
                           <span class="block min-w-0 truncate text-xs text-gray-500" title={loadingLabelForModel(m)}>
-                            {compactLoadingLabel(loadingLabelForModel(m))}
+                            {loadingLabelForModel(m)}
                           </span>
                           <span class="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin" />
                         </div>
                       ) : loadingRun.value === m.name ? (
-                        <div class="flex min-w-0 max-w-[8rem] items-center gap-2">
+                        <div class="flex min-w-0 max-w-[18rem] items-center gap-2">
                           <span class="block min-w-0 truncate text-xs text-gray-500" title={loadingLabelForModel(m)}>
-                            {compactLoadingLabel(loadingLabelForModel(m))}
+                            {loadingLabelForModel(m)}
                           </span>
                           <span class="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin" />
                         </div>
@@ -1123,7 +1142,9 @@ function RunParamsDialog({
   const asrModel = isASRModel(model);
   const runtimeManagedModel = imageGenerationModel || asrModel;
   const ggufModel = model.format === "gguf";
-  const dtypeOptions = ggufModel && ggufQuants.length > 0 ? ggufQuants : DTYPE_OPTIONS;
+  // GGUF models list only the quantizations actually downloaded locally
+  // (issue #75); SafeTensors models keep the converter dtype options.
+  const dtypeOptions = ggufModel ? ggufQuants : DTYPE_OPTIONS;
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
