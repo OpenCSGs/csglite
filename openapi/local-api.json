@@ -1988,6 +1988,53 @@
         }
       }
     },
+    "/api/system/open-external": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Open an HTTPS URL in the system browser",
+        "operationId": "openExternalURL",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "pattern": "^https://"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "The URL was opened in the system browser."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "description": "The operating system failed to open the URL."
+          },
+          "501": {
+            "description": "External URL handling is unsupported on this platform."
+          }
+        }
+      }
+    },
     "/api/settings": {
       "get": {
         "tags": [
