@@ -56,6 +56,19 @@ type Config struct {
 	AIAppPreferredModels map[string]string                  `json:"ai_app_preferred_models,omitempty"`
 	AIAppModelBindings   map[string][]api.AIAppModelBinding `json:"ai_app_model_bindings,omitempty"`
 	WebSearch            WebSearchConfig                    `json:"web_search,omitempty"`
+	DesktopMode          bool                               `json:"-"`
+	DesktopToken         string                             `json:"-"`
+	DesktopSessionToken  string                             `json:"-"`
+	DesktopControlToken  string                             `json:"-"`
+	DesktopInstanceID    string                             `json:"-"`
+	BoundAddr            string                             `json:"-"`
+}
+
+func (c *Config) RuntimeListenAddr() string {
+	if strings.TrimSpace(c.BoundAddr) != "" {
+		return c.BoundAddr
+	}
+	return c.ListenAddr
 }
 
 type WebSearchConfig struct {

@@ -1,8 +1,20 @@
 import { ComponentChildren } from "preact";
 import { useLocation } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
-import { getSettings } from "../api/client";
+import { getSettings, openExternalURL } from "../api/client";
 import { t, locale } from "../i18n";
+
+const helpURL = "https://opencsg.com/docs/csghub/101/function/csghub-lite/intro";
+
+async function openHelp(event: MouseEvent) {
+  event.preventDefault();
+  try {
+    if (await openExternalURL(helpURL)) return;
+  } catch (error) {
+    console.error("failed to open help in the system browser", error);
+  }
+  window.open(helpURL, "_blank", "noopener,noreferrer");
+}
 
 const navKeys = [
   { id: "dashboard", path: "/", key: "nav.dashboard", icon: DashboardIcon },
@@ -133,9 +145,10 @@ export function Layout({ children }: { children: ComponentChildren }) {
         })()}
         {showNavItem("help") && (
           <a
-            href="https://opencsg.com/docs/csghub/101/function/csghub-lite/intro"
+            href={helpURL}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={openHelp}
             class="flex items-center gap-3 mx-3 mb-4 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:bg-gray-50 hover:text-gray-900"
           >
             <HelpIcon />

@@ -232,6 +232,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		DefaultServerURL:         config.DefaultServerURL,
 		DefaultAIGatewayURL:      cloud.DefaultBaseURL,
 		Autostart:                autostartEnabled,
+		DesktopMode:              cfg.DesktopMode,
 		WebSearch:                webSearchConfigToSettings(cfg.WebSearch),
 		HiddenNavItems:           append([]string{}, cfg.HiddenNavItems...),
 	}

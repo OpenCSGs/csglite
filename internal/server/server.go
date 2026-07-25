@@ -2,17 +2,20 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -31,6 +34,7 @@ import (
 
 const (
 	DefaultKeepAlive       = 5 * time.Minute
+	DesktopAPIProtocol     = "1"
 	evictorInterval        = 30 * time.Second
 	engineModeChat         = "chat"
 	engineModeEmbed        = "embedding"
@@ -173,9 +177,21 @@ type Server struct {
 	cloudRefreshAt   time.Time
 	cloudRefreshWait chan struct{}
 
-	conversations *chathistory.Store
-	apiKeys       *config.APIKeyStore
-	apiUsage      *config.APIUsageStore
+	conversations       *chathistory.Store
+	apiKeys             *config.APIKeyStore
+	apiUsage            *config.APIUsageStore
+	desktopBootstrapped atomic.Bool
+}
+
+type desktopReady struct {
+	Event        string `json:"event"`
+	URL          string `json:"url"`
+	BootstrapURL string `json:"bootstrap_url"`
+	ControlToken string `json:"control_token"`
+	Version      string `json:"version"`
+	APIProtocol  string `json:"api_protocol"`
+	InstanceID   string `json:"instance_id"`
+	PID          int    `json:"pid"`
 }
 
 func New(cfg *config.Config, version string) *Server {
@@ -243,26 +259,52 @@ func (s *Server) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Port conflict detection
-	if err := checkPort(s.cfg.ListenAddr); err != nil {
+	if s.cfg.DesktopMode {
+		if err := validateDesktopConfig(s.cfg); err != nil {
+			return err
+		}
+	}
+	listener, err := net.Listen("tcp", s.cfg.ListenAddr)
+	if err != nil {
 		return fmt.Errorf("port %s is already in use; try a different port with --listen :PORT\n  %w", s.cfg.ListenAddr, err)
 	}
+	defer listener.Close()
+	boundAddr := listener.Addr().String()
+	s.cfg.BoundAddr = boundAddr
 
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
 
 	errCh := make(chan error, 1)
+	if s.cfg.DesktopMode {
+		baseURL := "http://" + boundAddr
+		ready := desktopReady{
+			Event:        "ready",
+			URL:          baseURL,
+			BootstrapURL: baseURL + "/?desktop_token=" + url.QueryEscape(s.cfg.DesktopToken),
+			ControlToken: s.cfg.DesktopControlToken,
+			Version:      s.version,
+			APIProtocol:  DesktopAPIProtocol,
+			InstanceID:   s.cfg.DesktopInstanceID,
+			PID:          os.Getpid(),
+		}
+		payload, marshalErr := json.Marshal(ready)
+		if marshalErr != nil {
+			return fmt.Errorf("encoding desktop ready event: %w", marshalErr)
+		}
+		fmt.Printf("CSGLITE_DESKTOP_READY %s\n", payload)
+	}
 	go func() {
-		addr := s.cfg.ListenAddr
+		addr := boundAddr
 		if strings.HasPrefix(addr, ":") {
 			addr = "localhost" + addr
 		}
-		log.Printf("csghub-lite server listening on %s", s.cfg.ListenAddr)
+		log.Printf("csghub-lite server listening on %s", boundAddr)
 		log.Printf("  Web UI: %s", "http://"+addr+"/")
 		log.Printf("  Ollama API: %s", "http://"+addr+"/api/chat")
 		log.Printf("  OpenAI API: %s", "http://"+addr+"/v1/chat/completions")
 		log.Printf("  Anthropic API: %s", "http://"+addr+"/v1/messages")
-		if err := s.http.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := s.http.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 		close(errCh)
@@ -281,21 +323,33 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+func validateDesktopConfig(cfg *config.Config) error {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(cfg.ListenAddr))
+	if err != nil || !isDesktopLoopbackHost(host) {
+		return fmt.Errorf("desktop mode requires an explicit loopback listen address")
+	}
+	for name, value := range map[string]string{
+		"bootstrap token": cfg.DesktopToken,
+		"session token":   cfg.DesktopSessionToken,
+		"control token":   cfg.DesktopControlToken,
+	} {
+		decoded, err := hex.DecodeString(value)
+		if err != nil || len(decoded) != 32 {
+			return fmt.Errorf("desktop mode requires a random 32-byte %s", name)
+		}
+	}
+	instanceID, err := hex.DecodeString(cfg.DesktopInstanceID)
+	if err != nil || len(instanceID) != 16 {
+		return fmt.Errorf("desktop mode requires a random 16-byte instance ID")
+	}
+	return nil
+}
+
 func (s *Server) shutdownRuntime() {
 	if s.appShells != nil {
 		s.appShells.CloseAll()
 	}
 	s.closeAllEngines()
-}
-
-// checkPort attempts to listen on the address to detect conflicts early.
-func checkPort(addr string) error {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	ln.Close()
-	return nil
 }
 
 // startEvictor periodically closes engines that have exceeded their keep-alive.

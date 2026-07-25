@@ -84,6 +84,17 @@ type LoadResponse struct {
 
 // -- Response types --
 
+type HealthResponse struct {
+	Status       string   `json:"status"`
+	Version      string   `json:"version,omitempty"`
+	APIProtocol  string   `json:"api_protocol"`
+	PID          int      `json:"pid"`
+	InstanceID   string   `json:"instance_id,omitempty"`
+	DesktopMode  bool     `json:"desktop_mode"`
+	StorageDir   string   `json:"storage_dir,omitempty"`
+	Capabilities []string `json:"capabilities"`
+}
+
 type GenerateResponse struct {
 	Model     string    `json:"model"`
 	Response  string    `json:"response"`
@@ -406,6 +417,7 @@ type SettingsResponse struct {
 	DefaultServerURL         string            `json:"default_server_url"`
 	DefaultAIGatewayURL      string            `json:"default_ai_gateway_url"`
 	Autostart                bool              `json:"autostart"`
+	DesktopMode              bool              `json:"desktop_mode"`
 	WebSearch                WebSearchSettings `json:"web_search"`
 	HiddenNavItems           []string          `json:"hidden_nav_items"`
 }

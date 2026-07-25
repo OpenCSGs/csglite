@@ -14,6 +14,10 @@ import (
 
 // GET /api/upgrade/check - Check for updates
 func (s *Server) handleUpgradeCheck(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.DesktopMode {
+		writeJSON(w, http.StatusOK, api.UpgradeCheckResponse{CurrentVersion: s.version})
+		return
+	}
 	ctx := r.Context()
 	result, err := upgrade.NewUpdater(s.version).CheckForUpdate(ctx)
 	if err != nil {
@@ -34,6 +38,10 @@ func (s *Server) handleUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/upgrade - Perform upgrade with SSE progress
 func (s *Server) handleUpgrade(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.DesktopMode {
+		writeError(w, http.StatusConflict, "updates are managed by the desktop application")
+		return
+	}
 	ctx := r.Context()
 
 	// Set SSE headers

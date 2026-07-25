@@ -30,6 +30,7 @@ const storageLocation = signal("");
 const modelDirectory = signal("");
 const datasetDirectory = signal("");
 const appVersion = signal("");
+const desktopMode = signal(false);
 const autostartEnabled = signal(false);
 const isSavingAutostart = signal(false);
 const contextIndex = signal(1);
@@ -165,6 +166,7 @@ function applySettings(data: AppSettings) {
   defaultAiGatewayUrl.value = data.default_ai_gateway_url || "";
   defaultCloudProviderName.value = data.default_cloud_provider_name || "csghub";
   appVersion.value = data.version || "";
+  desktopMode.value = data.desktop_mode ?? false;
   upgradeProgress.value = {
     ...upgradeProgress.value,
     currentVersion: data.version || upgradeProgress.value.currentVersion,
@@ -1064,14 +1066,16 @@ export function Settings() {
                   : t("upgrade.upToDate")}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={openUpgradeDialog}
-              disabled={!upgradeProgress.value.hasUpdate}
-              class="px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:border-gray-200 disabled:text-gray-400 disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
-            >
-              {t("upgrade.upgrade")}
-            </button>
+            {!desktopMode.value && (
+              <button
+                type="button"
+                onClick={openUpgradeDialog}
+                disabled={!upgradeProgress.value.hasUpdate}
+                class="px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:border-gray-200 disabled:text-gray-400 disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
+              >
+                {t("upgrade.upgrade")}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1098,17 +1102,19 @@ export function Settings() {
         onBrowse={(path) => void browseStorageDir(path)}
         onSelect={selectStorageDir}
       />
-      <UpgradeDialog
-        open={upgradeDialogOpen.value}
-        progress={upgradeProgress.value}
-        onConfirm={doUpgrade}
-        onClose={() => {
-          upgradeDialogOpen.value = false;
-          if (upgradeProgress.value.status !== "upgrading") {
-            upgradeProgress.value = { ...upgradeProgress.value, status: "idle" };
-          }
-        }}
-      />
+      {!desktopMode.value && (
+        <UpgradeDialog
+          open={upgradeDialogOpen.value}
+          progress={upgradeProgress.value}
+          onConfirm={doUpgrade}
+          onClose={() => {
+            upgradeDialogOpen.value = false;
+            if (upgradeProgress.value.status !== "upgrading") {
+              upgradeProgress.value = { ...upgradeProgress.value, status: "idle" };
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

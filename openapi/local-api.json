@@ -82,7 +82,18 @@
                   "$ref": "#/components/schemas/HealthResponse"
                 },
                 "example": {
-                  "status": "ok"
+                  "status": "ok",
+                  "version": "0.9.30",
+                  "api_protocol": "1",
+                  "pid": 1234,
+                  "desktop_mode": false,
+                  "capabilities": [
+                    "rest",
+                    "sse",
+                    "websocket",
+                    "embedded-web-ui",
+                    "self-update"
+                  ]
                 }
               }
             }
@@ -4409,12 +4420,40 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "status"
+          "status",
+          "api_protocol",
+          "pid",
+          "desktop_mode",
+          "capabilities"
         ],
         "properties": {
           "status": {
             "type": "string",
             "example": "ok"
+          },
+          "version": {
+            "type": "string"
+          },
+          "api_protocol": {
+            "type": "string"
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "instance_id": {
+            "type": "string"
+          },
+          "desktop_mode": {
+            "type": "boolean"
+          },
+          "storage_dir": {
+            "type": "string"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -4749,6 +4788,7 @@
           "default_ai_gateway_url",
           "default_cloud_provider_name",
           "autostart",
+          "desktop_mode",
           "web_search",
           "hidden_nav_items"
         ],
@@ -4785,6 +4825,9 @@
             "type": "string"
           },
           "autostart": {
+            "type": "boolean"
+          },
+          "desktop_mode": {
             "type": "boolean"
           },
           "web_search": {

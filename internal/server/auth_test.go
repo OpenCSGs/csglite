@@ -102,6 +102,100 @@ func TestRemoteAPIAuthAcceptsBearerAndXAPIKey(t *testing.T) {
 	}
 }
 
+func TestDesktopAuthRequiresBootstrapSession(t *testing.T) {
+	s := newTestServer(t)
+	s.cfg.DesktopMode = true
+	s.cfg.DesktopToken = "desktop-secret"
+	s.cfg.DesktopSessionToken = "session-secret"
+	s.cfg.DesktopControlToken = "control-secret"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req.Host = "127.0.0.1:43123"
+	req.RemoteAddr = "127.0.0.1:5555"
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d body=%s, want 401", w.Code, w.Body.String())
+	}
+
+	bootstrap := httptest.NewRequest(http.MethodGet, "/?desktop_token=desktop-secret", nil)
+	bootstrap.Host = "127.0.0.1:43123"
+	bootstrap.RemoteAddr = "127.0.0.1:5555"
+	w = httptest.NewRecorder()
+	s.routes().ServeHTTP(w, bootstrap)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bootstrap status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `content="0;url=/"`) {
+		t.Fatalf("bootstrap response does not perform a same-origin handoff: %s", w.Body.String())
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != desktopSessionCookie || !cookies[0].HttpOnly {
+		t.Fatalf("unexpected bootstrap cookies: %#v", cookies)
+	}
+	if cookies[0].Value != "session-secret" || cookies[0].Value == s.cfg.DesktopToken {
+		t.Fatalf("bootstrap token was not exchanged for a distinct session")
+	}
+	if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatalf("bootstrap response may leak credentials: %#v", w.Header())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req.Host = "127.0.0.1:43123"
+	req.RemoteAddr = "127.0.0.1:5555"
+	req.AddCookie(cookies[0])
+	w = httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("authenticated status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+}
+
+func TestDesktopAuthRejectsNonLoopbackHostAndTokenReplay(t *testing.T) {
+	s := newTestServer(t)
+	s.cfg.DesktopMode = true
+	s.cfg.DesktopToken = "desktop-secret"
+	s.cfg.DesktopSessionToken = "session-secret"
+	s.cfg.DesktopControlToken = "control-secret"
+
+	remoteHost := httptest.NewRequest(http.MethodGet, "/?desktop_token=desktop-secret", nil)
+	remoteHost.Host = "example.com"
+	remoteHost.RemoteAddr = "127.0.0.1:5555"
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, remoteHost)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("non-loopback host status = %d, want 403", w.Code)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		req := httptest.NewRequest(http.MethodGet, "/?desktop_token=desktop-secret", nil)
+		req.Host = "localhost:43123"
+		req.RemoteAddr = "127.0.0.1:5555"
+		w = httptest.NewRecorder()
+		s.routes().ServeHTTP(w, req)
+		if attempt == 0 && w.Code != http.StatusOK {
+			t.Fatalf("first bootstrap status = %d, want 200", w.Code)
+		}
+		if attempt == 1 && w.Code != http.StatusUnauthorized {
+			t.Fatalf("replayed bootstrap status = %d, want 401", w.Code)
+		}
+	}
+
+	for token, want := range map[string]int{
+		"desktop-secret": http.StatusUnauthorized,
+		"control-secret": http.StatusOK,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+		req.Host = "localhost:43123"
+		req.Header.Set("X-CSGLite-Desktop-Token", token)
+		w = httptest.NewRecorder()
+		s.routes().ServeHTTP(w, req)
+		if w.Code != want {
+			t.Fatalf("header token %q status = %d, want %d", token, w.Code, want)
+		}
+	}
+}
+
 func TestAPIKeyCreateDoesNotExposeHash(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/api-keys", strings.NewReader(`{"name":"client"}`))

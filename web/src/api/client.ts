@@ -202,6 +202,7 @@ export interface AppSettings {
   default_server_url: string;
   default_ai_gateway_url: string;
   default_cloud_provider_name: string;
+  desktop_mode: boolean;
   autostart: boolean;
   web_search: WebSearchSettings;
   hidden_nav_items: string[];
@@ -885,6 +886,21 @@ export async function getCloudAuthStatus(): Promise<CloudAuthStatus> {
 
 export async function getSettings(): Promise<AppSettings> {
   return fetchJSON<AppSettings>("/api/settings");
+}
+
+export async function openExternalURL(url: string): Promise<boolean> {
+  const resp = await fetch("/api/system/open-external", withLocaleHeader({
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  }));
+  if (resp.status === 409) return false;
+  if (!resp.ok) {
+    const contentType = resp.headers.get("content-type") || "";
+    const body = await resp.text();
+    throw new Error(extractErrorMessage(body, contentType, resp.statusText || "failed to open external link"));
+  }
+  return true;
 }
 
 export async function getImageRuntimeStatus(): Promise<ImageRuntimeStatus> {

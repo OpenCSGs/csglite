@@ -238,7 +238,7 @@ func openClawProviderBaseURL(serverURL string) string {
 }
 
 func (s *Server) localBaseURL() string {
-	addr := strings.TrimSpace(s.cfg.ListenAddr)
+	addr := strings.TrimSpace(s.cfg.RuntimeListenAddr())
 	if addr == "" {
 		return "http://127.0.0.1" + config.DefaultListenAddr
 	}

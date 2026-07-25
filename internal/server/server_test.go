@@ -95,6 +95,32 @@ func newTestServer(t *testing.T) *Server {
 	return s
 }
 
+func TestValidateDesktopConfig(t *testing.T) {
+	valid := &config.Config{
+		DesktopMode:         true,
+		ListenAddr:          "127.0.0.1:0",
+		DesktopToken:        strings.Repeat("a", 64),
+		DesktopSessionToken: strings.Repeat("b", 64),
+		DesktopControlToken: strings.Repeat("c", 64),
+		DesktopInstanceID:   strings.Repeat("d", 32),
+	}
+	if err := validateDesktopConfig(valid); err != nil {
+		t.Fatalf("valid desktop config rejected: %v", err)
+	}
+
+	nonLoopback := *valid
+	nonLoopback.ListenAddr = "0.0.0.0:0"
+	if err := validateDesktopConfig(&nonLoopback); err == nil {
+		t.Fatal("non-loopback desktop listen address accepted")
+	}
+
+	weakToken := *valid
+	weakToken.DesktopSessionToken = "predictable"
+	if err := validateDesktopConfig(&weakToken); err == nil {
+		t.Fatal("weak desktop session token accepted")
+	}
+}
+
 func TestRunWithLocalInferenceSelfHealReloadsAndRetries(t *testing.T) {
 	s := newTestServer(t)
 	initial := &scriptedChatEngine{
@@ -273,12 +299,15 @@ func TestHandleHealth(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	var resp map[string]string
+	var resp api.HealthResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode error: %v", err)
 	}
-	if resp["status"] != "ok" {
-		t.Errorf("status = %q, want %q", resp["status"], "ok")
+	if resp.Status != "ok" {
+		t.Errorf("status = %q, want %q", resp.Status, "ok")
+	}
+	if resp.APIProtocol != DesktopAPIProtocol || resp.PID == 0 {
+		t.Errorf("incomplete health response: %#v", resp)
 	}
 }
 

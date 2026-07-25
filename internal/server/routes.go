@@ -69,6 +69,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/marketplace/models/{namespace}/{name}", s.handleMarketplaceModelDetail)
 	mux.HandleFunc("GET /api/marketplace/datasets", s.handleMarketplaceDatasets)
 	mux.HandleFunc("GET /api/system", s.handleSystem)
+	mux.HandleFunc("POST /api/system/open-external", s.handleDesktopOpenExternal)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/settings", s.handleSettingsUpdate)
 	mux.HandleFunc("POST /api/settings/directories", s.handleSettingsDirectories)
@@ -128,14 +129,22 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /", devStaticHandler("web/dist"))
 	}
 
-	return corsMiddleware(s.apiAuthMiddleware(LogMiddleware(mux)))
+	return s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(LogMiddleware(mux))))
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if s.cfg.DesktopMode {
+			if origin := r.Header.Get("Origin"); origin != "" && isAllowedDesktopOrigin(r) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Add("Vary", "Origin")
+			}
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Range, Authorization, x-api-key")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Range, Authorization, x-api-key, X-CSGLite-Desktop-Token")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

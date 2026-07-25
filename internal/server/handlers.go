@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -173,7 +174,22 @@ func runWithLocalInferenceSelfHealWhen[T any](
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	capabilities := []string{"rest", "sse", "websocket", "embedded-web-ui"}
+	if s.cfg.DesktopMode {
+		capabilities = append(capabilities, "desktop-managed-update")
+	} else {
+		capabilities = append(capabilities, "self-update")
+	}
+	writeJSON(w, http.StatusOK, api.HealthResponse{
+		Status:       "ok",
+		Version:      s.version,
+		APIProtocol:  DesktopAPIProtocol,
+		PID:          os.Getpid(),
+		InstanceID:   s.cfg.DesktopInstanceID,
+		DesktopMode:  s.cfg.DesktopMode,
+		StorageDir:   s.cfg.StorageDir(),
+		Capabilities: capabilities,
+	})
 }
 
 // GET /api/tags -- list available local, OpenCSG, and third-party provider models
