@@ -119,9 +119,12 @@ func (s *Server) resolveCSGClawLaunchModels(ctx context.Context, requestedModel,
 func (s *Server) configureCSGClaw(ctx context.Context, binary, modelID string, modelIDs []string, forceRestartManager bool) error {
 	listenAddr := ""
 	if s != nil && s.cfg != nil {
-		listenAddr = s.cfg.RuntimeListenAddr()
+		listenAddr = s.cfg.RuntimeAPIAddr()
 	}
 	serverURL := csgclawReachableBaseURL(listenAddr, csgclawInterfaceAddrs())
+	if s != nil && s.cfg != nil && s.cfg.DesktopMode {
+		serverURL = s.localBaseURL()
+	}
 	token := ""
 	if s != nil && s.cfg != nil {
 		token = strings.TrimSpace(s.cfg.Token)

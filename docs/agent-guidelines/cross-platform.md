@@ -9,6 +9,10 @@ consider all three platforms.
 - Never hardcode path separators, home directories, or binary suffixes; use
   `filepath.Join()`, `os.UserHomeDir()`, `exec.LookPath()`, `runtime.GOOS`, and
   `os.PathListSeparator`.
+- `exec.LookPath()` alone is not sufficient for third-party tools used by the
+  desktop GUI. Finder and Windows Explorer may launch `csglite-client` with a
+  minimal `PATH`; resolve standard application install locations or support an
+  explicit path override, then execute the resolved absolute path.
 - Do not assume `bash`, `sudo`, `/usr/local/bin`, or Unix-only commands exist on
   Windows.
 - If install or uninstall behavior changes, update both `scripts/install.sh`
@@ -53,6 +57,21 @@ path := filepath.Join(home, ".csghub-lite", "models")
   - Windows: `PATH`
 - Use `os.PathListSeparator` instead of hardcoding `:` or `;`.
 
+## Desktop Client
+
+- Any macOS or Windows platform feature must be tested through
+  `csglite-client`, not only through a terminal-launched `csghub-lite`.
+- Account for the desktop sidecar's authenticated dynamic loopback port. Before
+  adding containers, subprocesses, or external apps, verify that they can reach
+  the API without weakening loopback binding or desktop authentication.
+- Browser behavior is not automatically equivalent in Tauri WebView. Route
+  external links through the system browser and verify new-window, clipboard,
+  file-selection, and download behavior on both macOS and Windows.
+- Hide or replace server-only controls in desktop mode. Core self-upgrade is
+  disabled there; desktop releases must use the signed Tauri updater.
+- Coordinate desktop protocol or runtime changes with `csglite-client`, update
+  its pinned csglite commit, and test first launch, restart, shutdown, and update.
+
 ## Default Install Locations
 
 | Platform | csghub-lite | llama-server |
@@ -70,3 +89,5 @@ When modifying platform-sensitive code, verify:
 3. Permission escalation branches on `runtime.GOOS`.
 4. Environment variable names are platform-appropriate.
 5. Install script changes are reflected in both `.sh` and `.ps1`.
+6. Finder/Explorer launches can resolve required third-party executables.
+7. Desktop loopback, WebView, sidecar lifecycle, and updater behavior remain valid.

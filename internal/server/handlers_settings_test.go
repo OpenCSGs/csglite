@@ -189,3 +189,31 @@ func TestHandleSettingsUpdateServiceURLsRestoreDefaults(t *testing.T) {
 		t.Fatalf("cloud base URL = %q, want default %q", got, cloud.DefaultBaseURL)
 	}
 }
+
+func TestHandleSettingsUpdateRejectsAutostartInDesktopMode(t *testing.T) {
+	s := newTestServer(t)
+	s.cfg.DesktopMode = true
+	enabled := true
+	body, err := json.Marshal(api.SettingsUpdateRequest{Autostart: &enabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleSettingsUpdate(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s, want %d", w.Code, w.Body.String(), http.StatusConflict)
+	}
+}
+
+func TestCurrentSettingsIncludesDesktopAPIURL(t *testing.T) {
+	cfg := &config.Config{
+		DesktopMode:         true,
+		DesktopAPIAddr:      config.DefaultDesktopAPIAddr,
+		DesktopAPIBoundAddr: config.DefaultDesktopAPIAddr,
+	}
+	settings := currentSettingsResponse(cfg, "test")
+	if settings.LocalAPIURL != "http://127.0.0.1:11436" {
+		t.Fatalf("LocalAPIURL = %q, want stable desktop API URL", settings.LocalAPIURL)
+	}
+}

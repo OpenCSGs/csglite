@@ -230,7 +230,7 @@ func xiaozhiDockerAvailability(ctx context.Context) xiaozhiAvailability {
 	if !xiaozhiHostCanRunAMD64() {
 		return xiaozhiAvailability{reason: "architecture_unsupported"}
 	}
-	docker, err := exec.LookPath("docker")
+	docker, err := resolveXiaozhiDocker()
 	if err != nil {
 		return xiaozhiAvailability{supported: true, reason: "docker_not_found"}
 	}
@@ -249,6 +249,49 @@ func xiaozhiDockerAvailability(ctx context.Context) xiaozhiAvailability {
 
 func xiaozhiHostCanRunAMD64() bool {
 	return runtime.GOARCH == "amd64" || (runtime.GOOS == "darwin" && runtime.GOARCH == "arm64")
+}
+
+func resolveXiaozhiDocker() (string, error) {
+	if configured := strings.TrimSpace(os.Getenv("CSGHUB_LITE_DOCKER_PATH")); configured != "" {
+		if info, err := os.Stat(configured); err == nil && !info.IsDir() {
+			return configured, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	if docker, ok := detectInstalledBinaryPath("docker"); ok {
+		return docker, nil
+	}
+	for _, path := range xiaozhiDockerFallbackPaths() {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+	}
+	return "", exec.ErrNotFound
+}
+
+func xiaozhiDockerFallbackPaths() []string {
+	return xiaozhiDockerFallbackPathsForOS(runtime.GOOS)
+}
+
+func xiaozhiDockerFallbackPathsForOS(goos string) []string {
+	home, _ := os.UserHomeDir()
+	switch goos {
+	case "darwin":
+		return uniqueNonEmptyPaths([]string{
+			filepath.Join(home, ".docker", "bin", "docker"),
+			"/Applications/Docker.app/Contents/Resources/bin/docker",
+		})
+	case "windows":
+		paths := []string{filepath.Join(home, ".docker", "bin", "docker.exe")}
+		for _, root := range []string{os.Getenv("ProgramW6432"), os.Getenv("ProgramFiles")} {
+			if strings.TrimSpace(root) != "" {
+				paths = append(paths, filepath.Join(root, "Docker", "Docker", "resources", "bin", "docker.exe"))
+			}
+		}
+		return uniqueNonEmptyPaths(paths)
+	default:
+		return nil
+	}
 }
 
 func (m *Manager) cachedXiaozhiAvailability(ctx context.Context) xiaozhiAvailability {
@@ -634,7 +677,7 @@ func randomHex(bytes int) (string, error) {
 }
 
 func (m *Manager) xiaozhiComposeCommand(ctx context.Context, args ...string) (*exec.Cmd, error) {
-	docker, err := exec.LookPath("docker")
+	docker, err := resolveXiaozhiDocker()
 	if err != nil {
 		return nil, fmt.Errorf("docker not found: %w", err)
 	}

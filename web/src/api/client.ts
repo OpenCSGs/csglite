@@ -203,6 +203,7 @@ export interface AppSettings {
   default_ai_gateway_url: string;
   default_cloud_provider_name: string;
   desktop_mode: boolean;
+  local_api_url?: string;
   autostart: boolean;
   web_search: WebSearchSettings;
   hidden_nav_items: string[];

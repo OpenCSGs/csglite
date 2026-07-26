@@ -102,6 +102,10 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if s.cfg.DesktopMode && req.Autostart != nil {
+		writeError(w, http.StatusConflict, "autostart is managed by the desktop application")
+		return
+	}
 
 	var dirsUpdated bool
 	var configUpdated bool
@@ -220,6 +224,10 @@ func (s *Server) applyRuntimeSettingsUpdate(serverURLUpdated, aiGatewayURLUpdate
 
 func currentSettingsResponse(cfg *config.Config, version string) api.SettingsResponse {
 	autostartEnabled, _ := autostart.IsEnabled()
+	localAPIURL := ""
+	if cfg.DesktopMode && strings.TrimSpace(cfg.RuntimeAPIAddr()) != "" {
+		localAPIURL = "http://" + strings.TrimSpace(cfg.RuntimeAPIAddr())
+	}
 	return api.SettingsResponse{
 		Version:                  version,
 		StorageDir:               cfg.StorageDir(),
@@ -233,6 +241,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		DefaultAIGatewayURL:      cloud.DefaultBaseURL,
 		Autostart:                autostartEnabled,
 		DesktopMode:              cfg.DesktopMode,
+		LocalAPIURL:              localAPIURL,
 		WebSearch:                webSearchConfigToSettings(cfg.WebSearch),
 		HiddenNavItems:           append([]string{}, cfg.HiddenNavItems...),
 	}

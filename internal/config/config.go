@@ -14,6 +14,7 @@ const (
 	DefaultServerURL         = "https://hub.opencsg.com"
 	DefaultDisplayURL        = "https://opencsg.com"
 	DefaultListenAddr        = ":11435"
+	DefaultDesktopAPIAddr    = "127.0.0.1:11436"
 	DefaultCloudProviderName = "csghub"
 	EnvServerURL             = "CSGHUB_LITE_SERVER_URL"
 	EnvAIGatewayURL          = "CSGHUB_LITE_AI_GATEWAY_URL"
@@ -61,14 +62,36 @@ type Config struct {
 	DesktopSessionToken  string                             `json:"-"`
 	DesktopControlToken  string                             `json:"-"`
 	DesktopInstanceID    string                             `json:"-"`
+	ListenAddrOverride   string                             `json:"-"`
 	BoundAddr            string                             `json:"-"`
+	DesktopAPIAddr       string                             `json:"-"`
+	DesktopAPIBoundAddr  string                             `json:"-"`
+}
+
+func (c *Config) EffectiveListenAddr() string {
+	if strings.TrimSpace(c.ListenAddrOverride) != "" {
+		return c.ListenAddrOverride
+	}
+	return c.ListenAddr
 }
 
 func (c *Config) RuntimeListenAddr() string {
 	if strings.TrimSpace(c.BoundAddr) != "" {
 		return c.BoundAddr
 	}
-	return c.ListenAddr
+	return c.EffectiveListenAddr()
+}
+
+func (c *Config) RuntimeAPIAddr() string {
+	if c.DesktopMode {
+		if strings.TrimSpace(c.DesktopAPIBoundAddr) != "" {
+			return c.DesktopAPIBoundAddr
+		}
+		if strings.TrimSpace(c.DesktopAPIAddr) != "" {
+			return c.DesktopAPIAddr
+		}
+	}
+	return c.RuntimeListenAddr()
 }
 
 type WebSearchConfig struct {
@@ -211,6 +234,11 @@ func Load() (*Config, error) {
 			globalConfig.ServerURL = DefaultServerURL
 		}
 		if globalConfig.ListenAddr == "" {
+			globalConfig.ListenAddr = DefaultListenAddr
+		}
+		// Early desktop builds accidentally persisted their ephemeral listener.
+		// Restore the normal CLI address while keeping future overrides runtime-only.
+		if globalConfig.ListenAddr == "127.0.0.1:0" {
 			globalConfig.ListenAddr = DefaultListenAddr
 		}
 		globalConfig.CloudProviderName = NormalizeCloudProviderName(globalConfig.CloudProviderName)

@@ -245,6 +245,21 @@ func TestEnrichXiaozhiReturnsFourModelSlots(t *testing.T) {
 	}
 }
 
+func TestDesktopModeDisablesXiaozhi(t *testing.T) {
+	s := &Server{cfg: &config.Config{DesktopMode: true}}
+	info := api.AIAppInfo{ID: xiaozhiAppID, Supported: true, RuntimeSupported: true}
+
+	if !s.disableDesktopXiaozhi(&info) {
+		t.Fatal("disableDesktopXiaozhi returned false")
+	}
+	if !info.Disabled || info.Status != "disabled" || info.DisabledReason != xiaozhiDesktopUnsupported {
+		t.Fatalf("unexpected desktop Xiaozhi state: %#v", info)
+	}
+	if info.RuntimeSupported {
+		t.Fatal("desktop Xiaozhi runtime should be unavailable")
+	}
+}
+
 func fileModePerm(t *testing.T, path string) os.FileMode {
 	t.Helper()
 	info, err := os.Stat(path)

@@ -424,6 +424,19 @@ func TestLocalBaseURLDefaultsToConfigListenAddr(t *testing.T) {
 	}
 }
 
+func TestLocalBaseURLUsesStableDesktopAPI(t *testing.T) {
+	s := &Server{cfg: &config.Config{
+		DesktopMode:         true,
+		BoundAddr:           "127.0.0.1:43123",
+		DesktopAPIAddr:      config.DefaultDesktopAPIAddr,
+		DesktopAPIBoundAddr: config.DefaultDesktopAPIAddr,
+	}}
+
+	if got := s.localBaseURL(); got != "http://127.0.0.1:11436" {
+		t.Fatalf("localBaseURL = %q, want desktop API URL", got)
+	}
+}
+
 func TestCSGClawReachableBaseURLUsesHostReachableAddress(t *testing.T) {
 	addrs := []net.Addr{
 		&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},

@@ -1846,7 +1846,7 @@ function drawerNotice(app: AIAppCatalogEntry, state: AIAppRuntimeState): string 
   }
   if (state.disabled) {
     const reasonKey = state.disabledReason || state.phase;
-    if (["docker_not_found", "docker_compose_unavailable", "docker_daemon_unavailable", "architecture_unsupported"].includes(reasonKey)) {
+    if (["docker_not_found", "docker_compose_unavailable", "docker_daemon_unavailable", "architecture_unsupported", "desktop_docker_api_unavailable"].includes(reasonKey)) {
       return t(`aiApps.disabledReason.${reasonKey}`);
     }
     if (state.phase === "linux_unsupported") {

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 
 func TestXiaozhiAvailabilityExplainsMissingPrerequisite(t *testing.T) {
 	t.Setenv("PATH", "")
+	t.Setenv("CSGHUB_LITE_DOCKER_PATH", filepath.Join(t.TempDir(), "missing-docker"))
 	got := xiaozhiDockerAvailability(context.Background())
 	if !xiaozhiHostCanRunAMD64() {
 		if got.reason != "architecture_unsupported" || got.supported {
@@ -23,6 +25,55 @@ func TestXiaozhiAvailabilityExplainsMissingPrerequisite(t *testing.T) {
 	}
 	if got.reason != "docker_not_found" || !got.supported {
 		t.Fatalf("availability = %#v, want supported platform with missing Docker", got)
+	}
+}
+
+func TestResolveXiaozhiDockerUsesConfiguredPathOutsidePATH(t *testing.T) {
+	t.Setenv("PATH", "")
+	docker := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CSGHUB_LITE_DOCKER_PATH", docker)
+	got, err := resolveXiaozhiDocker()
+	if err != nil {
+		t.Fatalf("resolveXiaozhiDocker: %v", err)
+	}
+	if got != docker {
+		t.Fatalf("resolveXiaozhiDocker = %q, want %q", got, docker)
+	}
+}
+
+func TestResolveXiaozhiDockerFindsDockerDesktopUserCLI(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Docker Desktop path is macOS-specific")
+	}
+	t.Setenv("PATH", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	docker := filepath.Join(home, ".docker", "bin", "docker")
+	if err := os.MkdirAll(filepath.Dir(docker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveXiaozhiDocker()
+	if err != nil {
+		t.Fatalf("resolveXiaozhiDocker: %v", err)
+	}
+	if got != docker {
+		t.Fatalf("resolveXiaozhiDocker = %q, want %q", got, docker)
+	}
+}
+
+func TestXiaozhiDockerFallbackPathsIncludeWindowsDockerDesktop(t *testing.T) {
+	t.Setenv("ProgramW6432", `C:\Program Files`)
+	t.Setenv("ProgramFiles", `C:\Program Files (x86)`)
+	paths := xiaozhiDockerFallbackPathsForOS("windows")
+	want := filepath.Join(`C:\Program Files`, "Docker", "Docker", "resources", "bin", "docker.exe")
+	if !slices.Contains(paths, want) {
+		t.Fatalf("Windows Docker Desktop path missing from %#v", paths)
 	}
 }
 

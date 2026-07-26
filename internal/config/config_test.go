@@ -24,6 +24,9 @@ func clearCloudServiceEnv(t *testing.T) {
 }
 
 func TestDefaultValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	clearCloudServiceEnv(t)
 	Reset()
 	cfg, err := Load()
@@ -41,6 +44,69 @@ func TestDefaultValues(t *testing.T) {
 	}
 	if cfg.AIAppPreferredModels == nil {
 		t.Fatal("AIAppPreferredModels = nil, want initialized map")
+	}
+}
+
+func TestLoadRepairsLegacyDesktopListenAddress(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	clearCloudServiceEnv(t)
+	appHome := filepath.Join(home, AppDir)
+	if err := os.MkdirAll(appHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appHome, ConfigFile),
+		[]byte(`{"listen_addr":"127.0.0.1:0"}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	Reset()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ListenAddr != DefaultListenAddr {
+		t.Fatalf("ListenAddr = %q, want repaired %q", cfg.ListenAddr, DefaultListenAddr)
+	}
+}
+
+func TestRuntimeListenOverrideIsNotPersisted(t *testing.T) {
+	cfg := &Config{
+		ListenAddr:         DefaultListenAddr,
+		ListenAddrOverride: "127.0.0.1:0",
+	}
+	if got := cfg.EffectiveListenAddr(); got != "127.0.0.1:0" {
+		t.Fatalf("EffectiveListenAddr = %q", got)
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "127.0.0.1:0") {
+		t.Fatalf("runtime listen override was persisted: %s", data)
+	}
+	if !strings.Contains(string(data), DefaultListenAddr) {
+		t.Fatalf("persistent listen address missing: %s", data)
+	}
+}
+
+func TestRuntimeAPIAddrUsesDesktopListener(t *testing.T) {
+	cfg := &Config{
+		DesktopMode:         true,
+		ListenAddr:          DefaultListenAddr,
+		BoundAddr:           "127.0.0.1:43123",
+		DesktopAPIAddr:      DefaultDesktopAPIAddr,
+		DesktopAPIBoundAddr: DefaultDesktopAPIAddr,
+	}
+	if got := cfg.RuntimeAPIAddr(); got != DefaultDesktopAPIAddr {
+		t.Fatalf("RuntimeAPIAddr = %q, want %q", got, DefaultDesktopAPIAddr)
+	}
+	cfg.DesktopMode = false
+	if got := cfg.RuntimeAPIAddr(); got != "127.0.0.1:43123" {
+		t.Fatalf("non-desktop RuntimeAPIAddr = %q, want internal listener", got)
 	}
 }
 

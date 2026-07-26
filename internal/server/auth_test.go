@@ -196,6 +196,61 @@ func TestDesktopAuthRejectsNonLoopbackHostAndTokenReplay(t *testing.T) {
 	}
 }
 
+func TestDesktopExternalAPIAllowsInferenceWithoutDesktopSession(t *testing.T) {
+	s := newTestServer(t)
+	s.cfg.DesktopMode = true
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req.Host = config.DefaultDesktopAPIAddr
+	req.RemoteAddr = "127.0.0.1:5555"
+	w := httptest.NewRecorder()
+
+	s.externalAPIRoutes().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+}
+
+func TestDesktopExternalAPIDoesNotExposeManagementRoutes(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	req.Host = config.DefaultDesktopAPIAddr
+	req.RemoteAddr = "127.0.0.1:5555"
+	w := httptest.NewRecorder()
+
+	s.externalAPIRoutes().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s, want 404", w.Code, w.Body.String())
+	}
+}
+
+func TestDesktopExternalAPIRejectsBrowserAndRemoteRequests(t *testing.T) {
+	s := newTestServer(t)
+	for name, configure := range map[string]func(*http.Request){
+		"browser": func(req *http.Request) {
+			req.Header.Set("Origin", "https://example.com")
+		},
+		"remote": func(req *http.Request) {
+			req.RemoteAddr = "192.168.1.20:5555"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+			req.Host = config.DefaultDesktopAPIAddr
+			req.RemoteAddr = "127.0.0.1:5555"
+			configure(req)
+			w := httptest.NewRecorder()
+
+			s.externalAPIRoutes().ServeHTTP(w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("status = %d body=%s, want 403", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestAPIKeyCreateDoesNotExposeHash(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/api-keys", strings.NewReader(`{"name":"client"}`))

@@ -34,7 +34,7 @@ import (
 
 const (
 	DefaultKeepAlive       = 5 * time.Minute
-	DesktopAPIProtocol     = "1"
+	DesktopAPIProtocol     = "2"
 	evictorInterval        = 30 * time.Second
 	engineModeChat         = "chat"
 	engineModeEmbed        = "embedding"
@@ -155,6 +155,7 @@ type Server struct {
 	appShells      *aiAppShellManager
 	cloud          *cloud.Service
 	http           *http.Server
+	externalHTTP   *http.Server
 	logBuf         *LogBuffer
 
 	mu           sync.RWMutex
@@ -184,14 +185,15 @@ type Server struct {
 }
 
 type desktopReady struct {
-	Event        string `json:"event"`
-	URL          string `json:"url"`
-	BootstrapURL string `json:"bootstrap_url"`
-	ControlToken string `json:"control_token"`
-	Version      string `json:"version"`
-	APIProtocol  string `json:"api_protocol"`
-	InstanceID   string `json:"instance_id"`
-	PID          int    `json:"pid"`
+	Event          string `json:"event"`
+	URL            string `json:"url"`
+	BootstrapURL   string `json:"bootstrap_url"`
+	ExternalAPIURL string `json:"external_api_url"`
+	ControlToken   string `json:"control_token"`
+	Version        string `json:"version"`
+	APIProtocol    string `json:"api_protocol"`
+	InstanceID     string `json:"instance_id"`
+	PID            int    `json:"pid"`
 }
 
 func New(cfg *config.Config, version string) *Server {
@@ -245,6 +247,15 @@ func New(cfg *config.Config, version string) *Server {
 		WriteTimeout:      0, // streaming responses and large uploads
 		IdleTimeout:       120 * time.Second,
 	}
+	if cfg.DesktopMode {
+		s.externalHTTP = &http.Server{
+			Addr:              cfg.DesktopAPIAddr,
+			Handler:           s.externalAPIRoutes(),
+			ReadHeaderTimeout: 30 * time.Second,
+			WriteTimeout:      0,
+			IdleTimeout:       120 * time.Second,
+		}
+	}
 	return s
 }
 
@@ -264,29 +275,41 @@ func (s *Server) Run(ctx context.Context) error {
 			return err
 		}
 	}
-	listener, err := net.Listen("tcp", s.cfg.ListenAddr)
+	listenAddr := s.cfg.EffectiveListenAddr()
+	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		return fmt.Errorf("port %s is already in use; try a different port with --listen :PORT\n  %w", s.cfg.ListenAddr, err)
+		return fmt.Errorf("port %s is already in use; try a different port with --listen :PORT\n  %w", listenAddr, err)
 	}
 	defer listener.Close()
 	boundAddr := listener.Addr().String()
 	s.cfg.BoundAddr = boundAddr
 
+	var externalListener net.Listener
+	if s.cfg.DesktopMode {
+		externalListener, err = net.Listen("tcp", s.cfg.DesktopAPIAddr)
+		if err != nil {
+			return fmt.Errorf("desktop API port %s is already in use; close the conflicting application and restart csglite: %w", s.cfg.DesktopAPIAddr, err)
+		}
+		defer externalListener.Close()
+		s.cfg.DesktopAPIBoundAddr = externalListener.Addr().String()
+	}
+
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	if s.cfg.DesktopMode {
 		baseURL := "http://" + boundAddr
 		ready := desktopReady{
-			Event:        "ready",
-			URL:          baseURL,
-			BootstrapURL: baseURL + "/?desktop_token=" + url.QueryEscape(s.cfg.DesktopToken),
-			ControlToken: s.cfg.DesktopControlToken,
-			Version:      s.version,
-			APIProtocol:  DesktopAPIProtocol,
-			InstanceID:   s.cfg.DesktopInstanceID,
-			PID:          os.Getpid(),
+			Event:          "ready",
+			URL:            baseURL,
+			BootstrapURL:   baseURL + "/?desktop_token=" + url.QueryEscape(s.cfg.DesktopToken),
+			ExternalAPIURL: "http://" + s.cfg.DesktopAPIBoundAddr,
+			ControlToken:   s.cfg.DesktopControlToken,
+			Version:        s.version,
+			APIProtocol:    DesktopAPIProtocol,
+			InstanceID:     s.cfg.DesktopInstanceID,
+			PID:            os.Getpid(),
 		}
 		payload, marshalErr := json.Marshal(ready)
 		if marshalErr != nil {
@@ -307,26 +330,51 @@ func (s *Server) Run(ctx context.Context) error {
 		if err := s.http.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
-		close(errCh)
 	}()
+	if externalListener != nil {
+		go func() {
+			log.Printf("  Desktop API: http://%s", s.cfg.DesktopAPIBoundAddr)
+			if err := s.externalHTTP.Serve(externalListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- err
+			}
+		}()
+	}
 
 	select {
 	case err := <-errCh:
 		s.shutdownRuntime()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.shutdownHTTPServers(shutCtx)
 		return err
 	case <-ctx.Done():
 		log.Println("shutting down server...")
 		s.shutdownRuntime()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return s.http.Shutdown(shutCtx)
+		return s.shutdownHTTPServers(shutCtx)
 	}
 }
 
+func (s *Server) shutdownHTTPServers(ctx context.Context) error {
+	var externalErr error
+	if s.externalHTTP != nil {
+		externalErr = s.externalHTTP.Shutdown(ctx)
+	}
+	internalErr := s.http.Shutdown(ctx)
+	if internalErr != nil {
+		return internalErr
+	}
+	return externalErr
+}
+
 func validateDesktopConfig(cfg *config.Config) error {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(cfg.ListenAddr))
+	host, _, err := net.SplitHostPort(strings.TrimSpace(cfg.EffectiveListenAddr()))
 	if err != nil || !isDesktopLoopbackHost(host) {
 		return fmt.Errorf("desktop mode requires an explicit loopback listen address")
+	}
+	if strings.TrimSpace(cfg.DesktopAPIAddr) != config.DefaultDesktopAPIAddr {
+		return fmt.Errorf("desktop mode requires API address %s", config.DefaultDesktopAPIAddr)
 	}
 	for name, value := range map[string]string{
 		"bootstrap token": cfg.DesktopToken,

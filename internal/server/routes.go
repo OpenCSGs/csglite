@@ -132,6 +132,55 @@ func (s *Server) routes() http.Handler {
 	return s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(LogMiddleware(mux))))
 }
 
+func (s *Server) externalAPIRoutes() http.Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/tags", s.handleTags)
+	mux.HandleFunc("GET /api/pipeline-tags", s.handlePipelineTags)
+	mux.HandleFunc("GET /api/ps", s.handlePs)
+	mux.HandleFunc("POST /api/show", s.handleShow)
+	mux.HandleFunc("POST /api/load", s.handleLoad)
+	mux.HandleFunc("POST /api/stop", s.handleStop)
+	mux.HandleFunc("POST /api/generate", s.handleGenerate)
+	mux.HandleFunc("POST /api/chat", s.handleChat)
+
+	mux.HandleFunc("GET /v1/models", s.handleModels)
+	mux.HandleFunc("GET /v1/responses", s.handleOpenAIResponsesUnsupported)
+	mux.HandleFunc("POST /v1/chat/completions", s.handleOpenAIChatCompletions)
+	mux.HandleFunc("POST /v1/embeddings", s.handleOpenAIEmbeddings)
+	mux.HandleFunc("POST /v1/images/generations", s.handleOpenAIImagesGenerations)
+	mux.HandleFunc("POST /v1/images/edits", s.handleOpenAIImagesEdits)
+	mux.HandleFunc("POST /v1/audio/transcriptions", s.handleOpenAIAudioTranscriptions)
+	mux.HandleFunc("POST /v1/responses", s.handleOpenAIResponses)
+	mux.HandleFunc("POST /v1/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /v1/messages/count_tokens", s.handleAnthropicCountTokens)
+	mux.HandleFunc("POST /anthropic/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /anthropic/messages/count_tokens", s.handleAnthropicCountTokens)
+	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
+
+	return desktopExternalAPIMiddleware(LogMiddleware(mux))
+}
+
+func desktopExternalAPIMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isDesktopLoopbackHost(r.Host) || !isLoopbackRequest(r) {
+			writeError(w, http.StatusForbidden, "desktop API requests must use loopback")
+			return
+		}
+		if r.Header.Get("Origin") != "" {
+			writeError(w, http.StatusForbidden, "browser origins are not allowed on the desktop API")
+			return
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.DesktopMode {

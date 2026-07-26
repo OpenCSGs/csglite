@@ -32,7 +32,8 @@ func newServeCmd(version string) *cobra.Command {
 			}
 			if desktopMode {
 				cfg.DesktopMode = true
-				cfg.ListenAddr = "127.0.0.1:0"
+				cfg.ListenAddrOverride = "127.0.0.1:0"
+				cfg.DesktopAPIAddr = config.DefaultDesktopAPIAddr
 				cfg.DesktopToken, err = randomIdentifier(32)
 				if err != nil {
 					return fmt.Errorf("generating desktop bootstrap token: %w", err)

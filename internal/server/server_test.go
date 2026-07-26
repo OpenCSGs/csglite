@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -99,6 +100,7 @@ func TestValidateDesktopConfig(t *testing.T) {
 	valid := &config.Config{
 		DesktopMode:         true,
 		ListenAddr:          "127.0.0.1:0",
+		DesktopAPIAddr:      config.DefaultDesktopAPIAddr,
 		DesktopToken:        strings.Repeat("a", 64),
 		DesktopSessionToken: strings.Repeat("b", 64),
 		DesktopControlToken: strings.Repeat("c", 64),
@@ -114,10 +116,102 @@ func TestValidateDesktopConfig(t *testing.T) {
 		t.Fatal("non-loopback desktop listen address accepted")
 	}
 
+	wrongAPIAddr := *valid
+	wrongAPIAddr.DesktopAPIAddr = "127.0.0.1:11435"
+	if err := validateDesktopConfig(&wrongAPIAddr); err == nil {
+		t.Fatal("unexpected desktop API address accepted")
+	}
+
 	weakToken := *valid
 	weakToken.DesktopSessionToken = "predictable"
 	if err := validateDesktopConfig(&weakToken); err == nil {
 		t.Fatal("weak desktop session token accepted")
+	}
+}
+
+func TestDesktopRunFailsWhenExternalAPIPortIsOccupied(t *testing.T) {
+	blocker, err := net.Listen("tcp", config.DefaultDesktopAPIAddr)
+	if err != nil {
+		t.Skipf("desktop API port is already unavailable: %v", err)
+	}
+	defer blocker.Close()
+
+	base := newTestServer(t)
+	cfg := base.cfg
+	cfg.DesktopMode = true
+	cfg.ListenAddrOverride = "127.0.0.1:0"
+	cfg.DesktopAPIAddr = config.DefaultDesktopAPIAddr
+	cfg.DesktopToken = strings.Repeat("a", 64)
+	cfg.DesktopSessionToken = strings.Repeat("b", 64)
+	cfg.DesktopControlToken = strings.Repeat("c", 64)
+	cfg.DesktopInstanceID = strings.Repeat("d", 32)
+	s := New(cfg, "test")
+
+	err = s.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "desktop API port") {
+		t.Fatalf("Run error = %v, want desktop API port conflict", err)
+	}
+}
+
+func TestDesktopRunServesExternalAPIOnStablePort(t *testing.T) {
+	probe, err := net.Listen("tcp", config.DefaultDesktopAPIAddr)
+	if err != nil {
+		t.Skipf("desktop API port is already unavailable: %v", err)
+	}
+	_ = probe.Close()
+
+	base := newTestServer(t)
+	cfg := base.cfg
+	cfg.DesktopMode = true
+	cfg.ListenAddrOverride = "127.0.0.1:0"
+	cfg.DesktopAPIAddr = config.DefaultDesktopAPIAddr
+	cfg.DesktopToken = strings.Repeat("a", 64)
+	cfg.DesktopSessionToken = strings.Repeat("b", 64)
+	cfg.DesktopControlToken = strings.Repeat("c", 64)
+	cfg.DesktopInstanceID = strings.Repeat("d", 32)
+	s := New(cfg, "test")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- s.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("desktop server shutdown: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Error("desktop server did not shut down")
+		}
+	})
+
+	client := &http.Client{Timeout: time.Second}
+	var response *http.Response
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		response, err = client.Get("http://" + config.DefaultDesktopAPIAddr + "/api/health")
+		if err == nil {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("GET desktop API health: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("health status = %d, want 200", response.StatusCode)
+	}
+
+	response, err = client.Get("http://" + config.DefaultDesktopAPIAddr + "/api/settings")
+	if err != nil {
+		t.Fatalf("GET desktop API management route: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("management route status = %d, want 404", response.StatusCode)
 	}
 }
 

@@ -418,6 +418,7 @@ type SettingsResponse struct {
 	DefaultAIGatewayURL      string            `json:"default_ai_gateway_url"`
 	Autostart                bool              `json:"autostart"`
 	DesktopMode              bool              `json:"desktop_mode"`
+	LocalAPIURL              string            `json:"local_api_url,omitempty"`
 	WebSearch                WebSearchSettings `json:"web_search"`
 	HiddenNavItems           []string          `json:"hidden_nav_items"`
 }
