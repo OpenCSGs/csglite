@@ -225,29 +225,32 @@ func TestDesktopExternalAPIDoesNotExposeManagementRoutes(t *testing.T) {
 	}
 }
 
-func TestDesktopExternalAPIRejectsBrowserAndRemoteRequests(t *testing.T) {
+func TestDesktopExternalAPIRejectsBrowserOrigins(t *testing.T) {
 	s := newTestServer(t)
-	for name, configure := range map[string]func(*http.Request){
-		"browser": func(req *http.Request) {
-			req.Header.Set("Origin", "https://example.com")
-		},
-		"remote": func(req *http.Request) {
-			req.RemoteAddr = "192.168.1.20:5555"
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-			req.Host = config.DefaultDesktopAPIAddr
-			req.RemoteAddr = "127.0.0.1:5555"
-			configure(req)
-			w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req.Host = config.DefaultDesktopAPIAddr
+	req.RemoteAddr = "127.0.0.1:5555"
+	req.Header.Set("Origin", "https://example.com")
+	w := httptest.NewRecorder()
 
-			s.externalAPIRoutes().ServeHTTP(w, req)
+	s.externalAPIRoutes().ServeHTTP(w, req)
 
-			if w.Code != http.StatusForbidden {
-				t.Fatalf("status = %d body=%s, want 403", w.Code, w.Body.String())
-			}
-		})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s, want 403", w.Code, w.Body.String())
+	}
+}
+
+func TestDesktopExternalAPIAllowsDockerGatewayRequests(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req.Host = "host.docker.internal:11436"
+	req.RemoteAddr = "192.168.65.2:5555"
+	w := httptest.NewRecorder()
+
+	s.externalAPIRoutes().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
 	}
 }
 

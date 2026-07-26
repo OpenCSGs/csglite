@@ -11,21 +11,22 @@ import (
 )
 
 const (
-	DefaultServerURL         = "https://hub.opencsg.com"
-	DefaultDisplayURL        = "https://opencsg.com"
-	DefaultListenAddr        = ":11435"
-	DefaultDesktopAPIAddr    = "127.0.0.1:11436"
-	DefaultCloudProviderName = "csghub"
-	EnvServerURL             = "CSGHUB_LITE_SERVER_URL"
-	EnvAIGatewayURL          = "CSGHUB_LITE_AI_GATEWAY_URL"
-	EnvCloudProviderName     = "CSGHUB_LITE_CLOUD_PROVIDER_NAME"
-	EnvOpenAIStreamDefault   = "CSGHUB_LITE_OPENAI_STREAM_DEFAULT"
-	EnvHiddenNavItems        = "CSGHUB_LITE_HIDDEN_NAV_ITEMS"
-	AppDir                   = ".csghub-lite"
-	ConfigFile               = "config.json"
-	ModelsDir                = "models"
-	DatasetsDir              = "datasets"
-	TmpDir                   = "tmp"
+	DefaultServerURL          = "https://hub.opencsg.com"
+	DefaultDisplayURL         = "https://opencsg.com"
+	DefaultListenAddr         = ":11435"
+	DefaultDesktopAPIAddr     = "127.0.0.1:11436"
+	DefaultDesktopAPIBindAddr = "0.0.0.0:11436"
+	DefaultCloudProviderName  = "csghub"
+	EnvServerURL              = "CSGHUB_LITE_SERVER_URL"
+	EnvAIGatewayURL           = "CSGHUB_LITE_AI_GATEWAY_URL"
+	EnvCloudProviderName      = "CSGHUB_LITE_CLOUD_PROVIDER_NAME"
+	EnvOpenAIStreamDefault    = "CSGHUB_LITE_OPENAI_STREAM_DEFAULT"
+	EnvHiddenNavItems         = "CSGHUB_LITE_HIDDEN_NAV_ITEMS"
+	AppDir                    = ".csghub-lite"
+	ConfigFile                = "config.json"
+	ModelsDir                 = "models"
+	DatasetsDir               = "datasets"
+	TmpDir                    = "tmp"
 )
 
 func (c *Config) DisplayURL() string {
@@ -65,6 +66,7 @@ type Config struct {
 	ListenAddrOverride   string                             `json:"-"`
 	BoundAddr            string                             `json:"-"`
 	DesktopAPIAddr       string                             `json:"-"`
+	DesktopAPIBindAddr   string                             `json:"-"`
 	DesktopAPIBoundAddr  string                             `json:"-"`
 }
 
@@ -84,12 +86,16 @@ func (c *Config) RuntimeListenAddr() string {
 
 func (c *Config) RuntimeAPIAddr() string {
 	if c.DesktopMode {
-		if strings.TrimSpace(c.DesktopAPIBoundAddr) != "" {
-			return c.DesktopAPIBoundAddr
-		}
 		if strings.TrimSpace(c.DesktopAPIAddr) != "" {
 			return c.DesktopAPIAddr
 		}
+	}
+	return c.RuntimeListenAddr()
+}
+
+func (c *Config) RuntimeDockerAPIAddr() string {
+	if c.DesktopMode && strings.TrimSpace(c.DesktopAPIBindAddr) != "" {
+		return c.DesktopAPIBindAddr
 	}
 	return c.RuntimeListenAddr()
 }

@@ -165,10 +165,6 @@ func (s *Server) externalAPIRoutes() http.Handler {
 
 func desktopExternalAPIMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isDesktopLoopbackHost(r.Host) || !isLoopbackRequest(r) {
-			writeError(w, http.StatusForbidden, "desktop API requests must use loopback")
-			return
-		}
 		if r.Header.Get("Origin") != "" {
 			writeError(w, http.StatusForbidden, "browser origins are not allowed on the desktop API")
 			return

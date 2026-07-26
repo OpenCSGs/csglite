@@ -321,7 +321,7 @@ func (s *Server) syncXiaozhiConfig() error {
 
 	copilot := objectMap(root["copilot"])
 	root["copilot"] = copilot
-	baseURL, err := xiaozhiLiteBaseURL(s.cfg.RuntimeListenAddr())
+	baseURL, err := xiaozhiLiteBaseURL(s.cfg.RuntimeDockerAPIAddr())
 	if err != nil {
 		return err
 	}

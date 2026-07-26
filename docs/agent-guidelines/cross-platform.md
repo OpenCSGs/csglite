@@ -61,9 +61,12 @@ path := filepath.Join(home, ".csghub-lite", "models")
 
 - Any macOS or Windows platform feature must be tested through
   `csglite-client`, not only through a terminal-launched `csghub-lite`.
-- Account for the desktop sidecar's authenticated dynamic loopback port. Before
-  adding containers, subprocesses, or external apps, verify that they can reach
-  the API without weakening loopback binding or desktop authentication.
+- Preserve the desktop UI sidecar's authenticated dynamic loopback port.
+- The separate desktop inference API uses fixed port `11436` on host interfaces
+  so native apps, Docker containers, and trusted LAN clients can reach it
+  without authentication. Keep this listener inference-only: never add
+  management, UI, credential, or lifecycle routes, and continue rejecting
+  browser-origin requests.
 - Browser behavior is not automatically equivalent in Tauri WebView. Route
   external links through the system browser and verify new-window, clipboard,
   file-selection, and download behavior on both macOS and Windows.

@@ -99,10 +99,14 @@ func TestRuntimeAPIAddrUsesDesktopListener(t *testing.T) {
 		ListenAddr:          DefaultListenAddr,
 		BoundAddr:           "127.0.0.1:43123",
 		DesktopAPIAddr:      DefaultDesktopAPIAddr,
-		DesktopAPIBoundAddr: DefaultDesktopAPIAddr,
+		DesktopAPIBindAddr:  DefaultDesktopAPIBindAddr,
+		DesktopAPIBoundAddr: "0.0.0.0:11436",
 	}
 	if got := cfg.RuntimeAPIAddr(); got != DefaultDesktopAPIAddr {
 		t.Fatalf("RuntimeAPIAddr = %q, want %q", got, DefaultDesktopAPIAddr)
+	}
+	if got := cfg.RuntimeDockerAPIAddr(); got != DefaultDesktopAPIBindAddr {
+		t.Fatalf("RuntimeDockerAPIAddr = %q, want %q", got, DefaultDesktopAPIBindAddr)
 	}
 	cfg.DesktopMode = false
 	if got := cfg.RuntimeAPIAddr(); got != "127.0.0.1:43123" {

@@ -249,7 +249,7 @@ func New(cfg *config.Config, version string) *Server {
 	}
 	if cfg.DesktopMode {
 		s.externalHTTP = &http.Server{
-			Addr:              cfg.DesktopAPIAddr,
+			Addr:              cfg.DesktopAPIBindAddr,
 			Handler:           s.externalAPIRoutes(),
 			ReadHeaderTimeout: 30 * time.Second,
 			WriteTimeout:      0,
@@ -286,9 +286,9 @@ func (s *Server) Run(ctx context.Context) error {
 
 	var externalListener net.Listener
 	if s.cfg.DesktopMode {
-		externalListener, err = net.Listen("tcp", s.cfg.DesktopAPIAddr)
+		externalListener, err = net.Listen("tcp", s.cfg.DesktopAPIBindAddr)
 		if err != nil {
-			return fmt.Errorf("desktop API port %s is already in use; close the conflicting application and restart csglite: %w", s.cfg.DesktopAPIAddr, err)
+			return fmt.Errorf("desktop API port %s is already in use; close the conflicting application and restart csglite: %w", s.cfg.DesktopAPIBindAddr, err)
 		}
 		defer externalListener.Close()
 		s.cfg.DesktopAPIBoundAddr = externalListener.Addr().String()
@@ -304,7 +304,7 @@ func (s *Server) Run(ctx context.Context) error {
 			Event:          "ready",
 			URL:            baseURL,
 			BootstrapURL:   baseURL + "/?desktop_token=" + url.QueryEscape(s.cfg.DesktopToken),
-			ExternalAPIURL: "http://" + s.cfg.DesktopAPIBoundAddr,
+			ExternalAPIURL: "http://" + s.cfg.DesktopAPIAddr,
 			ControlToken:   s.cfg.DesktopControlToken,
 			Version:        s.version,
 			APIProtocol:    DesktopAPIProtocol,
@@ -375,6 +375,9 @@ func validateDesktopConfig(cfg *config.Config) error {
 	}
 	if strings.TrimSpace(cfg.DesktopAPIAddr) != config.DefaultDesktopAPIAddr {
 		return fmt.Errorf("desktop mode requires API address %s", config.DefaultDesktopAPIAddr)
+	}
+	if strings.TrimSpace(cfg.DesktopAPIBindAddr) != config.DefaultDesktopAPIBindAddr {
+		return fmt.Errorf("desktop mode requires API bind address %s", config.DefaultDesktopAPIBindAddr)
 	}
 	for name, value := range map[string]string{
 		"bootstrap token": cfg.DesktopToken,

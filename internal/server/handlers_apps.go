@@ -17,7 +17,6 @@ const (
 	aiAppRuntimeStatusRunning = "running"
 	aiAppRuntimeStatusStopped = "stopped"
 	aiAppRuntimeStatusTimeout = 2 * time.Second
-	xiaozhiDesktopUnsupported = "desktop_docker_api_unavailable"
 )
 
 func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
@@ -40,11 +39,6 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "app_id is required")
 		return
 	}
-	if s.cfg.DesktopMode && req.AppID == xiaozhiAppID {
-		writeError(w, http.StatusConflict, "Xiaozhi Docker access is not available in desktop mode")
-		return
-	}
-
 	log.Printf("AI APP %s: install requested", req.AppID)
 	info, err := s.appManager.Install(req.AppID)
 	if err != nil {
@@ -105,10 +99,6 @@ func (s *Server) handleAppStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "app_id is required")
 		return
 	}
-	if s.cfg.DesktopMode && req.AppID == xiaozhiAppID {
-		writeError(w, http.StatusConflict, "Xiaozhi Docker access is not available in desktop mode")
-		return
-	}
 	if info, err := s.appManager.Get(r.Context(), req.AppID); err == nil && info.Disabled {
 		writeJSON(w, http.StatusConflict, info)
 		return
@@ -167,10 +157,6 @@ func (s *Server) handleAppModelSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if appID == xiaozhiAppID {
-		if s.cfg.DesktopMode {
-			writeError(w, http.StatusConflict, "Xiaozhi Docker access is not available in desktop mode")
-			return
-		}
 		if err := s.saveXiaozhiModelBindings(r.Context(), req.ModelBindings); err != nil {
 			log.Printf("AI APP xiaozhi: model binding save failed: %v", err)
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -322,9 +308,6 @@ func (s *Server) enrichAIAppListItem(ctx context.Context, info *api.AIAppInfo) {
 	if info == nil {
 		return
 	}
-	if s.disableDesktopXiaozhi(info) {
-		return
-	}
 	s.enrichAIAppRuntime(ctx, info)
 	s.enrichAIAppProvider(info)
 	if !info.Supported || info.Disabled {
@@ -345,9 +328,6 @@ func (s *Server) enrichAIAppListItem(ctx context.Context, info *api.AIAppInfo) {
 
 func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 	if info == nil {
-		return
-	}
-	if s.disableDesktopXiaozhi(info) {
 		return
 	}
 	s.enrichAIAppRuntime(ctx, info)
@@ -390,20 +370,6 @@ func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 	if err == nil {
 		info.ModelID = modelID
 	}
-}
-
-func (s *Server) disableDesktopXiaozhi(info *api.AIAppInfo) bool {
-	if !s.cfg.DesktopMode || info.ID != xiaozhiAppID {
-		return false
-	}
-	info.Disabled = true
-	info.Status = "disabled"
-	info.Phase = xiaozhiDesktopUnsupported
-	info.DisabledReason = xiaozhiDesktopUnsupported
-	info.RuntimeSupported = false
-	info.RuntimeRunning = false
-	info.RuntimeStatus = ""
-	return true
 }
 
 func (s *Server) enrichAIAppRuntime(ctx context.Context, info *api.AIAppInfo) {

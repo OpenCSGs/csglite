@@ -101,6 +101,7 @@ func TestValidateDesktopConfig(t *testing.T) {
 		DesktopMode:         true,
 		ListenAddr:          "127.0.0.1:0",
 		DesktopAPIAddr:      config.DefaultDesktopAPIAddr,
+		DesktopAPIBindAddr:  config.DefaultDesktopAPIBindAddr,
 		DesktopToken:        strings.Repeat("a", 64),
 		DesktopSessionToken: strings.Repeat("b", 64),
 		DesktopControlToken: strings.Repeat("c", 64),
@@ -122,6 +123,12 @@ func TestValidateDesktopConfig(t *testing.T) {
 		t.Fatal("unexpected desktop API address accepted")
 	}
 
+	wrongAPIBindAddr := *valid
+	wrongAPIBindAddr.DesktopAPIBindAddr = config.DefaultDesktopAPIAddr
+	if err := validateDesktopConfig(&wrongAPIBindAddr); err == nil {
+		t.Fatal("unexpected desktop API bind address accepted")
+	}
+
 	weakToken := *valid
 	weakToken.DesktopSessionToken = "predictable"
 	if err := validateDesktopConfig(&weakToken); err == nil {
@@ -130,7 +137,7 @@ func TestValidateDesktopConfig(t *testing.T) {
 }
 
 func TestDesktopRunFailsWhenExternalAPIPortIsOccupied(t *testing.T) {
-	blocker, err := net.Listen("tcp", config.DefaultDesktopAPIAddr)
+	blocker, err := net.Listen("tcp", config.DefaultDesktopAPIBindAddr)
 	if err != nil {
 		t.Skipf("desktop API port is already unavailable: %v", err)
 	}
@@ -141,6 +148,7 @@ func TestDesktopRunFailsWhenExternalAPIPortIsOccupied(t *testing.T) {
 	cfg.DesktopMode = true
 	cfg.ListenAddrOverride = "127.0.0.1:0"
 	cfg.DesktopAPIAddr = config.DefaultDesktopAPIAddr
+	cfg.DesktopAPIBindAddr = config.DefaultDesktopAPIBindAddr
 	cfg.DesktopToken = strings.Repeat("a", 64)
 	cfg.DesktopSessionToken = strings.Repeat("b", 64)
 	cfg.DesktopControlToken = strings.Repeat("c", 64)
@@ -165,6 +173,7 @@ func TestDesktopRunServesExternalAPIOnStablePort(t *testing.T) {
 	cfg.DesktopMode = true
 	cfg.ListenAddrOverride = "127.0.0.1:0"
 	cfg.DesktopAPIAddr = config.DefaultDesktopAPIAddr
+	cfg.DesktopAPIBindAddr = config.DefaultDesktopAPIBindAddr
 	cfg.DesktopToken = strings.Repeat("a", 64)
 	cfg.DesktopSessionToken = strings.Repeat("b", 64)
 	cfg.DesktopControlToken = strings.Repeat("c", 64)
@@ -203,6 +212,14 @@ func TestDesktopRunServesExternalAPIOnStablePort(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("health status = %d, want 200", response.StatusCode)
+	}
+	boundHost, boundPort, err := net.SplitHostPort(cfg.DesktopAPIBoundAddr)
+	if err != nil {
+		t.Fatalf("desktop API bound address = %q: %v", cfg.DesktopAPIBoundAddr, err)
+	}
+	boundIP := net.ParseIP(boundHost)
+	if boundIP == nil || !boundIP.IsUnspecified() || boundPort != "11436" {
+		t.Fatalf("desktop API bound address = %q, want all interfaces on port 11436", cfg.DesktopAPIBoundAddr)
 	}
 
 	response, err = client.Get("http://" + config.DefaultDesktopAPIAddr + "/api/settings")

@@ -245,18 +245,18 @@ func TestEnrichXiaozhiReturnsFourModelSlots(t *testing.T) {
 	}
 }
 
-func TestDesktopModeDisablesXiaozhi(t *testing.T) {
-	s := &Server{cfg: &config.Config{DesktopMode: true}}
-	info := api.AIAppInfo{ID: xiaozhiAppID, Supported: true, RuntimeSupported: true}
-
-	if !s.disableDesktopXiaozhi(&info) {
-		t.Fatal("disableDesktopXiaozhi returned false")
+func TestDesktopXiaozhiUsesDockerBridge(t *testing.T) {
+	cfg := &config.Config{
+		DesktopMode:        true,
+		DesktopAPIAddr:     config.DefaultDesktopAPIAddr,
+		DesktopAPIBindAddr: config.DefaultDesktopAPIBindAddr,
 	}
-	if !info.Disabled || info.Status != "disabled" || info.DisabledReason != xiaozhiDesktopUnsupported {
-		t.Fatalf("unexpected desktop Xiaozhi state: %#v", info)
+	got, err := xiaozhiLiteBaseURL(cfg.RuntimeDockerAPIAddr())
+	if err != nil {
+		t.Fatalf("xiaozhiLiteBaseURL: %v", err)
 	}
-	if info.RuntimeSupported {
-		t.Fatal("desktop Xiaozhi runtime should be unavailable")
+	if got != "http://host.docker.internal:11436/v1" {
+		t.Fatalf("desktop Xiaozhi base URL = %q", got)
 	}
 }
 
