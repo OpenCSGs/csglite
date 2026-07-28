@@ -753,12 +753,12 @@ export function Library() {
         <div class="overflow-x-auto">
           <table class="w-full min-w-[980px] table-fixed text-sm">
             <colgroup>
-              <col class="w-[23%]" />
+              <col class="w-[22%]" />
               <col class="w-[9%]" />
               <col class="w-[10%]" />
               <col class="w-[9%]" />
-              <col class="w-[10%]" />
-              <col class="w-[10%]" />
+              <col class="w-[14%]" />
+              <col class="w-[8%]" />
               <col class="w-[11%]" />
               <col class="w-[18%]" />
             </colgroup>
