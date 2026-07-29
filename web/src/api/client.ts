@@ -18,6 +18,7 @@ export interface ModelInfo {
   output_modalities?: string[];
   has_mmproj?: boolean;
   context_window?: number;
+  max_model_len?: number;
   description?: string;
   license?: string;
   llm_type?: string;

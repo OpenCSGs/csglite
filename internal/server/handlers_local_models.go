@@ -102,10 +102,14 @@ func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
 	pipelineTag := s.resolvedLocalPipelineTag(storageID, strings.TrimSpace(item.PipelineTag))
 	hasMMProj := false
 	var contextWindow int64
+	var maxModelLen int64
 
 	if dir, err := s.manager.ModelPath(storageID); err == nil {
 		hasMMProj = model.FindMMProj(dir) != ""
 		contextWindow = s.localModelContextWindow(storageID, dir)
+		// Native length metadata is optional; malformed or incomplete model
+		// metadata must not make the local library endpoint unavailable.
+		maxModelLen, _ = model.MaxModelLen(dir, item.Format)
 	}
 	if pipelineTag == "" {
 		pipelineTag = "text-generation"
@@ -126,6 +130,7 @@ func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
 		PipelineTag:   pipelineTag,
 		HasMMProj:     hasMMProj,
 		ContextWindow: contextWindow,
+		MaxModelLen:   maxModelLen,
 		Description:   strings.TrimSpace(item.Description),
 		License:       strings.TrimSpace(item.License),
 	}

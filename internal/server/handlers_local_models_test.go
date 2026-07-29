@@ -212,6 +212,39 @@ func TestLocalModelInfoPrefersDetectedDiffusersPipelineTag(t *testing.T) {
 	}
 }
 
+func TestHandleLocalModelSearchIncludesQwen35MaxModelLen(t *testing.T) {
+	s := newTestServer(t)
+	mustSaveLocalModel(t, s.cfg.ModelDir, &model.LocalModel{
+		Namespace:   "Qwen",
+		Name:        "Qwen3.5-2B",
+		Format:      model.FormatSafeTensors,
+		Files:       []string{"model.safetensors", "config.json"},
+		PipelineTag: "text-generation",
+	})
+	modelDir := filepath.Join(s.cfg.ModelDir, "Qwen", "Qwen3.5-2B")
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"text_config":{"max_position_embeddings":262144}}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/models/search", nil)
+	w := httptest.NewRecorder()
+	s.handleLocalModelSearch(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resp api.LocalModelSearchResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Models) != 1 {
+		t.Fatalf("models = %#v, want one model", resp.Models)
+	}
+	if resp.Models[0].MaxModelLen != 262144 {
+		t.Fatalf("max_model_len = %d, want 262144", resp.Models[0].MaxModelLen)
+	}
+}
+
 func TestHandleLocalModelSearch_InvalidPaginationParams(t *testing.T) {
 	s := newTestServer(t)
 

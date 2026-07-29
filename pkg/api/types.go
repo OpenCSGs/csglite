@@ -291,6 +291,7 @@ type ModelInfo struct {
 	OutputModalities []string      `json:"output_modalities,omitempty"`
 	HasMMProj        bool          `json:"has_mmproj,omitempty"`
 	ContextWindow    int64         `json:"context_window,omitempty"`
+	MaxModelLen      int64         `json:"max_model_len,omitempty"`
 	Description      string        `json:"description,omitempty"`
 	License          string        `json:"license,omitempty"`
 	LLMType          string        `json:"llm_type,omitempty"`

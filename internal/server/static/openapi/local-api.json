@@ -6119,6 +6119,11 @@
           "context_window": {
             "type": "integer"
           },
+          "max_model_len": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Native maximum model context length. Local GGUF models read this from the GGUF metadata header; local SafeTensors models read `config.json.max_position_embeddings`, or `config.json.text_config.max_position_embeddings` for nested text configurations."
+          },
           "description": {
             "type": "string"
           },
