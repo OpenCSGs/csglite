@@ -295,6 +295,18 @@ The CLI and Web UI expose a convenience `storage_dir` setting. When you set it, 
 | `listen_addr` | `:11435` | API server listen address |
 | `token` | (none) | CSGHub access token |
 
+### Local inference environment variables
+
+Set `CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX=true` before starting CSGLite to load
+local llama.cpp models with the maximum context length declared by the model
+metadata when no `num_ctx` is set explicitly. CSGLite reads
+`max_position_embeddings` from `config.json`, nested `text_config` for
+vision-language models, and GGUF `*.context_length` metadata.
+
+Explicit request parameters and `CSGHUB_LITE_LLAMA_NUM_CTX` still take
+precedence. If the model does not declare a maximum context length, CSGLite
+keeps its conservative default behavior.
+
 To hide one or more left navigation items in the Web UI, set the
 `CSGHUB_LITE_HIDDEN_NAV_ITEMS` environment variable to a comma-separated list
 and restart the server:
