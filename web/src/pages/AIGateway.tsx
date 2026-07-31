@@ -1220,9 +1220,17 @@ function UsageStatisticsSection() {
   const usage = localAPIUsage.value;
   const rows = usage?.rows || [];
   const summary = usage?.total_summary;
-  const providerOptions = providers.value
-    .map((provider) => provider.name.trim())
-    .filter((name, index, names) => name && names.indexOf(name) === index);
+  const providerOptions = [
+    { value: "local", label: t("settings.apiUsageSourceLocal") },
+    { value: "cloud", label: t("settings.apiUsageSourceCloud") },
+    ...providers.value.map((provider) => ({
+      value: provider.name.trim(),
+      label: provider.name.trim(),
+    })),
+  ].filter((option, index, options) =>
+    option.value
+    && options.findIndex((candidate) => candidate.value.toLowerCase() === option.value.toLowerCase()) === index
+  );
 
   return (
     <div>
@@ -1241,8 +1249,8 @@ function UsageStatisticsSection() {
               class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none transition-colors focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100 disabled:opacity-60"
             >
               <option value="">{t("settings.apiUsageProviderAll")}</option>
-              {providerOptions.map((name) => (
-                <option key={name} value={name}>{name}</option>
+              {providerOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </label>
