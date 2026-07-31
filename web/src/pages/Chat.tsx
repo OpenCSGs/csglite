@@ -1324,7 +1324,8 @@ export function Chat() {
     const ac = new AbortController();
     abortRef.current = ac;
 
-    const numCtx = normalizeNumCtx(conv.settings?.num_ctx);
+    const savedNumCtx = conv.settings?.num_ctx;
+    const numCtx = savedNumCtx ? normalizeNumCtx(savedNumCtx) : readNumCtx();
     const numParallel = conv.settings?.num_parallel || defaultNumParallel();
 
     chatError.value = "";
