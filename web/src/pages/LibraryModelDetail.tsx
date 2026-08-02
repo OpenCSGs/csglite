@@ -69,7 +69,7 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
   };
 
   return (
-    <div class="p-8 max-w-6xl mx-auto">
+    <div class="page-shell">
       <div class="flex items-start gap-3 mb-4">
         <a
           href="/library"

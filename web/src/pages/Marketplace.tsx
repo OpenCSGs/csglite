@@ -214,7 +214,7 @@ export function Marketplace() {
   };
 
   return (
-    <div class="p-8 max-w-6xl mx-auto">
+    <div class="page-shell">
       <h1 class="text-2xl font-bold text-gray-900">{t("mp.title")}</h1>
       <p class="text-gray-500 text-sm mt-1 mb-6">{t("mp.subtitle")}</p>
 
@@ -346,7 +346,7 @@ export function Marketplace() {
         <div class="text-center py-16 text-gray-400">{t("mp.loading")}</div>
       ) : activeTab.value === "models" ? (
         viewMode.value === "grid" ? (
-          <div class="grid grid-cols-2 gap-4">
+          <div class="grid grid-cols-2 gap-4 2xl:grid-cols-3">
             {models.value.map((m) => (
               <ModelGridCard
                 key={m.id}
@@ -375,7 +375,7 @@ export function Marketplace() {
           </div>
         )
       ) : viewMode.value === "grid" ? (
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-2 gap-4 2xl:grid-cols-3">
           {datasets.value.map((d) => (
             <DatasetGridCard key={d.id} dataset={d} pulling={getDownloadTask("dataset", d.path)} isLocal={localDatasetNames.value.has(d.path)} onDownload={handleDatasetDownload} />
           ))}

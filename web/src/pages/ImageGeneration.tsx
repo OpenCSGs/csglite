@@ -679,7 +679,7 @@ export function ImageGeneration() {
   };
 
   return (
-    <div class="mx-auto max-w-6xl space-y-6 p-8">
+    <div class="page-shell space-y-6">
       <div class="flex items-start justify-between gap-4">
         <div>
           <h1 class="text-2xl font-bold text-gray-900">{t("image.title")}</h1>

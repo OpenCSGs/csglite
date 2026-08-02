@@ -265,7 +265,7 @@ export function AIApps() {
   const grouped = groupedApps.value;
 
   return (
-    <div class="p-8 max-w-6xl mx-auto">
+    <div class="page-shell">
       <h1 class="text-2xl font-bold text-gray-900">{t("aiApps.title")}</h1>
       <p class="text-gray-500 text-sm mt-1 mb-6">{t("aiApps.subtitle")}</p>
 
@@ -395,7 +395,7 @@ function AIAppsGrid({
   onOpenChat: (appId: string) => void;
 }) {
   return (
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
       {apps.map((app) => (
         <AIAppCard
           key={app.id}

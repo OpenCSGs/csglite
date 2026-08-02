@@ -642,7 +642,7 @@ export function AIGateway() {
   }, []);
 
   return (
-    <div class="mx-auto max-w-6xl p-8">
+    <div class="page-shell">
       <div class="mb-6 overflow-hidden rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-7">
         <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>

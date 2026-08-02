@@ -173,7 +173,7 @@ function DatasetList() {
   const downloading = hasActiveDownload.value;
 
   return (
-    <div class="p-8 max-w-6xl mx-auto">
+    <div class="page-shell">
       <div class="mb-1">
         <h1 class="text-2xl font-bold text-gray-900">{t("ds.title")}</h1>
         <p class="text-gray-500 text-sm mt-1">{t("ds.subtitle")}</p>
@@ -356,7 +356,7 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
   };
 
   return (
-    <div class="p-8 max-w-6xl mx-auto">
+    <div class="page-shell">
       <div class="flex items-center gap-3 mb-4">
         <button
           onClick={goBack}

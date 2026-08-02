@@ -82,7 +82,7 @@ export function Dashboard() {
     : undefined;
 
   return (
-    <div class="w-full space-y-6 p-8">
+    <div class="page-shell space-y-6">
       {/* Resource Utilization */}
       <section class="bg-white rounded-xl border border-gray-200 p-6">
         <div class="flex items-center justify-between mb-6">

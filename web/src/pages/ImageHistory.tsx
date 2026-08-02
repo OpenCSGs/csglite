@@ -136,7 +136,7 @@ export function ImageHistory() {
   }, []);
 
   return (
-    <div class="mx-auto max-w-6xl space-y-6 p-8">
+    <div class="page-shell space-y-6">
       <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <a href="/images" class="text-sm font-medium text-indigo-600 hover:text-indigo-700">{t("image.backToImages")}</a>
