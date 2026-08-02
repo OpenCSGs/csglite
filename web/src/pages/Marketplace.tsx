@@ -810,11 +810,14 @@ function ModelCard({
           <span>{new Date(model.updated_at).toLocaleDateString()}</span>
           <span>&middot;</span>
           <span class="flex items-center gap-1">
-            <DownloadIcon /> {model.downloads}
+            <DownloadIcon /> {formatDownloadCount(model.downloads)}
           </span>
           <span class="flex items-center gap-1">
             <StarIcon /> {model.likes}
           </span>
+          {typeof model.repo_size === "number" && model.repo_size > 0 && (
+            <span>{t("mp.repoSizeValue", formatRepoSize(model.repo_size))}</span>
+          )}
         </div>
       </div>
       <div class="ml-4 flex-shrink-0 w-28 flex items-center justify-end">
@@ -914,11 +917,14 @@ function ModelGridCard({
             </span>
           ))}
           <span class="flex items-center gap-1">
-            <DownloadIcon /> {model.downloads}
+            <DownloadIcon /> {formatDownloadCount(model.downloads)}
           </span>
           <span class="flex items-center gap-1">
             <StarIcon /> {model.likes}
           </span>
+          {typeof model.repo_size === "number" && model.repo_size > 0 && (
+            <span>{t("mp.repoSizeValue", formatRepoSize(model.repo_size))}</span>
+          )}
         </div>
       </div>
       <div class="flex items-center justify-between mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400">
@@ -995,7 +1001,7 @@ function DatasetGridCard({
             </span>
           ))}
           <span class="flex items-center gap-1">
-            <DownloadIcon /> {dataset.downloads}
+            <DownloadIcon /> {formatDownloadCount(dataset.downloads)}
           </span>
           <span class="flex items-center gap-1">
             <StarIcon /> {dataset.likes}
@@ -1077,7 +1083,7 @@ function DatasetCard({
           <span>{new Date(dataset.updated_at).toLocaleDateString()}</span>
           <span>&middot;</span>
           <span class="flex items-center gap-1">
-            <DownloadIcon /> {dataset.downloads}
+            <DownloadIcon /> {formatDownloadCount(dataset.downloads)}
           </span>
           <span class="flex items-center gap-1">
             <StarIcon /> {dataset.likes}
@@ -1179,4 +1185,24 @@ function ModelFormatBadges({ model }: { model: MarketplaceModel }) {
       })}
     </>
   );
+}
+
+function formatRepoSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const unitIndex = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** unitIndex;
+  return `${value.toFixed(value >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatDownloadCount(value: number): string {
+  if (!Number.isFinite(value) || value < 0) {
+    return "0";
+  }
+  if (value < 1000) {
+    return String(Math.floor(value));
+  }
+  return `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
 }

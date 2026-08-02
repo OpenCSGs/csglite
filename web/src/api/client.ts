@@ -136,6 +136,7 @@ export interface MarketplaceModel {
   sync_status?: string;
   metadata?: MarketplaceModelMetadata;
   hf_path?: string;
+  repo_size?: number;
 }
 
 export interface MarketplaceModelQuantization {

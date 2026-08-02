@@ -7355,6 +7355,12 @@
           },
           "hf_path": {
             "type": "string"
+          },
+          "repo_size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Total repository download size in bytes, including LFS objects."
           }
         }
       },

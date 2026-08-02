@@ -64,6 +64,18 @@ func (c *Client) GetModel(ctx context.Context, namespace, name string) (*Model, 
 	return &resp.Data, nil
 }
 
+// GetRepoExtras returns repository sizes for a batch of repository IDs.
+func (c *Client) GetRepoExtras(ctx context.Context, repoIDs []int) ([]RepoExtraItem, error) {
+	if len(repoIDs) == 0 {
+		return []RepoExtraItem{}, nil
+	}
+	var resp APIResponse[[]RepoExtraItem]
+	if err := c.postJSON(ctx, "/api/v1/repos/extra", map[string][]int{"repo_ids": repoIDs}, &resp); err != nil {
+		return nil, fmt.Errorf("getting repository sizes: %w", err)
+	}
+	return resp.Data, nil
+}
+
 // GetModelRawFile returns the text content of a non-LFS model repository file.
 func (c *Client) GetModelRawFile(ctx context.Context, namespace, name, filePath string) (string, error) {
 	path := fmt.Sprintf("/api/v1/models/%s/%s/raw/%s", namespace, name, filePath)
