@@ -162,7 +162,7 @@ func TestDesktopRunFailsWhenExternalAPIPortIsOccupied(t *testing.T) {
 }
 
 func TestDesktopRunServesExternalAPIOnStablePort(t *testing.T) {
-	probe, err := net.Listen("tcp", config.DefaultDesktopAPIAddr)
+	probe, err := net.Listen("tcp", config.DefaultDesktopAPIBindAddr)
 	if err != nil {
 		t.Skipf("desktop API port is already unavailable: %v", err)
 	}

@@ -42,7 +42,7 @@ func TestHandleModelManifest_BackfillsLegacyManifest(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/models/Acme/demo/manifest", nil)
 	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, req)
+	s.externalAPIRoutes().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
@@ -107,7 +107,7 @@ func TestHandleModelManifestByPublicID(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/models/Fun-ASR-Nano-2512/manifest", nil)
 	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, req)
+	s.externalAPIRoutes().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
@@ -147,7 +147,7 @@ func TestHandleModelFile_SupportsHeadAndRange(t *testing.T) {
 		DownloadedAt: time.Unix(100, 0),
 	})
 
-	mux := s.routes()
+	mux := s.externalAPIRoutes()
 
 	headReq := httptest.NewRequest(http.MethodHead, "/api/models/Acme/demo/files/weights/model.gguf", nil)
 	headW := httptest.NewRecorder()

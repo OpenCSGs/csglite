@@ -2,6 +2,7 @@ import { signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { t, locale } from "../i18n";
 import { formatNumber, formatDateTime, formatChartDate, chartXAxisLabels } from "../utils/format";
+import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
 import { ProviderModelModalityBadges, providerModelLabel, defaultProviderModelDisplayName } from "../components/ProviderModelBadges";
 import {
   clearCloudAPIKey,
@@ -596,10 +597,6 @@ function selectLocalAPIUsageProvider(provider: string) {
   void fetchLocalAPIUsage(localAPIUsagePeriod.value, provider);
 }
 
-function localAPIOrigin(): string {
-  return window.location.origin;
-}
-
 function copySnippet(value: string) {
   void navigator.clipboard?.writeText(value);
   copiedSnippet.value = value;
@@ -853,7 +850,7 @@ function CloudAPIKeySection() {
 function LocalAPIKeysSection() {
   const keys = localAPIKeys.value?.keys || [];
   const authEnabled = localAPIKeys.value?.auth_enabled || false;
-  const origin = localAPIOrigin();
+  const origin = useRuntimeAPIOrigin();
   const openAIBaseURL = `${origin}/v1`;
   const anthropicBaseURL = `${origin}/anthropic`;
   const openAICurl = `curl ${openAIBaseURL}/chat/completions \\

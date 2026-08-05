@@ -131,9 +131,30 @@ func requiresRemoteAPIAuth(r *http.Request) bool {
 	if r.Method == http.MethodOptions {
 		return false
 	}
-	switch r.URL.Path {
-	case "/api/chat", "/api/generate", "/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/messages/count_tokens", "/anthropic/messages", "/anthropic/messages/count_tokens", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens":
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && isReadOnlyArtifactPath(r.URL.Path) {
 		return true
+	}
+	switch r.URL.Path {
+	case "/api/chat", "/api/generate", "/api/load", "/api/stop", "/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/messages/count_tokens", "/anthropic/messages", "/anthropic/messages/count_tokens", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens":
+		return true
+	default:
+		return false
+	}
+}
+
+func isReadOnlyArtifactPath(path string) bool {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 4 || parts[0] != "api" {
+		return false
+	}
+	switch parts[1] {
+	case "models":
+		return (len(parts) == 4 && parts[3] == "manifest") ||
+			(len(parts) == 5 && parts[4] == "manifest") ||
+			(len(parts) >= 6 && parts[4] == "files")
+	case "datasets":
+		return (len(parts) == 5 && parts[4] == "manifest") ||
+			(len(parts) >= 6 && parts[4] == "files")
 	default:
 		return false
 	}

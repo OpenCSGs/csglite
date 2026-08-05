@@ -211,32 +211,154 @@ func TestDesktopExternalAPIAllowsInferenceWithoutDesktopSession(t *testing.T) {
 	}
 }
 
+func TestDesktopExternalDownloadAuthFollowsRemoteAccessSetting(t *testing.T) {
+	s := newTestServer(t)
+	paths := []string{
+		"/api/models/demo/manifest",
+		"/api/models/Acme/demo/manifest",
+		"/api/models/Acme/demo/files/model.gguf",
+		"/api/datasets/Acme/demo/manifest",
+		"/api/datasets/Acme/demo/files/data.jsonl",
+	}
+
+	for _, path := range paths {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.20:5555"
+		w := httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		if w.Code == http.StatusUnauthorized {
+			t.Fatalf("%s status = %d with auth disabled, want request to reach handler", path, w.Code)
+		}
+	}
+
+	_, plain, err := s.apiKeys.Create("downloads")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	if _, err := s.apiKeys.SetAuthEnabled(true); err != nil {
+		t.Fatalf("enable auth: %v", err)
+	}
+
+	for _, path := range paths {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.20:5555"
+		w := httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s remote status without key = %d, want 401", path, w.Code)
+		}
+
+		req = httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.20:5555"
+		req.Header.Set("Authorization", "Bearer "+plain)
+		w = httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		if w.Code == http.StatusUnauthorized {
+			t.Fatalf("%s remote status with key = %d, want request to reach handler", path, w.Code)
+		}
+
+		req = httptest.NewRequest(http.MethodHead, path, nil)
+		req.RemoteAddr = "127.0.0.1:5555"
+		w = httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		if w.Code == http.StatusUnauthorized {
+			t.Fatalf("%s loopback HEAD status = %d, want auth bypass", path, w.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/models/demo/manifest", nil)
+	req.RemoteAddr = "192.168.1.20:5555"
+	req.Header.Set("x-api-key", plain)
+	w := httptest.NewRecorder()
+	s.externalAPIRoutes().ServeHTTP(w, req)
+	if w.Code == http.StatusUnauthorized {
+		t.Fatalf("remote download status with x-api-key = %d, want request to reach handler", w.Code)
+	}
+}
+
+func TestDesktopExternalRuntimeAuthFollowsLocalAPIKeySetting(t *testing.T) {
+	s := newTestServer(t)
+	routes := []string{"/api/load", "/api/stop"}
+	request := func(path, apiKey string) (int, string) {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		req.RemoteAddr = "192.168.1.20:5555"
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		w := httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		return w.Code, w.Body.String()
+	}
+
+	for _, path := range routes {
+		status, body := request(path, "")
+		if status == http.StatusUnauthorized || body == "404 page not found\n" {
+			t.Fatalf("%s status with auth disabled = %d body=%q, want request to reach handler", path, status, body)
+		}
+	}
+	_, plain, err := s.apiKeys.Create("desktop-runtime")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	if _, err := s.apiKeys.SetAuthEnabled(true); err != nil {
+		t.Fatalf("enable auth: %v", err)
+	}
+	for _, path := range routes {
+		if status, _ := request(path, ""); status != http.StatusUnauthorized {
+			t.Fatalf("%s status without key = %d, want 401", path, status)
+		}
+		status, body := request(path, plain)
+		if status == http.StatusUnauthorized || body == "404 page not found\n" {
+			t.Fatalf("%s status with key = %d body=%q, want request to reach handler", path, status, body)
+		}
+	}
+}
+
 func TestDesktopExternalAPIDoesNotExposeManagementRoutes(t *testing.T) {
 	s := newTestServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
-	req.Host = config.DefaultDesktopAPIAddr
-	req.RemoteAddr = "127.0.0.1:5555"
-	w := httptest.NewRecorder()
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/"},
+		{http.MethodGet, "/api/models/search"},
+		{http.MethodPost, "/api/models/upload"},
+		{http.MethodPost, "/api/pull"},
+		{http.MethodDelete, "/api/delete"},
+		{http.MethodGet, "/api/datasets/search"},
+		{http.MethodPost, "/api/datasets/pull"},
+		{http.MethodGet, "/api/settings"},
+		{http.MethodGet, "/api/api-keys"},
+		{http.MethodPost, "/api/shutdown"},
+	}
+	for _, route := range routes {
+		req := httptest.NewRequest(route.method, route.path, nil)
+		req.Host = config.DefaultDesktopAPIAddr
+		req.RemoteAddr = "127.0.0.1:5555"
+		w := httptest.NewRecorder()
 
-	s.externalAPIRoutes().ServeHTTP(w, req)
+		s.externalAPIRoutes().ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("status = %d body=%s, want 404", w.Code, w.Body.String())
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s %s status = %d body=%s, want 404", route.method, route.path, w.Code, w.Body.String())
+		}
 	}
 }
 
 func TestDesktopExternalAPIRejectsBrowserOrigins(t *testing.T) {
 	s := newTestServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	req.Host = config.DefaultDesktopAPIAddr
-	req.RemoteAddr = "127.0.0.1:5555"
-	req.Header.Set("Origin", "https://example.com")
-	w := httptest.NewRecorder()
+	for _, path := range []string{"/api/health", "/api/models/demo/manifest", "/api/datasets/Acme/demo/files/data.jsonl"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = config.DefaultDesktopAPIAddr
+		req.RemoteAddr = "127.0.0.1:5555"
+		req.Header.Set("Origin", "https://example.com")
+		w := httptest.NewRecorder()
 
-	s.externalAPIRoutes().ServeHTTP(w, req)
+		s.externalAPIRoutes().ServeHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status = %d body=%s, want 403", w.Code, w.Body.String())
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("%s status = %d body=%s, want 403", path, w.Code, w.Body.String())
+		}
 	}
 }
 

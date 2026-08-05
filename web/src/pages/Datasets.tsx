@@ -8,6 +8,7 @@ import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../component
 import type { PageSize } from "../components/Pagination";
 import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
+import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
 
 type View = { kind: "list" } | { kind: "detail"; dataset: string; path: string };
 type DatasetTableRow = {
@@ -293,6 +294,7 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
   const [detailError, setDetailError] = useState("");
   const [copiedKey, setCopiedKey] = useState("");
   const copyResetRef = useRef<number | null>(null);
+  const runtimeAPIOrigin = useRuntimeAPIOrigin();
 
   useEffect(() => {
     loadFiles(dataset, path);
@@ -333,10 +335,10 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
   };
 
   const breadcrumbs = buildBreadcrumbs(dataset, path);
-  const manifestURL = buildDatasetManifestURL(dataset);
+  const manifestURL = buildDatasetManifestURL(dataset, runtimeAPIOrigin);
   const manifestCurl = buildCurlCommand(manifestURL);
   const exampleFile = manifest?.files?.[0];
-  const exampleCurl = exampleFile ? buildDatasetFileCurlCommand(exampleFile) : "";
+  const exampleCurl = exampleFile ? buildDatasetFileCurlCommand(exampleFile, runtimeAPIOrigin) : "";
   const fileMetaMap = new Map((manifest?.files || []).map((file) => [file.path, file]));
 
   const handleCopy = async (key: string, value: string) => {
@@ -500,12 +502,12 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
               fileEntries.value.map((f) => {
                 const relPath = path ? `${path}/${f.name}` : f.name;
                 const fileMeta = fileMetaMap.get(relPath);
-                const fileURL = fileMeta ? absoluteURL(fileMeta.download_url) : buildDatasetFileURL(dataset, relPath);
-                const fileCurl = fileMeta ? buildDatasetFileCurlCommand(fileMeta) : buildDatasetFileCurlCommand({
+                const fileURL = fileMeta ? absoluteURL(fileMeta.download_url, runtimeAPIOrigin) : buildDatasetFileURL(dataset, relPath, runtimeAPIOrigin);
+                const fileCurl = fileMeta ? buildDatasetFileCurlCommand(fileMeta, runtimeAPIOrigin) : buildDatasetFileCurlCommand({
                   path: relPath,
                   size: f.size,
                   download_url: fileURL,
-                });
+                }, runtimeAPIOrigin);
                 return (
                   <tr key={f.name} class="border-b border-gray-50 hover:bg-gray-50/50">
                     <td class="px-4 py-3">
@@ -670,38 +672,38 @@ function buildBreadcrumbs(dataset: string, path: string) {
   return crumbs;
 }
 
-function buildDatasetManifestURL(dataset: string): string {
+function buildDatasetManifestURL(dataset: string, origin: string): string {
   const parts = splitDatasetID(dataset);
   if (!parts) {
-    return absoluteURL(`/api/datasets/${encodeURIComponent(dataset)}/manifest`);
+    return absoluteURL(`/api/datasets/${encodeURIComponent(dataset)}/manifest`, origin);
   }
-  return absoluteURL(`/api/datasets/${encodeURIComponent(parts.namespace)}/${encodeURIComponent(parts.name)}/manifest`);
+  return absoluteURL(`/api/datasets/${encodeURIComponent(parts.namespace)}/${encodeURIComponent(parts.name)}/manifest`, origin);
 }
 
-function buildDatasetFileURL(dataset: string, relPath: string): string {
+function buildDatasetFileURL(dataset: string, relPath: string, origin: string): string {
   const parts = splitDatasetID(dataset);
   if (!parts) {
-    return absoluteURL(`/api/datasets/${encodeURIComponent(dataset)}/files/${encodeURIComponent(relPath)}`);
+    return absoluteURL(`/api/datasets/${encodeURIComponent(dataset)}/files/${encodeURIComponent(relPath)}`, origin);
   }
   const segments = relPath.split("/").filter(Boolean).map((segment) => encodeURIComponent(segment));
-  return absoluteURL(`/api/datasets/${encodeURIComponent(parts.namespace)}/${encodeURIComponent(parts.name)}/files/${segments.join("/")}`);
+  return absoluteURL(`/api/datasets/${encodeURIComponent(parts.namespace)}/${encodeURIComponent(parts.name)}/files/${segments.join("/")}`, origin);
 }
 
 function buildCurlCommand(url: string): string {
   return `curl ${shellQuote(url)}`;
 }
 
-function buildDatasetFileCurlCommand(file: Pick<DatasetDownloadFile, "path" | "download_url" | "size">): string {
-  const fileURL = absoluteURL(file.download_url);
+function buildDatasetFileCurlCommand(file: Pick<DatasetDownloadFile, "path" | "download_url" | "size">, origin: string): string {
+  const fileURL = absoluteURL(file.download_url, origin);
   const targetPath = shellQuote(file.path);
   return `mkdir -p "$(dirname -- ${targetPath})" && curl -L -C - ${shellQuote(fileURL)} -o ${targetPath}`;
 }
 
-function absoluteURL(path: string): string {
-  if (typeof window === "undefined") {
+function absoluteURL(path: string, origin: string): string {
+  if (!origin) {
     return path;
   }
-  return new URL(path, window.location.origin).toString();
+  return new URL(path, origin).toString();
 }
 
 function splitDatasetID(dataset: string): { namespace: string; name: string } | null {

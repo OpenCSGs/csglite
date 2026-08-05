@@ -41,7 +41,7 @@ func TestHandleDatasetManifest_BackfillsLegacyManifest(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/datasets/Acme/demo/manifest", nil)
 	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, req)
+	s.externalAPIRoutes().ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
@@ -105,7 +105,7 @@ func TestHandleDatasetFile_SupportsHeadAndRange(t *testing.T) {
 		DownloadedAt: time.Unix(100, 0),
 	})
 
-	mux := s.routes()
+	mux := s.externalAPIRoutes()
 
 	headReq := httptest.NewRequest(http.MethodHead, "/api/datasets/Acme/demo/files/train/data.jsonl", nil)
 	headW := httptest.NewRecorder()

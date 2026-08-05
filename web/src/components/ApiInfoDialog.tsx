@@ -1,6 +1,7 @@
 import { signal } from "@preact/signals";
 import { t } from "../i18n";
 import { apiExampleModeFromPipelineTag, buildApiExamples } from "../utils/apiExamples";
+import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
 
 export function ApiInfoDialog({
   model,
@@ -17,7 +18,7 @@ export function ApiInfoDialog({
   isASR?: boolean;
   onClose: () => void;
 }) {
-  const baseUrl = `${location.protocol}//${location.host}`;
+  const baseUrl = useRuntimeAPIOrigin();
   const mode = isASR
     ? "asr"
     : isEmbedding

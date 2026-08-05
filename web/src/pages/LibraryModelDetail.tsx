@@ -9,6 +9,7 @@ import {
   localInferenceModeFromSupport,
   localInferenceValueKey,
 } from "../utils/localInference";
+import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
 
 type LibraryModelDetailProps = RoutePropsForPath<"/library/detail/:model">;
 
@@ -21,6 +22,7 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
   const [error, setError] = useState("");
   const [copiedKey, setCopiedKey] = useState("");
   const copyResetRef = useRef<number | null>(null);
+  const runtimeAPIOrigin = useRuntimeAPIOrigin();
 
   useEffect(() => {
     setLoading(true);
@@ -46,10 +48,10 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
     };
   }, []);
 
-  const manifestURL = buildManifestURL(modelID);
+  const manifestURL = buildManifestURL(modelID, runtimeAPIOrigin);
   const manifestCurl = buildCurlCommand(manifestURL);
   const exampleFile = manifest?.files?.[0];
-  const exampleCurl = exampleFile ? buildFileCurlCommand(exampleFile) : "";
+  const exampleCurl = exampleFile ? buildFileCurlCommand(exampleFile, runtimeAPIOrigin) : "";
   const localInferenceMode = localInferenceModeFromSupport(manifest?.local_inference);
 
   const handleCopy = async (key: string, value: string) => {
@@ -211,8 +213,8 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
                     </tr>
                   ) : (
                     manifest.files.map((file) => {
-                      const fileURL = absoluteURL(file.download_url);
-                      const curlCommand = buildFileCurlCommand(file);
+                      const fileURL = absoluteURL(file.download_url, runtimeAPIOrigin);
+                      const curlCommand = buildFileCurlCommand(file, runtimeAPIOrigin);
                       return (
                         <tr key={file.path} class="border-b border-gray-50 hover:bg-gray-50/50 align-top">
                           <td class="px-4 py-3">
@@ -316,27 +318,27 @@ function modelOriginLabel(origin?: string): string {
   return t("lib.notAvailable");
 }
 
-function absoluteURL(path: string): string {
-  if (typeof window === "undefined") {
+function absoluteURL(path: string, origin: string): string {
+  if (!origin) {
     return path;
   }
-  return new URL(path, window.location.origin).toString();
+  return new URL(path, origin).toString();
 }
 
 function buildCurlCommand(url: string): string {
   return `curl ${shellQuote(url)}`;
 }
 
-function buildManifestURL(modelID: string): string {
+function buildManifestURL(modelID: string, origin: string): string {
   const parts = splitModelID(modelID);
   if (!parts) {
-    return absoluteURL(`/api/models/${encodeURIComponent(modelID)}/manifest`);
+    return absoluteURL(`/api/models/${encodeURIComponent(modelID)}/manifest`, origin);
   }
-  return absoluteURL(`/api/models/${encodeURIComponent(parts.namespace)}/${encodeURIComponent(parts.name)}/manifest`);
+  return absoluteURL(`/api/models/${encodeURIComponent(parts.namespace)}/${encodeURIComponent(parts.name)}/manifest`, origin);
 }
 
-function buildFileCurlCommand(file: ModelFileEntry): string {
-  const fileURL = absoluteURL(file.download_url);
+function buildFileCurlCommand(file: ModelFileEntry, origin: string): string {
+  const fileURL = absoluteURL(file.download_url, origin);
   const targetPath = shellQuote(file.path);
   return `mkdir -p "$(dirname -- ${targetPath})" && curl -L -C - ${shellQuote(fileURL)} -o ${targetPath}`;
 }

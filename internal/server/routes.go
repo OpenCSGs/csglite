@@ -144,6 +144,11 @@ func (s *Server) externalAPIRoutes() http.Handler {
 	mux.HandleFunc("POST /api/stop", s.handleStop)
 	mux.HandleFunc("POST /api/generate", s.handleGenerate)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
+	mux.HandleFunc("GET /api/models/{model}/manifest", s.handleModelManifestByPublicID)
+	mux.HandleFunc("GET /api/models/{namespace}/{name}/manifest", s.handleModelManifest)
+	mux.HandleFunc("GET /api/models/{namespace}/{name}/files/{path...}", s.handleModelFile)
+	mux.HandleFunc("GET /api/datasets/{namespace}/{name}/manifest", s.handleDatasetManifest)
+	mux.HandleFunc("GET /api/datasets/{namespace}/{name}/files/{path...}", s.handleDatasetFile)
 
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("GET /v1/responses", s.handleOpenAIResponsesUnsupported)
@@ -160,7 +165,7 @@ func (s *Server) externalAPIRoutes() http.Handler {
 	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropicMessages)
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
 
-	return desktopExternalAPIMiddleware(LogMiddleware(mux))
+	return desktopExternalAPIMiddleware(s.apiAuthMiddleware(LogMiddleware(mux)))
 }
 
 func desktopExternalAPIMiddleware(next http.Handler) http.Handler {
