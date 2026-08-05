@@ -41,61 +41,93 @@ func (s *Server) refreshCloudModelsOnStartup(parent context.Context) {
 }
 
 func (s *Server) listAvailableModelsWithRefresh(ctx context.Context, refreshCloud bool) ([]api.ModelInfo, error) {
-	localModels, err := s.listLocalModelInfos()
-	if err != nil {
-		return nil, err
+	return s.listAvailableModelsForProvider(ctx, "", refreshCloud)
+}
+
+// listAvailableModelsForProvider loads only the sources needed for provider.
+// An empty provider keeps the historical "all sources" behavior. A concrete
+// provider (local / cloud / third-party) skips unrelated network work so
+// provider=local does not wait on the cloud model gateway.
+func (s *Server) listAvailableModelsForProvider(ctx context.Context, provider string, refreshCloud bool) ([]api.ModelInfo, error) {
+	provider = normalizeModelProvider(provider)
+
+	includeLocal := provider == "" || provider == localModelProvider
+	includeCloud := provider == "" || s.wantsCloudProviderModels(provider)
+	includeThirdParty := false
+	switch {
+	case provider == "":
+		includeThirdParty = true
+	case includeLocal || includeCloud:
+		includeThirdParty = false
+	default:
+		if _, ok := getThirdPartyProviderByAlias(provider); ok {
+			includeThirdParty = true
+		} else {
+			// Unknown provider: do not probe every source just to return [].
+			return []api.ModelInfo{}, nil
+		}
 	}
 
-	seen := make(map[string]struct{}, len(localModels)+8)
-	out := make([]api.ModelInfo, 0, len(localModels)+8)
-	for _, item := range localModels {
+	seen := make(map[string]struct{}, 8)
+	out := make([]api.ModelInfo, 0, 8)
+
+	appendUnique := func(item api.ModelInfo) {
 		modelID := strings.TrimSpace(item.Model)
 		if modelID == "" {
-			continue
+			return
 		}
-		key := strings.TrimSpace(item.Source) + ":" + modelID
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, item)
-	}
-
-	cloudModels, err := s.listCloudModels(ctx, refreshCloud)
-	if err == nil {
-		for _, item := range cloudModels {
-			modelID := strings.TrimSpace(item.Model)
-			if modelID == "" {
-				continue
-			}
-			key := strings.TrimSpace(item.Source) + ":" + modelID
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, item)
-		}
-	} else {
-		log.Printf("cloud model list unavailable: %v", err)
-	}
-
-	for _, item := range s.listSelectedThirdPartyProviderModels(ctx) {
-		modelID := strings.TrimSpace(item.Model)
 		source := strings.TrimSpace(item.Source)
-		if modelID == "" || source == "" {
-			continue
-		}
 		key := source + ":" + modelID
 		if _, ok := seen[key]; ok {
-			continue
+			return
 		}
 		seen[key] = struct{}{}
 		out = append(out, item)
+	}
+
+	if includeLocal {
+		localModels, err := s.listLocalModelInfos()
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range localModels {
+			appendUnique(item)
+		}
+	}
+
+	if includeCloud {
+		cloudModels, err := s.listCloudModels(ctx, refreshCloud)
+		if err == nil {
+			for _, item := range cloudModels {
+				appendUnique(item)
+			}
+		} else {
+			log.Printf("cloud model list unavailable: %v", err)
+		}
+	}
+
+	if includeThirdParty {
+		for _, item := range s.listSelectedThirdPartyProviderModels(ctx) {
+			if provider != "" && !modelMatchesProvider(item, provider) {
+				continue
+			}
+			appendUnique(item)
+		}
 	}
 
 	sortModelsByPriority(out)
-
 	return out, nil
+}
+
+func (s *Server) wantsCloudProviderModels(provider string) bool {
+	provider = normalizeModelProvider(provider)
+	if provider == "" {
+		return false
+	}
+	if provider == legacyCloudProviderRouteID {
+		return true
+	}
+	return s.isCloudModelProviderAlias(provider)
 }
 
 // Public cloud model metadata can be listed without an access token.

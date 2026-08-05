@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -211,6 +213,112 @@ func TestHandleTagsIncludesSupportedCloudInferenceTasks(t *testing.T) {
 	}
 	if got := byID["asr/model"]; got.PipelineTag != "automatic-speech-recognition" || !sameStrings(got.InputModalities, []string{"audio"}) || !sameStrings(got.OutputModalities, []string{"transcription"}) {
 		t.Fatalf("asr metadata = %#v, want ASR audio->transcription", got)
+	}
+}
+
+func TestHandleTagsProviderLocalDoesNotFetchCloud(t *testing.T) {
+	requests := 0
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{"id": "cloud/model", "task": "text-generation"},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cloud = cloud.NewService(apiServer.URL)
+	if err := model.SaveManifest(s.cfg.ModelDir, &model.LocalModel{
+		Namespace:    "test",
+		Name:         "local-model",
+		Format:       model.FormatGGUF,
+		Size:         1024,
+		Files:        []string{"model.gguf"},
+		DownloadedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("save local model: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags?provider=local", nil)
+	w := httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if requests != 0 {
+		t.Fatalf("cloud list requests = %d, want 0 for provider=local", requests)
+	}
+
+	var resp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode tags response: %v", err)
+	}
+	if len(resp.Models) != 1 || resp.Models[0].Provider != "local" {
+		t.Fatalf("models = %#v, want one local model", resp.Models)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=csghub", nil)
+	w = httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("csghub status = %d body=%s", w.Code, w.Body.String())
+	}
+	if requests == 0 {
+		t.Fatal("expected cloud list request for provider=csghub")
+	}
+}
+
+func TestHandleTagsProviderThirdPartyDoesNotFetchCloud(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
+	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
+
+	requests := 0
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "should not be called", http.StatusInternalServerError)
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cloud = cloud.NewService(apiServer.URL)
+	if err := config.SaveProviders([]config.ThirdPartyProvider{{
+		ID:      "provider1",
+		Name:    "Provider One",
+		Enabled: true,
+		BaseURL: "https://example.com/v1",
+		APIKey:  "secret",
+	}}); err != nil {
+		t.Fatalf("save providers: %v", err)
+	}
+	if err := config.ReplaceProviderModelAllowlist("provider1", []string{"selected/model"}); err != nil {
+		t.Fatalf("save provider model allowlist: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags?provider=provider1", nil)
+	w := httptest.NewRecorder()
+	s.handleTags(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if requests != 0 {
+		t.Fatalf("cloud list requests = %d, want 0 for third-party provider", requests)
+	}
+
+	var resp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode tags response: %v", err)
+	}
+	if len(resp.Models) != 1 || resp.Models[0].Model != "selected/model" {
+		t.Fatalf("models = %#v, want selected third-party model", resp.Models)
 	}
 }
 
