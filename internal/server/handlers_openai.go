@@ -24,6 +24,12 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
+	source, err := effectiveRequestSource(r.Context(), req.Source)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	req.Source = source
 
 	opts := inference.DefaultOptions()
 	requestedNumCtx := 0
@@ -471,6 +477,7 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
+	models = filterModelsByProviderRoute(models, providerRouteSourceFromContext(r.Context()))
 
 	seen := make(map[string]struct{}, len(models))
 	data := make([]api.OpenAIModel, 0, len(models)+4)

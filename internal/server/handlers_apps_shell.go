@@ -114,6 +114,7 @@ type aiAppShellControlMessage struct {
 	AppID    string `json:"app_id,omitempty"`
 	Title    string `json:"title,omitempty"`
 	ModelID  string `json:"model_id,omitempty"`
+	Source   string `json:"source,omitempty"`
 	WorkDir  string `json:"work_dir,omitempty"`
 	ExitCode int    `json:"exit_code,omitempty"`
 	Error    string `json:"error,omitempty"`
@@ -138,6 +139,7 @@ type aiAppShellSession struct {
 	appID   string
 	title   string
 	modelID string
+	source  string
 	workDir string
 	cmd     *exec.Cmd
 	pty     xpty.Pty
@@ -163,7 +165,7 @@ func newAIAppShellManager() *aiAppShellManager {
 	}
 }
 
-func (m *aiAppShellManager) Create(appID, title, modelID string, prepared aiAppPreparedLaunch) (*aiAppShellSession, error) {
+func (m *aiAppShellManager) Create(appID, title, modelID, source string, prepared aiAppPreparedLaunch) (*aiAppShellSession, error) {
 	pty, err := xpty.NewPty(aiAppShellDefaultCols, aiAppShellDefaultRows)
 	if err != nil {
 		return nil, fmt.Errorf("creating terminal: %w", err)
@@ -186,6 +188,7 @@ func (m *aiAppShellManager) Create(appID, title, modelID string, prepared aiAppP
 		appID:   appID,
 		title:   title,
 		modelID: modelID,
+		source:  source,
 		workDir: prepared.Dir,
 		cmd:     cmd,
 		pty:     pty,
@@ -302,6 +305,7 @@ func (s *aiAppShellSession) wait() {
 			AppID:    s.appID,
 			Title:    s.title,
 			ModelID:  s.modelID,
+			Source:   s.source,
 			WorkDir:  s.workDir,
 			ExitCode: exitCode,
 			Error:    exitErr,
@@ -321,6 +325,7 @@ func (s *aiAppShellSession) Attach() aiAppShellAttach {
 			AppID:   s.appID,
 			Title:   s.title,
 			ModelID: s.modelID,
+			Source:  s.source,
 			WorkDir: s.workDir,
 		},
 		replay: append([]byte(nil), s.replay...),
@@ -334,6 +339,7 @@ func (s *aiAppShellSession) Attach() aiAppShellAttach {
 			AppID:    s.appID,
 			Title:    s.title,
 			ModelID:  s.modelID,
+			Source:   s.source,
 			WorkDir:  s.workDir,
 			ExitCode: s.exitCode,
 			Error:    s.exitErr,
@@ -544,22 +550,29 @@ func (s *Server) openAIAppShellURL(ctx context.Context, appID, requestedModel, r
 			return "", err
 		}
 	}
+	resolvedSource := ""
+	if defaultModel != "" {
+		resolvedSource, modelIDs, err = s.resolveAIAppModelSource(ctx, defaultModel, requestedSource)
+		if err != nil {
+			return "", err
+		}
+	}
 	// AI app shells store the public (inference) model ID so it stays stable even
 	// when the local storage ID includes a namespace prefix.
 	defaultModel = s.localInferenceModelID(defaultModel)
-	log.Printf("AI APP %s: preparing shell launch model=%q models=%d work_dir=%q", appID, defaultModel, len(modelIDs), requestedWorkDir)
+	log.Printf("AI APP %s: preparing shell launch model=%q source=%q models=%d work_dir=%q", appID, defaultModel, resolvedSource, len(modelIDs), requestedWorkDir)
 
-	prepared, err := s.prepareAIAppShellLaunch(target, defaultModel, modelIDs, requestedWorkDir)
+	prepared, err := s.prepareAIAppShellLaunch(target, defaultModel, resolvedSource, modelIDs, requestedWorkDir)
 	if err != nil {
 		return "", err
 	}
 
-	session, err := s.appShells.Create(target.AppID, target.DisplayName, defaultModel, prepared)
+	session, err := s.appShells.Create(target.AppID, target.DisplayName, defaultModel, resolvedSource, prepared)
 	if err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(requestedModel) != "" && (!providerSwitchSupported || providerStatus.Mode == apps.ProviderModeOpenCSG) {
-		s.savePreferredAIAppModel(appID, defaultModel)
+		s.savePreferredAIAppSelection(appID, defaultModel, resolvedSource)
 	}
 
 	baseURL := s.localBaseURL()
@@ -587,7 +600,7 @@ func (s *Server) resolveAIAppShellLaunchModels(ctx context.Context, appID, reque
 
 	preferredModel := strings.TrimSpace(s.preferredAIAppModel(appID))
 	if preferredModel != "" {
-		modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, preferredModel, "")
+		modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, preferredModel, s.preferredAIAppModelSource(appID))
 		if err == nil {
 			return modelID, modelIDs, nil
 		}
@@ -602,6 +615,37 @@ func (s *Server) resolveAIAppShellLaunchModels(ctx context.Context, appID, reque
 	}
 
 	return s.resolveAIAppLaunchModels(ctx, "", "")
+}
+
+func (s *Server) resolveAIAppModelSource(ctx context.Context, modelID, requestedSource string) (string, []string, error) {
+	models, err := s.listAvailableModelsWithRefresh(ctx, true)
+	if err != nil {
+		return "", nil, fmt.Errorf("listing available models: %w", err)
+	}
+	modelID = strings.TrimSpace(modelID)
+	requestedSource = strings.TrimSpace(requestedSource)
+	source := requestedSource
+	if source == "" {
+		for _, item := range models {
+			if strings.TrimSpace(item.Model) == modelID {
+				source = strings.TrimSpace(item.Source)
+				break
+			}
+		}
+	}
+	if source == "" {
+		// Legacy preferences and tests may refer to an ID that is resolved
+		// through a local alias not present in the refreshed catalog.
+		source = "local"
+	}
+	modelIDs := make([]string, 0, len(models))
+	seen := map[string]struct{}{}
+	for _, item := range models {
+		if strings.EqualFold(strings.TrimSpace(item.Source), source) {
+			modelIDs = appendUniqueModelID(modelIDs, seen, item.Model)
+		}
+	}
+	return source, modelIDs, nil
 }
 
 func resolveAIAppOpenTarget(appID string) (aiAppOpenTarget, error) {
@@ -805,9 +849,23 @@ func (s *Server) preferredAIAppModel(appID string) string {
 	return strings.TrimSpace(s.cfg.AIAppPreferredModels[strings.TrimSpace(appID)])
 }
 
+func (s *Server) preferredAIAppModelSource(appID string) string {
+	s.prefsMu.Lock()
+	defer s.prefsMu.Unlock()
+	if s.cfg == nil || s.cfg.AIAppPreferredSources == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.cfg.AIAppPreferredSources[strings.TrimSpace(appID)])
+}
+
 func (s *Server) savePreferredAIAppModel(appID, modelID string) {
+	s.savePreferredAIAppSelection(appID, modelID, "")
+}
+
+func (s *Server) savePreferredAIAppSelection(appID, modelID, source string) {
 	appID = strings.TrimSpace(appID)
 	modelID = strings.TrimSpace(modelID)
+	source = strings.TrimSpace(source)
 	if appID == "" || modelID == "" || s.cfg == nil {
 		return
 	}
@@ -817,7 +875,15 @@ func (s *Server) savePreferredAIAppModel(appID, modelID string) {
 	if s.cfg.AIAppPreferredModels == nil {
 		s.cfg.AIAppPreferredModels = map[string]string{}
 	}
+	if s.cfg.AIAppPreferredSources == nil {
+		s.cfg.AIAppPreferredSources = map[string]string{}
+	}
 	s.cfg.AIAppPreferredModels[appID] = modelID
+	if source == "" {
+		delete(s.cfg.AIAppPreferredSources, appID)
+	} else {
+		s.cfg.AIAppPreferredSources[appID] = source
+	}
 	_ = config.Save(s.cfg)
 }
 
@@ -836,6 +902,9 @@ func (s *Server) clearPreferredAIAppModel(appID string) {
 		return
 	}
 	delete(s.cfg.AIAppPreferredModels, appID)
+	if s.cfg.AIAppPreferredSources != nil {
+		delete(s.cfg.AIAppPreferredSources, appID)
+	}
 	_ = config.Save(s.cfg)
 }
 
@@ -896,7 +965,7 @@ func openCodeReviewShellLaunch(modelID string) (string, []string, map[string]str
 	return "/bin/sh", args, map[string]string{"CSGHUB_LITE_USER_SHELL": loginShell}, nil
 }
 
-func (s *Server) prepareAIAppShellLaunch(target aiAppOpenTarget, modelID string, modelIDs []string, requestedWorkDir string) (aiAppPreparedLaunch, error) {
+func (s *Server) prepareAIAppShellLaunch(target aiAppOpenTarget, modelID, modelSource string, modelIDs []string, requestedWorkDir string) (aiAppPreparedLaunch, error) {
 	binary, err := resolveAIAppLaunchBinary(target.AppID, target.Binaries)
 	if err != nil {
 		return aiAppPreparedLaunch{}, fmt.Errorf("%s is installed, but the launch command was not found on PATH", target.DisplayName)
@@ -907,6 +976,12 @@ func (s *Server) prepareAIAppShellLaunch(target aiAppOpenTarget, modelID string,
 		return aiAppPreparedLaunch{}, err
 	}
 	serverURL := s.localBaseURL()
+	if strings.TrimSpace(modelID) != "" {
+		serverURL, err = providerScopedBaseURL(serverURL, modelSource)
+		if err != nil {
+			return aiAppPreparedLaunch{}, err
+		}
+	}
 
 	switch target.AppID {
 	case "claude-code":

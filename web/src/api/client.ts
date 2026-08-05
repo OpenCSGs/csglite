@@ -437,6 +437,7 @@ export interface AIAppInfo {
   latest_version?: string;
   update_available?: boolean;
   model_id?: string;
+  model_source?: string;
   provider_mode?: "native" | "opencsg";
   provider_group?: string;
   provider_switch_supported?: boolean;

@@ -3863,6 +3863,626 @@
         }
       }
     },
+    "/providers/{providerID}/v1/models": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "List compatibility models",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Returns an OpenAI model list by default. When Anthropic-style headers such as `anthropic-version` are present, the same route returns an Anthropic-compatible model list instead.",
+        "operationId": "providerScopedListCompatibilityModels",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "description": "Force a refresh of the cloud model catalog before returning results.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "anthropic-version",
+            "in": "header",
+            "description": "Send this header to receive Anthropic-compatible model metadata.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "anthropic-beta",
+            "in": "header",
+            "description": "Additional Anthropic compatibility hint that also switches the response shape.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "description": "Anthropic-style API key header. When provided without `authorization`, the route returns the Anthropic response format.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenAI- or Anthropic-compatible model listing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OpenAIModelList"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AnthropicModelListResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Compatibility model listing error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OpenAIErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AnthropicErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/chat/completions": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible chat completions",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for OpenAI Chat Completions. When `stream` is true the server streams SSE chunks and ends with `data: [DONE]`. If `stream` is omitted, deployments can opt into streaming by starting the server with `--openai-stream-default` or setting `CSGHUB_LITE_OPENAI_STREAM_DEFAULT=true`.",
+        "operationId": "providerScopedOpenAIChatCompletions",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIChatRequest"
+              },
+              "example": {
+                "model": "Qwen/Qwen3-0.6B-GGUF",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "Write a short haiku."
+                  }
+                ],
+                "stream": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chat completion output or streamed chunk sequence.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIChatResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventStream"
+                },
+                "example": "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1710000000,\"model\":\"Qwen/Qwen3-0.6B-GGUF\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"}}]}\n\ndata: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1710000000,\"model\":\"Qwen/Qwen3-0.6B-GGUF\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/OpenAITooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/responses": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "Responses API probe guard",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Returns a clear compatibility error for websocket probes and other unsupported GET requests to the Responses API endpoint.",
+        "operationId": "providerScopedGetResponsesUnsupported",
+        "responses": {
+          "426": {
+            "description": "WebSocket transport is not supported on this endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "message": "websocket transport is not supported on this endpoint",
+                    "type": "invalid_request_error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible Responses API",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Minimal Responses API compatibility for Codex and OpenAI SDK clients. When `stream` is true the route emits Responses API-style SSE events and ends with `event: done` plus `[DONE]`.",
+        "operationId": "providerScopedOpenAIResponses",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIResponsesRequest"
+              },
+              "example": {
+                "model": "Qwen/Qwen3-0.6B-GGUF",
+                "input": "Summarize the latest local logs.",
+                "stream": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responses API output or streamed event sequence.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponsesResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventStream"
+                },
+                "example": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"in_progress\"}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"completed\"}}\n\nevent: done\ndata: [DONE]\n\n"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/OpenAITooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/messages": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "Anthropic-compatible messages API",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Anthropic Messages compatibility endpoint. When `stream` is true the route emits Anthropic event-stream events such as `message_start`, `content_block_delta`, and `message_stop`.",
+        "operationId": "providerScopedAnthropicMessages",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnthropicMessageRequest"
+              },
+              "example": {
+                "model": "Qwen/Qwen3-0.6B-GGUF",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "Explain what local inference means."
+                  }
+                ],
+                "max_tokens": 256,
+                "stream": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Anthropic-compatible message response or SSE event sequence.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicMessageResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventStream"
+                },
+                "example": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/AnthropicBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AnthropicUnauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/AnthropicTooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/AnthropicInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/messages/count_tokens": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "Anthropic-compatible token counting",
+        "operationId": "providerScopedAnthropicCountTokens",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnthropicCountTokensRequest"
+              },
+              "example": {
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "Count the tokens in this sentence."
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Estimated input token count.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicCountTokensResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/AnthropicBadRequest"
+          }
+        },
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. "
+      }
+    },
+    "/providers/{providerID}/v1/embeddings": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible embeddings",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for OpenAI Embeddings. Local models are served through llama-server in embedding mode.",
+        "operationId": "providerScopedOpenAIEmbeddings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIEmbeddingsRequest"
+              },
+              "example": {
+                "model": "BAAI/bge-m3",
+                "input": [
+                  "hello world"
+                ],
+                "encoding_format": "float"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Embedding vectors for the supplied input.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIEmbeddingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/OpenAITooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/images/generations": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible image generation",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for local text-to-image generation. The Diffusers runtime is checked lazily when this endpoint is called.",
+        "operationId": "providerScopedOpenAIImagesGenerations",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIImagesGenerationRequest"
+              },
+              "example": {
+                "model": "Qwen/Qwen-Image",
+                "prompt": "A watercolor cat reading a book",
+                "size": "1024x1024",
+                "response_format": "b64_json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Generated image data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIImagesGenerationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "503": {
+            "description": "Diffusers runtime is not installed or not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeNotReadyError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/images/edits": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible image edit",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. OpenAI-compatible image editing endpoint. Accepts multipart/form-data with one or more input images and an edit prompt. Local Diffusers models such as Qwen-Image-Edit are supported through the shared image runtime.",
+        "operationId": "providerScopedOpenAIImagesEdits",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIImagesEditRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Edited image data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIImagesGenerationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "503": {
+            "description": "Diffusers runtime is not installed or not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeNotReadyError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/audio/transcriptions": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "OpenAI Compatibility"
+        ],
+        "summary": "Create audio transcription",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. OpenAI-compatible audio transcription endpoint served by the local ASR runtime.",
+        "operationId": "providerScopedCreateAudioTranscription",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIAudioTranscriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transcription result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIAudioTranscriptionResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
     "/v1/models": {
       "get": {
         "tags": [
@@ -7076,6 +7696,10 @@
           "model_id": {
             "type": "string"
           },
+          "model_source": {
+            "type": "string",
+            "description": "Persisted model source such as local, cloud, or provider:<id>."
+          },
           "provider_mode": {
             "type": "string",
             "enum": [
@@ -8561,6 +9185,10 @@
         "properties": {
           "model": {
             "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Optional source hint. Provider-scoped routes supply this value authoritatively."
           },
           "messages": {
             "type": "array",

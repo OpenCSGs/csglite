@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,15 +26,17 @@ type launchTarget struct {
 	AppID       string
 	DisplayName string
 	Binaries    []string
+	OpenViaAPI  bool
 }
 
 type launchOptions struct {
 	SkipConfirm bool
 	Model       string
+	Provider    string
 	Gateway     string
 }
 
-const launchSupportedApps = "claude-code, open-code, open-code-review/ocr, codex, pi, openclaw, csgclaw, dify, anythingllm"
+const launchSupportedApps = "claude-code, open-code, open-code-review/ocr, codex, codex-app, zcode, pi, openclaw, csgclaw, dify, anythingllm"
 const claudeDangerouslySkipPermissionsFlag = "dangerously-skip-permissions"
 
 func newLaunchCmd() *cobra.Command {
@@ -54,6 +57,8 @@ Supported apps: ` + launchSupportedApps + `
 Use ` + "`--`" + ` to pass through arguments to the launched app binary.`,
 		Example: `  csghub-lite launch claude-code
   csghub-lite launch codex --model Qwen/Qwen2.5-Coder-7B
+  csghub-lite launch zcode --model deepseek-v4-flash --provider <provider-id-or-name>
+  csghub-lite launch codex-app --model deepseek-v4-flash --provider <provider-id>
   csghub-lite launch ocr --model glm-5.1-1
   csghub-lite launch open-code-review -- review --format json
   csghub-lite launch pi
@@ -74,7 +79,8 @@ Use ` + "`--`" + ` to pass through arguments to the launched app binary.`,
 	}
 
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "Install without confirmation if the app is missing")
-	cmd.Flags().StringVar(&opts.Model, "model", "", "Use a specific local model when launching the app")
+	cmd.Flags().StringVar(&opts.Model, "model", "", "Use a specific model when launching the app")
+	cmd.Flags().StringVar(&opts.Provider, "provider", "", "Use a specific model provider by ID or unique name")
 	cmd.Flags().StringVar(&opts.Gateway, "gateway", "", "Use a remote csghub-lite gateway URL (e.g. http://192.168.1.18:11435)")
 	cmd.Flags().BoolVar(&claudeDangerouslySkipPermissions, claudeDangerouslySkipPermissionsFlag, false, "Pass --dangerously-skip-permissions to Claude Code")
 	return cmd
@@ -140,7 +146,24 @@ func runLaunch(cmd *cobra.Command, args []string, opts launchOptions) error {
 		}
 	}
 
-	modelID, err := resolveLaunchModel(serverURL, app.ModelID, opts.Model, opts.SkipConfirm, strings.TrimSpace(cfg.Token) != "")
+	providerHint := opts.Provider
+	if providerHint == "" && opts.Model == "" {
+		providerHint = strings.TrimPrefix(strings.TrimSpace(app.ModelSource), "provider:")
+	}
+	selection, err := resolveLaunchModelSelection(serverURL, app.ModelID, opts.Model, providerHint, opts.SkipConfirm, strings.TrimSpace(cfg.Token) != "")
+	if err != nil {
+		return err
+	}
+	modelID := selection.ID
+	if target.OpenViaAPI {
+		if len(args) > 1 {
+			return fmt.Errorf("%s does not accept arguments after --", target.DisplayName)
+		}
+		fmt.Printf("Using model %s [%s]\n", modelID, selection.ProviderName)
+		fmt.Printf("Launching %s...\n", target.DisplayName)
+		return requestAIAppOpen(serverURL, target.AppID, modelID, selection.Source)
+	}
+	scopedServerURL, err := launchProviderScopedBaseURL(serverURL, selection.Source)
 	if err != nil {
 		return err
 	}
@@ -154,14 +177,45 @@ func runLaunch(cmd *cobra.Command, args []string, opts launchOptions) error {
 		return err
 	}
 
-	prepared, err := prepareLaunchExecution(target, serverURL, modelID, userArgs)
+	prepared, err := prepareLaunchExecution(target, scopedServerURL, modelID, userArgs)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Using model %s\n", modelID)
+	fmt.Printf("Using model %s [%s]\n", modelID, selection.ProviderName)
 	fmt.Printf("Launching %s...\n", target.DisplayName)
 	return launchProcess(prepared.Binary, prepared.Args, prepared.Env)
+}
+
+func launchProviderScopedBaseURL(serverURL, source string) (string, error) {
+	source = strings.TrimSpace(source)
+	providerID := source
+	switch strings.ToLower(source) {
+	case "", "local":
+		providerID = "local"
+	case "cloud":
+		providerID = config.DefaultCloudProviderName
+	default:
+		if strings.HasPrefix(source, "provider:") {
+			providerID = strings.TrimPrefix(source, "provider:")
+		}
+	}
+	if strings.TrimSpace(providerID) == "" {
+		return "", fmt.Errorf("model provider source is empty")
+	}
+	return strings.TrimRight(serverURL, "/") + "/providers/" + url.PathEscape(providerID), nil
+}
+
+func unscopedLaunchServerURL(serverURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(serverURL))
+	if err != nil {
+		return strings.TrimRight(serverURL, "/")
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) >= 2 && parts[len(parts)-2] == "providers" {
+		parsed.Path = "/" + strings.Join(parts[:len(parts)-2], "/")
+	}
+	return strings.TrimRight(parsed.String(), "/")
 }
 
 func userRequestedClaudeSkipPermissions(cmd *cobra.Command) (bool, error) {
@@ -253,6 +307,18 @@ func resolveLaunchTarget(name string) (launchTarget, error) {
 			DisplayName: "Codex",
 			Binaries:    []string{"codex"},
 		}, nil
+	case "codexapp", "codexdesktop":
+		return launchTarget{
+			AppID:       "codex-app",
+			DisplayName: "Codex Desktop",
+			OpenViaAPI:  true,
+		}, nil
+	case "zcode":
+		return launchTarget{
+			AppID:       "zcode",
+			DisplayName: "ZCode",
+			OpenViaAPI:  true,
+		}, nil
 	case "pi", "picoding", "picodingagent":
 		return launchTarget{
 			AppID:       "pi",
@@ -284,6 +350,30 @@ func resolveLaunchTarget(name string) (launchTarget, error) {
 	default:
 		return launchTarget{}, fmt.Errorf("unknown AI app %q (supported: %s)\n\nRun 'csghub-lite launch --help' for supported apps and examples.", name, launchSupportedApps)
 	}
+}
+
+func requestAIAppOpen(serverURL, appID, modelID, source string) error {
+	body, _ := json.Marshal(api.AIAppOpenRequest{
+		AppID:   appID,
+		ModelID: modelID,
+		Source:  source,
+	})
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Post(strings.TrimRight(serverURL, "/")+"/api/apps/open", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("launching %s: %w", appID, err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode >= 400 {
+		msg := strings.TrimSpace(string(respBody))
+		if msg == "" {
+			msg = resp.Status
+		}
+		return fmt.Errorf("launching %s: %s", appID, msg)
+	}
+	return nil
 }
 
 func normalizeLaunchAppName(name string) string {
@@ -348,7 +438,7 @@ func getAIAppInfo(serverURL, appID string) (api.AIAppInfo, error) {
 
 func getLaunchModels(serverURL string) ([]api.ModelInfo, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(serverURL + "/api/tags?refresh=1")
+	resp, err := client.Get(unscopedLaunchServerURL(serverURL) + "/api/tags?refresh=1")
 	if err != nil {
 		return nil, fmt.Errorf("querying AI app models: %w", err)
 	}

@@ -21,6 +21,7 @@ interface ShellControlMessage {
   app_id?: string;
   title?: string;
   model_id?: string;
+  source?: string;
   work_dir?: string;
   exit_code?: number;
   error?: string;
@@ -109,6 +110,7 @@ export function AIAppShell() {
   const queryAppId = useMemo(() => new URLSearchParams(location.search).get("app_id")?.trim() || "", []);
   const [title, setTitle] = useState("");
   const [modelId, setModelId] = useState("");
+  const [modelSource, setModelSource] = useState("");
   const [appId, setAppId] = useState(queryAppId);
   const [error, setError] = useState("");
   const [state, setState] = useState<ConnectionState>("connecting");
@@ -285,6 +287,7 @@ export function AIAppShell() {
           setTitle(message.title || "");
           setAppId(message.app_id || "");
           setModelId(message.model_id || "");
+          setModelSource(message.source || "");
           setWorkDir(message.work_dir || "");
           setWorkDirInput(message.work_dir || "");
           document.title = message.title ? `${message.title} · CSGLite` : "CSGLite";
@@ -394,8 +397,12 @@ export function AIAppShell() {
     }
 
     setSelectedModel((current) => {
-      if (modelId && models.some((item) => item.model === modelId)) {
-        const model = models.find((item) => item.model === modelId);
+      if (modelId && models.some((item) =>
+        item.model === modelId && (!modelSource || item.source === modelSource)
+      )) {
+        const model = models.find((item) =>
+          item.model === modelId && (!modelSource || item.source === modelSource)
+        );
         return model ? shellModelKey(model) : modelId;
       }
       if (current && models.some((item) => shellModelKey(item) === current)) {
@@ -403,7 +410,7 @@ export function AIAppShell() {
       }
       return models[0] ? shellModelKey(models[0]) : "";
     });
-  }, [appId, modelId, models]);
+  }, [appId, modelId, modelSource, models]);
 
   const shellTitle = title || t("aiApps.shellTitle");
   const statusLabel = state === "connected"
@@ -425,7 +432,9 @@ export function AIAppShell() {
   const trimmedWorkDir = workDirInput.trim();
   const selectedModelParts = selectedModel ? parseShellModelKey(selectedModel) : null;
   const currentModelKey = modelId
-    ? shellModelKey(models.find((item) => item.model === modelId) || { model: modelId, source: "local" })
+    ? shellModelKey(models.find((item) =>
+      item.model === modelId && (!modelSource || item.source === modelSource)
+    ) || { model: modelId, source: modelSource || "local" })
     : "";
   const modelChanged = canSwitchShellModel && selectedModel !== currentModelKey;
   const workDirChanged = trimmedWorkDir !== workDir;
@@ -486,7 +495,11 @@ export function AIAppShell() {
           </div>
           <div class="mt-1 flex items-center gap-3 flex-wrap text-xs text-slate-400">
             {appId && <span>{appId}</span>}
-            {!canSwitchShellModel && modelId && <span>{t("aiApps.shellModel")}: {modelId}</span>}
+            {modelId && <span>{t("aiApps.shellModel")}: {
+              formatShellModelLabel(models.find((item) =>
+                item.model === modelId && (!modelSource || item.source === modelSource)
+              ) || { model: modelId, source: modelSource || "local" } as ModelInfo)
+            }</span>}
             {!canSwitchShellWorkDir && workDir && <span>{t("aiApps.shellDirectory")}: {workDir}</span>}
             {state === "exited" && exitCode !== null && <span>{t("aiApps.shellExitCode", String(exitCode))}</span>}
           </div>

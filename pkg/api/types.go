@@ -573,6 +573,7 @@ type AIAppInfo struct {
 	LatestVersion           string              `json:"latest_version,omitempty"`
 	UpdateAvailable         bool                `json:"update_available,omitempty"`
 	ModelID                 string              `json:"model_id,omitempty"`
+	ModelSource             string              `json:"model_source,omitempty"`
 	ProviderMode            string              `json:"provider_mode,omitempty"`
 	ProviderGroup           string              `json:"provider_group,omitempty"`
 	ProviderSwitchSupported bool                `json:"provider_switch_supported,omitempty"`

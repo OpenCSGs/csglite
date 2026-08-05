@@ -63,6 +63,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /anthropic/messages/count_tokens", s.handleAnthropicCountTokens)
 	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropicMessages)
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
+	s.registerProviderInferenceRoutes(mux)
 
 	// New: marketplace, system, logs, settings
 	mux.HandleFunc("GET /api/marketplace/models", s.handleMarketplaceModels)
@@ -164,6 +165,7 @@ func (s *Server) externalAPIRoutes() http.Handler {
 	mux.HandleFunc("POST /anthropic/messages/count_tokens", s.handleAnthropicCountTokens)
 	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropicMessages)
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
+	s.registerProviderInferenceRoutes(mux)
 
 	return desktopExternalAPIMiddleware(s.apiAuthMiddleware(LogMiddleware(mux)))
 }

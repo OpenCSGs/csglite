@@ -113,7 +113,11 @@ func (s *Server) openClawChatURL(ctx context.Context, modelID, modelSource strin
 		return "", err
 	}
 	if strings.TrimSpace(modelID) != "" {
-		s.savePreferredAIAppModel("openclaw", modelID)
+		resolvedSource, _, err := s.resolveAIAppModelSource(ctx, modelID, modelSource)
+		if err != nil {
+			return "", err
+		}
+		s.savePreferredAIAppSelection("openclaw", modelID, resolvedSource)
 	}
 
 	url, err := openClawDashboardURL(ctx, binary)
@@ -152,7 +156,14 @@ func (s *Server) ensureOpenClawProfile(ctx context.Context, binary, requestedMod
 	if err != nil {
 		return err
 	}
-	serverURL := s.localBaseURL()
+	modelSource, modelIDs, err := s.resolveAIAppModelSource(ctx, modelID, requestedSource)
+	if err != nil {
+		return err
+	}
+	serverURL, err := providerScopedBaseURL(s.localBaseURL(), modelSource)
+	if err != nil {
+		return err
+	}
 
 	ok, err := openClawProfileMatches(serverURL, modelID)
 	if err != nil || !ok {

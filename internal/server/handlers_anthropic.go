@@ -23,6 +23,12 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		writeAnthropicError(w, http.StatusBadRequest, "model is required")
 		return
 	}
+	source, err := effectiveRequestSource(r.Context(), req.Source)
+	if err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Source = source
 
 	opts := inference.DefaultOptions()
 	if req.Temperature != nil {
@@ -38,7 +44,7 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		opts.Stop = req.StopSequences
 	}
 
-	eng, err := s.getChatEngine(r.Context(), req.Model, "", s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
+	eng, err := s.getChatEngine(r.Context(), req.Model, req.Source, s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
 	if err != nil {
 		writeAnthropicInferenceError(w, err)
 		return
@@ -109,16 +115,16 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		writeAnthropicSSE(w, "message_stop", map[string]interface{}{
 			"type": "message_stop",
 		})
-		s.recordAPIUsage(r, req.Model, "", inputTokens, outputTokens)
+		s.recordAPIUsage(r, req.Model, req.Source, inputTokens, outputTokens)
 		return
 	}
 
-	response, err := runWithLocalInferenceSelfHeal(s, "", req.Model, engineModeChat, eng,
+	response, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
 		func(engine inference.Engine) (string, error) {
 			return engine.Chat(r.Context(), messages, opts, nil)
 		},
 		func() (inference.Engine, error) {
-			return s.getChatEngine(r.Context(), req.Model, "", s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
+			return s.getChatEngine(r.Context(), req.Model, req.Source, s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
 		},
 	)
 	if err != nil {
@@ -127,7 +133,7 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	}
 
 	anthropicResp := buildAnthropicMessageResponse(id, req.Model, response, inputTokens)
-	s.recordAPIUsage(r, req.Model, "", anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
+	s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 	writeJSON(w, http.StatusOK, anthropicResp)
 }
 
@@ -147,7 +153,7 @@ func (s *Server) handleAnthropicMessagesProxy(
 		return
 	}
 
-	resp, err := runWithLocalInferenceSelfHeal(s, "", req.Model, engineModeChat, eng,
+	resp, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
 		func(engine inference.Engine) (*http.Response, error) {
 			proxyEngine, ok := engine.(inference.ChatCompletionProxier)
 			if !ok {
@@ -156,7 +162,7 @@ func (s *Server) handleAnthropicMessagesProxy(
 			return proxyEngine.ChatCompletion(r.Context(), reqBody)
 		},
 		func() (inference.Engine, error) {
-			return s.getChatEngine(r.Context(), req.Model, "", s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
+			return s.getChatEngine(r.Context(), req.Model, req.Source, s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
 		},
 	)
 	if err != nil {
@@ -203,7 +209,7 @@ func (s *Server) handleAnthropicMessagesProxy(
 	}
 
 	if !req.Stream {
-		s.recordAPIUsage(r, req.Model, "", anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
+		s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 		writeJSON(w, http.StatusOK, anthropicResp)
 		return
 	}
@@ -211,7 +217,7 @@ func (s *Server) handleAnthropicMessagesProxy(
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	s.recordAPIUsage(r, req.Model, "", anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
+	s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 	writeAnthropicStreamedMessage(w, anthropicResp)
 }
 
@@ -236,7 +242,7 @@ func (s *Server) handleAnthropicMessagesWithTools(
 		return
 	}
 
-	resp, err := runWithLocalInferenceSelfHeal(s, "", req.Model, engineModeChat, eng,
+	resp, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
 		func(engine inference.Engine) (*http.Response, error) {
 			proxyEngine, ok := engine.(inference.ChatCompletionProxier)
 			if !ok {
@@ -245,7 +251,7 @@ func (s *Server) handleAnthropicMessagesWithTools(
 			return proxyEngine.ChatCompletion(r.Context(), reqBody)
 		},
 		func() (inference.Engine, error) {
-			return s.getChatEngine(r.Context(), req.Model, "", s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
+			return s.getChatEngine(r.Context(), req.Model, req.Source, s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
 		},
 	)
 	if err != nil {
@@ -294,7 +300,7 @@ func (s *Server) handleAnthropicMessagesWithTools(
 	}
 
 	if !req.Stream {
-		s.recordAPIUsage(r, req.Model, "", anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
+		s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 		writeJSON(w, http.StatusOK, anthropicResp)
 		return
 	}
@@ -302,7 +308,7 @@ func (s *Server) handleAnthropicMessagesWithTools(
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	s.recordAPIUsage(r, req.Model, "", anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
+	s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 	writeAnthropicStreamedMessage(w, anthropicResp)
 }
 
@@ -311,6 +317,10 @@ func (s *Server) handleAnthropicCountTokens(w http.ResponseWriter, r *http.Reque
 	var req api.AnthropicMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if _, err := effectiveRequestSource(r.Context(), req.Source); err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

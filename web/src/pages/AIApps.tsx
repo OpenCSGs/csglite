@@ -623,7 +623,11 @@ function LiveLogsDrawer({
   const currentModelInfo = selectedModelParts
     ? models.find((item) => aiAppModelKey(item) === selectedModel)
     : models.find((item) => item.model === currentModelID);
-  const launchPreview = cliLaunchPreview(app, currentModelID);
+  const launchPreview = cliLaunchPreview(
+    app,
+    currentModelID,
+    currentModelInfo?.source || state.modelSource || "",
+  );
   const xiaozhiSavedBindingsKey = JSON.stringify(state.modelBindings || {});
 
   useEffect(() => {
@@ -743,8 +747,12 @@ function LiveLogsDrawer({
       if (current && models.some((item) => aiAppModelKey(item) === current)) {
         return current;
       }
-      if (state.modelID && models.some((item) => item.model === state.modelID)) {
-        const model = models.find((item) => item.model === state.modelID);
+      if (state.modelID && models.some((item) =>
+        item.model === state.modelID && (!state.modelSource || item.source === state.modelSource)
+      )) {
+        const model = models.find((item) =>
+          item.model === state.modelID && (!state.modelSource || item.source === state.modelSource)
+        );
         return model ? aiAppModelKey(model) : state.modelID;
       }
       if (state.modelID) {
@@ -752,7 +760,7 @@ function LiveLogsDrawer({
       }
       return models[0] ? aiAppModelKey(models[0]) : "";
     });
-  }, [app.id, canLoadModels, state.modelID, models]);
+  }, [app.id, canLoadModels, state.modelID, state.modelSource, models]);
 
   useEffect(() => {
     if (!isXiaozhi) {
@@ -1754,6 +1762,7 @@ function mergeAppStates(remoteApps: RemoteAIAppInfo[]) {
       latestVersion: remote.latest_version,
       updateAvailable: Boolean(remote.update_available),
       modelID: remote.model_id || "",
+      modelSource: remote.model_source || "",
       providerMode: remote.provider_mode || "native",
       providerGroup: remote.provider_group,
       providerSwitchSupported: Boolean(remote.provider_switch_supported),
@@ -1921,14 +1930,15 @@ function runtimeStatusDotClass(state: AIAppRuntimeState): string {
     : "bg-red-500";
 }
 
-function cliLaunchPreview(app: AIAppCatalogEntry, modelID: string): string {
+function cliLaunchPreview(app: AIAppCatalogEntry, modelID: string, source: string): string {
   const launchName = cliLaunchAppName(app.id);
   if (!launchName) {
     return "";
   }
-  const launchWithModel = modelID
-    ? `csghub-lite launch ${launchName} --model "${modelID}"`
-    : `csghub-lite launch ${launchName} --model "<model-id>"`;
+  const provider = launchProviderID(source);
+  const modelArg = modelID ? `"${modelID}"` : '"<model-id>"';
+  const providerArg = provider ? `"${provider}"` : '"<provider-id-or-name>"';
+  const launchWithModel = `csghub-lite launch ${launchName} --model ${modelArg} --provider ${providerArg}`;
   return [
     `csghub-lite launch ${launchName}`,
     launchWithModel,
@@ -1946,6 +1956,10 @@ function cliLaunchAppName(appID: string): string {
       return "ocr";
     case "codex":
       return "codex";
+    case "codex-app":
+      return "codex-app";
+    case "zcode":
+      return "zcode";
     case "pi":
       return "pi";
     case "openclaw":
@@ -1955,6 +1969,14 @@ function cliLaunchAppName(appID: string): string {
     default:
       return "";
   }
+}
+
+function launchProviderID(source: string): string {
+  const value = source.trim();
+  const normalized = value.toLocaleLowerCase();
+  if (!normalized || normalized === "local") return "local";
+  if (normalized === "cloud") return "csghub";
+  return normalized.startsWith("provider:") ? value.slice("provider:".length) : value;
 }
 
 function canSelectAIAppModel(app: AIAppCatalogEntry): boolean {

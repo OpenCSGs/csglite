@@ -1318,7 +1318,7 @@ func TestPrepareAIAppShellLaunchSetsTerminalEnvForClaudeCode(t *testing.T) {
 		AppID:       "claude-code",
 		DisplayName: "Claude Code",
 		Binaries:    []string{"claude"},
-	}, "Qwen/Qwen3.5-2B", []string{"Qwen/Qwen3.5-2B"}, workDir)
+	}, "Qwen/Qwen3.5-2B", "local", []string{"Qwen/Qwen3.5-2B"}, workDir)
 	if err != nil {
 		t.Fatalf("prepareAIAppShellLaunch returned error: %v", err)
 	}
@@ -1398,7 +1398,7 @@ func TestPrepareAIAppShellLaunchConfiguresOpenCodeReview(t *testing.T) {
 		AppID:       "open-code-review",
 		DisplayName: "Open Code Review",
 		Binaries:    []string{"ocr"},
-	}, "Qwen/Qwen3.5-2B", modelIDs, workDir)
+	}, "Qwen/Qwen3.5-2B", "local", modelIDs, workDir)
 	if err != nil {
 		t.Fatalf("prepareAIAppShellLaunch returned error: %v", err)
 	}
@@ -1457,7 +1457,7 @@ func TestPrepareAIAppShellLaunchConfiguresOpenCodeReview(t *testing.T) {
 		t.Fatalf("unexpected provider/model: %#v", payload)
 	}
 	provider := payload.CustomProviders["csghub-lite"]
-	if provider.URL != "http://127.0.0.1:11435/v1" || provider.Protocol != "openai" {
+	if provider.URL != "http://127.0.0.1:11435/providers/local/v1" || provider.Protocol != "openai" {
 		t.Fatalf("unexpected provider endpoint: %#v", provider)
 	}
 	if provider.APIKey == "" || provider.Model != "Qwen/Qwen3.5-2B" {
@@ -1522,7 +1522,7 @@ mcp_servers.remotion-documentation.args = ["@remotion/mcp@latest"]
 		AppID:       "codex",
 		DisplayName: "Codex",
 		Binaries:    []string{"codex"},
-	}, "Qwen/Qwen3.5-2B", modelIDs, workDir)
+	}, "Qwen/Qwen3.5-2B", "local", modelIDs, workDir)
 	if err != nil {
 		t.Fatalf("prepareAIAppShellLaunch returned error: %v", err)
 	}
@@ -1626,7 +1626,7 @@ func TestPrepareAIAppShellLaunchPreservesNativeCodexConfig(t *testing.T) {
 		AppID:       "codex",
 		DisplayName: "Codex",
 		Binaries:    []string{"codex"},
-	}, "Qwen/Qwen3.5-2B", []string{"Qwen/Qwen3.5-2B"}, t.TempDir())
+	}, "Qwen/Qwen3.5-2B", "local", []string{"Qwen/Qwen3.5-2B"}, t.TempDir())
 	if err != nil {
 		t.Fatalf("prepareAIAppShellLaunch returned error: %v", err)
 	}
@@ -1675,7 +1675,7 @@ func TestPrepareAIAppShellLaunchUsesPiProviderConfig(t *testing.T) {
 		AppID:       "pi",
 		DisplayName: "Pi",
 		Binaries:    []string{"pi"},
-	}, "Qwen/Qwen3.5-2B", []string{"Qwen/Qwen3.5-2B", "minimax-m2.5"}, workDir)
+	}, "Qwen/Qwen3.5-2B", "local", []string{"Qwen/Qwen3.5-2B", "minimax-m2.5"}, workDir)
 	if err != nil {
 		t.Fatalf("prepareAIAppShellLaunch returned error: %v", err)
 	}
@@ -1708,8 +1708,8 @@ func TestPrepareAIAppShellLaunchUsesPiProviderConfig(t *testing.T) {
 	if !ok {
 		t.Fatalf("Pi csghub-lite provider missing: %#v", payload.Providers)
 	}
-	if provider.BaseURL != "http://127.0.0.1:11435/v1" {
-		t.Fatalf("provider baseUrl = %q, want local v1 URL", provider.BaseURL)
+	if provider.BaseURL != "http://127.0.0.1:11435/providers/local/v1" {
+		t.Fatalf("provider baseUrl = %q, want provider-scoped local v1 URL", provider.BaseURL)
 	}
 	if got := collectOpenClawModelIDs(provider.Models); !sameStrings(got, []string{"Qwen/Qwen3.5-2B", "minimax-m2.5"}) {
 		t.Fatalf("Pi model ids = %#v, want launch models", got)

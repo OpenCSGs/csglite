@@ -53,10 +53,11 @@ func (s *Server) listAvailableModelsWithRefresh(ctx context.Context, refreshClou
 		if modelID == "" {
 			continue
 		}
-		if _, ok := seen[modelID]; ok {
+		key := strings.TrimSpace(item.Source) + ":" + modelID
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		seen[modelID] = struct{}{}
+		seen[key] = struct{}{}
 		out = append(out, item)
 	}
 
@@ -67,10 +68,11 @@ func (s *Server) listAvailableModelsWithRefresh(ctx context.Context, refreshClou
 			if modelID == "" {
 				continue
 			}
-			if _, ok := seen[modelID]; ok {
+			key := strings.TrimSpace(item.Source) + ":" + modelID
+			if _, ok := seen[key]; ok {
 				continue
 			}
-			seen[modelID] = struct{}{}
+			seen[key] = struct{}{}
 			out = append(out, item)
 		}
 	} else {

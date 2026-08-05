@@ -53,6 +53,12 @@ func (s *Server) handleOpenAIImagesGenerations(w http.ResponseWriter, r *http.Re
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", errMsg)
 		return
 	}
+	source, err := effectiveRequestSource(r.Context(), req.Source)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	req.Source = source
 	if strings.TrimSpace(req.Image) != "" || len(req.Images) > 0 {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "image editing is not supported on /v1/images/generations; use POST /v1/images/edits")
 		return
@@ -73,6 +79,12 @@ func (s *Server) handleOpenAIImagesEdits(w http.ResponseWriter, r *http.Request)
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", errMsg)
 		return
 	}
+	source, err := effectiveRequestSource(r.Context(), inferenceReq.Source)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	inferenceReq.Source = source
 
 	resp, err := s.runOpenAIImageInference(r, inferenceReq)
 	if err != nil {

@@ -361,8 +361,9 @@ func TestHandleModelProvidersListUsesConfiguredCloudProviderName(t *testing.T) {
 	if len(resp.Providers) != 1 {
 		t.Fatalf("providers = %#v, want one cloud provider", resp.Providers)
 	}
-	if resp.Providers[0].ID != "opencsg" || resp.Providers[0].Name != "OpenCSG" || resp.Providers[0].ModelCount != 1 {
-		t.Fatalf("provider = %#v, want configured OpenCSG provider", resp.Providers[0])
+	if resp.Providers[0].ID != "csghub" || resp.Providers[0].Name != "OpenCSG" ||
+		resp.Providers[0].Source != "cloud" || resp.Providers[0].ModelCount != 1 {
+		t.Fatalf("provider = %#v, want stable csghub ID with configured OpenCSG name", resp.Providers[0])
 	}
 }
 

@@ -167,7 +167,11 @@ func (s *Server) cloudAuthStatus(ctx context.Context) cloudAuthStatus {
 }
 
 func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (inference.Engine, error) {
-	source = strings.TrimSpace(source)
+	var err error
+	source, err = effectiveRequestSource(ctx, source)
+	if err != nil {
+		return nil, inference.NewHTTPStatusError(http.StatusBadRequest, err.Error())
+	}
 	normalizedSource := strings.ToLower(source)
 	if providerIDFromSource(source) != "" {
 		return newThirdPartyProviderEngine(source, modelID)
@@ -223,7 +227,11 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 }
 
 func (s *Server) getEmbeddingEngine(ctx context.Context, modelID, source string, numCtx, nGPULayers int, dtype string) (inference.Engine, error) {
-	source = strings.TrimSpace(source)
+	var err error
+	source, err = effectiveRequestSource(ctx, source)
+	if err != nil {
+		return nil, inference.NewHTTPStatusError(http.StatusBadRequest, err.Error())
+	}
 	normalizedSource := strings.ToLower(source)
 	if providerIDFromSource(source) != "" {
 		return newThirdPartyProviderEngine(source, modelID)

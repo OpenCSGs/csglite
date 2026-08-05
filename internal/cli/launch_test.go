@@ -2,6 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -18,6 +21,8 @@ func TestResolveLaunchTarget(t *testing.T) {
 		{input: "open-code-review", want: "open-code-review"},
 		{input: "ocr", want: "open-code-review"},
 		{input: "codex", want: "codex"},
+		{input: "codex-app", want: "codex-app"},
+		{input: "zcode", want: "zcode"},
 		{input: "pi", want: "pi"},
 		{input: "openclaw", want: "openclaw"},
 		{input: "csgclaw", want: "csgclaw"},
@@ -62,7 +67,8 @@ func TestLaunchCmdHelpListsSupportedAppsAndExamples(t *testing.T) {
 	output := buf.String()
 	for _, want := range []string{
 		"Supported apps:",
-		"claude-code, open-code, open-code-review/ocr, codex, pi, openclaw, csgclaw, dify, anythingllm",
+		"claude-code, open-code, open-code-review/ocr, codex, codex-app, zcode, pi, openclaw, csgclaw, dify, anythingllm",
+		"csghub-lite launch zcode --model deepseek-v4-flash --provider <provider-id-or-name>",
 		"csghub-lite launch ocr --model glm-5.1-1",
 		"csghub-lite launch open-code-review -- review --format json",
 		"csghub-lite launch pi",
@@ -88,5 +94,38 @@ func TestLaunchCmdRequiresArgShowsHelpHint(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "csghub-lite launch --help") {
 		t.Fatalf("launch error = %q, want help hint", err)
+	}
+}
+
+func TestRequestAIAppOpenIncludesModelSource(t *testing.T) {
+	var got struct {
+		AppID   string `json:"app_id"`
+		ModelID string `json:"model_id"`
+		Source  string `json:"source"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"mode":"desktop"}`))
+	}))
+	defer server.Close()
+
+	if err := requestAIAppOpen(server.URL, "zcode", "deepseek-v4-flash", "provider:provider-1"); err != nil {
+		t.Fatalf("requestAIAppOpen() error: %v", err)
+	}
+	if got.AppID != "zcode" || got.ModelID != "deepseek-v4-flash" || got.Source != "provider:provider-1" {
+		t.Fatalf("request = %#v", got)
+	}
+}
+
+func TestLaunchProviderScopedBaseURLUsesCSGHubForCloud(t *testing.T) {
+	got, err := launchProviderScopedBaseURL("http://localhost:11435", "cloud")
+	if err != nil {
+		t.Fatalf("launchProviderScopedBaseURL() error: %v", err)
+	}
+	if got != "http://localhost:11435/providers/csghub" {
+		t.Fatalf("launchProviderScopedBaseURL() = %q", got)
 	}
 }

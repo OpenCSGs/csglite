@@ -60,7 +60,7 @@ func startTestAIAppShellWithChild(t *testing.T, appID string) (*aiAppShellManage
 	script := fmt.Sprintf("echo $$ > %q; sleep 60 & echo $! > %q; wait", parentPath, childPath)
 
 	manager := newAIAppShellManager()
-	session, err := manager.Create(appID, "Test Shell", "test/model", aiAppPreparedLaunch{
+	session, err := manager.Create(appID, "Test Shell", "test/model", "local", aiAppPreparedLaunch{
 		Binary: sh,
 		Args:   []string{"-c", script},
 		Env:    os.Environ(),

@@ -30,6 +30,9 @@ func (s *Server) recordAPIUsage(r *http.Request, model, source string, inputToke
 		keyID = key.ID
 		keyName = key.Name
 	}
+	if routeSource := providerRouteSourceFromContext(r.Context()); routeSource != "" {
+		source = routeSource
+	}
 	resolvedSource, sourceType, sourceName := s.resolveAPIUsageSource(r.Context(), model, source)
 	_ = s.apiUsage.Add(config.APIUsageEvent{
 		APIKeyID:     keyID,

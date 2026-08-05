@@ -46,6 +46,7 @@ export interface AIAppRuntimeState {
   latestVersion?: string;
   updateAvailable?: boolean;
   modelID?: string;
+  modelSource?: string;
   providerMode?: "native" | "opencsg";
   providerGroup?: string;
   providerSwitchSupported: boolean;
