@@ -2,6 +2,7 @@ package codexagent
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,96 @@ import (
 
 	"github.com/opencsgs/csglite/pkg/api"
 )
+
+func TestMatchesManagedProviderConfigDataIgnoresUnrelatedCodexSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	catalogPath := filepath.Join(home, ".codex", "csghub-lite", "models.json")
+	data := []byte(fmt.Sprintf(`
+model_provider = "csghub_lite"
+model = "user-selected-model"
+model_catalog_json = %q
+marketplaces.openai-bundled.last_updated = "2026-08-05T00:00:00Z"
+
+[model_providers.csghub_lite]
+name = "OpenCSG"
+base_url = "http://127.0.0.1:11435/v1"
+api_key = "test-token"
+supports_websockets = false
+
+[projects."/tmp/example"]
+trust_level = "trusted"
+`, catalogPath))
+
+	if !MatchesManagedProviderConfigData(data, "http://127.0.0.1:11435", "test-token") {
+		t.Fatal("unrelated Codex settings caused managed provider mismatch")
+	}
+	tampered := strings.Replace(string(data), "http://127.0.0.1:11435/v1", "https://example.com/v1", 1)
+	if MatchesManagedProviderConfigData([]byte(tampered), "http://127.0.0.1:11435", "test-token") {
+		t.Fatal("changed provider base URL was accepted")
+	}
+}
+
+func TestRestoreNativeConfigDataPreservesUnrelatedChanges(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	original := []byte(`
+model_provider = "openai"
+model = "native-model"
+
+[model_providers.openai]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+`)
+	current := []byte(`
+model_provider = "csghub_lite"
+model = "managed-model"
+model_catalog_json = "/tmp/csghub-models.json"
+marketplaces.openai-bundled.last_updated = "2026-08-05T00:00:00Z"
+
+[model_providers.csghub_lite]
+name = "OpenCSG"
+base_url = "http://127.0.0.1:11435/v1"
+api_key = "test-token"
+supports_websockets = false
+
+[projects."/tmp/new-project"]
+trust_level = "trusted"
+`)
+
+	if err := RestoreNativeConfigData(current, original, true); err != nil {
+		t.Fatalf("RestoreNativeConfigData() error: %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]tomlValue{}
+	parseTomlFile(string(data), values)
+	if got := tomlString(values["model_provider"]); got != "openai" {
+		t.Fatalf("model_provider = %q, want openai", got)
+	}
+	if got := tomlString(values["model"]); got != "native-model" {
+		t.Fatalf("model = %q, want native-model", got)
+	}
+	if _, ok := values["model_catalog_json"]; ok {
+		t.Fatal("managed model_catalog_json was not removed")
+	}
+	for key := range values {
+		if strings.HasPrefix(key, "model_providers.csghub_lite.") {
+			t.Fatalf("managed provider field %q was not removed", key)
+		}
+	}
+	if got := tomlString(values["marketplaces.openai-bundled.last_updated"]); got != "2026-08-05T00:00:00Z" {
+		t.Fatalf("marketplace update = %q, want preserved", got)
+	}
+	if got := tomlString(values[`projects."/tmp/new-project".trust_level`]); got != "trusted" {
+		t.Fatalf("project trust = %q, want preserved", got)
+	}
+}
 
 func TestParseTomlFilePreservesMCPArgsArray(t *testing.T) {
 	values := map[string]tomlValue{}

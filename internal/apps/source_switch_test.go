@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -82,6 +83,44 @@ func TestSourceSwitchRefusesToOverwriteDriftedConfig(t *testing.T) {
 	}
 	if string(got) != "user changed this\n" {
 		t.Fatalf("drifted config was overwritten: %q", got)
+	}
+}
+
+func TestSourceSwitchValidatorIgnoresUnmanagedFileChanges(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "config.toml")
+	if err := os.WriteFile(target, []byte("provider=managed\nunrelated=old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewSourceSwitchManager(filepath.Join(root, "storage"))
+	isManaged := func(data []byte) bool { return strings.Contains(string(data), "provider=managed") }
+	validateManaged := func(data []byte) bool { return strings.Contains(string(data), "provider=managed") }
+	if _, err := manager.UseOpenCSG("codex", target, isManaged, func() error {
+		return os.WriteFile(target, []byte("provider=managed\nunrelated=old\n"), 0o600)
+	}, validateManaged); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("provider=managed\nunrelated=new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := manager.Status("codex", target, isManaged, validateManaged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Drifted {
+		t.Fatalf("unmanaged file change reported as drift: %#v", status)
+	}
+	if err := os.WriteFile(target, []byte("provider=tampered\nunrelated=new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, err = manager.Status("codex", target, isManaged, validateManaged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Drifted {
+		t.Fatalf("managed provider change was not reported as drift: %#v", status)
 	}
 }
 

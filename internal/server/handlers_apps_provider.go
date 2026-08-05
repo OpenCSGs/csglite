@@ -91,7 +91,12 @@ func (s *Server) switchAIAppProvider(ctx context.Context, appID, mode, requested
 		return err
 	}
 	if mode == apps.ProviderModeNative {
-		_, err := s.sourceSwitches.RestoreNative(group, targetPath, isManaged, restoreLegacy)
+		options := apps.RestoreNativeOptions{}
+		if group == codexProviderGroup {
+			options.ValidateManaged = s.sourceSwitchManagedValidator(group)
+			options.RestoreManaged = codexagent.RestoreNativeConfigData
+		}
+		_, err := s.sourceSwitches.RestoreNative(group, targetPath, isManaged, restoreLegacy, options)
 		return err
 	}
 
@@ -118,7 +123,13 @@ func (s *Server) switchAIAppProvider(ctx context.Context, appID, mode, requested
 			return fmt.Errorf("unknown provider group %s", group)
 		}
 	}
-	if _, err := s.sourceSwitches.UseOpenCSG(group, targetPath, isManaged, apply); err != nil {
+	if _, err := s.sourceSwitches.UseOpenCSG(
+		group,
+		targetPath,
+		isManaged,
+		apply,
+		s.sourceSwitchManagedValidator(group),
+	); err != nil {
 		return err
 	}
 	s.savePreferredAIAppModel(appID, modelID)
@@ -152,8 +163,19 @@ func (s *Server) aiAppProviderStatus(appID string) (apps.SourceSwitchStatus, boo
 	if err != nil {
 		return apps.SourceSwitchStatus{}, true, err
 	}
-	status, err := s.sourceSwitches.Status(group, targetPath, isManaged)
+	status, err := s.sourceSwitches.Status(group, targetPath, isManaged, s.sourceSwitchManagedValidator(group))
 	return status, true, err
+}
+
+func (s *Server) sourceSwitchManagedValidator(group string) func([]byte) bool {
+	if group != codexProviderGroup {
+		return nil
+	}
+	serverURL := s.localBaseURL()
+	apiKey := openClawProviderAPIKey(s.cfg.Token)
+	return func(data []byte) bool {
+		return codexagent.MatchesManagedProviderConfigData(data, serverURL, apiKey)
+	}
 }
 
 func (s *Server) enrichAIAppProvider(info *api.AIAppInfo) {

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opencsgs/csglite/internal/apps"
 	"github.com/opencsgs/csglite/internal/claudeagent"
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/codexagent"
@@ -36,6 +37,64 @@ func enableOpenCSGProviderForTest(t *testing.T, s *Server, appID string, apply f
 	}
 	if _, err := s.sourceSwitches.UseOpenCSG(group, targetPath, isManaged, apply); err != nil {
 		t.Fatalf("enable OpenCSG provider for %s: %v", appID, err)
+	}
+}
+
+func TestCodexProviderRestorePreservesUnrelatedConfigChanges(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("model_provider = \"openai\"\nmodel = \"native-model\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(&config.Config{
+		ListenAddr: ":11435",
+		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
+	}, "test")
+	enableOpenCSGProviderForTest(t, s, "codex", func() error {
+		return codexagent.SyncConfig(
+			s.localBaseURL(),
+			openClawProviderAPIKey(s.cfg.Token),
+			"managed-model",
+			[]api.ModelInfo{{Model: "managed-model"}},
+		)
+	})
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(
+		[]byte("marketplaces.openai-bundled.last_updated = \"2026-08-05T00:00:00Z\"\n"),
+		data...,
+	)
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.switchAIAppProvider(context.Background(), "codex", apps.ProviderModeNative, "", ""); err != nil {
+		t.Fatalf("restore native provider: %v", err)
+	}
+	data, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configText := string(data)
+	for _, want := range []string{
+		`model_provider = "openai"`,
+		`model = "native-model"`,
+		`marketplaces.openai-bundled.last_updated = "2026-08-05T00:00:00Z"`,
+	} {
+		if !strings.Contains(configText, want) {
+			t.Fatalf("restored config missing %q:\n%s", want, configText)
+		}
+	}
+	if strings.Contains(configText, "model_providers.csghub_lite") {
+		t.Fatalf("restored config kept managed provider:\n%s", configText)
 	}
 }
 
@@ -421,6 +480,14 @@ func TestLocalBaseURLDefaultsToConfigListenAddr(t *testing.T) {
 
 	if got := s.localBaseURL(); got != "http://127.0.0.1:11435" {
 		t.Fatalf("localBaseURL = %q, want %q", got, "http://127.0.0.1:11435")
+	}
+}
+
+func TestLocalBaseURLNormalizesUnspecifiedIPv6Listener(t *testing.T) {
+	s := &Server{cfg: &config.Config{BoundAddr: "[::]:11435"}}
+
+	if got := s.localBaseURL(); got != "http://127.0.0.1:11435" {
+		t.Fatalf("localBaseURL = %q, want loopback URL", got)
 	}
 }
 
@@ -1107,7 +1174,7 @@ func TestResolveCSGClawLaunchModelsUsesRememberedModelWhenRequestOmitted(t *test
 	}
 }
 
-func TestResolveAIAppLaunchModelsExcludesUnavailableCloudModels(t *testing.T) {
+func TestResolveAIAppLaunchModelsIncludesCloudModels(t *testing.T) {
 	cfg := &config.Config{
 		ModelDir:   t.TempDir(),
 		ListenAddr: ":11435",
@@ -1154,16 +1221,16 @@ func TestResolveAIAppLaunchModelsExcludesUnavailableCloudModels(t *testing.T) {
 	if modelID != "Qwen3.5-2B" {
 		t.Fatalf("modelID = %q, want local default", modelID)
 	}
-	if !sameStrings(modelIDs, []string{"Qwen3.5-2B", "glm-5"}) {
-		t.Fatalf("modelIDs = %#v, want available models without opus4.7", modelIDs)
+	if !sameStrings(modelIDs, []string{"Qwen3.5-2B", "opus4.7", "glm-5"}) {
+		t.Fatalf("modelIDs = %#v, want all available cloud models", modelIDs)
 	}
 
-	_, _, err = s.resolveAIAppLaunchModels(context.Background(), "opus4.7", "cloud")
-	if err == nil {
-		t.Fatal("resolveAIAppLaunchModels returned nil error for unavailable cloud model")
+	selected, _, err := s.resolveAIAppLaunchModels(context.Background(), "opus4.7", "cloud")
+	if err != nil {
+		t.Fatalf("resolveAIAppLaunchModels(opus4.7) returned error: %v", err)
 	}
-	if got := err.Error(); !strings.Contains(got, `model "opus4.7" is not available for AI Apps`) {
-		t.Fatalf("error = %q, want unavailable model error", got)
+	if selected != "opus4.7" {
+		t.Fatalf("selected model = %q, want opus4.7", selected)
 	}
 }
 

@@ -245,6 +245,11 @@ func (s *Server) localBaseURL() string {
 	if strings.HasPrefix(addr, ":") {
 		return "http://127.0.0.1" + addr
 	}
+	if host, port, err := net.SplitHostPort(addr); err == nil {
+		if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+			return "http://127.0.0.1:" + port
+		}
+	}
 	if strings.HasPrefix(addr, "0.0.0.0:") {
 		return "http://127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
 	}
