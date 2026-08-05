@@ -646,7 +646,6 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 	if err != nil {
 		return "", nil, fmt.Errorf("listing available models: %w", err)
 	}
-	availableModels = filterAIAppLaunchModels(availableModels)
 	modelIDs, seen := s.modelIDsFromInfos(availableModels)
 	defaultModel := ""
 	if len(modelIDs) > 0 {
@@ -741,28 +740,6 @@ func (s *Server) resolveAIAppRequestedModelID(seen map[string]struct{}, requeste
 	return requestedModel
 }
 
-func filterAIAppLaunchModels(models []api.ModelInfo) []api.ModelInfo {
-	out := make([]api.ModelInfo, 0, len(models))
-	for _, item := range models {
-		if isAIAppLaunchModel(item) {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
-func isAIAppLaunchModel(model api.ModelInfo) bool {
-	if !isCloudModelInfo(model) {
-		return true
-	}
-	switch strings.ToLower(strings.TrimSpace(model.Model)) {
-	case "opus4.7":
-		return false
-	default:
-		return true
-	}
-}
-
 func hasLocalAIAppModels(models []api.ModelInfo) bool {
 	for _, item := range models {
 		if isLocalModelInfo(item) {
@@ -801,7 +778,6 @@ func refreshRequestedCloudModel(ctx context.Context, s *Server, requestedModel s
 	if err != nil {
 		return false
 	}
-	cloudModels = filterAIAppLaunchModels(cloudModels)
 	for _, item := range cloudModels {
 		*modelIDs = appendUniqueModelID(*modelIDs, seen, item.Model)
 	}

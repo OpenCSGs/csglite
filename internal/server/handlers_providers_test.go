@@ -205,6 +205,9 @@ func TestListOpenAICompatibleProviderModels(t *testing.T) {
 	if models[0].Label != "gpt-4o-mini [OpenAI]" {
 		t.Fatalf("label = %q, want provider label", models[0].Label)
 	}
+	if models[0].Provider != "OpenAI" {
+		t.Fatalf("provider = %q, want configured provider name", models[0].Provider)
+	}
 }
 
 func TestInferThirdPartyPipelineFromOpenRouterArchitecture(t *testing.T) {
@@ -390,7 +393,7 @@ func TestThirdPartyModelProviderUsesStableProviderID(t *testing.T) {
 	s := newTestServer(t)
 	if err := config.SaveProviders([]config.ThirdPartyProvider{{
 		ID:       "provider1",
-		Name:     "xiaomi-plan",
+		Name:     "Xiaomi Plan",
 		BaseURL:  apiServer.URL + "/v1",
 		APIKey:   "secret",
 		Provider: "openai",
@@ -424,8 +427,8 @@ func TestThirdPartyModelProviderUsesStableProviderID(t *testing.T) {
 		t.Fatalf("providers = %#v, want one third-party provider", providersResp.Providers)
 	}
 	got := providersResp.Providers[0]
-	if got.ID != "provider1" || got.Name != "xiaomi-plan" || got.Source != "provider" || got.ModelCount != 1 {
-		t.Fatalf("model provider = %#v, want provider1 with xiaomi-plan display name", got)
+	if got.ID != "provider1" || got.Name != "Xiaomi Plan" || got.Source != "provider" || got.ModelCount != 1 {
+		t.Fatalf("model provider = %#v, want provider1 with configured display name", got)
 	}
 	if providerModelRequests != 0 {
 		t.Fatalf("providers list requested third-party models %d times, want none", providerModelRequests)
@@ -447,8 +450,8 @@ func TestThirdPartyModelProviderUsesStableProviderID(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
 		t.Fatalf("decode tags: %v", err)
 	}
-	if len(tagsResp.Models) != 1 || tagsResp.Models[0].Model != "mi-model" || tagsResp.Models[0].Provider != "xiaomi-plan" {
-		t.Fatalf("models = %#v, want xiaomi-plan model", tagsResp.Models)
+	if len(tagsResp.Models) != 1 || tagsResp.Models[0].Model != "mi-model" || tagsResp.Models[0].Provider != "Xiaomi Plan" {
+		t.Fatalf("models = %#v, want configured provider name", tagsResp.Models)
 	}
 	if tagsResp.Models[0].Category != "language_model" {
 		t.Fatalf("category = %q, want language_model", tagsResp.Models[0].Category)
@@ -500,7 +503,7 @@ func TestThirdPartyModelProviderUsesStableProviderID(t *testing.T) {
 		t.Fatalf("openai-compatible type should not be exposed as model provider: %#v", tagsResp.Models)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi%20plan", nil)
 	w = httptest.NewRecorder()
 	s.handleTags(w, req)
 	if w.Code != http.StatusOK {
@@ -540,7 +543,7 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 	s := newTestServer(t)
 	if err := config.SaveProviders([]config.ThirdPartyProvider{{
 		ID:       "provider1",
-		Name:     "xiaomi-plan",
+		Name:     "Xiaomi Plan",
 		BaseURL:  apiServer.URL + "/v1",
 		APIKey:   "secret",
 		Provider: "openai",
@@ -549,7 +552,7 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 		t.Fatalf("save providers: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=xiaomi-plan", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=xiaomi%20plan", nil)
 	w := httptest.NewRecorder()
 	s.handleProviderTagsManageList(w, req)
 	if w.Code != http.StatusOK {
@@ -569,7 +572,7 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 		t.Fatalf("manage models = %#v, want two catalog models", tagsResp.Models)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=xiaomi-plan&category=image_generation", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=xiaomi%20plan&category=image_generation", nil)
 	w = httptest.NewRecorder()
 	s.handleProviderTagsManageList(w, req)
 	if w.Code != http.StatusOK {
@@ -582,7 +585,7 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 		t.Fatalf("filtered manage models = %#v, want image model", tagsResp.Models)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi%20plan", nil)
 	w = httptest.NewRecorder()
 	s.handleTags(w, req)
 	if w.Code != http.StatusOK {
@@ -595,7 +598,7 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 		t.Fatalf("selected models before add = %#v, want none", tagsResp.Models)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/api/tags/manage?provider=xiaomi-plan", strings.NewReader(`{"model":"scope/with/slash"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/tags/manage?provider=xiaomi%20plan", strings.NewReader(`{"model":"scope/with/slash"}`))
 	w = httptest.NewRecorder()
 	s.handleProviderTagsManageAdd(w, req)
 	if w.Code != http.StatusCreated {
@@ -612,7 +615,7 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 		t.Fatalf("selection modalities = inputs %#v outputs %#v, want text->image", selections[0].InputModalities, selections[0].OutputModalities)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi%20plan", nil)
 	w = httptest.NewRecorder()
 	s.handleTags(w, req)
 	if w.Code != http.StatusOK {
@@ -621,18 +624,18 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&tagsResp); err != nil {
 		t.Fatalf("decode selected tags after add: %v", err)
 	}
-	if len(tagsResp.Models) != 1 || tagsResp.Models[0].Model != "scope/with/slash" || tagsResp.Models[0].Provider != "xiaomi-plan" || tagsResp.Models[0].DisplayName != "Scope Slash [xiaomi-plan]" {
+	if len(tagsResp.Models) != 1 || tagsResp.Models[0].Model != "scope/with/slash" || tagsResp.Models[0].Provider != "Xiaomi Plan" || tagsResp.Models[0].DisplayName != "Scope Slash [Xiaomi Plan]" {
 		t.Fatalf("selected models = %#v, want slash model", tagsResp.Models)
 	}
 
-	req = httptest.NewRequest(http.MethodDelete, "/api/tags/manage?provider=xiaomi-plan&model=scope%2Fwith%2Fslash", nil)
+	req = httptest.NewRequest(http.MethodDelete, "/api/tags/manage?provider=xiaomi%20plan&model=scope%2Fwith%2Fslash", nil)
 	w = httptest.NewRecorder()
 	s.handleProviderTagsManageDelete(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("delete status = %d body=%s", w.Code, w.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi-plan", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/tags?provider=xiaomi%20plan", nil)
 	w = httptest.NewRecorder()
 	s.handleTags(w, req)
 	if w.Code != http.StatusOK {
@@ -645,7 +648,7 @@ func TestProviderTagsManageSelectsModels(t *testing.T) {
 		t.Fatalf("selected models after delete = %#v, want none", tagsResp.Models)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=xiaomi-plan&category=bad", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=xiaomi%20plan&category=bad", nil)
 	w = httptest.NewRecorder()
 	s.handleProviderTagsManageList(w, req)
 	if w.Code != http.StatusBadRequest {

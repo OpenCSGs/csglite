@@ -7,7 +7,6 @@ import {
   getImageGenerationJob,
   getImageRuntimeStatus,
   getCloudAuthStatus,
-  getTags,
   installImageRuntime,
   listImageGenerationJobs,
   saveCloudToken,
@@ -16,6 +15,11 @@ import type { CloudAuthStatus, ImageGenerationJobResponse, ImageRuntimeStatus, M
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { locale, t } from "../i18n";
 import { isImageToImageModel, stripDataURL } from "../utils/imageModels";
+import {
+  formatModelOptionLabel,
+  loadModelOptions,
+  modelOptionKey as imageModelKey,
+} from "../utils/modelOptions";
 
 const defaultWidth = "1024";
 const defaultHeight = "1024";
@@ -369,10 +373,6 @@ async function readInputImageFile(file: File): Promise<string> {
   return stripDataURL(dataUrl);
 }
 
-function imageModelKey(model: ModelInfo): string {
-  return `${model.source || "local"}:${model.model || model.name}`;
-}
-
 function isLocalImageModel(model?: ModelInfo): boolean {
   if (!model) return false;
   const source = (model?.source || "local").trim().toLowerCase();
@@ -384,10 +384,8 @@ function selectedModelInfo(): ModelInfo | undefined {
 }
 
 function imageModelLabel(model: ModelInfo): string {
-  const label = model.display_name || model.label || model.model || model.name;
-  const source = model.source === "cloud" ? t("chat.cloud") : model.source?.startsWith("provider:") ? model.provider || t("chat.provider") : t("chat.local");
   const kind = isImageToImageModel(model) ? t("image.modelTypeEdit") : t("image.modelTypeGenerate");
-  return `${label} [${source} · ${kind}]`;
+  return `${formatModelOptionLabel(model)} [${kind}]`;
 }
 
 function localizeImageErrorMessage(message: string, model?: ModelInfo): string {
@@ -402,7 +400,7 @@ function localizeImageErrorMessage(message: string, model?: ModelInfo): string {
 }
 
 async function refreshImageModels() {
-  const allModels = await getTags({ refresh: true });
+  const allModels = await loadModelOptions({ refresh: true });
   const imageModels = allModels.filter((model) => model.pipeline_tag === "text-to-image" || model.pipeline_tag === "image-to-image");
   models.value = imageModels;
   if (!selectedModel.value || !imageModels.some((model) => imageModelKey(model) === selectedModel.value)) {

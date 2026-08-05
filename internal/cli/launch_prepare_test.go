@@ -129,7 +129,7 @@ func TestNormalizeLaunchModelChoicesProviderNoSourceSuffix(t *testing.T) {
 	}
 }
 
-func TestNormalizeLaunchModelChoicesExcludesUnavailableAIAppCloudModels(t *testing.T) {
+func TestNormalizeLaunchModelChoicesIncludesAllCloudModels(t *testing.T) {
 	models := []api.ModelInfo{
 		{Model: "opus4.7", Source: "cloud", Format: "cloud"},
 		{Model: "glm-5", Source: "cloud", Format: "cloud"},
@@ -137,10 +137,10 @@ func TestNormalizeLaunchModelChoicesExcludesUnavailableAIAppCloudModels(t *testi
 	}
 	choices := normalizeLaunchModelChoices(models)
 	if len(choices) != 2 {
-		t.Fatalf("choices count = %d, want 2", len(choices))
+		t.Fatalf("choices count = %d, want 2 unique model IDs", len(choices))
 	}
-	if choices[0].ID != "glm-5" || choices[1].ID != "opus4.7" {
-		t.Fatalf("choices = %#v, want cloud glm-5 and local opus4.7", choices)
+	if choices[0].ID != "opus4.7" || choices[1].ID != "glm-5" {
+		t.Fatalf("choices = %#v, want cloud opus4.7 and glm-5", choices)
 	}
 }
 

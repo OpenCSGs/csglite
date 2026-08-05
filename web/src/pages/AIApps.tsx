@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import {
   getAIApps,
   getCloudAuthStatus,
-  getTags,
   installAIApp,
   openAIApp,
   saveAIAppModel,
@@ -32,6 +31,11 @@ import {
   type AIAppRuntimeState,
 } from "../data/aiApps";
 import { locale, t, type Locale } from "../i18n";
+import {
+  formatModelOptionLabel,
+  loadModelOptions,
+  modelOptionKey as aiAppModelKey,
+} from "../utils/modelOptions";
 
 type AIAppFilter = "all" | AIAppCategory;
 type DrawerMode = "details" | "install";
@@ -71,10 +75,6 @@ function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
 function openExternalURL(url?: string) {
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");
-}
-
-function aiAppModelKey(model: Pick<ModelInfo, "model" | "source">): string {
-  return `${model.source || "local"}:${model.model}`;
 }
 
 function parseAIAppModelKey(key: string): { source: string; model: string } {
@@ -674,10 +674,10 @@ function LiveLogsDrawer({
       if (showLoading) {
         setModelsLoading(true);
       }
-      getTags({ refresh: true })
+      loadModelOptions({ refresh: true })
         .then((items) => {
           if (disposed) return;
-          setModels(normalizeAIAppModels(items));
+          setModels(items);
         })
         .catch(() => {
           if (disposed) return;
@@ -1026,7 +1026,7 @@ function LiveLogsDrawer({
         return;
       }
       try {
-        setModels(normalizeAIAppModels(await getTags({ refresh: true })));
+        setModels(await loadModelOptions({ refresh: true }));
       } catch {
         /* ignore */
       }
@@ -1972,28 +1972,6 @@ function openActionLabel(app: AIAppCatalogEntry, pending: boolean): string {
   return pending ? t("aiApps.opening") : t("aiApps.open");
 }
 
-function normalizeAIAppModels(models: ModelInfo[]): ModelInfo[] {
-  const seen = new Set<string>();
-  const out: ModelInfo[] = [];
-  for (const model of models) {
-    const modelId = model.model?.trim();
-    const key = aiAppModelKey(model);
-    if (!modelId || seen.has(key) || !isAIAppLaunchModel(model)) {
-      continue;
-    }
-    seen.add(key);
-    out.push(model);
-  }
-  return out;
-}
-
-function isAIAppLaunchModel(model: ModelInfo): boolean {
-  if (model.source !== "cloud") {
-    return true;
-  }
-  return model.model?.trim().toLowerCase() !== "opus4.7";
-}
-
 function emptyXiaozhiBindings(): Record<XiaozhiModelSlot, string> {
   return {
     language_model: "",
@@ -2065,27 +2043,11 @@ function extractAIAppRequestedModel(message: string): string {
 }
 
 function formatAIAppModelLabel(model: ModelInfo): string {
-  const name = model.display_name || model.model;
-  const src = model.source || "local";
-  if (src === "cloud") {
-    return `${name} [${t("aiApps.modelSourceCloud")}]`;
-  }
-  if (src.startsWith("provider:")) {
-    return name;
-  }
-  return `${name} [${t("aiApps.modelSourceLocal")}]`;
+  return formatModelOptionLabel(model);
 }
 
 function formatXiaozhiModelLabel(model: ModelInfo): string {
-  const name = model.display_name || model.model;
-  const source = model.source || "local";
-  if (source === "cloud") {
-    return `${name} [${t("aiApps.modelSourceCloud")}]`;
-  }
-  if (source.startsWith("provider:")) {
-    return `${name} [${source.slice("provider:".length)}]`;
-  }
-  return `${name} [${t("aiApps.modelSourceLocal")}]`;
+  return formatModelOptionLabel(model);
 }
 
 function CheckIcon({ className }: { className: string }) {

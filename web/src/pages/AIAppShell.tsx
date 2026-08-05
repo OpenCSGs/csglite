@@ -2,8 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { getTags, openAIApp, type ModelInfo } from "../api/client";
+import { openAIApp, type ModelInfo } from "../api/client";
 import { locale, t } from "../i18n";
+import {
+  formatModelOptionLabel as formatShellModelLabel,
+  loadModelOptions,
+  modelOptionKey as shellModelKey,
+} from "../utils/modelOptions";
 
 type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
 const claudeCodeAppId = "claude-code";
@@ -70,10 +75,6 @@ function shellWebSocketURL(sessionId: string): string {
   return `${protocol}//${location.host}/api/apps/shell/${encodeURIComponent(sessionId)}/ws`;
 }
 
-function shellModelKey(model: Pick<ModelInfo, "model" | "source">): string {
-  return `${model.source || "local"}:${model.model}`;
-}
-
 function parseShellModelKey(key: string): { source: string; model: string } {
   const providerPrefix = "provider:";
   if (key.startsWith(providerPrefix)) {
@@ -87,40 +88,6 @@ function parseShellModelKey(key: string): { source: string; model: string } {
     return { source: key.slice(0, first), model: key.slice(first + 1) };
   }
   return { source: "", model: key };
-}
-
-function normalizeShellModels(models: ModelInfo[]): ModelInfo[] {
-  const seen = new Set<string>();
-  const out: ModelInfo[] = [];
-  for (const model of models) {
-    const modelId = model.model?.trim();
-    const key = shellModelKey(model);
-    if (!modelId || seen.has(key) || !isShellLaunchModel(model)) {
-      continue;
-    }
-    seen.add(key);
-    out.push(model);
-  }
-  return out;
-}
-
-function isShellLaunchModel(model: ModelInfo): boolean {
-  if (model.source !== "cloud") {
-    return true;
-  }
-  return model.model?.trim().toLowerCase() !== "opus4.7";
-}
-
-function formatShellModelLabel(model: ModelInfo): string {
-  const name = model.display_name || model.model;
-  const src = model.source || "local";
-  if (src === "cloud") {
-    return `${name} [${t("aiApps.modelSourceCloud")}]`;
-  }
-  if (src.startsWith("provider:")) {
-    return name;
-  }
-  return `${name} [${t("aiApps.modelSourceLocal")}]`;
 }
 
 async function closeShellSession(sessionId: string): Promise<void> {
@@ -400,10 +367,10 @@ export function AIAppShell() {
     let disposed = false;
     setModelsLoading(true);
 
-    getTags({ refresh: true })
+    loadModelOptions({ refresh: true })
       .then((items) => {
         if (disposed) return;
-        setModels(normalizeShellModels(items));
+        setModels(items);
       })
       .catch(() => {
         if (disposed) return;

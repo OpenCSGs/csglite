@@ -107,7 +107,7 @@
           "Models"
         ],
         "summary": "List available models",
-        "description": "Returns local, CSGHub cloud, and selected third-party provider models. Use `provider` to filter by a model provider ID such as `local`, `csghub`, or a third-party provider ID. Provider filters return selected models configured through `/api/tags/manage`; when no `csghub` cloud selection has been saved, all cloud catalog models are returned. Configured third-party names are accepted as legacy aliases.",
+        "description": "Returns local, CSGHub cloud, and selected third-party provider models. Each model preserves its configured provider display name while `source` carries its stable routing identity. Use `provider` to filter by a stable provider ID or configured provider name. Provider filters return selected models configured through `/api/tags/manage`; when no `csghub` cloud selection has been saved, all cloud catalog models are returned.",
         "operationId": "getTags",
         "parameters": [
           {
@@ -121,7 +121,7 @@
           {
             "name": "provider",
             "in": "query",
-            "description": "Filter models by normalized provider ID. Local models use `local`; all CSGHub cloud models use `csghub`; third-party provider models use the configured provider ID. Configured third-party names are accepted as legacy aliases.",
+            "description": "Filter models case-insensitively by provider alias. Local models accept `local`; cloud models accept `csghub` or the configured cloud provider name; third-party models accept their stable provider ID or configured provider name.",
             "schema": {
               "type": "string"
             }
@@ -6090,7 +6090,7 @@
           },
           "provider": {
             "type": "string",
-            "description": "Normalized provider name for filtering `/api/tags`, such as `local`, `csghub`, or a third-party provider name."
+            "description": "Provider display name. Local models use `local`; cloud and third-party models preserve the provider name from configuration. Use `source` for stable routing; the `/api/tags` provider filter remains case-insensitive and accepts provider aliases."
           },
           "category": {
             "type": "string",

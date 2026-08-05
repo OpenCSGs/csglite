@@ -94,7 +94,7 @@ func providerModelInfoFromSelection(provider config.ThirdPartyProvider, selectio
 		labelName = displayName
 	}
 	label := fmt.Sprintf("%s [%s]", labelName, provider.Name)
-	modelProvider := normalizeModelProvider(provider.Name)
+	modelProvider := strings.TrimSpace(provider.Name)
 	if modelProvider == "" {
 		modelProvider = normalizeModelProvider(provider.ID)
 	}
@@ -158,6 +158,9 @@ func providerManagedModelProviderID(provider modelManageProvider) string {
 	if provider.IsCloud() {
 		return provider.Name
 	}
+	if name := strings.TrimSpace(provider.Name); name != "" {
+		return name
+	}
 	return normalizeModelProvider(provider.ID)
 }
 
@@ -205,7 +208,7 @@ func listOpenAICompatibleProviderModels(ctx context.Context, provider config.Thi
 			labelName = displayName
 		}
 		label := fmt.Sprintf("%s [%s]", labelName, provider.Name)
-		modelProvider := normalizeModelProvider(provider.Name)
+		modelProvider := strings.TrimSpace(provider.Name)
 		if modelProvider == "" {
 			modelProvider = normalizeModelProvider(provider.ID)
 		}

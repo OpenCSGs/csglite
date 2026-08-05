@@ -2,7 +2,7 @@ import MarkdownIt from "markdown-it";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { signal, computed } from "@preact/signals";
 import {
-  getTags, getPs, streamChat, getCloudAuthStatus, saveCloudToken,
+  getPs, streamChat, getCloudAuthStatus, saveCloudToken,
   listConversations, searchConversations, getConversation, createConversation, updateConversation, deleteConversation,
   getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob, getASRRuntimeStatus, transcribeAudioStream,
 } from "../api/client";
@@ -15,6 +15,11 @@ import { t, locale } from "../i18n";
 import { parseReasoningText } from "../reasoning";
 import { buildChatContextMessages } from "../chatContext";
 import { isImageGenerationModel, isImageToImageModel, stripDataURL } from "../utils/imageModels";
+import {
+  formatModelOptionLabel as modelLabel,
+  loadModelOptions,
+  modelOptionKey as modelKey,
+} from "../utils/modelOptions";
 
 const availableModels = signal<ModelInfo[]>([]);
 const selectedModelKey = signal("");
@@ -74,10 +79,6 @@ const webSearchStorageKey = "csghub.chat.web_search.enabled";
 const legacyWebSearchModeStorageKey = "csghub.chat.web_search.mode";
 const providersChangedEvent = "csghub:providers-changed";
 
-function modelKey(model: Pick<ModelInfo, "model" | "name" | "source">): string {
-  return `${model.source || "local"}:${model.model || model.name}`;
-}
-
 function isKimiFamilyModel(model?: Pick<ModelInfo, "model" | "name" | "source"> | null): boolean {
   if (!model) return false;
   const name = (model.model || model.name || "").toLowerCase();
@@ -112,19 +113,6 @@ function getChatModelMode(model?: ModelInfo | null): ChatModelMode {
     return "vision";
   }
   return "chat";
-}
-
-function modelLabel(model: ModelInfo): string {
-  const label = model.label || model.display_name || model.name;
-  const source = model.source || "local";
-  if (source === "cloud") {
-    const provider = model.provider || cloudProviderName.value || t("chat.cloud");
-    return `${label} [${provider}]`;
-  }
-  if (source.startsWith("provider:")) {
-    return label;
-  }
-  return `${label} [${t("chat.local")}]`;
 }
 
 function configuredCloudProviderName(): string {
@@ -909,7 +897,7 @@ export function Chat() {
         return;
       }
       try {
-        setAvailableModels(await getTags({ refresh: true }));
+        setAvailableModels(await loadModelOptions({ refresh: true }));
       } catch {
         /* ignore */
       }
@@ -924,7 +912,7 @@ export function Chat() {
 
   useEffect(() => {
     const refreshModels = () => {
-      getTags({ refresh: true }).then((m) => {
+      loadModelOptions({ refresh: true }).then((m) => {
         setAvailableModels(m);
       }).catch(() => {});
     };
