@@ -23,6 +23,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/convert"
+	"github.com/opencsgs/csglite/internal/ggufpick"
 	"github.com/opencsgs/csglite/internal/logutil"
 )
 
@@ -374,7 +375,11 @@ func modelMaxContextFromGGUF(modelDir string) int {
 		if !strings.EqualFold(filepath.Ext(path), ".gguf") {
 			return nil
 		}
-		if strings.Contains(strings.ToLower(d.Name()), "mmproj") {
+		rel, relErr := filepath.Rel(modelDir, path)
+		if relErr != nil {
+			rel = path
+		}
+		if !ggufpick.IsWeightGGUF(rel) {
 			fallback = append(fallback, path)
 			return nil
 		}

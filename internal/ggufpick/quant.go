@@ -75,13 +75,79 @@ func IsMMProjGGUF(name string) bool {
 	return strings.HasSuffix(lower, ".gguf") && strings.Contains(lower, "mmproj")
 }
 
-// IsWeightGGUF is a non-mmproj .gguf file (main model weights).
-func IsWeightGGUF(name string) bool {
-	lower := strings.ToLower(filepath.Base(name))
+// IsMTPGGUF reports whether path looks like a multi-token-prediction module GGUF,
+// either by filename token (mtp-model-Q8_0.gguf) or by folder (MTP/model.gguf).
+// These modules carry their own architecture and cannot be loaded as a main model.
+func IsMTPGGUF(path string) bool {
+	segments := ggufPathSegments(path)
+	if len(segments) == 0 {
+		return false
+	}
+	for _, segment := range segments[:len(segments)-1] {
+		if isMTPToken(segment) {
+			return true
+		}
+	}
+	base := segments[len(segments)-1]
+	if !strings.HasSuffix(base, ".gguf") {
+		return false
+	}
+	for _, token := range splitGGUFTokens(strings.TrimSuffix(base, ".gguf")) {
+		if isMTPToken(token) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsWeightGGUF reports whether path is a main model weight .gguf file, excluding
+// companion modules (multimodal projectors and multi-token-prediction modules)
+// that llama-server cannot load as a standalone model.
+func IsWeightGGUF(path string) bool {
+	lower := strings.ToLower(filepath.Base(path))
 	if !strings.HasSuffix(lower, ".gguf") {
 		return false
 	}
-	return !strings.Contains(lower, "mmproj")
+	if strings.Contains(lower, "mmproj") {
+		return false
+	}
+	return !IsMTPGGUF(path)
+}
+
+func ggufPathSegments(path string) []string {
+	path = strings.ReplaceAll(path, `\`, "/")
+	path = strings.ToLower(strings.TrimSpace(filepath.ToSlash(path)))
+	if path == "" {
+		return nil
+	}
+	segments := make([]string, 0, 4)
+	for _, segment := range strings.Split(path, "/") {
+		segment = strings.TrimSpace(segment)
+		if segment == "" || segment == "." {
+			continue
+		}
+		segments = append(segments, segment)
+	}
+	return segments
+}
+
+func splitGGUFTokens(stem string) []string {
+	return strings.FieldsFunc(strings.ToLower(stem), func(r rune) bool {
+		return r == '-' || r == '_' || r == '.' || r == ' '
+	})
+}
+
+func isMTPToken(token string) bool {
+	token = strings.ToLower(strings.TrimSpace(token))
+	if !strings.HasPrefix(token, "mtp") {
+		return false
+	}
+	for _, r := range token[len("mtp"):] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // QuantRank returns a precision rank for a weight GGUF basename; higher is better.
@@ -339,13 +405,12 @@ func CollectWeightGGUFRelPaths(root string) ([]string, error) {
 		if d.IsDir() {
 			return nil
 		}
-		lower := strings.ToLower(d.Name())
-		if !strings.HasSuffix(lower, ".gguf") || strings.Contains(lower, "mmproj") {
-			return nil
-		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
+		}
+		if !IsWeightGGUF(rel) {
+			return nil
 		}
 		out = append(out, rel)
 		return nil

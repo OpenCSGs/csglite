@@ -446,6 +446,34 @@ func TestFindModelFile_PicksHighestPrecisionGGUF(t *testing.T) {
 	}
 }
 
+// A repo's MTP module is a separate architecture that llama-server cannot load,
+// so it must never win over the real main weights even at a higher quant.
+func TestFindModelFile_SkipsMTPModule(t *testing.T) {
+	dir := t.TempDir()
+	mtpDir := filepath.Join(dir, "MTP")
+	if err := os.MkdirAll(mtpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mtpDir, "mtp-gemma-4-31B-it-Q8_0.gguf"), []byte("mtp"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(dir, "gemma-4-31B-it-qat-Q4_0.gguf")
+	if err := os.WriteFile(main, []byte("main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	path, format, err := FindModelFile(dir)
+	if err != nil {
+		t.Fatalf("FindModelFile: %v", err)
+	}
+	if format != FormatGGUF {
+		t.Errorf("format = %q, want %q", format, FormatGGUF)
+	}
+	if path != main {
+		t.Errorf("path = %q, want %q", path, main)
+	}
+}
+
 func TestFindModelFile_NestedQuantFolders(t *testing.T) {
 	dir := t.TempDir()
 	q4 := filepath.Join(dir, "Q4_0")

@@ -167,6 +167,38 @@ func TestFilterGGUFMultiQuantDownload_dotSeparatedQuantNames(t *testing.T) {
 	}
 }
 
+// An MTP module must not be treated as a quant candidate: it would otherwise win
+// the highest-precision filter and be downloaded instead of the main weights.
+func TestFilterGGUFMultiQuantDownload_keepsMainWeightsAlongsideMTPModule(t *testing.T) {
+	files := []RepoFile{
+		{Type: "file", Path: "README.md", Name: "README.md"},
+		{Type: "file", Path: "gemma-4-31B-it-qat-Q4_0.gguf", Name: "gemma-4-31B-it-qat-Q4_0.gguf", LFS: true},
+		{Type: "file", Path: "gemma-4-31B-it-qat-Q3_K_M.gguf", Name: "gemma-4-31B-it-qat-Q3_K_M.gguf", LFS: true},
+		{Type: "file", Path: "MTP/mtp-gemma-4-31B-it-Q8_0.gguf", Name: "mtp-gemma-4-31B-it-Q8_0.gguf", LFS: true},
+	}
+
+	got, err := filterGGUFMultiQuantDownload(files, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, f := range got {
+		paths = append(paths, f.Path)
+	}
+	want := []string{
+		"README.md",
+		"gemma-4-31B-it-qat-Q4_0.gguf",
+		"MTP/mtp-gemma-4-31B-it-Q8_0.gguf",
+	}
+	if !reflect.DeepEqual(paths, want) {
+		t.Errorf("got %v, want %v", paths, want)
+	}
+
+	if _, err := filterGGUFMultiQuantDownload(files, []string{"Q8_0"}); err == nil {
+		t.Error("expected an error for a quant that only the MTP module provides")
+	}
+}
+
 func TestFilterTransformersWeightDownloadPrefersSafeTensors(t *testing.T) {
 	files := []RepoFile{
 		{Type: "file", Path: "config.json", Name: "config.json"},

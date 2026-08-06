@@ -119,8 +119,7 @@ func HasGGUF(modelDir string) (string, bool) {
 		return "", false
 	}
 	for _, e := range entries {
-		lower := strings.ToLower(e.Name())
-		if !e.IsDir() && strings.HasSuffix(lower, ".gguf") && !strings.Contains(lower, "mmproj") {
+		if !e.IsDir() && ggufpick.IsWeightGGUF(e.Name()) {
 			return filepath.Join(modelDir, e.Name()), true
 		}
 	}
