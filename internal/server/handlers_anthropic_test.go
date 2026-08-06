@@ -1,12 +1,16 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +19,79 @@ import (
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
 )
+
+type delayedAnthropicStreamEngine struct {
+	body    io.ReadCloser
+	lastReq map[string]interface{}
+}
+
+func (e *delayedAnthropicStreamEngine) Generate(context.Context, string, inference.Options, inference.TokenCallback) (string, error) {
+	return "", nil
+}
+
+func (e *delayedAnthropicStreamEngine) Chat(context.Context, []inference.Message, inference.Options, inference.TokenCallback) (string, error) {
+	return "", nil
+}
+
+func (e *delayedAnthropicStreamEngine) Close() error { return nil }
+
+func (e *delayedAnthropicStreamEngine) ModelName() string { return "test/model" }
+
+func (e *delayedAnthropicStreamEngine) ChatCompletion(_ context.Context, reqBody map[string]interface{}) (*http.Response, error) {
+	e.lastReq = reqBody
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       e.body,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+	}, nil
+}
+
+type flushSignalResponseWriter struct {
+	mu      sync.Mutex
+	header  http.Header
+	body    bytes.Buffer
+	status  int
+	flushed chan struct{}
+}
+
+func newFlushSignalResponseWriter() *flushSignalResponseWriter {
+	return &flushSignalResponseWriter{
+		header:  make(http.Header),
+		flushed: make(chan struct{}, 32),
+	}
+}
+
+func (w *flushSignalResponseWriter) Header() http.Header { return w.header }
+
+func (w *flushSignalResponseWriter) WriteHeader(status int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *flushSignalResponseWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(data)
+}
+
+func (w *flushSignalResponseWriter) Flush() {
+	select {
+	case w.flushed <- struct{}{}:
+	default:
+	}
+}
+
+func (w *flushSignalResponseWriter) BodyString() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.body.String()
+}
 
 func newAnthropicProxyTestServer(t *testing.T, engine inference.Engine) *Server {
 	t.Helper()
@@ -464,6 +541,56 @@ func TestHandleAnthropicMessagesProxyPreservesReasoningContent(t *testing.T) {
 	}
 }
 
+func TestHandleAnthropicMessagesProxyFlushesBeforeUpstreamCompletion(t *testing.T) {
+	reader, writer := io.Pipe()
+	engine := &delayedAnthropicStreamEngine{body: reader}
+	s := newAnthropicProxyTestServer(t, engine)
+
+	body := `{
+	  "model": "test/model",
+	  "messages": [{"role":"user","content":"write a long response"}],
+	  "stream": true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	response := newFlushSignalResponseWriter()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleAnthropicMessages(response, req)
+	}()
+
+	select {
+	case <-response.flushed:
+	case <-time.After(time.Second):
+		t.Fatal("message_start was not flushed while upstream body remained open")
+	}
+	if stream, _ := engine.lastReq["stream"].(bool); !stream {
+		t.Fatalf("upstream stream = %#v, want true", engine.lastReq["stream"])
+	}
+	if got := response.BodyString(); !strings.Contains(got, `event: message_start`) {
+		t.Fatalf("initial stream body = %q, want message_start", got)
+	}
+
+	_, _ = io.WriteString(writer, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello\"}}]}\n\n")
+	_, _ = io.WriteString(writer, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+	_, _ = io.WriteString(writer, "data: [DONE]\n\n")
+	_ = writer.Close()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stream handler did not finish after upstream [DONE]")
+	}
+	got := response.BodyString()
+	if !strings.Contains(got, `"text":"hello"`) || !strings.Contains(got, `"type":"text_delta"`) {
+		t.Fatalf("stream body missing translated text delta: %s", got)
+	}
+	if !strings.Contains(got, `event: message_stop`) {
+		t.Fatalf("stream body missing message_stop: %s", got)
+	}
+}
+
 func TestHandleAnthropicMessagesProxyStreamsReasoningContent(t *testing.T) {
 	engine := &fakeChatCompletionEngine{
 		resp: api.OpenAIChatResponse{
@@ -509,6 +636,9 @@ func TestHandleAnthropicMessagesProxyStreamsReasoningContent(t *testing.T) {
 	}
 	if !strings.Contains(bodyText, `"type":"text_delta"`) || !strings.Contains(bodyText, `"text":"stream visible answer"`) {
 		t.Fatalf("expected text delta in stream, got %s", bodyText)
+	}
+	if stream, _ := engine.lastReq["stream"].(bool); !stream {
+		t.Fatalf("upstream stream = %#v, want true", engine.lastReq["stream"])
 	}
 }
 
@@ -573,5 +703,8 @@ func TestHandleAnthropicMessagesStreamWithTools(t *testing.T) {
 	}
 	if !strings.Contains(bodyText, `"stop_reason":"tool_use"`) {
 		t.Fatalf("expected tool_use stop reason in stream, got %s", bodyText)
+	}
+	if stream, _ := engine.lastReq["stream"].(bool); !stream {
+		t.Fatalf("upstream stream = %#v, want true", engine.lastReq["stream"])
 	}
 }

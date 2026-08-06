@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -147,6 +149,11 @@ func (s *Server) handleAnthropicMessagesProxy(
 	inputTokens int,
 	id string,
 ) {
+	if req.Stream {
+		s.handleAnthropicMessagesProxyStream(w, r, req, eng, opts, inputTokens, id)
+		return
+	}
+
 	reqBody, err := anthropicRequestToProxyBody(req, opts, false)
 	if err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, err.Error())
@@ -221,6 +228,296 @@ func (s *Server) handleAnthropicMessagesProxy(
 	writeAnthropicStreamedMessage(w, anthropicResp)
 }
 
+func (s *Server) handleAnthropicMessagesProxyStream(
+	w http.ResponseWriter,
+	r *http.Request,
+	req api.AnthropicMessageRequest,
+	eng inference.Engine,
+	opts inference.Options,
+	inputTokens int,
+	id string,
+) {
+	reqBody, err := anthropicRequestToProxyBody(req, opts, true)
+	if err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	resp, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeChat, eng,
+		func(engine inference.Engine) (*http.Response, error) {
+			proxyEngine, ok := engine.(inference.ChatCompletionProxier)
+			if !ok {
+				return nil, fmt.Errorf("selected model backend does not support Anthropic proxy streaming")
+			}
+			return proxyEngine.ChatCompletion(r.Context(), reqBody)
+		},
+		func() (inference.Engine, error) {
+			return s.getChatEngine(r.Context(), req.Model, req.Source, s.anthropicPreferredNumCtx(req.Model), 0, -1, "", "", "")
+		},
+	)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		writeAnthropicSSE(w, "error", anthropicErrorPayloadFromInferenceError(err))
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	writeAnthropicMessageStart(w, id, req.Model, inputTokens)
+
+	outputTokens, err := streamOpenAIChatAsAnthropic(w, resp.Body)
+	if err != nil {
+		writeAnthropicSSE(w, "error", anthropicErrorPayloadWithStatus(
+			http.StatusBadGateway,
+			"api_error",
+			"reading upstream stream: "+err.Error(),
+		))
+		return
+	}
+	s.recordAPIUsage(r, req.Model, req.Source, inputTokens, outputTokens)
+}
+
+type anthropicStreamToolCall struct {
+	id        string
+	name      string
+	arguments strings.Builder
+}
+
+func streamOpenAIChatAsAnthropic(w http.ResponseWriter, body io.Reader) (int, error) {
+	blockIndex := 0
+	openBlock := ""
+	finishReason := ""
+	outputTokens := 0
+	var outputText strings.Builder
+	tools := make(map[int]*anthropicStreamToolCall)
+	toolOrder := make([]int, 0)
+
+	closeBlock := func() {
+		if openBlock == "" {
+			return
+		}
+		writeAnthropicSSE(w, "content_block_stop", map[string]interface{}{
+			"type":  "content_block_stop",
+			"index": blockIndex,
+		})
+		blockIndex++
+		openBlock = ""
+	}
+	openTextBlock := func(kind string) {
+		if openBlock == kind {
+			return
+		}
+		closeBlock()
+		block := map[string]interface{}{"type": kind}
+		switch kind {
+		case "thinking":
+			block["thinking"] = ""
+			block["signature"] = ""
+		default:
+			block["text"] = ""
+		}
+		writeAnthropicSSE(w, "content_block_start", map[string]interface{}{
+			"type":          "content_block_start",
+			"index":         blockIndex,
+			"content_block": block,
+		})
+		openBlock = kind
+	}
+	writeTextDelta := func(kind, value string) {
+		if value == "" {
+			return
+		}
+		openTextBlock(kind)
+		delta := map[string]interface{}{"type": "text_delta", "text": value}
+		if kind == "thinking" {
+			delta = map[string]interface{}{"type": "thinking_delta", "thinking": value}
+		}
+		writeAnthropicSSE(w, "content_block_delta", map[string]interface{}{
+			"type":  "content_block_delta",
+			"index": blockIndex,
+			"delta": delta,
+		})
+		outputText.WriteString(value)
+	}
+
+	err := scanOpenAIChatStream(body, func(chunk api.OpenAIChatResponse) error {
+		if chunk.Usage.CompletionTokens > 0 {
+			outputTokens = chunk.Usage.CompletionTokens
+		}
+		if len(chunk.Choices) == 0 {
+			return nil
+		}
+		choice := chunk.Choices[0]
+		if choice.FinishReason != nil && *choice.FinishReason != "" {
+			finishReason = *choice.FinishReason
+		}
+		if choice.Delta == nil {
+			return nil
+		}
+		delta := choice.Delta
+		reasoning := delta.ReasoningContent
+		if reasoning == "" {
+			reasoning = delta.Thinking
+		}
+		writeTextDelta("thinking", reasoning)
+		writeTextDelta("text", anthropicContentText(delta.Content))
+
+		for position, call := range delta.ToolCalls {
+			index := position
+			if call.Index != nil {
+				index = *call.Index
+			}
+			state, ok := tools[index]
+			if !ok {
+				state = &anthropicStreamToolCall{}
+				tools[index] = state
+				toolOrder = append(toolOrder, index)
+			}
+			if call.ID != "" {
+				state.id = call.ID
+			}
+			if call.Function.Name != "" {
+				state.name = call.Function.Name
+			}
+			state.arguments.WriteString(openAIToolArgumentsDelta(call.Function.Arguments))
+		}
+		return nil
+	})
+	if err != nil {
+		return outputTokens, err
+	}
+
+	closeBlock()
+	for _, toolIndex := range toolOrder {
+		call := tools[toolIndex]
+		writeAnthropicSSE(w, "content_block_start", map[string]interface{}{
+			"type":  "content_block_start",
+			"index": blockIndex,
+			"content_block": map[string]interface{}{
+				"type":  "tool_use",
+				"id":    anthropicToolUseID(call.id, 0, toolIndex),
+				"name":  call.name,
+				"input": map[string]interface{}{},
+			},
+		})
+		if arguments := call.arguments.String(); arguments != "" {
+			writeAnthropicSSE(w, "content_block_delta", map[string]interface{}{
+				"type":  "content_block_delta",
+				"index": blockIndex,
+				"delta": map[string]interface{}{
+					"type":         "input_json_delta",
+					"partial_json": arguments,
+				},
+			})
+			outputText.WriteString(arguments)
+		}
+		writeAnthropicSSE(w, "content_block_stop", map[string]interface{}{
+			"type":  "content_block_stop",
+			"index": blockIndex,
+		})
+		blockIndex++
+	}
+
+	stopReason := "end_turn"
+	switch finishReason {
+	case "length":
+		stopReason = "max_tokens"
+	case "tool_calls":
+		stopReason = "tool_use"
+	default:
+		if len(toolOrder) > 0 {
+			stopReason = "tool_use"
+		}
+	}
+	if outputTokens == 0 {
+		outputTokens = estimateAnthropicTokens(outputText.String())
+	}
+	writeAnthropicSSE(w, "message_delta", map[string]interface{}{
+		"type": "message_delta",
+		"delta": map[string]interface{}{
+			"stop_reason":   stopReason,
+			"stop_sequence": nil,
+		},
+		"usage": map[string]interface{}{
+			"output_tokens": outputTokens,
+		},
+	})
+	writeAnthropicSSE(w, "message_stop", map[string]interface{}{
+		"type": "message_stop",
+	})
+	return outputTokens, nil
+}
+
+func scanOpenAIChatStream(body io.Reader, onChunk func(api.OpenAIChatResponse) error) error {
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	dataLines := make([]string, 0, 1)
+
+	dispatch := func() (bool, error) {
+		if len(dataLines) == 0 {
+			return false, nil
+		}
+		data := strings.TrimSpace(strings.Join(dataLines, "\n"))
+		dataLines = dataLines[:0]
+		if data == "" {
+			return false, nil
+		}
+		if data == "[DONE]" {
+			return true, nil
+		}
+		var envelope struct {
+			api.OpenAIChatResponse
+			Error json.RawMessage `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(data), &envelope); err != nil {
+			return false, fmt.Errorf("decoding OpenAI stream chunk: %w", err)
+		}
+		if len(envelope.Error) > 0 && string(envelope.Error) != "null" {
+			return false, fmt.Errorf("upstream error: %s", strings.TrimSpace(string(envelope.Error)))
+		}
+		return false, onChunk(envelope.OpenAIChatResponse)
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			done, err := dispatch()
+			if err != nil || done {
+				return err
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	_, err := dispatch()
+	return err
+}
+
+func openAIToolArgumentsDelta(value interface{}) string {
+	switch value := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return value
+	default:
+		data, err := json.Marshal(value)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	}
+}
+
 func (s *Server) handleAnthropicMessagesWithTools(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -233,6 +530,10 @@ func (s *Server) handleAnthropicMessagesWithTools(
 	_, ok := eng.(inference.ChatCompletionProxier)
 	if !ok {
 		writeAnthropicErrorWithType(w, http.StatusBadRequest, "invalid_request_error", "selected model backend does not support tool calling")
+		return
+	}
+	if req.Stream {
+		s.handleAnthropicMessagesProxyStream(w, r, req, eng, opts, inputTokens, id)
 		return
 	}
 
