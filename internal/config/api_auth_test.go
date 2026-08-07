@@ -117,3 +117,54 @@ func TestAPIUsageCompactsEventsByDayAndSource(t *testing.T) {
 		t.Fatalf("records = %#v, want aggregate across buckets", state.Records)
 	}
 }
+
+func TestAPIUsagePoolMetadataAggregatesAndFiltersWithoutBreakingLegacyEvents(t *testing.T) {
+	dir := t.TempDir()
+	usedAt := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
+	legacy := `{"records":[],"events":[{"api_key_id":"legacy","api_key_name":"Legacy","model":"old-model","source":"cloud","source_type":"cloud","requests":1,"input_tokens":2,"output_tokens":3,"total_tokens":5,"created_at":"2026-06-19T09:00:00Z"}]}`
+	if err := os.WriteFile(filepath.Join(dir, APIUsageFile), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy usage: %v", err)
+	}
+	store := NewAPIUsageStore(dir)
+	for _, event := range []APIUsageEvent{
+		{
+			APIKeyID: "key", APIKeyName: "Client", Model: "public-model",
+			Source: "provider:member", SourceType: "provider", SourceName: "Member Provider",
+			PoolID: "pool-id", PoolName: "Primary Pool", PoolModel: "public-model", MemberModel: "upstream-model",
+			FallbackCount: 1, LimitedCount: 1, InputTokens: 4, OutputTokens: 6, CreatedAt: usedAt,
+		},
+		{
+			APIKeyID: "key", APIKeyName: "Client", Model: "public-model",
+			Source: "provider:member", SourceType: "provider", SourceName: "Member Provider",
+			PoolID: "pool-id", PoolName: "Primary Pool", PoolModel: "public-model", MemberModel: "upstream-model",
+			FallbackCount: 2, InputTokens: 1, OutputTokens: 2, CreatedAt: usedAt.Add(time.Hour),
+		},
+	} {
+		if err := store.Add(event); err != nil {
+			t.Fatalf("add pool usage: %v", err)
+		}
+	}
+
+	state, err := store.List(APIUsageListOptions{Pool: "primary pool", Provider: "Member Provider"})
+	if err != nil {
+		t.Fatalf("list filtered pool usage: %v", err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("records = %#v, want one pool member aggregate", state.Records)
+	}
+	record := state.Records[0]
+	if record.Requests != 2 || record.TotalTokens != 13 || record.FallbackCount != 3 || record.LimitedCount != 1 {
+		t.Fatalf("pool counters = %#v, want compacted totals", record)
+	}
+	if record.PoolID != "pool-id" || record.PoolModel != "public-model" || record.MemberModel != "upstream-model" {
+		t.Fatalf("pool attribution = %#v", record)
+	}
+
+	all, err := store.List(APIUsageListOptions{})
+	if err != nil {
+		t.Fatalf("list all usage: %v", err)
+	}
+	if len(all.Records) != 2 {
+		t.Fatalf("records = %#v, want legacy and pool usage readable", all.Records)
+	}
+}

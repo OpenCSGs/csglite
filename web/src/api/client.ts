@@ -350,6 +350,9 @@ export interface LocalAPIUsageTotals {
   total_tokens: number;
   local_tokens: number;
   cloud_tokens: number;
+  pool_requests: number;
+  fallback_count: number;
+  limited_count: number;
 }
 
 export interface LocalAPIUsageRow {
@@ -359,6 +362,12 @@ export interface LocalAPIUsageRow {
   source: string;
   source_type: string;
   source_name?: string;
+  pool_id?: string;
+  pool_name?: string;
+  pool_model?: string;
+  member_model?: string;
+  fallback_count?: number;
+  limited_count?: number;
   requests: number;
   input_tokens: number;
   output_tokens: number;
@@ -374,6 +383,25 @@ export interface LocalAPIUsageSourceTotal {
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;
+}
+
+export interface LocalAPIUsagePoolMemberTotal extends LocalAPIUsageSourceTotal {
+  model: string;
+  fallback_count: number;
+  limited_count: number;
+}
+
+export interface LocalAPIUsagePoolTotal {
+  pool_id: string;
+  pool_name: string;
+  pool_model: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  fallback_count: number;
+  limited_count: number;
+  members: LocalAPIUsagePoolMemberTotal[];
 }
 
 export interface ProviderTagModelSelection {
@@ -406,6 +434,7 @@ export interface LocalAPIUsageResponse {
   total_history: number;
   total_summary: LocalAPIUsageTotalSummary;
   source_totals: LocalAPIUsageSourceTotal[];
+  pool_totals: LocalAPIUsagePoolTotal[];
   rows: LocalAPIUsageRow[];
 }
 
@@ -1139,10 +1168,11 @@ export async function deleteLocalAPIKey(id: string): Promise<void> {
   });
 }
 
-export async function getLocalAPIUsage(period?: string, provider?: string): Promise<LocalAPIUsageResponse> {
+export async function getLocalAPIUsage(period?: string, provider?: string, pool?: string): Promise<LocalAPIUsageResponse> {
   const params = new URLSearchParams();
   if (period) params.set("period", period);
   if (provider) params.set("provider", provider);
+	if (pool) params.set("pool", pool);
   const query = params.toString() ? `?${params}` : "";
   return fetchJSON<LocalAPIUsageResponse>(`/api/api-usage${query}`);
 }
@@ -2072,6 +2102,66 @@ export interface ThirdPartyProviderValidateRequest {
 export interface ThirdPartyProviderValidateResponse {
   valid: boolean;
   model_count: number;
+}
+
+export interface ProviderPoolMember {
+  id: string;
+  source: string;
+  model: string;
+  priority?: number;
+  weight?: number;
+  requests_per_minute?: number;
+  tokens_per_minute?: number;
+  max_concurrent?: number;
+}
+
+export interface ProviderPool {
+  id: string;
+  name: string;
+  model: string;
+  enabled: boolean;
+  members: ProviderPoolMember[];
+}
+
+export interface ProviderPoolCreateRequest {
+  name: string;
+  model: string;
+  enabled?: boolean;
+  members: ProviderPoolMember[];
+}
+
+export interface ProviderPoolUpdateRequest {
+  name?: string;
+  model?: string;
+  enabled?: boolean;
+  members?: ProviderPoolMember[];
+}
+
+export async function getProviderPools(): Promise<ProviderPool[]> {
+  const resp = await fetchJSON<{ pools: ProviderPool[] }>("/api/provider-pools");
+  return resp.pools || [];
+}
+
+export async function createProviderPool(req: ProviderPoolCreateRequest): Promise<ProviderPool> {
+  return fetchJSON<ProviderPool>("/api/provider-pools", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+export async function updateProviderPool(id: string, req: ProviderPoolUpdateRequest): Promise<ProviderPool> {
+  return fetchJSON<ProviderPool>(`/api/provider-pools/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+export async function deleteProviderPool(id: string): Promise<void> {
+  await fetchJSON<{ status: string }>(`/api/provider-pools/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function getProviders(): Promise<ThirdPartyProvider[]> {

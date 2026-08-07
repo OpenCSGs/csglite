@@ -247,6 +247,14 @@ func (s *Server) handleProviderDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "provider id is required")
 		return
 	}
+	for _, pool := range config.GetProviderPools() {
+		for _, member := range pool.Members {
+			if providerIDFromSource(member.Source) == id {
+				writeError(w, http.StatusConflict, "provider is referenced by provider pool "+pool.Name)
+				return
+			}
+		}
+	}
 
 	providers := config.GetProviders()
 	found := false

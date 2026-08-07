@@ -69,6 +69,7 @@ func TestLaunchCmdHelpListsSupportedAppsAndExamples(t *testing.T) {
 		"Supported apps:",
 		"claude-code, open-code, open-code-review/ocr, codex, codex-app, zcode, pi, openclaw, csgclaw, dify, anythingllm",
 		"csghub-lite launch zcode --model deepseek-v4-flash --provider <provider-id-or-name>",
+		"csghub-lite launch zcode --pool <pool-id-or-name>",
 		"csghub-lite launch ocr --model glm-5.1-1",
 		"csghub-lite launch open-code-review -- review --format json",
 		"csghub-lite launch pi",
@@ -127,5 +128,34 @@ func TestLaunchProviderScopedBaseURLUsesCSGHubForCloud(t *testing.T) {
 	}
 	if got != "http://localhost:11435/providers/csghub" {
 		t.Fatalf("launchProviderScopedBaseURL() = %q", got)
+	}
+}
+
+func TestLaunchProviderScopedBaseURLKeepsPoolUnscoped(t *testing.T) {
+	got, err := launchProviderScopedBaseURL("http://localhost:11435/", "pool:production")
+	if err != nil {
+		t.Fatalf("launchProviderScopedBaseURL() error: %v", err)
+	}
+	if got != "http://localhost:11435" {
+		t.Fatalf("launchProviderScopedBaseURL() = %q", got)
+	}
+}
+
+func TestGetLaunchProviderPoolFindsEnabledPoolByName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"pools":[
+			{"id":"disabled","name":"Disabled","model":"disabled-model","enabled":false,"members":[]},
+			{"id":"production","name":"Production Chat","model":"production-chat","enabled":true,"members":[]}
+		]}`))
+	}))
+	defer server.Close()
+
+	pool, err := getLaunchProviderPool(server.URL, "production chat")
+	if err != nil {
+		t.Fatalf("getLaunchProviderPool() error: %v", err)
+	}
+	if pool.ID != "production" || pool.Model != "production-chat" {
+		t.Fatalf("pool = %#v", pool)
 	}
 }

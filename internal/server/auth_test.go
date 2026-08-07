@@ -674,6 +674,55 @@ func TestAPIUsageFiltersByProvider(t *testing.T) {
 	}
 }
 
+func TestAPIUsageReportsPoolTotalsMemberSplitAndPoolFilter(t *testing.T) {
+	s := newTestServer(t)
+	now := time.Now().UTC()
+	for _, event := range []config.APIUsageEvent{
+		{
+			APIKeyID: "key", APIKeyName: "client", Model: "public-model",
+			Source: "provider:a", SourceType: "provider", SourceName: "Provider A",
+			PoolID: "pool-1", PoolName: "Production Pool", PoolModel: "public-model", MemberModel: "upstream-a",
+			InputTokens: 3, OutputTokens: 7, CreatedAt: now,
+		},
+		{
+			APIKeyID: "key", APIKeyName: "client", Model: "public-model",
+			Source: "provider:b", SourceType: "provider", SourceName: "Provider B",
+			PoolID: "pool-1", PoolName: "Production Pool", PoolModel: "public-model", MemberModel: "upstream-b",
+			FallbackCount: 1, LimitedCount: 1, InputTokens: 5, OutputTokens: 5, CreatedAt: now,
+		},
+		{
+			APIKeyID: "key", APIKeyName: "client", Model: "other-model",
+			Source: "cloud", SourceType: "cloud", InputTokens: 50, OutputTokens: 50, CreatedAt: now,
+		},
+	} {
+		if err := s.apiUsage.Add(event); err != nil {
+			t.Fatalf("add usage: %v", err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	s.handleAPIUsage(w, httptest.NewRequest(http.MethodGet, "/api/api-usage?pool=production+pool", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+	var resp api.APIUsageResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode usage: %v", err)
+	}
+	if resp.Totals.TotalTokens != 20 || resp.Totals.CloudTokens != 20 || resp.Totals.PoolRequests != 2 {
+		t.Fatalf("actual upstream totals changed: %#v", resp.Totals)
+	}
+	if resp.Totals.FallbackCount != 1 || resp.Totals.LimitedCount != 1 {
+		t.Fatalf("pool counters = %#v", resp.Totals)
+	}
+	if len(resp.PoolTotals) != 1 || len(resp.PoolTotals[0].Members) != 2 {
+		t.Fatalf("pool totals = %#v, want one pool and two members", resp.PoolTotals)
+	}
+	if len(resp.SourceTotals) != 2 || len(resp.Rows) != 2 {
+		t.Fatalf("source/member split = %#v rows=%#v", resp.SourceTotals, resp.Rows)
+	}
+}
+
 func TestAPIUsageFiltersByPeriod(t *testing.T) {
 	s := newTestServer(t)
 	record, _, err := s.apiKeys.Create("client")

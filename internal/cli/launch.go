@@ -33,6 +33,7 @@ type launchOptions struct {
 	SkipConfirm bool
 	Model       string
 	Provider    string
+	Pool        string
 	Gateway     string
 }
 
@@ -58,6 +59,7 @@ Use ` + "`--`" + ` to pass through arguments to the launched app binary.`,
 		Example: `  csghub-lite launch claude-code
   csghub-lite launch codex --model Qwen/Qwen2.5-Coder-7B
   csghub-lite launch zcode --model deepseek-v4-flash --provider <provider-id-or-name>
+  csghub-lite launch zcode --pool <pool-id-or-name>
   csghub-lite launch codex-app --model deepseek-v4-flash --provider <provider-id>
   csghub-lite launch ocr --model glm-5.1-1
   csghub-lite launch open-code-review -- review --format json
@@ -81,6 +83,7 @@ Use ` + "`--`" + ` to pass through arguments to the launched app binary.`,
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "Install without confirmation if the app is missing")
 	cmd.Flags().StringVar(&opts.Model, "model", "", "Use a specific model when launching the app")
 	cmd.Flags().StringVar(&opts.Provider, "provider", "", "Use a specific model provider by ID or unique name")
+	cmd.Flags().StringVar(&opts.Pool, "pool", "", "Use a provider pool by ID or name when launching the app")
 	cmd.Flags().StringVar(&opts.Gateway, "gateway", "", "Use a remote csghub-lite gateway URL (e.g. http://192.168.1.18:11435)")
 	cmd.Flags().BoolVar(&claudeDangerouslySkipPermissions, claudeDangerouslySkipPermissionsFlag, false, "Pass --dangerously-skip-permissions to Claude Code")
 	return cmd
@@ -146,6 +149,17 @@ func runLaunch(cmd *cobra.Command, args []string, opts launchOptions) error {
 		}
 	}
 
+	if strings.TrimSpace(opts.Pool) != "" {
+		if strings.TrimSpace(opts.Model) != "" || strings.TrimSpace(opts.Provider) != "" {
+			return fmt.Errorf("--pool cannot be combined with --model or --provider")
+		}
+		pool, err := getLaunchProviderPool(serverURL, opts.Pool)
+		if err != nil {
+			return err
+		}
+		opts.Model = pool.Model
+		opts.Provider = "pool:" + pool.ID
+	}
 	providerHint := opts.Provider
 	if providerHint == "" && opts.Model == "" {
 		providerHint = strings.TrimPrefix(strings.TrimSpace(app.ModelSource), "provider:")
@@ -196,6 +210,9 @@ func launchProviderScopedBaseURL(serverURL, source string) (string, error) {
 	case "cloud":
 		providerID = config.DefaultCloudProviderName
 	default:
+		if strings.HasPrefix(source, "pool:") {
+			return strings.TrimRight(serverURL, "/"), nil
+		}
 		if strings.HasPrefix(source, "provider:") {
 			providerID = strings.TrimPrefix(source, "provider:")
 		}
@@ -204,6 +221,31 @@ func launchProviderScopedBaseURL(serverURL, source string) (string, error) {
 		return "", fmt.Errorf("model provider source is empty")
 	}
 	return strings.TrimRight(serverURL, "/") + "/providers/" + url.PathEscape(providerID), nil
+}
+
+func getLaunchProviderPool(serverURL, requested string) (api.ProviderPool, error) {
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(serverURL, "/")+"/api/provider-pools", nil)
+	if err != nil {
+		return api.ProviderPool{}, err
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return api.ProviderPool{}, fmt.Errorf("listing provider pools: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return api.ProviderPool{}, fmt.Errorf("listing provider pools: server returned %s", resp.Status)
+	}
+	var result api.ProviderPoolsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return api.ProviderPool{}, fmt.Errorf("decoding provider pools: %w", err)
+	}
+	for _, pool := range result.Pools {
+		if pool.Enabled && (strings.EqualFold(pool.ID, strings.TrimSpace(requested)) || strings.EqualFold(pool.Name, strings.TrimSpace(requested))) {
+			return pool, nil
+		}
+	}
+	return api.ProviderPool{}, fmt.Errorf("provider pool %q is not available", requested)
 }
 
 func unscopedLaunchServerURL(serverURL string) string {

@@ -462,26 +462,35 @@ type APIKeySettingsUpdateRequest struct {
 }
 
 type APIUsageTotals struct {
-	Requests     int64 `json:"requests"`
-	InputTokens  int64 `json:"input_tokens"`
-	OutputTokens int64 `json:"output_tokens"`
-	TotalTokens  int64 `json:"total_tokens"`
-	LocalTokens  int64 `json:"local_tokens"`
-	CloudTokens  int64 `json:"cloud_tokens"`
+	Requests      int64 `json:"requests"`
+	InputTokens   int64 `json:"input_tokens"`
+	OutputTokens  int64 `json:"output_tokens"`
+	TotalTokens   int64 `json:"total_tokens"`
+	LocalTokens   int64 `json:"local_tokens"`
+	CloudTokens   int64 `json:"cloud_tokens"`
+	PoolRequests  int64 `json:"pool_requests"`
+	FallbackCount int64 `json:"fallback_count"`
+	LimitedCount  int64 `json:"limited_count"`
 }
 
 type APIUsageRow struct {
-	APIKeyID     string    `json:"api_key_id"`
-	APIKeyName   string    `json:"api_key_name"`
-	Model        string    `json:"model"`
-	Source       string    `json:"source"`
-	SourceType   string    `json:"source_type"`
-	SourceName   string    `json:"source_name,omitempty"`
-	Requests     int64     `json:"requests"`
-	InputTokens  int64     `json:"input_tokens"`
-	OutputTokens int64     `json:"output_tokens"`
-	TotalTokens  int64     `json:"total_tokens"`
-	LastUsedAt   time.Time `json:"last_used_at"`
+	APIKeyID      string    `json:"api_key_id"`
+	APIKeyName    string    `json:"api_key_name"`
+	Model         string    `json:"model"`
+	Source        string    `json:"source"`
+	SourceType    string    `json:"source_type"`
+	SourceName    string    `json:"source_name,omitempty"`
+	PoolID        string    `json:"pool_id,omitempty"`
+	PoolName      string    `json:"pool_name,omitempty"`
+	PoolModel     string    `json:"pool_model,omitempty"`
+	MemberModel   string    `json:"member_model,omitempty"`
+	FallbackCount int64     `json:"fallback_count,omitempty"`
+	LimitedCount  int64     `json:"limited_count,omitempty"`
+	Requests      int64     `json:"requests"`
+	InputTokens   int64     `json:"input_tokens"`
+	OutputTokens  int64     `json:"output_tokens"`
+	TotalTokens   int64     `json:"total_tokens"`
+	LastUsedAt    time.Time `json:"last_used_at"`
 }
 
 type APIUsageSourceTotal struct {
@@ -492,6 +501,32 @@ type APIUsageSourceTotal struct {
 	InputTokens  int64  `json:"input_tokens"`
 	OutputTokens int64  `json:"output_tokens"`
 	TotalTokens  int64  `json:"total_tokens"`
+}
+
+type APIUsagePoolMemberTotal struct {
+	Source        string `json:"source"`
+	SourceType    string `json:"source_type"`
+	SourceName    string `json:"source_name,omitempty"`
+	Model         string `json:"model"`
+	Requests      int64  `json:"requests"`
+	InputTokens   int64  `json:"input_tokens"`
+	OutputTokens  int64  `json:"output_tokens"`
+	TotalTokens   int64  `json:"total_tokens"`
+	FallbackCount int64  `json:"fallback_count"`
+	LimitedCount  int64  `json:"limited_count"`
+}
+
+type APIUsagePoolTotal struct {
+	PoolID        string                    `json:"pool_id"`
+	PoolName      string                    `json:"pool_name"`
+	PoolModel     string                    `json:"pool_model"`
+	Requests      int64                     `json:"requests"`
+	InputTokens   int64                     `json:"input_tokens"`
+	OutputTokens  int64                     `json:"output_tokens"`
+	TotalTokens   int64                     `json:"total_tokens"`
+	FallbackCount int64                     `json:"fallback_count"`
+	LimitedCount  int64                     `json:"limited_count"`
+	Members       []APIUsagePoolMemberTotal `json:"members"`
 }
 
 type APIUsageSummarySeries struct {
@@ -512,6 +547,7 @@ type APIUsageResponse struct {
 	TotalHistory int64                 `json:"total_history"`
 	TotalSummary APIUsageTotalSummary  `json:"total_summary"`
 	SourceTotals []APIUsageSourceTotal `json:"source_totals"`
+	PoolTotals   []APIUsagePoolTotal   `json:"pool_totals"`
 	Rows         []APIUsageRow         `json:"rows"`
 }
 
@@ -836,6 +872,44 @@ type ThirdPartyProviderUpdateRequest struct {
 	APIKey   string `json:"api_key,omitempty"`
 	Provider string `json:"provider,omitempty"`
 	Enabled  *bool  `json:"enabled,omitempty"`
+}
+
+// ProviderPool exposes one public model ID and selects one of its members.
+type ProviderPool struct {
+	ID      string               `json:"id"`
+	Name    string               `json:"name"`
+	Model   string               `json:"model"`
+	Enabled bool                 `json:"enabled"`
+	Members []ProviderPoolMember `json:"members"`
+}
+
+type ProviderPoolMember struct {
+	ID            string `json:"id"`
+	Source        string `json:"source"`
+	Model         string `json:"model"`
+	Priority      int    `json:"priority,omitempty"`
+	Weight        int    `json:"weight,omitempty"`
+	RequestsPM    int    `json:"requests_per_minute,omitempty"`
+	TokensPM      int    `json:"tokens_per_minute,omitempty"`
+	MaxConcurrent int    `json:"max_concurrent,omitempty"`
+}
+
+type ProviderPoolsResponse struct {
+	Pools []ProviderPool `json:"pools"`
+}
+
+type ProviderPoolCreateRequest struct {
+	Name    string               `json:"name"`
+	Model   string               `json:"model"`
+	Enabled *bool                `json:"enabled,omitempty"`
+	Members []ProviderPoolMember `json:"members"`
+}
+
+type ProviderPoolUpdateRequest struct {
+	Name    *string               `json:"name,omitempty"`
+	Model   *string               `json:"model,omitempty"`
+	Enabled *bool                 `json:"enabled,omitempty"`
+	Members *[]ProviderPoolMember `json:"members,omitempty"`
 }
 
 type ProviderTagModelRequest struct {

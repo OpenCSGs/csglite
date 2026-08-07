@@ -114,6 +114,25 @@ func (s *Server) listAvailableModelsForProvider(ctx context.Context, provider st
 			appendUnique(item)
 		}
 	}
+	if provider == "" {
+		for _, pool := range config.GetProviderPools() {
+			if !pool.Enabled {
+				continue
+			}
+			label := pool.Model + " [" + pool.Name + "]"
+			appendUnique(api.ModelInfo{
+				Name:        pool.Model,
+				Model:       pool.Model,
+				Label:       label,
+				DisplayName: label,
+				Format:      "api",
+				Source:      poolSource(pool.ID),
+				Provider:    pool.Name,
+				Category:    "chat",
+				PipelineTag: "text-generation",
+			})
+		}
+	}
 
 	sortModelsByPriority(out)
 	return out, nil

@@ -72,6 +72,7 @@ func TestMain(m *testing.M) {
 	}
 	config.ResetProviders()
 	config.ResetProviderModelAllowlist()
+	config.ResetProviderPools()
 	os.Exit(m.Run())
 }
 
@@ -82,8 +83,10 @@ func newTestServer(t *testing.T) *Server {
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
 	config.ResetProviderModelAllowlist()
+	config.ResetProviderPools()
 	t.Cleanup(config.ResetProviders)
 	t.Cleanup(config.ResetProviderModelAllowlist)
+	t.Cleanup(config.ResetProviderPools)
 	dir := t.TempDir()
 	cfg := &config.Config{
 		ServerURL:  "https://hub.opencsg.com",

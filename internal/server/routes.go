@@ -91,6 +91,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/providers", s.handleProviderCreate)
 	mux.HandleFunc("PUT /api/providers/{id}", s.handleProviderUpdate)
 	mux.HandleFunc("DELETE /api/providers/{id}", s.handleProviderDelete)
+	mux.HandleFunc("GET /api/provider-pools", s.handleProviderPoolsList)
+	mux.HandleFunc("POST /api/provider-pools", s.handleProviderPoolCreate)
+	mux.HandleFunc("PUT /api/provider-pools/{id}", s.handleProviderPoolUpdate)
+	mux.HandleFunc("DELETE /api/provider-pools/{id}", s.handleProviderPoolDelete)
 	mux.HandleFunc("GET /api/cloud/auth", s.handleCloudAuthStatus)
 	mux.HandleFunc("POST /api/cloud/auth/token", s.handleCloudAuthTokenSave)
 	mux.HandleFunc("DELETE /api/cloud/auth/token", s.handleCloudAuthTokenDelete)
@@ -130,7 +134,7 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /", devStaticHandler("web/dist"))
 	}
 
-	return s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(LogMiddleware(mux))))
+	return s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(providerPoolUsageMiddleware(LogMiddleware(mux)))))
 }
 
 func (s *Server) externalAPIRoutes() http.Handler {
@@ -167,7 +171,7 @@ func (s *Server) externalAPIRoutes() http.Handler {
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
 	s.registerProviderInferenceRoutes(mux)
 
-	return desktopExternalAPIMiddleware(s.apiAuthMiddleware(LogMiddleware(mux)))
+	return desktopExternalAPIMiddleware(s.apiAuthMiddleware(providerPoolUsageMiddleware(LogMiddleware(mux))))
 }
 
 func desktopExternalAPIMiddleware(next http.Handler) http.Handler {

@@ -214,6 +214,8 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 		return
 	}
 	defer resp.Body.Close()
+	usageSource := requestPoolUsageSource(req.Source, resp)
+	usagePool := requestPoolUsageMetadata(req.Model, req.Source, resp)
 
 	if contentType := strings.TrimSpace(resp.Header.Get("Content-Type")); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
@@ -229,7 +231,7 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	w.WriteHeader(http.StatusOK)
 	if stream {
 		_, _ = io.Copy(openAIStreamWriter{ResponseWriter: w}, resp.Body)
-		s.recordAPIUsage(r, req.Model, req.Source, countMessageTokens(req.Messages), 0)
+		s.recordAPIUsageWithPool(r, req.Model, usageSource, countMessageTokens(req.Messages), 0, usagePool)
 	} else {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -241,9 +243,9 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 			if inputTokens == 0 {
 				inputTokens = countMessageTokens(req.Messages)
 			}
-			s.recordAPIUsage(r, req.Model, req.Source, inputTokens, outputTokens)
+			s.recordAPIUsageWithPool(r, req.Model, usageSource, inputTokens, outputTokens, usagePool)
 		} else {
-			s.recordAPIUsage(r, req.Model, req.Source, countMessageTokens(req.Messages), 0)
+			s.recordAPIUsageWithPool(r, req.Model, usageSource, countMessageTokens(req.Messages), 0, usagePool)
 		}
 		_, _ = w.Write(body)
 	}
