@@ -212,6 +212,31 @@ func TestLocalModelInfoPrefersDetectedDiffusersPipelineTag(t *testing.T) {
 	}
 }
 
+func TestLocalModelInfoUpgradesLegacyTextManifestWithMMProj(t *testing.T) {
+	s := newTestServer(t)
+	mustSaveLocalModel(t, s.cfg.ModelDir, &model.LocalModel{
+		Namespace:   "local",
+		Name:        "qwen3.5-0.8b-gguf",
+		Format:      model.FormatGGUF,
+		Files:       []string{"model.gguf", "mmproj-model.gguf"},
+		PipelineTag: "text-generation",
+	})
+	modelDir := filepath.Join(s.cfg.ModelDir, "local", "qwen3.5-0.8b-gguf")
+	if err := os.WriteFile(filepath.Join(modelDir, "mmproj-model.gguf"), []byte("mmproj"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	info := s.localModelInfo(&model.LocalModel{
+		Namespace:   "local",
+		Name:        "qwen3.5-0.8b-gguf",
+		Format:      model.FormatGGUF,
+		PipelineTag: "text-generation",
+	})
+	if info.PipelineTag != "image-text-to-text" || !info.HasMMProj {
+		t.Fatalf("localModelInfo() pipeline_tag = %q, has_mmproj = %t", info.PipelineTag, info.HasMMProj)
+	}
+}
+
 func TestHandleLocalModelSearchIncludesQwen35MaxModelLen(t *testing.T) {
 	s := newTestServer(t)
 	mustSaveLocalModel(t, s.cfg.ModelDir, &model.LocalModel{

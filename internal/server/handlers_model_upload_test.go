@@ -55,6 +55,36 @@ func TestHandleModelUpload_Files(t *testing.T) {
 	assertNoUploadStagingDirs(t, s.cfg.TempDir())
 }
 
+func TestHandleModelUpload_GGUFWithMMProjIsVisionModel(t *testing.T) {
+	s := newTestServer(t)
+	body, contentType := multipartModelUpload(t, map[string]string{
+		"model": "local/qwen3.5-0.8b-gguf",
+		"mode":  "files",
+	}, []uploadTestFile{
+		{Path: "qwen3.5-0.8b-q4_k_m.gguf", Body: "gguf"},
+		{Path: "mmproj-qwen3.5-0.8b-f16.gguf", Body: "mmproj"},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/models/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp api.ModelUploadResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Details.PipelineTag != "image-text-to-text" {
+		t.Fatalf("pipeline_tag = %q, want image-text-to-text", resp.Details.PipelineTag)
+	}
+	if !resp.Details.HasMMProj {
+		t.Fatal("has_mmproj = false, want true")
+	}
+}
+
 func TestHandleModelUpload_Archive(t *testing.T) {
 	s := newTestServer(t)
 	archive := zipBytes(t, map[string]string{

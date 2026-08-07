@@ -219,6 +219,17 @@ func TestDetectPipelineTagRegisteredVisionArchitecture(t *testing.T) {
 	}
 }
 
+func TestDetectPipelineTagMMProjWithoutConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mmproj-model-f16.gguf"), []byte("mmproj"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := DetectPipelineTag(dir); got != "image-text-to-text" {
+		t.Fatalf("DetectPipelineTag() = %q, want image-text-to-text", got)
+	}
+}
+
 func TestDetectPipelineTagASRSupportedArchitectures(t *testing.T) {
 	for _, arch := range []string{
 		"Qwen3ASRForConditionalGeneration",
@@ -471,6 +482,37 @@ func TestFindModelFile_SkipsMTPModule(t *testing.T) {
 	}
 	if path != main {
 		t.Errorf("path = %q, want %q", path, main)
+	}
+}
+
+func TestFindModelFile_SkipsMetadataDetectedProjector(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "qwen3.5-Q4_0.gguf")
+	if err := os.WriteFile(main, []byte("main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	projectorDir := filepath.Join(dir, "vision")
+	if err := os.MkdirAll(projectorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projector := filepath.Join(projectorDir, "encoder-Q8_0.gguf")
+	writeTestGGUF(t, projector, []testGGUFMetadata{
+		{key: "general.architecture", valueType: ggufMetadataString, value: "clip"},
+		{key: "clip.projector_type", valueType: ggufMetadataString, value: "qwen3vl_merger"},
+	})
+
+	path, format, err := FindModelFile(dir)
+	if err != nil {
+		t.Fatalf("FindModelFile: %v", err)
+	}
+	if format != FormatGGUF || path != main {
+		t.Fatalf("FindModelFile() = %q, %q; want %q, %q", path, format, main, FormatGGUF)
+	}
+	if got := FindMMProj(dir); got != projector {
+		t.Fatalf("FindMMProj() = %q, want %q", got, projector)
+	}
+	if got := DetectPipelineTag(dir); got != "image-text-to-text" {
+		t.Fatalf("DetectPipelineTag() = %q, want image-text-to-text", got)
 	}
 }
 

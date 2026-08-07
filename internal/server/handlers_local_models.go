@@ -168,7 +168,10 @@ func (s *Server) resolvedLocalPipelineTag(modelID, manifestPipelineTag string) s
 	if dir, err := s.manager.ModelPath(modelID); err == nil {
 		detected = strings.TrimSpace(model.DetectPipelineTag(dir))
 	}
-	if isImageGenerationPipelineTag(detected) || isEmbeddingPipelineTag(detected) || isASRPipelineTag(detected) {
+	if isImageGenerationPipelineTag(detected) ||
+		isEmbeddingPipelineTag(detected) ||
+		isASRPipelineTag(detected) ||
+		strings.EqualFold(detected, "image-text-to-text") {
 		return detected
 	}
 	if manifestPipelineTag != "" {

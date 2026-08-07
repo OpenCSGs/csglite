@@ -1,6 +1,8 @@
 package convert
 
 import (
+	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -141,5 +143,51 @@ func TestFindMMProjForDTypeMatchesRequestedQuant(t *testing.T) {
 	}
 	if filepath.Base(got) != "mmproj-model-q8_0.gguf" {
 		t.Fatalf("FindMMProjForDType = %q, want mmproj-model-q8_0.gguf", got)
+	}
+}
+
+func TestFindMMProjForDTypeDetectsGGUFMetadata(t *testing.T) {
+	dir := t.TempDir()
+	projectorDir := filepath.Join(dir, "vision")
+	if err := os.MkdirAll(projectorDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	projector := filepath.Join(projectorDir, "encoder-Q8_0.gguf")
+	writeClipTestGGUF(t, projector)
+
+	if path, ok := HasGGUF(dir); ok {
+		t.Fatalf("HasGGUF() = %q, true; projector must not be treated as main weights", path)
+	}
+	got, ok, err := FindMMProjForDType(dir, "q8_0")
+	if err != nil {
+		t.Fatalf("FindMMProjForDType returned error: %v", err)
+	}
+	if !ok || got != projector {
+		t.Fatalf("FindMMProjForDType = %q, %t; want %q, true", got, ok, projector)
+	}
+}
+
+func writeClipTestGGUF(t *testing.T, path string) {
+	t.Helper()
+	var data bytes.Buffer
+	write := func(value any) {
+		t.Helper()
+		if err := binary.Write(&data, binary.LittleEndian, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeString := func(value string) {
+		write(uint64(len(value)))
+		data.WriteString(value)
+	}
+	data.WriteString("GGUF")
+	write(uint32(3))
+	write(uint64(0))
+	write(uint64(1))
+	writeString("general.architecture")
+	write(uint32(8))
+	writeString("clip")
+	if err := os.WriteFile(path, data.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

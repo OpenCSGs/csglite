@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/opencsgs/csglite/internal/ggufmeta"
 	"github.com/opencsgs/csglite/internal/ggufpick"
 )
 
@@ -177,6 +178,10 @@ func normalizeASRModelFamily(value string) string {
 // tag for routing. Sentence-transformers repositories are treated as embedding
 // models even when the hub metadata was not persisted in older manifests.
 func DetectPipelineTag(modelDir string) string {
+	modelCardTag := detectModelCardPipelineTag(modelDir)
+	if modelCardTag != "" && modelCardTag != "text-generation" {
+		return modelCardTag
+	}
 	if IsASRModelFamily(modelDir) {
 		return "automatic-speech-recognition"
 	}
@@ -191,6 +196,9 @@ func DetectPipelineTag(modelDir string) string {
 	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
+		if FindMMProj(modelDir) != "" {
+			return "image-text-to-text"
+		}
 		return "text-generation"
 	}
 	var cfg struct {
@@ -200,6 +208,9 @@ func DetectPipelineTag(modelDir string) string {
 		ModelType       string   `json:"model_type"`
 	}
 	if json.Unmarshal(data, &cfg) != nil {
+		if FindMMProj(modelDir) != "" {
+			return "image-text-to-text"
+		}
 		return "text-generation"
 	}
 	if isASRModelType(cfg.ModelType) {
@@ -220,6 +231,9 @@ func DetectPipelineTag(modelDir string) string {
 		if IsASRArchitecture(arch) {
 			return "automatic-speech-recognition"
 		}
+	}
+	if FindMMProj(modelDir) != "" {
+		return "image-text-to-text"
 	}
 	return "text-generation"
 }
@@ -346,19 +360,50 @@ func isImageToImageDiffusersClass(className string) bool {
 		strings.Contains(className, "edit")
 }
 
-// FindMMProj looks for a multimodal projector GGUF file (mmproj) in the model directory.
+// FindMMProj looks for a multimodal projector GGUF file in the model directory.
 func FindMMProj(modelDir string) string {
-	entries, err := os.ReadDir(modelDir)
-	if err != nil {
+	paths, err := FindMMProjFiles(modelDir)
+	if err != nil || len(paths) == 0 {
 		return ""
 	}
-	for _, e := range entries {
-		lower := strings.ToLower(e.Name())
-		if strings.Contains(lower, "mmproj") && strings.HasSuffix(lower, ".gguf") {
-			return filepath.Join(modelDir, e.Name())
+	return paths[0]
+}
+
+// FindMMProjFiles returns multimodal projector GGUF files ordered with
+// conventionally named mmproj files first, then metadata-detected projectors.
+func FindMMProjFiles(modelDir string) ([]string, error) {
+	var named []string
+	var candidates []string
+	err := filepath.WalkDir(modelDir, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".gguf") {
+			return nil
+		}
+		if ggufpick.IsMMProjGGUF(entry.Name()) {
+			named = append(named, current)
+			return nil
+		}
+		candidates = append(candidates, current)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(named)
+	if len(named) > 0 {
+		return named, nil
+	}
+	var detected []string
+	for _, current := range candidates {
+		isProjector, err := ggufmeta.IsVisionProjectorFile(current)
+		if err == nil && isProjector {
+			detected = append(detected, current)
 		}
 	}
-	return ""
+	sort.Strings(detected)
+	return detected, nil
 }
 
 // SaveManifest writes a model manifest to disk.
@@ -416,7 +461,7 @@ func DetectFormat(files []string) Format {
 // FindModelFile returns the primary model file (GGUF or SafeTensors).
 func FindModelFile(modelDir string) (string, Format, error) {
 	// Prefer GGUF weight files (skip multimodal projector); recurse into subdirs; pick highest precision.
-	ggufRel, err := ggufpick.CollectWeightGGUFRelPaths(modelDir)
+	ggufRel, err := FindWeightGGUFRelPaths(modelDir)
 	if err != nil {
 		return "", FormatUnknown, err
 	}
@@ -439,6 +484,28 @@ func FindModelFile(modelDir string) (string, Format, error) {
 		return path, FormatPyTorch, nil
 	}
 	return "", FormatUnknown, os.ErrNotExist
+}
+
+// FindWeightGGUFRelPaths returns main-model GGUF paths while excluding
+// filename- and metadata-identified companion modules.
+func FindWeightGGUFRelPaths(modelDir string) ([]string, error) {
+	paths, err := ggufpick.CollectWeightGGUFRelPaths(modelDir)
+	if err != nil {
+		return nil, err
+	}
+	return filterMetadataProjectors(modelDir, paths), nil
+}
+
+func filterMetadataProjectors(modelDir string, paths []string) []string {
+	filtered := make([]string, 0, len(paths))
+	for _, relPath := range paths {
+		isProjector, err := ggufmeta.IsVisionProjectorFile(filepath.Join(modelDir, relPath))
+		if err == nil && isProjector {
+			continue
+		}
+		filtered = append(filtered, relPath)
+	}
+	return filtered
 }
 
 func findWeightFileBySuffix(modelDir, suffix string) (string, bool) {

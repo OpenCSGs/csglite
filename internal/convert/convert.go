@@ -114,16 +114,11 @@ func resolveDType(value string) (string, error) {
 
 // HasGGUF checks if a GGUF file already exists in the model directory.
 func HasGGUF(modelDir string) (string, bool) {
-	entries, err := os.ReadDir(modelDir)
-	if err != nil {
+	path, format, err := model.FindModelFile(modelDir)
+	if err != nil || format != model.FormatGGUF {
 		return "", false
 	}
-	for _, e := range entries {
-		if !e.IsDir() && ggufpick.IsWeightGGUF(e.Name()) {
-			return filepath.Join(modelDir, e.Name()), true
-		}
-	}
-	return "", false
+	return path, true
 }
 
 // HasSafeTensors reports whether modelDir contains SafeTensors files.
@@ -160,18 +155,7 @@ func HasConvertibleHFWeights(modelDir string) bool {
 }
 
 func mmprojGGUFNames(modelDir string) ([]string, error) {
-	entries, err := os.ReadDir(modelDir)
-	if err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, e := range entries {
-		lower := strings.ToLower(e.Name())
-		if !e.IsDir() && strings.Contains(lower, "mmproj") && strings.HasSuffix(lower, ".gguf") {
-			names = append(names, e.Name())
-		}
-	}
-	return names, nil
+	return model.FindMMProjFiles(modelDir)
 }
 
 // NeedsConversion checks if the model directory contains HuggingFace weights
@@ -246,7 +230,7 @@ func FindGGUFForDType(modelDir, dtype string) (string, bool, error) {
 		return path, true, nil
 	}
 
-	relPaths, err := ggufpick.CollectWeightGGUFRelPaths(modelDir)
+	relPaths, err := model.FindWeightGGUFRelPaths(modelDir)
 	if err != nil {
 		return "", false, err
 	}
@@ -282,11 +266,11 @@ func FindMMProjForDType(modelDir, dtype string) (string, bool, error) {
 				bestRank = rank
 			}
 		}
-		return filepath.Join(modelDir, bestName), true, nil
+		return bestName, true, nil
 	}
 	for _, name := range names {
 		if strings.EqualFold(ggufpick.QuantLabel(name), normalized) {
-			return filepath.Join(modelDir, name), true, nil
+			return name, true, nil
 		}
 	}
 	return "", false, nil

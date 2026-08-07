@@ -179,7 +179,7 @@ func writeMinimalGGUFContextLength(path string, contextLength uint32) error {
 	if _, err := buf.Write(key); err != nil {
 		return err
 	}
-	if err := binary.Write(&buf, binary.LittleEndian, uint32(ggufTypeUint32)); err != nil {
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(4)); err != nil { // GGUF_TYPE_UINT32
 		return err
 	}
 	if err := binary.Write(&buf, binary.LittleEndian, contextLength); err != nil {
