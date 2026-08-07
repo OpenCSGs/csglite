@@ -1,13 +1,20 @@
 package convert
 
-import _ "embed"
+import (
+	"io/fs"
 
-//go:embed data/convert_hf_to_gguf.py
-var bundledConverterPy []byte
+	llamacppassets "github.com/opencsgs/llama-cpp-assets"
+)
 
-// bundledConverterRevision must be incremented whenever data/convert_hf_to_gguf.py
-// changes so upgraded binaries rewrite the cached script under ~/.csghub-lite/tools/.
-const bundledConverterRevision = 7
+var bundledConverterPy, _ = fs.ReadFile(llamacppassets.FS, llamacppassets.ConverterPath)
 
-// BundledConverterLLamacppRef documents the llama.cpp release tag the bundled script was taken from.
-const BundledConverterLLamacppRef = "b9158"
+var bundledGGUFPy = llamacppassets.FS
+
+const bundledGGUFPyRoot = llamacppassets.GGUFPyRoot
+
+// These aliases keep converter cache and error reporting tied directly to the
+// versioned dependency that owns the Python assets.
+const (
+	bundledConverterRevision    = llamacppassets.Revision
+	BundledConverterLLamacppRef = llamacppassets.LlamaCppRef
+)

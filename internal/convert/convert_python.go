@@ -1,11 +1,10 @@
 package convert
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -27,10 +26,6 @@ const (
 	pythonCPUOnlyTorchFallbackURL = "https://download.pytorch.org/whl/cpu"
 	pythonCPUOnlyTorchInstallArgs = pythonPackageIndexArgs + " --find-links " + pythonCPUOnlyTorchIndexURL + " torch"
 	pythonDepsInstallArgs         = "safetensors transformers sentencepiece protobuf"
-	regionCN                      = "CN"
-	regionINTL                    = "INTL"
-	llamaCppGitHubRepo            = "https://github.com/ggml-org/llama.cpp"
-	llamaCppGiteeRepo             = "https://gitee.com/xzgan/llama.cpp"
 	minPythonMajor                = 3
 	minPythonMinor                = 9
 )
@@ -44,12 +39,6 @@ type converterRepairResult struct {
 type converterRepairPlan struct {
 	installBundledGGUFPy bool
 	upgradePackages      []string
-}
-
-type llamaCppSource struct {
-	name       string
-	repoURL    string
-	archiveURL string
 }
 
 func pythonInstallHint() string {
@@ -118,46 +107,6 @@ func preferredPipInstallCommand() string {
 	return "~/.csghub-lite/tools/python/bin/python -m pip install --upgrade"
 }
 
-func ggufRepoInstallCommand(repoURL string) string {
-	return fmt.Sprintf(
-		`%s "gguf @ git+%s.git@%s#subdirectory=gguf-py"`,
-		preferredPipInstallCommand(),
-		repoURL,
-		BundledConverterLLamacppRef,
-	)
-}
-
-func ggufRepoInstallHint(region string) string {
-	sources := llamaCppSources(region)
-	if len(sources) == 0 {
-		return ""
-	}
-	lines := []string{
-		"Install the matching `gguf-py` directly from the Gitee llama.cpp source:",
-		"  " + ggufRepoInstallCommand(sources[0].repoURL),
-	}
-	return strings.Join(lines, "\n")
-}
-
-func sourceGGUFPySetupHint(region string) string {
-	sources := llamaCppSources(region)
-	if len(sources) == 0 {
-		return ""
-	}
-	sourceURLs := make([]string, 0, len(sources))
-	for _, source := range sources {
-		sourceURLs = append(sourceURLs, source.repoURL)
-	}
-	lines := []string{
-		fmt.Sprintf(
-			"csghub-lite installs `gguf-py` from llama.cpp source tag `%s`, not from PyPI.",
-			BundledConverterLLamacppRef,
-		),
-		fmt.Sprintf("Sources: %s.", strings.Join(sourceURLs, ", ")),
-	}
-	return strings.Join(lines, "\n")
-}
-
 func bundledConverterVersionString() string {
 	return fmt.Sprintf("llama.cpp %s (bundled revision %d)", BundledConverterLLamacppRef, bundledConverterRevision)
 }
@@ -197,7 +146,10 @@ func managedPythonVenvExecutable() string {
 }
 
 func managedGGUFPyPath() string {
-	return filepath.Join(bundledConverterDir(), "gguf-py")
+	return filepath.Join(
+		bundledConverterDir(),
+		fmt.Sprintf("gguf-py-%s-r%d", BundledConverterLLamacppRef, bundledConverterRevision),
+	)
 }
 
 func bundledConverterDir() string {
@@ -509,12 +461,11 @@ func ConvertPython(modelDir string, progress ProgressFunc, dtype string) (string
 		log.Printf("CONVERT: preparing gguf-py failed: %v", err)
 		return "", converterErrorf(
 			"this checkpoint is SafeTensors-only; csghub-lite converts it to GGUF once using the official llama.cpp Python script.\n"+
-				"csghub-lite tried to prepare matching `gguf-py` from llama.cpp source, but setup failed.\n\n"+
-				"Automatic gguf-py setup failed: %s\n\n"+
-				"%s\n\n"+
+				"csghub-lite could not materialize the matching embedded `gguf-py` package.\n\n"+
+				"Embedded gguf-py setup failed: %s\n\n"+
+				"Reinstall or upgrade csghub-lite to restore the bundled converter files.\n\n"+
 				"If a GGUF variant exists on CSGHub or Hugging Face, use it to skip conversion.",
 			err,
-			sourceGGUFPySetupHint(detectLlamaCppSourceRegion()),
 		)
 	} else {
 		progress(fmt.Sprintf("Prepared matching gguf-py from %s", sourceName), 0, 0)
@@ -809,7 +760,7 @@ func runLoggedCommand(cmd *exec.Cmd) (string, error) {
 }
 
 func ensureConverterGGUFPySource(progress ProgressFunc) (string, error) {
-	progress("Preparing matching gguf-py from Gitee llama.cpp source", 0, 0)
+	progress("Preparing embedded matching gguf-py", 0, 0)
 	return ensureBundledGGUFPy()
 }
 
@@ -881,18 +832,15 @@ func attemptConverterAutoRepair(python, combined string, progress ProgressFunc) 
 	}
 
 	if plan.installBundledGGUFPy {
-		progress("Preparing matching gguf-py from Gitee llama.cpp source", 0, 0)
+		progress("Restoring embedded matching gguf-py", 0, 0)
 		sourceName, err := ensureBundledGGUFPy()
 		if err != nil {
 			failures = append(failures, fmt.Sprintf(
 				"csghub-lite detected that this bundled converter needs matching `gguf-py` from llama.cpp tag `%s`.\n"+
-					"It tried Gitee source: %s.\n\n"+
-					"Automatic gguf-py download failed: %s\n\n"+
-					"%s",
+					"Restoring the embedded gguf-py package failed: %s\n\n"+
+					"Reinstall or upgrade csghub-lite to restore the bundled converter files.",
 				BundledConverterLLamacppRef,
-				llamaCppGiteeRepo,
 				err,
-				ggufRepoInstallHint(regionCN),
 			))
 		} else {
 			notes = append(notes, fmt.Sprintf("prepared matching gguf-py from %s", sourceName))
@@ -1004,113 +952,26 @@ func repairSuccessNote(notes, failures []string) string {
 	return note
 }
 
-func detectLlamaCppSourceRegion() string {
-	if region := strings.ToUpper(strings.TrimSpace(os.Getenv("CSGHUB_LITE_REGION"))); region != "" {
-		if region == regionCN {
-			return regionCN
-		}
-		return regionINTL
-	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("https://ipinfo.io/country")
-	if err == nil {
-		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 16))
-			if readErr == nil {
-				country := strings.TrimSpace(string(body))
-				if country == regionCN {
-					return regionCN
-				}
-				if country != "" {
-					return regionINTL
-				}
-			}
-		}
-	}
-
-	return regionCN
-}
-
-func llamaCppSources(region string) []llamaCppSource {
-	gitee := llamaCppSource{
-		name:       "Gitee mirror",
-		repoURL:    llamaCppGiteeRepo,
-		archiveURL: fmt.Sprintf("%s/archive/refs/tags/%s.tar.gz", llamaCppGiteeRepo, BundledConverterLLamacppRef),
-	}
-	github := llamaCppSource{
-		name:       "GitHub upstream",
-		repoURL:    llamaCppGitHubRepo,
-		archiveURL: fmt.Sprintf("%s/archive/refs/tags/%s.tar.gz", llamaCppGitHubRepo, BundledConverterLLamacppRef),
-	}
-	if strings.EqualFold(region, regionCN) {
-		return []llamaCppSource{gitee, github}
-	}
-	return []llamaCppSource{github, gitee}
-}
-
-func llamaCppSourceNames(region string) []string {
-	sources := llamaCppSources(region)
-	names := make([]string, 0, len(sources))
-	for _, source := range sources {
-		names = append(names, source.name)
-	}
-	return names
-}
-
 func ensureBundledGGUFPy() (string, error) {
 	dir := bundledConverterDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("creating bundled converter dir: %w", err)
 	}
 
-	stampPath := filepath.Join(dir, "bundled_gguf_py_ref")
-	sourcePath := filepath.Join(dir, "bundled_gguf_py_source")
-	dst := filepath.Join(dir, "gguf-py")
-	wantStamp := bundledConverterStamp()
-
-	if prev, err := os.ReadFile(stampPath); err == nil && string(prev) == wantStamp {
-		if _, err := os.Stat(filepath.Join(dst, "gguf", "__init__.py")); err == nil {
-			if source, err := os.ReadFile(sourcePath); err == nil && strings.TrimSpace(string(source)) != "" {
-				return strings.TrimSpace(string(source)), nil
-			}
-			return "cached llama.cpp source", nil
-		}
+	dst := managedGGUFPyPath()
+	if bundledGGUFPyReady(dst) {
+		return "embedded llama.cpp " + BundledConverterLLamacppRef, nil
 	}
-
-	region := detectLlamaCppSourceRegion()
-	var failures []string
-	for _, source := range llamaCppSources(region) {
-		tmpDir, err := cloneGGUFPyFromGitSource(dir, source)
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s git: %v", source.name, err))
-			continue
-		}
-		if err := installPreparedGGUFPy(dst, tmpDir, stampPath, sourcePath, wantStamp, source.name+" git"); err != nil {
-			os.RemoveAll(tmpDir)
-			return "", err
-		}
-		return source.name + " git", nil
-	}
-
-	archiveFile, err := os.CreateTemp(dir, "llama.cpp-*.tar.gz")
+	unlock, err := acquireBundledGGUFPyLock(dst)
 	if err != nil {
-		return "", fmt.Errorf("creating llama.cpp archive temp file: %w", err)
-	}
-	archivePath := archiveFile.Name()
-	archiveFile.Close()
-	defer os.Remove(archivePath)
-
-	sourceName, err := downloadLlamaCppArchive(archivePath, llamaCppSources(region))
-	if err != nil {
-		if len(failures) > 0 {
-			return "", fmt.Errorf("%v; git fallback failed: %s", err, strings.Join(failures, "; "))
-		}
 		return "", err
 	}
+	defer unlock()
+	if bundledGGUFPyReady(dst) {
+		return "embedded llama.cpp " + BundledConverterLLamacppRef, nil
+	}
 
-	tmpDir, err := os.MkdirTemp(dir, "gguf-py-*")
+	tmpDir, err := os.MkdirTemp(dir, ".gguf-py-*")
 	if err != nil {
 		return "", fmt.Errorf("creating gguf-py temp dir: %w", err)
 	}
@@ -1120,263 +981,90 @@ func ensureBundledGGUFPy() (string, error) {
 		}
 	}()
 
-	if err := extractGGUFPyFromTarGz(archivePath, tmpDir); err != nil {
-		return "", err
+	if err := materializeBundledGGUFPy(tmpDir); err != nil {
+		return "", fmt.Errorf("materializing embedded gguf-py: %w", err)
 	}
-
-	if err := installPreparedGGUFPy(dst, tmpDir, stampPath, sourcePath, wantStamp, sourceName); err != nil {
-		return "", err
+	if !bundledGGUFPyReady(dst) {
+		if err := os.RemoveAll(dst); err != nil {
+			return "", fmt.Errorf("removing incomplete gguf-py cache: %w", err)
+		}
+	}
+	if err := os.Rename(tmpDir, dst); err != nil {
+		// A concurrent conversion may have installed the same immutable bundle.
+		if bundledGGUFPyReady(dst) {
+			return "embedded llama.cpp " + BundledConverterLLamacppRef, nil
+		}
+		return "", fmt.Errorf("installing embedded gguf-py: %w", err)
 	}
 	tmpDir = ""
 
-	return sourceName, nil
+	return "embedded llama.cpp " + BundledConverterLLamacppRef, nil
 }
 
-func cloneGGUFPyFromGitSource(parentDir string, source llamaCppSource) (string, error) {
-	git, err := exec.LookPath("git")
-	if err != nil {
-		return "", fmt.Errorf("git not found on PATH")
-	}
+const (
+	bundledGGUFPyLockWait  = 30 * time.Second
+	bundledGGUFPyLockStale = 2 * time.Minute
+)
 
-	root, err := os.MkdirTemp(parentDir, "gguf-py-git-*")
-	if err != nil {
-		return "", fmt.Errorf("creating git temp dir: %w", err)
-	}
-	repoDir := filepath.Join(root, "llama.cpp")
-	log.Printf("CONVERT: cloning gguf-py from %s tag=%s", source.repoURL, BundledConverterLLamacppRef)
-	clone := exec.Command(git, "clone", "--depth", "1", "--branch", BundledConverterLLamacppRef, "--filter=blob:none", "--sparse", source.repoURL, repoDir)
-	if output, err := runLoggedCommand(clone); err != nil {
-		os.RemoveAll(root)
-		return "", fmt.Errorf("cloning llama.cpp: %w\n%s", err, lastNLines(output, 8))
-	}
-	checkout := exec.Command(git, "-C", repoDir, "sparse-checkout", "set", "gguf-py")
-	if output, err := runLoggedCommand(checkout); err != nil {
-		os.RemoveAll(root)
-		return "", fmt.Errorf("checking out gguf-py: %w\n%s", err, lastNLines(output, 8))
-	}
+func acquireBundledGGUFPyLock(dst string) (func(), error) {
+	lockPath := dst + ".lock"
+	deadline := time.Now().Add(bundledGGUFPyLockWait)
 
-	src := filepath.Join(repoDir, "gguf-py")
-	if _, err := os.Stat(filepath.Join(src, "gguf", "__init__.py")); err != nil {
-		os.RemoveAll(root)
-		return "", fmt.Errorf("gguf-py source missing after git checkout: %w", err)
-	}
-	dst := filepath.Join(root, "gguf-py")
-	prepared := filepath.Join(root, "prepared")
-	if err := copyDir(src, prepared); err != nil {
-		os.RemoveAll(root)
-		return "", err
-	}
-	if err := os.RemoveAll(repoDir); err != nil {
-		os.RemoveAll(root)
-		return "", fmt.Errorf("removing temporary git checkout: %w", err)
-	}
-	if err := os.Rename(prepared, dst); err != nil {
-		os.RemoveAll(root)
-		return "", fmt.Errorf("preparing gguf-py source: %w", err)
-	}
-	return dst, nil
-}
-
-func installPreparedGGUFPy(dst, prepared, stampPath, sourcePath, wantStamp, sourceName string) error {
-	if err := os.RemoveAll(dst); err != nil {
-		return fmt.Errorf("removing old gguf-py: %w", err)
-	}
-	if err := os.Rename(prepared, dst); err != nil {
-		return fmt.Errorf("installing gguf-py: %w", err)
-	}
-	if err := os.WriteFile(stampPath, []byte(wantStamp), 0o644); err != nil {
-		return fmt.Errorf("writing gguf-py stamp: %w", err)
-	}
-	if err := os.WriteFile(sourcePath, []byte(sourceName), 0o644); err != nil {
-		return fmt.Errorf("writing gguf-py source: %w", err)
-	}
-	return nil
-}
-
-func copyDir(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for {
+		lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			if closeErr := lock.Close(); closeErr != nil {
+				_ = os.Remove(lockPath)
+				return nil, fmt.Errorf("closing gguf-py initialization lock: %w", closeErr)
+			}
+			return func() { _ = os.Remove(lockPath) }, nil
 		}
-		rel, err := filepath.Rel(src, path)
+		if !os.IsExist(err) {
+			return nil, fmt.Errorf("creating gguf-py initialization lock: %w", err)
+		}
+
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > bundledGGUFPyLockStale {
+			_ = os.Remove(lockPath)
+			continue
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("timed out waiting for matching gguf-py initialization")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func bundledGGUFPyReady(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "gguf", "__init__.py"))
+	return err == nil
+}
+
+func materializeBundledGGUFPy(dst string) error {
+	const root = bundledGGUFPyRoot
+	return fs.WalkDir(bundledGGUFPy, root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
 		if rel == "." {
-			return os.MkdirAll(dst, 0o755)
+			return nil
 		}
 		target := filepath.Join(dst, rel)
-		info, err := d.Info()
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := fs.ReadFile(bundledGGUFPy, path)
 		if err != nil {
 			return err
-		}
-		if d.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		if !info.Mode().IsRegular() {
-			return nil
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(out, in); err != nil {
-			out.Close()
-			return err
-		}
-		return out.Close()
+		return os.WriteFile(target, data, 0o644)
 	})
-}
-
-func downloadLlamaCppArchive(dst string, sources []llamaCppSource) (string, error) {
-	client := &http.Client{Timeout: 5 * time.Minute}
-	var failures []string
-	for _, source := range sources {
-		if err := downloadURLToFile(client, source.archiveURL, dst); err == nil {
-			return source.name, nil
-		} else {
-			failures = append(failures, fmt.Sprintf("%s: %v", source.name, err))
-		}
-	}
-	return "", fmt.Errorf("downloading llama.cpp archive failed: %s", strings.Join(failures, "; "))
-}
-
-func downloadURLToFile(client *http.Client, rawURL, dst string) error {
-	log.Printf("CONVERT: downloading llama.cpp archive %s", rawURL)
-	resp, err := client.Get(rawURL)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	contentType := resp.Header.Get("Content-Type")
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("HTTP %d content_type=%q body=%q", resp.StatusCode, contentType, strings.TrimSpace(string(body)))
-	}
-
-	f, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := validateGzipFile(dst); err != nil {
-		return fmt.Errorf("%w (content_type=%q url=%s)", err, contentType, rawURL)
-	}
-	log.Printf("CONVERT: downloaded llama.cpp archive %s", rawURL)
-	return nil
-}
-
-func validateGzipFile(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("opening downloaded archive: %w", err)
-	}
-	defer f.Close()
-
-	header := make([]byte, 2)
-	n, err := io.ReadFull(f, header)
-	if err != nil {
-		return fmt.Errorf("downloaded archive is not a gzip file: %w", err)
-	}
-	if n != 2 || header[0] != 0x1f || header[1] != 0x8b {
-		if _, seekErr := f.Seek(0, io.SeekStart); seekErr == nil {
-			body, _ := io.ReadAll(io.LimitReader(f, 160))
-			return fmt.Errorf("downloaded archive is not a gzip file: first bytes % x body_prefix=%q", header, strings.TrimSpace(string(body)))
-		}
-		return fmt.Errorf("downloaded archive is not a gzip file: first bytes % x", header)
-	}
-	return nil
-}
-
-func extractGGUFPyFromTarGz(archivePath, dst string) error {
-	f, err := os.Open(archivePath)
-	if err != nil {
-		return fmt.Errorf("opening llama.cpp archive: %w", err)
-	}
-	defer f.Close()
-
-	gzr, err := gzip.NewReader(f)
-	if err != nil {
-		return fmt.Errorf("opening llama.cpp gzip stream: %w", err)
-	}
-	defer gzr.Close()
-
-	tr := tar.NewReader(gzr)
-	found := false
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("reading llama.cpp archive: %w", err)
-		}
-
-		name := strings.TrimPrefix(hdr.Name, "./")
-		idx := strings.Index(name, "/gguf-py/")
-		if idx < 0 {
-			continue
-		}
-
-		rel := name[idx+len("/gguf-py/"):]
-		if rel == "" {
-			found = true
-			continue
-		}
-
-		target := filepath.Join(dst, filepath.FromSlash(rel))
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)); err != nil {
-				return fmt.Errorf("creating gguf-py dir: %w", err)
-			}
-			found = true
-		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return fmt.Errorf("creating gguf-py file dir: %w", err)
-			}
-			mode := os.FileMode(hdr.Mode)
-			if mode == 0 {
-				mode = 0o644
-			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-			if err != nil {
-				return fmt.Errorf("creating gguf-py file: %w", err)
-			}
-			if _, err := io.Copy(out, tr); err != nil {
-				out.Close()
-				return fmt.Errorf("writing gguf-py file: %w", err)
-			}
-			if err := out.Close(); err != nil {
-				return fmt.Errorf("closing gguf-py file: %w", err)
-			}
-			found = true
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("llama.cpp archive did not contain gguf-py")
-	}
-	if _, err := os.Stat(filepath.Join(dst, "gguf", "__init__.py")); err != nil {
-		return fmt.Errorf("extracted gguf-py is incomplete: %w", err)
-	}
-
-	return nil
 }
 
 func lastNLines(s string, n int) string {
@@ -1413,11 +1101,9 @@ func hintForConverterScriptFailure(combined string) string {
 		(strings.Contains(combined, "MODEL_ARCH") || strings.Contains(combined, "gguf.")) {
 		return fmt.Sprintf(
 			"\n\nLikely the `gguf` Python package is older than this converter script expects.\n"+
-				"csghub-lite uses matching `gguf-py` from Gitee llama.cpp tag `%s`, not PyPI.\n"+
-				"%s\n"+
+				"csghub-lite includes matching `gguf-py` from llama.cpp tag `%s` in its binary.\n"+
 				"To reset the bundled copy, delete the bundled converter cache under %s\n",
 			BundledConverterLLamacppRef,
-			ggufRepoInstallHint(regionCN),
 			bundledConverterDir(),
 		)
 	}

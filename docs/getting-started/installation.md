@@ -43,7 +43,7 @@ $env:EE="1"; irm https://hub.opencsg.com/csghub-lite/install.ps1 | iex
 | `EE` | 设为 `1` 时，将企业版 `license.txt` 写入 `csghub-lite` 安装目录。 |
 | `INSTALL_DIR` | 指定 `csghub-lite` 安装目录。未设置时，macOS 会优先选择当前 `PATH` 中可写的目录，否则回退到 `~/bin`；Linux 仍默认使用已有安装目录或 `/usr/local/bin`。 |
 | `CSGHUB_LITE_LLAMA_SERVER_INSTALL_DIR` | 指定 `llama-server` 安装目录。未设置时，macOS 默认跟随 `csghub-lite` 的安装目录。 |
-| `CSGHUB_LITE_LLAMA_CPP_TAG` | 指定要安装的 `llama.cpp` release tag。默认固定到与内置 `convert_hf_to_gguf.py` / `gguf-py` 对齐的 tag，确保三个版本一致。 |
+| `CSGHUB_LITE_LLAMA_CPP_TAG` | 指定要安装的 `llama.cpp` release tag。默认固定到与 `llama-cpp-assets` 依赖对齐的 tag，确保 converter、`gguf-py` 和 `llama-server` 版本一致。 |
 | `CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER` | 设为 `0` 可跳过自动安装/升级 `llama-server`。 |
 | `CSGHUB_LITE_AUTO_INSTALL_CUDA_LIBS` | Linux NVIDIA 环境安装 CUDA 版 `llama-server` 后，若缺少 `libcudart` / `libcublas`，默认通过 NVIDIA 官方 APT 源安装 `cuda-libraries-*`；设为 `0` 可关闭。 |
 | `CSGHUB_LITE_AUTO_INSTALL_PATCHELF` | Linux 上设为 `0` 可禁止自动 `apt/dnf/yum install patchelf`（用于为 `llama-server` 设置 `$ORIGIN`，使同目录 `.so` 可被直接加载）。 |
