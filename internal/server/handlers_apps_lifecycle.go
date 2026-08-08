@@ -10,7 +10,7 @@ import (
 
 func aiAppSupportsRuntimeLifecycle(appID string) bool {
 	switch strings.TrimSpace(appID) {
-	case "openclaw", "csgclaw", "xiaozhi":
+	case "openclaw", "xiaozhi":
 		return true
 	default:
 		return false

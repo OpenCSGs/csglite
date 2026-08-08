@@ -392,6 +392,32 @@ func TestFetchLatestVersionParsesVersionJSON(t *testing.T) {
 	}
 }
 
+func TestFetchLatestVersionParsesDesktopDownloadsManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/downloads.json" {
+			t.Fatalf("latest path = %q, want /downloads.json", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"schema_version":1,"channel":"release","latest":"0.4.6","versions":{}}`))
+	}))
+	defer server.Close()
+
+	mgr := NewManager(nil)
+	latest, err := mgr.fetchLatestVersion(context.Background(), appSpec{
+		id: "csgclaw",
+		latest: &latestVersionSource{
+			baseURL: server.URL + "/downloads.json",
+			format:  "downloads-json",
+		},
+	})
+	if err != nil {
+		t.Fatalf("fetchLatestVersion returned error: %v", err)
+	}
+	if latest != "0.4.6" {
+		t.Fatalf("latest = %q, want 0.4.6", latest)
+	}
+}
+
 func TestFetchLatestVersionParsesVersionPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/en/changelog" {

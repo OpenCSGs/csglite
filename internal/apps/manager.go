@@ -167,6 +167,20 @@ func codexAppDisabledReason() string {
 	}
 }
 
+func csgclawDesktopSupported() bool {
+	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+}
+
+func csgclawDesktopDisabledReason() string {
+	if runtime.GOOS == "linux" {
+		return "linux_unsupported"
+	}
+	if csgclawDesktopSupported() {
+		return ""
+	}
+	return "platform_unsupported"
+}
+
 func appSpecs() []appSpec {
 	return []appSpec{
 		{
@@ -274,23 +288,21 @@ func appSpecs() []appSpec {
 			},
 		},
 		{
-			id:           "csgclaw",
-			binaryName:   "csgclaw",
-			installMode:  "script",
-			progressMode: progressModePercent,
-			supported:    true,
-			versionArgs:  []string{"--version"},
+			id:             "csgclaw",
+			binaryName:     "csgclaw-desktop",
+			installMode:    "script",
+			progressMode:   progressModePercent,
+			supported:      csgclawDesktopSupported(),
+			disabledReason: csgclawDesktopDisabledReason(),
 			latest: &latestVersionSource{
-				baseURL: "https://csgclaw.opencsg.com/releases/latest",
-				envVar:  "CSGHUB_LITE_CSGCLAW_LATEST_URL",
-				format:  "github-release",
+				baseURL: "https://opencsg-public-resource.oss-cn-beijing.aliyuncs.com/csgclaw-desktop/channels/release/downloads.json",
+				envVar:  "CSGHUB_LITE_CSGCLAW_DESKTOP_MANIFEST_URL",
+				format:  "downloads-json",
 			},
 			unix: &scriptSource{
-				mirrorURL:    "https://csgclaw.opencsg.com/install.sh",
 				embeddedPath: "scripts/csgclaw-install.sh",
 			},
 			windows: &scriptSource{
-				mirrorURL:    "https://csgclaw.opencsg.com/install.ps1",
 				embeddedPath: "scripts/csgclaw-install.ps1",
 			},
 			uninstallUnix: &scriptSource{
@@ -689,7 +701,7 @@ func (m *Manager) fetchLatestVersion(ctx context.Context, spec appSpec) (string,
 	reqCtx, cancel := context.WithTimeout(ctx, latestVersionTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL+"/latest", nil)
-	if spec.latest.format == "github-release" || spec.latest.format == "version-json" || spec.latest.format == "version-page" {
+	if spec.latest.format == "github-release" || spec.latest.format == "version-json" || spec.latest.format == "version-page" || spec.latest.format == "downloads-json" {
 		req, err = http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL, nil)
 	}
 	if err != nil {
@@ -724,6 +736,15 @@ func (m *Manager) fetchLatestVersion(ctx context.Context, spec appSpec) (string,
 			return "", err
 		}
 		return strings.TrimSpace(payload.Version), nil
+	}
+	if spec.latest.format == "downloads-json" {
+		var payload struct {
+			Latest string `json:"latest"`
+		}
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(payload.Latest), nil
 	}
 	if spec.latest.format == "version-page" {
 		version := versionPageMatch(data)
@@ -1501,6 +1522,8 @@ func inferLegacyManagedInstall(spec appSpec, installPath string) bool {
 		return looksLikeCodexAppInstall(installPath)
 	case "zcode":
 		return looksLikeZCodeInstall(installPath)
+	case "csgclaw":
+		return looksLikeCSGClawDesktopInstall(installPath)
 	case "openclaw":
 		return looksLikeLegacyOpenClawInstall(installPath)
 	default:

@@ -67,7 +67,6 @@ Current CLI apps:
 | `open-code-review` | `ocr` | `~/.local/share/open-code-review/versions/*` |
 | `codex` | `codex` | `~/.local/share/codex/versions/*` |
 | `openclaw` | `openclaw` | PATH/common bins only |
-| `csgclaw` | `csgclaw` | `~/.local/lib/csgclaw/*/<bundle>/bin` |
 | `pi` | `pi` | `~/.local/share/pi-coding-agent/bin` |
 
 ### Desktop Apps
@@ -122,6 +121,14 @@ only `modelProviderFamilySelectedKeys` in `~/.zcode/v2/setting.json` so the
 chosen model is active for both Z.ai and BigModel domains. Existing providers,
 unrelated settings, and unknown family keys must be preserved; derived caches
 must not be edited.
+
+CSGClaw Desktop is supported on macOS and Windows only. Its installer reads
+`csgclaw-desktop/channels/release/downloads.json`, verifies the selected DMG or
+EXE checksum, and records the resolved native launch target under
+`~/.local/share/csgclaw-desktop`. Detection also covers `CSGClaw.app` in the
+standard macOS Applications directories and Windows uninstall registry/common
+per-user application locations. Linux must report `linux_unsupported` and must
+not run an installer.
 
 ### Adding A New App
 

@@ -56,11 +56,10 @@ func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, modelSource, 
 		}
 		return rewriteLoopbackURLHost(url, publicBaseURL), nil
 	case "csgclaw":
-		url, err := s.openCSGClawURL(ctx, modelID, modelSource)
-		if err != nil {
+		if err := s.launchCSGClawDesktopApp(ctx, modelID, modelSource); err != nil {
 			return "", err
 		}
-		return rewriteLoopbackURLHost(url, publicBaseURL), nil
+		return "", nil
 	case "xiaozhi":
 		running, err := s.appManager.XiaozhiRunning(ctx)
 		if err != nil {

@@ -247,13 +247,18 @@ func (s *Server) handleAppSetPath(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "app_id and path are required")
 		return
 	}
-	if appID != "codex-app" {
-		writeError(w, http.StatusBadRequest, "manual install path is only supported for codex-app")
+	log.Printf("AI APP %s: manual install path requested path=%q", appID, path)
+	var err error
+	switch appID {
+	case "codex-app":
+		err = apps.SetCodexAppLaunchTarget(path)
+	case "csgclaw":
+		err = apps.SetCSGClawDesktopLaunchTarget(path)
+	default:
+		writeError(w, http.StatusBadRequest, "manual install path is only supported for codex-app and csgclaw")
 		return
 	}
-
-	log.Printf("AI APP %s: manual install path requested path=%q", appID, path)
-	if err := apps.SetCodexAppLaunchTarget(path); err != nil {
+	if err != nil {
 		log.Printf("AI APP %s: manual install path rejected: %v", appID, err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

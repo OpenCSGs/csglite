@@ -1964,8 +1964,6 @@ function cliLaunchAppName(appID: string): string {
       return "pi";
     case "openclaw":
       return "openclaw";
-    case "csgclaw":
-      return "csgclaw";
     default:
       return "";
   }

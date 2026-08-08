@@ -178,7 +178,7 @@ One-click setup for AI assistant applications:
 | **ZCode** | Z.ai cross-platform desktop coding app | Web UI → AI Apps |
 | **Pi** | Lightweight terminal coding agent | `csghub-lite launch pi` or Web UI → AI Apps |
 | **OpenClaw** | Open-source AI assistant with web UI | `csghub-lite launch openclaw` or Web UI → AI Apps |
-| **CSGClaw** | Enterprise AI assistant with advanced features | `csghub-lite launch csgclaw` or Web UI → AI Apps |
+| **CSGClaw** | macOS/Windows multi-agent desktop application | Web UI → AI Apps |
 | **Dify** | LLM app development platform | Web UI → AI Apps |
 | **AnythingLLM** | Private document chat | Web UI → AI Apps |
 

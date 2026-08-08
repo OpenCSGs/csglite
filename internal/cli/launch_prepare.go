@@ -256,8 +256,6 @@ func prepareLaunchExecution(target launchTarget, serverURL, modelID string, user
 		return preparePiLaunch(target, serverURL, modelID, userArgs)
 	case "openclaw":
 		return prepareOpenClawLaunch(target, serverURL, modelID, userArgs)
-	case "csgclaw":
-		return prepareCSGClawLaunch(target, serverURL, modelID, userArgs)
 	default:
 		return preparedLaunch{}, fmt.Errorf("%s does not support direct launch yet", target.DisplayName)
 	}
@@ -377,31 +375,6 @@ func prepareOpenClawLaunch(target launchTarget, serverURL, modelID string, userA
 	args := prependArgsIfMissing(userArgs, []string{"--profile", openClawLaunchProfile}, "--profile")
 	env := envWithOverrides(nil)
 	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
-}
-
-func prepareCSGClawLaunch(target launchTarget, serverURL, modelID string, userArgs []string) (preparedLaunch, error) {
-	binary, err := resolveLaunchBinary(target.AppID, target.Binaries)
-	if err != nil {
-		return preparedLaunch{}, fmt.Errorf("%s is installed, but the launch command was not found on PATH", target.DisplayName)
-	}
-
-	models, err := getLaunchModels(serverURL)
-	if err != nil {
-		return preparedLaunch{}, err
-	}
-	modelIDs := csgClawOrderedModels(modelID, launchModelIDs(models))
-	modelBaseURL := strings.TrimRight(serverURL, "/") + "/v1"
-	apiKey := openClawProviderAPIKey(config.Get().Token)
-
-	if err := ensureCSGClawLaunchConfig(modelBaseURL, apiKey, modelID, modelIDs); err != nil {
-		return preparedLaunch{}, fmt.Errorf("writing CSGClaw config: %w", err)
-	}
-
-	args := append([]string{}, userArgs...)
-	if len(args) == 0 {
-		args = []string{"serve"}
-	}
-	return preparedLaunch{Binary: binary, Args: args, Env: envWithOverrides(nil)}, nil
 }
 
 func prependArgsIfMissing(args []string, defaults []string, flags ...string) []string {

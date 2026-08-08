@@ -31,7 +31,7 @@ var installDetectProfiles = map[string]installDetectProfile{
 	"open-code":        {mode: installDetectCLI, versionedShare: "opencode"},
 	"open-code-review": {mode: installDetectCLI, versionedShare: "open-code-review"},
 	"openclaw":         {mode: installDetectCLI},
-	"csgclaw":          {mode: installDetectCLI, libBundleName: "csgclaw"},
+	"csgclaw":          {mode: installDetectDesktop},
 	"codex":            {mode: installDetectCLI, versionedShare: "codex"},
 	"codex-app":        {mode: installDetectDesktop},
 	"zcode":            {mode: installDetectDesktop},
@@ -63,6 +63,8 @@ func detectInstalled(ctx context.Context, spec appSpec) (string, string, bool) {
 			return detectCodexAppInstall()
 		case "zcode":
 			return detectZCodeInstall()
+		case "csgclaw":
+			return detectCSGClawDesktopInstall()
 		default:
 			return "", "", false
 		}
