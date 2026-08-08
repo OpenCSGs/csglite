@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -44,6 +45,81 @@ func TestIsLocalhostBrowserAccess(t *testing.T) {
 				t.Fatalf("isLocalhostBrowserAccess() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRemoveCSGClawStaleSandboxSockets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets are not available on Windows")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("user home: %v", err)
+	}
+	testBase := filepath.Join(home, ".csghub-lite", "tmp")
+	if err := os.MkdirAll(testBase, 0o700); err != nil {
+		t.Fatalf("mkdir test base: %v", err)
+	}
+	root, err := os.MkdirTemp(testBase, "socket-test-")
+	if err != nil {
+		t.Fatalf("create short temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	socketsDir := filepath.Join(root, "agents", "sockets")
+	if err := os.MkdirAll(socketsDir, 0o755); err != nil {
+		t.Fatalf("mkdir sockets: %v", err)
+	}
+	socketPath := filepath.Join(socketsDir, "box.sock")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir temp root: %v", err)
+	}
+	listener, err := net.Listen("unix", filepath.Join("agents", "sockets", "box.sock"))
+	if restoreErr := os.Chdir(cwd); restoreErr != nil {
+		t.Fatalf("restore cwd: %v", restoreErr)
+	}
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close unix socket: %v", err)
+	}
+	regularPath := filepath.Join(socketsDir, "keep.txt")
+	if err := os.WriteFile(regularPath, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write regular file: %v", err)
+	}
+
+	if err := removeCSGClawStaleSandboxSockets(root); err != nil {
+		t.Fatalf("remove stale sockets: %v", err)
+	}
+	if _, err := os.Stat(socketPath); !os.IsNotExist(err) {
+		t.Fatalf("socket still exists: %v", err)
+	}
+	if _, err := os.Stat(regularPath); err != nil {
+		t.Fatalf("regular file was removed: %v", err)
+	}
+}
+
+func TestSetCSGClawDesktopSandboxProviderForcesDocker(t *testing.T) {
+	input := `[sandbox]
+provider = "boxlite"
+home_dir_name = "boxlite"
+
+[models]
+default = "csghub-lite.test"
+`
+	updated := setCSGClawSandboxProvider(input, "docker")
+	if !strings.Contains(updated, `[sandbox]`+"\n"+`provider = "docker"`) {
+		t.Fatalf("updated config did not force docker:\n%s", updated)
+	}
+	if strings.Contains(updated, `provider = "boxlite"`) {
+		t.Fatalf("updated config retained boxlite provider:\n%s", updated)
+	}
+	if !strings.Contains(updated, `home_dir_name = "boxlite"`) || !strings.Contains(updated, `[models]`) {
+		t.Fatalf("updated config dropped unrelated settings:\n%s", updated)
 	}
 }
 

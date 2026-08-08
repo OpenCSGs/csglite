@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -106,7 +109,120 @@ func (s *Server) launchCodexDesktopApp(ctx context.Context) error {
 }
 
 func isDesktopAIAppID(appID string) bool {
-	return appID == "codex-app" || appID == "zcode"
+	return appID == "codex-app" || appID == "zcode" || appID == "csgclaw"
+}
+
+func (s *Server) launchCSGClawDesktopApp(ctx context.Context, requestedModelID, requestedSource string) error {
+	s.csgclawMu.Lock()
+	defer s.csgclawMu.Unlock()
+
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		return fmt.Errorf("CSGClaw Desktop is only available on macOS and Windows")
+	}
+	if !isLocalhostBrowserAccessFromContext(ctx) {
+		return fmt.Errorf("CSGClaw Desktop can only be opened from localhost")
+	}
+	if err := prepareCSGClawDesktopLaunch(); err != nil {
+		return err
+	}
+	modelID, modelIDs, err := s.resolveCSGClawLaunchModels(ctx, requestedModelID, requestedSource)
+	if err != nil {
+		return err
+	}
+	if err := s.configureCSGClawDesktop(modelID, modelIDs); err != nil {
+		return err
+	}
+	s.savePreferredAIAppModel("csgclaw", modelID)
+
+	target, err := apps.CSGClawDesktopLaunchTarget()
+	if err != nil {
+		return err
+	}
+	log.Printf("AI APP csgclaw: launching desktop target=%s", target)
+	switch runtime.GOOS {
+	case "darwin":
+		if out, err := exec.CommandContext(ctx, "open", target).CombinedOutput(); err != nil {
+			return desktopLaunchError("CSGClaw Desktop", out, err)
+		}
+	case "windows":
+		if out, err := exec.CommandContext(ctx, "cmd", "/c", "start", "", target).CombinedOutput(); err != nil {
+			return desktopLaunchError("CSGClaw Desktop", out, err)
+		}
+	}
+	return nil
+}
+
+func prepareCSGClawDesktopLaunch() error {
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("osascript", "-e", `if application "CSGClaw" is running then tell application "CSGClaw" to quit`).Run()
+		if csgclawDesktopProcessRunning() {
+			_ = exec.Command("pkill", "-TERM", "-x", "CSGClaw").Run()
+		}
+	case "windows":
+		script := `Get-Process CSGClaw,csgclaw-desktop -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }`
+		_ = exec.Command("powershell", "-NoProfile", "-Command", script).Run()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for csgclawDesktopProcessRunning() {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("CSGClaw Desktop is still running; close it and try Launch again")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return fmt.Errorf("preparing CSGClaw Desktop launch: user home directory was not found")
+	}
+	root := filepath.Join(home, ".csgclaw")
+	if err := removeCSGClawStaleSandboxSockets(root); err != nil {
+		return fmt.Errorf("removing stale CSGClaw sandbox sockets: %w", err)
+	}
+	return nil
+}
+
+func csgclawDesktopProcessRunning() bool {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("pgrep", "-x", "CSGClaw").Run() == nil
+	case "windows":
+		script := `if (Get-Process CSGClaw,csgclaw-desktop -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }`
+		return exec.Command("powershell", "-NoProfile", "-Command", script).Run() == nil
+	default:
+		return false
+	}
+}
+
+func removeCSGClawStaleSandboxSockets(configRoot string) error {
+	agentsRoot := filepath.Join(configRoot, "agents")
+	err := filepath.WalkDir(agentsRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if entry.IsDir() || filepath.Base(filepath.Dir(path)) != "sockets" {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		log.Printf("AI APP csgclaw: removed stale sandbox socket %s", path)
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 func (s *Server) ensureZCodeLaunchConfig(ctx context.Context, requestedModelID, requestedSource string) (string, error) {

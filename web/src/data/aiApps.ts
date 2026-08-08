@@ -445,27 +445,28 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     installMode: "script",
     progressMode: "percent",
     installHint: {
-      en: "Install the official CSGClaw release for macOS (arm64), Linux (amd64/arm64), and Windows (amd64).",
-      zh: "通过官方 CSGClaw 发布包完成安装，支持 macOS (arm64)、Linux (amd64/arm64) 和 Windows (amd64)。",
+      en: "Install CSGClaw Desktop for macOS (arm64/x86_64) or Windows (x86_64). Linux desktop builds are not available.",
+      zh: "安装 CSGClaw 桌面应用，支持 macOS (arm64/x86_64) 与 Windows (x86_64)，暂不提供 Linux 桌面版。",
     },
     cnInstallHint: {
-      en: "By default the installer reads official CSGClaw releases; launch config uses the OpenCSG PicoClaw manager image, so there is no separate PicoClaw app sync step.",
-      zh: "默认从官方 CSGClaw 发布源读取发布包；启动配置会使用 OpenCSG 的 PicoClaw manager 镜像，不再需要单独同步 PicoClaw 应用。",
+      en: "The installer selects and verifies the desktop package from the release-channel downloads manifest.",
+      zh: "安装器会从 release channel 的 downloads manifest 中选择当前平台安装包并校验完整性。",
     },
-    commandPreview: "curl -fsSL https://csgclaw.opencsg.com/install.sh | bash",
+    commandPreview: "https://opencsg-public-resource.oss-cn-beijing.aliyuncs.com/csgclaw-desktop/channels/release/downloads.json",
     liveLogsReady: true,
+    desktop: true,
     plannedSteps: [
       {
-        en: "Resolve the requested CSGClaw version from the official release feed.",
-        zh: "从官方发布源解析目标 CSGClaw 版本。",
+        en: "Resolve the latest CSGClaw Desktop version and platform artifact from downloads.json.",
+        zh: "从 downloads.json 解析最新 CSGClaw Desktop 版本及当前平台安装包。",
       },
       {
-        en: "Download the official archive for the current platform and install the bundled runtime.",
-        zh: "下载当前平台对应的官方归档，并安装随包 runtime。",
+        en: "Download and verify the macOS DMG or Windows installer, then install the desktop app.",
+        zh: "下载并校验 macOS DMG 或 Windows 安装程序，然后安装桌面应用。",
       },
       {
-        en: "Write the csghub-lite provider into config.toml, then start the WebUI through csgclaw serve daemon mode.",
-        zh: "将 csghub-lite provider 写入 config.toml，然后通过 csgclaw serve daemon 模式启动 WebUI。",
+        en: "Write the selected csghub-lite model into config.toml, then launch CSGClaw Desktop.",
+        zh: "将选中的 csghub-lite 模型写入 config.toml，然后启动 CSGClaw Desktop。",
       },
     ],
     status: "idle",
@@ -620,7 +621,7 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
 
 export const initialAIAppStates = aiAppsCatalog.reduce<Record<string, AIAppRuntimeState>>((acc, app) => {
   const isStaticallyDisabled = app.status === "disabled";
-  const runtimeSupported = ["openclaw", "csgclaw", "xiaozhi"].includes(app.id);
+  const runtimeSupported = ["openclaw", "xiaozhi"].includes(app.id);
   acc[app.id] = {
     status: app.status,
     phase: isStaticallyDisabled ? "docker_disabled" : "ready",

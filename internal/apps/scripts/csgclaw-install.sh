@@ -1,210 +1,116 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP="${APP:-csgclaw}"
-VERSION="${VERSION:-${1:-latest}}"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
-LIB_DIR="${LIB_DIR:-$HOME/.local/lib/${APP}}"
-BASE_URL="${BASE_URL:-https://csgclaw.opencsg.com/releases}"
-TMPDIR_INSTALL=""
+DEFAULT_MANIFEST_URL="https://opencsg-public-resource.oss-cn-beijing.aliyuncs.com/csgclaw-desktop/channels/release/downloads.json"
+MANIFEST_URL="${CSGHUB_LITE_CSGCLAW_DESKTOP_MANIFEST_URL:-$DEFAULT_MANIFEST_URL}"
+RUNTIME_ROOT="${HOME}/.local/share/csgclaw-desktop"
+WORKDIR=""
+MOUNT_DIR=""
 
 emit_progress() {
   printf 'CSGHUB_PROGRESS|%s|%s\n' "$1" "$2"
 }
 
-log() {
-  printf '%s\n' "$*"
-}
-
 cleanup() {
-  if [[ -n "${TMPDIR_INSTALL:-}" && -d "${TMPDIR_INSTALL:-}" ]]; then
-    rm -rf "${TMPDIR_INSTALL}"
+  if [[ -n "$MOUNT_DIR" && -d "$MOUNT_DIR" ]]; then
+    hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
+    rmdir "$MOUNT_DIR" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$WORKDIR" && -d "$WORKDIR" ]]; then
+    rm -rf "$WORKDIR"
   fi
 }
 
 trap cleanup EXIT
 
-need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || {
-    log "ERROR: missing required command: $1"
-    exit 1
-  }
+json_field() {
+  local json="$1"
+  local field="$2"
+  printf '%s' "$json" | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p'
 }
 
-detect_os() {
-  case "$(uname -s)" in
-    Darwin) echo "darwin" ;;
-    Linux) echo "linux" ;;
-    *)
-      log "ERROR: unsupported OS: $(uname -s)"
-      exit 1
-      ;;
-  esac
+artifact_entry() {
+  local manifest="$1"
+  local arch="$2"
+  printf '%s' "$manifest" |
+    tr -d '\n\r\t' |
+    sed 's/}[[:space:]]*,[[:space:]]*{/}\
+{/g' |
+    awk -v arch="$arch" '
+      index($0, "\"platform\": \"macos\"") && index($0, "\"arch\": \"" arch "\"") { print; exit }
+    '
 }
 
-detect_arch() {
-  case "$(uname -m)" in
-    x86_64|amd64) echo "amd64" ;;
-    arm64|aarch64) echo "arm64" ;;
-    *)
-      log "ERROR: unsupported architecture: $(uname -m)"
-      exit 1
-      ;;
-  esac
+sha256_file() {
+  shasum -a 256 "$1" | awk '{print $1}'
 }
 
-ensure_supported_platform() {
-  case "$1/$2" in
-    darwin/arm64|linux/amd64|linux/arm64) ;;
-    *)
-      log "ERROR: unsupported platform: $1/$2"
-      log "ERROR: prebuilt csgclaw binaries currently support macOS arm64, Linux amd64, and Linux arm64 only"
-      exit 1
-      ;;
-  esac
-}
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  printf 'ERROR: CSGClaw Desktop installation is only supported on macOS and Windows\n'
+  exit 1
+fi
 
-resolve_latest_version() {
-  local api_url tag base
-  # Mirror serves GitHub-compatible JSON at ${BASE_URL}/latest (tag_name, assets, ...).
-  base="${BASE_URL:-https://csgclaw.opencsg.com/releases}"
-  while [[ "$base" == */ ]]; do base="${base%/}"; done
-  api_url="${base}/latest"
-  tag="$(curl -fsSL "$api_url" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
-  if [[ -z "$tag" ]]; then
-    log "ERROR: failed to resolve latest release from ${api_url}"
+for command_name in curl hdiutil shasum; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    printf 'ERROR: missing required command: %s\n' "$command_name"
     exit 1
   fi
-  echo "$tag"
-}
+done
 
-shell_profile_file() {
-  local home_dir="${HOME:-}"
-  if [[ -z "$home_dir" ]]; then
-    return 1
-  fi
-  case "$(basename "${SHELL:-}")" in
-    zsh)  printf '%s\n' "${home_dir}/.zprofile" ;;
-    bash) printf '%s\n' "${home_dir}/.bash_profile" ;;
-    *)    printf '%s\n' "${home_dir}/.profile" ;;
-  esac
-}
-
-ensure_local_bin_on_path() {
-  local profile=""
-  local line='case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
-
-  export PATH="${INSTALL_DIR}:${PATH}"
-
-  profile="$(shell_profile_file || true)"
-  if [[ -z "$profile" ]]; then
-    return 0
-  fi
-  mkdir -p "$(dirname "$profile")"
-  [[ -f "$profile" ]] || : > "$profile"
-  if ! grep -F "$line" "$profile" >/dev/null 2>&1; then
-    printf '\n%s\n' "$line" >> "$profile"
-  fi
-}
-
-trim_trailing_slash() {
-  local value="$1"
-  while [[ "$value" == */ ]]; do
-    value="${value%/}"
-  done
-  printf '%s\n' "$value"
-}
-
-check_path_hint() {
-  case ":$PATH:" in
-    *":$INSTALL_DIR:"*) ;;
-    *)
-      log ""
-      log "${INSTALL_DIR} is not on your PATH."
-      log "Add this line to your shell profile:"
-      log "  export PATH=\"${INSTALL_DIR}:\$PATH\""
-      ;;
-  esac
-}
-
-main() {
-  local os=""
-  local arch=""
-  local version=""
-  local base_url=""
-  local archive_name=""
-  local download_url=""
-  local archive_path=""
-  local bundle_path=""
-  local bundle_bin_path=""
-  local install_root=""
-  local extracted_path=""
-
-  need_cmd curl
-  need_cmd tar
-  need_cmd mktemp
-  need_cmd install
-
-  emit_progress 10 detecting_platform
-  os="$(detect_os)"
-  arch="$(detect_arch)"
-  ensure_supported_platform "$os" "$arch"
-
-  version="$VERSION"
-  if [[ -z "$version" || "$version" == "latest" ]]; then
-    emit_progress 25 resolving_latest
-    version="$(resolve_latest_version)"
-  fi
-
-  version="$(printf '%s' "$version" | tr -d '[:space:]')"
-  if [[ -z "$version" ]]; then
-    log "ERROR: failed to resolve CSGClaw version"
+emit_progress 10 detecting_platform
+case "$(uname -m)" in
+  arm64|aarch64) arch="arm64" ;;
+  x86_64|amd64) arch="x86_64" ;;
+  *)
+    printf 'ERROR: unsupported macOS architecture: %s\n' "$(uname -m)"
     exit 1
-  fi
+    ;;
+esac
 
-  base_url="$(trim_trailing_slash "$BASE_URL")"
-  archive_name="${APP}_${version}_${os}_${arch}.tar.gz"
-  download_url="${base_url}/${version}/${archive_name}"
+emit_progress 25 resolving_latest
+manifest="$(curl --connect-timeout 15 --max-time 60 --retry 3 -fsSL "$MANIFEST_URL")"
+version="$(json_field "$manifest" latest)"
+entry="$(artifact_entry "$manifest" "$arch")"
+url="$(json_field "$entry" url)"
+checksum="$(json_field "$entry" sha256)"
+if [[ -z "$version" || -z "$url" || -z "$checksum" ]]; then
+  printf 'ERROR: no CSGClaw Desktop artifact for macOS/%s in %s\n' "$arch" "$MANIFEST_URL"
+  exit 1
+fi
 
-  emit_progress 55 downloading_archive
-  TMPDIR_INSTALL="$(mktemp -d)"
-  archive_path="${TMPDIR_INSTALL}/${archive_name}"
-  log "INFO: downloading ${download_url}"
-  curl --connect-timeout 15 --max-time 1800 --retry 3 --retry-delay 2 -fsSL "$download_url" -o "$archive_path"
+WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/csgclaw-desktop-install.XXXXXX")"
+dmg_path="${WORKDIR}/csgclaw-desktop.dmg"
 
-  emit_progress 75 extracting_archive
-  tar -xzf "$archive_path" -C "$TMPDIR_INSTALL"
-  bundle_path="${TMPDIR_INSTALL}/${APP}"
-  bundle_bin_path="${bundle_path}/bin/${APP}"
+emit_progress 55 downloading_archive
+printf 'INFO: downloading CSGClaw Desktop %s for macOS/%s\n' "$version" "$arch"
+curl --connect-timeout 15 --max-time 3600 --retry 3 --retry-delay 2 -fsSL "$url" -o "$dmg_path"
 
-  emit_progress 90 installing_runtime
-  mkdir -p "$INSTALL_DIR" "$LIB_DIR"
-  if [[ -f "$bundle_bin_path" ]]; then
-    install_root="${LIB_DIR}/${version}"
-    rm -rf "$install_root"
-    mkdir -p "$install_root"
-    cp -R "$bundle_path" "$install_root/"
-    ln -sfn "${install_root}/${APP}/bin/${APP}" "${INSTALL_DIR}/${APP}"
-    extracted_path="${install_root}/${APP}/bin/${APP}"
-  else
-    extracted_path="${TMPDIR_INSTALL}/${APP}"
-    if [[ ! -f "$extracted_path" ]]; then
-      log "ERROR: archive did not contain ${APP}"
-      exit 1
-    fi
-    install -m 0755 "$extracted_path" "${INSTALL_DIR}/${APP}"
-    extracted_path="${INSTALL_DIR}/${APP}"
-  fi
-  ensure_local_bin_on_path
+emit_progress 75 verifying_checksum
+actual="$(sha256_file "$dmg_path")"
+if [[ "$actual" != "$checksum" ]]; then
+  printf 'ERROR: checksum verification failed\n'
+  exit 1
+fi
 
-  emit_progress 100 complete
-  log "INFO: installed ${APP} ${version} to ${extracted_path}"
-  if command -v "$APP" >/dev/null 2>&1; then
-    "$APP" --version || true
-  fi
-  log "INFO: next steps: ${APP} serve"
-  log "INFO: CSGClaw installation complete"
-  check_path_hint
-}
+emit_progress 85 mounting_installer
+MOUNT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/csgclaw-desktop-mount.XXXXXX")"
+hdiutil attach "$dmg_path" -nobrowse -readonly -mountpoint "$MOUNT_DIR" >/dev/null
+app_bundle="$(printf '%s\n' "$MOUNT_DIR"/*.app | sed -n '1p')"
+if [[ ! -d "$app_bundle" ]]; then
+  printf 'ERROR: CSGClaw Desktop app bundle was not found in the DMG\n'
+  exit 1
+fi
 
-main "$@"
+emit_progress 90 installing_runtime
+version_dir="${RUNTIME_ROOT}/versions/${version}"
+installed_app="${version_dir}/$(basename "$app_bundle")"
+rm -rf "$version_dir"
+mkdir -p "$version_dir"
+cp -R "$app_bundle" "$version_dir/"
+xattr -cr "$installed_app" >/dev/null 2>&1 || true
+printf '%s\n' "$version" > "${RUNTIME_ROOT}/version"
+printf '%s\n' "$installed_app" > "${RUNTIME_ROOT}/launch-target"
+ln -sfn "$version_dir" "${RUNTIME_ROOT}/current"
+
+emit_progress 100 complete
+printf 'INFO: installed CSGClaw Desktop %s to %s\n' "$version" "$installed_app"

@@ -584,54 +584,6 @@ func TestSyncOpenClawProfileRewritesStaleModelCatalog(t *testing.T) {
 	}
 }
 
-func TestPrepareCSGClawLaunchWritesConfigAndDefaultsToServe(t *testing.T) {
-	server := launchModelTestServer([]api.ModelInfo{
-		{Model: "Qwen/Qwen3.5-2B", Source: "local"},
-		{Model: "minimax-m2.5", Source: "cloud"},
-	})
-	defer server.Close()
-
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	binDir := t.TempDir()
-	commandPath := filepath.Join(binDir, "csgclaw")
-	content := "#!/bin/sh\nexit 0\n"
-	if err := os.WriteFile(commandPath, []byte(content), 0o755); err != nil {
-		t.Fatalf("write fake csgclaw: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	prepared, err := prepareCSGClawLaunch(launchTarget{
-		AppID:       "csgclaw",
-		DisplayName: "CSGClaw",
-		Binaries:    []string{"csgclaw"},
-	}, server.URL, "minimax-m2.5", nil)
-	if err != nil {
-		t.Fatalf("prepareCSGClawLaunch returned error: %v", err)
-	}
-	if len(prepared.Args) != 1 || prepared.Args[0] != "serve" {
-		t.Fatalf("prepared args = %#v, want csgclaw serve", prepared.Args)
-	}
-
-	data, err := os.ReadFile(filepath.Join(home, ".csgclaw", "config.toml"))
-	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
-	configText := string(data)
-	for _, want := range []string{
-		`manager_image_override = ""`,
-		`provider = "boxlite"`,
-		`default = "csghub-lite.minimax-m2.5"`,
-		`[models.providers.csghub-lite]`,
-		`base_url = "` + server.URL + `/v1"`,
-		`models = ["minimax-m2.5", "Qwen/Qwen3.5-2B"]`,
-	} {
-		if !strings.Contains(configText, want) {
-			t.Fatalf("config missing %q:\n%s", want, configText)
-		}
-	}
-}
-
 func TestCSGClawLaunchSandboxProviderIsPlatformAware(t *testing.T) {
 	if got := csgClawLaunchSandboxProviderForGOOS("windows"); got != "docker" {
 		t.Fatalf("windows sandbox provider = %q, want docker", got)

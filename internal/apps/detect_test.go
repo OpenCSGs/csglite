@@ -66,6 +66,37 @@ func TestDetectCLIAppBinaryFromLibBundle(t *testing.T) {
 	}
 }
 
+func TestDetectCSGClawDesktopFromManagedLaunchTarget(t *testing.T) {
+	home := setTempHome(t)
+	root := csgclawDesktopRuntimeRoot(home)
+	target := filepath.Join(root, "versions", "0.4.6", csgclawAppBundleName)
+	if runtime.GOOS == "windows" {
+		target = filepath.Join(root, "versions", "0.4.6", "CSGClaw.exe")
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("mkdir target dir: %v", err)
+		}
+		if err := os.WriteFile(target, []byte("stub"), 0o644); err != nil {
+			t.Fatalf("write target: %v", err)
+		}
+	} else if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("mkdir app bundle: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "launch-target"), []byte(target+"\n"), 0o644); err != nil {
+		t.Fatalf("write launch target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "version"), []byte("0.4.6\n"), 0o644); err != nil {
+		t.Fatalf("write version: %v", err)
+	}
+
+	installPath, version, ok := detectCSGClawDesktopInstall()
+	if !ok {
+		t.Fatal("expected managed CSGClaw Desktop target to be detected")
+	}
+	if installPath != target || version != "0.4.6" {
+		t.Fatalf("detected (%q, %q), want (%q, 0.4.6)", installPath, version, target)
+	}
+}
+
 func TestDetectCodexAppInstallFromLaunchTargetWithoutLauncher(t *testing.T) {
 	home := setTempHome(t)
 	runtimeRoot := codexAppRuntimeRoot(home)

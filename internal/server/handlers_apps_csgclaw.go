@@ -67,31 +67,97 @@ func (s *Server) saveCSGClawModel(ctx context.Context, modelID, modelSource stri
 	s.csgclawMu.Lock()
 	defer s.csgclawMu.Unlock()
 
-	binary, err := resolveAIAppLaunchBinary("csgclaw", []string{"csgclaw"})
-	if err != nil {
-		return fmt.Errorf("CSGClaw is installed, but its launch command was not found on PATH")
-	}
-
 	resolvedModel, modelIDs, err := s.resolveCSGClawLaunchModels(ctx, modelID, modelSource)
 	if err != nil {
 		return err
 	}
 	s.savePreferredAIAppModel("csgclaw", resolvedModel)
 
-	log.Printf("AI APP csgclaw: model switch requested model=%q resolved=%q", modelID, resolvedModel)
-	if err := s.configureCSGClaw(ctx, binary, resolvedModel, modelIDs, true); err != nil {
-		return err
-	}
+	log.Printf("AI APP csgclaw: desktop model switch requested model=%q resolved=%q", modelID, resolvedModel)
+	return s.configureCSGClawDesktop(resolvedModel, modelIDs)
+}
 
-	stopCSGClaw(binary)
-	log.Printf("AI APP csgclaw: restarting serve daemon after model switch")
-	if err := s.startCSGClawServe(binary); err != nil {
-		return err
+func (s *Server) configureCSGClawDesktop(modelID string, modelIDs []string) error {
+	listenAddr := ""
+	if s != nil && s.cfg != nil {
+		listenAddr = s.cfg.RuntimeAPIAddr()
 	}
-	if err := waitForCSGClaw(csgclawServeWait); err != nil {
-		return err
+	serverURL := csgclawReachableBaseURL(listenAddr, csgclawInterfaceAddrs())
+	apiKey := "csghub-lite"
+	if s != nil && s.cfg != nil && strings.TrimSpace(s.cfg.Token) != "" {
+		apiKey = strings.TrimSpace(s.cfg.Token)
 	}
+	models := csgclawOrderedModels(modelID, modelIDs)
+	if err := ensureCSGClawManagedConfig(strings.TrimRight(serverURL, "/")+"/v1", apiKey, modelID, models); err != nil {
+		return fmt.Errorf("writing CSGClaw config: %w", err)
+	}
+	if err := ensureCSGClawDesktopSandboxProvider(); err != nil {
+		return fmt.Errorf("writing CSGClaw Desktop sandbox config: %w", err)
+	}
+	log.Printf("AI APP csgclaw: desktop config synced model=%q models=%d", modelID, len(models))
 	return nil
+}
+
+func ensureCSGClawDesktopSandboxProvider() error {
+	path, err := csgclawConfigPath()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	updated := setCSGClawSandboxProvider(string(data), "docker")
+	return os.WriteFile(path, []byte(updated), 0o600)
+}
+
+func setCSGClawSandboxProvider(input, provider string) string {
+	provider = csgclawNormalizedSandboxProvider(provider)
+	if provider == "" {
+		provider = "docker"
+	}
+	lines := strings.Split(strings.ReplaceAll(input, "\r\n", "\n"), "\n")
+	out := make([]string, 0, len(lines)+3)
+	inSandbox := false
+	sandboxFound := false
+	providerSet := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			if inSandbox && !providerSet {
+				out = append(out, "provider = "+strconv.Quote(provider))
+				providerSet = true
+			}
+			inSandbox = trimmed == "[sandbox]"
+			if inSandbox {
+				sandboxFound = true
+			}
+			out = append(out, line)
+			continue
+		}
+		if inSandbox {
+			key, _, ok := parseCSGClawConfigKV(trimmed)
+			if ok && key == "provider" {
+				if !providerSet {
+					out = append(out, "provider = "+strconv.Quote(provider))
+					providerSet = true
+				}
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	if inSandbox && !providerSet {
+		out = append(out, "provider = "+strconv.Quote(provider))
+	}
+	if !sandboxFound {
+		out = append(out, "", "[sandbox]", "provider = "+strconv.Quote(provider))
+	}
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+	return strings.Join(out, "\n") + "\n"
 }
 
 func (s *Server) resolveCSGClawLaunchModels(ctx context.Context, requestedModel, requestedSource string) (string, []string, error) {
