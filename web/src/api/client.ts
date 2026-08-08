@@ -1572,6 +1572,13 @@ export interface LoadModelOptions {
   cache_type_k?: string;
   cache_type_v?: string;
   dtype?: string;
+  speculative?: {
+    types?: string[];
+    draft_model?: string;
+    draft_n_max?: number;
+    draft_n_min?: number;
+    draft_p_min?: number;
+  };
 }
 
 export function loadModel(
@@ -1594,6 +1601,7 @@ export function loadModel(
         cache_type_k: options?.cache_type_k || undefined,
         cache_type_v: options?.cache_type_v || undefined,
         dtype: options?.dtype || undefined,
+        speculative: options?.speculative,
       }),
       signal,
     })

@@ -410,14 +410,18 @@ func ggufContextLength(path string) int {
 }
 
 func newLlamaEngine(modelPath, modelName string, verbose bool, progress ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV string, mmproj ...string) (*llamaEngine, error) {
-	return newLlamaEngineWithMode(modelPath, modelName, verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, false, mmproj...)
+	return newLlamaEngineWithMode(modelPath, modelName, verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, false, SpeculativeConfig{}, mmproj...)
+}
+
+func newLlamaSpeculativeEngine(modelPath, modelName string, verbose bool, progress ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV string, speculative SpeculativeConfig, mmproj ...string) (*llamaEngine, error) {
+	return newLlamaEngineWithMode(modelPath, modelName, verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, false, speculative, mmproj...)
 }
 
 func newLlamaEmbeddingEngine(modelPath, modelName string, verbose bool, progress ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV string, mmproj ...string) (*llamaEngine, error) {
-	return newLlamaEngineWithMode(modelPath, modelName, verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, true, mmproj...)
+	return newLlamaEngineWithMode(modelPath, modelName, verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, true, SpeculativeConfig{}, mmproj...)
 }
 
-func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV string, embedding bool, mmproj ...string) (*llamaEngine, error) {
+func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV string, embedding bool, speculative SpeculativeConfig, mmproj ...string) (*llamaEngine, error) {
 	binary := findLlamaBinary()
 	if binary == "" {
 		return nil, fmt.Errorf("llama-server not found in PATH or common install locations.\n" +
@@ -451,6 +455,16 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	if err != nil {
 		return nil, err
 	}
+	speculative, err = NormalizeSpeculativeConfig(speculative)
+	if err != nil {
+		return nil, err
+	}
+	if embedding && speculative.Enabled() {
+		return nil, fmt.Errorf("speculative decoding is not supported for embedding models")
+	}
+	if err := validateLlamaSpecCapabilities(binary, speculative); err != nil {
+		return nil, err
+	}
 	totalCtx := effectiveNumCtx * effectiveNumParallel
 
 	args := []string{
@@ -472,6 +486,7 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	if normalizedCacheTypeV != "" {
 		args = append(args, "--cache-type-v", normalizedCacheTypeV)
 	}
+	args = append(args, speculative.llamaArgs()...)
 	if len(mmproj) > 0 && mmproj[0] != "" {
 		args = append(args, "--mmproj", mmproj[0])
 		engine.hasMultimodal = true
@@ -483,7 +498,7 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	}
 
 	engine.cmd = exec.Command(binary, args...)
-	log.Printf("LLAMA: starting llama-server model=%q binary=%s port=%d embedding=%t num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q mmproj=%t", modelName, binary, port, embedding, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, len(mmproj) > 0 && mmproj[0] != "")
+	log.Printf("LLAMA: starting llama-server model=%q binary=%s port=%d embedding=%t num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q speculative=%q mmproj=%t", modelName, binary, port, embedding, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, speculative.Key(), len(mmproj) > 0 && mmproj[0] != "")
 	if config.FileLoggingEnabled() {
 		if path, err := config.LlamaServerLogPath(); err != nil {
 			log.Printf("warning: could not resolve llama-server log path: %v", err)

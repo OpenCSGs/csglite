@@ -152,8 +152,19 @@ func managedGGUFPyPath() string {
 	)
 }
 
+func managedConversionPath() string {
+	return filepath.Join(bundledConverterVersionDir(), "conversion")
+}
+
 func bundledConverterDir() string {
 	return filepath.Join(converterCacheDir(), "bundled")
+}
+
+func bundledConverterVersionDir() string {
+	return filepath.Join(
+		bundledConverterDir(),
+		fmt.Sprintf("llama-%s-r%d", BundledConverterLLamacppRef, bundledConverterRevision),
+	)
 }
 
 func remoteConverterDir() string {
@@ -314,7 +325,7 @@ func materializeBundledConverter() (string, error) {
 	if len(bundledConverterPy) == 0 {
 		return "", fmt.Errorf("embedded convert_hf_to_gguf.py is missing (rebuild csghub-lite)")
 	}
-	dir := bundledConverterDir()
+	dir := bundledConverterVersionDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("creating tools dir: %w", err)
 	}
@@ -957,6 +968,9 @@ func ensureBundledGGUFPy() (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("creating bundled converter dir: %w", err)
 	}
+	if err := ensureBundledConversion(); err != nil {
+		return "", err
+	}
 
 	dst := managedGGUFPyPath()
 	if bundledGGUFPyReady(dst) {
@@ -1001,6 +1015,43 @@ func ensureBundledGGUFPy() (string, error) {
 	return "embedded llama.cpp " + BundledConverterLLamacppRef, nil
 }
 
+func ensureBundledConversion() error {
+	dst := managedConversionPath()
+	if bundledConversionReady(dst) {
+		return nil
+	}
+	dir := filepath.Dir(dst)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating bundled conversion dir: %w", err)
+	}
+	unlock, err := acquireBundledGGUFPyLock(dst)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if bundledConversionReady(dst) {
+		return nil
+	}
+	tmpDir, err := os.MkdirTemp(dir, ".conversion-*")
+	if err != nil {
+		return fmt.Errorf("creating conversion package temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	if err := materializeBundledPythonTree(bundledConversion, bundledConversionRoot, tmpDir); err != nil {
+		return fmt.Errorf("materializing embedded conversion package: %w", err)
+	}
+	if err := os.RemoveAll(dst); err != nil {
+		return fmt.Errorf("removing incomplete conversion package: %w", err)
+	}
+	if err := os.Rename(tmpDir, dst); err != nil {
+		if bundledConversionReady(dst) {
+			return nil
+		}
+		return fmt.Errorf("installing embedded conversion package: %w", err)
+	}
+	return nil
+}
+
 const (
 	bundledGGUFPyLockWait  = 30 * time.Second
 	bundledGGUFPyLockStale = 2 * time.Minute
@@ -1039,9 +1090,17 @@ func bundledGGUFPyReady(dir string) bool {
 	return err == nil
 }
 
+func bundledConversionReady(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "__init__.py"))
+	return err == nil
+}
+
 func materializeBundledGGUFPy(dst string) error {
-	const root = bundledGGUFPyRoot
-	return fs.WalkDir(bundledGGUFPy, root, func(path string, entry fs.DirEntry, walkErr error) error {
+	return materializeBundledPythonTree(bundledGGUFPy, bundledGGUFPyRoot, dst)
+}
+
+func materializeBundledPythonTree(source fs.FS, root, dst string) error {
+	return fs.WalkDir(source, root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -1056,7 +1115,7 @@ func materializeBundledGGUFPy(dst string) error {
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		data, err := fs.ReadFile(bundledGGUFPy, path)
+		data, err := fs.ReadFile(source, path)
 		if err != nil {
 			return err
 		}

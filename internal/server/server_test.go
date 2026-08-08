@@ -742,6 +742,100 @@ func TestConcurrentLoadsShareSingleInFlightLoad(t *testing.T) {
 	}
 }
 
+func TestConcurrentLoadsWithDifferentSpeculativeConfigsReloadAfterWaiting(t *testing.T) {
+	s := newTestServer(t)
+	lm := &model.LocalModel{
+		Namespace: "test",
+		Name:      "speculative",
+		Format:    model.FormatGGUF,
+		Size:      123,
+		Files:     []string{"model.gguf"},
+	}
+	if err := model.SaveManifest(s.cfg.ModelDir, lm); err != nil {
+		t.Fatalf("SaveManifest() error = %v", err)
+	}
+	modelDir := filepath.Join(s.cfg.ModelDir, "test", "speculative")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model.gguf"), []byte("gguf"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	origLoader := loadEngineWithSpeculativeProgress
+	defer func() { loadEngineWithSpeculativeProgress = origLoader }()
+
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstEngine := &fakeEngine{}
+	secondEngine := &fakeEngine{}
+	calls := 0
+	loadEngineWithSpeculativeProgress = func(_ string, _ *model.LocalModel, _ inference.ConvertProgressFunc, _ bool, _ int, _ int, _ int, _ string, _ string, _ string, speculative inference.SpeculativeConfig) (inference.Engine, error) {
+		calls++
+		switch speculative.Key() {
+		case "ngram-mod||0|0|":
+			close(firstStarted)
+			<-releaseFirst
+			return firstEngine, nil
+		case "ngram-simple||0|0|":
+			return secondEngine, nil
+		default:
+			t.Fatalf("unexpected speculative config %q", speculative.Key())
+			return nil, nil
+		}
+	}
+
+	type result struct {
+		eng inference.Engine
+		err error
+	}
+	firstResult := make(chan result, 1)
+	go func() {
+		eng, err := s.getOrLoadEngineFullSpeculative(
+			"test/speculative", nil, 0, 0, -1, "", "", "",
+			inference.SpeculativeConfig{Types: []string{"ngram-mod"}},
+		)
+		firstResult <- result{eng: eng, err: err}
+	}()
+
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first speculative load")
+	}
+
+	secondResult := make(chan result, 1)
+	go func() {
+		eng, err := s.getOrLoadEngineFullSpeculative(
+			"test/speculative", nil, 0, 0, -1, "", "", "",
+			inference.SpeculativeConfig{Types: []string{"ngram-simple"}},
+		)
+		secondResult <- result{eng: eng, err: err}
+	}()
+
+	close(releaseFirst)
+	first := <-firstResult
+	second := <-secondResult
+	if first.err != nil {
+		t.Fatalf("first load error = %v", first.err)
+	}
+	if second.err != nil {
+		t.Fatalf("second load error = %v", second.err)
+	}
+	if first.eng != firstEngine {
+		t.Fatalf("first engine = %#v, want %#v", first.eng, firstEngine)
+	}
+	if second.eng != secondEngine {
+		t.Fatalf("second engine = %#v, want %#v", second.eng, secondEngine)
+	}
+	if calls != 2 {
+		t.Fatalf("loader call count = %d, want 2", calls)
+	}
+	if got := s.engines["test/speculative"].speculativeKey; got != "ngram-simple||0|0|" {
+		t.Fatalf("cached speculative key = %q, want ngram-simple", got)
+	}
+}
+
 func TestROCMSingleEngineModeClosesOtherTextEnginesBeforeLoad(t *testing.T) {
 	s := newTestServer(t)
 	for _, name := range []string{"first", "second"} {
@@ -1062,6 +1156,23 @@ func TestHandleLoad_InvalidDType(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "unsupported dtype") {
 		t.Fatalf("body = %q, want unsupported dtype", w.Body.String())
+	}
+}
+
+func TestHandleLoad_InvalidSpeculativeType(t *testing.T) {
+	s := newTestServer(t)
+
+	body := `{"model":"test/model","speculative":{"types":["magic-draft"]}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/load", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleLoad(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "unsupported speculative decoding type") {
+		t.Fatalf("body = %q, want speculative type validation error", w.Body.String())
 	}
 }
 

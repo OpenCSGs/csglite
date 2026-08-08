@@ -406,6 +406,29 @@ func FindMMProjFiles(modelDir string) ([]string, error) {
 	return detected, nil
 }
 
+// FindMTPFiles returns Multi-Token Prediction companion GGUF files.
+func FindMTPFiles(modelDir string) ([]string, error) {
+	var paths []string
+	err := filepath.WalkDir(modelDir, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".gguf") {
+			return nil
+		}
+		relPath, err := filepath.Rel(modelDir, current)
+		if err == nil && ggufpick.IsMTPGGUF(relPath) {
+			paths = append(paths, current)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
 // SaveManifest writes a model manifest to disk.
 func SaveManifest(baseDir string, m *LocalModel) error {
 	normalizeLocalModel(m)

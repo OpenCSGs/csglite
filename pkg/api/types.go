@@ -46,15 +46,16 @@ type StopRequest struct {
 }
 
 type LoadRequest struct {
-	Model       string `json:"model"`
-	Stream      *bool  `json:"stream,omitempty"`
-	KeepAlive   string `json:"keep_alive,omitempty"`
-	NumCtx      int    `json:"num_ctx,omitempty"`
-	NumParallel int    `json:"num_parallel,omitempty"`
-	NGPULayers  *int   `json:"n_gpu_layers,omitempty"`
-	CacheTypeK  string `json:"cache_type_k,omitempty"`
-	CacheTypeV  string `json:"cache_type_v,omitempty"`
-	DType       string `json:"dtype,omitempty"`
+	Model       string              `json:"model"`
+	Stream      *bool               `json:"stream,omitempty"`
+	KeepAlive   string              `json:"keep_alive,omitempty"`
+	NumCtx      int                 `json:"num_ctx,omitempty"`
+	NumParallel int                 `json:"num_parallel,omitempty"`
+	NGPULayers  *int                `json:"n_gpu_layers,omitempty"`
+	CacheTypeK  string              `json:"cache_type_k,omitempty"`
+	CacheTypeV  string              `json:"cache_type_v,omitempty"`
+	DType       string              `json:"dtype,omitempty"`
+	Speculative *SpeculativeOptions `json:"speculative,omitempty"`
 }
 
 type ImageRuntimeInstallRequest struct {
@@ -310,17 +311,26 @@ type ModelTokenPrice struct {
 }
 
 type ModelOptions struct {
-	Temperature float64 `json:"temperature,omitempty"`
-	TopP        float64 `json:"top_p,omitempty"`
-	TopK        int     `json:"top_k,omitempty"`
-	MaxTokens   int     `json:"max_tokens,omitempty"`
-	Seed        int     `json:"seed,omitempty"`
-	NumCtx      int     `json:"num_ctx,omitempty"`
-	NumParallel int     `json:"num_parallel,omitempty"`
-	NGPULayers  *int    `json:"n_gpu_layers,omitempty"`
-	CacheTypeK  string  `json:"cache_type_k,omitempty"`
-	CacheTypeV  string  `json:"cache_type_v,omitempty"`
-	DType       string  `json:"dtype,omitempty"`
+	Temperature float64             `json:"temperature,omitempty"`
+	TopP        float64             `json:"top_p,omitempty"`
+	TopK        int                 `json:"top_k,omitempty"`
+	MaxTokens   int                 `json:"max_tokens,omitempty"`
+	Seed        int                 `json:"seed,omitempty"`
+	NumCtx      int                 `json:"num_ctx,omitempty"`
+	NumParallel int                 `json:"num_parallel,omitempty"`
+	NGPULayers  *int                `json:"n_gpu_layers,omitempty"`
+	CacheTypeK  string              `json:"cache_type_k,omitempty"`
+	CacheTypeV  string              `json:"cache_type_v,omitempty"`
+	DType       string              `json:"dtype,omitempty"`
+	Speculative *SpeculativeOptions `json:"speculative,omitempty"`
+}
+
+type SpeculativeOptions struct {
+	Types      []string `json:"types,omitempty"`
+	DraftModel string   `json:"draft_model,omitempty"`
+	DraftNMax  int      `json:"draft_n_max,omitempty"`
+	DraftNMin  int      `json:"draft_n_min,omitempty"`
+	DraftPMin  *float64 `json:"draft_p_min,omitempty"`
 }
 
 // -- Dataset request types --

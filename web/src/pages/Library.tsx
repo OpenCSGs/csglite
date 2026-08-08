@@ -21,6 +21,11 @@ type RunModelParams = {
   cacheTypeV: string;
   dtype: string;
   keepAlive: string;
+  specType: string;
+  specNgram: string;
+  specDraftModel: string;
+  specDraftNMax: string;
+  specDraftPMin: string;
 };
 type ModelTableRow = {
   model: ModelInfo;
@@ -111,6 +116,11 @@ function defaultRunParams(): RunModelParams {
     cacheTypeV: "",
     dtype: "",
     keepAlive: "",
+    specType: "",
+    specNgram: "",
+    specDraftModel: "",
+    specDraftNMax: "",
+    specDraftPMin: "",
   };
 }
 
@@ -124,6 +134,11 @@ function normalizeRunParams(raw: any): RunModelParams {
     cacheTypeV: String(raw?.cacheTypeV ?? raw?.cache_type_v ?? defaults.cacheTypeV),
     dtype: String(raw?.dtype ?? defaults.dtype),
     keepAlive: String(raw?.keepAlive ?? raw?.keep_alive ?? defaults.keepAlive),
+    specType: String(raw?.specType ?? defaults.specType),
+    specNgram: String(raw?.specNgram ?? defaults.specNgram),
+    specDraftModel: String(raw?.specDraftModel ?? defaults.specDraftModel),
+    specDraftNMax: String(raw?.specDraftNMax ?? defaults.specDraftNMax),
+    specDraftPMin: String(raw?.specDraftPMin ?? defaults.specDraftPMin),
   };
 }
 
@@ -161,7 +176,29 @@ function optionalInt(value: string, label: string, min: number): number | undefi
   return parsed;
 }
 
+function optionalFloat(value: string, label: string, min: number, max: number): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw new Error(t("lib.runParamRange", label, min, max));
+  }
+  return parsed;
+}
+
 function buildLoadOptions(params: RunModelParams): LoadModelOptions {
+  const types = params.specType ? [params.specType] : [];
+  if (params.specNgram === "true" && !types.includes("ngram-mod")) {
+    types.push("ngram-mod");
+  }
+  const usesDraft = params.specType.startsWith("draft-");
+  const usesExternalDraft = usesDraft && params.specType !== "draft-mtp";
+  const speculative = types.length > 0 ? {
+    types,
+    draft_model: usesExternalDraft ? optionalText(params.specDraftModel) : undefined,
+    draft_n_max: usesDraft ? optionalInt(params.specDraftNMax, t("lib.runParamSpecDraftNMax"), 1) : undefined,
+    draft_p_min: usesDraft ? optionalFloat(params.specDraftPMin, t("lib.runParamSpecDraftPMin"), 0, 1) : undefined,
+  } : undefined;
   return {
     num_ctx: optionalInt(params.numCtx, t("lib.runParamNumCtx"), 1024),
     num_parallel: optionalInt(params.numParallel, t("lib.runParamNumParallel"), 1),
@@ -170,6 +207,7 @@ function buildLoadOptions(params: RunModelParams): LoadModelOptions {
     cache_type_v: optionalText(params.cacheTypeV),
     dtype: optionalText(params.dtype),
     keep_alive: optionalText(params.keepAlive),
+    speculative,
   };
 }
 
@@ -937,6 +975,10 @@ export function Library() {
         <RunParamsDialog
           model={runDialogModel.value}
           params={runParams.value}
+          draftModels={allModels.value
+            .filter((candidate) => candidate.name !== runDialogModel.value?.name && candidate.format === "gguf" && !isEmbeddingModel(candidate))
+            .map((candidate) => candidate.name)
+            .sort()}
           error={runDialogError.value}
           ggufQuants={runDialogGGUFQuants.value}
           quantsLoading={runDialogQuantsLoading.value}
@@ -1138,6 +1180,7 @@ function UploadModelDialog({
 function RunParamsDialog({
   model,
   params,
+  draftModels,
   error,
   ggufQuants,
   quantsLoading,
@@ -1148,6 +1191,7 @@ function RunParamsDialog({
 }: {
   model: ModelInfo;
   params: RunModelParams;
+  draftModels: string[];
   error: string;
   ggufQuants: string[];
   quantsLoading: boolean;
@@ -1168,7 +1212,7 @@ function RunParamsDialog({
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
       <form
-        class="w-full max-w-2xl bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden"
+        class="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl"
         onSubmit={(e) => {
           e.preventDefault();
           onSubmit();
@@ -1187,7 +1231,7 @@ function RunParamsDialog({
           </p>
         </div>
 
-        <div class="px-6 py-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 gap-4 overflow-y-auto px-6 py-5 md:grid-cols-2">
           {runtimeManagedModel ? (
             <div class="md:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
               {imageGenerationModel ? t("lib.runParamImageRuntimeHint") : t("lib.runParamASRRuntimeHint")}
@@ -1249,6 +1293,98 @@ function RunParamsDialog({
                 </>
               )}
             </>
+          )}
+          {!runtimeManagedModel && !embeddingModel && ggufModel && (
+            <div class="md:col-span-2 rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-white p-4">
+              <div class="flex items-start justify-between gap-4">
+                <div class="flex gap-3">
+                  <div class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M13 2 4.5 13H11l-1 9 8.5-11H12l1-9Z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <h3 class="text-sm font-semibold text-gray-900">{t("lib.runParamSpecTitle")}</h3>
+                      <span class="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-700">
+                        {t("lib.runParamSpecExperimental")}
+                      </span>
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500">{t("lib.runParamSpecHint")}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <RunSelectField
+                  label={t("lib.runParamSpecMode")}
+                  value={params.specType}
+                  options={["ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-cache", "draft-mtp", "draft-simple", "draft-eagle3", "draft-dflash", "draft-dspark"]}
+                  defaultLabel={t("lib.runParamSpecOff")}
+                  hint={t("lib.runParamSpecModeHint")}
+                  onInput={(value) => onChange("specType", value)}
+                />
+                {params.specType.startsWith("draft-") && params.specType !== "draft-mtp" && (
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.runParamSpecDraftModel")}</label>
+                    <select
+                      value={params.specDraftModel}
+                      onInput={(e) => onChange("specDraftModel", (e.currentTarget as HTMLSelectElement).value)}
+                      class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    >
+                      <option value="">{t("lib.runParamSpecDraftModelSelect")}</option>
+                      {draftModels.map((name) => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                    <p class="text-xs text-gray-400 mt-1">{t("lib.runParamSpecDraftModelHint")}</p>
+                  </div>
+                )}
+              </div>
+
+              {params.specType.startsWith("draft-") && (
+                <label class="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-gray-100 bg-white/80 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={params.specNgram === "true"}
+                    onChange={(e) => onChange("specNgram", (e.currentTarget as HTMLInputElement).checked ? "true" : "")}
+                    class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>
+                    <span class="block text-sm font-medium text-gray-700">{t("lib.runParamSpecNgramBoost")}</span>
+                    <span class="block text-xs text-gray-400">{t("lib.runParamSpecNgramBoostHint")}</span>
+                  </span>
+                </label>
+              )}
+
+              {params.specType.startsWith("draft-") && (
+                <details class="mt-3 rounded-lg border border-gray-100 bg-white/80 px-3 py-2">
+                  <summary class="cursor-pointer select-none text-xs font-medium text-gray-600">{t("lib.runParamSpecAdvanced")}</summary>
+                  <div class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <RunNumberField
+                      label={t("lib.runParamSpecDraftNMax")}
+                      value={params.specDraftNMax}
+                      min={1}
+                      placeholder="16"
+                      hint={t("lib.runParamSpecDraftNMaxHint")}
+                      onInput={(value) => onChange("specDraftNMax", value)}
+                    />
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.runParamSpecDraftPMin")}</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step="0.01"
+                        value={params.specDraftPMin}
+                        onInput={(e) => onChange("specDraftPMin", (e.currentTarget as HTMLInputElement).value)}
+                        placeholder="0.8"
+                        class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      />
+                      <p class="text-xs text-gray-400 mt-1">{t("lib.runParamSpecDraftPMinHint")}</p>
+                    </div>
+                  </div>
+                </details>
+              )}
+            </div>
           )}
           <div class="md:col-span-2">
             <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.runParamKeepAlive")}</label>

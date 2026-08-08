@@ -43,15 +43,16 @@ const (
 )
 
 type managedEngine struct {
-	engine      inference.Engine
-	numCtx      int
-	numParallel int
-	nGPULayers  int
-	cacheTypeK  string
-	cacheTypeV  string
-	dtype       string
-	lastUsed    time.Time
-	keepAlive   time.Duration
+	engine         inference.Engine
+	numCtx         int
+	numParallel    int
+	nGPULayers     int
+	cacheTypeK     string
+	cacheTypeV     string
+	dtype          string
+	speculativeKey string
+	lastUsed       time.Time
+	keepAlive      time.Duration
 }
 
 // loadStepState records the latest load/conversion progress step for a model
@@ -86,9 +87,10 @@ func (s *Server) loadStepFor(modelID string) (loadStepState, bool) {
 }
 
 type engineLoadState struct {
-	done   chan struct{}
-	engine inference.Engine
-	err    error
+	done      chan struct{}
+	configKey string
+	engine    inference.Engine
+	err       error
 }
 
 type selfHealBreakerState struct {
@@ -621,6 +623,10 @@ func (s *Server) getOrLoadEngineWithProgressAndOpts(modelID string, progress inf
 	return s.getOrLoadEngineFull(modelID, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
 }
 
+func (s *Server) getOrLoadEngineWithProgressAndSpeculativeOpts(modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, speculative inference.SpeculativeConfig) (inference.Engine, error) {
+	return s.getOrLoadEngineFullSpeculative(modelID, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, speculative)
+}
+
 func runtimeOverridesRequested(numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV string) bool {
 	return numCtx > 0 || numParallel > 0 || nGPULayers >= 0 || cacheTypeK != "" || cacheTypeV != ""
 }
@@ -636,6 +642,12 @@ func loadedDTypeMatchesRequest(loaded, requested string) bool {
 }
 
 var loadEngineWithProgress = inference.LoadEngineWithProgress
+var loadEngineWithSpeculativeProgress = func(modelDir string, lm *model.LocalModel, progress inference.ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, speculative inference.SpeculativeConfig) (inference.Engine, error) {
+	if !speculative.Enabled() {
+		return loadEngineWithProgress(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
+	}
+	return inference.LoadEngineWithSpeculativeProgress(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, speculative)
+}
 var loadEmbeddingEngineWithProgress = inference.LoadEmbeddingEngineWithProgress
 var rocmSingleEngineMode = inference.ROCMSingleEngineMode
 var newPythonEmbeddingEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (inference.Engine, error) {
@@ -671,7 +683,11 @@ var ensureImageRuntimeReady = func(ctx context.Context, runtimeManager *imagegen
 }
 
 func (s *Server) getOrLoadEngineFull(modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (inference.Engine, error) {
-	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, engineModeChat)
+	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, engineModeChat, inference.SpeculativeConfig{}, false)
+}
+
+func (s *Server) getOrLoadEngineFullSpeculative(modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, speculative inference.SpeculativeConfig) (inference.Engine, error) {
+	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, engineModeChat, speculative, true)
 }
 
 func (s *Server) getOrLoadEmbeddingEngineWithOpts(ctx context.Context, modelID string, numCtx, nGPULayers int, dtype string) (inference.Engine, error) {
@@ -682,7 +698,7 @@ func (s *Server) getOrLoadEmbeddingEngineWithProgress(ctx context.Context, model
 	if s.shouldUsePythonEmbeddingRuntime(modelID) {
 		return s.getOrLoadPythonEmbeddingEngine(ctx, modelID)
 	}
-	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, 0, nGPULayers, "", "", dtype, engineModeEmbed)
+	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, 0, nGPULayers, "", "", dtype, engineModeEmbed, inference.SpeculativeConfig{}, false)
 }
 
 func (s *Server) shouldUsePythonEmbeddingRuntime(modelID string) bool {
@@ -801,7 +817,7 @@ func (s *Server) getOrLoadPythonEmbeddingEngine(ctx context.Context, modelID str
 	}
 }
 
-func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype, mode string) (inference.Engine, error) {
+func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype, mode string, speculative inference.SpeculativeConfig, speculativeRequested bool) (inference.Engine, error) {
 	modelID = s.resolveLocalModelStorageID(modelID)
 	normalizedCacheTypeK, err := inference.NormalizeCacheType(cacheTypeK)
 	if err != nil {
@@ -819,13 +835,22 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	if err != nil {
 		return nil, err
 	}
-	requestedOverrides := runtimeOverridesRequested(numCtx, numParallel, normalizedNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV)
+	speculative, err = inference.NormalizeSpeculativeConfig(speculative)
+	if err != nil {
+		return nil, err
+	}
+	if mode == engineModeEmbed && speculative.Enabled() {
+		return nil, fmt.Errorf("speculative decoding is not supported for embedding models")
+	}
+	speculativeKey := speculative.Key()
+	runtimeOverrides := runtimeOverridesRequested(numCtx, numParallel, normalizedNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV)
+	requestedOverrides := runtimeOverrides || speculativeRequested
 	cacheKey := engineCacheKey(modelID, mode)
 
 	s.mu.RLock()
 	me, ok := s.engines[cacheKey]
 	s.mu.RUnlock()
-	if ok && !requestedOverrides && normalizedDType == "" {
+	if ok && !runtimeOverrides && normalizedDType == "" && (!speculativeRequested || me.speculativeKey == speculativeKey) {
 		log.Printf("MODEL %s: using already loaded %s engine", modelID, mode)
 		return me.engine, nil
 	}
@@ -837,6 +862,16 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	effectiveNumCtx := inference.ResolveNumCtx(modelDir, numCtx)
 	effectiveNumParallel := inference.ResolveNumParallel(numParallel)
 	effectiveNGPULayers := inference.ResolveNGPULayers(normalizedNGPULayers)
+	loadConfigKey := fmt.Sprintf(
+		"%d|%d|%d|%s|%s|%s|%s",
+		effectiveNumCtx,
+		effectiveNumParallel,
+		effectiveNGPULayers,
+		normalizedCacheTypeK,
+		normalizedCacheTypeV,
+		normalizedDType,
+		speculativeKey,
+	)
 	needsRequestedDTypeConversion := false
 	if normalizedDType != "" {
 		if needs, err := convert.NeedsConversionForDType(modelDir, normalizedDType); err != nil {
@@ -856,7 +891,8 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 				return eng, nil
 			}
 			dtypeReady := normalizedDType == "" || (loadedDTypeMatchesRequest(me.dtype, normalizedDType) && !needsRequestedDTypeConversion)
-			if me.numCtx == effectiveNumCtx && me.numParallel == effectiveNumParallel && me.nGPULayers == effectiveNGPULayers && me.cacheTypeK == normalizedCacheTypeK && me.cacheTypeV == normalizedCacheTypeV && dtypeReady {
+			speculativeReady := !speculativeRequested || me.speculativeKey == speculativeKey
+			if me.numCtx == effectiveNumCtx && me.numParallel == effectiveNumParallel && me.nGPULayers == effectiveNGPULayers && me.cacheTypeK == normalizedCacheTypeK && me.cacheTypeV == normalizedCacheTypeV && speculativeReady && dtypeReady {
 				eng := me.engine
 				s.mu.Unlock()
 				return eng, nil
@@ -865,8 +901,12 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 
 		if state, ok := s.loading[cacheKey]; ok {
 			log.Printf("MODEL %s: waiting for in-flight %s load", modelID, mode)
+			sameConfig := state.configKey == loadConfigKey
 			s.mu.Unlock()
 			<-state.done
+			if !sameConfig {
+				continue
+			}
 			if state.err != nil {
 				return nil, state.err
 			}
@@ -885,9 +925,12 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 			}
 		}
 
-		state := &engineLoadState{done: make(chan struct{})}
+		state := &engineLoadState{
+			done:      make(chan struct{}),
+			configKey: loadConfigKey,
+		}
 		s.loading[cacheKey] = state
-		log.Printf("MODEL %s: %s engine load started num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q", modelID, mode, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType)
+		log.Printf("MODEL %s: %s engine load started num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q speculative=%q", modelID, mode, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType, speculativeKey)
 
 		var oldEngine inference.Engine
 		var closedEngines []inference.Engine
@@ -896,7 +939,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 			closedEngines = s.closeOtherInferenceEnginesLocked(cacheKey)
 		}
 		if me, ok := s.engines[cacheKey]; ok {
-			log.Printf("reloading model %s %s engine due to config change (num_ctx %d->%d, parallel %d->%d, n_gpu_layers %d->%d, cache_type_k %q->%q, cache_type_v %q->%q, dtype %q->%q)", modelID, mode, me.numCtx, effectiveNumCtx, me.numParallel, effectiveNumParallel, me.nGPULayers, effectiveNGPULayers, me.cacheTypeK, normalizedCacheTypeK, me.cacheTypeV, normalizedCacheTypeV, me.dtype, normalizedDType)
+			log.Printf("reloading model %s %s engine due to config change (num_ctx %d->%d, parallel %d->%d, n_gpu_layers %d->%d, cache_type_k %q->%q, cache_type_v %q->%q, dtype %q->%q, speculative %q->%q)", modelID, mode, me.numCtx, effectiveNumCtx, me.numParallel, effectiveNumParallel, me.nGPULayers, effectiveNGPULayers, me.cacheTypeK, normalizedCacheTypeK, me.cacheTypeV, normalizedCacheTypeV, me.dtype, normalizedDType, me.speculativeKey, speculativeKey)
 			oldEngine = me.engine
 			nextKeepAlive = me.keepAlive
 			delete(s.engines, cacheKey)
@@ -910,11 +953,11 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 
 		lm, err := s.manager.Get(modelID)
 		if err == nil {
-			loader := loadEngineWithProgress
 			if mode == engineModeEmbed {
-				loader = loadEmbeddingEngineWithProgress
+				state.engine, err = loadEmbeddingEngineWithProgress(modelDir, lm, progress, false, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType)
+			} else {
+				state.engine, err = loadEngineWithSpeculativeProgress(modelDir, lm, progress, false, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType, speculative)
 			}
-			state.engine, err = loader(modelDir, lm, progress, false, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType)
 		}
 		state.err = err
 
@@ -922,15 +965,16 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		delete(s.loading, cacheKey)
 		if state.err == nil {
 			s.engines[cacheKey] = &managedEngine{
-				engine:      state.engine,
-				numCtx:      effectiveNumCtx,
-				numParallel: effectiveNumParallel,
-				nGPULayers:  effectiveNGPULayers,
-				cacheTypeK:  normalizedCacheTypeK,
-				cacheTypeV:  normalizedCacheTypeV,
-				dtype:       normalizedDType,
-				lastUsed:    time.Now(),
-				keepAlive:   nextKeepAlive,
+				engine:         state.engine,
+				numCtx:         effectiveNumCtx,
+				numParallel:    effectiveNumParallel,
+				nGPULayers:     effectiveNGPULayers,
+				cacheTypeK:     normalizedCacheTypeK,
+				cacheTypeV:     normalizedCacheTypeV,
+				dtype:          normalizedDType,
+				speculativeKey: speculativeKey,
+				lastUsed:       time.Now(),
+				keepAlive:      nextKeepAlive,
 			}
 		}
 		close(state.done)

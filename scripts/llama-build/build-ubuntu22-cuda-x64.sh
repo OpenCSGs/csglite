@@ -2,7 +2,7 @@
 # Run inside: nvidia/cuda:12.9.1-devel-ubuntu22.04 (linux/amd64). Keep image locally; do not prune.
 set -euo pipefail
 
-TAG="${LLAMA_TAG:-b9158}"
+TAG="${LLAMA_TAG:-b10326}"
 WORKDIR="${WORKDIR:-/work}"
 OUTDIR="${OUTDIR:-/out}"
 

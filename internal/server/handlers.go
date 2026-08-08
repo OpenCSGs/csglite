@@ -543,6 +543,15 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	embeddingModel := s.modelUsesEmbeddingEngine(req.Model)
 	imageGenerationModel := s.modelUsesImageGenerationEngine(req.Model)
 	asrModel := s.modelUsesASREngine(req.Model)
+	speculative, err := s.resolveSpeculativeConfig(req.Model, req.Speculative)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if speculative.Enabled() && (embeddingModel || imageGenerationModel || asrModel) {
+		writeError(w, http.StatusBadRequest, "speculative decoding is only supported for local text-generation models")
+		return
+	}
 
 	stream := req.Stream != nil && *req.Stream
 
@@ -556,7 +565,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		} else if embeddingModel {
 			_, err = s.getOrLoadEmbeddingEngineWithOpts(r.Context(), req.Model, requestedNumCtx, requestedNGPULayers, requestedDType)
 		} else {
-			_, err = s.getOrLoadEngineFull(req.Model, nil, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+			_, err = s.getOrLoadEngineFullSpeculative(req.Model, nil, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType, speculative)
 		}
 		if err != nil {
 			log.Printf("MODEL %s: load failed: %v", req.Model, err)
@@ -664,7 +673,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	} else if embeddingModel {
 		_, err = s.getOrLoadEmbeddingEngineWithProgress(context.Background(), req.Model, progress, requestedNumCtx, requestedNGPULayers, requestedDType)
 	} else {
-		_, err = s.getOrLoadEngineWithProgressAndOpts(req.Model, progress, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+		_, err = s.getOrLoadEngineWithProgressAndSpeculativeOpts(req.Model, progress, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType, speculative)
 	}
 	if err != nil {
 		log.Printf("load %s failed: %v", req.Model, err)
@@ -713,6 +722,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	requestedCacheTypeK := ""
 	requestedCacheTypeV := ""
 	requestedDType := ""
+	var speculativeOptions *api.SpeculativeOptions
 	if req.Options != nil {
 		if req.Options.Temperature > 0 {
 			opts.Temperature = req.Options.Temperature
@@ -745,9 +755,21 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		if req.Options.DType != "" {
 			requestedDType = req.Options.DType
 		}
+		speculativeOptions = req.Options.Speculative
 	}
 
-	eng, err := s.getOrLoadEngineWithOpts(req.Model, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+	speculative, err := s.resolveSpeculativeConfig(req.Model, speculativeOptions)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	loadGenerateEngine := func() (inference.Engine, error) {
+		if speculativeOptions != nil {
+			return s.getOrLoadEngineFullSpeculative(req.Model, nil, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType, speculative)
+		}
+		return s.getOrLoadEngineWithOpts(req.Model, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+	}
+	eng, err := loadGenerateEngine()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -798,7 +820,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 				return engine.Generate(r.Context(), req.Prompt, opts, nil)
 			},
 			func() (inference.Engine, error) {
-				return s.getOrLoadEngineWithOpts(req.Model, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+				return loadGenerateEngine()
 			},
 		)
 		if err != nil {
@@ -834,6 +856,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	requestedCacheTypeK := ""
 	requestedCacheTypeV := ""
 	requestedDType := ""
+	var speculativeOptions *api.SpeculativeOptions
 	if req.Options != nil {
 		if req.Options.Temperature > 0 {
 			opts.Temperature = req.Options.Temperature
@@ -866,12 +889,30 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		if req.Options.DType != "" {
 			requestedDType = req.Options.DType
 		}
+		speculativeOptions = req.Options.Speculative
 	}
 	if requestDisablesThinking(r) {
 		opts.DisableThinking = true
 	}
 
-	eng, err := s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+	speculative, err := s.resolveSpeculativeConfig(req.Model, speculativeOptions)
+	if err != nil {
+		writeInferenceError(w, err)
+		return
+	}
+	if speculativeOptions != nil {
+		if source := strings.ToLower(strings.TrimSpace(req.Source)); source != "" && source != "local" {
+			writeInferenceError(w, fmt.Errorf("speculative decoding is only supported for local models"))
+			return
+		}
+	}
+	loadChatEngine := func() (inference.Engine, error) {
+		if speculativeOptions != nil {
+			return s.getOrLoadEngineFullSpeculative(req.Model, nil, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType, speculative)
+		}
+		return s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+	}
+	eng, err := loadChatEngine()
 	if err != nil {
 		writeInferenceError(w, err)
 		return
@@ -931,7 +972,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 					return !wroteChunk
 				},
 				func() (inference.Engine, error) {
-					return s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+					return loadChatEngine()
 				},
 			)
 			if err != nil {
@@ -993,7 +1034,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				return !wroteChunk
 			},
 			func() (inference.Engine, error) {
-				return s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+				return loadChatEngine()
 			},
 		)
 		if err != nil {
@@ -1030,7 +1071,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				return engine.Chat(r.Context(), messages, opts, nil)
 			},
 			func() (inference.Engine, error) {
-				return s.getChatEngine(r.Context(), req.Model, req.Source, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+				return loadChatEngine()
 			},
 		)
 		if err != nil {

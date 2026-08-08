@@ -39,6 +39,7 @@ curl -fsSL -o "${REF}" \
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "${WORKDIR}"' EXIT
+mkdir -p "${WORKDIR}/ref" "${WORKDIR}/new"
 
 tar -xzf "${REF}" -C "${WORKDIR}/ref"
 tar -xzf "${NEW}" -C "${WORKDIR}/new"
@@ -56,7 +57,8 @@ docker run --platform "${PLATFORM}" --pull=never --rm \
   -v "${REF}:/pkg.tar.gz:ro" \
   "${LLAMA_BUILD_CUDA_IMAGE}" bash -lc \
   'mkdir -p /tmp/p && tar -xzf /pkg.tar.gz -C /tmp/p
-    if [ -d /tmp/p/bin ]; then r=/tmp/p; else r=/tmp/p/llama-*-arm64; fi
+    server=$(find /tmp/p -type f -path "*/bin/llama-server" -print -quit)
+    r=${server%/bin/llama-server}
     LD_LIBRARY_PATH=$r/lib $r/bin/llama-server --version' || true
 
 echo "=== new version (Ubuntu 22.04) ==="
@@ -64,7 +66,8 @@ docker run --platform "${PLATFORM}" --pull=never --rm \
   -v "${NEW}:/pkg.tar.gz:ro" \
   "${LLAMA_BUILD_CUDA_IMAGE}" bash -lc \
   'mkdir -p /tmp/p && tar -xzf /pkg.tar.gz -C /tmp/p
-    if [ -d /tmp/p/bin ]; then r=/tmp/p; else r=/tmp/p/llama-*-arm64; fi
+    server=$(find /tmp/p -type f -path "*/bin/llama-server" -print -quit)
+    r=${server%/bin/llama-server}
     LD_LIBRARY_PATH=$r/lib $r/bin/llama-server --version'
 
 echo "=== sha256 ==="

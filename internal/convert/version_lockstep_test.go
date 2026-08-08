@@ -20,6 +20,9 @@ func TestLlamaCppVersionLockstepWithInstallScripts(t *testing.T) {
 	}{
 		{path: filepath.Join(repoRoot, "scripts", "install.sh"), want: wantShell},
 		{path: filepath.Join(repoRoot, "scripts", "install.ps1"), want: wantPowerShell},
+		{path: filepath.Join(repoRoot, "scripts", "llama-build", "common.sh"), want: `${1:-` + BundledConverterLLamacppRef + `}`},
+		{path: filepath.Join(repoRoot, "scripts", "llama-build", "build-ubuntu22-cuda-x64.sh"), want: `LLAMA_TAG:-` + BundledConverterLLamacppRef},
+		{path: filepath.Join(repoRoot, "scripts", "llama-build", "build-ubuntu22-cuda-arm64.sh"), want: `LLAMA_TAG:-` + BundledConverterLLamacppRef},
 	}
 
 	for _, tc := range cases {

@@ -39,8 +39,8 @@ SafeTensors 是 Hugging Face 推出的模型存储格式。CSGLite 支持下载�
 
 ### 自动转换（内置脚本）
 
-CSGLite 将固定 llama.cpp 版本的 `convert_hf_to_gguf.py` 和完整
-`gguf-py` **一起打包进二进制**。首次推理时，两者会释放到
+CSGLite 将固定 llama.cpp 版本的 `convert_hf_to_gguf.py`、`conversion`
+和完整 `gguf-py` **一起打包进二进制**。首次推理时，这些文件会释放到
 `~/.csghub-lite/tools/` 后调用本机 Python；不需要安装 Git，也不会在
 运行时 clone 或下载 llama.cpp 源码。升级 CSGLite 后若内置工具更新，会随
 **`bundledConverterRevision`** 自动使用新的版本化缓存。
@@ -92,3 +92,33 @@ csghub-lite search "Qwen"
 ```
 
 模型名中带有 `-GGUF` 后缀的通常提供 GGUF 格式文件。
+
+## 投机解码加速
+
+GGUF 文本模型可在运行参数窗口启用投机解码，也可通过 CLI 配置：
+
+```bash
+# 无需 draft 模型
+csghub-lite run Qwen/Qwen3-0.6B-GGUF --spec-type ngram-mod
+
+# 模型自带或同目录包含 MTP head
+csghub-lite run Qwen/Qwen3-Next-GGUF --spec-type draft-mtp
+
+# 独立 draft 模型，可同时叠加 n-gram
+csghub-lite run target/model \
+  --spec-type draft-eagle3,ngram-mod \
+  --spec-draft-model draft/model \
+  --spec-draft-n-max 16
+```
+
+- `n-gram-*` 不要求专用模型，适合输入或输出中有重复模式的场景。
+- llama.cpp b10326 没有独立的 `suffix` 类型；其上下文后缀复用场景由
+  `ngram-simple` 等 N-gram 方法覆盖，CSGLite 不会伪造一个运行时不支持的参数。
+- `draft-simple` 要求小模型与目标模型使用兼容 tokenizer。
+- `draft-eagle3`、`draft-dflash`、`draft-dspark` 要求对应方法训练得到的专用 draft 权重，不能用任意小模型替代。
+- `draft-mtp` 仅适用于带 MTP/NextN head 的模型；CSGLite 会优先自动配对同目录的 MTP GGUF companion。
+- llama.cpp 支持一个 `draft-*` 方法与一个或多个 `ngram-*` 方法同时启用，但不能同时启用多个 `draft-*` 方法。
+
+高级参数 `--spec-draft-n-max` 和 `--spec-draft-p-min` 分别控制最大候选
+token 数与最小接受概率。加速效果依赖模型、提示内容和硬件；若接受率过低，
+关闭投机解码通常更快。

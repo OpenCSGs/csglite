@@ -102,7 +102,7 @@ download them on Ubuntu 22.04 hosts.
 **Use the checked-in scripts:** [`scripts/llama-build/README.md`](../../scripts/llama-build/README.md)
 
 ```sh
-make llama-cuda-rebuild-all LLAMA_TAG=b9158   # or ./scripts/llama-build/rebuild-upload-all.sh
+make llama-cuda-rebuild-all LLAMA_TAG=b10326   # or ./scripts/llama-build/rebuild-upload-all.sh
 ```
 
 ### Why Ubuntu 22.04 in Docker
@@ -129,7 +129,7 @@ is already present.
 
 Workdirs (`scripts/llama-build/work/`) are gitignored; only scripts are committed.
 
-### GitLab packages (b9158 reference)
+### GitLab packages (b10326 reference)
 
 | Arch | Filename | Tar layout |
 |------|----------|------------|
@@ -200,6 +200,12 @@ install `cuda-libraries-<major>-<minor>` unless
 - URL:
   `https://git-devops.opencsg.com/api/v4/projects/393/packages/generic/llama-cpp/<tag>/<filename>`
 - Re-download and compare SHA256 after upload when validating.
+- A Generic Package upload is not a completed publish. For every new llama.cpp
+  tag, create or update the matching GitLab Release in project `393` in the same
+  task and add package-type asset links for every mirrored artifact.
+- Before reporting completion, verify that the tag appears on the GitLab
+  Releases page and that each linked package URL is downloadable. Do not leave
+  a new tag visible only under Packages.
 - Release `b9158` already links these filenames; replacing the generic package
   updates the release asset.
 

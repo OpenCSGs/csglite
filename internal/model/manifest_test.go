@@ -516,6 +516,28 @@ func TestFindModelFile_SkipsMetadataDetectedProjector(t *testing.T) {
 	}
 }
 
+func TestFindMTPFiles(t *testing.T) {
+	modelDir := t.TempDir()
+	mtpPath := filepath.Join(modelDir, "draft", "mtp-model-q8_0.gguf")
+	if err := os.MkdirAll(filepath.Dir(mtpPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mtpPath, []byte("GGUF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model-q4_k_m.gguf"), []byte("GGUF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := FindMTPFiles(modelDir)
+	if err != nil {
+		t.Fatalf("FindMTPFiles() error = %v", err)
+	}
+	if len(got) != 1 || got[0] != mtpPath {
+		t.Fatalf("FindMTPFiles() = %v, want [%s]", got, mtpPath)
+	}
+}
+
 func TestFindModelFile_NestedQuantFolders(t *testing.T) {
 	dir := t.TempDir()
 	q4 := filepath.Join(dir, "Q4_0")

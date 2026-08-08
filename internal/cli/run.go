@@ -23,6 +23,10 @@ func newRunCmd() *cobra.Command {
 	var cacheTypeV string
 	var dtype string
 	var keepAlive string
+	var specTypes string
+	var specDraftModel string
+	var specDraftNMax int
+	var specDraftPMin float64
 
 	cmd := &cobra.Command{
 		Use:   "run MODEL",
@@ -42,7 +46,7 @@ Use --keep-alive to control how long the model stays loaded after you exit
 (-1 keeps it loaded until you stop it manually).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRun(cmd, args, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, keepAlive)
+			return runRun(cmd, args, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, keepAlive, specTypes, specDraftModel, specDraftNMax, specDraftPMin)
 		},
 	}
 	cmd.Flags().IntVar(&numCtx, "num-ctx", 0, "set the per-model context length for this run only (for example 131072)")
@@ -52,6 +56,10 @@ Use --keep-alive to control how long the model stays loaded after you exit
 	cmd.Flags().StringVar(&cacheTypeV, "cache-type-v", "", "set llama-server --cache-type-v for this run only ("+llamaRuntimeCacheTypeHelp()+")")
 	cmd.Flags().StringVar(&dtype, "dtype", "", "set SafeTensors -> GGUF conversion dtype for this run only ("+convertDTypeHelp()+")")
 	cmd.Flags().StringVar(&keepAlive, "keep-alive", "", "keep the model loaded after exit for this run (for example 5m, 1h, or -1 to keep it loaded until stopped)")
+	cmd.Flags().StringVar(&specTypes, "spec-type", "", "speculative decoding type(s), comma-separated (for example draft-mtp,ngram-mod)")
+	cmd.Flags().StringVar(&specDraftModel, "spec-draft-model", "", "local model ID for draft-simple, EAGLE-3, DFlash, or DSpark")
+	cmd.Flags().IntVar(&specDraftNMax, "spec-draft-n-max", 0, "maximum speculative draft tokens (llama.cpp default when unset)")
+	cmd.Flags().Float64Var(&specDraftPMin, "spec-draft-p-min", -1, "minimum draft probability from 0 to 1 (llama.cpp default when unset)")
 	return cmd
 }
 
@@ -109,7 +117,7 @@ func validateRunOverrides(numCtx, numParallel, nGPULayers int, cacheTypeK, cache
 	return nil
 }
 
-func runRun(cmd *cobra.Command, args []string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype, keepAlive string) error {
+func runRun(cmd *cobra.Command, args []string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype, keepAlive, specTypes, specDraftModel string, specDraftNMax int, specDraftPMin float64) error {
 	if err := validateRunOverrides(numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, keepAlive); err != nil {
 		return err
 	}
@@ -148,7 +156,11 @@ func runRun(cmd *cobra.Command, args []string, numCtx, numParallel, nGPULayers i
 		return fmt.Errorf("starting server: %w", err)
 	}
 
-	if err := preloadModel(serverURL, modelID, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, keepAlive); err != nil {
+	speculative, err := buildSpeculativeOptions(specTypes, specDraftModel, specDraftNMax, specDraftPMin)
+	if err != nil {
+		return err
+	}
+	if err := preloadModel(serverURL, modelID, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, keepAlive, speculative); err != nil {
 		return fmt.Errorf("loading model: %w", err)
 	}
 
@@ -160,6 +172,36 @@ func runRun(cmd *cobra.Command, args []string, numCtx, numParallel, nGPULayers i
 	session := inference.NewSession(eng, opts)
 
 	return chatLoop(cmd.Context(), session)
+}
+
+func buildSpeculativeOptions(specTypes, draftModel string, draftNMax int, draftPMin float64) (*api.SpeculativeOptions, error) {
+	types := strings.Split(specTypes, ",")
+	if strings.TrimSpace(specTypes) == "" {
+		types = nil
+	}
+	var pMin *float64
+	if draftPMin != -1 {
+		value := draftPMin
+		pMin = &value
+	}
+	config, err := inference.NormalizeSpeculativeConfig(inference.SpeculativeConfig{
+		Types:      types,
+		DraftModel: strings.TrimSpace(draftModel),
+		DraftNMax:  draftNMax,
+		DraftPMin:  pMin,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !config.Enabled() {
+		return nil, nil
+	}
+	return &api.SpeculativeOptions{
+		Types:      config.Types,
+		DraftModel: strings.TrimSpace(draftModel),
+		DraftNMax:  config.DraftNMax,
+		DraftPMin:  config.DraftPMin,
+	}, nil
 }
 
 func chatLoop(ctx context.Context, session *Session) error {

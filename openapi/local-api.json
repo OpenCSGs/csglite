@@ -6396,6 +6396,9 @@
           },
           "dtype": {
             "type": "string"
+          },
+          "speculative": {
+            "$ref": "#/components/schemas/SpeculativeOptions"
           }
         }
       },
@@ -6926,6 +6929,50 @@
           }
         }
       },
+      "SpeculativeOptions": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "draft-simple",
+                "draft-eagle3",
+                "draft-dflash",
+                "draft-dspark",
+                "draft-mtp",
+                "ngram-cache",
+                "ngram-simple",
+                "ngram-map-k",
+                "ngram-map-k4v",
+                "ngram-mod"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "draft_model": {
+            "type": "string",
+            "description": "Local GGUF model ID used as the speculative draft model. Optional for draft-mtp when the target includes or ships an MTP companion."
+          },
+          "draft_n_max": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "draft_n_min": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "draft_p_min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      },
       "LoadRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -6964,6 +7011,9 @@
           },
           "dtype": {
             "type": "string"
+          },
+          "speculative": {
+            "$ref": "#/components/schemas/SpeculativeOptions"
           }
         }
       },

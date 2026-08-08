@@ -76,16 +76,20 @@ func LoadEngine(modelDir string, lm *model.LocalModel) (Engine, error) {
 // for SafeTensors → GGUF conversion. When verbose is true, llama-server
 // output is printed to stderr.
 func LoadEngineWithProgress(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (Engine, error) {
-	return loadEngineWithProgressMode(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, false)
+	return LoadEngineWithSpeculativeProgress(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, SpeculativeConfig{})
+}
+
+func LoadEngineWithSpeculativeProgress(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, speculative SpeculativeConfig) (Engine, error) {
+	return loadEngineWithProgressMode(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, false, speculative)
 }
 
 // LoadEmbeddingEngineWithProgress is like LoadEngineWithProgress but starts
 // llama-server in embedding mode for OpenAI-compatible /v1/embeddings.
 func LoadEmbeddingEngineWithProgress(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (Engine, error) {
-	return loadEngineWithProgressMode(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, true)
+	return loadEngineWithProgressMode(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, true, SpeculativeConfig{})
 }
 
-func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, embedding bool) (Engine, error) {
+func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, embedding bool, speculative SpeculativeConfig) (Engine, error) {
 	modelName := ""
 	if lm != nil {
 		modelName = lm.FullName()
@@ -122,7 +126,7 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 			if embedding {
 				return newLlamaEmbeddingEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
 			}
-			return newLlamaEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
+			return newLlamaSpeculativeEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, speculative, mmproj)
 		}
 		if convert.HasConvertibleHFWeights(modelDir) {
 			if err := ensureConvertibleHFArchitecture(modelDir); err != nil {
@@ -145,7 +149,7 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 				}
 				return eng, nil
 			}
-			eng, err := newLlamaEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
+			eng, err := newLlamaSpeculativeEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, speculative, mmproj)
 			if err != nil {
 				removeConvertedGGUFIfInvalid(ggufPath, err)
 				return nil, err
@@ -175,7 +179,7 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 		if embedding {
 			return newLlamaEmbeddingEngine(modelFile, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
 		}
-		return newLlamaEngine(modelFile, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
+		return newLlamaSpeculativeEngine(modelFile, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, speculative, mmproj)
 
 	case model.FormatSafeTensors, model.FormatPyTorch:
 		if err := ensureConvertibleHFArchitecture(modelDir); err != nil {
@@ -198,7 +202,7 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 			}
 			return eng, nil
 		}
-		eng, err := newLlamaEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
+		eng, err := newLlamaSpeculativeEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, speculative, mmproj)
 		if err != nil {
 			removeConvertedGGUFIfInvalid(ggufPath, err)
 			return nil, err

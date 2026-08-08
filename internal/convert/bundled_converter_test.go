@@ -17,8 +17,12 @@ func TestBundledConverterPyPresent(t *testing.T) {
 
 func TestBundledConverterIncludesMiniMaxPatchedTokenizerHash(t *testing.T) {
 	const patchedHash = "a77756c3cc91392f442c5b99e414be8020d53ae31460de90754b4fcf5cc84a2d"
-	if !strings.Contains(string(bundledConverterPy), patchedHash) {
-		t.Fatalf("bundled converter is missing patched MiniMax tokenizer hash %q", patchedHash)
+	base, err := fs.ReadFile(bundledConversion, bundledConversionRoot+"/base.py")
+	if err != nil {
+		t.Fatalf("read bundled conversion base: %v", err)
+	}
+	if !strings.Contains(string(base), patchedHash) {
+		t.Fatalf("bundled conversion package is missing patched MiniMax tokenizer hash %q", patchedHash)
 	}
 }
 
@@ -37,6 +41,31 @@ func TestMaterializeBundledGGUFPy(t *testing.T) {
 	initPath := filepath.Join(dst, "gguf", "__init__.py")
 	if data, err := os.ReadFile(initPath); err != nil || len(data) == 0 {
 		t.Fatalf("materialized gguf-py package is invalid: path=%s bytes=%d err=%v", initPath, len(data), err)
+	}
+}
+
+func TestMaterializeBundledConversion(t *testing.T) {
+	dst := t.TempDir()
+	if err := materializeBundledPythonTree(bundledConversion, bundledConversionRoot, dst); err != nil {
+		t.Fatalf("materialize conversion package: %v", err)
+	}
+	initPath := filepath.Join(dst, "__init__.py")
+	if _, err := os.Stat(initPath); err != nil {
+		t.Fatalf("materialized conversion package is invalid: %v", err)
+	}
+}
+
+func TestManagedConversionPathIsVersioned(t *testing.T) {
+	path := managedConversionPath()
+	if filepath.Base(path) != "conversion" {
+		t.Fatalf("managedConversionPath() = %q, want importable conversion package name", path)
+	}
+	versionDir := filepath.Base(filepath.Dir(path))
+	if !strings.Contains(versionDir, BundledConverterLLamacppRef) || !strings.Contains(versionDir, "-r") {
+		t.Fatalf("managedConversionPath() = %q, want versioned parent directory", path)
+	}
+	if filepath.Dir(path) != bundledConverterVersionDir() {
+		t.Fatalf("conversion package dir = %q, converter version dir = %q; want siblings", filepath.Dir(path), bundledConverterVersionDir())
 	}
 }
 

@@ -161,7 +161,7 @@ func ServerPID() int {
 // preloadModel sends a request to the server to eagerly load (and convert if
 // necessary) the model, so it is ready before the first chat request.
 // It uses SSE streaming to display conversion progress.
-func preloadModel(serverURL, modelID string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype, keepAlive string) error {
+func preloadModel(serverURL, modelID string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype, keepAlive string, speculative ...*api.SpeculativeOptions) error {
 	stream := true
 	req := api.LoadRequest{
 		Model:       modelID,
@@ -172,6 +172,9 @@ func preloadModel(serverURL, modelID string, numCtx, numParallel, nGPULayers int
 		CacheTypeK:  cacheTypeK,
 		CacheTypeV:  cacheTypeV,
 		DType:       dtype,
+	}
+	if len(speculative) > 0 {
+		req.Speculative = speculative[0]
 	}
 	if nGPULayers >= 0 {
 		req.NGPULayers = &nGPULayers

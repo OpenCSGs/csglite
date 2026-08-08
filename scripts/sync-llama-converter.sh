@@ -9,6 +9,9 @@ ASSETS_MODULE="github.com/opencsgs/llama-cpp-assets"
 INSTALL_SH="${REPO_ROOT}/scripts/install.sh"
 INSTALL_PS1="${REPO_ROOT}/scripts/install.ps1"
 INSTALL_GUIDE="${REPO_ROOT}/docs/getting-started/installation.md"
+LLAMA_BUILD_COMMON="${REPO_ROOT}/scripts/llama-build/common.sh"
+LLAMA_BUILD_X64="${REPO_ROOT}/scripts/llama-build/build-ubuntu22-cuda-x64.sh"
+LLAMA_BUILD_ARM64="${REPO_ROOT}/scripts/llama-build/build-ubuntu22-cuda-arm64.sh"
 
 info() { printf "\033[0;32m[INFO]\033[0m %s\n" "$1"; }
 die() { printf "\033[0;31m[ERROR]\033[0m %s\n" "$1" >&2; exit 1; }
@@ -72,7 +75,7 @@ ASSETS_REF="$(sed -n 's/^[[:space:]]*LlamaCppRef = "\(.*\)"$/\1/p' "${ASSETS_DIR
 
 go get "${ASSETS_MODULE}@${ASSETS_VERSION}"
 
-python3 - "${INSTALL_SH}" "${INSTALL_PS1}" "${INSTALL_GUIDE}" "${TAG}" <<'PY'
+python3 - "${INSTALL_SH}" "${INSTALL_PS1}" "${INSTALL_GUIDE}" "${LLAMA_BUILD_COMMON}" "${LLAMA_BUILD_X64}" "${LLAMA_BUILD_ARM64}" "${TAG}" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -80,7 +83,10 @@ import sys
 install_sh_path = Path(sys.argv[1])
 install_ps1_path = Path(sys.argv[2])
 install_guide_path = Path(sys.argv[3])
-tag = sys.argv[4]
+build_common_path = Path(sys.argv[4])
+build_x64_path = Path(sys.argv[5])
+build_arm64_path = Path(sys.argv[6])
+tag = sys.argv[7]
 
 install_sh = install_sh_path.read_text(encoding="utf-8")
 install_sh, shell_count = re.subn(
@@ -114,6 +120,29 @@ guide, guide_count = re.subn(
 if guide_count != 1:
     raise SystemExit("failed to update installation guide")
 install_guide_path.write_text(guide, encoding="utf-8")
+
+build_common = build_common_path.read_text(encoding="utf-8")
+build_common, common_count = re.subn(
+    r'\$\{LLAMA_TAG:-\$\{1:-b\d+\}\}',
+    '${LLAMA_TAG:-${1:-' + tag + '}}',
+    build_common,
+    count=1,
+)
+if common_count != 1:
+    raise SystemExit("failed to update scripts/llama-build/common.sh")
+build_common_path.write_text(build_common, encoding="utf-8")
+
+for build_path in (build_x64_path, build_arm64_path):
+    build = build_path.read_text(encoding="utf-8")
+    build, build_count = re.subn(
+        r'TAG="\$\{LLAMA_TAG:-b\d+\}"',
+        f'TAG="${{LLAMA_TAG:-{tag}}}"',
+        build,
+        count=1,
+    )
+    if build_count != 1:
+        raise SystemExit(f"failed to update {build_path}")
+    build_path.write_text(build, encoding="utf-8")
 PY
 
 go mod tidy
