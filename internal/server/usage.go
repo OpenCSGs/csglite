@@ -15,12 +15,30 @@ const (
 	apiUsageSourceLocal    = "local"
 	apiUsageSourceCloud    = "cloud"
 	apiUsageSourceProvider = "provider"
+	apiUsageSourcePool     = "pool"
 	apiUsageSourceUnknown  = "unknown"
 	apiUsageBuiltinKeyID   = "builtin:lite-chat"
 	apiUsageBuiltinKeyName = "Lite Chat / Local API"
 )
 
+type apiUsagePoolMetadata struct {
+	PoolID        string
+	PoolName      string
+	PoolModel     string
+	MemberModel   string
+	FallbackCount int64
+	LimitedCount  int64
+}
+
 func (s *Server) recordAPIUsage(r *http.Request, model, source string, inputTokens, outputTokens int) {
+	memberSource, pool := providerPoolUsageCaptureFromContext(r.Context()).get()
+	if memberSource != "" {
+		source = memberSource
+	}
+	s.recordAPIUsageWithPool(r, model, source, inputTokens, outputTokens, pool)
+}
+
+func (s *Server) recordAPIUsageWithPool(r *http.Request, model, source string, inputTokens, outputTokens int, pool *apiUsagePoolMetadata) {
 	if s == nil || s.apiUsage == nil {
 		return
 	}
@@ -30,22 +48,53 @@ func (s *Server) recordAPIUsage(r *http.Request, model, source string, inputToke
 		keyID = key.ID
 		keyName = key.Name
 	}
+	if routeSource := providerRouteSourceFromContext(r.Context()); routeSource != "" && pool == nil {
+		source = routeSource
+	}
 	resolvedSource, sourceType, sourceName := s.resolveAPIUsageSource(r.Context(), model, source)
 	_ = s.apiUsage.Add(config.APIUsageEvent{
-		APIKeyID:     keyID,
-		APIKeyName:   keyName,
-		Model:        model,
-		Source:       resolvedSource,
-		SourceType:   sourceType,
-		SourceName:   sourceName,
-		InputTokens:  int64(inputTokens),
-		OutputTokens: int64(outputTokens),
+		APIKeyID:      keyID,
+		APIKeyName:    keyName,
+		Model:         model,
+		Source:        resolvedSource,
+		SourceType:    sourceType,
+		SourceName:    sourceName,
+		PoolID:        poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.PoolID }),
+		PoolName:      poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.PoolName }),
+		PoolModel:     poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.PoolModel }),
+		MemberModel:   poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.MemberModel }),
+		FallbackCount: poolMetadataCount(pool, func(value *apiUsagePoolMetadata) int64 { return value.FallbackCount }),
+		LimitedCount:  poolMetadataCount(pool, func(value *apiUsagePoolMetadata) int64 { return value.LimitedCount }),
+		InputTokens:   int64(inputTokens),
+		OutputTokens:  int64(outputTokens),
 	})
+}
+
+func poolMetadataValue(metadata *apiUsagePoolMetadata, value func(*apiUsagePoolMetadata) string) string {
+	if metadata == nil {
+		return ""
+	}
+	return strings.TrimSpace(value(metadata))
+}
+
+func poolMetadataCount(metadata *apiUsagePoolMetadata, value func(*apiUsagePoolMetadata) int64) int64 {
+	if metadata == nil {
+		return 0
+	}
+	return value(metadata)
 }
 
 func (s *Server) resolveAPIUsageSource(ctx context.Context, model, source string) (string, string, string) {
 	source = strings.TrimSpace(source)
 	normalized := strings.ToLower(source)
+	if poolID := poolIDFromSource(source); poolID != "" {
+		for _, pool := range config.GetProviderPools() {
+			if pool.ID == poolID {
+				return poolSource(poolID), apiUsageSourcePool, pool.Name
+			}
+		}
+		return poolSource(poolID), apiUsageSourcePool, poolID
+	}
 	if providerID := providerIDFromSource(source); providerID != "" {
 		name := providerID
 		if provider, ok := getThirdPartyProvider(providerID); ok && strings.TrimSpace(provider.Name) != "" {

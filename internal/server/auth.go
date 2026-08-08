@@ -131,9 +131,39 @@ func requiresRemoteAPIAuth(r *http.Request) bool {
 	if r.Method == http.MethodOptions {
 		return false
 	}
-	switch r.URL.Path {
-	case "/api/chat", "/api/generate", "/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/messages/count_tokens", "/anthropic/messages", "/anthropic/messages/count_tokens", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens":
+	path := providerRouteLegacyPath(r.URL.Path)
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && isReadOnlyArtifactPath(path) {
 		return true
+	}
+	switch path {
+	case "/api/chat", "/api/generate", "/api/load", "/api/stop", "/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/messages/count_tokens", "/anthropic/messages", "/anthropic/messages/count_tokens", "/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens":
+		return true
+	default:
+		return false
+	}
+}
+
+func providerRouteLegacyPath(path string) string {
+	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 3)
+	if len(parts) == 3 && parts[0] == "providers" && strings.HasPrefix(parts[2], "v1/") {
+		return "/" + parts[2]
+	}
+	return path
+}
+
+func isReadOnlyArtifactPath(path string) bool {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 4 || parts[0] != "api" {
+		return false
+	}
+	switch parts[1] {
+	case "models":
+		return (len(parts) == 4 && parts[3] == "manifest") ||
+			(len(parts) == 5 && parts[4] == "manifest") ||
+			(len(parts) >= 6 && parts[4] == "files")
+	case "datasets":
+		return (len(parts) == 5 && parts[4] == "manifest") ||
+			(len(parts) >= 6 && parts[4] == "files")
 	default:
 		return false
 	}

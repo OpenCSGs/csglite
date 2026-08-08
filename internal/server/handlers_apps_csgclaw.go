@@ -41,12 +41,16 @@ func (s *Server) openCSGClawURL(ctx context.Context, modelID, modelSource string
 	if err != nil {
 		return "", err
 	}
+	resolvedSource, modelIDs, err := s.resolveAIAppModelSource(ctx, resolvedModel, modelSource)
+	if err != nil {
+		return "", err
+	}
 	if requestedModel != "" {
-		s.savePreferredAIAppModel("csgclaw", resolvedModel)
+		s.savePreferredAIAppSelection("csgclaw", resolvedModel, resolvedSource)
 	}
 
 	log.Printf("AI APP csgclaw: configuring model=%q models=%d", resolvedModel, len(modelIDs))
-	if err := s.configureCSGClaw(ctx, binary, resolvedModel, modelIDs, false); err != nil {
+	if err := s.configureCSGClaw(ctx, binary, resolvedModel, resolvedSource, modelIDs, false); err != nil {
 		return "", err
 	}
 
@@ -71,18 +75,27 @@ func (s *Server) saveCSGClawModel(ctx context.Context, modelID, modelSource stri
 	if err != nil {
 		return err
 	}
-	s.savePreferredAIAppModel("csgclaw", resolvedModel)
+	resolvedSource, modelIDs, err := s.resolveAIAppModelSource(ctx, resolvedModel, modelSource)
+	if err != nil {
+		return err
+	}
+	s.savePreferredAIAppSelection("csgclaw", resolvedModel, resolvedSource)
 
 	log.Printf("AI APP csgclaw: desktop model switch requested model=%q resolved=%q", modelID, resolvedModel)
-	return s.configureCSGClawDesktop(resolvedModel, modelIDs)
+	return s.configureCSGClawDesktop(resolvedModel, resolvedSource, modelIDs)
 }
 
-func (s *Server) configureCSGClawDesktop(modelID string, modelIDs []string) error {
+func (s *Server) configureCSGClawDesktop(modelID, modelSource string, modelIDs []string) error {
 	listenAddr := ""
 	if s != nil && s.cfg != nil {
 		listenAddr = s.cfg.RuntimeAPIAddr()
 	}
 	serverURL := csgclawReachableBaseURL(listenAddr, csgclawInterfaceAddrs())
+	var err error
+	serverURL, err = providerScopedBaseURL(serverURL, modelSource)
+	if err != nil {
+		return err
+	}
 	apiKey := "csghub-lite"
 	if s != nil && s.cfg != nil && strings.TrimSpace(s.cfg.Token) != "" {
 		apiKey = strings.TrimSpace(s.cfg.Token)
@@ -168,7 +181,7 @@ func (s *Server) resolveCSGClawLaunchModels(ctx context.Context, requestedModel,
 
 	preferredModel := s.preferredAIAppModel("csgclaw")
 	if preferredModel != "" {
-		modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, preferredModel, "")
+		modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, preferredModel, s.preferredAIAppModelSource("csgclaw"))
 		if err == nil {
 			return modelID, modelIDs, nil
 		}
@@ -182,7 +195,7 @@ func (s *Server) resolveCSGClawLaunchModels(ctx context.Context, requestedModel,
 	return s.resolveAIAppLaunchModels(ctx, "", "")
 }
 
-func (s *Server) configureCSGClaw(ctx context.Context, binary, modelID string, modelIDs []string, forceRestartManager bool) error {
+func (s *Server) configureCSGClaw(ctx context.Context, binary, modelID, modelSource string, modelIDs []string, forceRestartManager bool) error {
 	listenAddr := ""
 	if s != nil && s.cfg != nil {
 		listenAddr = s.cfg.RuntimeAPIAddr()
@@ -190,6 +203,11 @@ func (s *Server) configureCSGClaw(ctx context.Context, binary, modelID string, m
 	serverURL := csgclawReachableBaseURL(listenAddr, csgclawInterfaceAddrs())
 	if s != nil && s.cfg != nil && s.cfg.DesktopMode {
 		serverURL = s.localBaseURL()
+	}
+	var err error
+	serverURL, err = providerScopedBaseURL(serverURL, modelSource)
+	if err != nil {
+		return err
 	}
 	token := ""
 	if s != nil && s.cfg != nil {

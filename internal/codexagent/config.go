@@ -73,6 +73,68 @@ func IsManagedConfigData(data []byte) bool {
 	return tomlString(existing["model_provider"]) == ProviderID
 }
 
+// MatchesManagedProviderConfigData reports whether the Codex fields owned by
+// csghub-lite still point at the expected local provider. Unrelated Codex
+// settings are intentionally ignored because Codex updates them independently.
+func MatchesManagedProviderConfigData(data []byte, serverURL, apiKey string) bool {
+	existing := make(map[string]tomlValue)
+	parseTomlFile(string(data), existing)
+
+	configDir, err := ConfigDir()
+	if err != nil {
+		return false
+	}
+	prefix := "model_providers." + ProviderID + "."
+	websockets := existing[prefix+"supports_websockets"]
+	return tomlString(existing["model_provider"]) == ProviderID &&
+		tomlString(existing[prefix+"name"]) == "OpenCSG" &&
+		tomlString(existing[prefix+"base_url"]) == strings.TrimRight(serverURL, "/")+"/v1" &&
+		tomlString(existing[prefix+"api_key"]) == strings.TrimSpace(apiKey) &&
+		websockets.isBool && !websockets.boolVal &&
+		filepath.Clean(tomlString(existing["model_catalog_json"])) ==
+			filepath.Join(configDir, "csghub-lite", "models.json")
+}
+
+// RestoreNativeConfigData restores only the Codex fields managed by
+// csghub-lite. Settings that Codex or the user changed after enabling OpenCSG
+// remain untouched.
+func RestoreNativeConfigData(currentData, originalData []byte, originalExisted bool) error {
+	configPath, err := ConfigPath()
+	if err != nil {
+		return err
+	}
+	current := make(map[string]tomlValue)
+	parseTomlFile(string(currentData), current)
+	original := make(map[string]tomlValue)
+	if originalExisted {
+		parseTomlFile(string(originalData), original)
+	}
+
+	for _, key := range []string{"model_provider", "model", "model_catalog_json"} {
+		restoreConfigValue(current, original, key)
+	}
+	prefix := "model_providers." + ProviderID + "."
+	for key := range current {
+		if strings.HasPrefix(key, prefix) {
+			delete(current, key)
+		}
+	}
+	for key, value := range original {
+		if strings.HasPrefix(key, prefix) {
+			current[key] = value
+		}
+	}
+	return writeConfigValues(configPath, current)
+}
+
+func restoreConfigValue(current, original map[string]tomlValue, key string) {
+	if value, ok := original[key]; ok {
+		current[key] = value
+		return
+	}
+	delete(current, key)
+}
+
 // RemoveManagedConfig removes only fields owned by legacy csghub-lite
 // integrations. It is used when no pre-switch snapshot exists.
 func RemoveManagedConfig() error {

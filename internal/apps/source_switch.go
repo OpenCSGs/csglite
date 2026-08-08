@@ -23,6 +23,11 @@ type SourceSwitchStatus struct {
 	Drifted bool
 }
 
+type RestoreNativeOptions struct {
+	ValidateManaged func([]byte) bool
+	RestoreManaged  func(currentData, originalData []byte, originalExisted bool) error
+}
+
 type sourceFileSnapshot struct {
 	Known   bool        `json:"known"`
 	Existed bool        `json:"existed"`
@@ -47,7 +52,11 @@ func NewSourceSwitchManager(storageRoot string) *SourceSwitchManager {
 	}
 }
 
-func (m *SourceSwitchManager) Status(group, targetPath string, isManaged func([]byte) bool) (SourceSwitchStatus, error) {
+func (m *SourceSwitchManager) Status(
+	group, targetPath string,
+	isManaged func([]byte) bool,
+	validateManaged ...func([]byte) bool,
+) (SourceSwitchStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -73,7 +82,7 @@ func (m *SourceSwitchManager) Status(group, targetPath string, isManaged func([]
 		if err != nil {
 			return SourceSwitchStatus{}, err
 		}
-		status.Drifted = fileDigest(data) != record.ManagedSHA256
+		status.Drifted = managedConfigDrifted(data, record.ManagedSHA256, validateManaged)
 	}
 	return status, nil
 }
@@ -82,6 +91,7 @@ func (m *SourceSwitchManager) UseOpenCSG(
 	group, targetPath string,
 	isManaged func([]byte) bool,
 	apply func() error,
+	validateManaged ...func([]byte) bool,
 ) (SourceSwitchStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -95,7 +105,7 @@ func (m *SourceSwitchManager) UseOpenCSG(
 		return SourceSwitchStatus{}, err
 	}
 	if found && normalizeProviderMode(record.Mode) == ProviderModeOpenCSG &&
-		record.ManagedSHA256 != "" && fileDigest(currentData) != record.ManagedSHA256 {
+		record.ManagedSHA256 != "" && managedConfigDrifted(currentData, record.ManagedSHA256, validateManaged) {
 		return SourceSwitchStatus{Mode: ProviderModeOpenCSG, Drifted: true},
 			fmt.Errorf("configuration changed after OpenCSG was enabled; restore or review the app configuration before switching again")
 	}
@@ -137,6 +147,7 @@ func (m *SourceSwitchManager) RestoreNative(
 	group, targetPath string,
 	isManaged func([]byte) bool,
 	restoreLegacy func() error,
+	options ...RestoreNativeOptions,
 ) (SourceSwitchStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -149,15 +160,25 @@ func (m *SourceSwitchManager) RestoreNative(
 	if err != nil {
 		return SourceSwitchStatus{}, err
 	}
+	var option RestoreNativeOptions
+	if len(options) > 0 {
+		option = options[0]
+	}
 	if found && normalizeProviderMode(record.Mode) == ProviderModeOpenCSG &&
-		record.ManagedSHA256 != "" && fileDigest(currentData) != record.ManagedSHA256 {
+		record.ManagedSHA256 != "" && managedConfigDrifted(currentData, record.ManagedSHA256, []func([]byte) bool{option.ValidateManaged}) {
 		return SourceSwitchStatus{Mode: ProviderModeOpenCSG, Drifted: true},
 			fmt.Errorf("configuration changed after OpenCSG was enabled; refusing to overwrite the newer app configuration")
 	}
 
 	if found && record.Original.Known {
-		if err := restoreSnapshot(targetPath, record.Original); err != nil {
-			return SourceSwitchStatus{}, err
+		if option.RestoreManaged != nil {
+			if err := option.RestoreManaged(currentData, record.Original.Data, record.Original.Existed); err != nil {
+				return SourceSwitchStatus{}, err
+			}
+		} else {
+			if err := restoreSnapshot(targetPath, record.Original); err != nil {
+				return SourceSwitchStatus{}, err
+			}
 		}
 	} else if isManaged(currentData) {
 		if err := restoreLegacy(); err != nil {
@@ -174,6 +195,13 @@ func (m *SourceSwitchManager) RestoreNative(
 		return SourceSwitchStatus{}, err
 	}
 	return SourceSwitchStatus{Mode: ProviderModeNative}, nil
+}
+
+func managedConfigDrifted(data []byte, managedSHA256 string, validateManaged []func([]byte) bool) bool {
+	if len(validateManaged) > 0 && validateManaged[0] != nil {
+		return !validateManaged[0](data)
+	}
+	return fileDigest(data) != managedSHA256
 }
 
 func (m *SourceSwitchManager) recordPath(group string) string {

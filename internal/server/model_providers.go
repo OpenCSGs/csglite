@@ -23,9 +23,6 @@ func modelProviderID(info api.ModelInfo) string {
 		return normalizeModelProvider(providerID)
 	}
 	if isCloudModelInfo(info) {
-		if provider := normalizeModelProvider(info.Provider); provider != "" {
-			return provider
-		}
 		return config.DefaultCloudProviderName
 	}
 	if provider := normalizeModelProvider(info.Provider); provider != "" {
@@ -95,12 +92,10 @@ func modelProviderName(info api.ModelInfo, id string, locale string) string {
 		}
 	}
 	if isCloudModelInfo(info) {
-		if provider := strings.TrimSpace(info.Provider); normalizeModelProvider(provider) == id {
+		if provider := strings.TrimSpace(info.Provider); provider != "" {
 			return provider
 		}
-		if id == config.DefaultCloudProviderName {
-			return config.DefaultCloudProviderName
-		}
+		return config.DefaultCloudProviderName
 	}
 	if ownedBy := strings.TrimSpace(info.OwnedBy); normalizeModelProvider(ownedBy) == id {
 		return ownedBy

@@ -5,8 +5,12 @@
 When syncing or changing the bundled `llama.cpp` converter version, keep these
 aligned in the same task:
 
-- `internal/convert/bundled_converter.go` `BundledConverterLLamacppRef`.
-- User-facing `gguf-py` install/download hints that reference a llama.cpp tag.
+- The published `github.com/opencsgs/llama-cpp-assets` module version in
+  `go.mod`. Its exported `LlamaCppRef`, converter, and `gguf-py` must all come
+  from the same upstream tag.
+- `internal/convert/bundled_converter.go`, which must consume the dependency's
+  exported ref and revision rather than defining an independent version.
+- User-facing `gguf-py` descriptions that reference a llama.cpp tag.
 - Installer defaults in `scripts/install.sh` and `scripts/install.ps1` for
   downloaded `llama-server`.
 - Local inference architecture support tables:
@@ -21,12 +25,28 @@ aligned in the same task:
 Users should get a consistent llama.cpp version for:
 
 - bundled `convert_hf_to_gguf.py`
-- matching `gguf-py`
+- bundled matching `gguf-py`
 - downloaded `llama-server`
 
 Do not sync only the converter and leave installer defaults on an older tag. If
 an exact mirrored binary tag is unavailable, either mirror it as part of the task
 or explicitly choose the fallback tag and update all three surfaces together.
+
+The asset dependency repository is part of every llama.cpp upgrade:
+
+1. In `OpenCSGs/llama-cpp-assets`, run
+   `scripts/sync-llama-cpp.sh --tag <tag>`, review the converter and complete
+   `gguf-py` update, run its tests, then commit, tag, and publish a new module
+   version.
+2. In CSGLite, run
+   `scripts/sync-llama-converter.sh --tag <tag> --assets-version <version>`.
+   This must update `go.mod`, installer defaults, and lockstep tests together.
+3. Build or mirror matching `llama-server` binaries and update architecture
+   support tables in the same CSGLite change.
+
+Do not check generated Python assets into the CSGLite repository. Normal
+SafeTensors conversion must use the dependency's embedded package and must not
+clone or download llama.cpp source at runtime.
 
 When upgrading the bundled llama.cpp converter, inspect the new
 `convert_hf_to_gguf.py` registry and update the Go mapping tables in the same
@@ -43,8 +63,9 @@ When bumping the pinned llama.cpp tag, use **two paths**. Do not mix them.
 
 Use the official GitHub release tag for everything upstream publishes:
 
-- **Bundled converter** — `scripts/sync-llama-converter.sh --tag <tag>` (source:
-  `ggml-org/llama.cpp` at that tag).
+- **Bundled converter and gguf-py** — sync and publish
+  `OpenCSGs/llama-cpp-assets` first, then update CSGLite with
+  `scripts/sync-llama-converter.sh --tag <tag> --assets-version <version>`.
 - **Installer prebuilts** that exist on the official release page — macOS CPU,
   Ubuntu CPU x64/arm64, Windows CPU/CUDA where `ggml-org` ships tarballs/zip,
   etc. Download from

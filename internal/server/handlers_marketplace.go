@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -89,6 +90,9 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
+	if err := enrichMarketplaceModelSizes(r.Context(), client, models); err != nil {
+		log.Printf("marketplace model sizes unavailable: %v", err)
+	}
 
 	writeMarketplaceListResponse(w, cacheKey, map[string]interface{}{
 		"data":  models,
@@ -115,6 +119,27 @@ type marketplaceModelDetailResponse struct {
 	LocalModel     marketplaceLocalModelStatus    `json:"local_model"`
 }
 
+func enrichMarketplaceModelSizes(ctx context.Context, client *csghub.Client, models []csghub.Model) error {
+	repoIDs := make([]int, 0, len(models))
+	for _, item := range models {
+		if item.RepositoryID > 0 {
+			repoIDs = append(repoIDs, item.RepositoryID)
+		}
+	}
+	extras, err := client.GetRepoExtras(ctx, repoIDs)
+	if err != nil {
+		return err
+	}
+	sizes := make(map[int]int64, len(extras))
+	for _, item := range extras {
+		sizes[item.RepoID] = item.Size
+	}
+	for i := range models {
+		models[i].RepoSize = sizes[models[i].RepositoryID]
+	}
+	return nil
+}
+
 // GET /api/marketplace/models/{namespace}/{name} -- proxy to CSGHub model detail
 func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Request) {
 	namespace := r.PathValue("namespace")
@@ -130,6 +155,12 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+	modelWithSize := []csghub.Model{*details}
+	if err := enrichMarketplaceModelSizes(r.Context(), client, modelWithSize); err != nil {
+		log.Printf("marketplace model size unavailable for %s: %v", requestedModelID, err)
+	} else {
+		*details = modelWithSize[0]
 	}
 
 	format := marketplaceModelFormat(details.Tags)

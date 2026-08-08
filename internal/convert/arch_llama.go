@@ -12,94 +12,94 @@ import (
 // Synced from llama.cpp convert_hf_to_gguf.py and src/llama-arch.cpp.
 var archMapping = map[string]string{
 	// Llama family
-	"LlamaForCausalLM":                "llama",
-	"LLaMAForCausalLM":                "llama",
-	"MistralForCausalLM":              "llama",
-	"MixtralForCausalLM":              "llama",
-	"InternLM3ForCausalLM":            "llama",
-	"Llama4ForCausalLM":               "llama4",
-	"Llama4ForConditionalGeneration":   "llama4",
-	"LlamaBidirectionalModel":          "llama",
-	"DeciLMForCausalLM":               "deci",
-	"ArceeForCausalLM":                "arcee",
-	"AfmoeForCausalLM":                "afmoe",
-	"SmolLM3ForCausalLM":              "smollm3",
-	"ApertusForCausalLM":              "apertus",
-	"CogVLMForCausalLM":               "cogvlm",
+	"LlamaForCausalLM":               "llama",
+	"LLaMAForCausalLM":               "llama",
+	"MistralForCausalLM":             "llama",
+	"MixtralForCausalLM":             "llama",
+	"InternLM3ForCausalLM":           "llama",
+	"Llama4ForCausalLM":              "llama4",
+	"Llama4ForConditionalGeneration": "llama4",
+	"LlamaBidirectionalModel":        "llama",
+	"DeciLMForCausalLM":              "deci",
+	"ArceeForCausalLM":               "arcee",
+	"AfmoeForCausalLM":               "afmoe",
+	"SmolLM3ForCausalLM":             "smollm3",
+	"ApertusForCausalLM":             "apertus",
+	"CogVLMForCausalLM":              "cogvlm",
 
 	// Qwen family
-	"QWenLMHeadModel":                            "qwen2",
-	"Qwen2ForCausalLM":                           "qwen2",
-	"Qwen2Model":                                 "qwen2",
-	"Qwen2MoeForCausalLM":                        "qwen2moe",
-	"Qwen2VLForConditionalGeneration":             "qwen2vl",
-	"Qwen2_5_VLForConditionalGeneration":          "qwen2vl",
-	"Qwen2AudioForConditionalGeneration":          "qwen2",
-	"KORMoForCausalLM":                            "qwen2",
-	"AudioFlamingo3ForConditionalGeneration":       "qwen2",
-	"Qwen3ForCausalLM":                            "qwen3",
-	"Qwen3MoeForCausalLM":                         "qwen3moe",
-	"Qwen3VLForConditionalGeneration":             "qwen3",
-	"Qwen3VLMoeForConditionalGeneration":          "qwen3moe",
-	"Qwen3NextForCausalLM":                        "qwen3next",
-	"Qwen3_5ForConditionalGeneration":             "qwen35",
-	"Qwen3_5ForCausalLM":                          "qwen35",
-	"Qwen3_5MoeForConditionalGeneration":          "qwen35moe",
-	"Qwen3_5MoeForCausalLM":                       "qwen35moe",
+	"QWenLMHeadModel":                        "qwen2",
+	"Qwen2ForCausalLM":                       "qwen2",
+	"Qwen2Model":                             "qwen2",
+	"Qwen2MoeForCausalLM":                    "qwen2moe",
+	"Qwen2VLForConditionalGeneration":        "qwen2vl",
+	"Qwen2_5_VLForConditionalGeneration":     "qwen2vl",
+	"Qwen2AudioForConditionalGeneration":     "qwen2",
+	"KORMoForCausalLM":                       "qwen2",
+	"AudioFlamingo3ForConditionalGeneration": "qwen2",
+	"Qwen3ForCausalLM":                       "qwen3",
+	"Qwen3MoeForCausalLM":                    "qwen3moe",
+	"Qwen3VLForConditionalGeneration":        "qwen3",
+	"Qwen3VLMoeForConditionalGeneration":     "qwen3moe",
+	"Qwen3NextForCausalLM":                   "qwen3next",
+	"Qwen3_5ForConditionalGeneration":        "qwen35",
+	"Qwen3_5ForCausalLM":                     "qwen35",
+	"Qwen3_5MoeForConditionalGeneration":     "qwen35moe",
+	"Qwen3_5MoeForCausalLM":                  "qwen35moe",
 
 	// Gemma family
 	"GemmaForCausalLM":                "gemma",
 	"Gemma2ForCausalLM":               "gemma2",
 	"Gemma3ForCausalLM":               "gemma3",
-	"Gemma3ForConditionalGeneration":   "gemma3",
+	"Gemma3ForConditionalGeneration":  "gemma3",
 	"Gemma3nForCausalLM":              "gemma3n",
-	"Gemma3nForConditionalGeneration":  "gemma3n",
+	"Gemma3nForConditionalGeneration": "gemma3n",
 
 	// Phi family
-	"PhiForCausalLM":     "phi2",
-	"Phi3ForCausalLM":    "phi3",
-	"Phi4ForCausalLMV":   "phi3",
-	"PhiMoEForCausalLM":  "phimoe",
+	"PhiForCausalLM":    "phi2",
+	"Phi3ForCausalLM":   "phi3",
+	"Phi4ForCausalLMV":  "phi3",
+	"PhiMoEForCausalLM": "phimoe",
 
 	// GLM / ChatGLM family
-	"GlmForCausalLM":                    "chatglm",
-	"ChatGLMModel":                      "chatglm",
-	"ChatGLMForConditionalGeneration":   "chatglm",
-	"Glm4ForCausalLM":                   "glm4",
-	"Glm4vForConditionalGeneration":     "glm4",
-	"GlmOcrForConditionalGeneration":    "glm4",
-	"Glm4MoeForCausalLM":                "glm4moe",
-	"Glm4vMoeForConditionalGeneration":  "glm4moe",
-	"GlmMoeDsaForCausalLM":              "glm-dsa",
-	"Glm4MoeLiteForCausalLM":            "deepseek2",
-	"SolarOpenForCausalLM":              "glm4moe",
+	"GlmForCausalLM":                   "chatglm",
+	"ChatGLMModel":                     "chatglm",
+	"ChatGLMForConditionalGeneration":  "chatglm",
+	"Glm4ForCausalLM":                  "glm4",
+	"Glm4vForConditionalGeneration":    "glm4",
+	"GlmOcrForConditionalGeneration":   "glm4",
+	"Glm4MoeForCausalLM":               "glm4moe",
+	"Glm4vMoeForConditionalGeneration": "glm4moe",
+	"GlmMoeDsaForCausalLM":             "glm-dsa",
+	"Glm4MoeLiteForCausalLM":           "deepseek2",
+	"SolarOpenForCausalLM":             "glm4moe",
 
 	// Deepseek family
-	"DeepseekForCausalLM":    "deepseek",
-	"DeepseekV2ForCausalLM":  "deepseek2",
-	"DeepseekV3ForCausalLM":  "deepseek2",
+	"DeepseekForCausalLM":   "deepseek",
+	"DeepseekV2ForCausalLM": "deepseek2",
+	"DeepseekV3ForCausalLM": "deepseek2",
 
 	// InternLM
 	"InternLM2ForCausalLM": "internlm2",
 
 	// Baichuan
-	"BaichuanForCausalLM":  "baichuan",
-	"BaiChuanForCausalLM":  "baichuan",
+	"BaichuanForCausalLM": "baichuan",
+	"BaiChuanForCausalLM": "baichuan",
 
 	// Cohere / Command-R
 	"CohereForCausalLM":  "command-r",
 	"Cohere2ForCausalLM": "cohere2",
 
 	// Olmo family
-	"OlmoForCausalLM":   "olmo",
-	"OLMoForCausalLM":   "olmo",
-	"Olmo2ForCausalLM":  "olmo2",
-	"Olmo3ForCausalLM":  "olmo2",
-	"OlmoeForCausalLM":  "olmoe",
+	"OlmoForCausalLM":  "olmo",
+	"OLMoForCausalLM":  "olmo",
+	"Olmo2ForCausalLM": "olmo2",
+	"Olmo3ForCausalLM": "olmo2",
+	"OlmoeForCausalLM": "olmoe",
 
 	// MiniCPM
-	"MiniCPMForCausalLM":   "minicpm",
-	"MiniCPM3ForCausalLM":  "minicpm3",
+	"MiniCPMForCausalLM":  "minicpm",
+	"MiniCPM3ForCausalLM": "minicpm3",
 
 	// Falcon family
 	"FalconForCausalLM":   "falcon",
@@ -107,38 +107,38 @@ var archMapping = map[string]string{
 	"FalconH1ForCausalLM": "falcon-h1",
 
 	// Mamba / SSM family
-	"MambaForCausalLM":        "mamba",
-	"MambaLMHeadModel":        "mamba",
-	"FalconMambaForCausalLM":  "mamba",
-	"Mamba2ForCausalLM":       "mamba2",
-	"JambaForCausalLM":        "jamba",
+	"MambaForCausalLM":       "mamba",
+	"MambaLMHeadModel":       "mamba",
+	"FalconMambaForCausalLM": "mamba",
+	"Mamba2ForCausalLM":      "mamba2",
+	"JambaForCausalLM":       "jamba",
 
 	// RWKV family
-	"Rwkv6ForCausalLM":        "rwkv6",
-	"RWKV6Qwen2ForCausalLM":   "rwkv6qwen2",
-	"Rwkv7ForCausalLM":        "rwkv7",
-	"RWKV7ForCausalLM":        "rwkv7",
-	"RwkvHybridForCausalLM":   "arwkv7",
+	"Rwkv6ForCausalLM":      "rwkv6",
+	"RWKV6Qwen2ForCausalLM": "rwkv6qwen2",
+	"Rwkv7ForCausalLM":      "rwkv7",
+	"RWKV7ForCausalLM":      "rwkv7",
+	"RwkvHybridForCausalLM": "arwkv7",
 
 	// Granite family
-	"GraniteForCausalLM":              "granite",
-	"GraniteMoeForCausalLM":           "granitemoe",
-	"GraniteMoeSharedForCausalLM":     "granitemoe",
-	"GraniteMoeHybridForCausalLM":     "granitehybrid",
-	"BambaForCausalLM":                "granitehybrid",
+	"GraniteForCausalLM":          "granite",
+	"GraniteMoeForCausalLM":       "granitemoe",
+	"GraniteMoeSharedForCausalLM": "granitemoe",
+	"GraniteMoeHybridForCausalLM": "granitehybrid",
+	"BambaForCausalLM":            "granitehybrid",
 
 	// Nemotron
-	"NemotronForCausalLM":   "nemotron",
-	"NemotronHForCausalLM":  "nemotron_h",
+	"NemotronForCausalLM":  "nemotron",
+	"NemotronHForCausalLM": "nemotron_h",
 
 	// Exaone
-	"ExaoneForCausalLM":     "exaone",
-	"Exaone4ForCausalLM":    "exaone4",
-	"ExaoneMoEForCausalLM":  "exaone-moe",
+	"ExaoneForCausalLM":    "exaone",
+	"Exaone4ForCausalLM":   "exaone4",
+	"ExaoneMoEForCausalLM": "exaone-moe",
 
 	// StarCoder
-	"GPTBigCodeForCausalLM":    "starcoder",
-	"Starcoder2ForCausalLM":    "starcoder2",
+	"GPTBigCodeForCausalLM": "starcoder",
+	"Starcoder2ForCausalLM": "starcoder2",
 
 	// Mistral (standalone)
 	"Ministral3ForCausalLM":            "mistral3",
@@ -147,47 +147,47 @@ var archMapping = map[string]string{
 	"Mistral4ForCausalLM":              "mistral4",
 
 	// HunyYuan
-	"HunYuanMoEV1ForCausalLM":    "hunyuan-moe",
-	"HunYuanDenseV1ForCausalLM":  "hunyuan-dense",
+	"HunYuanMoEV1ForCausalLM":   "hunyuan-moe",
+	"HunYuanDenseV1ForCausalLM": "hunyuan-dense",
 
 	// Ernie
-	"Ernie4_5_ForCausalLM":     "ernie4_5",
-	"Ernie4_5ForCausalLM":      "ernie4_5",
-	"Ernie4_5_MoeForCausalLM":  "ernie4_5-moe",
+	"Ernie4_5_ForCausalLM":    "ernie4_5",
+	"Ernie4_5ForCausalLM":     "ernie4_5",
+	"Ernie4_5_MoeForCausalLM": "ernie4_5-moe",
 
 	// GPT family
-	"GPT2LMHeadModel":        "gpt2",
-	"GPTNeoXForCausalLM":     "gptneox",
-	"GPTRefactForCausalLM":   "refact",
+	"GPT2LMHeadModel":      "gpt2",
+	"GPTNeoXForCausalLM":   "gptneox",
+	"GPTRefactForCausalLM": "refact",
 
 	// Bloom
-	"BloomForCausalLM":   "bloom",
-	"BloomModel":         "bloom",
+	"BloomForCausalLM": "bloom",
+	"BloomModel":       "bloom",
 
 	// StableLM
-	"StableLmForCausalLM":              "stablelm",
-	"StableLMEpochForCausalLM":         "stablelm",
-	"LlavaStableLMEpochForCausalLM":    "stablelm",
+	"StableLmForCausalLM":           "stablelm",
+	"StableLMEpochForCausalLM":      "stablelm",
+	"LlavaStableLMEpochForCausalLM": "stablelm",
 
 	// T5 encoder-decoder
-	"T5WithLMHeadModel":           "t5",
-	"T5ForConditionalGeneration":  "t5",
-	"MT5ForConditionalGeneration": "t5",
+	"T5WithLMHeadModel":            "t5",
+	"T5ForConditionalGeneration":   "t5",
+	"MT5ForConditionalGeneration":  "t5",
 	"UMT5ForConditionalGeneration": "t5",
-	"UMT5Model":                   "t5",
-	"T5EncoderModel":              "t5encoder",
+	"UMT5Model":                    "t5",
+	"T5EncoderModel":               "t5encoder",
 
 	// JAIS
-	"JaisModel":          "jais",
-	"JAISLMHeadModel":    "jais",
-	"Jais2ForCausalLM":   "jais2",
+	"JaisModel":        "jais",
+	"JAISLMHeadModel":  "jais",
+	"Jais2ForCausalLM": "jais2",
 
 	// PLaMo family
-	"PlamoForCausalLM":   "plamo",
-	"Plamo2ForCausalLM":  "plamo2",
-	"PLaMo2ForCausalLM":  "plamo2",
-	"Plamo3ForCausalLM":  "plamo3",
-	"PLaMo3ForCausalLM":  "plamo3",
+	"PlamoForCausalLM":  "plamo",
+	"Plamo2ForCausalLM": "plamo2",
+	"PLaMo2ForCausalLM": "plamo2",
+	"Plamo3ForCausalLM": "plamo3",
+	"PLaMo3ForCausalLM": "plamo3",
 
 	// Diffusion models
 	"DreamModel":      "dream",
@@ -201,41 +201,41 @@ var archMapping = map[string]string{
 	"KimiLinearModel":       "kimi-linear",
 
 	// LFM2 family
-	"Lfm2ForCausalLM":      "lfm2",
-	"LFM2ForCausalLM":      "lfm2",
-	"Lfm2Model":            "lfm2",
-	"Lfm25AudioTokenizer":  "lfm2",
-	"Lfm2MoeForCausalLM":   "lfm2moe",
+	"Lfm2ForCausalLM":     "lfm2",
+	"LFM2ForCausalLM":     "lfm2",
+	"Lfm2Model":           "lfm2",
+	"Lfm25AudioTokenizer": "lfm2",
+	"Lfm2MoeForCausalLM":  "lfm2moe",
 
 	// Other architectures
-	"MPTForCausalLM":             "mpt",
-	"OrionForCausalLM":           "orion",
-	"XverseForCausalLM":          "xverse",
-	"CodeShellForCausalLM":       "codeshell",
-	"DbrxForCausalLM":            "dbrx",
-	"OpenELMForCausalLM":         "openelm",
-	"ArcticForCausalLM":          "arctic",
-	"BitnetForCausalLM":          "bitnet",
-	"GrokForCausalLM":            "grok",
-	"Grok1ForCausalLM":           "grok",
-	"ChameleonForCausalLM":       "chameleon",
-	"ChameleonForConditionalGeneration": "chameleon",
-	"PLMForCausalLM":             "plm",
-	"Dots1ForCausalLM":           "dots1",
-	"BailingMoeForCausalLM":      "bailingmoe",
-	"BailingMoeV2ForCausalLM":    "bailingmoe2",
-	"GroveMoeForCausalLM":                        "grovemoe",
-	"modeling_grove_moe.GroveMoeForCausalLM":      "grovemoe",
-	"SmallThinkerForCausalLM":    "smallthinker",
-	"GptOssForCausalLM":          "gpt-oss",
-	"SeedOssForCausalLM":         "seed_oss",
-	"MiniMaxM2ForCausalLM":       "minimax-m2",
-	"MiMoV2FlashForCausalLM":     "mimo2",
-	"Step3p5ForCausalLM":         "step35",
-	"MaincoderForCausalLM":       "maincoder",
-	"PanguEmbeddedForCausalLM":   "pangu-embedded",
-	"WavTokenizerDec":            "wavtokenizer-dec",
-	"PaddleOCRVLForConditionalGeneration": "paddleocr",
+	"MPTForCausalLM":                         "mpt",
+	"OrionForCausalLM":                       "orion",
+	"XverseForCausalLM":                      "xverse",
+	"CodeShellForCausalLM":                   "codeshell",
+	"DbrxForCausalLM":                        "dbrx",
+	"OpenELMForCausalLM":                     "openelm",
+	"ArcticForCausalLM":                      "arctic",
+	"BitnetForCausalLM":                      "bitnet",
+	"GrokForCausalLM":                        "grok",
+	"Grok1ForCausalLM":                       "grok",
+	"ChameleonForCausalLM":                   "chameleon",
+	"ChameleonForConditionalGeneration":      "chameleon",
+	"PLMForCausalLM":                         "plm",
+	"Dots1ForCausalLM":                       "dots1",
+	"BailingMoeForCausalLM":                  "bailingmoe",
+	"BailingMoeV2ForCausalLM":                "bailingmoe2",
+	"GroveMoeForCausalLM":                    "grovemoe",
+	"modeling_grove_moe.GroveMoeForCausalLM": "grovemoe",
+	"SmallThinkerForCausalLM":                "smallthinker",
+	"GptOssForCausalLM":                      "gpt-oss",
+	"SeedOssForCausalLM":                     "seed_oss",
+	"MiniMaxM2ForCausalLM":                   "minimax-m2",
+	"MiMoV2FlashForCausalLM":                 "mimo2",
+	"Step3p5ForCausalLM":                     "step35",
+	"MaincoderForCausalLM":                   "maincoder",
+	"PanguEmbeddedForCausalLM":               "pangu-embedded",
+	"WavTokenizerDec":                        "wavtokenizer-dec",
+	"PaddleOCRVLForConditionalGeneration":    "paddleocr",
 }
 
 // ropeParameters holds rope_parameters / rope_scaling fields from config.json.
@@ -263,8 +263,8 @@ type modelConfig struct {
 	BosTokenID            *int     `json:"bos_token_id"`
 	EosTokenID            *int     `json:"eos_token_id"`
 
-	RopeParams   *ropeParameters `json:"rope_parameters"`
-	RopeScaling  *ropeParameters `json:"rope_scaling"`
+	RopeParams  *ropeParameters `json:"rope_parameters"`
+	RopeScaling *ropeParameters `json:"rope_scaling"`
 
 	// SSM / linear-attention fields (Qwen3.5, Mamba, etc.)
 	LinearConvKernelDim   int     `json:"linear_conv_kernel_dim"`
@@ -303,6 +303,31 @@ type modelConfig struct {
 }
 
 func loadModelConfig(modelDir string) (*modelConfig, error) {
+	cfg, err := readModelConfig(modelDir)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(cfg.Architectures) == 0 {
+		return nil, fmt.Errorf("config.json: no architectures specified")
+	}
+
+	normalizeModelConfig(cfg)
+	return cfg, nil
+}
+
+// ModelMaxPositionEmbeddings returns the text model's declared maximum context
+// from config.json, including vision-language configs that nest text params
+// under text_config.
+func ModelMaxPositionEmbeddings(modelDir string) (int, error) {
+	cfg, err := readModelConfig(modelDir)
+	if err != nil {
+		return 0, err
+	}
+	return cfg.MaxPositionEmbeddings, nil
+}
+
+func readModelConfig(modelDir string) (*modelConfig, error) {
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
 		return nil, fmt.Errorf("reading config.json: %w", err)
@@ -313,10 +338,11 @@ func loadModelConfig(modelDir string) (*modelConfig, error) {
 		return nil, fmt.Errorf("parsing config.json: %w", err)
 	}
 
-	if len(cfg.Architectures) == 0 {
-		return nil, fmt.Errorf("config.json: no architectures specified")
-	}
+	promoteTextModelConfig(&cfg)
+	return &cfg, nil
+}
 
+func promoteTextModelConfig(cfg *modelConfig) {
 	// VL models store text model params under text_config; promote them.
 	if cfg.HiddenSize == 0 && cfg.TextConfig != nil {
 		tc := cfg.TextConfig
@@ -369,7 +395,9 @@ func loadModelConfig(modelDir string) (*modelConfig, error) {
 			cfg.PartialRotaryFactor = tc.PartialRotaryFactor
 		}
 	}
+}
 
+func normalizeModelConfig(cfg *modelConfig) {
 	// Use rope_theta from rope_parameters if top-level is unset.
 	rp := cfg.RopeParams
 	if rp == nil {
@@ -409,8 +437,6 @@ func loadModelConfig(modelDir string) (*modelConfig, error) {
 	if cfg.RmsNormEps == 0 {
 		cfg.RmsNormEps = 1e-5
 	}
-
-	return &cfg, nil
 }
 
 // detectGGUFArch returns the GGUF architecture name for a HuggingFace architecture.

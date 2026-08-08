@@ -129,6 +129,49 @@ func TestFilterWeightGGUFFiles_nestedDirs(t *testing.T) {
 	}
 }
 
+func TestIsWeightGGUFExcludesCompanionModules(t *testing.T) {
+	weights := []string{
+		"gemma-4-31B-it-qat-Q4_0.gguf",
+		"Q8_0/model.gguf",
+		"empty-model.gguf",
+	}
+	for _, path := range weights {
+		if !IsWeightGGUF(path) {
+			t.Errorf("IsWeightGGUF(%q) = false, want true", path)
+		}
+	}
+
+	companions := []string{
+		"mmproj-model-f16.gguf",
+		"MTP/mtp-gemma-4-31B-it-Q8_0.gguf",
+		"MTP/model-Q8_0.gguf",
+		"gemma-4-31B-it-mtp-Q8_0.gguf",
+		"model.mtp0.Q8_0.gguf",
+	}
+	for _, path := range companions {
+		if IsWeightGGUF(path) {
+			t.Errorf("IsWeightGGUF(%q) = true, want false", path)
+		}
+	}
+}
+
+func TestFilterWeightGGUFFiles_SkipsMTPModule(t *testing.T) {
+	entries := []FileEntry{
+		{Path: "gemma-4-31B-it-qat-Q4_0.gguf"},
+		{Path: "MTP/mtp-gemma-4-31B-it-Q8_0.gguf"},
+	}
+	var weights []FileEntry
+	for _, e := range entries {
+		if IsWeightGGUF(e.Path) {
+			weights = append(weights, e)
+		}
+	}
+	got := FilterWeightGGUFFiles(weights)
+	if len(got) != 1 || got[0].Path != "gemma-4-31B-it-qat-Q4_0.gguf" {
+		t.Fatalf("got %#v, want main weights only", got)
+	}
+}
+
 func TestBestWeightGGUFRelPath(t *testing.T) {
 	paths := []string{"Q4_0/a.gguf", "Q8_0/b.gguf"}
 	if g := BestWeightGGUFRelPath(paths); g != "Q8_0/b.gguf" {

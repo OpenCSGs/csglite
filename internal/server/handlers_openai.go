@@ -24,6 +24,12 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
+	source, err := effectiveRequestSource(r.Context(), req.Source)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	req.Source = source
 
 	opts := inference.DefaultOptions()
 	requestedNumCtx := 0
@@ -208,6 +214,8 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 		return
 	}
 	defer resp.Body.Close()
+	usageSource := requestPoolUsageSource(req.Source, resp)
+	usagePool := requestPoolUsageMetadata(req.Model, req.Source, resp)
 
 	if contentType := strings.TrimSpace(resp.Header.Get("Content-Type")); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
@@ -223,7 +231,7 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	w.WriteHeader(http.StatusOK)
 	if stream {
 		_, _ = io.Copy(openAIStreamWriter{ResponseWriter: w}, resp.Body)
-		s.recordAPIUsage(r, req.Model, req.Source, countMessageTokens(req.Messages), 0)
+		s.recordAPIUsageWithPool(r, req.Model, usageSource, countMessageTokens(req.Messages), 0, usagePool)
 	} else {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -235,9 +243,9 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 			if inputTokens == 0 {
 				inputTokens = countMessageTokens(req.Messages)
 			}
-			s.recordAPIUsage(r, req.Model, req.Source, inputTokens, outputTokens)
+			s.recordAPIUsageWithPool(r, req.Model, usageSource, inputTokens, outputTokens, usagePool)
 		} else {
-			s.recordAPIUsage(r, req.Model, req.Source, countMessageTokens(req.Messages), 0)
+			s.recordAPIUsageWithPool(r, req.Model, usageSource, countMessageTokens(req.Messages), 0, usagePool)
 		}
 		_, _ = w.Write(body)
 	}
@@ -471,6 +479,7 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
+	models = filterModelsByProviderRoute(models, providerRouteSourceFromContext(r.Context()))
 
 	seen := make(map[string]struct{}, len(models))
 	data := make([]api.OpenAIModel, 0, len(models)+4)

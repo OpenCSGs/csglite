@@ -156,6 +156,7 @@ export function MarketplaceModelDetailDialog({
                   tone={localInferenceMode === "none" ? "danger" : "default"}
                 />
                 <SummaryTile label={t("mp.modelParams")} value={formatModelParams(model.metadata?.model_params)} />
+                <SummaryTile label={t("mp.repoSize")} value={formatRepoSize(model.repo_size)} />
                 <SummaryTile label={t("mp.architecture")} value={model.metadata?.architecture || model.metadata?.class_name || t("lib.notAvailable")} />
                 <SummaryTile label={t("mp.tensorType")} value={model.metadata?.tensor_type || t("lib.notAvailable")} />
                 <SummaryTile label={t("mp.downloads")} value={formatCount(model.downloads)} />
@@ -370,6 +371,16 @@ function formatModelParams(value?: number): string {
   return `${trimFloat(value)}B`;
 }
 
+function formatRepoSize(bytes?: number): string {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes <= 0) {
+    return t("lib.notAvailable");
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const unitIndex = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** unitIndex;
+  return `${value.toFixed(value >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
 function trimFloat(value: number): string {
   return value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2).replace(/\.?0+$/, "");
 }
@@ -378,8 +389,10 @@ function formatCount(value?: number): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return t("lib.notAvailable");
   }
-  const language = locale.value === "zh" ? "zh-CN" : "en-US";
-  return new Intl.NumberFormat(language).format(value);
+  if (value < 1000) {
+    return String(Math.max(0, Math.floor(value)));
+  }
+  return `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
 }
 
 function formatDate(value?: string): string {

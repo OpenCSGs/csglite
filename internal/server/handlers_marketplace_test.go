@@ -54,6 +54,66 @@ func TestHandleMarketplaceModelsMapsFrameworkToTagFilter(t *testing.T) {
 	}
 }
 
+func TestHandleMarketplaceModelsEnrichesRepositorySizes(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/models":
+			_ = json.NewEncoder(w).Encode(csghub.ListResponse[csghub.Model]{
+				Msg: "OK",
+				Data: []csghub.Model{
+					{ID: 1, Path: "ns/model-a", RepositoryID: 101},
+					{ID: 2, Path: "ns/model-b", RepositoryID: 202},
+				},
+				Total: 2,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/extra":
+			var req struct {
+				RepoIDs []int `json:"repo_ids"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode extras request: %v", err)
+			}
+			if len(req.RepoIDs) != 2 || req.RepoIDs[0] != 101 || req.RepoIDs[1] != 202 {
+				t.Fatalf("repo_ids = %#v, want [101 202]", req.RepoIDs)
+			}
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoExtraItem]{
+				Msg: "OK",
+				Data: []csghub.RepoExtraItem{
+					{RepoID: 101, Size: 7_516_192_768},
+					{RepoID: 202, Size: 2_147_483_648},
+				},
+			})
+		default:
+			t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?page=71", nil)
+	w := httptest.NewRecorder()
+	s.handleMarketplaceModels(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp struct {
+		Data []csghub.Model `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Data) != 2 {
+		t.Fatalf("data len = %d, want 2", len(resp.Data))
+	}
+	if resp.Data[0].RepoSize != 7_516_192_768 || resp.Data[1].RepoSize != 2_147_483_648 {
+		t.Fatalf("repo sizes = [%d %d], want [7516192768 2147483648]", resp.Data[0].RepoSize, resp.Data[1].RepoSize)
+	}
+}
+
 func TestHandleMarketplaceModelsMapsTaskToTagFilter(t *testing.T) {
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/models" {

@@ -35,7 +35,8 @@ CSGLite 是一个轻量级的本地大语言模型运行工具，基于 [CSGHub]
 
 ### 使用指南
 
-- [配置说明](guides/configuration.md) — 配置文件、私有化部署、环境变量
+- [配置说明](guides/configuration.md) — 配置文件与私有化部署
+- [环境变量参考](guides/environment-variables.md) — 运行时、推理、安装器和 AI Apps 的全部环境变量
 - [小智 Docker 应用](guides/xiaozhi.md) — Docker 前置条件、模型配置、数据目录与维护
 - [模型格式](guides/model-formats.md) — GGUF / SafeTensors 格式说明与转换
 - [打包与发布](guides/packaging.md) — GoReleaser、Homebrew（主要面向 macOS）、安装脚本

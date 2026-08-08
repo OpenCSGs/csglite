@@ -39,7 +39,7 @@ func TestListModels(t *testing.T) {
 
 		resp := ListResponse[Model]{
 			Msg:   "OK",
-			Data:  []Model{{ID: 1, Name: "Qwen-7B", Path: "Qwen/Qwen-7B"}},
+			Data:  []Model{{ID: 1, Name: "Qwen-7B", Path: "Qwen/Qwen-7B", RepoSize: 7_516_192_768}},
 			Total: 50,
 		}
 		_ = json.NewEncoder(w).Encode(resp)
@@ -67,6 +67,9 @@ func TestListModels(t *testing.T) {
 	if models[0].Name != "Qwen-7B" {
 		t.Errorf("Name = %q, want %q", models[0].Name, "Qwen-7B")
 	}
+	if models[0].RepoSize != 7_516_192_768 {
+		t.Errorf("RepoSize = %d, want %d", models[0].RepoSize, int64(7_516_192_768))
+	}
 }
 
 func TestGetModel(t *testing.T) {
@@ -75,8 +78,14 @@ func TestGetModel(t *testing.T) {
 			t.Errorf("path = %q, want /api/v1/models/OpenCSG/csg-wukong-1B", r.URL.Path)
 		}
 		resp := APIResponse[Model]{
-			Msg:  "OK",
-			Data: Model{ID: 367, Name: "csg-wukong-1B", Path: "OpenCSG/csg-wukong-1B", DefaultBranch: "main"},
+			Msg: "OK",
+			Data: Model{
+				ID:            367,
+				Name:          "csg-wukong-1B",
+				Path:          "OpenCSG/csg-wukong-1B",
+				DefaultBranch: "main",
+				RepoSize:      2_147_483_648,
+			},
 		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
@@ -92,6 +101,52 @@ func TestGetModel(t *testing.T) {
 	}
 	if m.DefaultBranch != "main" {
 		t.Errorf("DefaultBranch = %q, want %q", m.DefaultBranch, "main")
+	}
+	if m.RepoSize != 2_147_483_648 {
+		t.Errorf("RepoSize = %d, want %d", m.RepoSize, int64(2_147_483_648))
+	}
+}
+
+func TestGetRepoExtras(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v1/repos/extra" {
+			t.Errorf("path = %q, want /api/v1/repos/extra", r.URL.Path)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", got)
+		}
+		var req struct {
+			RepoIDs []int `json:"repo_ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if len(req.RepoIDs) != 2 || req.RepoIDs[0] != 101 || req.RepoIDs[1] != 202 {
+			t.Fatalf("repo_ids = %#v, want [101 202]", req.RepoIDs)
+		}
+		_ = json.NewEncoder(w).Encode(APIResponse[[]RepoExtraItem]{
+			Msg: "OK",
+			Data: []RepoExtraItem{
+				{RepoID: 101, Size: 7_516_192_768, LastCommitSize: 7_500_000_000},
+				{RepoID: 202, Size: 2_147_483_648},
+			},
+		})
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "")
+	extras, err := c.GetRepoExtras(context.Background(), []int{101, 202})
+	if err != nil {
+		t.Fatalf("GetRepoExtras error: %v", err)
+	}
+	if len(extras) != 2 {
+		t.Fatalf("extras len = %d, want 2", len(extras))
+	}
+	if extras[0].RepoID != 101 || extras[0].Size != 7_516_192_768 {
+		t.Errorf("extras[0] = %#v, want repo 101 size 7516192768", extras[0])
 	}
 }
 

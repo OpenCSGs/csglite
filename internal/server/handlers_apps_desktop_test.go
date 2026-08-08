@@ -319,7 +319,7 @@ func TestEnsureCodexAppLaunchConfigWritesSharedCodexConfig(t *testing.T) {
 	for _, want := range []string{
 		`model = "Qwen3.5-2B"`,
 		`model_provider = "csghub_lite"`,
-		`base_url = "http://127.0.0.1:11435/v1"`,
+		`base_url = "http://127.0.0.1:11435/providers/local/v1"`,
 	} {
 		if !strings.Contains(configText, want) {
 			t.Fatalf("config missing %q:\n%s", want, configText)
@@ -386,11 +386,58 @@ func TestEnsureZCodeLaunchConfigWritesLocalProvider(t *testing.T) {
 		t.Fatal("csghub-lite provider missing from ZCode config")
 	}
 	if provider.Kind != "openai-compatible" ||
-		provider.Options.BaseURL != "http://127.0.0.1:11435/v1" ||
+		provider.Options.BaseURL != "http://127.0.0.1:11435/providers/local/v1" ||
 		provider.Options.APIKey != "test-token" {
 		t.Fatalf("provider = %#v", provider)
 	}
 	if _, ok := provider.Models["Qwen3.5-2B"]; !ok {
 		t.Fatal("selected local model missing from ZCode provider")
+	}
+}
+
+func TestHandleAppModelSaveImmediatelySyncsZCodeConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	originalStop := stopZCodeForConfigReloadFunc
+	stopZCodeForConfigReloadFunc = func() error { return nil }
+	t.Cleanup(func() { stopZCodeForConfigReloadFunc = originalStop })
+
+	cfg := &config.Config{
+		ModelDir:   t.TempDir(),
+		ListenAddr: ":11435",
+		Token:      "test-token",
+	}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace: "Qwen",
+		Name:      "Qwen3.5-2B",
+		Format:    model.FormatGGUF,
+		Files:     []string{"model.gguf"},
+	}); err != nil {
+		t.Fatalf("save model manifest: %v", err)
+	}
+
+	s := New(cfg, "test")
+	s.cloud = cloud.NewService("")
+	req := httptest.NewRequest(http.MethodPost, "/api/apps/model", strings.NewReader(
+		`{"app_id":"zcode","model_id":"Qwen3.5-2B","source":"local"}`,
+	))
+	rec := httptest.NewRecorder()
+	s.handleAppModelSave(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	configPath, err := zcodeagent.ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath() error: %v", err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(data), `"baseURL": "http://127.0.0.1:11435/providers/local/v1"`) ||
+		!strings.Contains(string(data), `"Qwen3.5-2B"`) {
+		t.Fatalf("saved model was not synced to ZCode config:\n%s", data)
 	}
 }

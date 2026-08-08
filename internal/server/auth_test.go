@@ -211,32 +211,154 @@ func TestDesktopExternalAPIAllowsInferenceWithoutDesktopSession(t *testing.T) {
 	}
 }
 
+func TestDesktopExternalDownloadAuthFollowsRemoteAccessSetting(t *testing.T) {
+	s := newTestServer(t)
+	paths := []string{
+		"/api/models/demo/manifest",
+		"/api/models/Acme/demo/manifest",
+		"/api/models/Acme/demo/files/model.gguf",
+		"/api/datasets/Acme/demo/manifest",
+		"/api/datasets/Acme/demo/files/data.jsonl",
+	}
+
+	for _, path := range paths {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.20:5555"
+		w := httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		if w.Code == http.StatusUnauthorized {
+			t.Fatalf("%s status = %d with auth disabled, want request to reach handler", path, w.Code)
+		}
+	}
+
+	_, plain, err := s.apiKeys.Create("downloads")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	if _, err := s.apiKeys.SetAuthEnabled(true); err != nil {
+		t.Fatalf("enable auth: %v", err)
+	}
+
+	for _, path := range paths {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.20:5555"
+		w := httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s remote status without key = %d, want 401", path, w.Code)
+		}
+
+		req = httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "192.168.1.20:5555"
+		req.Header.Set("Authorization", "Bearer "+plain)
+		w = httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		if w.Code == http.StatusUnauthorized {
+			t.Fatalf("%s remote status with key = %d, want request to reach handler", path, w.Code)
+		}
+
+		req = httptest.NewRequest(http.MethodHead, path, nil)
+		req.RemoteAddr = "127.0.0.1:5555"
+		w = httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		if w.Code == http.StatusUnauthorized {
+			t.Fatalf("%s loopback HEAD status = %d, want auth bypass", path, w.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/models/demo/manifest", nil)
+	req.RemoteAddr = "192.168.1.20:5555"
+	req.Header.Set("x-api-key", plain)
+	w := httptest.NewRecorder()
+	s.externalAPIRoutes().ServeHTTP(w, req)
+	if w.Code == http.StatusUnauthorized {
+		t.Fatalf("remote download status with x-api-key = %d, want request to reach handler", w.Code)
+	}
+}
+
+func TestDesktopExternalRuntimeAuthFollowsLocalAPIKeySetting(t *testing.T) {
+	s := newTestServer(t)
+	routes := []string{"/api/load", "/api/stop"}
+	request := func(path, apiKey string) (int, string) {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		req.RemoteAddr = "192.168.1.20:5555"
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		w := httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		return w.Code, w.Body.String()
+	}
+
+	for _, path := range routes {
+		status, body := request(path, "")
+		if status == http.StatusUnauthorized || body == "404 page not found\n" {
+			t.Fatalf("%s status with auth disabled = %d body=%q, want request to reach handler", path, status, body)
+		}
+	}
+	_, plain, err := s.apiKeys.Create("desktop-runtime")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	if _, err := s.apiKeys.SetAuthEnabled(true); err != nil {
+		t.Fatalf("enable auth: %v", err)
+	}
+	for _, path := range routes {
+		if status, _ := request(path, ""); status != http.StatusUnauthorized {
+			t.Fatalf("%s status without key = %d, want 401", path, status)
+		}
+		status, body := request(path, plain)
+		if status == http.StatusUnauthorized || body == "404 page not found\n" {
+			t.Fatalf("%s status with key = %d body=%q, want request to reach handler", path, status, body)
+		}
+	}
+}
+
 func TestDesktopExternalAPIDoesNotExposeManagementRoutes(t *testing.T) {
 	s := newTestServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
-	req.Host = config.DefaultDesktopAPIAddr
-	req.RemoteAddr = "127.0.0.1:5555"
-	w := httptest.NewRecorder()
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/"},
+		{http.MethodGet, "/api/models/search"},
+		{http.MethodPost, "/api/models/upload"},
+		{http.MethodPost, "/api/pull"},
+		{http.MethodDelete, "/api/delete"},
+		{http.MethodGet, "/api/datasets/search"},
+		{http.MethodPost, "/api/datasets/pull"},
+		{http.MethodGet, "/api/settings"},
+		{http.MethodGet, "/api/api-keys"},
+		{http.MethodPost, "/api/shutdown"},
+	}
+	for _, route := range routes {
+		req := httptest.NewRequest(route.method, route.path, nil)
+		req.Host = config.DefaultDesktopAPIAddr
+		req.RemoteAddr = "127.0.0.1:5555"
+		w := httptest.NewRecorder()
 
-	s.externalAPIRoutes().ServeHTTP(w, req)
+		s.externalAPIRoutes().ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("status = %d body=%s, want 404", w.Code, w.Body.String())
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s %s status = %d body=%s, want 404", route.method, route.path, w.Code, w.Body.String())
+		}
 	}
 }
 
 func TestDesktopExternalAPIRejectsBrowserOrigins(t *testing.T) {
 	s := newTestServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	req.Host = config.DefaultDesktopAPIAddr
-	req.RemoteAddr = "127.0.0.1:5555"
-	req.Header.Set("Origin", "https://example.com")
-	w := httptest.NewRecorder()
+	for _, path := range []string{"/api/health", "/api/models/demo/manifest", "/api/datasets/Acme/demo/files/data.jsonl"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = config.DefaultDesktopAPIAddr
+		req.RemoteAddr = "127.0.0.1:5555"
+		req.Header.Set("Origin", "https://example.com")
+		w := httptest.NewRecorder()
 
-	s.externalAPIRoutes().ServeHTTP(w, req)
+		s.externalAPIRoutes().ServeHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status = %d body=%s, want 403", w.Code, w.Body.String())
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("%s status = %d body=%s, want 403", path, w.Code, w.Body.String())
+		}
 	}
 }
 
@@ -549,6 +671,55 @@ func TestAPIUsageFiltersByProvider(t *testing.T) {
 	}
 	if len(resp.SourceTotals) != 1 || resp.SourceTotals[0].SourceName != "Provider A" || resp.SourceTotals[0].TotalTokens != 3 {
 		t.Fatalf("unexpected filtered source totals: %#v", resp.SourceTotals)
+	}
+}
+
+func TestAPIUsageReportsPoolTotalsMemberSplitAndPoolFilter(t *testing.T) {
+	s := newTestServer(t)
+	now := time.Now().UTC()
+	for _, event := range []config.APIUsageEvent{
+		{
+			APIKeyID: "key", APIKeyName: "client", Model: "public-model",
+			Source: "provider:a", SourceType: "provider", SourceName: "Provider A",
+			PoolID: "pool-1", PoolName: "Production Pool", PoolModel: "public-model", MemberModel: "upstream-a",
+			InputTokens: 3, OutputTokens: 7, CreatedAt: now,
+		},
+		{
+			APIKeyID: "key", APIKeyName: "client", Model: "public-model",
+			Source: "provider:b", SourceType: "provider", SourceName: "Provider B",
+			PoolID: "pool-1", PoolName: "Production Pool", PoolModel: "public-model", MemberModel: "upstream-b",
+			FallbackCount: 1, LimitedCount: 1, InputTokens: 5, OutputTokens: 5, CreatedAt: now,
+		},
+		{
+			APIKeyID: "key", APIKeyName: "client", Model: "other-model",
+			Source: "cloud", SourceType: "cloud", InputTokens: 50, OutputTokens: 50, CreatedAt: now,
+		},
+	} {
+		if err := s.apiUsage.Add(event); err != nil {
+			t.Fatalf("add usage: %v", err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	s.handleAPIUsage(w, httptest.NewRequest(http.MethodGet, "/api/api-usage?pool=production+pool", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+	var resp api.APIUsageResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode usage: %v", err)
+	}
+	if resp.Totals.TotalTokens != 20 || resp.Totals.CloudTokens != 20 || resp.Totals.PoolRequests != 2 {
+		t.Fatalf("actual upstream totals changed: %#v", resp.Totals)
+	}
+	if resp.Totals.FallbackCount != 1 || resp.Totals.LimitedCount != 1 {
+		t.Fatalf("pool counters = %#v", resp.Totals)
+	}
+	if len(resp.PoolTotals) != 1 || len(resp.PoolTotals[0].Members) != 2 {
+		t.Fatalf("pool totals = %#v, want one pool and two members", resp.PoolTotals)
+	}
+	if len(resp.SourceTotals) != 2 || len(resp.Rows) != 2 {
+		t.Fatalf("source/member split = %#v rows=%#v", resp.SourceTotals, resp.Rows)
 	}
 }
 

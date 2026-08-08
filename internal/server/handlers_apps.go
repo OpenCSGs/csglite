@@ -195,8 +195,44 @@ func (s *Server) handleAppModelSave(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	s.savePreferredAIAppModel(req.AppID, req.ModelID)
+	if err := s.syncAIAppSelectedModelConfig(r.Context(), appID, req.ModelID, req.Source); err != nil {
+		log.Printf("AI APP %s: model config sync failed: %v", appID, err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.savePreferredAIAppSelection(req.AppID, req.ModelID, req.Source)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) syncAIAppSelectedModelConfig(ctx context.Context, appID, modelID, source string) error {
+	switch appID {
+	case "zcode":
+		_, err := s.ensureZCodeLaunchConfig(ctx, modelID, source)
+		return err
+	case "open-code", "open-code-review", "pi":
+		target, err := resolveAIAppOpenTarget(appID)
+		if err != nil {
+			return err
+		}
+		resolvedModel, _, err := s.resolveAIAppShellLaunchModels(ctx, appID, modelID, source)
+		if err != nil {
+			return err
+		}
+		resolvedSource, modelIDs, err := s.resolveAIAppModelSource(ctx, resolvedModel, source)
+		if err != nil {
+			return err
+		}
+		_, err = s.prepareAIAppShellLaunch(target, resolvedModel, resolvedSource, modelIDs, "")
+		return err
+	case "openclaw":
+		binary, err := resolveAIAppLaunchBinary("openclaw", []string{"openclaw"})
+		if err != nil {
+			return fmt.Errorf("OpenClaw is installed, but its launch command was not found on PATH")
+		}
+		return s.ensureOpenClawProfile(ctx, binary, modelID, source)
+	default:
+		return nil
+	}
 }
 
 func (s *Server) handleAppSetPath(w http.ResponseWriter, r *http.Request) {
@@ -322,6 +358,7 @@ func (s *Server) enrichAIAppListItem(ctx context.Context, info *api.AIAppInfo) {
 	s.appManager.RefreshLatestVersionAsync(*info)
 	if info.ProviderSwitchSupported && info.ProviderMode == apps.ProviderModeNative {
 		info.ModelID = ""
+		info.ModelSource = ""
 		return
 	}
 	if info.ID == xiaozhiAppID {
@@ -329,6 +366,7 @@ func (s *Server) enrichAIAppListItem(ctx context.Context, info *api.AIAppInfo) {
 		return
 	}
 	info.ModelID = s.preferredAIAppModel(info.ID)
+	info.ModelSource = s.preferredAIAppModelSource(info.ID)
 }
 
 func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
@@ -344,6 +382,7 @@ func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 	s.appManager.EnrichLatestVersion(ctx, info)
 	if info.ProviderSwitchSupported && info.ProviderMode == apps.ProviderModeNative {
 		info.ModelID = ""
+		info.ModelSource = ""
 		return
 	}
 	if info.ID == xiaozhiAppID {
@@ -374,6 +413,10 @@ func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 
 	if err == nil {
 		info.ModelID = modelID
+		source, _, sourceErr := s.resolveAIAppModelSource(ctx, modelID, s.preferredAIAppModelSource(info.ID))
+		if sourceErr == nil {
+			info.ModelSource = source
+		}
 	}
 }
 

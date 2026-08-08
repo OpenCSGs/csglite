@@ -59,6 +59,7 @@ type Model struct {
 	SyncStatus    string        `json:"sync_status"`
 	Metadata      ModelMetadata `json:"metadata"`
 	HFPath        string        `json:"hf_path"`
+	RepoSize      int64         `json:"repo_size"`
 }
 
 type Tag struct {
@@ -72,6 +73,12 @@ type Tag struct {
 type Repository struct {
 	HTTPCloneURL string `json:"http_clone_url"`
 	SSHCloneURL  string `json:"ssh_clone_url"`
+}
+
+type RepoExtraItem struct {
+	RepoID         int   `json:"repo_id"`
+	Size           int64 `json:"size"`
+	LastCommitSize int64 `json:"last_commit_size"`
 }
 
 type ModelMetadata struct {

@@ -161,6 +161,12 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "input is required")
 		return
 	}
+	source, err := effectiveRequestSource(r.Context(), req.Source)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	req.Source = source
 
 	requestedNumCtx := 0
 	requestedNGPULayers := -1
@@ -200,6 +206,8 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 	type embeddingResponse struct {
 		body        []byte
 		contentType string
+		usageSource string
+		usagePool   *apiUsagePoolMetadata
 	}
 	result, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeEmbed, eng,
 		func(engine inference.Engine) (embeddingResponse, error) {
@@ -219,6 +227,8 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 			return embeddingResponse{
 				body:        body,
 				contentType: strings.TrimSpace(resp.Header.Get("Content-Type")),
+				usageSource: requestPoolUsageSource(req.Source, resp),
+				usagePool:   requestPoolUsageMetadata(req.Model, req.Source, resp),
 			}, nil
 		},
 		func() (inference.Engine, error) {
@@ -236,7 +246,7 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusOK)
 	body := result.body
-	s.recordAPIUsage(r, req.Model, req.Source, openAIEmbeddingPromptTokens(body, req.Input), 0)
+	s.recordAPIUsageWithPool(r, req.Model, result.usageSource, openAIEmbeddingPromptTokens(body, req.Input), 0, result.usagePool)
 	_, _ = w.Write(body)
 }
 

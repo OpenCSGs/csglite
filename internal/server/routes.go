@@ -63,6 +63,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /anthropic/messages/count_tokens", s.handleAnthropicCountTokens)
 	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropicMessages)
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
+	s.registerProviderInferenceRoutes(mux)
 
 	// New: marketplace, system, logs, settings
 	mux.HandleFunc("GET /api/marketplace/models", s.handleMarketplaceModels)
@@ -90,6 +91,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/providers", s.handleProviderCreate)
 	mux.HandleFunc("PUT /api/providers/{id}", s.handleProviderUpdate)
 	mux.HandleFunc("DELETE /api/providers/{id}", s.handleProviderDelete)
+	mux.HandleFunc("GET /api/provider-pools", s.handleProviderPoolsList)
+	mux.HandleFunc("POST /api/provider-pools", s.handleProviderPoolCreate)
+	mux.HandleFunc("PUT /api/provider-pools/{id}", s.handleProviderPoolUpdate)
+	mux.HandleFunc("DELETE /api/provider-pools/{id}", s.handleProviderPoolDelete)
 	mux.HandleFunc("GET /api/cloud/auth", s.handleCloudAuthStatus)
 	mux.HandleFunc("POST /api/cloud/auth/token", s.handleCloudAuthTokenSave)
 	mux.HandleFunc("DELETE /api/cloud/auth/token", s.handleCloudAuthTokenDelete)
@@ -129,7 +134,7 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /", devStaticHandler("web/dist"))
 	}
 
-	return s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(LogMiddleware(mux))))
+	return s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(providerPoolUsageMiddleware(LogMiddleware(mux)))))
 }
 
 func (s *Server) externalAPIRoutes() http.Handler {
@@ -144,6 +149,11 @@ func (s *Server) externalAPIRoutes() http.Handler {
 	mux.HandleFunc("POST /api/stop", s.handleStop)
 	mux.HandleFunc("POST /api/generate", s.handleGenerate)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
+	mux.HandleFunc("GET /api/models/{model}/manifest", s.handleModelManifestByPublicID)
+	mux.HandleFunc("GET /api/models/{namespace}/{name}/manifest", s.handleModelManifest)
+	mux.HandleFunc("GET /api/models/{namespace}/{name}/files/{path...}", s.handleModelFile)
+	mux.HandleFunc("GET /api/datasets/{namespace}/{name}/manifest", s.handleDatasetManifest)
+	mux.HandleFunc("GET /api/datasets/{namespace}/{name}/files/{path...}", s.handleDatasetFile)
 
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("GET /v1/responses", s.handleOpenAIResponsesUnsupported)
@@ -159,8 +169,9 @@ func (s *Server) externalAPIRoutes() http.Handler {
 	mux.HandleFunc("POST /anthropic/messages/count_tokens", s.handleAnthropicCountTokens)
 	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropicMessages)
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
+	s.registerProviderInferenceRoutes(mux)
 
-	return desktopExternalAPIMiddleware(LogMiddleware(mux))
+	return desktopExternalAPIMiddleware(s.apiAuthMiddleware(providerPoolUsageMiddleware(LogMiddleware(mux))))
 }
 
 func desktopExternalAPIMiddleware(next http.Handler) http.Handler {

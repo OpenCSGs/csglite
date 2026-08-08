@@ -47,6 +47,7 @@ func (s *Server) handleAnthropicModels(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	models = filterModelsByProviderRoute(models, providerRouteSourceFromContext(r.Context()))
 
 	data := make([]api.AnthropicModelInfo, 0, len(models))
 	for _, item := range models {

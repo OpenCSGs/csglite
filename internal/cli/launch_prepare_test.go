@@ -46,6 +46,25 @@ func TestResolveLaunchModelAcceptsCloudModelID(t *testing.T) {
 	}
 }
 
+func TestResolveLaunchModelSelectionUsesProviderName(t *testing.T) {
+	server := launchModelTestServer([]api.ModelInfo{
+		{Model: "shared-model", Source: "cloud", Provider: "OpenCSG"},
+		{Model: "shared-model", Source: "provider:deepseek-id", Provider: "DeepSeek"},
+	})
+	defer server.Close()
+
+	got, err := resolveLaunchModelSelection(server.URL, "", "shared-model", "deepseek", true, true)
+	if err != nil {
+		t.Fatalf("resolveLaunchModelSelection returned error: %v", err)
+	}
+	if got.Source != "provider:deepseek-id" || got.ProviderID != "deepseek-id" {
+		t.Fatalf("selection = %#v, want DeepSeek provider route", got)
+	}
+	if got.ProviderName != "DeepSeek" || got.Label != "shared-model [DeepSeek]" {
+		t.Fatalf("selection provider display = %#v, want configured provider name", got)
+	}
+}
+
 func TestResolveLaunchModelMissingCloudTokenShowsSettingsHint(t *testing.T) {
 	server := launchModelTestServer([]api.ModelInfo{
 		{Model: "Qwen/Qwen3.5-2B", Source: "local"},
@@ -76,8 +95,8 @@ func TestNormalizeLaunchModelChoicesUsesLabelField(t *testing.T) {
 		id    string
 		label string
 	}{
-		{"Qwen/Qwen3-0.6B", "Qwen/Qwen3-0.6B (local)"},
-		{"deepseek-v3.2", "deepseek-v3.2(infini-ai) (cloud)"},
+		{"Qwen/Qwen3-0.6B", "Qwen/Qwen3-0.6B [local]"},
+		{"deepseek-v3.2", "deepseek-v3.2(infini-ai) [cloud]"},
 		{"kimi-k2.6", "kimi-k2.6 [kimi]"},
 	}
 	for i, tt := range tests {
@@ -98,8 +117,8 @@ func TestNormalizeLaunchModelChoicesFallsBackToDisplayName(t *testing.T) {
 	if len(choices) != 1 {
 		t.Fatalf("choices count = %d, want 1", len(choices))
 	}
-	if choices[0].Label != "Some Model (cloud)" {
-		t.Fatalf("Label = %q, want DisplayName fallback with cloud tag", choices[0].Label)
+	if choices[0].Label != "Some Model [cloud]" {
+		t.Fatalf("Label = %q, want DisplayName fallback with provider", choices[0].Label)
 	}
 }
 
@@ -111,8 +130,8 @@ func TestNormalizeLaunchModelChoicesFallsBackToModelID(t *testing.T) {
 	if len(choices) != 1 {
 		t.Fatalf("choices count = %d, want 1", len(choices))
 	}
-	if choices[0].Label != "bare-model (local)" {
-		t.Fatalf("Label = %q, want model ID fallback with local tag", choices[0].Label)
+	if choices[0].Label != "bare-model [local]" {
+		t.Fatalf("Label = %q, want model ID fallback with provider", choices[0].Label)
 	}
 }
 
@@ -129,18 +148,19 @@ func TestNormalizeLaunchModelChoicesProviderNoSourceSuffix(t *testing.T) {
 	}
 }
 
-func TestNormalizeLaunchModelChoicesExcludesUnavailableAIAppCloudModels(t *testing.T) {
+func TestNormalizeLaunchModelChoicesIncludesAllCloudModels(t *testing.T) {
 	models := []api.ModelInfo{
 		{Model: "opus4.7", Source: "cloud", Format: "cloud"},
 		{Model: "glm-5", Source: "cloud", Format: "cloud"},
 		{Model: "opus4.7", Source: "local"},
 	}
 	choices := normalizeLaunchModelChoices(models)
-	if len(choices) != 2 {
-		t.Fatalf("choices count = %d, want 2", len(choices))
+	if len(choices) != 3 {
+		t.Fatalf("choices count = %d, want all source-qualified choices", len(choices))
 	}
-	if choices[0].ID != "glm-5" || choices[1].ID != "opus4.7" {
-		t.Fatalf("choices = %#v, want cloud glm-5 and local opus4.7", choices)
+	if choices[0].ID != "opus4.7" || choices[0].Source != "cloud" ||
+		choices[1].ID != "glm-5" || choices[2].Source != "local" {
+		t.Fatalf("choices = %#v, want cloud choices followed by local duplicate", choices)
 	}
 }
 

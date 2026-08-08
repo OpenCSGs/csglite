@@ -104,36 +104,6 @@ AttributeError: GEMMA4. Did you mean: 'GEMMA'?
 	}
 }
 
-func TestLlamaCppSourcesPreferGiteeInCN(t *testing.T) {
-	got := llamaCppSources(regionCN)
-	if len(got) != 2 {
-		t.Fatalf("len(llamaCppSources(CN)) = %d, want 2", len(got))
-	}
-	if got[0].name != "Gitee mirror" || got[1].name != "GitHub upstream" {
-		t.Fatalf("llamaCppSources(CN) order = %#v", got)
-	}
-}
-
-func TestLlamaCppSourcesPreferGitHubOutsideCN(t *testing.T) {
-	got := llamaCppSources(regionINTL)
-	if len(got) != 2 {
-		t.Fatalf("len(llamaCppSources(INTL)) = %d, want 2", len(got))
-	}
-	if got[0].name != "GitHub upstream" || got[1].name != "Gitee mirror" {
-		t.Fatalf("llamaCppSources(INTL) order = %#v", got)
-	}
-}
-
-func TestGGUFRepoInstallHintIncludesCopyableCommands(t *testing.T) {
-	got := ggufRepoInstallHint(regionCN)
-	if !strings.Contains(got, `git+https://gitee.com/xzgan/llama.cpp.git@`+BundledConverterLLamacppRef+`#subdirectory=gguf-py`) {
-		t.Fatalf("ggufRepoInstallHint(CN) missing Gitee command: %q", got)
-	}
-	if strings.Contains(got, "github.com/ggml-org") || strings.Contains(got, "pip install gguf") {
-		t.Fatalf("ggufRepoInstallHint(CN) should only use Gitee source, got: %q", got)
-	}
-}
-
 func TestPythonDepsInstallHintUsesManagedVenv(t *testing.T) {
 	got := pythonDepsInstallHintForGOOS("darwin")
 	if strings.Contains(got, "pip3 install") {
@@ -174,15 +144,15 @@ func TestPythonDepsInstallHintUsesManagedVenvOnWindows(t *testing.T) {
 	}
 }
 
-func TestHintForConverterScriptFailureIncludesGGUFRepoInstallExample(t *testing.T) {
+func TestHintForConverterScriptFailureUsesEmbeddedGGUFPy(t *testing.T) {
 	output := `
 INFO:hf-to-gguf:Model architecture: Gemma4ForConditionalGeneration
 model_arch = gguf.MODEL_ARCH.GEMMA4
 AttributeError: GEMMA4. Did you mean: 'GEMMA'?
 `
 	got := hintForConverterScriptFailure(output)
-	if !strings.Contains(got, `git+https://gitee.com/xzgan/llama.cpp.git@`+BundledConverterLLamacppRef+`#subdirectory=gguf-py`) {
-		t.Fatalf("hintForConverterScriptFailure() missing Gitee install example: %q", got)
+	if !strings.Contains(got, "includes matching `gguf-py`") || strings.Contains(got, "git+") {
+		t.Fatalf("hintForConverterScriptFailure() should describe the embedded package: %q", got)
 	}
 }
 
@@ -264,17 +234,5 @@ func TestFormatConverterFailureIncludesConverterVersion(t *testing.T) {
 	got := formatConverterFailure(fmt.Errorf("exit status 1"), "Traceback\nline2", "").Error()
 	if !strings.Contains(got, "Converter version: llama.cpp "+BundledConverterLLamacppRef) {
 		t.Fatalf("formatConverterFailure() missing llama.cpp tag: %q", got)
-	}
-}
-
-func TestDetectLlamaCppSourceRegionUsesEnvOverride(t *testing.T) {
-	t.Setenv("CSGHUB_LITE_REGION", "CN")
-	if got := detectLlamaCppSourceRegion(); got != regionCN {
-		t.Fatalf("detectLlamaCppSourceRegion() with CN = %q, want %q", got, regionCN)
-	}
-
-	t.Setenv("CSGHUB_LITE_REGION", "intl")
-	if got := detectLlamaCppSourceRegion(); got != regionINTL {
-		t.Fatalf("detectLlamaCppSourceRegion() with intl = %q, want %q", got, regionINTL)
 	}
 }

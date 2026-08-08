@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import {
   getAIApps,
   getCloudAuthStatus,
-  getTags,
   installAIApp,
   openAIApp,
   saveAIAppModel,
@@ -32,6 +31,11 @@ import {
   type AIAppRuntimeState,
 } from "../data/aiApps";
 import { locale, t, type Locale } from "../i18n";
+import {
+  formatModelOptionLabel,
+  loadModelOptions,
+  modelOptionKey as aiAppModelKey,
+} from "../utils/modelOptions";
 
 type AIAppFilter = "all" | AIAppCategory;
 type DrawerMode = "details" | "install";
@@ -71,10 +75,6 @@ function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
 function openExternalURL(url?: string) {
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");
-}
-
-function aiAppModelKey(model: Pick<ModelInfo, "model" | "source">): string {
-  return `${model.source || "local"}:${model.model}`;
 }
 
 function parseAIAppModelKey(key: string): { source: string; model: string } {
@@ -265,7 +265,7 @@ export function AIApps() {
   const grouped = groupedApps.value;
 
   return (
-    <div class="p-8 max-w-6xl mx-auto">
+    <div class="page-shell">
       <h1 class="text-2xl font-bold text-gray-900">{t("aiApps.title")}</h1>
       <p class="text-gray-500 text-sm mt-1 mb-6">{t("aiApps.subtitle")}</p>
 
@@ -395,7 +395,7 @@ function AIAppsGrid({
   onOpenChat: (appId: string) => void;
 }) {
   return (
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
       {apps.map((app) => (
         <AIAppCard
           key={app.id}
@@ -623,7 +623,11 @@ function LiveLogsDrawer({
   const currentModelInfo = selectedModelParts
     ? models.find((item) => aiAppModelKey(item) === selectedModel)
     : models.find((item) => item.model === currentModelID);
-  const launchPreview = cliLaunchPreview(app, currentModelID);
+  const launchPreview = cliLaunchPreview(
+    app,
+    currentModelID,
+    currentModelInfo?.source || state.modelSource || "",
+  );
   const xiaozhiSavedBindingsKey = JSON.stringify(state.modelBindings || {});
 
   useEffect(() => {
@@ -674,10 +678,10 @@ function LiveLogsDrawer({
       if (showLoading) {
         setModelsLoading(true);
       }
-      getTags({ refresh: true })
+      loadModelOptions({ refresh: true })
         .then((items) => {
           if (disposed) return;
-          setModels(normalizeAIAppModels(items));
+          setModels(items);
         })
         .catch(() => {
           if (disposed) return;
@@ -743,8 +747,12 @@ function LiveLogsDrawer({
       if (current && models.some((item) => aiAppModelKey(item) === current)) {
         return current;
       }
-      if (state.modelID && models.some((item) => item.model === state.modelID)) {
-        const model = models.find((item) => item.model === state.modelID);
+      if (state.modelID && models.some((item) =>
+        item.model === state.modelID && (!state.modelSource || item.source === state.modelSource)
+      )) {
+        const model = models.find((item) =>
+          item.model === state.modelID && (!state.modelSource || item.source === state.modelSource)
+        );
         return model ? aiAppModelKey(model) : state.modelID;
       }
       if (state.modelID) {
@@ -752,7 +760,7 @@ function LiveLogsDrawer({
       }
       return models[0] ? aiAppModelKey(models[0]) : "";
     });
-  }, [app.id, canLoadModels, state.modelID, models]);
+  }, [app.id, canLoadModels, state.modelID, state.modelSource, models]);
 
   useEffect(() => {
     if (!isXiaozhi) {
@@ -1026,7 +1034,7 @@ function LiveLogsDrawer({
         return;
       }
       try {
-        setModels(normalizeAIAppModels(await getTags({ refresh: true })));
+        setModels(await loadModelOptions({ refresh: true }));
       } catch {
         /* ignore */
       }
@@ -1754,6 +1762,7 @@ function mergeAppStates(remoteApps: RemoteAIAppInfo[]) {
       latestVersion: remote.latest_version,
       updateAvailable: Boolean(remote.update_available),
       modelID: remote.model_id || "",
+      modelSource: remote.model_source || "",
       providerMode: remote.provider_mode || "native",
       providerGroup: remote.provider_group,
       providerSwitchSupported: Boolean(remote.provider_switch_supported),
@@ -1921,14 +1930,15 @@ function runtimeStatusDotClass(state: AIAppRuntimeState): string {
     : "bg-red-500";
 }
 
-function cliLaunchPreview(app: AIAppCatalogEntry, modelID: string): string {
+function cliLaunchPreview(app: AIAppCatalogEntry, modelID: string, source: string): string {
   const launchName = cliLaunchAppName(app.id);
   if (!launchName) {
     return "";
   }
-  const launchWithModel = modelID
-    ? `csghub-lite launch ${launchName} --model "${modelID}"`
-    : `csghub-lite launch ${launchName} --model "<model-id>"`;
+  const provider = launchProviderID(source);
+  const modelArg = modelID ? `"${modelID}"` : '"<model-id>"';
+  const providerArg = provider ? `"${provider}"` : '"<provider-id-or-name>"';
+  const launchWithModel = `csghub-lite launch ${launchName} --model ${modelArg} --provider ${providerArg}`;
   return [
     `csghub-lite launch ${launchName}`,
     launchWithModel,
@@ -1946,6 +1956,10 @@ function cliLaunchAppName(appID: string): string {
       return "ocr";
     case "codex":
       return "codex";
+    case "codex-app":
+      return "codex-app";
+    case "zcode":
+      return "zcode";
     case "pi":
       return "pi";
     case "openclaw":
@@ -1953,6 +1967,14 @@ function cliLaunchAppName(appID: string): string {
     default:
       return "";
   }
+}
+
+function launchProviderID(source: string): string {
+  const value = source.trim();
+  const normalized = value.toLocaleLowerCase();
+  if (!normalized || normalized === "local") return "local";
+  if (normalized === "cloud") return "csghub";
+  return normalized.startsWith("provider:") ? value.slice("provider:".length) : value;
 }
 
 function canSelectAIAppModel(app: AIAppCatalogEntry): boolean {
@@ -1968,28 +1990,6 @@ function openActionLabel(app: AIAppCatalogEntry, pending: boolean): string {
     return pending ? t("aiApps.launching") : t("aiApps.launch");
   }
   return pending ? t("aiApps.opening") : t("aiApps.open");
-}
-
-function normalizeAIAppModels(models: ModelInfo[]): ModelInfo[] {
-  const seen = new Set<string>();
-  const out: ModelInfo[] = [];
-  for (const model of models) {
-    const modelId = model.model?.trim();
-    const key = aiAppModelKey(model);
-    if (!modelId || seen.has(key) || !isAIAppLaunchModel(model)) {
-      continue;
-    }
-    seen.add(key);
-    out.push(model);
-  }
-  return out;
-}
-
-function isAIAppLaunchModel(model: ModelInfo): boolean {
-  if (model.source !== "cloud") {
-    return true;
-  }
-  return model.model?.trim().toLowerCase() !== "opus4.7";
 }
 
 function emptyXiaozhiBindings(): Record<XiaozhiModelSlot, string> {
@@ -2063,27 +2063,11 @@ function extractAIAppRequestedModel(message: string): string {
 }
 
 function formatAIAppModelLabel(model: ModelInfo): string {
-  const name = model.display_name || model.model;
-  const src = model.source || "local";
-  if (src === "cloud") {
-    return `${name} [${t("aiApps.modelSourceCloud")}]`;
-  }
-  if (src.startsWith("provider:")) {
-    return name;
-  }
-  return `${name} [${t("aiApps.modelSourceLocal")}]`;
+  return formatModelOptionLabel(model);
 }
 
 function formatXiaozhiModelLabel(model: ModelInfo): string {
-  const name = model.display_name || model.model;
-  const source = model.source || "local";
-  if (source === "cloud") {
-    return `${name} [${t("aiApps.modelSourceCloud")}]`;
-  }
-  if (source.startsWith("provider:")) {
-    return `${name} [${source.slice("provider:".length)}]`;
-  }
-  return `${name} [${t("aiApps.modelSourceLocal")}]`;
+  return formatModelOptionLabel(model);
 }
 
 function CheckIcon({ className }: { className: string }) {

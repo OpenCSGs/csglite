@@ -292,6 +292,15 @@ func repoFileBaseName(f RepoFile) string {
 	return filepath.Base(f.Path)
 }
 
+// repoFilePath prefers the repo-relative path so directory-based checks such as
+// companion module folders (for example MTP/) still work.
+func repoFilePath(f RepoFile) string {
+	if strings.TrimSpace(f.Path) != "" {
+		return f.Path
+	}
+	return f.Name
+}
+
 func distinctQuantLabels(entries []ggufpick.FileEntry) []string {
 	seen := make(map[string]struct{})
 	var out []string
@@ -327,7 +336,7 @@ func entriesHaveQuantLabels(entries []ggufpick.FileEntry) bool {
 func filterGGUFMultiQuantDownload(files []RepoFile, quants []string) ([]RepoFile, error) {
 	var weights []RepoFile
 	for _, f := range files {
-		if ggufpick.IsWeightGGUF(repoFileBaseName(f)) {
+		if ggufpick.IsWeightGGUF(repoFilePath(f)) {
 			weights = append(weights, f)
 		}
 	}
@@ -364,7 +373,7 @@ func filterGGUFMultiQuantDownload(files []RepoFile, quants []string) ([]RepoFile
 	}
 	out := make([]RepoFile, 0, len(files)-len(weights)+len(filtered))
 	for _, f := range files {
-		if !ggufpick.IsWeightGGUF(repoFileBaseName(f)) {
+		if !ggufpick.IsWeightGGUF(repoFilePath(f)) {
 			out = append(out, f)
 			continue
 		}
@@ -447,7 +456,7 @@ func filterTransformersWeightDownload(files []RepoFile) []RepoFile {
 
 func repoHasGGUFWeight(files []RepoFile) bool {
 	for _, f := range files {
-		if ggufpick.IsWeightGGUF(repoFileBaseName(f)) {
+		if ggufpick.IsWeightGGUF(repoFilePath(f)) {
 			return true
 		}
 	}

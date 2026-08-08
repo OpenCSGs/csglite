@@ -2,30 +2,36 @@ import { signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { t, locale } from "../i18n";
 import { formatNumber, formatDateTime, formatChartDate, chartXAxisLabels } from "../utils/format";
+import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
 import { ProviderModelModalityBadges, providerModelLabel, defaultProviderModelDisplayName } from "../components/ProviderModelBadges";
 import {
   clearCloudAPIKey,
   createProvider,
+  createProviderPool,
   createLocalAPIKey,
   deleteProvider,
+  deleteProviderPool,
   deleteLocalAPIKey,
   getCloudAuthStatus,
   getSettings,
+  getTags,
   getLocalAPIKeys,
   getLocalAPIUsage,
   getProviderManageTags,
+  getProviderPools,
   getProviderSelectedTags,
   getProviders,
   replaceProviderManageTags,
   saveCloudAPIKey,
   updateProvider,
+  updateProviderPool,
   updateProviderManageTag,
   validateProvider,
   updateLocalAPIKeySettings,
 } from "../api/client";
-import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
+import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
 
-type GatewayTab = "apiKeys" | "providers" | "usage";
+type GatewayTab = "apiKeys" | "providers" | "pools" | "usage";
 type UsagePeriod = "week" | "month" | "year";
 type ManagedProvider = ThirdPartyProvider & { builtIn?: boolean; source?: "cloud" | "provider" };
 
@@ -44,9 +50,24 @@ const localAPIUsageError = signal("");
 const localAPIUsagePeriod = signal<UsagePeriod>("week");
 const localAPIUsageProvider = signal("");
 const providers = signal<ThirdPartyProvider[]>([]);
+const providerPools = signal<ProviderPool[]>([]);
+const providerPoolModels = signal<ModelInfo[]>([]);
 const cloudManagedProvider = signal<ManagedProvider | null>(null);
 const providersLoading = signal(false);
 const providersError = signal("");
+const isProviderPoolDialogOpen = signal(false);
+const editingProviderPool = signal<ProviderPool | null>(null);
+const providerPoolFormName = signal("");
+const providerPoolFormModel = signal("");
+const providerPoolFormEnabled = signal(true);
+const providerPoolFormMembers = signal<ProviderPoolMember[]>([]);
+const providerPoolFormError = signal("");
+const providerPoolFormSaving = signal(false);
+const providerPoolDialogStep = signal<"basics" | "members">("basics");
+const providerPoolSourceFilter = signal("local");
+const providerPoolModelSearch = signal("");
+const providerPoolMemberConfigIndex = signal<number | null>(null);
+const providerPoolMemberConfigDraft = signal<ProviderPoolMember | null>(null);
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudAPIKeyInput = signal("");
 const cloudAPIKeyError = signal("");
@@ -169,12 +190,14 @@ async function fetchProviderOptions() {
   providersLoading.value = true;
   providersError.value = "";
   try {
-		const [list, settings] = await Promise.all([getProviders(), getSettings()]);
+		const [list, settings, pools, models] = await Promise.all([getProviders(), getSettings(), getProviderPools(), getTags()]);
 		const cloudProvider = cloudProviderFromSettings(settings);
 		cloudProviderName.value = settings.cloud_provider_name || settings.default_cloud_provider_name || "";
 		cloudGatewayURL.value = settings.ai_gateway_url || settings.default_ai_gateway_url || "";
 		cloudManagedProvider.value = cloudProvider;
     providers.value = list;
+    providerPools.value = pools;
+    providerPoolModels.value = models;
 		const managedProviders = [cloudProvider, ...list];
     const entries = await Promise.all(
 			managedProviders.map(async (provider) => {
@@ -586,6 +609,172 @@ async function removeProvider(provider: ThirdPartyProvider) {
   }
 }
 
+function newProviderPoolMember(index = providerPoolFormMembers.value.length): ProviderPoolMember {
+  return {
+    id: `member-${Date.now()}-${index}`,
+    source: "local",
+    model: "",
+    priority: 0,
+    weight: 100,
+    requests_per_minute: 0,
+    tokens_per_minute: 0,
+    max_concurrent: 0,
+  };
+}
+
+function openProviderPoolDialog(pool?: ProviderPool) {
+  editingProviderPool.value = pool || null;
+  providerPoolFormName.value = pool?.name || "";
+  providerPoolFormModel.value = pool?.model || "";
+  providerPoolFormEnabled.value = pool?.enabled ?? true;
+  providerPoolFormMembers.value = pool?.members.map((member) => ({ ...member })) || [];
+  providerPoolFormError.value = "";
+  providerPoolDialogStep.value = "basics";
+  providerPoolSourceFilter.value = "local";
+  providerPoolModelSearch.value = "";
+  isProviderPoolDialogOpen.value = true;
+}
+
+function closeProviderPoolDialog() {
+  if (providerPoolFormSaving.value) return;
+  isProviderPoolDialogOpen.value = false;
+  editingProviderPool.value = null;
+  providerPoolFormError.value = "";
+  providerPoolDialogStep.value = "basics";
+  providerPoolModelSearch.value = "";
+  closeProviderPoolMemberConfigDialog();
+}
+
+function continueProviderPoolDialog() {
+  if (!providerPoolFormName.value.trim() || !providerPoolFormModel.value.trim()) {
+    providerPoolFormError.value = t("settings.providerPoolNameModelRequired");
+    return;
+  }
+  providerPoolFormError.value = "";
+  providerPoolDialogStep.value = "members";
+}
+
+function backProviderPoolDialog() {
+  providerPoolFormError.value = "";
+  providerPoolDialogStep.value = "basics";
+}
+
+function updateProviderPoolMember(index: number, patch: Partial<ProviderPoolMember>) {
+  providerPoolFormMembers.value = providerPoolFormMembers.value.map((member, memberIndex) =>
+    memberIndex === index ? { ...member, ...patch } : member
+  );
+}
+
+function openProviderPoolMemberConfigDialog(index: number) {
+  const member = providerPoolFormMembers.value[index];
+  if (!member) return;
+  providerPoolMemberConfigIndex.value = index;
+  providerPoolMemberConfigDraft.value = {
+    ...member,
+    priority: member.priority ?? 0,
+    weight: member.weight ?? 100,
+    requests_per_minute: member.requests_per_minute ?? 0,
+    tokens_per_minute: member.tokens_per_minute ?? 0,
+    max_concurrent: member.max_concurrent ?? 0,
+  };
+}
+
+function closeProviderPoolMemberConfigDialog() {
+  providerPoolMemberConfigIndex.value = null;
+  providerPoolMemberConfigDraft.value = null;
+}
+
+function saveProviderPoolMemberConfigDialog() {
+  const index = providerPoolMemberConfigIndex.value;
+  const member = providerPoolMemberConfigDraft.value;
+  if (index === null || !member) return;
+  updateProviderPoolMember(index, {
+    priority: member.priority ?? 0,
+    weight: member.weight ?? 100,
+    requests_per_minute: member.requests_per_minute ?? 0,
+    tokens_per_minute: member.tokens_per_minute ?? 0,
+    max_concurrent: member.max_concurrent ?? 0,
+  });
+  closeProviderPoolMemberConfigDialog();
+}
+
+function updateProviderPoolMemberConfigDraft(
+  key: "priority" | "weight" | "requests_per_minute" | "tokens_per_minute" | "max_concurrent",
+  value: string,
+) {
+  const member = providerPoolMemberConfigDraft.value;
+  if (!member) return;
+  const number = Number.parseInt(value, 10);
+  providerPoolMemberConfigDraft.value = {
+    ...member,
+    [key]: Number.isFinite(number) ? number : undefined,
+  };
+}
+
+function toggleProviderPoolSourceModel(source: string, model: string, checked: boolean) {
+  const memberIndex = providerPoolFormMembers.value.findIndex(
+    (member) => member.source === source && member.model === model
+  );
+  if (checked && memberIndex === -1) {
+    providerPoolFormMembers.value = [
+      ...providerPoolFormMembers.value,
+      { ...newProviderPoolMember(providerPoolFormMembers.value.length), source, model },
+    ];
+  } else if (!checked && memberIndex !== -1) {
+    providerPoolFormMembers.value = providerPoolFormMembers.value.filter((_, index) => index !== memberIndex);
+  }
+}
+
+async function saveProviderPoolForm() {
+  const name = providerPoolFormName.value.trim();
+  const model = providerPoolFormModel.value.trim();
+  const members = providerPoolFormMembers.value.map((member) => ({
+    ...member,
+    id: member.id.trim(),
+    source: member.source.trim(),
+    model: member.model.trim(),
+  }));
+  if (!name || !model) {
+    providerPoolFormError.value = t("settings.providerPoolNameModelRequired");
+    return;
+  }
+  if (members.length === 0 || members.some((member) => !member.id || !member.source || !member.model)) {
+    providerPoolFormError.value = t("settings.providerPoolMemberRequired");
+    return;
+  }
+
+  providerPoolFormSaving.value = true;
+  providerPoolFormError.value = "";
+  try {
+    const payload = { name, model, enabled: providerPoolFormEnabled.value, members };
+    if (editingProviderPool.value) {
+      await updateProviderPool(editingProviderPool.value.id, payload);
+    } else {
+      await createProviderPool(payload);
+    }
+    await fetchProviderOptions();
+    notifyProvidersChanged();
+    providerPoolFormSaving.value = false;
+    closeProviderPoolDialog();
+  } catch (err: any) {
+    providerPoolFormError.value = err?.message || t("settings.providerPoolSaveFailed");
+  } finally {
+    providerPoolFormSaving.value = false;
+  }
+}
+
+async function removeProviderPool(pool: ProviderPool) {
+  if (!confirm(t("settings.providerPoolDeleteConfirm", pool.name))) return;
+  providersError.value = "";
+  try {
+    await deleteProviderPool(pool.id);
+    providerPools.value = providerPools.value.filter((item) => item.id !== pool.id);
+    notifyProvidersChanged();
+  } catch (err: any) {
+    providersError.value = err?.message || t("settings.providerPoolDeleteFailed");
+  }
+}
+
 function selectLocalAPIUsagePeriod(period: UsagePeriod) {
   localAPIUsagePeriod.value = period;
   void fetchLocalAPIUsage(period);
@@ -594,10 +783,6 @@ function selectLocalAPIUsagePeriod(period: UsagePeriod) {
 function selectLocalAPIUsageProvider(provider: string) {
   localAPIUsageProvider.value = provider;
   void fetchLocalAPIUsage(localAPIUsagePeriod.value, provider);
-}
-
-function localAPIOrigin(): string {
-  return window.location.origin;
 }
 
 function copySnippet(value: string) {
@@ -642,7 +827,7 @@ export function AIGateway() {
   }, []);
 
   return (
-    <div class="mx-auto max-w-6xl p-8">
+    <div class="page-shell">
       <div class="mb-6 overflow-hidden rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-7">
         <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -657,11 +842,13 @@ export function AIGateway() {
       <div class="mb-6 inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
         <GatewayTabButton tab="apiKeys" label={t("settings.tabAPIKeys")} />
         <GatewayTabButton tab="providers" label={t("gateway.tabProviders")} />
+        <GatewayTabButton tab="pools" label={t("settings.providerPools")} />
         <GatewayTabButton tab="usage" label={t("settings.tabUsage")} />
       </div>
 
       {activeGatewayTab.value === "apiKeys" && <APIKeysSection />}
       {activeGatewayTab.value === "providers" && <ProvidersSection />}
+      {activeGatewayTab.value === "pools" && <ProviderPoolsSection />}
       {activeGatewayTab.value === "usage" && <UsageStatisticsSection />}
       <LocalAPIKeyDialog
         open={isLocalAPIKeyDialogOpen.value}
@@ -724,6 +911,34 @@ export function AIGateway() {
         onChangeModelID={(value) => (providerModelEditID.value = value)}
         onChangeDisplayName={(value) => (providerModelEditDisplayName.value = value)}
         onChangeDescription={(value) => (providerModelEditDescription.value = value)}
+      />
+      <ProviderPoolDialog
+        open={isProviderPoolDialogOpen.value}
+        editing={!!editingProviderPool.value}
+        step={providerPoolDialogStep.value}
+        name={providerPoolFormName.value}
+        model={providerPoolFormModel.value}
+        enabled={providerPoolFormEnabled.value}
+        members={providerPoolFormMembers.value}
+        models={providerPoolModels.value}
+        error={providerPoolFormError.value}
+        saving={providerPoolFormSaving.value}
+        onClose={closeProviderPoolDialog}
+        onNext={continueProviderPoolDialog}
+        onBack={backProviderPoolDialog}
+        onSave={() => void saveProviderPoolForm()}
+        onChangeName={(value) => (providerPoolFormName.value = value)}
+        onChangeModel={(value) => (providerPoolFormModel.value = value)}
+        onChangeEnabled={(value) => (providerPoolFormEnabled.value = value)}
+        onToggleSourceModel={toggleProviderPoolSourceModel}
+      />
+      <ProviderPoolMemberConfigDialog
+        open={providerPoolMemberConfigIndex.value !== null}
+        member={providerPoolMemberConfigDraft.value}
+        saving={providerPoolFormSaving.value}
+        onClose={closeProviderPoolMemberConfigDialog}
+        onSave={saveProviderPoolMemberConfigDialog}
+        onChange={updateProviderPoolMemberConfigDraft}
       />
     </div>
   );
@@ -853,7 +1068,7 @@ function CloudAPIKeySection() {
 function LocalAPIKeysSection() {
   const keys = localAPIKeys.value?.keys || [];
   const authEnabled = localAPIKeys.value?.auth_enabled || false;
-  const origin = localAPIOrigin();
+  const origin = useRuntimeAPIOrigin();
   const openAIBaseURL = `${origin}/v1`;
   const anthropicBaseURL = `${origin}/anthropic`;
   const openAICurl = `curl ${openAIBaseURL}/chat/completions \\
@@ -1216,13 +1431,89 @@ function ProvidersSection() {
   );
 }
 
+function ProviderPoolsSection() {
+  const pools = providerPools.value;
+  return (
+    <section class="rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-5 py-5">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900">{t("settings.providerPools")}</h2>
+          <p class="mt-1 text-sm text-gray-500">{t("settings.providerPoolsDesc")}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => openProviderPoolDialog()}
+          class="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-700"
+        >
+          {t("settings.providerPoolAdd")}
+        </button>
+      </div>
+      {providersLoading.value ? (
+        <p class="p-5 text-sm text-gray-500">...</p>
+      ) : pools.length === 0 ? (
+        <div class="p-5 text-center">
+          <p class="text-sm font-medium text-gray-700">{t("settings.providerPoolsEmpty")}</p>
+          <p class="mt-1 text-sm text-gray-500">{t("settings.providerPoolsHint")}</p>
+        </div>
+      ) : (
+        <div class="grid gap-4 p-5 lg:grid-cols-2">
+          {pools.map((pool) => (
+            <div key={pool.id} class="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <h3 class="truncate text-sm font-semibold text-gray-900">{pool.name}</h3>
+                    <span class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${pool.enabled ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
+                      {pool.enabled ? t("settings.providerEnabled") : t("settings.providerDisabled")}
+                    </span>
+                  </div>
+                  <p class="mt-1 truncate font-mono text-xs text-gray-500">{pool.model}</p>
+                </div>
+                <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
+                  {t("settings.providerPoolMembers", pool.members.length)}
+                </span>
+              </div>
+              <div class="mt-4 space-y-2">
+                {pool.members.map((member) => (
+                  <div key={member.id} class="rounded-lg bg-white px-3 py-2 text-xs text-gray-600">
+                    <div class="flex min-w-0 justify-between gap-2">
+                      <span class="truncate font-medium text-gray-800">{member.model}</span>
+                      <span class="shrink-0 text-gray-400">{member.source}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div class="mt-4 flex justify-end gap-2">
+                <button type="button" onClick={() => openProviderPoolDialog(pool)} class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 transition-colors hover:bg-gray-50">
+                  {t("settings.providerEdit")}
+                </button>
+                <button type="button" onClick={() => void removeProviderPool(pool)} class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs text-red-600 transition-colors hover:bg-red-50">
+                  {t("settings.providerDelete")}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function UsageStatisticsSection() {
   const usage = localAPIUsage.value;
   const rows = usage?.rows || [];
   const summary = usage?.total_summary;
-  const providerOptions = providers.value
-    .map((provider) => provider.name.trim())
-    .filter((name, index, names) => name && names.indexOf(name) === index);
+  const providerOptions = [
+    { value: "local", label: t("settings.apiUsageSourceLocal") },
+    { value: "cloud", label: t("settings.apiUsageSourceCloud") },
+    ...providers.value.map((provider) => ({
+      value: provider.name.trim(),
+      label: provider.name.trim(),
+    })),
+  ].filter((option, index, options) =>
+    option.value
+    && options.findIndex((candidate) => candidate.value.toLowerCase() === option.value.toLowerCase()) === index
+  );
 
   return (
     <div>
@@ -1241,8 +1532,8 @@ function UsageStatisticsSection() {
               class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none transition-colors focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100 disabled:opacity-60"
             >
               <option value="">{t("settings.apiUsageProviderAll")}</option>
-              {providerOptions.map((name) => (
-                <option key={name} value={name}>{name}</option>
+              {providerOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </label>
@@ -1272,7 +1563,14 @@ function UsageStatisticsSection() {
       <div class="mb-3 mt-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 class="text-sm font-semibold text-gray-900">{t("settings.apiUsageBreakdown")}</h3>
-          <span class="text-xs text-gray-400">{t("settings.apiUsageRequests")}: {formatNumber(usage?.totals.requests || 0)}</span>
+          <span class="text-xs text-gray-400">
+            {t("settings.apiUsageRequests")}: {formatNumber(usage?.totals.requests || 0)}
+            {(usage?.totals.pool_requests || 0) > 0 && (
+              <> · {t("settings.apiUsagePoolRequests")}: {formatNumber(usage?.totals.pool_requests || 0)}
+                {" · "}{t("settings.apiUsageFallbacks")}: {formatNumber(usage?.totals.fallback_count || 0)}
+                {" · "}{t("settings.apiUsageLimited")}: {formatNumber(usage?.totals.limited_count || 0)}</>
+            )}
+          </span>
         </div>
       </div>
       <div class="overflow-hidden rounded-xl border border-gray-200 bg-white">
@@ -1295,11 +1593,11 @@ function UsageStatisticsSection() {
               <tbody class="divide-y divide-gray-100">
                 {rows.map((row) => (
                   <tr key={`${row.api_key_id}:${row.source}:${row.model}`}>
-                    <td class="truncate whitespace-nowrap px-4 py-3 text-gray-600" title={apiUsageSourceRowLabel(row.source_type, row.source_name)}>
-                      {apiUsageSourceRowLabel(row.source_type, row.source_name)}
+                    <td class="truncate whitespace-nowrap px-4 py-3 text-gray-600" title={apiUsageSourceRowLabel(row.source_type, row.source_name, row.pool_name)}>
+                      {apiUsageSourceRowLabel(row.source_type, row.source_name, row.pool_name)}
                     </td>
-                    <td class="truncate whitespace-nowrap px-4 py-3 text-gray-600" title={row.model}>
-                      {row.model}
+                    <td class="truncate whitespace-nowrap px-4 py-3 text-gray-600" title={row.member_model ? `${row.model} → ${row.member_model}` : row.model}>
+                      {row.member_model ? `${row.model} → ${row.member_model}` : row.model}
                     </td>
                     <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.requests)}</td>
                     <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.input_tokens)}</td>
@@ -1446,7 +1744,11 @@ function apiUsageSourceSummaryLabel(sourceType: string, sourceName?: string): st
   }
 }
 
-function apiUsageSourceRowLabel(sourceType: string, sourceName?: string): string {
+function apiUsageSourceRowLabel(sourceType: string, sourceName?: string, poolName?: string): string {
+  if (poolName) {
+    const member = sourceName || apiUsageSourceSummaryLabel(sourceType);
+    return `${poolName} → ${member}`;
+  }
   if (sourceType === "provider" && sourceName) {
     return sourceName;
   }
@@ -1659,6 +1961,338 @@ function ProviderDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+function ProviderPoolDialog({
+  open,
+  editing,
+  step,
+  name,
+  model,
+  enabled,
+  members,
+  models,
+  error,
+  saving,
+  onClose,
+  onNext,
+  onBack,
+  onSave,
+  onChangeName,
+  onChangeModel,
+  onChangeEnabled,
+  onToggleSourceModel,
+}: {
+  open: boolean;
+  editing: boolean;
+  step: "basics" | "members";
+  name: string;
+  model: string;
+  enabled: boolean;
+  members: ProviderPoolMember[];
+  models: ModelInfo[];
+  error: string;
+  saving: boolean;
+  onClose: () => void;
+  onNext: () => void;
+  onBack: () => void;
+  onSave: () => void;
+  onChangeName: (value: string) => void;
+  onChangeModel: (value: string) => void;
+  onChangeEnabled: (value: boolean) => void;
+  onToggleSourceModel: (source: string, model: string, checked: boolean) => void;
+}) {
+  if (!open) return null;
+  const sources = [
+    { value: "local", label: t("settings.providerPoolSourceLocal") },
+    { value: "cloud", label: t("settings.providerPoolSourceCloud") },
+    ...providers.value.filter((provider) => provider.enabled).map((provider) => ({
+      value: `provider:${provider.id}`,
+      label: provider.name,
+    })),
+  ];
+  const sourceLabel = (source: string) => sources.find((item) => item.value === source)?.label || source;
+  const modelLabel = (source: string, modelID: string) => {
+    const item = models.find((candidate) => candidate.source === source && candidate.model === modelID);
+    return item?.display_name || item?.label || modelID;
+  };
+  const activeSource = sources.some((source) => source.value === providerPoolSourceFilter.value)
+    ? providerPoolSourceFilter.value
+    : sources[0]?.value || "local";
+  const search = providerPoolModelSearch.value.trim().toLocaleLowerCase();
+  const catalog = models
+    .filter((item) => item.source === activeSource && item.model)
+    .map((item) => ({
+      value: item.model,
+      label: item.display_name || item.label || item.model,
+    }))
+    .filter((item, index, items) => items.findIndex((candidate) => candidate.value === item.value) === index)
+    .filter((item) => !search || item.value.toLocaleLowerCase().includes(search) || item.label.toLocaleLowerCase().includes(search));
+  const basicsValid = !!name.trim() && !!model.trim();
+  return (
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 p-3 sm:p-6" onClick={onClose}>
+      <div class="flex max-h-[calc(100vh-1.5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:max-h-[calc(100vh-3rem)]" onClick={(event) => event.stopPropagation()}>
+        <div class="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 class="text-lg font-semibold text-gray-950">{editing ? t("settings.providerPoolEditTitle") : t("settings.providerPoolAddTitle")}</h2>
+              <p class="mt-1 text-sm text-gray-500">{t("settings.providerPoolDialogDesc")}</p>
+            </div>
+            <div class="flex shrink-0 items-center gap-2" aria-label={t("settings.providerPoolProgress")}>
+              {(["basics", "members"] as const).map((item, index) => {
+                const active = step === item;
+                const complete = item === "basics" && step === "members";
+                return (
+                  <div key={item} class="flex items-center gap-2">
+                    {index > 0 && <span class="h-px w-5 bg-gray-200 sm:w-8" />}
+                    <span class={`inline-flex items-center gap-2 text-xs font-medium ${active ? "text-indigo-700" : complete ? "text-emerald-700" : "text-gray-400"}`}>
+                      <span class={`inline-flex h-6 w-6 items-center justify-center rounded-full ${active ? "bg-indigo-600 text-white" : complete ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
+                        {index + 1}
+                      </span>
+                      {item === "basics" ? t("settings.providerPoolStepBasics") : t("settings.providerPoolStepMembers")}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        {step === "basics" ? (
+          <div class="flex-1 overflow-y-auto px-5 py-6 sm:px-7">
+            <div class="mx-auto max-w-2xl">
+              <div class="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
+                <h3 class="text-sm font-semibold text-indigo-950">{t("settings.providerPoolBasicsTitle")}</h3>
+                <p class="mt-1 text-sm leading-6 text-indigo-700">{t("settings.providerPoolBasicsDesc")}</p>
+              </div>
+              <div class="mt-6 space-y-5">
+                <div>
+                  <label class="mb-1.5 block text-sm font-medium text-gray-700">{t("settings.providerPoolName")}</label>
+                  <input
+                    class="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={name}
+                    onInput={(event) => onChangeName((event.target as HTMLInputElement).value)}
+                    placeholder={t("settings.providerPoolNamePlaceholder")}
+                    disabled={saving}
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500">{t("settings.providerPoolNameHint")}</p>
+                </div>
+                <div>
+                  <label class="mb-1.5 block text-sm font-medium text-gray-700">{t("settings.providerPoolModel")}</label>
+                  <input
+                    class="w-full rounded-xl border border-gray-200 px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={model}
+                    onInput={(event) => onChangeModel((event.target as HTMLInputElement).value)}
+                    placeholder={t("settings.providerPoolModelPlaceholder")}
+                    disabled={saving}
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500">{t("settings.providerPoolModelHint")}</p>
+                </div>
+                <div class="flex items-center justify-between gap-4 rounded-xl border border-gray-200 px-4 py-3">
+                  <div>
+                    <p class="text-sm font-medium text-gray-800">{t("settings.providerPoolEnabledLabel")}</p>
+                    <p class="mt-0.5 text-xs text-gray-500">{t("settings.providerPoolEnabledHint")}</p>
+                  </div>
+                  <label class="relative inline-flex shrink-0 cursor-pointer items-center">
+                    <input type="checkbox" checked={enabled} onChange={(event) => onChangeEnabled((event.target as HTMLInputElement).checked)} disabled={saving} class="peer sr-only" />
+                    <div class="h-6 w-11 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:shadow-sm after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 peer-disabled:opacity-60" />
+                  </label>
+                </div>
+              </div>
+              {error && <p class="mt-4 text-sm text-red-600">{error}</p>}
+            </div>
+          </div>
+        ) : (
+          <div class="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-5 sm:px-7">
+            <div class="mb-4">
+              <h3 class="text-sm font-semibold text-gray-900">{t("settings.providerPoolMembersTitle")}</h3>
+              <p class="mt-1 text-xs leading-5 text-gray-500">{t("settings.providerPoolMembersWizardDesc")}</p>
+            </div>
+            <div class="grid min-h-0 flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
+              <div class="flex min-h-[24rem] min-w-0 flex-col overflow-hidden rounded-2xl border border-gray-200">
+                <div class="border-b border-gray-100 bg-gray-50/70 p-3">
+                  <div class="flex gap-2 overflow-x-auto pb-1">
+                    {sources.map((source) => {
+                      const selectedCount = members.filter((member) => member.source === source.value).length;
+                      return (
+                        <button
+                          key={source.value}
+                          type="button"
+                          onClick={() => {
+                            providerPoolSourceFilter.value = source.value;
+                            providerPoolModelSearch.value = "";
+                          }}
+                          class={`shrink-0 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${activeSource === source.value ? "bg-indigo-600 text-white shadow-sm" : "bg-white text-gray-600 hover:bg-gray-100"}`}
+                        >
+                          {source.label}
+                          {selectedCount > 0 && <span class={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${activeSource === source.value ? "bg-white/20 text-white" : "bg-indigo-50 text-indigo-700"}`}>{selectedCount}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div class="relative mt-2">
+                    <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="m20 20-3.5-3.5" />
+                    </svg>
+                    <input
+                      type="search"
+                      value={providerPoolModelSearch.value}
+                      onInput={(event) => (providerPoolModelSearch.value = (event.target as HTMLInputElement).value)}
+                      placeholder={t("settings.providerPoolSearchPlaceholder")}
+                      aria-label={t("settings.providerPoolSearchLabel")}
+                      class="w-full rounded-lg border border-gray-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+                <div class="min-h-0 flex-1 overflow-y-auto p-3">
+                  {catalog.length === 0 ? (
+                    <div class="flex h-full min-h-48 flex-col items-center justify-center px-6 text-center">
+                      <p class="text-sm font-medium text-gray-600">{search ? t("settings.providerPoolSearchEmpty") : t("settings.providerPoolSourceEmpty")}</p>
+                      <p class="mt-1 text-xs text-gray-400">{search ? t("settings.providerPoolSearchEmptyHint") : t("settings.providerPoolSourceEmptyHint")}</p>
+                    </div>
+                  ) : (
+                    <div class="grid gap-2 sm:grid-cols-2">
+                      {catalog.map((item) => {
+                        const selected = members.some((member) => member.source === activeSource && member.model === item.value);
+                        return (
+                          <label key={item.value} class={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors ${selected ? "border-indigo-200 bg-indigo-50/60" : "border-gray-100 hover:border-gray-200 hover:bg-gray-50"}`}>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={(event) => onToggleSourceModel(activeSource, item.value, (event.target as HTMLInputElement).checked)}
+                              disabled={saving}
+                              class="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span class="min-w-0">
+                              <span class="block truncate text-sm font-medium text-gray-900">{item.label}</span>
+                              <span class="mt-0.5 block truncate font-mono text-xs text-gray-500">{item.value}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <aside class="flex min-h-[18rem] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-gray-50/70 lg:sticky lg:top-0 lg:max-h-[calc(100vh-15rem)]">
+                <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+                  <div>
+                    <h4 class="text-sm font-semibold text-gray-900">{t("settings.providerPoolSelectedTitle")}</h4>
+                    <p class="mt-0.5 text-xs text-gray-500">{t("settings.providerPoolSelectedHint")}</p>
+                  </div>
+                  <span class="rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-700">{members.length}</span>
+                </div>
+                <div class="min-h-0 flex-1 overflow-y-auto p-3">
+                  {members.length === 0 ? (
+                    <div class="flex h-full min-h-36 items-center justify-center px-5 text-center text-sm text-gray-400">{t("settings.providerPoolSelectedEmpty")}</div>
+                  ) : (
+                    <div class="space-y-2">
+                      {members.map((member, memberIndex) => (
+                        <div key={member.id} class="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+                          <div class="flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                              <p class="truncate text-sm font-medium text-gray-900">{modelLabel(member.source, member.model)}</p>
+                              <p class="mt-0.5 truncate font-mono text-xs text-gray-500">{member.model}</p>
+                              <span class="mt-2 inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{sourceLabel(member.source)}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onToggleSourceModel(member.source, member.model, false)}
+                              disabled={saving}
+                              aria-label={t("settings.providerPoolMemberRemove")}
+                              title={t("settings.providerPoolMemberRemove")}
+                              class="shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-60"
+                            >
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4" aria-hidden="true">
+                                <path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 11v6m4-6v6" />
+                              </svg>
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openProviderPoolMemberConfigDialog(memberIndex)}
+                            disabled={saving}
+                            class="mt-3 w-full rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-60"
+                          >
+                            {t("settings.providerPoolMemberConfigure")}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </aside>
+            </div>
+            {error && <p class="mt-4 text-sm text-red-600">{error}</p>}
+          </div>
+        )}
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 bg-white px-5 py-4 sm:px-7">
+          <button type="button" onClick={onClose} disabled={saving} class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60">{t("upgrade.cancel")}</button>
+          <div class="flex items-center gap-3">
+            {step === "members" && (
+              <button type="button" onClick={onBack} disabled={saving} class="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60">{t("settings.providerPoolBack")}</button>
+            )}
+            {step === "basics" ? (
+              <button type="button" onClick={onNext} disabled={saving || !basicsValid} class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{t("settings.providerPoolNext")}</button>
+            ) : (
+              <button type="button" onClick={onSave} disabled={saving || members.length === 0} class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{saving ? t("settings.providerPoolSaving") : t("settings.providerPoolSave")}</button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProviderPoolMemberConfigDialog({
+  open,
+  member,
+  saving,
+  onClose,
+  onSave,
+  onChange,
+}: {
+  open: boolean;
+  member: ProviderPoolMember | null;
+  saving: boolean;
+  onClose: () => void;
+  onSave: () => void;
+  onChange: (key: "priority" | "weight" | "requests_per_minute" | "tokens_per_minute" | "max_concurrent", value: string) => void;
+}) {
+  if (!open || !member) return null;
+  return (
+    <div class="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/40 px-4" onClick={onClose}>
+      <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div class="border-b border-gray-100 px-6 py-5">
+          <h2 class="text-lg font-semibold text-gray-900">{t("settings.providerPoolMemberConfigureTitle")}</h2>
+          <p class="mt-1 truncate font-mono text-sm text-gray-500">{member.model}</p>
+        </div>
+        <div class="space-y-4 px-6 py-5">
+          <p class="text-sm text-gray-500">{t("settings.providerPoolMemberConfigureDesc")}</p>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <PoolNumberInput label={t("settings.providerPoolMemberPriority")} value={member.priority} disabled={saving} onChange={(value) => onChange("priority", value)} />
+            <PoolNumberInput label={t("settings.providerPoolMemberWeight")} value={member.weight} disabled={saving} onChange={(value) => onChange("weight", value)} />
+            <PoolNumberInput label={t("settings.providerPoolMemberRPM")} value={member.requests_per_minute} disabled={saving} onChange={(value) => onChange("requests_per_minute", value)} />
+            <PoolNumberInput label={t("settings.providerPoolMemberTPM")} value={member.tokens_per_minute} disabled={saving} onChange={(value) => onChange("tokens_per_minute", value)} />
+            <PoolNumberInput label={t("settings.providerPoolMemberMaxConcurrent")} value={member.max_concurrent} disabled={saving} onChange={(value) => onChange("max_concurrent", value)} />
+          </div>
+        </div>
+        <div class="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">
+          <button type="button" onClick={onClose} disabled={saving} class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60">{t("upgrade.cancel")}</button>
+          <button type="button" onClick={onSave} disabled={saving} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white transition-colors hover:bg-indigo-700 disabled:opacity-60">{t("settings.providerPoolMemberConfigureSave")}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PoolNumberInput({ label, value, disabled, onChange }: { label: string; value?: number; disabled: boolean; onChange: (value: string) => void }) {
+  return (
+    <label>
+      <span class="mb-1 block text-xs font-medium text-gray-600">{label}</span>
+      <input type="number" min="0" value={value ?? ""} onInput={(event) => onChange((event.target as HTMLInputElement).value)} disabled={disabled} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+    </label>
   );
 }
 

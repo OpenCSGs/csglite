@@ -93,6 +93,7 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 	period, since := apiUsagePeriod(r)
 	options := config.APIUsageListOptions{
 		Provider: strings.TrimSpace(r.URL.Query().Get("provider")),
+		Pool:     strings.TrimSpace(r.URL.Query().Get("pool")),
 	}
 	if since != nil {
 		options.Since = since
@@ -102,7 +103,7 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load API usage")
 		return
 	}
-	historyState, err := s.apiUsage.List(config.APIUsageListOptions{Provider: options.Provider})
+	historyState, err := s.apiUsage.List(config.APIUsageListOptions{Provider: options.Provider, Pool: options.Pool})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load API usage")
 		return
@@ -112,6 +113,7 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 		TotalHistory: apiUsageTotalTokens(historyState.Records),
 		Rows:         make([]api.APIUsageRow, 0, len(state.Records)),
 		SourceTotals: make([]api.APIUsageSourceTotal, 0, 4),
+		PoolTotals:   make([]api.APIUsagePoolTotal, 0),
 	}
 	sourceHints := apiUsageSourceHints(historyState.Events, historyState.Records)
 	resp.TotalSummary = s.apiUsageTotalSummary(r.Context(), state.Events, since, sourceHints)
@@ -124,6 +126,11 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 		resp.Totals.InputTokens += record.InputTokens
 		resp.Totals.OutputTokens += record.OutputTokens
 		resp.Totals.TotalTokens += record.TotalTokens
+		resp.Totals.FallbackCount += record.FallbackCount
+		resp.Totals.LimitedCount += record.LimitedCount
+		if record.PoolID != "" {
+			resp.Totals.PoolRequests += record.Requests
+		}
 		if row.SourceType == apiUsageSourceLocal {
 			resp.Totals.LocalTokens += record.TotalTokens
 		} else {
@@ -131,6 +138,7 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Rows = append(resp.Rows, row)
 		addAPIUsageSourceTotal(&resp.SourceTotals, row)
+		addAPIUsagePoolTotal(&resp.PoolTotals, row)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -294,18 +302,76 @@ func (s *Server) apiUsageRow(ctx context.Context, record config.APIUsageRecord, 
 		}
 	}
 	return api.APIUsageRow{
-		APIKeyID:     record.APIKeyID,
-		APIKeyName:   record.APIKeyName,
-		Model:        record.Model,
-		Source:       source,
-		SourceType:   sourceType,
-		SourceName:   sourceName,
-		Requests:     record.Requests,
-		InputTokens:  record.InputTokens,
-		OutputTokens: record.OutputTokens,
-		TotalTokens:  record.TotalTokens,
-		LastUsedAt:   record.LastUsedAt,
+		APIKeyID:      record.APIKeyID,
+		APIKeyName:    record.APIKeyName,
+		Model:         record.Model,
+		Source:        source,
+		SourceType:    sourceType,
+		SourceName:    sourceName,
+		PoolID:        record.PoolID,
+		PoolName:      record.PoolName,
+		PoolModel:     record.PoolModel,
+		MemberModel:   record.MemberModel,
+		FallbackCount: record.FallbackCount,
+		LimitedCount:  record.LimitedCount,
+		Requests:      record.Requests,
+		InputTokens:   record.InputTokens,
+		OutputTokens:  record.OutputTokens,
+		TotalTokens:   record.TotalTokens,
+		LastUsedAt:    record.LastUsedAt,
 	}
+}
+
+func addAPIUsagePoolTotal(totals *[]api.APIUsagePoolTotal, row api.APIUsageRow) {
+	if strings.TrimSpace(row.PoolID) == "" {
+		return
+	}
+	poolIndex := -1
+	for i := range *totals {
+		if (*totals)[i].PoolID == row.PoolID {
+			poolIndex = i
+			break
+		}
+	}
+	if poolIndex < 0 {
+		*totals = append(*totals, api.APIUsagePoolTotal{
+			PoolID:    row.PoolID,
+			PoolName:  row.PoolName,
+			PoolModel: row.PoolModel,
+			Members:   []api.APIUsagePoolMemberTotal{},
+		})
+		poolIndex = len(*totals) - 1
+	}
+	pool := &(*totals)[poolIndex]
+	pool.Requests += row.Requests
+	pool.InputTokens += row.InputTokens
+	pool.OutputTokens += row.OutputTokens
+	pool.TotalTokens += row.TotalTokens
+	pool.FallbackCount += row.FallbackCount
+	pool.LimitedCount += row.LimitedCount
+	for i := range pool.Members {
+		if pool.Members[i].Source == row.Source && pool.Members[i].Model == row.MemberModel {
+			addAPIUsagePoolMemberTotal(&pool.Members[i], row)
+			return
+		}
+	}
+	member := api.APIUsagePoolMemberTotal{
+		Source:     row.Source,
+		SourceType: row.SourceType,
+		SourceName: row.SourceName,
+		Model:      row.MemberModel,
+	}
+	addAPIUsagePoolMemberTotal(&member, row)
+	pool.Members = append(pool.Members, member)
+}
+
+func addAPIUsagePoolMemberTotal(total *api.APIUsagePoolMemberTotal, row api.APIUsageRow) {
+	total.Requests += row.Requests
+	total.InputTokens += row.InputTokens
+	total.OutputTokens += row.OutputTokens
+	total.TotalTokens += row.TotalTokens
+	total.FallbackCount += row.FallbackCount
+	total.LimitedCount += row.LimitedCount
 }
 
 func addAPIUsageSourceTotal(totals *[]api.APIUsageSourceTotal, row api.APIUsageRow) {

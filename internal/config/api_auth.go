@@ -189,43 +189,61 @@ func (s *APIKeyStore) saveLocked(state APIKeyState) error {
 }
 
 type APIUsageEvent struct {
-	APIKeyID     string
-	APIKeyName   string
-	Model        string
-	Source       string
-	SourceType   string
-	SourceName   string
-	InputTokens  int64
-	OutputTokens int64
-	CreatedAt    time.Time
+	APIKeyID      string
+	APIKeyName    string
+	Model         string
+	Source        string
+	SourceType    string
+	SourceName    string
+	PoolID        string
+	PoolName      string
+	PoolModel     string
+	MemberModel   string
+	FallbackCount int64
+	LimitedCount  int64
+	InputTokens   int64
+	OutputTokens  int64
+	CreatedAt     time.Time
 }
 
 type APIUsageRecord struct {
-	APIKeyID     string    `json:"api_key_id"`
-	APIKeyName   string    `json:"api_key_name"`
-	Model        string    `json:"model"`
-	Source       string    `json:"source,omitempty"`
-	SourceType   string    `json:"source_type,omitempty"`
-	SourceName   string    `json:"source_name,omitempty"`
-	Requests     int64     `json:"requests"`
-	InputTokens  int64     `json:"input_tokens"`
-	OutputTokens int64     `json:"output_tokens"`
-	TotalTokens  int64     `json:"total_tokens"`
-	LastUsedAt   time.Time `json:"last_used_at"`
+	APIKeyID      string    `json:"api_key_id"`
+	APIKeyName    string    `json:"api_key_name"`
+	Model         string    `json:"model"`
+	Source        string    `json:"source,omitempty"`
+	SourceType    string    `json:"source_type,omitempty"`
+	SourceName    string    `json:"source_name,omitempty"`
+	PoolID        string    `json:"pool_id,omitempty"`
+	PoolName      string    `json:"pool_name,omitempty"`
+	PoolModel     string    `json:"pool_model,omitempty"`
+	MemberModel   string    `json:"member_model,omitempty"`
+	FallbackCount int64     `json:"fallback_count,omitempty"`
+	LimitedCount  int64     `json:"limited_count,omitempty"`
+	Requests      int64     `json:"requests"`
+	InputTokens   int64     `json:"input_tokens"`
+	OutputTokens  int64     `json:"output_tokens"`
+	TotalTokens   int64     `json:"total_tokens"`
+	LastUsedAt    time.Time `json:"last_used_at"`
 }
 
 type APIUsageEventRecord struct {
-	APIKeyID     string    `json:"api_key_id"`
-	APIKeyName   string    `json:"api_key_name"`
-	Model        string    `json:"model"`
-	Source       string    `json:"source,omitempty"`
-	SourceType   string    `json:"source_type,omitempty"`
-	SourceName   string    `json:"source_name,omitempty"`
-	Requests     int64     `json:"requests,omitempty"`
-	InputTokens  int64     `json:"input_tokens"`
-	OutputTokens int64     `json:"output_tokens"`
-	TotalTokens  int64     `json:"total_tokens"`
-	CreatedAt    time.Time `json:"created_at"`
+	APIKeyID      string    `json:"api_key_id"`
+	APIKeyName    string    `json:"api_key_name"`
+	Model         string    `json:"model"`
+	Source        string    `json:"source,omitempty"`
+	SourceType    string    `json:"source_type,omitempty"`
+	SourceName    string    `json:"source_name,omitempty"`
+	PoolID        string    `json:"pool_id,omitempty"`
+	PoolName      string    `json:"pool_name,omitempty"`
+	PoolModel     string    `json:"pool_model,omitempty"`
+	MemberModel   string    `json:"member_model,omitempty"`
+	FallbackCount int64     `json:"fallback_count,omitempty"`
+	LimitedCount  int64     `json:"limited_count,omitempty"`
+	Requests      int64     `json:"requests,omitempty"`
+	InputTokens   int64     `json:"input_tokens"`
+	OutputTokens  int64     `json:"output_tokens"`
+	TotalTokens   int64     `json:"total_tokens"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type APIUsageState struct {
@@ -237,6 +255,7 @@ type APIUsageListOptions struct {
 	Since    *time.Time
 	Until    *time.Time
 	Provider string
+	Pool     string
 }
 
 type APIUsageStore struct {
@@ -269,17 +288,23 @@ func (s *APIUsageStore) Add(event APIUsageEvent) error {
 		now = now.UTC()
 	}
 	record := APIUsageEventRecord{
-		APIKeyID:     event.APIKeyID,
-		APIKeyName:   event.APIKeyName,
-		Model:        event.Model,
-		Source:       strings.TrimSpace(event.Source),
-		SourceType:   strings.TrimSpace(event.SourceType),
-		SourceName:   strings.TrimSpace(event.SourceName),
-		Requests:     1,
-		InputTokens:  event.InputTokens,
-		OutputTokens: event.OutputTokens,
-		TotalTokens:  event.InputTokens + event.OutputTokens,
-		CreatedAt:    now,
+		APIKeyID:      event.APIKeyID,
+		APIKeyName:    event.APIKeyName,
+		Model:         event.Model,
+		Source:        strings.TrimSpace(event.Source),
+		SourceType:    strings.TrimSpace(event.SourceType),
+		SourceName:    strings.TrimSpace(event.SourceName),
+		PoolID:        strings.TrimSpace(event.PoolID),
+		PoolName:      strings.TrimSpace(event.PoolName),
+		PoolModel:     strings.TrimSpace(event.PoolModel),
+		MemberModel:   strings.TrimSpace(event.MemberModel),
+		FallbackCount: event.FallbackCount,
+		LimitedCount:  event.LimitedCount,
+		Requests:      1,
+		InputTokens:   event.InputTokens,
+		OutputTokens:  event.OutputTokens,
+		TotalTokens:   event.InputTokens + event.OutputTokens,
+		CreatedAt:     now,
 	}
 	upsertAPIUsageEventBucket(&state.Events, record)
 	state.Records = aggregateAPIUsageEvents(state.Events, APIUsageListOptions{})
@@ -340,17 +365,23 @@ func migrateLegacyAPIUsageEvents(state *APIUsageState, fallback time.Time) {
 			usedAt = fallback
 		}
 		state.Events = append(state.Events, APIUsageEventRecord{
-			APIKeyID:     record.APIKeyID,
-			APIKeyName:   record.APIKeyName,
-			Model:        record.Model,
-			Source:       record.Source,
-			SourceType:   record.SourceType,
-			SourceName:   record.SourceName,
-			Requests:     apiUsageRecordRequests(record),
-			InputTokens:  record.InputTokens,
-			OutputTokens: record.OutputTokens,
-			TotalTokens:  record.TotalTokens,
-			CreatedAt:    usedAt.UTC(),
+			APIKeyID:      record.APIKeyID,
+			APIKeyName:    record.APIKeyName,
+			Model:         record.Model,
+			Source:        record.Source,
+			SourceType:    record.SourceType,
+			SourceName:    record.SourceName,
+			PoolID:        record.PoolID,
+			PoolName:      record.PoolName,
+			PoolModel:     record.PoolModel,
+			MemberModel:   record.MemberModel,
+			FallbackCount: record.FallbackCount,
+			LimitedCount:  record.LimitedCount,
+			Requests:      apiUsageRecordRequests(record),
+			InputTokens:   record.InputTokens,
+			OutputTokens:  record.OutputTokens,
+			TotalTokens:   record.TotalTokens,
+			CreatedAt:     usedAt.UTC(),
 		})
 	}
 }
@@ -368,6 +399,10 @@ func compactAPIUsageEvents(events []APIUsageEventRecord) []APIUsageEventRecord {
 		event.Source = strings.TrimSpace(event.Source)
 		event.SourceType = strings.TrimSpace(event.SourceType)
 		event.SourceName = strings.TrimSpace(event.SourceName)
+		event.PoolID = strings.TrimSpace(event.PoolID)
+		event.PoolName = strings.TrimSpace(event.PoolName)
+		event.PoolModel = strings.TrimSpace(event.PoolModel)
+		event.MemberModel = strings.TrimSpace(event.MemberModel)
 		event.Requests = apiUsageEventRequests(event)
 		event.TotalTokens = apiUsageEventTotalTokens(event)
 		if !event.CreatedAt.IsZero() {
@@ -377,7 +412,10 @@ func compactAPIUsageEvents(events []APIUsageEventRecord) []APIUsageEventRecord {
 		if i, ok := index[key]; ok {
 			out[i].APIKeyName = latestNonEmpty(out[i].APIKeyName, event.APIKeyName)
 			out[i].SourceName = latestNonEmpty(out[i].SourceName, event.SourceName)
+			out[i].PoolName = latestNonEmpty(out[i].PoolName, event.PoolName)
 			out[i].Requests += event.Requests
+			out[i].FallbackCount += event.FallbackCount
+			out[i].LimitedCount += event.LimitedCount
 			out[i].InputTokens += event.InputTokens
 			out[i].OutputTokens += event.OutputTokens
 			out[i].TotalTokens += event.TotalTokens
@@ -404,7 +442,10 @@ func upsertAPIUsageEventBucket(events *[]APIUsageEventRecord, event APIUsageEven
 		if apiUsageEventBucketKey((*events)[i]) == key {
 			(*events)[i].APIKeyName = latestNonEmpty((*events)[i].APIKeyName, event.APIKeyName)
 			(*events)[i].SourceName = latestNonEmpty((*events)[i].SourceName, event.SourceName)
+			(*events)[i].PoolName = latestNonEmpty((*events)[i].PoolName, event.PoolName)
 			(*events)[i].Requests += apiUsageEventRequests(event)
+			(*events)[i].FallbackCount += event.FallbackCount
+			(*events)[i].LimitedCount += event.LimitedCount
 			(*events)[i].InputTokens += event.InputTokens
 			(*events)[i].OutputTokens += event.OutputTokens
 			(*events)[i].TotalTokens += apiUsageEventTotalTokens(event)
@@ -424,10 +465,16 @@ func upsertAPIUsageRecord(state *APIUsageState, event APIUsageEventRecord) {
 		if state.Records[i].APIKeyID == event.APIKeyID &&
 			state.Records[i].Model == event.Model &&
 			state.Records[i].Source == event.Source &&
-			state.Records[i].SourceType == event.SourceType {
+			state.Records[i].SourceType == event.SourceType &&
+			state.Records[i].PoolID == event.PoolID &&
+			state.Records[i].PoolModel == event.PoolModel &&
+			state.Records[i].MemberModel == event.MemberModel {
 			state.Records[i].APIKeyName = event.APIKeyName
 			state.Records[i].SourceName = event.SourceName
+			state.Records[i].PoolName = latestNonEmpty(state.Records[i].PoolName, event.PoolName)
 			state.Records[i].Requests += requests
+			state.Records[i].FallbackCount += event.FallbackCount
+			state.Records[i].LimitedCount += event.LimitedCount
 			state.Records[i].InputTokens += event.InputTokens
 			state.Records[i].OutputTokens += event.OutputTokens
 			state.Records[i].TotalTokens += apiUsageEventTotalTokens(event)
@@ -436,17 +483,23 @@ func upsertAPIUsageRecord(state *APIUsageState, event APIUsageEventRecord) {
 		}
 	}
 	state.Records = append(state.Records, APIUsageRecord{
-		APIKeyID:     event.APIKeyID,
-		APIKeyName:   event.APIKeyName,
-		Model:        event.Model,
-		Source:       event.Source,
-		SourceType:   event.SourceType,
-		SourceName:   event.SourceName,
-		Requests:     requests,
-		InputTokens:  event.InputTokens,
-		OutputTokens: event.OutputTokens,
-		TotalTokens:  apiUsageEventTotalTokens(event),
-		LastUsedAt:   event.CreatedAt,
+		APIKeyID:      event.APIKeyID,
+		APIKeyName:    event.APIKeyName,
+		Model:         event.Model,
+		Source:        event.Source,
+		SourceType:    event.SourceType,
+		SourceName:    event.SourceName,
+		PoolID:        event.PoolID,
+		PoolName:      event.PoolName,
+		PoolModel:     event.PoolModel,
+		MemberModel:   event.MemberModel,
+		FallbackCount: event.FallbackCount,
+		LimitedCount:  event.LimitedCount,
+		Requests:      requests,
+		InputTokens:   event.InputTokens,
+		OutputTokens:  event.OutputTokens,
+		TotalTokens:   apiUsageEventTotalTokens(event),
+		LastUsedAt:    event.CreatedAt,
 	})
 }
 
@@ -456,7 +509,7 @@ func aggregateAPIUsageEvents(events []APIUsageEventRecord, options APIUsageListO
 		if !apiUsageTimeInRange(event.CreatedAt, options) {
 			continue
 		}
-		if !apiUsageProviderMatches(event.Source, event.SourceName, options) {
+		if !apiUsageMatches(event.Source, event.SourceName, event.PoolID, event.PoolName, event.PoolModel, options) {
 			continue
 		}
 		upsertAPIUsageRecord(&state, event)
@@ -470,6 +523,9 @@ func apiUsageEventBucketKey(event APIUsageEventRecord) string {
 		strings.TrimSpace(event.Model),
 		strings.TrimSpace(event.Source),
 		strings.TrimSpace(event.SourceType),
+		strings.TrimSpace(event.PoolID),
+		strings.TrimSpace(event.PoolModel),
+		strings.TrimSpace(event.MemberModel),
 		apiUsageEventDay(event.CreatedAt),
 	}, "\x00")
 }
@@ -513,7 +569,7 @@ func latestNonEmpty(current, next string) string {
 func filterAPIUsageRecords(records []APIUsageRecord, options APIUsageListOptions) []APIUsageRecord {
 	out := make([]APIUsageRecord, 0, len(records))
 	for _, record := range records {
-		if apiUsageTimeInRange(record.LastUsedAt, options) && apiUsageProviderMatches(record.Source, record.SourceName, options) {
+		if apiUsageTimeInRange(record.LastUsedAt, options) && apiUsageMatches(record.Source, record.SourceName, record.PoolID, record.PoolName, record.PoolModel, options) {
 			out = append(out, record)
 		}
 	}
@@ -523,7 +579,7 @@ func filterAPIUsageRecords(records []APIUsageRecord, options APIUsageListOptions
 func filterAPIUsageEvents(events []APIUsageEventRecord, options APIUsageListOptions) []APIUsageEventRecord {
 	out := make([]APIUsageEventRecord, 0, len(events))
 	for _, event := range events {
-		if apiUsageTimeInRange(event.CreatedAt, options) && apiUsageProviderMatches(event.Source, event.SourceName, options) {
+		if apiUsageTimeInRange(event.CreatedAt, options) && apiUsageMatches(event.Source, event.SourceName, event.PoolID, event.PoolName, event.PoolModel, options) {
 			out = append(out, event)
 		}
 	}
@@ -544,6 +600,23 @@ func apiUsageProviderMatches(source, sourceName string, options APIUsageListOpti
 		return strings.EqualFold(strings.TrimSpace(source[len("provider:"):]), provider)
 	}
 	return false
+}
+
+func apiUsageMatches(source, sourceName, poolID, poolName, poolModel string, options APIUsageListOptions) bool {
+	if !apiUsageProviderMatches(source, sourceName, options) {
+		return false
+	}
+	pool := strings.TrimSpace(options.Pool)
+	if pool == "" {
+		return true
+	}
+	poolID = strings.TrimSpace(poolID)
+	poolName = strings.TrimSpace(poolName)
+	poolModel = strings.TrimSpace(poolModel)
+	return strings.EqualFold(poolID, pool) ||
+		strings.EqualFold(poolName, pool) ||
+		strings.EqualFold(poolModel, pool) ||
+		strings.EqualFold("pool:"+poolID, pool)
 }
 
 func apiUsageTimeInRange(value time.Time, options APIUsageListOptions) bool {

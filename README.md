@@ -295,18 +295,11 @@ The CLI and Web UI expose a convenience `storage_dir` setting. When you set it, 
 | `listen_addr` | `:11435` | API server listen address |
 | `token` | (none) | CSGHub access token |
 
-To hide one or more left navigation items in the Web UI, set the
-`CSGHUB_LITE_HIDDEN_NAV_ITEMS` environment variable to a comma-separated list
-and restart the server:
+### Environment variables
 
-```bash
-CSGHUB_LITE_HIDDEN_NAV_ITEMS=marketplace,datasets,ai-apps,pricing,help csghub-lite serve
-```
-
-Supported item IDs are `dashboard`, `marketplace`, `library`, `datasets`,
-`chat`, `images`, `ai-apps`, `ai-gateway`, `settings`, `pricing`, and `help`.
-This only hides navigation entries; the corresponding page URLs remain
-accessible.
+See the [Environment Variables Reference](docs/guides/environment-variables.md)
+for all CSGLite runtime, llama.cpp/ROCm, installer, Python runtime, and AI Apps
+environment variables, including defaults and supported values.
 
 Switch to a private CSGHub deployment:
 
@@ -340,7 +333,7 @@ Full documentation is available in the [`docs/`](docs/) directory:
 - **Getting Started**: [Installation](docs/getting-started/installation.md) | [Quick Start](docs/getting-started/quickstart.md)
 - **CLI Reference**: [All Commands](docs/cli/overview.md)
 - **REST API**: [API Reference](docs/api/overview.md)
-- **Guides**: [Configuration](docs/guides/configuration.md) | [Model Formats](docs/guides/model-formats.md) | [Packaging](docs/guides/packaging.md) | [Architecture](docs/guides/architecture.md)
+- **Guides**: [Configuration](docs/guides/configuration.md) | [Environment Variables](docs/guides/environment-variables.md) | [Model Formats](docs/guides/model-formats.md) | [Packaging](docs/guides/packaging.md) | [Architecture](docs/guides/architecture.md)
 
 ## License
 

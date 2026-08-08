@@ -78,29 +78,48 @@ type codexTruncationPolicy struct {
 }
 
 func resolveLaunchModel(serverURL, defaultModel, requested string, skipPrompt, hasCloudToken bool) (string, error) {
+	selection, err := resolveLaunchModelSelection(serverURL, defaultModel, requested, "", skipPrompt, hasCloudToken)
+	return selection.ID, err
+}
+
+func resolveLaunchModelSelection(serverURL, defaultModel, requested, requestedProvider string, skipPrompt, hasCloudToken bool) (launchModelChoice, error) {
 	models, err := getLaunchModels(serverURL)
 	if err != nil {
-		return "", err
+		return launchModelChoice{}, err
 	}
 	if len(models) == 0 {
-		return "", fmt.Errorf("no models are currently available for AI apps")
+		return launchModelChoice{}, fmt.Errorf("no models are currently available for AI apps")
 	}
 
 	choices := normalizeLaunchModelChoices(models)
+	requestedProvider = strings.TrimSpace(requestedProvider)
+	if requestedProvider != "" {
+		filtered := make([]launchModelChoice, 0, len(choices))
+		for _, candidate := range choices {
+			if strings.EqualFold(candidate.ProviderID, requestedProvider) ||
+				strings.EqualFold(candidate.ProviderName, requestedProvider) {
+				filtered = append(filtered, candidate)
+			}
+		}
+		if len(filtered) == 0 {
+			return launchModelChoice{}, fmt.Errorf("provider %q is not available for AI apps", requestedProvider)
+		}
+		choices = filtered
+	}
 	if len(choices) == 0 {
-		return "", fmt.Errorf("no models are currently available for AI apps")
+		return launchModelChoice{}, fmt.Errorf("no models are currently available for AI apps")
 	}
 
 	if requested != "" {
 		for _, candidate := range choices {
 			if candidate.ID == requested {
-				return candidate.ID, nil
+				return candidate, nil
 			}
 		}
 		if !hasCloudToken {
-			return "", fmt.Errorf("model %q is not available for AI apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings and save an Access Token first", requested)
+			return launchModelChoice{}, fmt.Errorf("model %q is not available for AI apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings and save an Access Token first", requested)
 		}
-		return "", fmt.Errorf("model %q is not available for AI apps", requested)
+		return launchModelChoice{}, fmt.Errorf("model %q is not available for AI apps", requested)
 	}
 
 	defaultModel = strings.TrimSpace(defaultModel)
@@ -108,7 +127,7 @@ func resolveLaunchModel(serverURL, defaultModel, requested string, skipPrompt, h
 		for _, candidate := range choices {
 			if candidate.ID == defaultModel {
 				if len(choices) == 1 || skipPrompt || !stdinIsTerminal() {
-					return candidate.ID, nil
+					return candidate, nil
 				}
 				return promptForLaunchModel(choices, candidate.ID)
 			}
@@ -116,15 +135,18 @@ func resolveLaunchModel(serverURL, defaultModel, requested string, skipPrompt, h
 	}
 
 	if len(choices) == 1 || skipPrompt || !stdinIsTerminal() {
-		return choices[0].ID, nil
+		return choices[0], nil
 	}
 
 	return promptForLaunchModel(choices, "")
 }
 
 type launchModelChoice struct {
-	ID    string
-	Label string
+	ID           string
+	Source       string
+	ProviderID   string
+	ProviderName string
+	Label        string
 }
 
 func normalizeLaunchModelChoices(models []api.ModelInfo) []launchModelChoice {
@@ -135,13 +157,15 @@ func normalizeLaunchModelChoices(models []api.ModelInfo) []launchModelChoice {
 		if modelID == "" {
 			continue
 		}
-		if !isLaunchModelAvailableForAIApps(item) {
+		source := strings.TrimSpace(item.Source)
+		if source == "" {
+			source = "local"
+		}
+		key := source + ":" + modelID
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		if _, ok := seen[modelID]; ok {
-			continue
-		}
-		seen[modelID] = struct{}{}
+		seen[key] = struct{}{}
 
 		label := strings.TrimSpace(item.Label)
 		if label == "" {
@@ -150,26 +174,27 @@ func normalizeLaunchModelChoices(models []api.ModelInfo) []launchModelChoice {
 				label = modelID
 			}
 		}
-		source := strings.TrimSpace(item.Source)
-		if source == "local" || source == "" {
-			label += " (local)"
-		} else if source == "cloud" {
-			label += " (cloud)"
+		providerID := source
+		if strings.HasPrefix(source, "provider:") {
+			providerID = strings.TrimPrefix(source, "provider:")
+		}
+		providerName := strings.TrimSpace(item.Provider)
+		if providerName == "" {
+			providerName = providerID
+		}
+		if !strings.HasSuffix(strings.TrimSpace(label), "]") {
+			label += " [" + providerName + "]"
 		}
 
 		choices = append(choices, launchModelChoice{
-			ID:    modelID,
-			Label: label,
+			ID:           modelID,
+			Source:       source,
+			ProviderID:   providerID,
+			ProviderName: providerName,
+			Label:        label,
 		})
 	}
 	return choices
-}
-
-func isLaunchModelAvailableForAIApps(model api.ModelInfo) bool {
-	if !strings.EqualFold(strings.TrimSpace(model.Source), "cloud") && !strings.EqualFold(strings.TrimSpace(model.Format), "cloud") {
-		return true
-	}
-	return !strings.EqualFold(strings.TrimSpace(model.Model), "opus4.7")
 }
 
 func stdinIsTerminal() bool {
@@ -177,7 +202,7 @@ func stdinIsTerminal() bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-func promptForLaunchModel(models []launchModelChoice, defaultModel string) (string, error) {
+func promptForLaunchModel(models []launchModelChoice, defaultModel string) (launchModelChoice, error) {
 	fmt.Fprintln(os.Stderr, "Select a model for AI apps:")
 	defaultIndex := 0
 	if defaultModel != "" {
@@ -200,21 +225,21 @@ func promptForLaunchModel(models []launchModelChoice, defaultModel string) (stri
 	scanner := bufio.NewScanner(os.Stdin)
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {
-			return "", err
+			return launchModelChoice{}, err
 		}
-		return models[defaultIndex].ID, nil
+		return models[defaultIndex], nil
 	}
 
 	answer := strings.TrimSpace(scanner.Text())
 	if answer == "" {
-		return models[defaultIndex].ID, nil
+		return models[defaultIndex], nil
 	}
 
 	index, err := strconv.Atoi(answer)
 	if err != nil || index < 1 || index > len(models) {
-		return "", fmt.Errorf("invalid model selection %q", answer)
+		return launchModelChoice{}, fmt.Errorf("invalid model selection %q", answer)
 	}
-	return models[index-1].ID, nil
+	return models[index-1], nil
 }
 
 func prepareLaunchExecution(target launchTarget, serverURL, modelID string, userArgs []string) (preparedLaunch, error) {

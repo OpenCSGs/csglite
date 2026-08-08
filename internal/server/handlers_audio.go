@@ -52,6 +52,16 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		Stream:         stream,
 		Hotwords:       parseAudioHotwords(form.Get("hotwords")),
 	}
+	source, err := effectiveRequestSource(r.Context(), req.Source)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if providerIDFromSource(source) != "" {
+		writeOpenAIError(w, http.StatusNotImplemented, "unsupported_error", "third-party provider audio transcription is not supported")
+		return
+	}
+	req.Source = source
 	if value := strings.TrimSpace(form.Get("temperature")); value != "" {
 		temperature, err := strconv.ParseFloat(value, 64)
 		if err != nil {

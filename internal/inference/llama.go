@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,8 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/convert"
+	"github.com/opencsgs/csglite/internal/ggufpick"
 	"github.com/opencsgs/csglite/internal/logutil"
 )
 
@@ -30,6 +33,8 @@ const (
 	defaultLlamaParallel     = 1
 	unsetNGPULayers          = -1
 )
+
+const useModelMaxCtxEnv = "CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX"
 
 var allowedLlamaCacheTypes = []string{
 	"f32",
@@ -229,7 +234,8 @@ func llamaReadyTimeout(modelPath string) time.Duration {
 }
 
 // ResolveNumCtx returns the effective llama-server context window (--ctx-size / -c).
-// Explicit requests win, then CSGHUB_LITE_LLAMA_NUM_CTX, then a model-aware fallback.
+// Explicit requests win, then CSGHUB_LITE_LLAMA_NUM_CTX, then the optional
+// model maximum, then a conservative model-aware fallback.
 func ResolveNumCtx(modelDir string, requested int) int {
 	if requested >= 1024 {
 		return requested
@@ -240,11 +246,24 @@ func ResolveNumCtx(modelDir string, requested int) int {
 		}
 	}
 
-	if maxPos := ModelMaxPositionEmbeddings(modelDir); maxPos >= autoExpandedLlamaCtxSize {
+	maxPos := ModelMaxPositionEmbeddings(modelDir)
+	if useModelMaxCtxByDefault() && maxPos >= 1024 {
+		return maxPos
+	}
+	if maxPos >= autoExpandedLlamaCtxSize {
 		return min(maxPos, autoExpandedLlamaCtxSize)
 	}
 
 	return defaultLlamaCtxSize
+}
+
+func useModelMaxCtxByDefault() bool {
+	v := strings.TrimSpace(os.Getenv(useModelMaxCtxEnv))
+	if v == "" {
+		return false
+	}
+	enabled, err := strconv.ParseBool(v)
+	return err == nil && enabled
 }
 
 // ResolveNumParallel returns the effective number of parallel slots for llama-server.
@@ -339,18 +358,245 @@ func NormalizeCacheType(value string) (string, error) {
 }
 
 func ModelMaxPositionEmbeddings(modelDir string) int {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
+	if maxPos, err := convert.ModelMaxPositionEmbeddings(modelDir); err == nil && maxPos > 0 {
+		return maxPos
+	}
+
+	return modelMaxContextFromGGUF(modelDir)
+}
+
+func modelMaxContextFromGGUF(modelDir string) int {
+	var primary []string
+	var fallback []string
+	if err := filepath.WalkDir(modelDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(path), ".gguf") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(modelDir, path)
+		if relErr != nil {
+			rel = path
+		}
+		if !ggufpick.IsWeightGGUF(rel) {
+			fallback = append(fallback, path)
+			return nil
+		}
+		primary = append(primary, path)
+		return nil
+	}); err != nil {
 		return 0
 	}
 
-	var cfg struct {
-		MaxPositionEmbeddings int `json:"max_position_embeddings"`
+	for _, path := range append(primary, fallback...) {
+		if n := ggufContextLength(path); n > 0 {
+			return n
+		}
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	return 0
+}
+
+func ggufContextLength(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
 		return 0
 	}
-	return cfg.MaxPositionEmbeddings
+	defer f.Close()
+
+	var magic [4]byte
+	if _, err := io.ReadFull(f, magic[:]); err != nil || string(magic[:]) != "GGUF" {
+		return 0
+	}
+	var version uint32
+	var tensorCount uint64
+	var metadataCount uint64
+	if err := binary.Read(f, binary.LittleEndian, &version); err != nil || version == 0 {
+		return 0
+	}
+	if err := binary.Read(f, binary.LittleEndian, &tensorCount); err != nil {
+		return 0
+	}
+	if err := binary.Read(f, binary.LittleEndian, &metadataCount); err != nil {
+		return 0
+	}
+
+	for i := uint64(0); i < metadataCount; i++ {
+		key, err := readGGUFString(f)
+		if err != nil {
+			return 0
+		}
+		var valueType uint32
+		if err := binary.Read(f, binary.LittleEndian, &valueType); err != nil {
+			return 0
+		}
+		if strings.HasSuffix(key, ".context_length") || key == "context_length" {
+			value, ok, err := readGGUFIntValue(f, valueType)
+			if err != nil {
+				return 0
+			}
+			if ok {
+				return value
+			}
+			continue
+		}
+		if err := skipGGUFValue(f, valueType); err != nil {
+			return 0
+		}
+	}
+	return 0
+}
+
+const (
+	ggufTypeUint8   = 0
+	ggufTypeInt8    = 1
+	ggufTypeUint16  = 2
+	ggufTypeInt16   = 3
+	ggufTypeUint32  = 4
+	ggufTypeInt32   = 5
+	ggufTypeFloat32 = 6
+	ggufTypeBool    = 7
+	ggufTypeString  = 8
+	ggufTypeArray   = 9
+	ggufTypeUint64  = 10
+	ggufTypeInt64   = 11
+	ggufTypeFloat64 = 12
+)
+
+func readGGUFString(r io.Reader) (string, error) {
+	var n uint64
+	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
+		return "", err
+	}
+	if n > 1<<20 {
+		return "", fmt.Errorf("gguf string too large: %d", n)
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}
+
+func readGGUFIntValue(r io.Reader, valueType uint32) (int, bool, error) {
+	switch valueType {
+	case ggufTypeUint8:
+		var v uint8
+		if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
+			return 0, false, err
+		}
+		return int(v), true, nil
+	case ggufTypeInt8:
+		var v int8
+		if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
+			return 0, false, err
+		}
+		if v <= 0 {
+			return 0, false, nil
+		}
+		return int(v), true, nil
+	case ggufTypeUint16:
+		var v uint16
+		if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
+			return 0, false, err
+		}
+		return int(v), true, nil
+	case ggufTypeInt16:
+		var v int16
+		if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
+			return 0, false, err
+		}
+		if v <= 0 {
+			return 0, false, nil
+		}
+		return int(v), true, nil
+	case ggufTypeUint32:
+		var v uint32
+		if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
+			return 0, false, err
+		}
+		if uint64(v) > uint64(maxInt()) {
+			return 0, false, nil
+		}
+		return int(v), true, nil
+	case ggufTypeInt32:
+		var v int32
+		if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
+			return 0, false, err
+		}
+		if v <= 0 {
+			return 0, false, nil
+		}
+		return int(v), true, nil
+	case ggufTypeUint64:
+		var v uint64
+		if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
+			return 0, false, err
+		}
+		if v > uint64(maxInt()) {
+			return 0, false, nil
+		}
+		return int(v), true, nil
+	case ggufTypeInt64:
+		var v int64
+		if err := binary.Read(r, binary.LittleEndian, &v); err != nil {
+			return 0, false, err
+		}
+		if v <= 0 || uint64(v) > uint64(maxInt()) {
+			return 0, false, nil
+		}
+		return int(v), true, nil
+	default:
+		return 0, false, skipGGUFValue(r, valueType)
+	}
+}
+
+func skipGGUFValue(r io.Reader, valueType uint32) error {
+	switch valueType {
+	case ggufTypeUint8, ggufTypeInt8, ggufTypeBool:
+		return discardN(r, 1)
+	case ggufTypeUint16, ggufTypeInt16:
+		return discardN(r, 2)
+	case ggufTypeUint32, ggufTypeInt32, ggufTypeFloat32:
+		return discardN(r, 4)
+	case ggufTypeUint64, ggufTypeInt64, ggufTypeFloat64:
+		return discardN(r, 8)
+	case ggufTypeString:
+		var n uint64
+		if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
+			return err
+		}
+		return discardN(r, n)
+	case ggufTypeArray:
+		var elemType uint32
+		var n uint64
+		if err := binary.Read(r, binary.LittleEndian, &elemType); err != nil {
+			return err
+		}
+		if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
+			return err
+		}
+		for i := uint64(0); i < n; i++ {
+			if err := skipGGUFValue(r, elemType); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported gguf metadata type %d", valueType)
+	}
+}
+
+func discardN(r io.Reader, n uint64) error {
+	if n > uint64(maxInt()) {
+		return fmt.Errorf("gguf metadata value too large: %d", n)
+	}
+	_, err := io.CopyN(io.Discard, r, int64(n))
+	return err
+}
+
+func maxInt() int {
+	return int(^uint(0) >> 1)
 }
 
 func newLlamaEngine(modelPath, modelName string, verbose bool, progress ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV string, mmproj ...string) (*llamaEngine, error) {

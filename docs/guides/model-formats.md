@@ -39,12 +39,19 @@ SafeTensors 是 Hugging Face 推出的模型存储格式。CSGLite 支持下载�
 
 ### 自动转换（内置脚本）
 
-首次推理时，CSGLite 会把 `convert_hf_to_gguf.py` **随二进制打包**（来自固定版本的 llama.cpp），解压到 `~/.csghub-lite/tools/` 后调用本机 Python。升级 CSGLite 后若脚本更新，会随 **`bundledConverterRevision`** 自动刷新缓存；如果系统 `gguf` 太旧，工具会按地区从对应的 `llama.cpp` 源拉取匹配的 `gguf-py`。
+CSGLite 将固定 llama.cpp 版本的 `convert_hf_to_gguf.py` 和完整
+`gguf-py` **一起打包进二进制**。首次推理时，两者会释放到
+`~/.csghub-lite/tools/` 后调用本机 Python；不需要安装 Git，也不会在
+运行时 clone 或下载 llama.cpp 源码。升级 CSGLite 后若内置工具更新，会随
+**`bundledConverterRevision`** 自动使用新的版本化缓存。
 
-- 如果检测到本机 `gguf` 版本过旧，CSGLite 会自动按地区获取匹配当前 `llama.cpp` tag 的 `gguf-py` 后重试一次：`CSGHUB_LITE_REGION=CN` 优先走 `https://gitee.com/xzgan/llama.cpp`，其他地区优先走 GitHub。
+- 转换始终通过 `PYTHONPATH` 使用与内置 converter 同 tag 的 `gguf-py`，不会使用系统或 PyPI 中可能不匹配的 `gguf`。
 - 如果检测到本机 `transformers` 版本过旧，CSGLite 会自动尝试执行 `python -m pip install -U transformers`，然后重试一次转换。
 - 使用镜像上的脚本：设置环境变量 **`CSGHUB_LITE_CONVERTER_URL`** 为 raw 地址（下载一次后按 URL 缓存）。
-- 维护者更新内置脚本：见 `internal/convert/data/README.md`。
+- 维护者升级内置工具时，先在
+  [`OpenCSGs/llama-cpp-assets`](https://github.com/OpenCSGs/llama-cpp-assets)
+  发布匹配 llama.cpp tag 的依赖版本，再更新 CSGLite 的 `go.mod` 和
+  `llama-server` 安装版本。
 - 如需控制自动转换输出类型，可在 `run` / `chat` 时加 `--dtype`，例如：`csghub-lite run Qwen/Qwen3-0.6B --dtype q8_0`。支持的值与内置 llama.cpp 转换器 `--outtype` 对齐：`f32`、`f16`、`bf16`、`q8_0`、`tq1_0`、`tq2_0`、`auto`。如果模型包含视觉投影器，`mmproj` 也会按相同 `dtype` 一起转换。
 
 ### 转换为 GGUF（手动）

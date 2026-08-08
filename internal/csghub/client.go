@@ -1,6 +1,7 @@
 package csghub
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -70,6 +71,24 @@ func (c *Client) getJSON(ctx context.Context, path string, out interface{}) erro
 	if err != nil {
 		return err
 	}
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (c *Client) postJSON(ctx context.Context, path string, body, out interface{}) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("encoding request body: %w", err)
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, path, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.do(req)
 	if err != nil {
 		return err

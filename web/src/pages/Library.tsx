@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
-import { deleteModel, getModelManifest, getPs, loadModel, searchLocalModels, uploadLocalModel } from "../api/client";
+import { deleteModel, getModelManifest, getPs, loadModel, searchLocalModels, stopModel, uploadLocalModel } from "../api/client";
 import type { LoadModelOptions, LocalModelUploadFile, ModelFileEntry, ModelInfo, RunningModel } from "../api/client";
 import { locale, t } from "../i18n";
 import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
@@ -81,6 +81,7 @@ const currentPage = signal(1);
 const pageSize = signal<PageSize>(DEFAULT_PAGE_SIZE);
 const modelsLoading = signal(false);
 const loadingRun = signal<string>("");
+const stoppingModel = signal<string>("");
 type LoadStepProgress = { step?: string; status?: string; current?: number; total?: number };
 const loadProgress = signal<LoadStepProgress | null>(null);
 const libraryError = signal<string>("");
@@ -568,6 +569,19 @@ export function Library() {
     loadProgress.value = null;
   };
 
+  const handleStop = async (name: string) => {
+    stoppingModel.value = name;
+    libraryError.value = "";
+    try {
+      await stopModel(name);
+      runningModels.value = runningModels.value.filter((model) => model.name !== name);
+    } catch (e: any) {
+      libraryError.value = e?.message || t("lib.failedStop");
+    } finally {
+      if (stoppingModel.value === name) stoppingModel.value = "";
+    }
+  };
+
   const openUploadDialog = () => {
     if (uploadBusy.value) return;
     uploadDialogOpen.value = true;
@@ -689,7 +703,7 @@ export function Library() {
   const pagedRows = paginate(rows, currentPage.value, pageSize.value);
 
   return (
-    <div class="p-8 max-w-6xl mx-auto">
+    <div class="page-shell">
       <div class="flex items-center justify-between mb-1">
         <div>
           <h1 class="text-2xl font-bold text-gray-900">{t("lib.title")}</h1>
@@ -865,9 +879,14 @@ export function Library() {
                           >
                             {t("lib.api")}
                           </button>
-                          <span class="inline-flex shrink-0 items-center justify-center w-16 px-3 py-1 text-xs rounded bg-green-50 text-green-700 font-medium">
-                            {t("lib.running")}
-                          </span>
+                          <button
+                            onClick={() => void handleStop(m.name)}
+                            disabled={!!stoppingModel.value}
+                            title={t("lib.running")}
+                            class="inline-flex shrink-0 items-center justify-center min-w-16 px-3 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {stoppingModel.value === m.name ? t("lib.stopping") : t("lib.stop")}
+                          </button>
                         </>
                       ) : runningStatus(m.name) === "loading" ? (
                         <div class="flex min-w-0 max-w-[18rem] items-center gap-2">

@@ -50,12 +50,19 @@ func (s *Server) ensureCodexAppLaunchConfig(ctx context.Context, requestedModelI
 	if err != nil {
 		return "", err
 	}
+	modelSource, modelIDs, err := s.resolveAIAppModelSource(ctx, modelID, requestedSource)
+	if err != nil {
+		return "", err
+	}
 
 	models := make([]api.ModelInfo, 0, len(modelIDs))
 	for _, id := range modelIDs {
 		models = append(models, api.ModelInfo{Model: id})
 	}
-	serverURL := s.localBaseURL()
+	serverURL, err := providerScopedBaseURL(s.localBaseURL(), modelSource)
+	if err != nil {
+		return "", err
+	}
 	if err := codexagent.SyncConfig(serverURL, openClawProviderAPIKey(s.cfg.Token), modelID, models); err != nil {
 		return "", fmt.Errorf("syncing Codex config: %w", err)
 	}
@@ -65,7 +72,7 @@ func (s *Server) ensureCodexAppLaunchConfig(ctx context.Context, requestedModelI
 		return "", err
 	}
 	log.Printf("AI APP codex-app: synced shared config model=%q path=%s", modelID, configPath)
-	s.savePreferredAIAppModel("codex-app", modelID)
+	s.savePreferredAIAppSelection("codex-app", modelID, modelSource)
 	return modelID, nil
 }
 
@@ -129,10 +136,14 @@ func (s *Server) launchCSGClawDesktopApp(ctx context.Context, requestedModelID, 
 	if err != nil {
 		return err
 	}
-	if err := s.configureCSGClawDesktop(modelID, modelIDs); err != nil {
+	modelSource, modelIDs, err := s.resolveAIAppModelSource(ctx, modelID, requestedSource)
+	if err != nil {
 		return err
 	}
-	s.savePreferredAIAppModel("csgclaw", modelID)
+	if err := s.configureCSGClawDesktop(modelID, modelSource, modelIDs); err != nil {
+		return err
+	}
+	s.savePreferredAIAppSelection("csgclaw", modelID, modelSource)
 
 	target, err := apps.CSGClawDesktopLaunchTarget()
 	if err != nil {
@@ -230,12 +241,20 @@ func (s *Server) ensureZCodeLaunchConfig(ctx context.Context, requestedModelID, 
 	if err != nil {
 		return "", err
 	}
+	modelSource, modelIDs, err := s.resolveAIAppModelSource(ctx, modelID, requestedSource)
+	if err != nil {
+		return "", err
+	}
 	// ZCode persists in-memory provider state while exiting. Stop it completely
 	// before editing config.json so the old state cannot overwrite our merge.
 	if err := stopZCodeForConfigReloadFunc(); err != nil {
 		return "", err
 	}
-	if err := zcodeagent.SyncConfig(s.localBaseURL(), openClawProviderAPIKey(s.cfg.Token), modelID, modelIDs); err != nil {
+	serverURL, err := providerScopedBaseURL(s.localBaseURL(), modelSource)
+	if err != nil {
+		return "", err
+	}
+	if err := zcodeagent.SyncConfig(serverURL, openClawProviderAPIKey(s.cfg.Token), modelID, modelIDs); err != nil {
 		return "", fmt.Errorf("syncing ZCode config: %w", err)
 	}
 	configPath, err := zcodeagent.ConfigPath()
@@ -243,7 +262,7 @@ func (s *Server) ensureZCodeLaunchConfig(ctx context.Context, requestedModelID, 
 		return "", err
 	}
 	log.Printf("AI APP zcode: synced local model provider selected_model=%q models=%d path=%s", modelID, len(modelIDs), configPath)
-	s.savePreferredAIAppModel("zcode", modelID)
+	s.savePreferredAIAppSelection("zcode", modelID, modelSource)
 	return modelID, nil
 }
 

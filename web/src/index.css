@@ -8,6 +8,10 @@
 }
 
 @layer components {
+  .page-shell {
+    @apply mx-auto w-full max-w-screen-2xl p-8;
+  }
+
   .chat-markdown {
     @apply text-sm leading-7 text-gray-800;
   }

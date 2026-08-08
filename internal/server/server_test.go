@@ -72,6 +72,7 @@ func TestMain(m *testing.M) {
 	}
 	config.ResetProviders()
 	config.ResetProviderModelAllowlist()
+	config.ResetProviderPools()
 	os.Exit(m.Run())
 }
 
@@ -82,8 +83,10 @@ func newTestServer(t *testing.T) *Server {
 	t.Setenv("USERPROFILE", home)
 	config.ResetProviders()
 	config.ResetProviderModelAllowlist()
+	config.ResetProviderPools()
 	t.Cleanup(config.ResetProviders)
 	t.Cleanup(config.ResetProviderModelAllowlist)
+	t.Cleanup(config.ResetProviderPools)
 	dir := t.TempDir()
 	cfg := &config.Config{
 		ServerURL:  "https://hub.opencsg.com",
@@ -162,7 +165,7 @@ func TestDesktopRunFailsWhenExternalAPIPortIsOccupied(t *testing.T) {
 }
 
 func TestDesktopRunServesExternalAPIOnStablePort(t *testing.T) {
-	probe, err := net.Listen("tcp", config.DefaultDesktopAPIAddr)
+	probe, err := net.Listen("tcp", config.DefaultDesktopAPIBindAddr)
 	if err != nil {
 		t.Skipf("desktop API port is already unavailable: %v", err)
 	}

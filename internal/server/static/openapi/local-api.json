@@ -107,7 +107,7 @@
           "Models"
         ],
         "summary": "List available models",
-        "description": "Returns local, CSGHub cloud, and selected third-party provider models. Use `provider` to filter by a model provider ID such as `local`, `csghub`, or a third-party provider ID. Provider filters return selected models configured through `/api/tags/manage`; when no `csghub` cloud selection has been saved, all cloud catalog models are returned. Configured third-party names are accepted as legacy aliases.",
+        "description": "Returns local, CSGHub cloud, and selected third-party provider models. Each model preserves its configured provider display name while `source` carries its stable routing identity. Use `provider` to filter by a stable provider ID or configured provider name. Provider filters return selected models configured through `/api/tags/manage`; when no `csghub` cloud selection has been saved, all cloud catalog models are returned.",
         "operationId": "getTags",
         "parameters": [
           {
@@ -121,7 +121,7 @@
           {
             "name": "provider",
             "in": "query",
-            "description": "Filter models by normalized provider ID. Local models use `local`; all CSGHub cloud models use `csghub`; third-party provider models use the configured provider ID. Configured third-party names are accepted as legacy aliases.",
+            "description": "Filter models case-insensitively by provider alias. Local models accept `local`; cloud models accept `csghub` or the configured cloud provider name; third-party models accept their stable provider ID or configured provider name.",
             "schema": {
               "type": "string"
             }
@@ -2493,7 +2493,7 @@
           "System"
         ],
         "summary": "List local API usage statistics",
-        "description": "Returns aggregate request and token usage grouped by API key, model, and source.",
+        "description": "Returns aggregate request and token usage grouped by API key, model, and actual upstream source, with additive provider-pool attribution.",
         "operationId": "getAPIUsage",
         "parameters": [
           {
@@ -2515,6 +2515,15 @@
             "name": "provider",
             "in": "query",
             "description": "Optional provider name filter. Matches the recorded provider display name case-insensitively.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pool",
+            "in": "query",
+            "description": "Optional provider pool filter. Matches pool ID, name, public model, or pool:<id> case-insensitively.",
             "required": false,
             "schema": {
               "type": "string"
@@ -2738,6 +2747,138 @@
         "responses": {
           "200": {
             "description": "Provider deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/provider-pools": {
+      "get": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "List provider pools",
+        "operationId": "listProviderPools",
+        "responses": {
+          "200": {
+            "description": "Configured provider pools.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderPoolsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "Create a provider pool",
+        "operationId": "createProviderPool",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderPoolCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created provider pool.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderPool"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/provider-pools/{id}": {
+      "put": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "Update a provider pool",
+        "operationId": "updateProviderPool",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderPoolUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated provider pool.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderPool"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "Delete a provider pool",
+        "operationId": "deleteProviderPool",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provider pool deleted.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3863,6 +4004,626 @@
         }
       }
     },
+    "/providers/{providerID}/v1/models": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "List compatibility models",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Returns an OpenAI model list by default. When Anthropic-style headers such as `anthropic-version` are present, the same route returns an Anthropic-compatible model list instead.",
+        "operationId": "providerScopedListCompatibilityModels",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "description": "Force a refresh of the cloud model catalog before returning results.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "anthropic-version",
+            "in": "header",
+            "description": "Send this header to receive Anthropic-compatible model metadata.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "anthropic-beta",
+            "in": "header",
+            "description": "Additional Anthropic compatibility hint that also switches the response shape.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "description": "Anthropic-style API key header. When provided without `authorization`, the route returns the Anthropic response format.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenAI- or Anthropic-compatible model listing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OpenAIModelList"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AnthropicModelListResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Compatibility model listing error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OpenAIErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AnthropicErrorResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/chat/completions": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible chat completions",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for OpenAI Chat Completions. When `stream` is true the server streams SSE chunks and ends with `data: [DONE]`. If `stream` is omitted, deployments can opt into streaming by starting the server with `--openai-stream-default` or setting `CSGHUB_LITE_OPENAI_STREAM_DEFAULT=true`.",
+        "operationId": "providerScopedOpenAIChatCompletions",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIChatRequest"
+              },
+              "example": {
+                "model": "Qwen/Qwen3-0.6B-GGUF",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "Write a short haiku."
+                  }
+                ],
+                "stream": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chat completion output or streamed chunk sequence.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIChatResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventStream"
+                },
+                "example": "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1710000000,\"model\":\"Qwen/Qwen3-0.6B-GGUF\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"}}]}\n\ndata: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1710000000,\"model\":\"Qwen/Qwen3-0.6B-GGUF\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/OpenAITooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/responses": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "Responses API probe guard",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Returns a clear compatibility error for websocket probes and other unsupported GET requests to the Responses API endpoint.",
+        "operationId": "providerScopedGetResponsesUnsupported",
+        "responses": {
+          "426": {
+            "description": "WebSocket transport is not supported on this endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "message": "websocket transport is not supported on this endpoint",
+                    "type": "invalid_request_error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible Responses API",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Minimal Responses API compatibility for Codex and OpenAI SDK clients. When `stream` is true the route emits Responses API-style SSE events and ends with `event: done` plus `[DONE]`.",
+        "operationId": "providerScopedOpenAIResponses",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIResponsesRequest"
+              },
+              "example": {
+                "model": "Qwen/Qwen3-0.6B-GGUF",
+                "input": "Summarize the latest local logs.",
+                "stream": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Responses API output or streamed event sequence.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponsesResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventStream"
+                },
+                "example": "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"in_progress\"}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"completed\"}}\n\nevent: done\ndata: [DONE]\n\n"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/OpenAITooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/messages": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "Anthropic-compatible messages API",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Anthropic Messages compatibility endpoint. When `stream` is true the route emits Anthropic event-stream events such as `message_start`, `content_block_delta`, and `message_stop`.",
+        "operationId": "providerScopedAnthropicMessages",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnthropicMessageRequest"
+              },
+              "example": {
+                "model": "Qwen/Qwen3-0.6B-GGUF",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "Explain what local inference means."
+                  }
+                ],
+                "max_tokens": 256,
+                "stream": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Anthropic-compatible message response or SSE event sequence.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicMessageResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventStream"
+                },
+                "example": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/AnthropicBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AnthropicUnauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/AnthropicTooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/AnthropicInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/messages/count_tokens": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "Anthropic-compatible token counting",
+        "operationId": "providerScopedAnthropicCountTokens",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnthropicCountTokensRequest"
+              },
+              "example": {
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "Count the tokens in this sentence."
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Estimated input token count.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicCountTokensResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/AnthropicBadRequest"
+          }
+        },
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. "
+      }
+    },
+    "/providers/{providerID}/v1/embeddings": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible embeddings",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for OpenAI Embeddings. Local models are served through llama-server in embedding mode.",
+        "operationId": "providerScopedOpenAIEmbeddings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIEmbeddingsRequest"
+              },
+              "example": {
+                "model": "BAAI/bge-m3",
+                "input": [
+                  "hello world"
+                ],
+                "encoding_format": "float"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Embedding vectors for the supplied input.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIEmbeddingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/OpenAITooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/images/generations": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible image generation",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for local text-to-image generation. The Diffusers runtime is checked lazily when this endpoint is called.",
+        "operationId": "providerScopedOpenAIImagesGenerations",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIImagesGenerationRequest"
+              },
+              "example": {
+                "model": "Qwen/Qwen-Image",
+                "prompt": "A watercolor cat reading a book",
+                "size": "1024x1024",
+                "response_format": "b64_json"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Generated image data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIImagesGenerationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "503": {
+            "description": "Diffusers runtime is not installed or not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeNotReadyError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/images/edits": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible image edit",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. OpenAI-compatible image editing endpoint. Accepts multipart/form-data with one or more input images and an edit prompt. Local Diffusers models such as Qwen-Image-Edit are supported through the shared image runtime.",
+        "operationId": "providerScopedOpenAIImagesEdits",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIImagesEditRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Edited image data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIImagesGenerationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "503": {
+            "description": "Diffusers runtime is not installed or not ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeNotReadyError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/providers/{providerID}/v1/audio/transcriptions": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "OpenAI Compatibility"
+        ],
+        "summary": "Create audio transcription",
+        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. OpenAI-compatible audio transcription endpoint served by the local ASR runtime.",
+        "operationId": "providerScopedCreateAudioTranscription",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIAudioTranscriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transcription result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIAudioTranscriptionResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
     "/v1/models": {
       "get": {
         "tags": [
@@ -4702,6 +5463,144 @@
           }
         }
       },
+      "ProviderPoolMember": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "source",
+          "model"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "local, cloud, or provider:<provider-id>"
+          },
+          "model": {
+            "type": "string",
+            "description": "Concrete model ID for this member."
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "weight": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "requests_per_minute": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tokens_per_minute": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_concurrent": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ProviderPool": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "model",
+          "enabled",
+          "members"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "description": "Public model ID exposed by the pool."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderPoolMember"
+            }
+          }
+        }
+      },
+      "ProviderPoolsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pools"
+        ],
+        "properties": {
+          "pools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderPool"
+            }
+          }
+        }
+      },
+      "ProviderPoolCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "model",
+          "members"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "members": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/ProviderPoolMember"
+            }
+          }
+        }
+      },
+      "ProviderPoolUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "members": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/ProviderPoolMember"
+            }
+          }
+        }
+      },
       "ProviderTagModelRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -5017,7 +5916,10 @@
           "output_tokens",
           "total_tokens",
           "local_tokens",
-          "cloud_tokens"
+          "cloud_tokens",
+          "pool_requests",
+          "fallback_count",
+          "limited_count"
         ],
         "properties": {
           "requests": {
@@ -5045,6 +5947,21 @@
             "type": "integer",
             "minimum": 0,
             "description": "Total tokens consumed by non-local models, including OpenCSG cloud and third-party providers."
+          },
+          "pool_requests": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Successful requests routed through a provider pool."
+          },
+          "fallback_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Pool member fallbacks before successful responses."
+          },
+          "limited_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Pool member attempts skipped or rejected by a configured or upstream rate limit."
           }
         }
       },
@@ -5082,6 +5999,7 @@
               "local",
               "cloud",
               "provider",
+              "pool",
               "unknown"
             ]
           },
@@ -5107,6 +6025,26 @@
           "last_used_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "pool_id": {
+            "type": "string"
+          },
+          "pool_name": {
+            "type": "string"
+          },
+          "pool_model": {
+            "type": "string"
+          },
+          "member_model": {
+            "type": "string"
+          },
+          "fallback_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limited_count": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -5131,6 +6069,7 @@
               "local",
               "cloud",
               "provider",
+              "pool",
               "unknown"
             ]
           },
@@ -5214,6 +6153,7 @@
           "total_history",
           "total_summary",
           "source_totals",
+          "pool_totals",
           "rows"
         ],
         "properties": {
@@ -5250,6 +6190,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/APIUsageRow"
+            }
+          },
+          "pool_totals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/APIUsagePoolTotal"
             }
           }
         }
@@ -6090,7 +7036,7 @@
           },
           "provider": {
             "type": "string",
-            "description": "Normalized provider name for filtering `/api/tags`, such as `local`, `csghub`, or a third-party provider name."
+            "description": "Provider display name. Local models use `local`; cloud and third-party models preserve the provider name from configuration. Use `source` for stable routing; the `/api/tags` provider filter remains case-insensitive and accepts provider aliases."
           },
           "category": {
             "type": "string",
@@ -7076,6 +8022,10 @@
           "model_id": {
             "type": "string"
           },
+          "model_source": {
+            "type": "string",
+            "description": "Persisted model source such as local, cloud, or provider:<id>."
+          },
           "provider_mode": {
             "type": "string",
             "enum": [
@@ -7355,6 +8305,12 @@
           },
           "hf_path": {
             "type": "string"
+          },
+          "repo_size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Total repository download size in bytes, including LFS objects."
           }
         }
       },
@@ -8556,6 +9512,10 @@
           "model": {
             "type": "string"
           },
+          "source": {
+            "type": "string",
+            "description": "Optional source hint. Provider-scoped routes supply this value authoritatively."
+          },
           "messages": {
             "type": "array",
             "items": {
@@ -9023,6 +9983,123 @@
           },
           "text": {
             "type": "string"
+          }
+        }
+      },
+      "APIUsagePoolMemberTotal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "source_type",
+          "model",
+          "requests",
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "fallback_count",
+          "limited_count"
+        ],
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "source_type": {
+            "type": "string",
+            "enum": [
+              "local",
+              "cloud",
+              "provider",
+              "pool",
+              "unknown"
+            ]
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "requests": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fallback_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limited_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "APIUsagePoolTotal": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pool_id",
+          "pool_name",
+          "pool_model",
+          "requests",
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "fallback_count",
+          "limited_count",
+          "members"
+        ],
+        "properties": {
+          "pool_id": {
+            "type": "string"
+          },
+          "pool_name": {
+            "type": "string"
+          },
+          "pool_model": {
+            "type": "string"
+          },
+          "requests": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "fallback_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limited_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/APIUsagePoolMemberTotal"
+            }
           }
         }
       }

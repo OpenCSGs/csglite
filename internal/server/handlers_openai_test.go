@@ -64,6 +64,55 @@ func (e *fakeChatCompletionEngine) ModelName() string { return "test/model" }
 
 func (e *fakeChatCompletionEngine) ChatCompletion(_ context.Context, reqBody map[string]interface{}) (*http.Response, error) {
 	e.lastReq = reqBody
+	if stream, _ := reqBody["stream"].(bool); stream {
+		var body strings.Builder
+		for _, choice := range e.resp.Choices {
+			delta := choice.Message
+			if delta == nil {
+				delta = choice.Delta
+			}
+			chunk := api.OpenAIChatResponse{
+				ID:      e.resp.ID,
+				Object:  "chat.completion.chunk",
+				Created: e.resp.Created,
+				Model:   e.resp.Model,
+				Choices: []api.OpenAIChoice{{
+					Index: choice.Index,
+					Delta: delta,
+				}},
+			}
+			data, err := json.Marshal(chunk)
+			if err != nil {
+				return nil, err
+			}
+			fmt.Fprintf(&body, "data: %s\n\n", data)
+
+			finishReason := openAIChoiceFinishReason(choice)
+			finishChunk := api.OpenAIChatResponse{
+				ID:      e.resp.ID,
+				Object:  "chat.completion.chunk",
+				Created: e.resp.Created,
+				Model:   e.resp.Model,
+				Choices: []api.OpenAIChoice{{
+					Index:        choice.Index,
+					Delta:        &api.Message{Role: "assistant", Content: ""},
+					FinishReason: &finishReason,
+				}},
+				Usage: e.resp.Usage,
+			}
+			data, err = json.Marshal(finishChunk)
+			if err != nil {
+				return nil, err
+			}
+			fmt.Fprintf(&body, "data: %s\n\n", data)
+		}
+		body.WriteString("data: [DONE]\n\n")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body.String())),
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		}, nil
+	}
 	data, err := json.Marshal(e.resp)
 	if err != nil {
 		return nil, err

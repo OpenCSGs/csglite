@@ -1,6 +1,8 @@
 package inference
 
 import (
+	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,6 +21,55 @@ func TestResolveNumCtxUsesEnvOverride(t *testing.T) {
 
 	if got := ResolveNumCtx(dir, 0); got != 24576 {
 		t.Fatalf("ResolveNumCtx returned %d, want %d", got, 24576)
+	}
+}
+
+func TestResolveNumCtxUsesEnvOverrideBeforeModelMax(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_CTX", "24576")
+	t.Setenv(useModelMaxCtxEnv, "true")
+
+	if got := ResolveNumCtx(dir, 0); got != 24576 {
+		t.Fatalf("ResolveNumCtx returned %d, want %d", got, 24576)
+	}
+}
+
+func TestResolveNumCtxUsesModelMaxWhenEnabled(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	t.Setenv(useModelMaxCtxEnv, "true")
+
+	if got := ResolveNumCtx(dir, 0); got != 40960 {
+		t.Fatalf("ResolveNumCtx returned %d, want %d", got, 40960)
+	}
+}
+
+func TestResolveNumCtxUsesNestedModelMaxWhenEnabled(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"text_config":{"max_position_embeddings":262144}}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	t.Setenv(useModelMaxCtxEnv, "true")
+
+	if got := ResolveNumCtx(dir, 0); got != 262144 {
+		t.Fatalf("ResolveNumCtx returned %d, want %d", got, 262144)
+	}
+}
+
+func TestResolveNumCtxUsesGGUFModelMaxWhenEnabled(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeMinimalGGUFContextLength(filepath.Join(dir, "model.gguf"), 131072); err != nil {
+		t.Fatalf("write gguf: %v", err)
+	}
+	t.Setenv(useModelMaxCtxEnv, "true")
+
+	if got := ResolveNumCtx(dir, 0); got != 131072 {
+		t.Fatalf("ResolveNumCtx returned %d, want %d", got, 131072)
 	}
 }
 
@@ -107,4 +158,32 @@ func TestNormalizeNGPULayersRejectsLessThanUnset(t *testing.T) {
 	if _, err := NormalizeNGPULayers(-2); err == nil {
 		t.Fatal("expected invalid n_gpu_layers error")
 	}
+}
+
+func writeMinimalGGUFContextLength(path string, contextLength uint32) error {
+	var buf bytes.Buffer
+	buf.WriteString("GGUF")
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(3)); err != nil {
+		return err
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(0)); err != nil {
+		return err
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(1)); err != nil {
+		return err
+	}
+	key := []byte("llama.context_length")
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(key))); err != nil {
+		return err
+	}
+	if _, err := buf.Write(key); err != nil {
+		return err
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(ggufTypeUint32)); err != nil {
+		return err
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, contextLength); err != nil {
+		return err
+	}
+	return os.WriteFile(path, buf.Bytes(), 0o644)
 }

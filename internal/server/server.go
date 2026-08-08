@@ -173,6 +173,9 @@ type Server struct {
 	prefsMu      sync.Mutex
 	openclawMu   sync.Mutex
 	csgclawMu    sync.Mutex
+	poolMu       sync.Mutex
+	poolCurrent  map[string]int
+	poolRuntime  map[string]*providerPoolMemberRuntime
 
 	cloudRefreshMu   sync.Mutex
 	cloudRefreshAt   time.Time
@@ -221,6 +224,8 @@ func New(cfg *config.Config, version string) *Server {
 		cloud:          cloudSvc,
 		engines:        make(map[string]*managedEngine),
 		loading:        make(map[string]*engineLoadState),
+		poolCurrent:    make(map[string]int),
+		poolRuntime:    make(map[string]*providerPoolMemberRuntime),
 		selfHeal:       make(map[string]selfHealBreakerState),
 		imageEngines:   make(map[string]*managedImageEngine),
 		imageLoading:   make(map[string]*imageEngineLoadState),

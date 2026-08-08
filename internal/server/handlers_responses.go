@@ -36,6 +36,12 @@ func (s *Server) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
+	source, err := effectiveRequestSource(r.Context(), req.Source)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	req.Source = source
 
 	opts := inference.DefaultOptions()
 	if req.Temperature != nil {

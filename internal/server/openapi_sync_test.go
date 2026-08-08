@@ -38,6 +38,46 @@ func TestOpenAPISpecMatchesDocumentedRoutes(t *testing.T) {
 	)
 }
 
+func TestProviderScopedRouteFamilyIsDocumented(t *testing.T) {
+	specPath := filepath.Join("..", "..", "openapi", "local-api.json")
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", specPath, err)
+	}
+	var spec struct {
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	if err := json.Unmarshal(data, &spec); err != nil {
+		t.Fatalf("parse %s: %v", specPath, err)
+	}
+	if _, ok := spec.Paths["/providers/{providerID}/v1/{endpoint}"]; ok {
+		t.Fatal("provider-scoped OpenAPI paths must not use a slash-containing endpoint parameter")
+	}
+	required := map[string][]string{
+		"/providers/{providerID}/v1/models":                {"get"},
+		"/providers/{providerID}/v1/chat/completions":      {"post"},
+		"/providers/{providerID}/v1/responses":             {"get", "post"},
+		"/providers/{providerID}/v1/messages":              {"post"},
+		"/providers/{providerID}/v1/messages/count_tokens": {"post"},
+		"/providers/{providerID}/v1/embeddings":            {"post"},
+		"/providers/{providerID}/v1/images/generations":    {"post"},
+		"/providers/{providerID}/v1/images/edits":          {"post"},
+		"/providers/{providerID}/v1/audio/transcriptions":  {"post"},
+	}
+	for path, methods := range required {
+		item, ok := spec.Paths[path]
+		if !ok {
+			t.Errorf("provider-scoped path %s is missing from OpenAPI", path)
+			continue
+		}
+		for _, method := range methods {
+			if _, ok := item[method]; !ok {
+				t.Errorf("provider-scoped operation %s %s is missing from OpenAPI", strings.ToUpper(method), path)
+			}
+		}
+	}
+}
+
 func readDeclaredDocumentedRoutes(t *testing.T) map[string]struct{} {
 	t.Helper()
 

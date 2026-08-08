@@ -196,13 +196,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 
-	infos, err := s.listAvailableModelsWithRefresh(r.Context(), requestWantsModelRefresh(r))
+	provider := normalizeModelProvider(r.URL.Query().Get("provider"))
+	infos, err := s.listAvailableModelsForProvider(r.Context(), provider, requestWantsModelRefresh(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	provider := normalizeModelProvider(r.URL.Query().Get("provider"))
 	if provider != "" {
 		filtered := make([]api.ModelInfo, 0, len(infos))
 		for _, info := range infos {

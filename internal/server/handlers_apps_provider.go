@@ -11,6 +11,7 @@ import (
 	"github.com/opencsgs/csglite/internal/apps"
 	"github.com/opencsgs/csglite/internal/claudeagent"
 	"github.com/opencsgs/csglite/internal/codexagent"
+	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -91,11 +92,24 @@ func (s *Server) switchAIAppProvider(ctx context.Context, appID, mode, requested
 		return err
 	}
 	if mode == apps.ProviderModeNative {
-		_, err := s.sourceSwitches.RestoreNative(group, targetPath, isManaged, restoreLegacy)
+		options := apps.RestoreNativeOptions{}
+		if group == codexProviderGroup {
+			options.ValidateManaged = s.sourceSwitchManagedValidator(group)
+			options.RestoreManaged = codexagent.RestoreNativeConfigData
+		}
+		_, err := s.sourceSwitches.RestoreNative(group, targetPath, isManaged, restoreLegacy, options)
 		return err
 	}
 
 	modelID, modelIDs, err := s.resolveAIAppShellLaunchModels(ctx, appID, requestedModelID, requestedSource)
+	if err != nil {
+		return err
+	}
+	modelSource, modelIDs, err := s.resolveAIAppModelSource(ctx, modelID, requestedSource)
+	if err != nil {
+		return err
+	}
+	serverURL, err := providerScopedBaseURL(s.localBaseURL(), modelSource)
 	if err != nil {
 		return err
 	}
@@ -107,21 +121,27 @@ func (s *Server) switchAIAppProvider(ctx context.Context, appID, mode, requested
 				models = append(models, api.ModelInfo{Model: id})
 			}
 			return codexagent.SyncConfig(
-				s.localBaseURL(),
+				serverURL,
 				openClawProviderAPIKey(s.cfg.Token),
 				modelID,
 				models,
 			)
 		case claudeProviderGroup:
-			return claudeagent.SyncConfig(s.localBaseURL(), "csghub-lite", modelID)
+			return claudeagent.SyncConfig(serverURL, "csghub-lite", modelID)
 		default:
 			return fmt.Errorf("unknown provider group %s", group)
 		}
 	}
-	if _, err := s.sourceSwitches.UseOpenCSG(group, targetPath, isManaged, apply); err != nil {
+	if _, err := s.sourceSwitches.UseOpenCSG(
+		group,
+		targetPath,
+		isManaged,
+		apply,
+		s.sourceSwitchManagedValidator(group),
+	); err != nil {
 		return err
 	}
-	s.savePreferredAIAppModel(appID, modelID)
+	s.savePreferredAIAppSelection(appID, modelID, modelSource)
 	return nil
 }
 
@@ -152,8 +172,42 @@ func (s *Server) aiAppProviderStatus(appID string) (apps.SourceSwitchStatus, boo
 	if err != nil {
 		return apps.SourceSwitchStatus{}, true, err
 	}
-	status, err := s.sourceSwitches.Status(group, targetPath, isManaged)
+	status, err := s.sourceSwitches.Status(group, targetPath, isManaged, s.sourceSwitchManagedValidator(group))
 	return status, true, err
+}
+
+func (s *Server) sourceSwitchManagedValidator(group string) func([]byte) bool {
+	if group != codexProviderGroup {
+		return nil
+	}
+	serverURL := s.localBaseURL()
+	allowedURLs := []string{serverURL}
+	for _, source := range []string{"local", "cloud"} {
+		if value, err := providerScopedBaseURL(serverURL, source); err == nil {
+			allowedURLs = append(allowedURLs, value)
+		}
+	}
+	for _, provider := range config.GetProviders() {
+		if value, err := providerScopedBaseURL(serverURL, providerSource(provider.ID)); err == nil {
+			allowedURLs = append(allowedURLs, value)
+		}
+	}
+	for _, appID := range []string{"codex", "codex-app"} {
+		if source := s.preferredAIAppModelSource(appID); source != "" {
+			if value, err := providerScopedBaseURL(serverURL, source); err == nil {
+				allowedURLs = append(allowedURLs, value)
+			}
+		}
+	}
+	apiKey := openClawProviderAPIKey(s.cfg.Token)
+	return func(data []byte) bool {
+		for _, allowedURL := range allowedURLs {
+			if codexagent.MatchesManagedProviderConfigData(data, allowedURL, apiKey) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 func (s *Server) enrichAIAppProvider(info *api.AIAppInfo) {

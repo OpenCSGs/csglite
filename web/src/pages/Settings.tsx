@@ -525,7 +525,7 @@ export function Settings() {
   };
 
   return (
-    <div class="mx-auto max-w-6xl p-8">
+    <div class="page-shell">
       <h1 class="text-2xl font-bold text-gray-900">{t("settings.title")}</h1>
       <p class="text-gray-500 text-sm mt-1 mb-6">{t("settings.subtitle")}</p>
 

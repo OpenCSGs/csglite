@@ -39,7 +39,7 @@ export function Pricing() {
   const pricedCloudCount = cloudModels.filter(hasPricing).length;
 
   return (
-    <div class="p-8 max-w-6xl mx-auto">
+    <div class="page-shell">
       <div class="flex items-start justify-between gap-4 mb-6">
         <div>
           <h1 class="text-2xl font-bold text-gray-900">{t("pricing.title")}</h1>

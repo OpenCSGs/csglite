@@ -167,7 +167,18 @@ func (s *Server) cloudAuthStatus(ctx context.Context) cloudAuthStatus {
 }
 
 func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (inference.Engine, error) {
-	source = strings.TrimSpace(source)
+	var err error
+	source, err = effectiveRequestSource(ctx, source)
+	if err != nil {
+		return nil, inference.NewHTTPStatusError(http.StatusBadRequest, err.Error())
+	}
+	if poolIDFromSource(source) != "" {
+		pool, ok := providerPoolForRequest(modelID, source)
+		if !ok {
+			return nil, inference.NewHTTPStatusError(http.StatusNotFound, "provider pool not found or disabled")
+		}
+		return s.newProviderPoolChatEngine(ctx, pool, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
+	}
 	normalizedSource := strings.ToLower(source)
 	if providerIDFromSource(source) != "" {
 		return newThirdPartyProviderEngine(source, modelID)
@@ -218,12 +229,26 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 	if providerSource := s.thirdPartyProviderSourceForModel(ctx, modelID); providerSource != "" {
 		return newThirdPartyProviderEngine(providerSource, modelID)
 	}
+	if pool, ok := providerPoolForRequest(modelID, source); ok {
+		return s.newProviderPoolChatEngine(ctx, pool, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
+	}
 
 	return nil, err
 }
 
 func (s *Server) getEmbeddingEngine(ctx context.Context, modelID, source string, numCtx, nGPULayers int, dtype string) (inference.Engine, error) {
-	source = strings.TrimSpace(source)
+	var err error
+	source, err = effectiveRequestSource(ctx, source)
+	if err != nil {
+		return nil, inference.NewHTTPStatusError(http.StatusBadRequest, err.Error())
+	}
+	if poolIDFromSource(source) != "" {
+		pool, ok := providerPoolForRequest(modelID, source)
+		if !ok {
+			return nil, inference.NewHTTPStatusError(http.StatusNotFound, "provider pool not found or disabled")
+		}
+		return s.newProviderPoolEmbeddingEngine(ctx, pool, numCtx, nGPULayers, dtype)
+	}
 	normalizedSource := strings.ToLower(source)
 	if providerIDFromSource(source) != "" {
 		return newThirdPartyProviderEngine(source, modelID)
@@ -242,6 +267,9 @@ func (s *Server) getEmbeddingEngine(ctx context.Context, modelID, source string,
 
 	if providerSource := s.thirdPartyProviderSourceForModel(ctx, modelID); providerSource != "" {
 		return newThirdPartyProviderEngine(providerSource, modelID)
+	}
+	if pool, ok := providerPoolForRequest(modelID, source); ok {
+		return s.newProviderPoolEmbeddingEngine(ctx, pool, numCtx, nGPULayers, dtype)
 	}
 	return nil, err
 }

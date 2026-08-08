@@ -2,6 +2,7 @@ package api
 
 type AnthropicMessageRequest struct {
 	Model         string             `json:"model"`
+	Source        string             `json:"source,omitempty"`
 	Messages      []AnthropicMessage `json:"messages"`
 	System        interface{}        `json:"system,omitempty"`
 	Tools         []AnthropicTool    `json:"tools,omitempty"`

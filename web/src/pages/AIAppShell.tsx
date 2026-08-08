@@ -2,8 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { getTags, openAIApp, type ModelInfo } from "../api/client";
+import { openAIApp, type ModelInfo } from "../api/client";
 import { locale, t } from "../i18n";
+import {
+  formatModelOptionLabel as formatShellModelLabel,
+  loadModelOptions,
+  modelOptionKey as shellModelKey,
+} from "../utils/modelOptions";
 
 type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
 const claudeCodeAppId = "claude-code";
@@ -16,6 +21,7 @@ interface ShellControlMessage {
   app_id?: string;
   title?: string;
   model_id?: string;
+  source?: string;
   work_dir?: string;
   exit_code?: number;
   error?: string;
@@ -70,10 +76,6 @@ function shellWebSocketURL(sessionId: string): string {
   return `${protocol}//${location.host}/api/apps/shell/${encodeURIComponent(sessionId)}/ws`;
 }
 
-function shellModelKey(model: Pick<ModelInfo, "model" | "source">): string {
-  return `${model.source || "local"}:${model.model}`;
-}
-
 function parseShellModelKey(key: string): { source: string; model: string } {
   const providerPrefix = "provider:";
   if (key.startsWith(providerPrefix)) {
@@ -87,40 +89,6 @@ function parseShellModelKey(key: string): { source: string; model: string } {
     return { source: key.slice(0, first), model: key.slice(first + 1) };
   }
   return { source: "", model: key };
-}
-
-function normalizeShellModels(models: ModelInfo[]): ModelInfo[] {
-  const seen = new Set<string>();
-  const out: ModelInfo[] = [];
-  for (const model of models) {
-    const modelId = model.model?.trim();
-    const key = shellModelKey(model);
-    if (!modelId || seen.has(key) || !isShellLaunchModel(model)) {
-      continue;
-    }
-    seen.add(key);
-    out.push(model);
-  }
-  return out;
-}
-
-function isShellLaunchModel(model: ModelInfo): boolean {
-  if (model.source !== "cloud") {
-    return true;
-  }
-  return model.model?.trim().toLowerCase() !== "opus4.7";
-}
-
-function formatShellModelLabel(model: ModelInfo): string {
-  const name = model.display_name || model.model;
-  const src = model.source || "local";
-  if (src === "cloud") {
-    return `${name} [${t("aiApps.modelSourceCloud")}]`;
-  }
-  if (src.startsWith("provider:")) {
-    return name;
-  }
-  return `${name} [${t("aiApps.modelSourceLocal")}]`;
 }
 
 async function closeShellSession(sessionId: string): Promise<void> {
@@ -142,6 +110,7 @@ export function AIAppShell() {
   const queryAppId = useMemo(() => new URLSearchParams(location.search).get("app_id")?.trim() || "", []);
   const [title, setTitle] = useState("");
   const [modelId, setModelId] = useState("");
+  const [modelSource, setModelSource] = useState("");
   const [appId, setAppId] = useState(queryAppId);
   const [error, setError] = useState("");
   const [state, setState] = useState<ConnectionState>("connecting");
@@ -318,6 +287,7 @@ export function AIAppShell() {
           setTitle(message.title || "");
           setAppId(message.app_id || "");
           setModelId(message.model_id || "");
+          setModelSource(message.source || "");
           setWorkDir(message.work_dir || "");
           setWorkDirInput(message.work_dir || "");
           document.title = message.title ? `${message.title} · CSGLite` : "CSGLite";
@@ -400,10 +370,10 @@ export function AIAppShell() {
     let disposed = false;
     setModelsLoading(true);
 
-    getTags({ refresh: true })
+    loadModelOptions({ refresh: true })
       .then((items) => {
         if (disposed) return;
-        setModels(normalizeShellModels(items));
+        setModels(items);
       })
       .catch(() => {
         if (disposed) return;
@@ -427,8 +397,12 @@ export function AIAppShell() {
     }
 
     setSelectedModel((current) => {
-      if (modelId && models.some((item) => item.model === modelId)) {
-        const model = models.find((item) => item.model === modelId);
+      if (modelId && models.some((item) =>
+        item.model === modelId && (!modelSource || item.source === modelSource)
+      )) {
+        const model = models.find((item) =>
+          item.model === modelId && (!modelSource || item.source === modelSource)
+        );
         return model ? shellModelKey(model) : modelId;
       }
       if (current && models.some((item) => shellModelKey(item) === current)) {
@@ -436,7 +410,7 @@ export function AIAppShell() {
       }
       return models[0] ? shellModelKey(models[0]) : "";
     });
-  }, [appId, modelId, models]);
+  }, [appId, modelId, modelSource, models]);
 
   const shellTitle = title || t("aiApps.shellTitle");
   const statusLabel = state === "connected"
@@ -458,7 +432,9 @@ export function AIAppShell() {
   const trimmedWorkDir = workDirInput.trim();
   const selectedModelParts = selectedModel ? parseShellModelKey(selectedModel) : null;
   const currentModelKey = modelId
-    ? shellModelKey(models.find((item) => item.model === modelId) || { model: modelId, source: "local" })
+    ? shellModelKey(models.find((item) =>
+      item.model === modelId && (!modelSource || item.source === modelSource)
+    ) || { model: modelId, source: modelSource || "local" })
     : "";
   const modelChanged = canSwitchShellModel && selectedModel !== currentModelKey;
   const workDirChanged = trimmedWorkDir !== workDir;
@@ -519,7 +495,11 @@ export function AIAppShell() {
           </div>
           <div class="mt-1 flex items-center gap-3 flex-wrap text-xs text-slate-400">
             {appId && <span>{appId}</span>}
-            {!canSwitchShellModel && modelId && <span>{t("aiApps.shellModel")}: {modelId}</span>}
+            {modelId && <span>{t("aiApps.shellModel")}: {
+              formatShellModelLabel(models.find((item) =>
+                item.model === modelId && (!modelSource || item.source === modelSource)
+              ) || { model: modelId, source: modelSource || "local" } as ModelInfo)
+            }</span>}
             {!canSwitchShellWorkDir && workDir && <span>{t("aiApps.shellDirectory")}: {workDir}</span>}
             {state === "exited" && exitCode !== null && <span>{t("aiApps.shellExitCode", String(exitCode))}</span>}
           </div>
