@@ -48,7 +48,9 @@ Inspired by [Ollama](https://ollama.com), CSGLite provides model download, local
 
 Download the desktop client from the [CSGLite product page](https://opencsg.com/products/csglite).
 
-### Quick install (Linux / macOS)
+### CLI client
+
+#### Linux / macOS
 
 ```bash
 curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh | sh
@@ -60,7 +62,7 @@ Pin a release version:
 curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh | CSGHUB_LITE_VERSION=v0.8.55 sh
 ```
 
-### Quick install (Windows PowerShell)
+#### Windows PowerShell
 
 ```powershell
 irm https://hub.opencsg.com/csghub-lite/install.ps1 | iex
