@@ -44,6 +44,10 @@ Inspired by [Ollama](https://ollama.com), CSGLite provides model download, local
 
 ## Installation
 
+### Desktop client
+
+Download the desktop client from the [CSGLite product page](https://opencsg.com/products/csglite).
+
 ### Quick install (Linux / macOS)
 
 ```bash
