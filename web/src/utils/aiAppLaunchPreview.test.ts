@@ -11,7 +11,10 @@ describe("AI app launch examples", () => {
   it("uses a provider pool name and does not expose its ID", () => {
     const preview = aiAppLaunchPreview("claude-code", "code-pool", "pool:c4ed2ee85360025e", "聚合Model API");
 
-    expect(preview).toContain('--pool "聚合Model API"');
+    expect(preview.split("\n").slice(0, 2)).toEqual([
+      "csghub-lite launch claude",
+      'csghub-lite launch claude --pool "聚合Model API"',
+    ]);
     expect(preview).not.toContain("c4ed2ee85360025e");
   });
 
