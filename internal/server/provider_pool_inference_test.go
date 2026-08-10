@@ -301,6 +301,47 @@ func TestProviderPoolRetryAfterCooldownAndOrdinary4xx(t *testing.T) {
 	}
 }
 
+func TestProviderPoolFallsBackOnInsufficientBalance(t *testing.T) {
+	now := time.Now()
+	fallbackCalls := 0
+	engine := newPoolRuntimeTestEngine(&now,
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "depleted", Source: "cloud", Priority: 0},
+			new: func() (inference.Engine, error) {
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					response := poolRuntimeResponse(`{"error":{"message":"Insufficient balance"}}`)
+					response.StatusCode = http.StatusPaymentRequired
+					return response, nil
+				}}, nil
+			},
+		},
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "fallback", Source: "provider:fallback", Priority: 1},
+			new: func() (inference.Engine, error) {
+				fallbackCalls++
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					return poolRuntimeResponse(`{}`), nil
+				}}, nil
+			},
+		},
+	)
+
+	response, err := engine.ChatCompletion(t.Context(), map[string]interface{}{"prompt": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if fallbackCalls != 1 {
+		t.Fatalf("fallback calls = %d, want 1", fallbackCalls)
+	}
+	if got := response.Header.Get(providerPoolMemberSourceHeader); got != "provider:fallback" {
+		t.Fatalf("member source = %q, want provider:fallback", got)
+	}
+	if got := response.Header.Get(providerPoolFallbackCountHeader); got != "1" {
+		t.Fatalf("fallback count = %q, want 1", got)
+	}
+}
+
 func TestProviderPoolDoesNotRetryAfterStreamingToken(t *testing.T) {
 	now := time.Now()
 	fallbackCalls := 0

@@ -9,6 +9,7 @@ import {
   loadModelOptions,
   modelOptionKey as shellModelKey,
 } from "../utils/modelOptions";
+import { parseAIAppModelKey } from "../utils/aiAppLaunchPreview";
 
 type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
 const claudeCodeAppId = "claude-code";
@@ -74,21 +75,6 @@ function registerOpenCodeXtermCompat(terminal: Terminal, sendInput: (payload: Ui
 function shellWebSocketURL(sessionId: string): string {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${location.host}/api/apps/shell/${encodeURIComponent(sessionId)}/ws`;
-}
-
-function parseShellModelKey(key: string): { source: string; model: string } {
-  const providerPrefix = "provider:";
-  if (key.startsWith(providerPrefix)) {
-    const next = key.indexOf(":", providerPrefix.length);
-    if (next > providerPrefix.length) {
-      return { source: key.slice(0, next), model: key.slice(next + 1) };
-    }
-  }
-  const first = key.indexOf(":");
-  if (first > 0) {
-    return { source: key.slice(0, first), model: key.slice(first + 1) };
-  }
-  return { source: "", model: key };
 }
 
 async function closeShellSession(sessionId: string): Promise<void> {
@@ -430,7 +416,7 @@ export function AIAppShell() {
   const canSwitchShellModel = shellAppsWithModelSwitch.has(appId);
   const canSwitchShellWorkDir = shellAppsWithWorkDirSwitch.has(appId);
   const trimmedWorkDir = workDirInput.trim();
-  const selectedModelParts = selectedModel ? parseShellModelKey(selectedModel) : null;
+  const selectedModelParts = selectedModel ? parseAIAppModelKey(selectedModel) : null;
   const currentModelKey = modelId
     ? shellModelKey(models.find((item) =>
       item.model === modelId && (!modelSource || item.source === modelSource)

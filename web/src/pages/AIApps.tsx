@@ -36,6 +36,7 @@ import {
   loadModelOptions,
   modelOptionKey as aiAppModelKey,
 } from "../utils/modelOptions";
+import { aiAppLaunchPreview, parseAIAppModelKey } from "../utils/aiAppLaunchPreview";
 
 type AIAppFilter = "all" | AIAppCategory;
 type DrawerMode = "details" | "install";
@@ -75,21 +76,6 @@ function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
 function openExternalURL(url?: string) {
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");
-}
-
-function parseAIAppModelKey(key: string): { source: string; model: string } {
-  const providerPrefix = "provider:";
-  if (key.startsWith(providerPrefix)) {
-    const next = key.indexOf(":", providerPrefix.length);
-    if (next > providerPrefix.length) {
-      return { source: key.slice(0, next), model: key.slice(next + 1) };
-    }
-  }
-  const first = key.indexOf(":");
-  if (first > 0) {
-    return { source: key.slice(0, first), model: key.slice(first + 1) };
-  }
-  return { source: "", model: key };
 }
 
 const filteredApps = computed(() => {
@@ -623,10 +609,11 @@ function LiveLogsDrawer({
   const currentModelInfo = selectedModelParts
     ? models.find((item) => aiAppModelKey(item) === selectedModel)
     : models.find((item) => item.model === currentModelID);
-  const launchPreview = cliLaunchPreview(
-    app,
+  const launchPreview = aiAppLaunchPreview(
+    app.id,
     currentModelID,
     currentModelInfo?.source || state.modelSource || "",
+    currentModelInfo?.provider || "",
   );
   const xiaozhiSavedBindingsKey = JSON.stringify(state.modelBindings || {});
 
@@ -1928,53 +1915,6 @@ function runtimeStatusDotClass(state: AIAppRuntimeState): string {
   return state.runtimeRunning || state.runtimeStatus === "running"
     ? "bg-emerald-500"
     : "bg-red-500";
-}
-
-function cliLaunchPreview(app: AIAppCatalogEntry, modelID: string, source: string): string {
-  const launchName = cliLaunchAppName(app.id);
-  if (!launchName) {
-    return "";
-  }
-  const provider = launchProviderID(source);
-  const modelArg = modelID ? `"${modelID}"` : '"<model-id>"';
-  const providerArg = provider ? `"${provider}"` : '"<provider-id-or-name>"';
-  const launchWithModel = `csghub-lite launch ${launchName} --model ${modelArg} --provider ${providerArg}`;
-  return [
-    `csghub-lite launch ${launchName}`,
-    launchWithModel,
-    `${launchWithModel} -- --help`,
-  ].join("\n");
-}
-
-function cliLaunchAppName(appID: string): string {
-  switch (appID) {
-    case "claude-code":
-      return "claude";
-    case "open-code":
-      return "opencode";
-    case "open-code-review":
-      return "ocr";
-    case "codex":
-      return "codex";
-    case "codex-app":
-      return "codex-app";
-    case "zcode":
-      return "zcode";
-    case "pi":
-      return "pi";
-    case "openclaw":
-      return "openclaw";
-    default:
-      return "";
-  }
-}
-
-function launchProviderID(source: string): string {
-  const value = source.trim();
-  const normalized = value.toLocaleLowerCase();
-  if (!normalized || normalized === "local") return "local";
-  if (normalized === "cloud") return "csghub";
-  return normalized.startsWith("provider:") ? value.slice("provider:".length) : value;
 }
 
 function canSelectAIAppModel(app: AIAppCatalogEntry): boolean {

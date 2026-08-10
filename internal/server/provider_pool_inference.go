@@ -351,6 +351,9 @@ func providerPoolRetryable(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
+	if strings.Contains(strings.ToLower(inference.HTTPErrorMessage(err)), "insufficient balance") {
+		return true
+	}
 	status := inference.HTTPStatusCode(err)
 	return status == 0 || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }

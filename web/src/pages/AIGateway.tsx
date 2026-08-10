@@ -725,6 +725,17 @@ function toggleProviderPoolSourceModel(source: string, model: string, checked: b
   }
 }
 
+function providerPoolSourceLabel(source: string): string {
+  const value = source.trim();
+  if (value === "local") return t("settings.providerPoolSourceLocal");
+  if (value === "cloud") return cloudManagedProvider.value?.name || t("settings.providerPoolSourceCloud");
+  if (value.startsWith("provider:")) {
+    const providerID = value.slice("provider:".length);
+    return providers.value.find((provider) => provider.id === providerID)?.name || value;
+  }
+  return value;
+}
+
 async function saveProviderPoolForm() {
   const name = providerPoolFormName.value.trim();
   const model = providerPoolFormModel.value.trim();
@@ -1478,7 +1489,7 @@ function ProviderPoolsSection() {
                   <div key={member.id} class="rounded-lg bg-white px-3 py-2 text-xs text-gray-600">
                     <div class="flex min-w-0 justify-between gap-2">
                       <span class="truncate font-medium text-gray-800">{member.model}</span>
-                      <span class="shrink-0 text-gray-400">{member.source}</span>
+                      <span class="shrink-0 text-gray-400">{providerPoolSourceLabel(member.source)}</span>
                     </div>
                   </div>
                 ))}
