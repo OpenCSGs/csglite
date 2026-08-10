@@ -609,6 +609,21 @@ async function removeProvider(provider: ThirdPartyProvider) {
   }
 }
 
+// sortProviderPoolMembers orders members by priority ascending (lower priority
+// is tried first, matching the backend's orderedMembers() call order), then by
+// weight descending within the same priority. The weight tiebreaker is purely
+// visual — within a priority, members are load-split by weight ratio, not call
+// order — but listing higher-weight members first matches the intuition that
+// they carry more of the traffic.
+function sortProviderPoolMembers(members: ProviderPoolMember[]): ProviderPoolMember[] {
+  return [...members].sort((a, b) => {
+    const pa = a.priority ?? 0;
+    const pb = b.priority ?? 0;
+    if (pa !== pb) return pa - pb;
+    return (b.weight ?? 100) - (a.weight ?? 100);
+  });
+}
+
 function newProviderPoolMember(index = providerPoolFormMembers.value.length): ProviderPoolMember {
   return {
     id: `member-${Date.now()}-${index}`,
@@ -627,7 +642,7 @@ function openProviderPoolDialog(pool?: ProviderPool) {
   providerPoolFormName.value = pool?.name || "";
   providerPoolFormModel.value = pool?.model || "";
   providerPoolFormEnabled.value = pool?.enabled ?? true;
-  providerPoolFormMembers.value = pool?.members.map((member) => ({ ...member })) || [];
+  providerPoolFormMembers.value = sortProviderPoolMembers(pool?.members.map((member) => ({ ...member })) || []);
   providerPoolFormError.value = "";
   providerPoolDialogStep.value = "basics";
   providerPoolSourceFilter.value = "local";
@@ -695,6 +710,9 @@ function saveProviderPoolMemberConfigDialog() {
     tokens_per_minute: member.tokens_per_minute ?? 0,
     max_concurrent: member.max_concurrent ?? 0,
   });
+  // Re-sort so the list reflects the updated call priority (priority ascending,
+  // matching the backend's orderedMembers() order).
+  providerPoolFormMembers.value = sortProviderPoolMembers(providerPoolFormMembers.value);
   closeProviderPoolMemberConfigDialog();
 }
 
@@ -716,10 +734,10 @@ function toggleProviderPoolSourceModel(source: string, model: string, checked: b
     (member) => member.source === source && member.model === model
   );
   if (checked && memberIndex === -1) {
-    providerPoolFormMembers.value = [
+    providerPoolFormMembers.value = sortProviderPoolMembers([
       ...providerPoolFormMembers.value,
       { ...newProviderPoolMember(providerPoolFormMembers.value.length), source, model },
-    ];
+    ]);
   } else if (!checked && memberIndex !== -1) {
     providerPoolFormMembers.value = providerPoolFormMembers.value.filter((_, index) => index !== memberIndex);
   }
@@ -1485,11 +1503,19 @@ function ProviderPoolsSection() {
                 </span>
               </div>
               <div class="mt-4 space-y-2">
-                {pool.members.map((member) => (
+                {sortProviderPoolMembers(pool.members).map((member) => (
                   <div key={member.id} class="rounded-lg bg-white px-3 py-2 text-xs text-gray-600">
                     <div class="flex min-w-0 justify-between gap-2">
                       <span class="truncate font-medium text-gray-800">{member.model}</span>
                       <span class="shrink-0 text-gray-400">{providerPoolSourceLabel(member.source)}</span>
+                    </div>
+                    <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <span class="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700" title={t("settings.providerPoolMemberPriority")}>
+                        {t("settings.providerPoolMemberPriority")} {member.priority ?? 0}
+                      </span>
+                      <span class="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600" title={t("settings.providerPoolMemberWeight")}>
+                        {t("settings.providerPoolMemberWeight")} {member.weight ?? 100}
+                      </span>
                     </div>
                   </div>
                 ))}
@@ -2205,7 +2231,15 @@ function ProviderPoolDialog({
                             <div class="min-w-0">
                               <p class="truncate text-sm font-medium text-gray-900">{modelLabel(member.source, member.model)}</p>
                               <p class="mt-0.5 truncate font-mono text-xs text-gray-500">{member.model}</p>
-                              <span class="mt-2 inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{sourceLabel(member.source)}</span>
+                              <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                                <span class="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700" title={t("settings.providerPoolMemberPriority")}>
+                                  {t("settings.providerPoolMemberPriority")} {member.priority ?? 0}
+                                </span>
+                                <span class="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600" title={t("settings.providerPoolMemberWeight")}>
+                                  {t("settings.providerPoolMemberWeight")} {member.weight ?? 100}
+                                </span>
+                                <span class="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{sourceLabel(member.source)}</span>
+                              </div>
                             </div>
                             <button
                               type="button"
