@@ -1108,7 +1108,7 @@ function LocalAPIKeysSection() {
                 onChange={(e) => void toggleLocalAPIAuth((e.target as HTMLInputElement).checked)}
                 class="peer sr-only"
               />
-              <div class="h-7 w-12 rounded-full bg-gray-200 transition-all after:absolute after:left-[3px] after:top-[3px] after:h-6 after:w-6 after:rounded-full after:border after:border-gray-200 after:bg-white after:shadow-sm after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-5 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-200 peer-disabled:cursor-not-allowed peer-disabled:opacity-60" />
+              <div class="h-6 w-11 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:shadow-sm after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 peer-disabled:cursor-not-allowed peer-disabled:opacity-60" />
             </label>
           </div>
           <div class="mt-5 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
@@ -1365,7 +1365,7 @@ function ProvidersSection() {
 											onChange={() => void toggleProviderEnabled(provider)}
 											class="peer sr-only"
 										/>
-										<div class="h-5 w-9 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300" />
+										<div class="h-5 w-9 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300" />
 									</label>
 								)}
                 </div>
@@ -1891,7 +1891,7 @@ function ProviderDialog({
                   onChange={(e) => onChangeEnabled((e.target as HTMLInputElement).checked)}
                   class="peer sr-only"
                 />
-                <div class="h-6 w-11 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300" />
+                <div class="h-6 w-11 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300" />
               </label>
               <span class="text-sm text-gray-700">{enabled ? t("settings.providerEnabled") : t("settings.providerDisabled")}</span>
             </div>
@@ -2106,7 +2106,7 @@ function ProviderPoolDialog({
                   </div>
                   <label class="relative inline-flex shrink-0 cursor-pointer items-center">
                     <input type="checkbox" checked={enabled} onChange={(event) => onChangeEnabled((event.target as HTMLInputElement).checked)} disabled={saving} class="peer sr-only" />
-                    <div class="h-6 w-11 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:shadow-sm after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 peer-disabled:opacity-60" />
+                    <div class="h-6 w-11 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:shadow-sm after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 peer-disabled:opacity-60" />
                   </label>
                 </div>
               </div>
