@@ -355,7 +355,10 @@ func providerPoolRetryable(err error) bool {
 		return true
 	}
 	status := inference.HTTPStatusCode(err)
-	return status == 0 || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+	return status == 0 ||
+		status == http.StatusPaymentRequired ||
+		status == http.StatusTooManyRequests ||
+		status >= http.StatusInternalServerError
 }
 
 func requestPoolUsageSource(requested string, response *http.Response) string {

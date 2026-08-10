@@ -342,6 +342,37 @@ func TestProviderPoolFallsBackOnInsufficientBalance(t *testing.T) {
 	}
 }
 
+func TestProviderPoolRetryableIncludesPaymentRequired(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "payment required without recognizable message",
+			err:  inference.NewHTTPStatusError(http.StatusPaymentRequired, "billing unavailable"),
+			want: true,
+		},
+		{
+			name: "insufficient balance on another client error",
+			err:  inference.NewHTTPStatusError(http.StatusForbidden, "Insufficient balance"),
+			want: true,
+		},
+		{
+			name: "ordinary client error",
+			err:  inference.NewHTTPStatusError(http.StatusBadRequest, "bad request"),
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := providerPoolRetryable(tt.err); got != tt.want {
+				t.Fatalf("providerPoolRetryable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestProviderPoolDoesNotRetryAfterStreamingToken(t *testing.T) {
 	now := time.Now()
 	fallbackCalls := 0
