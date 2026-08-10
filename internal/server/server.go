@@ -187,6 +187,11 @@ type Server struct {
 	apiKeys             *config.APIKeyStore
 	apiUsage            *config.APIUsageStore
 	desktopBootstrapped atomic.Bool
+
+	// shutdownCancel stops the Run loop. It is set in Run and invoked by the
+	// /api/shutdown handler so an HTTP-initiated shutdown actually exits the
+	// process instead of only closing the listeners.
+	shutdownCancel context.CancelFunc
 }
 
 type desktopReady struct {
@@ -276,6 +281,7 @@ func resolveCloudURL(cfg *config.Config) string {
 func (s *Server) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	s.shutdownCancel = stop
 
 	if s.cfg.DesktopMode {
 		if err := validateDesktopConfig(s.cfg); err != nil {
