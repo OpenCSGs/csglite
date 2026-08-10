@@ -321,6 +321,11 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.http.Shutdown(shutCtx)
+		// Stop the Run loop so the process actually exits; closing the
+		// listeners alone leaves it blocked on <-ctx.Done().
+		if s.shutdownCancel != nil {
+			s.shutdownCancel()
+		}
 	}()
 }
 
