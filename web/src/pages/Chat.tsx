@@ -1432,6 +1432,10 @@ export function Chat() {
           num_parallel: numParallel,
           system: systemPrompt.value || undefined,
           source: currentModel.source,
+          thread_id: conv.id,
+          trace_id: typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           web_search: webSearchAvailable.value && webSearchEnabled.value
             ? { enabled: true, query: text }
             : { enabled: false },

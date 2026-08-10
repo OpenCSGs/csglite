@@ -7,6 +7,7 @@ import type { Locale } from "../i18n";
 import {
   browseLocalDirectories,
   checkUpgrade,
+  clearObservabilityData,
   clearCloudToken,
   getCloudAuthStatus,
   getTags,
@@ -80,6 +81,11 @@ const resetDefaultsError = signal("");
 const isUpgradingDiffuser = signal(false);
 const diffuserUpgradeMessage = signal("");
 const diffuserUpgradeError = signal("");
+const observabilityRetentionDays = signal(30);
+const isSavingObservability = signal(false);
+const isClearingObservability = signal(false);
+const observabilityMessage = signal("");
+const observabilityError = signal("");
 const providersChangedEvent = "csghub:providers-changed";
 
 function notifyProvidersChanged() {
@@ -174,12 +180,44 @@ function applySettings(data: AppSettings) {
     currentVersion: data.version || upgradeProgress.value.currentVersion,
   };
   autostartEnabled.value = data.autostart ?? false;
+  observabilityRetentionDays.value = data.observability?.retention_days ?? 30;
   const webSearch = data.web_search;
   webSearchEnabled.value = webSearch?.enabled ?? false;
   webSearchMaxResults.value = webSearch?.max_results || 5;
   webSearchLanguage.value = webSearch?.language || "";
   webSearchSafeSearch.value = webSearch?.safe_search ?? 1;
   webSearchTimeoutSeconds.value = webSearch?.timeout_seconds || 5;
+}
+
+async function saveObservabilityRetention() {
+  const days = Math.max(0, Math.min(3650, Math.round(observabilityRetentionDays.value || 0)));
+  isSavingObservability.value = true;
+  observabilityMessage.value = "";
+  observabilityError.value = "";
+  try {
+    const data = await saveSettings({ observability: { retention_days: days } });
+    applySettings(data);
+    observabilityMessage.value = t("observability.retentionSaved");
+  } catch (err: any) {
+    observabilityError.value = err?.message || t("observability.retentionSaveFailed");
+  } finally {
+    isSavingObservability.value = false;
+  }
+}
+
+async function clearSavedObservabilityData() {
+  if (!confirm(t("observability.clearConfirm"))) return;
+  isClearingObservability.value = true;
+  observabilityMessage.value = "";
+  observabilityError.value = "";
+  try {
+    await clearObservabilityData();
+    observabilityMessage.value = t("observability.clearSuccess");
+  } catch (err: any) {
+    observabilityError.value = err?.message || t("observability.clearFailed");
+  } finally {
+    isClearingObservability.value = false;
+  }
 }
 
 async function copyLocalAPIURL() {
@@ -568,6 +606,68 @@ export function Settings() {
         {storageDirError.value && (
           <p class="mt-3 ml-7 text-sm text-red-600">{storageDirError.value}</p>
         )}
+      </div>
+
+      {/* Observability retention */}
+      <div class="mb-10">
+        <div class="flex items-center gap-2 mb-1">
+          <svg class="h-5 w-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 19V9m5 10V5m5 14v-7m5 7V3M3 19h18" />
+          </svg>
+          <span class="font-semibold text-gray-900">{t("observability.settingsTitle")}</span>
+        </div>
+        <p class="mb-4 ml-7 text-sm text-gray-500">{t("observability.settingsDesc")}</p>
+        <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4">
+          <label class="text-sm font-medium text-gray-700">{t("observability.retention")}</label>
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            {[7, 30, 90, 365, 0].map((days) => (
+              <button
+                type="button"
+                key={days}
+                onClick={() => (observabilityRetentionDays.value = days)}
+                class={`rounded-lg border px-3 py-2 text-sm transition ${
+                  observabilityRetentionDays.value === days
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                {days === 0 ? t("observability.retentionForever") : t("observability.retentionDays", days)}
+              </button>
+            ))}
+            <div class="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-1.5">
+              <span class="text-xs text-gray-400">{t("observability.customDays")}</span>
+              <input
+                type="number"
+                min="1"
+                max="3650"
+                value={observabilityRetentionDays.value || ""}
+                onInput={(event) => (observabilityRetentionDays.value = Number((event.currentTarget as HTMLInputElement).value) || 0)}
+                class="w-20 border-0 p-0 text-sm text-gray-700 focus:outline-none focus:ring-0"
+              />
+            </div>
+          </div>
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void saveObservabilityRetention()}
+              disabled={isSavingObservability.value}
+              class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {isSavingObservability.value ? "..." : t("observability.saveRetention")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void clearSavedObservabilityData()}
+              disabled={isClearingObservability.value}
+              class="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+            >
+              {isClearingObservability.value ? "..." : t("observability.clearData")}
+            </button>
+            <span class="text-xs text-gray-400">{t("observability.clearDataHint")}</span>
+          </div>
+          {observabilityMessage.value && <p class="mt-3 text-sm text-emerald-600">{observabilityMessage.value}</p>}
+          {observabilityError.value && <p class="mt-3 text-sm text-red-600">{observabilityError.value}</p>}
+        </div>
       </div>
 
       {/* Context length */}

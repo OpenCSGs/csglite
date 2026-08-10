@@ -217,3 +217,31 @@ func TestCurrentSettingsIncludesDesktopAPIURL(t *testing.T) {
 		t.Fatalf("LocalAPIURL = %q, want stable desktop API URL", settings.LocalAPIURL)
 	}
 }
+
+func TestHandleSettingsUpdatesObservabilityRetention(t *testing.T) {
+	s := newTestServer(t)
+	body, err := json.Marshal(api.SettingsUpdateRequest{
+		Observability: &api.ObservabilitySettings{RetentionDays: 90},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	recorder := httptest.NewRecorder()
+
+	s.handleSettingsUpdate(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := config.ObservabilityRetentionDays(s.cfg.Observability); got != 90 {
+		t.Fatalf("retention days = %d, want 90", got)
+	}
+	var response api.SettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Observability.RetentionDays != 90 {
+		t.Fatalf("response retention days = %d, want 90", response.Observability.RetentionDays)
+	}
+}

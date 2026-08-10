@@ -183,6 +183,9 @@ func (e *openAIEngine) Chat(ctx context.Context, messages []Message, opts Option
 	if len(opts.Stop) > 0 {
 		reqBody["stop"] = opts.Stop
 	}
+	if stream {
+		reqBody["stream_options"] = map[string]interface{}{"include_usage": true}
+	}
 	disableThinking := e.disableThinking || opts.DisableThinking
 	reqBody = sanitizeOpenAIRequestBody(e.modelName, disableThinking, reqBody)
 	if opts.DisableThinking {
@@ -218,13 +221,18 @@ func (e *openAIEngine) Chat(ctx context.Context, messages []Message, opts Option
 		return "", decodeOpenAIHTTPError(resp)
 	}
 
+	collector := cacheUsageCollectorFromContext(ctx)
 	if stream {
-		return e.handleStream(resp.Body, onToken)
+		return e.handleStreamWithCacheUsage(resp.Body, onToken, collector)
 	}
-	return e.handleJSONResponse(resp.Body)
+	return e.handleJSONResponseWithCacheUsage(resp.Body, collector)
 }
 
 func (e *openAIEngine) handleStream(body io.Reader, onToken TokenCallback) (string, error) {
+	return e.handleStreamWithCacheUsage(body, onToken, nil)
+}
+
+func (e *openAIEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenCallback, collector *CacheUsageCollector) (string, error) {
 	scanner := bufio.NewScanner(body)
 	var full strings.Builder
 	reasoningOpen := false
@@ -250,6 +258,7 @@ func (e *openAIEngine) handleStream(body io.Reader, onToken TokenCallback) (stri
 		if err := json.Unmarshal([]byte(data), &chatResp); err != nil {
 			continue
 		}
+		recordOpenAICacheUsage(collector, chatResp.Usage)
 		if len(chatResp.Choices) == 0 || chatResp.Choices[0].Delta == nil {
 			continue
 		}
@@ -280,14 +289,43 @@ func (e *openAIEngine) handleStream(body io.Reader, onToken TokenCallback) (stri
 }
 
 func (e *openAIEngine) handleJSONResponse(body io.Reader) (string, error) {
+	return e.handleJSONResponseWithCacheUsage(body, nil)
+}
+
+func (e *openAIEngine) handleJSONResponseWithCacheUsage(body io.Reader, collector *CacheUsageCollector) (string, error) {
 	var chatResp api.OpenAIChatResponse
 	if err := json.NewDecoder(body).Decode(&chatResp); err != nil {
 		return "", fmt.Errorf("decoding response: %w", err)
 	}
+	recordOpenAICacheUsage(collector, chatResp.Usage)
 	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message == nil {
 		return "", fmt.Errorf("no message in response")
 	}
 	return openAIContentString(chatResp.Choices[0].Message.Content), nil
+}
+
+func recordOpenAICacheUsage(collector *CacheUsageCollector, usage api.OpenAIUsage) {
+	if collector == nil {
+		return
+	}
+	read, write := int64(usage.CachedTokens), int64(0)
+	reported := usage.CachedTokens != 0
+	if usage.PromptTokensDetails != nil {
+		reported = true
+		read = int64(usage.PromptTokensDetails.CachedTokens)
+		write = int64(usage.PromptTokensDetails.WriteCachedTokens)
+	}
+	if !reported {
+		return
+	}
+	prompt := int64(usage.PromptTokens)
+	switch {
+	case prompt < 0 && read > 0:
+		prompt += 2 * read
+	case prompt >= 0 && read > 0 && prompt < read:
+		prompt += read
+	}
+	collector.add(read, write, prompt)
 }
 
 // SupportsNativeToolStreaming reports that cloud and third-party

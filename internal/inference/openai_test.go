@@ -35,13 +35,15 @@ func TestOpenAIEngineChatStream(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
 		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":2,\"total_tokens\":102,\"prompt_tokens_details\":{\"cached_tokens\":75,\"write_cached_tokens\":10}}}\n\n")
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 	defer ts.Close()
 
 	eng := NewOpenAIEngine(ts.URL, "deepseek-v3", "test-token")
 	var streamed string
-	got, err := eng.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, DefaultOptions(), func(token string) {
+	ctx, collector := WithCacheUsageCollector(context.Background())
+	got, err := eng.Chat(ctx, []Message{{Role: "user", Content: "hi"}}, DefaultOptions(), func(token string) {
 		streamed += token
 	})
 	if err != nil {
@@ -52,6 +54,10 @@ func TestOpenAIEngineChatStream(t *testing.T) {
 	}
 	if streamed != "hello" {
 		t.Fatalf("streamed = %q, want hello", streamed)
+	}
+	usage := collector.Snapshot()
+	if usage.ReadInputTokens != 75 || usage.CreationInputTokens != 10 || usage.EligibleInputTokens != 100 {
+		t.Fatalf("cache usage = %+v, want read=75 creation=10 eligible=100", usage)
 	}
 }
 
@@ -112,6 +118,10 @@ func TestOpenAIEngineChatRequestBodyMatchesCloudDefaults(t *testing.T) {
 	}
 	if got["stream"] != true {
 		t.Fatalf("stream = %v, want true", got["stream"])
+	}
+	streamOptions, ok := got["stream_options"].(map[string]interface{})
+	if !ok || streamOptions["include_usage"] != true {
+		t.Fatalf("stream_options = %#v, want include_usage=true", got["stream_options"])
 	}
 	if got["temperature"] != 0.2 {
 		t.Fatalf("temperature = %v, want 0.2", got["temperature"])

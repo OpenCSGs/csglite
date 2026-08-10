@@ -417,32 +417,119 @@ type DatasetPullResponse struct {
 }
 
 type SettingsResponse struct {
-	Version                  string            `json:"version"`
-	StorageDir               string            `json:"storage_dir"`
-	ModelDir                 string            `json:"model_dir"`
-	DatasetDir               string            `json:"dataset_dir"`
-	ServerURL                string            `json:"server_url"`
-	AIGatewayURL             string            `json:"ai_gateway_url"`
-	CloudProviderName        string            `json:"cloud_provider_name"`
-	DefaultCloudProviderName string            `json:"default_cloud_provider_name"`
-	DefaultServerURL         string            `json:"default_server_url"`
-	DefaultAIGatewayURL      string            `json:"default_ai_gateway_url"`
-	Autostart                bool              `json:"autostart"`
-	DesktopMode              bool              `json:"desktop_mode"`
-	LocalAPIURL              string            `json:"local_api_url,omitempty"`
-	WebSearch                WebSearchSettings `json:"web_search"`
-	HiddenNavItems           []string          `json:"hidden_nav_items"`
+	Version                  string                `json:"version"`
+	StorageDir               string                `json:"storage_dir"`
+	ModelDir                 string                `json:"model_dir"`
+	DatasetDir               string                `json:"dataset_dir"`
+	ServerURL                string                `json:"server_url"`
+	AIGatewayURL             string                `json:"ai_gateway_url"`
+	CloudProviderName        string                `json:"cloud_provider_name"`
+	DefaultCloudProviderName string                `json:"default_cloud_provider_name"`
+	DefaultServerURL         string                `json:"default_server_url"`
+	DefaultAIGatewayURL      string                `json:"default_ai_gateway_url"`
+	Autostart                bool                  `json:"autostart"`
+	DesktopMode              bool                  `json:"desktop_mode"`
+	LocalAPIURL              string                `json:"local_api_url,omitempty"`
+	WebSearch                WebSearchSettings     `json:"web_search"`
+	Observability            ObservabilitySettings `json:"observability"`
+	HiddenNavItems           []string              `json:"hidden_nav_items"`
 }
 
 type SettingsUpdateRequest struct {
-	StorageDir        string             `json:"storage_dir,omitempty"`
-	ModelDir          string             `json:"model_dir,omitempty"`
-	DatasetDir        string             `json:"dataset_dir,omitempty"`
-	ServerURL         *string            `json:"server_url,omitempty"`
-	AIGatewayURL      *string            `json:"ai_gateway_url,omitempty"`
-	CloudProviderName *string            `json:"cloud_provider_name,omitempty"`
-	Autostart         *bool              `json:"autostart,omitempty"`
-	WebSearch         *WebSearchSettings `json:"web_search,omitempty"`
+	StorageDir        string                 `json:"storage_dir,omitempty"`
+	ModelDir          string                 `json:"model_dir,omitempty"`
+	DatasetDir        string                 `json:"dataset_dir,omitempty"`
+	ServerURL         *string                `json:"server_url,omitempty"`
+	AIGatewayURL      *string                `json:"ai_gateway_url,omitempty"`
+	CloudProviderName *string                `json:"cloud_provider_name,omitempty"`
+	Autostart         *bool                  `json:"autostart,omitempty"`
+	WebSearch         *WebSearchSettings     `json:"web_search,omitempty"`
+	Observability     *ObservabilitySettings `json:"observability,omitempty"`
+}
+
+type ObservabilitySettings struct {
+	// RetentionDays is 0 when records should be retained indefinitely.
+	RetentionDays int `json:"retention_days"`
+}
+
+type ObservabilityRequest struct {
+	ID                    string    `json:"id"`
+	TraceID               string    `json:"trace_id"`
+	ThreadID              string    `json:"thread_id,omitempty"`
+	StartedAt             time.Time `json:"started_at"`
+	CompletedAt           time.Time `json:"completed_at"`
+	Method                string    `json:"method"`
+	Path                  string    `json:"path"`
+	Protocol              string    `json:"protocol"`
+	Status                string    `json:"status"`
+	StatusCode            int       `json:"status_code"`
+	Stream                bool      `json:"stream"`
+	Model                 string    `json:"model"`
+	Source                string    `json:"source,omitempty"`
+	SourceType            string    `json:"source_type,omitempty"`
+	SourceName            string    `json:"source_name,omitempty"`
+	APIKeyID              string    `json:"api_key_id,omitempty"`
+	APIKeyName            string    `json:"api_key_name,omitempty"`
+	PoolID                string    `json:"pool_id,omitempty"`
+	PoolName              string    `json:"pool_name,omitempty"`
+	PoolModel             string    `json:"pool_model,omitempty"`
+	MemberModel           string    `json:"member_model,omitempty"`
+	FallbackCount         int64     `json:"fallback_count"`
+	LimitedCount          int64     `json:"limited_count"`
+	InputTokens           int64     `json:"input_tokens"`
+	OutputTokens          int64     `json:"output_tokens"`
+	TotalTokens           int64     `json:"total_tokens"`
+	CacheReadInputTokens  int64     `json:"cache_read_input_tokens"`
+	CacheCreationTokens   int64     `json:"cache_creation_input_tokens"`
+	CacheEligibleTokens   int64     `json:"cache_eligible_input_tokens"`
+	CacheHitRate          float64   `json:"cache_hit_rate"`
+	DurationMS            int64     `json:"duration_ms"`
+	FirstTokenLatencyMS   int64     `json:"first_token_latency_ms"`
+	ErrorMessage          string    `json:"error_message,omitempty"`
+	RequestBody           string    `json:"request_body,omitempty"`
+	ResponseBody          string    `json:"response_body,omitempty"`
+	RequestBodyTruncated  bool      `json:"request_body_truncated"`
+	ResponseBodyTruncated bool      `json:"response_body_truncated"`
+}
+
+type ObservabilityRequestSummary struct {
+	Requests       int64   `json:"requests"`
+	Succeeded      int64   `json:"succeeded"`
+	Failed         int64   `json:"failed"`
+	TotalTokens    int64   `json:"total_tokens"`
+	AverageLatency float64 `json:"average_latency_ms"`
+}
+
+type ObservabilityRequestListResponse struct {
+	Items   []ObservabilityRequest      `json:"items"`
+	Total   int64                       `json:"total"`
+	Limit   int                         `json:"limit"`
+	Offset  int                         `json:"offset"`
+	Summary ObservabilityRequestSummary `json:"summary"`
+}
+
+type ObservabilityTrace struct {
+	TraceID      string    `json:"trace_id"`
+	ThreadID     string    `json:"thread_id,omitempty"`
+	StartedAt    time.Time `json:"started_at"`
+	CompletedAt  time.Time `json:"completed_at"`
+	Status       string    `json:"status"`
+	RequestCount int64     `json:"request_count"`
+	Models       []string  `json:"models"`
+	TotalTokens  int64     `json:"total_tokens"`
+	DurationMS   int64     `json:"duration_ms"`
+}
+
+type ObservabilityTraceListResponse struct {
+	Items  []ObservabilityTrace `json:"items"`
+	Total  int64                `json:"total"`
+	Limit  int                  `json:"limit"`
+	Offset int                  `json:"offset"`
+}
+
+type ObservabilityTraceDetailResponse struct {
+	Trace    ObservabilityTrace     `json:"trace"`
+	Requests []ObservabilityRequest `json:"requests"`
 }
 
 type APIKeyInfo struct {
@@ -794,9 +881,16 @@ type OpenAIChoice struct {
 }
 
 type OpenAIUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens        int                        `json:"prompt_tokens"`
+	CompletionTokens    int                        `json:"completion_tokens"`
+	TotalTokens         int                        `json:"total_tokens"`
+	PromptTokensDetails *OpenAIPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	CachedTokens        int                        `json:"cached_tokens,omitempty"`
+}
+
+type OpenAIPromptTokensDetails struct {
+	CachedTokens      int `json:"cached_tokens"`
+	WriteCachedTokens int `json:"write_cached_tokens,omitempty"`
 }
 
 type OpenAIModelList struct {

@@ -208,7 +208,12 @@ export interface AppSettings {
   local_api_url?: string;
   autostart: boolean;
   web_search: WebSearchSettings;
+  observability: ObservabilitySettings;
   hidden_nav_items: string[];
+}
+
+export interface ObservabilitySettings {
+  retention_days: number;
 }
 
 export interface WebSearchSettings {
@@ -436,6 +441,98 @@ export interface LocalAPIUsageResponse {
   source_totals: LocalAPIUsageSourceTotal[];
   pool_totals: LocalAPIUsagePoolTotal[];
   rows: LocalAPIUsageRow[];
+}
+
+export interface ObservabilityRequest {
+  id: string;
+  trace_id: string;
+  thread_id?: string;
+  started_at: string;
+  completed_at: string;
+  method: string;
+  path: string;
+  protocol: string;
+  status: "completed" | "failed" | string;
+  status_code: number;
+  stream: boolean;
+  model: string;
+  source?: string;
+  source_type?: string;
+  source_name?: string;
+  api_key_id?: string;
+  api_key_name?: string;
+  pool_id?: string;
+  pool_name?: string;
+  pool_model?: string;
+  member_model?: string;
+  fallback_count: number;
+  limited_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_eligible_input_tokens: number;
+  cache_hit_rate: number;
+  duration_ms: number;
+  first_token_latency_ms: number;
+  error_message?: string;
+  request_body?: string;
+  response_body?: string;
+  request_body_truncated: boolean;
+  response_body_truncated: boolean;
+}
+
+export interface ObservabilityRequestSummary {
+  requests: number;
+  succeeded: number;
+  failed: number;
+  total_tokens: number;
+  average_latency_ms: number;
+}
+
+export interface ObservabilityRequestListResponse {
+  items: ObservabilityRequest[];
+  total: number;
+  limit: number;
+  offset: number;
+  summary: ObservabilityRequestSummary;
+}
+
+export interface ObservabilityTrace {
+  trace_id: string;
+  thread_id?: string;
+  started_at: string;
+  completed_at: string;
+  status: "completed" | "failed" | string;
+  request_count: number;
+  models: string[];
+  total_tokens: number;
+  duration_ms: number;
+}
+
+export interface ObservabilityTraceListResponse {
+  items: ObservabilityTrace[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ObservabilityTraceDetailResponse {
+  trace: ObservabilityTrace;
+  requests: ObservabilityRequest[];
+}
+
+export interface ObservabilityQuery {
+  from?: string;
+  to?: string;
+  status?: string;
+  model?: string;
+  source?: string;
+  api_key_id?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface LocalDirectoryEntry {
@@ -1134,6 +1231,7 @@ export async function saveSettings(patch: {
   cloud_provider_name?: string;
   autostart?: boolean;
   web_search?: WebSearchSettings;
+  observability?: ObservabilitySettings;
 }): Promise<AppSettings> {
   return fetchJSON<AppSettings>("/api/settings", {
     method: "POST",
@@ -1175,6 +1273,41 @@ export async function getLocalAPIUsage(period?: string, provider?: string, pool?
 	if (pool) params.set("pool", pool);
   const query = params.toString() ? `?${params}` : "";
   return fetchJSON<LocalAPIUsageResponse>(`/api/api-usage${query}`);
+}
+
+function observabilityQueryString(query?: ObservabilityQuery): string {
+  const params = new URLSearchParams();
+  if (query?.from) params.set("from", query.from);
+  if (query?.to) params.set("to", query.to);
+  if (query?.status) params.set("status", query.status);
+  if (query?.model) params.set("model", query.model);
+  if (query?.source) params.set("source", query.source);
+  if (query?.api_key_id) params.set("api_key_id", query.api_key_id);
+  if (query?.q) params.set("q", query.q);
+  if (typeof query?.limit === "number") params.set("limit", String(query.limit));
+  if (typeof query?.offset === "number") params.set("offset", String(query.offset));
+  const value = params.toString();
+  return value ? `?${value}` : "";
+}
+
+export async function getObservabilityRequests(query?: ObservabilityQuery): Promise<ObservabilityRequestListResponse> {
+  return fetchJSON<ObservabilityRequestListResponse>(`/api/observability/requests${observabilityQueryString(query)}`);
+}
+
+export async function getObservabilityRequest(id: string): Promise<ObservabilityRequest> {
+  return fetchJSON<ObservabilityRequest>(`/api/observability/requests/${encodeURIComponent(id)}`);
+}
+
+export async function getObservabilityTraces(query?: ObservabilityQuery): Promise<ObservabilityTraceListResponse> {
+  return fetchJSON<ObservabilityTraceListResponse>(`/api/observability/traces${observabilityQueryString(query)}`);
+}
+
+export async function getObservabilityTrace(traceID: string): Promise<ObservabilityTraceDetailResponse> {
+  return fetchJSON<ObservabilityTraceDetailResponse>(`/api/observability/traces/${encodeURIComponent(traceID)}`);
+}
+
+export async function clearObservabilityData(): Promise<void> {
+  await fetchJSON<{ status: string }>("/api/observability", { method: "DELETE" });
 }
 
 export async function browseLocalDirectories(path?: string): Promise<LocalDirectoryBrowseResponse> {
@@ -1456,7 +1589,7 @@ export async function deleteConversation(id: string): Promise<void> {
 export function streamChat(
   model: string,
   messages: ChatMessage[],
-  options: { temperature?: number; top_p?: number; max_tokens?: number; num_ctx?: number; num_parallel?: number; system?: string; source?: string; web_search?: { enabled: boolean; query?: string } },
+  options: { temperature?: number; top_p?: number; max_tokens?: number; num_ctx?: number; num_parallel?: number; system?: string; source?: string; thread_id?: string; trace_id?: string; web_search?: { enabled: boolean; query?: string } },
   onToken: (token: string, done: boolean) => void,
   signal?: AbortSignal,
   onSearching?: (query: string) => void,
@@ -1479,6 +1612,8 @@ export function streamChat(
         Accept: "text/event-stream",
         "X-CSGHUB-Stream": "sse",
         "X-CSGHUB-Disable-Thinking": "true",
+        ...(options.thread_id ? { "X-CSGLite-Thread-ID": options.thread_id } : {}),
+        ...(options.trace_id ? { "X-CSGLite-Trace-ID": options.trace_id } : {}),
       },
       body: JSON.stringify({
         model,

@@ -59,6 +59,7 @@ type Config struct {
 	AIAppPreferredSources map[string]string                  `json:"ai_app_preferred_sources,omitempty"`
 	AIAppModelBindings    map[string][]api.AIAppModelBinding `json:"ai_app_model_bindings,omitempty"`
 	WebSearch             WebSearchConfig                    `json:"web_search,omitempty"`
+	Observability         ObservabilityConfig                `json:"observability,omitempty"`
 	DesktopMode           bool                               `json:"-"`
 	DesktopToken          string                             `json:"-"`
 	DesktopSessionToken   string                             `json:"-"`
@@ -108,6 +109,23 @@ type WebSearchConfig struct {
 	Providers      []string `json:"providers,omitempty"`
 	SafeSearch     int      `json:"safe_search,omitempty"`
 	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+}
+
+const DefaultObservabilityRetentionDays = 30
+
+type ObservabilityConfig struct {
+	// RetentionDays is nil for legacy configurations and 0 for unlimited retention.
+	RetentionDays *int `json:"retention_days,omitempty"`
+}
+
+func ObservabilityRetentionDays(cfg ObservabilityConfig) int {
+	if cfg.RetentionDays == nil {
+		return DefaultObservabilityRetentionDays
+	}
+	if *cfg.RetentionDays < 0 {
+		return DefaultObservabilityRetentionDays
+	}
+	return *cfg.RetentionDays
 }
 
 var (

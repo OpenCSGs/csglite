@@ -39,7 +39,7 @@ func (s *Server) recordAPIUsage(r *http.Request, model, source string, inputToke
 }
 
 func (s *Server) recordAPIUsageWithPool(r *http.Request, model, source string, inputTokens, outputTokens int, pool *apiUsagePoolMetadata) {
-	if s == nil || s.apiUsage == nil {
+	if s == nil {
 		return
 	}
 	keyID := apiUsageBuiltinKeyID
@@ -52,6 +52,18 @@ func (s *Server) recordAPIUsageWithPool(r *http.Request, model, source string, i
 		source = routeSource
 	}
 	resolvedSource, sourceType, sourceName := s.resolveAPIUsageSource(r.Context(), model, source)
+	observationFromContext(r.Context()).setUsage(
+		model,
+		resolvedSource,
+		sourceType,
+		sourceName,
+		int64(inputTokens),
+		int64(outputTokens),
+		pool,
+	)
+	if s.apiUsage == nil {
+		return
+	}
 	_ = s.apiUsage.Add(config.APIUsageEvent{
 		APIKeyID:      keyID,
 		APIKeyName:    keyName,

@@ -138,6 +138,41 @@ func TestBuildLlamaChatRequestBodyDisablesThinkingForQwen3508B(t *testing.T) {
 	if got, ok := reqBody["max_tokens"].(int); !ok || got != -1 {
 		t.Fatalf("max_tokens = %#v, want -1", reqBody["max_tokens"])
 	}
+	streamOptions, ok := reqBody["stream_options"].(map[string]interface{})
+	if !ok || streamOptions["include_usage"] != true {
+		t.Fatalf("stream_options = %#v, want include_usage=true", reqBody["stream_options"])
+	}
+}
+
+func TestHandleStreamRecordsLlamaCacheUsage(t *testing.T) {
+	e := &llamaEngine{}
+	collector := &CacheUsageCollector{}
+	sse := "" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n" +
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":22,\"prompt_tokens_details\":{\"cached_tokens\":18}},\"timings\":{\"cache_n\":18,\"prompt_n\":4}}\n\n" +
+		"data: [DONE]\n\n"
+
+	if _, err := e.handleStreamWithCacheUsage(strings.NewReader(sse), func(string) {}, DefaultOptions(), collector); err != nil {
+		t.Fatal(err)
+	}
+	usage := collector.Snapshot()
+	if usage.ReadInputTokens != 18 || usage.CreationInputTokens != 4 || usage.EligibleInputTokens != 22 {
+		t.Fatalf("cache usage = %+v, want read=18 creation=4 eligible=22", usage)
+	}
+}
+
+func TestHandleNonStreamRecordsLlamaCacheUsage(t *testing.T) {
+	e := &llamaEngine{}
+	collector := &CacheUsageCollector{}
+	body := `{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":100,"prompt_tokens_details":{"cached_tokens":75}},"timings":{"cache_n":75,"prompt_n":25}}`
+
+	if _, err := e.handleNonStreamWithCacheUsage(strings.NewReader(body), DefaultOptions(), collector); err != nil {
+		t.Fatal(err)
+	}
+	usage := collector.Snapshot()
+	if usage.ReadInputTokens != 75 || usage.CreationInputTokens != 25 || usage.EligibleInputTokens != 100 {
+		t.Fatalf("cache usage = %+v, want read=75 creation=25 eligible=100", usage)
+	}
 }
 
 func TestBuildLlamaChatRequestBodyDisablesThinkingForQwen3Family(t *testing.T) {

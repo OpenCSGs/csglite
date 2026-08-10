@@ -112,6 +112,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	var serverURLUpdated bool
 	var aiGatewayURLUpdated bool
 	var cloudTokenUpdated bool
+	var observabilityUpdated bool
 	storageDir := strings.TrimSpace(req.StorageDir)
 	if storageDir != "" {
 		storageDir = filepath.Clean(storageDir)
@@ -141,6 +142,16 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cfg.WebSearch = next
+		configUpdated = true
+	}
+	if req.Observability != nil {
+		if req.Observability.RetentionDays < 0 || req.Observability.RetentionDays > 3650 {
+			writeError(w, http.StatusBadRequest, "observability retention days must be between 0 and 3650")
+			return
+		}
+		retentionDays := req.Observability.RetentionDays
+		s.cfg.Observability.RetentionDays = &retentionDays
+		observabilityUpdated = true
 		configUpdated = true
 	}
 	if req.ServerURL != nil {
@@ -186,6 +197,14 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.applyRuntimeSettingsUpdate(serverURLUpdated, aiGatewayURLUpdated, cloudTokenUpdated)
+	}
+	if dirsUpdated {
+		if err := s.reopenObservability(s.cfg.StorageDir()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to open observability storage: "+err.Error())
+			return
+		}
+	} else if observabilityUpdated {
+		s.cleanupObservability()
 	}
 
 	if req.Autostart != nil {
@@ -243,7 +262,10 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		DesktopMode:              cfg.DesktopMode,
 		LocalAPIURL:              localAPIURL,
 		WebSearch:                webSearchConfigToSettings(cfg.WebSearch),
-		HiddenNavItems:           append([]string{}, cfg.HiddenNavItems...),
+		Observability: api.ObservabilitySettings{
+			RetentionDays: config.ObservabilityRetentionDays(cfg.Observability),
+		},
+		HiddenNavItems: append([]string{}, cfg.HiddenNavItems...),
 	}
 }
 

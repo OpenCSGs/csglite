@@ -829,10 +829,11 @@ func (e *llamaEngine) chatOnce(ctx context.Context, messages []Message, opts Opt
 	}
 	defer resp.Body.Close()
 
+	collector := cacheUsageCollectorFromContext(ctx)
 	if onToken != nil {
-		return e.handleStream(resp.Body, onToken, opts)
+		return e.handleStreamWithCacheUsage(resp.Body, onToken, opts, collector)
 	}
-	return e.handleNonStream(resp.Body, opts)
+	return e.handleNonStreamWithCacheUsage(resp.Body, opts, collector)
 }
 
 func buildLlamaChatRequestBody(modelName string, messages []Message, opts Options, stream bool) map[string]interface{} {
@@ -848,6 +849,9 @@ func buildLlamaChatRequestBody(modelName string, messages []Message, opts Option
 	}
 	if len(opts.Stop) > 0 {
 		reqBody["stop"] = opts.Stop
+	}
+	if stream {
+		reqBody["stream_options"] = map[string]interface{}{"include_usage": true}
 	}
 	applyLlamaThinkingControls(modelName, reqBody, opts.DisableThinking)
 	return reqBody
@@ -886,7 +890,44 @@ func trimOldestNonSystemMessage(messages []Message) ([]Message, bool) {
 	return trimmed, true
 }
 
+type llamaChatUsage struct {
+	PromptTokens        int64 `json:"prompt_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens int64 `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
+type llamaChatTimings struct {
+	CacheN  int64 `json:"cache_n"`
+	PromptN int64 `json:"prompt_n"`
+}
+
+func recordLlamaCacheUsage(collector *CacheUsageCollector, usage llamaChatUsage, timings llamaChatTimings) {
+	if collector == nil {
+		return
+	}
+	read := timings.CacheN
+	if read <= 0 {
+		read = usage.PromptTokensDetails.CachedTokens
+	}
+	creation := timings.PromptN
+	eligible := usage.PromptTokens
+	if eligible <= 0 {
+		eligible = read + creation
+	}
+	if creation <= 0 && eligible > read {
+		creation = eligible - read
+	}
+	if eligible > 0 {
+		collector.add(read, creation, eligible)
+	}
+}
+
 func (e *llamaEngine) handleStream(body io.Reader, onToken TokenCallback, opts Options) (string, error) {
+	return e.handleStreamWithCacheUsage(body, onToken, opts, nil)
+}
+
+func (e *llamaEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenCallback, opts Options, collector *CacheUsageCollector) (string, error) {
 	scanner := bufio.NewScanner(body)
 	var full strings.Builder
 	debugCount := 0
@@ -904,6 +945,8 @@ func (e *llamaEngine) handleStream(body io.Reader, onToken TokenCallback, opts O
 		}
 
 		var chunk struct {
+			Usage   llamaChatUsage   `json:"usage"`
+			Timings llamaChatTimings `json:"timings"`
 			Choices []struct {
 				Delta struct {
 					Content          string `json:"content"`
@@ -914,6 +957,7 @@ func (e *llamaEngine) handleStream(body io.Reader, onToken TokenCallback, opts O
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
 		}
+		recordLlamaCacheUsage(collector, chunk.Usage, chunk.Timings)
 		if len(chunk.Choices) > 0 {
 			d := chunk.Choices[0].Delta
 			// Use at most one delta text per chunk. Some llama-server builds populate both
@@ -950,7 +994,13 @@ func (e *llamaEngine) handleStream(body io.Reader, onToken TokenCallback, opts O
 }
 
 func (e *llamaEngine) handleNonStream(body io.Reader, opts Options) (string, error) {
+	return e.handleNonStreamWithCacheUsage(body, opts, nil)
+}
+
+func (e *llamaEngine) handleNonStreamWithCacheUsage(body io.Reader, opts Options, collector *CacheUsageCollector) (string, error) {
 	var resp struct {
+		Usage   llamaChatUsage   `json:"usage"`
+		Timings llamaChatTimings `json:"timings"`
 		Choices []struct {
 			Message struct {
 				Content          string `json:"content"`
@@ -961,6 +1011,7 @@ func (e *llamaEngine) handleNonStream(body io.Reader, opts Options) (string, err
 	if err := json.NewDecoder(body).Decode(&resp); err != nil {
 		return "", fmt.Errorf("decoding response: %w", err)
 	}
+	recordLlamaCacheUsage(collector, resp.Usage, resp.Timings)
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("no choices in response")
 	}

@@ -2544,6 +2544,144 @@
         }
       }
     },
+    "/api/observability": {
+      "delete": {
+        "tags": ["System"],
+        "summary": "Clear observability data",
+        "operationId": "clearObservabilityData",
+        "responses": {
+          "200": {
+            "description": "All saved request history and traces were removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {"type": "string", "example": "cleared"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/observability/requests": {
+      "get": {
+        "tags": ["System"],
+        "summary": "List text-generation request history",
+        "operationId": "listObservabilityRequests",
+        "parameters": [
+          {"name": "from", "in": "query", "schema": {"type": "string", "format": "date-time"}},
+          {"name": "to", "in": "query", "schema": {"type": "string", "format": "date-time"}},
+          {"name": "status", "in": "query", "schema": {"type": "string", "enum": ["completed", "failed"]}},
+          {"name": "model", "in": "query", "schema": {"type": "string"}},
+          {"name": "source", "in": "query", "schema": {"type": "string"}},
+          {"name": "api_key_id", "in": "query", "schema": {"type": "string"}},
+          {"name": "q", "in": "query", "schema": {"type": "string"}},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}},
+          {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated request records and summary.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {"type": "array", "items": {"$ref": "#/components/schemas/ObservabilityRequest"}},
+                    "total": {"type": "integer", "format": "int64"},
+                    "limit": {"type": "integer"},
+                    "offset": {"type": "integer"},
+                    "summary": {"$ref": "#/components/schemas/ObservabilityRequestSummary"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/observability/requests/{id}": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Get a text-generation request record",
+        "operationId": "getObservabilityRequest",
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Request metadata and captured payloads.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ObservabilityRequest"}}}
+          },
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/api/observability/traces": {
+      "get": {
+        "tags": ["System"],
+        "summary": "List text-generation traces",
+        "operationId": "listObservabilityTraces",
+        "parameters": [
+          {"name": "from", "in": "query", "schema": {"type": "string", "format": "date-time"}},
+          {"name": "to", "in": "query", "schema": {"type": "string", "format": "date-time"}},
+          {"name": "status", "in": "query", "schema": {"type": "string", "enum": ["completed", "failed"]}},
+          {"name": "model", "in": "query", "schema": {"type": "string"}},
+          {"name": "source", "in": "query", "schema": {"type": "string"}},
+          {"name": "q", "in": "query", "schema": {"type": "string"}},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}},
+          {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated trace aggregates.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {"type": "array", "items": {"$ref": "#/components/schemas/ObservabilityTrace"}},
+                    "total": {"type": "integer", "format": "int64"},
+                    "limit": {"type": "integer"},
+                    "offset": {"type": "integer"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/observability/traces/{traceID}": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Get a trace timeline",
+        "operationId": "getObservabilityTrace",
+        "parameters": [
+          {"name": "traceID", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Trace aggregate and ordered requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "trace": {"$ref": "#/components/schemas/ObservabilityTrace"},
+                    "requests": {"type": "array", "items": {"$ref": "#/components/schemas/ObservabilityRequest"}}
+                  }
+                }
+              }
+            }
+          },
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
     "/api/providers": {
       "get": {
         "tags": [
@@ -5736,6 +5874,7 @@
           "autostart",
           "desktop_mode",
           "web_search",
+          "observability",
           "hidden_nav_items"
         ],
         "properties": {
@@ -5779,6 +5918,9 @@
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"
           },
+          "observability": {
+            "$ref": "#/components/schemas/ObservabilitySettings"
+          },
           "hidden_nav_items": {
             "type": "array",
             "description": "Stable IDs of left navigation items hidden by the runtime environment configuration.",
@@ -5818,6 +5960,22 @@
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"
+          },
+          "observability": {
+            "$ref": "#/components/schemas/ObservabilitySettings"
+          }
+        }
+      },
+      "ObservabilitySettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["retention_days"],
+        "properties": {
+          "retention_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3650,
+            "description": "Days to retain observability records. Zero retains records indefinitely."
           }
         }
       },
@@ -6198,6 +6356,74 @@
               "$ref": "#/components/schemas/APIUsagePoolTotal"
             }
           }
+        }
+      },
+      "ObservabilityRequest": {
+        "type": "object",
+        "required": ["id", "trace_id", "started_at", "completed_at", "method", "path", "protocol", "status", "status_code", "stream", "model", "input_tokens", "output_tokens", "total_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "cache_eligible_input_tokens", "cache_hit_rate", "duration_ms", "first_token_latency_ms"],
+        "properties": {
+          "id": {"type": "string"},
+          "trace_id": {"type": "string"},
+          "thread_id": {"type": "string"},
+          "started_at": {"type": "string", "format": "date-time"},
+          "completed_at": {"type": "string", "format": "date-time"},
+          "method": {"type": "string"},
+          "path": {"type": "string"},
+          "protocol": {"type": "string", "enum": ["lite", "openai", "responses", "anthropic"]},
+          "status": {"type": "string", "enum": ["completed", "failed"]},
+          "status_code": {"type": "integer"},
+          "stream": {"type": "boolean"},
+          "model": {"type": "string"},
+          "source": {"type": "string"},
+          "source_type": {"type": "string"},
+          "source_name": {"type": "string"},
+          "api_key_id": {"type": "string"},
+          "api_key_name": {"type": "string"},
+          "pool_id": {"type": "string"},
+          "pool_name": {"type": "string"},
+          "pool_model": {"type": "string"},
+          "member_model": {"type": "string"},
+          "fallback_count": {"type": "integer", "format": "int64"},
+          "limited_count": {"type": "integer", "format": "int64"},
+          "input_tokens": {"type": "integer", "format": "int64"},
+          "output_tokens": {"type": "integer", "format": "int64"},
+          "total_tokens": {"type": "integer", "format": "int64"},
+          "cache_read_input_tokens": {"type": "integer", "format": "int64", "description": "Input tokens served from a provider prompt cache."},
+          "cache_creation_input_tokens": {"type": "integer", "format": "int64", "description": "Input tokens written to a provider prompt cache."},
+          "cache_eligible_input_tokens": {"type": "integer", "format": "int64", "description": "Input token denominator used to calculate cache hit rate."},
+          "cache_hit_rate": {"type": "number", "format": "double", "minimum": 0, "maximum": 100, "description": "Percentage of cache-eligible input tokens served from cache."},
+          "duration_ms": {"type": "integer", "format": "int64"},
+          "first_token_latency_ms": {"type": "integer", "format": "int64"},
+          "error_message": {"type": "string"},
+          "request_body": {"type": "string"},
+          "response_body": {"type": "string"},
+          "request_body_truncated": {"type": "boolean"},
+          "response_body_truncated": {"type": "boolean"}
+        }
+      },
+      "ObservabilityRequestSummary": {
+        "type": "object",
+        "properties": {
+          "requests": {"type": "integer", "format": "int64"},
+          "succeeded": {"type": "integer", "format": "int64"},
+          "failed": {"type": "integer", "format": "int64"},
+          "total_tokens": {"type": "integer", "format": "int64"},
+          "average_latency_ms": {"type": "number", "format": "double"}
+        }
+      },
+      "ObservabilityTrace": {
+        "type": "object",
+        "required": ["trace_id", "started_at", "completed_at", "status", "request_count", "models", "total_tokens", "duration_ms"],
+        "properties": {
+          "trace_id": {"type": "string"},
+          "thread_id": {"type": "string"},
+          "started_at": {"type": "string", "format": "date-time"},
+          "completed_at": {"type": "string", "format": "date-time"},
+          "status": {"type": "string", "enum": ["completed", "failed"]},
+          "request_count": {"type": "integer", "format": "int64"},
+          "models": {"type": "array", "items": {"type": "string"}},
+          "total_tokens": {"type": "integer", "format": "int64"},
+          "duration_ms": {"type": "integer", "format": "int64"}
         }
       },
       "ConversationSettings": {

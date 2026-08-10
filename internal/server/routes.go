@@ -85,6 +85,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/api-keys", s.handleAPIKeyCreate)
 	mux.HandleFunc("DELETE /api/api-keys/{id}", s.handleAPIKeyDelete)
 	mux.HandleFunc("GET /api/api-usage", s.handleAPIUsage)
+	mux.HandleFunc("GET /api/observability/requests", s.handleObservabilityRequests)
+	mux.HandleFunc("GET /api/observability/requests/{id}", s.handleObservabilityRequest)
+	mux.HandleFunc("GET /api/observability/traces", s.handleObservabilityTraces)
+	mux.HandleFunc("GET /api/observability/traces/{traceID}", s.handleObservabilityTrace)
+	mux.HandleFunc("DELETE /api/observability", s.handleObservabilityClear)
 	// Third-party providers
 	mux.HandleFunc("GET /api/providers", s.handleProvidersList)
 	mux.HandleFunc("POST /api/providers/validate", s.handleProviderValidate)
@@ -134,7 +139,7 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /", devStaticHandler("web/dist"))
 	}
 
-	return s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(providerPoolUsageMiddleware(LogMiddleware(mux)))))
+	return s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(s.observabilityMiddleware(providerPoolUsageMiddleware(LogMiddleware(mux))))))
 }
 
 func (s *Server) externalAPIRoutes() http.Handler {
@@ -171,7 +176,7 @@ func (s *Server) externalAPIRoutes() http.Handler {
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
 	s.registerProviderInferenceRoutes(mux)
 
-	return desktopExternalAPIMiddleware(s.apiAuthMiddleware(providerPoolUsageMiddleware(LogMiddleware(mux))))
+	return desktopExternalAPIMiddleware(s.apiAuthMiddleware(s.observabilityMiddleware(providerPoolUsageMiddleware(LogMiddleware(mux)))))
 }
 
 func desktopExternalAPIMiddleware(next http.Handler) http.Handler {
@@ -199,8 +204,9 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 		} else {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
+		w.Header().Set("Access-Control-Expose-Headers", "X-CSGLite-Request-ID, X-CSGLite-Trace-ID, X-CSGLite-Thread-ID")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Range, Authorization, x-api-key, X-CSGLite-Desktop-Token")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Range, Authorization, x-api-key, X-CSGLite-Desktop-Token, X-CSGLite-Trace-ID, X-CSGLite-Thread-ID")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

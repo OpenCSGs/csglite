@@ -30,6 +30,7 @@ import (
 	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/internal/observability"
 )
 
 const (
@@ -183,10 +184,13 @@ type Server struct {
 	cloudRefreshAt   time.Time
 	cloudRefreshWait chan struct{}
 
-	conversations       *chathistory.Store
-	apiKeys             *config.APIKeyStore
-	apiUsage            *config.APIUsageStore
-	desktopBootstrapped atomic.Bool
+	conversations          *chathistory.Store
+	apiKeys                *config.APIKeyStore
+	apiUsage               *config.APIUsageStore
+	observabilityMu        sync.RWMutex
+	observability          *observability.Store
+	observabilityCleanupAt atomic.Int64
+	desktopBootstrapped    atomic.Bool
 
 	// shutdownCancel stops the Run loop. It is set in Run and invoked by the
 	// /api/shutdown handler so an HTTP-initiated shutdown actually exits the
@@ -244,6 +248,14 @@ func New(cfg *config.Config, version string) *Server {
 		logBuf:         logBuf,
 	}
 	s.appShells = newAIAppShellManager()
+	if store, err := observability.Open(storageRoot); err != nil {
+		log.Printf("OBSERVABILITY: database unavailable: %v", err)
+	} else {
+		s.observability = store
+		if _, err := store.Cleanup(context.Background(), config.ObservabilityRetentionDays(cfg.Observability)); err != nil {
+			log.Printf("OBSERVABILITY: retention cleanup failed: %v", err)
+		}
+	}
 
 	if appHome, err := config.AppHome(); err == nil {
 		s.conversations = chathistory.NewStore(appHome)
@@ -414,6 +426,12 @@ func (s *Server) shutdownRuntime() {
 		s.appShells.CloseAll()
 	}
 	s.closeAllEngines()
+	s.observabilityMu.Lock()
+	if s.observability != nil {
+		_ = s.observability.Close()
+		s.observability = nil
+	}
+	s.observabilityMu.Unlock()
 }
 
 // startEvictor periodically closes engines that have exceeded their keep-alive.
