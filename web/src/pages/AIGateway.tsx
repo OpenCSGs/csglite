@@ -1745,7 +1745,7 @@ function apiUsageSourceSummaryLabel(sourceType: string, sourceName?: string): st
     case "local":
       return t("settings.apiUsageSourceLocal");
     case "cloud":
-      return t("settings.apiUsageSourceCloud");
+      return cloudManagedProvider.value?.name || t("settings.apiUsageSourceCloud");
     case "provider":
       return sourceName
         ? `${t("settings.apiUsageSourceProvider")} · ${sourceName}`
@@ -2017,7 +2017,7 @@ function ProviderPoolDialog({
   if (!open) return null;
   const sources = [
     { value: "local", label: t("settings.providerPoolSourceLocal") },
-    { value: "cloud", label: t("settings.providerPoolSourceCloud") },
+    { value: "cloud", label: providerPoolSourceLabel("cloud") },
     ...providers.value.filter((provider) => provider.enabled).map((provider) => ({
       value: `provider:${provider.id}`,
       label: provider.name,

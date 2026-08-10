@@ -118,6 +118,26 @@ func TestAPIUsageCompactsEventsByDayAndSource(t *testing.T) {
 	}
 }
 
+func TestAPIUsageRecordsSortByLastUsedDescending(t *testing.T) {
+	older := time.Date(2026, 8, 10, 8, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	records := []APIUsageRecord{
+		{APIKeyID: "key-a", Model: "older-model", LastUsedAt: older},
+		{APIKeyID: "key-b", Model: "newer-model", LastUsedAt: newer},
+		{APIKeyID: "key-c", Model: "same-time-b", MemberModel: "member-b", LastUsedAt: newer},
+		{APIKeyID: "key-d", Model: "same-time-a", MemberModel: "member-a", LastUsedAt: newer},
+	}
+
+	sortAPIUsageRecords(records)
+
+	want := []string{"newer-model", "same-time-a", "same-time-b", "older-model"}
+	for i, model := range want {
+		if records[i].Model != model {
+			t.Fatalf("record %d model = %q, want %q (records=%#v)", i, records[i].Model, model, records)
+		}
+	}
+}
+
 func TestAPIUsagePoolMetadataAggregatesAndFiltersWithoutBreakingLegacyEvents(t *testing.T) {
 	dir := t.TempDir()
 	usedAt := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)

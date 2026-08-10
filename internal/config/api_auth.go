@@ -635,8 +635,8 @@ func apiUsageTimeInRange(value time.Time, options APIUsageListOptions) bool {
 
 func sortAPIUsageRecords(records []APIUsageRecord) {
 	sort.Slice(records, func(i, j int) bool {
-		if records[i].APIKeyName != records[j].APIKeyName {
-			return records[i].APIKeyName < records[j].APIKeyName
+		if !records[i].LastUsedAt.Equal(records[j].LastUsedAt) {
+			return records[i].LastUsedAt.After(records[j].LastUsedAt)
 		}
 		if records[i].SourceType != records[j].SourceType {
 			return records[i].SourceType < records[j].SourceType
@@ -644,7 +644,16 @@ func sortAPIUsageRecords(records []APIUsageRecord) {
 		if records[i].SourceName != records[j].SourceName {
 			return records[i].SourceName < records[j].SourceName
 		}
-		return records[i].Model < records[j].Model
+		if records[i].Model != records[j].Model {
+			return records[i].Model < records[j].Model
+		}
+		if records[i].MemberModel != records[j].MemberModel {
+			return records[i].MemberModel < records[j].MemberModel
+		}
+		if records[i].APIKeyName != records[j].APIKeyName {
+			return records[i].APIKeyName < records[j].APIKeyName
+		}
+		return records[i].APIKeyID < records[j].APIKeyID
 	})
 }
 
