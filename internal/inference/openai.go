@@ -246,20 +246,10 @@ func (e *openAIEngine) handleStream(body io.Reader, onToken TokenCallback) (stri
 			break
 		}
 
-		var envelope struct {
-			api.OpenAIChatResponse
-			Error json.RawMessage `json:"error"`
-		}
-		if err := json.Unmarshal([]byte(data), &envelope); err != nil {
+		var chatResp api.OpenAIChatResponse
+		if err := json.Unmarshal([]byte(data), &chatResp); err != nil {
 			continue
 		}
-		if len(envelope.Error) > 0 && string(envelope.Error) != "null" {
-			return full.String(), NewHTTPStatusError(
-				http.StatusBadGateway,
-				openAIErrorMessage([]byte(data), strings.TrimSpace(string(envelope.Error))),
-			)
-		}
-		chatResp := envelope.OpenAIChatResponse
 		if len(chatResp.Choices) == 0 || chatResp.Choices[0].Delta == nil {
 			continue
 		}
@@ -317,10 +307,6 @@ func (e *openAIEngine) ModelName() string {
 
 func decodeOpenAIHTTPError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
-	return NewHTTPStatusError(resp.StatusCode, openAIErrorMessage(body, resp.Status))
-}
-
-func openAIErrorMessage(body []byte, fallback string) string {
 	message := strings.TrimSpace(string(body))
 	if len(body) > 0 {
 		var payload struct {
@@ -344,9 +330,9 @@ func openAIErrorMessage(body []byte, fallback string) string {
 		}
 	}
 	if message == "" {
-		message = fallback
+		message = resp.Status
 	}
-	return message
+	return NewHTTPStatusError(resp.StatusCode, message)
 }
 
 func sanitizeOpenAIRequestBody(modelName string, disableThinking bool, reqBody map[string]interface{}) map[string]interface{} {

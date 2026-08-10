@@ -1,14 +1,12 @@
 package server
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -148,11 +146,6 @@ type providerPoolResponseBody struct {
 	once     sync.Once
 }
 
-type providerPoolReplayBody struct {
-	io.Reader
-	io.Closer
-}
-
 func (b *providerPoolResponseBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if n > 0 && b.collect {
@@ -260,9 +253,6 @@ func (e *providerPoolEngine) runChat(ctx context.Context, inputTokens, estimated
 			e.complete(admission, estimatedTokens)
 			lastErr = err
 		}
-		if providerPoolInsufficientBalance(lastErr) {
-			log.Printf("PROVIDER POOL %s: member %s (%s) has insufficient balance; falling back", e.poolID, member.member.Model, member.member.Source)
-		}
 		e.coolOnRateLimit(admission.key, lastErr, "")
 		if !providerPoolRetryable(lastErr) {
 			return "", lastErr
@@ -308,9 +298,6 @@ func (e *providerPoolEngine) runProxy(ctx context.Context, estimatedTokens int, 
 				}
 			}
 			if err == nil && response != nil {
-				err = providerPoolProbeResponseError(response)
-			}
-			if err == nil && response != nil {
 				response.Header.Set(providerPoolMemberSourceHeader, member.member.Source)
 				response.Header.Set(providerPoolMemberModelHeader, member.member.Model)
 				response.Header.Set(providerPoolFallbackCountHeader, strconv.Itoa(fallbackCount))
@@ -330,9 +317,6 @@ func (e *providerPoolEngine) runProxy(ctx context.Context, estimatedTokens int, 
 		} else {
 			e.complete(admission, estimatedTokens)
 			lastErr = err
-		}
-		if providerPoolInsufficientBalance(lastErr) {
-			log.Printf("PROVIDER POOL %s: member %s (%s) has insufficient balance; falling back", e.poolID, member.member.Model, member.member.Source)
 		}
 		e.coolOnRateLimit(admission.key, lastErr, retryAfter)
 		if !providerPoolRetryable(lastErr) {
@@ -367,67 +351,11 @@ func providerPoolRetryable(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	if providerPoolInsufficientBalance(err) {
+	if strings.Contains(strings.ToLower(inference.HTTPErrorMessage(err)), "insufficient balance") {
 		return true
 	}
 	status := inference.HTTPStatusCode(err)
 	return status == 0 || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
-}
-
-func providerPoolInsufficientBalance(err error) bool {
-	return strings.Contains(strings.ToLower(inference.HTTPErrorMessage(err)), "insufficient balance")
-}
-
-// providerPoolProbeResponseError reads through the first SSE data line or a
-// bounded JSON prefix before handing the response to the caller. Some
-// OpenAI-compatible gateways report account errors in HTTP 200 response bodies,
-// so status-only retry logic misses them. Non-error bytes are replayed unchanged.
-func providerPoolProbeResponseError(response *http.Response) error {
-	if response == nil || response.Body == nil {
-		return nil
-	}
-	original := response.Body
-	reader := bufio.NewReader(original)
-	var prefix bytes.Buffer
-	restore := func() {
-		response.Body = &providerPoolReplayBody{
-			Reader: io.MultiReader(bytes.NewReader(prefix.Bytes()), reader),
-			Closer: original,
-		}
-	}
-
-	for prefix.Len() < 8192 {
-		line, err := reader.ReadString('\n')
-		_, _ = prefix.WriteString(line)
-		if providerPoolResponseHasInsufficientBalance(prefix.Bytes()) {
-			_ = original.Close()
-			return inference.NewHTTPStatusError(http.StatusPaymentRequired, "Insufficient balance")
-		}
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "data:") && strings.TrimSpace(strings.TrimPrefix(trimmed, "data:")) != "" {
-			restore()
-			return nil
-		}
-		if err != nil {
-			restore()
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return fmt.Errorf("probing provider pool stream: %w", err)
-		}
-	}
-	restore()
-	return nil
-}
-
-func providerPoolResponseHasInsufficientBalance(body []byte) bool {
-	normalized := strings.ToLower(string(body))
-	if !strings.Contains(normalized, "insufficient balance") {
-		return false
-	}
-	return strings.Contains(normalized, `"error"`) ||
-		strings.Contains(normalized, "event: error") ||
-		!strings.Contains(normalized, `"choices"`)
 }
 
 func requestPoolUsageSource(requested string, response *http.Response) string {

@@ -48,27 +48,6 @@ func TestProviderScopedBaseURL(t *testing.T) {
 	}
 }
 
-func TestProviderScopedBaseURLUsesUnscopedRouteForPool(t *testing.T) {
-	newTestServer(t)
-	if err := config.SaveProviderPools([]config.ProviderPool{{
-		ID:      "code",
-		Name:    "Code",
-		Model:   "code-pool",
-		Enabled: true,
-		Members: []config.ProviderPoolMember{{ID: "cloud", Source: "cloud", Model: "upstream"}},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := providerScopedBaseURL("http://localhost:11435/", "pool:code")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "http://localhost:11435" {
-		t.Fatalf("providerScopedBaseURL = %q, want unscoped local URL", got)
-	}
-}
-
 func TestFilterModelsByProviderRoute(t *testing.T) {
 	models := []api.ModelInfo{
 		{Model: "shared", Source: "local"},

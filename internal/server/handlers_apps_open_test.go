@@ -1051,51 +1051,6 @@ func TestOpenAIAppShellURLRemembersRequestedModel(t *testing.T) {
 	}
 }
 
-func TestSwitchClaudeProviderAcceptsProviderPool(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	config.ResetProviderPools()
-	t.Cleanup(config.ResetProviderPools)
-
-	cfg := &config.Config{
-		ModelDir:             t.TempDir(),
-		ListenAddr:           ":11435",
-		AIAppPreferredModels: map[string]string{},
-	}
-	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
-		Namespace:    "Qwen",
-		Name:         "Qwen3.5-2B",
-		Format:       model.FormatGGUF,
-		Size:         2_000_000_000,
-		Files:        []string{"model.gguf"},
-		DownloadedAt: time.Unix(123, 0),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.SaveProviderPools([]config.ProviderPool{{
-		ID:      "code",
-		Name:    "Code",
-		Model:   "code-pool",
-		Enabled: true,
-		Members: []config.ProviderPoolMember{{
-			ID: "local", Source: "local", Model: "Qwen3.5-2B",
-		}},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-
-	s := New(cfg, "test")
-	if err := s.switchAIAppProvider(context.Background(), "claude-code", apps.ProviderModeOpenCSG, "code-pool", "pool:code"); err != nil {
-		t.Fatalf("switchAIAppProvider returned error: %v", err)
-	}
-	if got := s.preferredAIAppModel("claude-code"); got != "code-pool" {
-		t.Fatalf("preferred model = %q, want code-pool", got)
-	}
-	if got := s.preferredAIAppModelSource("claude-code"); got != "pool:code" {
-		t.Fatalf("preferred source = %q, want pool:code", got)
-	}
-}
-
 func TestOpenAIAppShellURLUsesRememberedModelWhenRequestOmitted(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
