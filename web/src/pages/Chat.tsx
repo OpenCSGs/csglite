@@ -1822,10 +1822,10 @@ export function Chat() {
         {/* Messages */}
         <div
           ref={messagesRef}
-          class="min-h-0 flex-1 overflow-auto bg-white px-6 py-8"
+          class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-white px-6 py-8"
           onScroll={syncStickToBottom}
         >
-          <div class="mx-auto flex min-h-full max-w-[760px] flex-col gap-5">
+          <div class="mx-auto flex min-h-full w-full min-w-0 max-w-[760px] flex-col gap-5">
             {chatError.value && (
               <div class="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 <svg class="mt-0.5 h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -2260,7 +2260,7 @@ function MessageBubble({ message, streaming, audioPreview }: { message: ChatMess
                   )}
                 </summary>
                 {parsed.thinking && (
-                  <div class="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-amber-900">
+                  <div class="mt-2 break-words whitespace-pre-wrap text-xs leading-relaxed text-amber-900">
                     {parsed.thinking}
                   </div>
                 )}
@@ -2270,7 +2270,7 @@ function MessageBubble({ message, streaming, audioPreview }: { message: ChatMess
           );
         }
       }
-      return isUser ? <p class="whitespace-pre-wrap">{content}</p> : <MarkdownContent text={content} />;
+      return isUser ? <p class="break-words whitespace-pre-wrap">{content}</p> : <MarkdownContent text={content} />;
     }
     if (Array.isArray(content)) {
       return (
@@ -2280,7 +2280,7 @@ function MessageBubble({ message, streaming, audioPreview }: { message: ChatMess
               return <img key={i} src={part.image_url.url} class="max-w-full rounded-lg mb-2 max-h-64" />;
             }
             if (part.type === "text" && part.text) {
-              return <p key={i} class="whitespace-pre-wrap">{part.text}</p>;
+              return <p key={i} class="break-words whitespace-pre-wrap">{part.text}</p>;
             }
             return null;
           })}
@@ -2291,17 +2291,17 @@ function MessageBubble({ message, streaming, audioPreview }: { message: ChatMess
   };
 
   return (
-    <div class={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
+    <div class={`flex w-full min-w-0 ${isUser ? "justify-end" : "justify-start"}`}>
       {!isUser && (
         <div class="mr-3 mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-blue-50 text-xs font-semibold text-blue-600">
           AI
         </div>
       )}
       <div
-        class={`text-sm leading-relaxed ${
+        class={`min-w-0 max-w-full text-sm leading-relaxed ${
           isUser
             ? "max-w-[72%] rounded-[18px] bg-gray-100 px-4 py-3 text-gray-900"
-            : "max-w-[760px] flex-1 text-gray-800"
+            : "flex-1 text-gray-800"
         } ${streaming ? "animate-pulse" : ""}`}
       >
         {renderContent()}
@@ -2314,7 +2314,7 @@ function MessageBubble({ message, streaming, audioPreview }: { message: ChatMess
           </div>
         )}
         {!isUser && !streaming && (
-          <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-300">
+          <div class="mt-3 flex min-w-0 max-w-full flex-wrap items-center gap-2 text-xs text-gray-300">
             <button
               onClick={() => plainText && navigator.clipboard.writeText(plainText)}
               class="rounded-md p-1 text-gray-300 transition-colors hover:bg-gray-50 hover:text-gray-500"
@@ -2335,7 +2335,7 @@ function MessageBubble({ message, streaming, audioPreview }: { message: ChatMess
               </svg>
             </button>
             <MessageSourceLinks sources={sources} />
-            {message.meta && <span class="ml-auto shrink-0">{formatResponseMeta(message.meta)}</span>}
+            {message.meta && <span class="ml-auto min-w-0 break-words text-right">{formatResponseMeta(message.meta)}</span>}
           </div>
         )}
       </div>

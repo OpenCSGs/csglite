@@ -1,7 +1,7 @@
 import type { Locale } from "../i18n";
 
-export type AIAppCategory = "coding" | "automation" | "documents-rag";
-export type AIAppInstallMode = "script" | "npm" | "docker";
+export type AIAppCategory = "coding" | "automation" | "documents-rag" | "creative";
+export type AIAppInstallMode = "script" | "npm" | "docker" | "builtin";
 export type AIAppProgressMode = "percent" | "indeterminate";
 export type AIAppStatus = "idle" | "installing" | "uninstalling" | "installed" | "failed" | "disabled";
 
@@ -13,6 +13,7 @@ export interface LocalizedText {
 export interface AIAppCatalogEntry {
   id: string;
   name: string;
+  localizedName?: LocalizedText;
   siteLabel: string;
   website: string;
   detailsUrl: string;
@@ -26,6 +27,8 @@ export interface AIAppCatalogEntry {
   commandPreview: string;
   liveLogsReady: boolean;
   desktop?: boolean;
+  builtin?: boolean;
+  openPath?: string;
   plannedSteps: LocalizedText[];
   status: AIAppStatus;
   progress?: number;
@@ -74,9 +77,57 @@ export const aiAppCategoryOptions: Array<{ id: "all" | AIAppCategory; label: Loc
   { id: "coding", label: { en: "Coding", zh: "编程" } },
   { id: "automation", label: { en: "Automation", zh: "自动化" } },
   { id: "documents-rag", label: { en: "Documents & RAG", zh: "文档与 RAG" } },
+  { id: "creative", label: { en: "Creative", zh: "创作" } },
 ];
 
 export const aiAppsCatalog: AIAppCatalogEntry[] = [
+  {
+    id: "image-generation",
+    name: "Image Generation",
+    localizedName: { en: "Image Generation", zh: "图像生成" },
+    siteLabel: "@csghub-lite",
+    website: "/images",
+    detailsUrl: "/images",
+    icon: "/apps/image-generation.svg",
+    category: "creative",
+    description: {
+      en: "Generate and edit images locally with text-to-image and image-to-image models through the Diffusers runtime.",
+      zh: "通过 Diffusers runtime 在本地运行文生图与图生图/编辑模型。",
+    },
+    installMode: "builtin",
+    progressMode: "indeterminate",
+    installHint: {
+      en: "Built into CSGHub-Lite. Open it directly—no separate install is required.",
+      zh: "已内置于 CSGHub-Lite，可直接打开，无需单独安装。",
+    },
+    cnInstallHint: {
+      en: "Built into CSGHub-Lite. Open it directly—no separate install is required.",
+      zh: "已内置于 CSGHub-Lite，可直接打开，无需单独安装。",
+    },
+    commandPreview: "",
+    liveLogsReady: false,
+    builtin: true,
+    openPath: "/images",
+    plannedSteps: [
+      {
+        en: "Open the built-in image generation workspace.",
+        zh: "打开内置图像生成工作台。",
+      },
+      {
+        en: "Select a local image model and enter a prompt.",
+        zh: "选择本地图像模型并输入提示词。",
+      },
+      {
+        en: "Generate images; Diffusers runtime installs on demand when needed.",
+        zh: "开始生成；需要时会按需安装 Diffusers runtime。",
+      },
+    ],
+    status: "installed",
+    statusText: {
+      en: "Built-in app",
+      zh: "内置应用",
+    },
+  },
   {
     id: "claude-code",
     name: "Claude Code",

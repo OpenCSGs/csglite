@@ -976,7 +976,12 @@ export function Library() {
           model={runDialogModel.value}
           params={runParams.value}
           draftModels={allModels.value
-            .filter((candidate) => candidate.name !== runDialogModel.value?.name && candidate.format === "gguf" && !isEmbeddingModel(candidate))
+            .filter((candidate) => {
+              if (candidate.name === runDialogModel.value?.name) return false;
+              if (isEmbeddingModel(candidate) || isImageGenerationModel(candidate) || isASRModel(candidate)) return false;
+              // GGUF runs directly; SafeTensors/PyTorch auto-convert to GGUF on load.
+              return candidate.format === "gguf" || candidate.format === "safetensors" || candidate.format === "pytorch";
+            })
             .map((candidate) => candidate.name)
             .sort()}
           error={runDialogError.value}
@@ -1294,97 +1299,104 @@ function RunParamsDialog({
               )}
             </>
           )}
-          {!runtimeManagedModel && !embeddingModel && ggufModel && (
-            <div class="md:col-span-2 rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-white p-4">
-              <div class="flex items-start justify-between gap-4">
-                <div class="flex gap-3">
-                  <div class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
-                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M13 2 4.5 13H11l-1 9 8.5-11H12l1-9Z" />
-                    </svg>
+          {!runtimeManagedModel && !embeddingModel && (
+            <details
+              class="group md:col-span-2 border-t border-gray-100 pt-4"
+              open={params.specType !== ""}
+            >
+              <summary class="flex cursor-pointer list-none items-center justify-between gap-4 rounded-lg px-1 py-1 select-none [&::-webkit-details-marker]:hidden">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <h3 class="text-sm font-medium text-gray-700">{t("lib.runParamSpecTitle")}</h3>
+                    <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                      {t("lib.runParamSpecExperimental")}
+                    </span>
                   </div>
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <h3 class="text-sm font-semibold text-gray-900">{t("lib.runParamSpecTitle")}</h3>
-                      <span class="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-700">
-                        {t("lib.runParamSpecExperimental")}
-                      </span>
-                    </div>
-                    <p class="mt-1 text-xs text-gray-500">{t("lib.runParamSpecHint")}</p>
-                  </div>
+                  <p class="mt-1 text-xs text-gray-400">{t("lib.runParamSpecHint")}</p>
                 </div>
-              </div>
+                <svg
+                  viewBox="0 0 20 20"
+                  class="h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-180"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                >
+                  <path d="m5 7.5 5 5 5-5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </summary>
 
-              <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <RunSelectField
-                  label={t("lib.runParamSpecMode")}
-                  value={params.specType}
-                  options={["ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-cache", "draft-mtp", "draft-simple", "draft-eagle3", "draft-dflash", "draft-dspark"]}
-                  defaultLabel={t("lib.runParamSpecOff")}
-                  hint={t("lib.runParamSpecModeHint")}
-                  onInput={(value) => onChange("specType", value)}
-                />
-                {params.specType.startsWith("draft-") && params.specType !== "draft-mtp" && (
-                  <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.runParamSpecDraftModel")}</label>
-                    <select
-                      value={params.specDraftModel}
-                      onInput={(e) => onChange("specDraftModel", (e.currentTarget as HTMLSelectElement).value)}
-                      class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      <option value="">{t("lib.runParamSpecDraftModelSelect")}</option>
-                      {draftModels.map((name) => <option key={name} value={name}>{name}</option>)}
-                    </select>
-                    <p class="text-xs text-gray-400 mt-1">{t("lib.runParamSpecDraftModelHint")}</p>
-                  </div>
+              <div class="mt-3 rounded-lg border border-gray-100 bg-gray-50/70 p-4">
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <RunSelectField
+                    label={t("lib.runParamSpecMode")}
+                    value={params.specType}
+                    options={["ngram-mod", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-cache", "draft-mtp", "draft-simple", "draft-eagle3", "draft-dflash", "draft-dspark"]}
+                    defaultLabel={t("lib.runParamSpecOff")}
+                    hint={t("lib.runParamSpecModeHint")}
+                    onInput={(value) => onChange("specType", value)}
+                  />
+                  {params.specType.startsWith("draft-") && params.specType !== "draft-mtp" && (
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.runParamSpecDraftModel")}</label>
+                      <select
+                        value={params.specDraftModel}
+                        onInput={(e) => onChange("specDraftModel", (e.currentTarget as HTMLSelectElement).value)}
+                        class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      >
+                        <option value="">{t("lib.runParamSpecDraftModelSelect")}</option>
+                        {draftModels.map((name) => <option key={name} value={name}>{name}</option>)}
+                      </select>
+                      <p class="text-xs text-gray-400 mt-1">{t("lib.runParamSpecDraftModelHint")}</p>
+                    </div>
+                  )}
+                </div>
+
+                {params.specType.startsWith("draft-") && (
+                  <label class="mt-4 flex cursor-pointer items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={params.specNgram === "true"}
+                      onChange={(e) => onChange("specNgram", (e.currentTarget as HTMLInputElement).checked ? "true" : "")}
+                      class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>
+                      <span class="block text-sm font-medium text-gray-700">{t("lib.runParamSpecNgramBoost")}</span>
+                      <span class="block text-xs text-gray-400">{t("lib.runParamSpecNgramBoostHint")}</span>
+                    </span>
+                  </label>
+                )}
+
+                {params.specType.startsWith("draft-") && (
+                  <details class="mt-4 border-t border-gray-200 pt-3">
+                    <summary class="cursor-pointer select-none text-xs font-medium text-gray-500">{t("lib.runParamSpecAdvanced")}</summary>
+                    <div class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <RunNumberField
+                        label={t("lib.runParamSpecDraftNMax")}
+                        value={params.specDraftNMax}
+                        min={1}
+                        placeholder="16"
+                        hint={t("lib.runParamSpecDraftNMaxHint")}
+                        onInput={(value) => onChange("specDraftNMax", value)}
+                      />
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.runParamSpecDraftPMin")}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step="0.01"
+                          value={params.specDraftPMin}
+                          onInput={(e) => onChange("specDraftPMin", (e.currentTarget as HTMLInputElement).value)}
+                          placeholder="0.8"
+                          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        />
+                        <p class="text-xs text-gray-400 mt-1">{t("lib.runParamSpecDraftPMinHint")}</p>
+                      </div>
+                    </div>
+                  </details>
                 )}
               </div>
-
-              {params.specType.startsWith("draft-") && (
-                <label class="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-gray-100 bg-white/80 px-3 py-2">
-                  <input
-                    type="checkbox"
-                    checked={params.specNgram === "true"}
-                    onChange={(e) => onChange("specNgram", (e.currentTarget as HTMLInputElement).checked ? "true" : "")}
-                    class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span>
-                    <span class="block text-sm font-medium text-gray-700">{t("lib.runParamSpecNgramBoost")}</span>
-                    <span class="block text-xs text-gray-400">{t("lib.runParamSpecNgramBoostHint")}</span>
-                  </span>
-                </label>
-              )}
-
-              {params.specType.startsWith("draft-") && (
-                <details class="mt-3 rounded-lg border border-gray-100 bg-white/80 px-3 py-2">
-                  <summary class="cursor-pointer select-none text-xs font-medium text-gray-600">{t("lib.runParamSpecAdvanced")}</summary>
-                  <div class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <RunNumberField
-                      label={t("lib.runParamSpecDraftNMax")}
-                      value={params.specDraftNMax}
-                      min={1}
-                      placeholder="16"
-                      hint={t("lib.runParamSpecDraftNMaxHint")}
-                      onInput={(value) => onChange("specDraftNMax", value)}
-                    />
-                    <div>
-                      <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.runParamSpecDraftPMin")}</label>
-                      <input
-                        type="number"
-                        min={0}
-                        max={1}
-                        step="0.01"
-                        value={params.specDraftPMin}
-                        onInput={(e) => onChange("specDraftPMin", (e.currentTarget as HTMLInputElement).value)}
-                        placeholder="0.8"
-                        class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                      />
-                      <p class="text-xs text-gray-400 mt-1">{t("lib.runParamSpecDraftPMinHint")}</p>
-                    </div>
-                  </div>
-                </details>
-              )}
-            </div>
+            </details>
           )}
           <div class="md:col-span-2">
             <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.runParamKeepAlive")}</label>

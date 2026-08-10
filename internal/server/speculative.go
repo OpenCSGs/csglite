@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/opencsgs/csglite/internal/convert"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
@@ -26,9 +27,9 @@ func (s *Server) resolveSpeculativeConfig(modelID string, options *api.Speculati
 		if err != nil {
 			return inference.SpeculativeConfig{}, fmt.Errorf("draft model %q not found locally", draftModelID)
 		}
-		draftPath, format, err := model.FindModelFile(draftDir)
-		if err != nil || format != model.FormatGGUF {
-			return inference.SpeculativeConfig{}, fmt.Errorf("draft model %q must contain GGUF weights", draftModelID)
+		draftPath, err := resolveDraftGGUFPath(draftDir, draftModelID)
+		if err != nil {
+			return inference.SpeculativeConfig{}, err
 		}
 		config.DraftModel = draftPath
 	}
@@ -53,4 +54,23 @@ func (s *Server) resolveSpeculativeConfig(modelID string, options *api.Speculati
 		}
 	}
 	return inference.NormalizeSpeculativeConfig(config)
+}
+
+// resolveDraftGGUFPath returns a GGUF path for speculative draft weights.
+// Existing GGUF is preferred; otherwise convertible HF weights are auto-converted
+// the same way target SafeTensors models are handled on load.
+func resolveDraftGGUFPath(draftDir, draftModelID string) (string, error) {
+	if path, ok, err := convert.FindGGUFForDType(draftDir, ""); err != nil {
+		return "", err
+	} else if ok {
+		return path, nil
+	}
+	if !convert.HasConvertibleHFWeights(draftDir) {
+		return "", fmt.Errorf("draft model %q must contain GGUF weights or convertible SafeTensors/PyTorch weights", draftModelID)
+	}
+	ggufPath, err := convert.Convert(draftDir, nil, "")
+	if err != nil {
+		return "", fmt.Errorf("auto-converting draft model %q to GGUF: %w", draftModelID, err)
+	}
+	return ggufPath, nil
 }

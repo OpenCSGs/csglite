@@ -13,7 +13,8 @@
   }
 
   .chat-markdown {
-    @apply text-sm leading-7 text-gray-800;
+    @apply min-w-0 max-w-full text-sm leading-7 text-gray-800;
+    overflow-wrap: anywhere;
   }
 
   .chat-markdown > :first-child {
@@ -58,6 +59,7 @@
 
   .chat-markdown pre {
     @apply my-3 overflow-x-auto rounded-xl bg-gray-950 px-4 py-3 text-xs leading-5 text-gray-100;
+    max-width: 100%;
   }
 
   .chat-markdown code {
@@ -80,6 +82,7 @@
     @apply my-3 w-full table-auto rounded-xl border border-gray-200 text-left text-sm;
     border-collapse: separate;
     border-spacing: 0;
+    table-layout: fixed;
   }
 
   .chat-markdown thead {
@@ -88,9 +91,11 @@
 
   .chat-markdown th {
     @apply border-b border-gray-200 px-3 py-2 font-semibold text-gray-700;
+    overflow-wrap: anywhere;
   }
 
   .chat-markdown td {
     @apply border-b border-gray-100 px-3 py-2 text-gray-700;
+    overflow-wrap: anywhere;
   }
 }

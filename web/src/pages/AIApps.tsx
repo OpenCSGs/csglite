@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { computed, signal } from "@preact/signals";
+import { useLocation } from "preact-iso";
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
   getAIApps,
@@ -90,6 +91,7 @@ const filteredApps = computed(() => {
 
     const searchable = [
       app.name,
+      app.localizedName ? getLocalizedText(app.localizedName, currentLocale) : "",
       app.siteLabel,
       app.website,
       getLocalizedText(app.description, currentLocale),
@@ -123,6 +125,7 @@ const groupedApps = computed(() => {
 const selectedApp = computed(() => aiAppsCatalog.find((app) => app.id === selectedAppId.value) || null);
 
 export function AIApps() {
+  const { route } = useLocation();
   void locale.value;
 
   useEffect(() => {
@@ -162,6 +165,9 @@ export function AIApps() {
   };
 
   const handleInstall = async (appId: string) => {
+    if (isBuiltinAIApp(aiAppsCatalog.find((app) => app.id === appId))) {
+      return;
+    }
     pendingInstallId.value = appId;
     actionError.value = "";
     try {
@@ -176,6 +182,9 @@ export function AIApps() {
   };
 
   const handleUninstall = async (appId: string) => {
+    if (isBuiltinAIApp(aiAppsCatalog.find((app) => app.id === appId))) {
+      return;
+    }
     pendingUninstallId.value = appId;
     actionError.value = "";
     try {
@@ -191,7 +200,14 @@ export function AIApps() {
   const handleOpenApp = async (appId: string, modelId?: string, source?: string) => {
     pendingOpenId.value = appId;
     actionError.value = "";
-    const opensDesktopApp = Boolean(aiAppsCatalog.find((app) => app.id === appId)?.desktop);
+    const catalogApp = aiAppsCatalog.find((app) => app.id === appId);
+    if (isBuiltinAIApp(catalogApp) && catalogApp?.openPath) {
+      closeDrawer();
+      route(catalogApp.openPath);
+      pendingOpenId.value = "";
+      return;
+    }
+    const opensDesktopApp = Boolean(catalogApp?.desktop);
     if (opensDesktopApp && !isLocalhostBrowserAccess()) {
       actionError.value = t("aiApps.error.localhostRequired");
       pendingOpenId.value = "";
@@ -416,12 +432,14 @@ function AIAppCard({
   onOpenChat: () => void;
 }) {
   const currentLocale = locale.value;
+  const isBuiltin = isBuiltinAIApp(app);
   const isInstalled = state.status === "installed";
   const isInstalling = state.status === "installing";
   const isUninstalling = state.status === "uninstalling";
   const isWorking = isInstalling || isUninstalling;
   const canOpenChat = canOpenAIApp(app, state);
   const showRuntimeIndicator = canControlAIAppRuntime(state);
+  const displayName = appDisplayName(app, currentLocale);
 
   return (
     <div class={`relative border rounded-xl bg-white p-5 flex flex-col justify-between min-h-[236px] overflow-hidden ${
@@ -431,25 +449,33 @@ function AIAppCard({
 
       <div>
         <div class="flex items-start gap-3">
-          <img src={app.icon} alt={`${app.name} icon`} class="w-11 h-11 rounded-xl border border-gray-100 flex-shrink-0 bg-white object-cover" />
+          <img src={app.icon} alt={`${displayName} icon`} class="w-11 h-11 rounded-xl border border-gray-100 flex-shrink-0 bg-white object-cover" />
           <div class="min-w-0">
-            <a
-              href={app.website}
-              target="_blank"
-              rel="noreferrer"
-              class="font-semibold text-gray-900 text-lg leading-6 hover:text-indigo-600 transition-colors"
-            >
-              {app.name}
-            </a>
-            <div>
+            {isBuiltin ? (
+              <div class="font-semibold text-gray-900 text-lg leading-6">{displayName}</div>
+            ) : (
               <a
                 href={app.website}
                 target="_blank"
                 rel="noreferrer"
-                class="text-xs text-indigo-500 hover:text-indigo-600 hover:underline"
+                class="font-semibold text-gray-900 text-lg leading-6 hover:text-indigo-600 transition-colors"
               >
-                {app.siteLabel}
+                {displayName}
               </a>
+            )}
+            <div>
+              {isBuiltin ? (
+                <span class="text-xs text-gray-400">{t("aiApps.builtin")}</span>
+              ) : (
+                <a
+                  href={app.website}
+                  target="_blank"
+                  rel="noreferrer"
+                  class="text-xs text-indigo-500 hover:text-indigo-600 hover:underline"
+                >
+                  {app.siteLabel}
+                </a>
+              )}
             </div>
           </div>
         </div>
@@ -462,6 +488,11 @@ function AIAppCard({
           <span class={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${categoryClassName(app.category)}`}>
             {getCategoryLabel(app.category, currentLocale)}
           </span>
+          {isBuiltin && (
+            <span class="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+              {t("aiApps.builtin")}
+            </span>
+          )}
           {state.disabled && (
             <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-500">
               {t("aiApps.disabled")}
@@ -488,12 +519,12 @@ function AIAppCard({
           <div class="flex items-center justify-between gap-3">
             <div class="min-w-0">
               <div class={`text-xs font-medium ${statusColorClass(state.status)}`}>
-                {statusLabel(state)}
+                {isBuiltin ? t("aiApps.builtinReadyShort") : statusLabel(state)}
               </div>
-              {state.version && (
+              {!isBuiltin && state.version && (
                 <div class="text-[11px] text-gray-400 truncate mt-1">{state.version}</div>
               )}
-              {state.updateAvailable && state.latestVersion && (
+              {!isBuiltin && state.updateAvailable && state.latestVersion && (
                 <div class="text-[11px] text-amber-600 truncate mt-1">
                   {t("aiApps.updateAvailableShort", state.latestVersion)}
                 </div>
@@ -517,7 +548,7 @@ function AIAppCard({
                   {pendingOpen ? openActionLabel(app, true) : openActionLabel(app, false)}
                 </button>
               )}
-              {!isInstalled && (
+              {!isBuiltin && !isInstalled && (
                 <button
                   onClick={onInstall}
                   disabled={state.disabled || pendingInstall}
@@ -574,17 +605,19 @@ function LiveLogsDrawer({
 
   const logRef = useRef<HTMLDivElement>(null);
   const copyResetRef = useRef<number | null>(null);
+  const isBuiltin = isBuiltinAIApp(app);
   const isInstalling = state.status === "installing";
   const isUninstalling = state.status === "uninstalling";
   const isWorking = isInstalling || isUninstalling;
-  const showTaskLogs = state.liveLogsReady && (mode === "install" || isWorking);
+  const showTaskLogs = !isBuiltin && state.liveLogsReady && (mode === "install" || isWorking);
   const requestPending = pendingInstall || pendingUninstall || pendingStart || pendingStop;
   const canOpenChat = canOpenAIApp(app, state);
-  const canLoadModels = canSelectAIAppModel(app);
+  const canLoadModels = !isBuiltin && canSelectAIAppModel(app);
   const canSelectModel = canLoadModels && (!state.providerSwitchSupported || state.providerMode === "opencsg");
   const isXiaozhi = app.id === "xiaozhi";
-  const showProgressSummary = !state.disabled && isWorking;
-  const showRuntimeSummary = canControlAIAppRuntime(state);
+  const showProgressSummary = !isBuiltin && !state.disabled && isWorking;
+  const showRuntimeSummary = !isBuiltin && canControlAIAppRuntime(state);
+  const displayName = appDisplayName(app, locale.value);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
@@ -1039,23 +1072,29 @@ function LiveLogsDrawer({
       <div class="w-full max-w-2xl h-full bg-white shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div class="px-6 py-5 border-b border-gray-100 flex items-start justify-between gap-4">
           <div class="flex items-start gap-3 min-w-0">
-            <img src={app.icon} alt={`${app.name} icon`} class="w-12 h-12 rounded-xl border border-gray-100 bg-white object-cover flex-shrink-0" />
+            <img src={app.icon} alt={`${displayName} icon`} class="w-12 h-12 rounded-xl border border-gray-100 bg-white object-cover flex-shrink-0" />
             <div class="min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
-                <h2 class="text-lg font-bold text-gray-900">{app.name}</h2>
+                <h2 class="text-lg font-bold text-gray-900">{displayName}</h2>
                 <span class="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600">
-                  {mode === "install" ? t("aiApps.installPreview") : t("aiApps.setupDetails")}
+                  {isBuiltin
+                    ? t("aiApps.builtin")
+                    : mode === "install"
+                      ? t("aiApps.installPreview")
+                      : t("aiApps.setupDetails")}
                 </span>
               </div>
               <p class="text-sm text-gray-500 mt-1">{getLocalizedText(app.description, locale.value)}</p>
-              <a
-                href={app.website}
-                target="_blank"
-                rel="noreferrer"
-                class="inline-flex items-center text-xs text-indigo-600 hover:text-indigo-700 hover:underline mt-2"
-              >
-                {t("aiApps.visitWebsite")}
-              </a>
+              {!isBuiltin && (
+                <a
+                  href={app.website}
+                  target="_blank"
+                  rel="noreferrer"
+                  class="inline-flex items-center text-xs text-indigo-600 hover:text-indigo-700 hover:underline mt-2"
+                >
+                  {t("aiApps.visitWebsite")}
+                </a>
+              )}
             </div>
           </div>
         </div>
@@ -1073,19 +1112,26 @@ function LiveLogsDrawer({
             {drawerNotice(app, state)}
           </div>
 
-          <div class={`grid grid-cols-1 ${showProgressSummary || showRuntimeSummary ? "sm:grid-cols-5" : "sm:grid-cols-4"} gap-3`}>
-            <SummaryTile label={t("aiApps.installMode")} value={installModeLabel(app.installMode)} />
-            {showProgressSummary && (
-              <SummaryTile label={t("aiApps.progressMode")} value={renderProgressValue(state.progressMode, state.progress)} />
-            )}
-            <SummaryTile label={t("aiApps.currentStatus")} value={statusLabel(state)} />
-            {showRuntimeSummary && (
-              <SummaryTile label={t("aiApps.runtimeStatus")} value={runtimeStatusLabel(state)} />
-            )}
-            <SummaryTile label={t("aiApps.currentVersion")} value={state.version || "—"} />
-            <SummaryTile label={t("aiApps.latestVersion")} value={state.latestVersion || "—"} />
-            <SummaryTile label={t("aiApps.updateStatus")} value={updateStatusLabel(state)} />
-          </div>
+          {isBuiltin ? (
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <SummaryTile label={t("aiApps.installMode")} value={installModeLabel(app.installMode)} />
+              <SummaryTile label={t("aiApps.currentStatus")} value={t("aiApps.builtinReadyShort")} />
+            </div>
+          ) : (
+            <div class={`grid grid-cols-1 ${showProgressSummary || showRuntimeSummary ? "sm:grid-cols-5" : "sm:grid-cols-4"} gap-3`}>
+              <SummaryTile label={t("aiApps.installMode")} value={installModeLabel(app.installMode)} />
+              {showProgressSummary && (
+                <SummaryTile label={t("aiApps.progressMode")} value={renderProgressValue(state.progressMode, state.progress)} />
+              )}
+              <SummaryTile label={t("aiApps.currentStatus")} value={statusLabel(state)} />
+              {showRuntimeSummary && (
+                <SummaryTile label={t("aiApps.runtimeStatus")} value={runtimeStatusLabel(state)} />
+              )}
+              <SummaryTile label={t("aiApps.currentVersion")} value={state.version || "—"} />
+              <SummaryTile label={t("aiApps.latestVersion")} value={state.latestVersion || "—"} />
+              <SummaryTile label={t("aiApps.updateStatus")} value={updateStatusLabel(state)} />
+            </div>
+          )}
 
           {state.installPath && (
             <section class="space-y-2">
@@ -1408,30 +1454,39 @@ function LiveLogsDrawer({
             </section>
           )}
 
-          <section class="space-y-2">
-            <div class="flex items-center justify-between gap-3">
-              <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.installCommand")}</h3>
-              <a
-                href={app.detailsUrl}
-                target="_blank"
-                rel="noreferrer"
-                class="text-xs text-indigo-600 hover:text-indigo-700 hover:underline"
-              >
-                {t("aiApps.openDocs")}
-              </a>
-            </div>
-            <pre class="rounded-xl bg-gray-900 text-gray-100 p-4 text-xs leading-5 overflow-x-auto whitespace-pre-wrap break-all font-mono">
-              {app.commandPreview}
-            </pre>
-            <p class="text-sm text-gray-500">{getLocalizedText(app.installHint, locale.value)}</p>
-          </section>
+          {isBuiltin ? (
+            <section class="space-y-2">
+              <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.builtin")}</h3>
+              <p class="text-sm text-gray-500">{getLocalizedText(app.installHint, locale.value)}</p>
+            </section>
+          ) : (
+            <>
+              <section class="space-y-2">
+                <div class="flex items-center justify-between gap-3">
+                  <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.installCommand")}</h3>
+                  <a
+                    href={app.detailsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    class="text-xs text-indigo-600 hover:text-indigo-700 hover:underline"
+                  >
+                    {t("aiApps.openDocs")}
+                  </a>
+                </div>
+                <pre class="rounded-xl bg-gray-900 text-gray-100 p-4 text-xs leading-5 overflow-x-auto whitespace-pre-wrap break-all font-mono">
+                  {app.commandPreview}
+                </pre>
+                <p class="text-sm text-gray-500">{getLocalizedText(app.installHint, locale.value)}</p>
+              </section>
 
-          <section class="space-y-2">
-            <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.cnHint")}</h3>
-            <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-              {getLocalizedText(app.cnInstallHint, locale.value)}
-            </div>
-          </section>
+              <section class="space-y-2">
+                <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.cnHint")}</h3>
+                <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+                  {getLocalizedText(app.cnInstallHint, locale.value)}
+                </div>
+              </section>
+            </>
+          )}
 
           <section class="space-y-3">
             <h3 class="text-sm font-semibold text-gray-900">{t("aiApps.plannedSteps")}</h3>
@@ -1517,7 +1572,7 @@ function LiveLogsDrawer({
                 {pendingOpen ? openActionLabel(app, true) : openActionLabel(app, false)}
               </button>
             )}
-            {!state.disabled && !isWorking && state.status === "installed" && state.managed && (
+            {!isBuiltin && !state.disabled && !isWorking && state.status === "installed" && state.managed && (
               <button
                 onClick={onUninstall}
                 disabled={requestPending}
@@ -1530,7 +1585,7 @@ function LiveLogsDrawer({
                 {pendingUninstall ? t("aiApps.status.uninstalling") : t("aiApps.uninstall")}
               </button>
             )}
-            {!state.disabled && !isWorking && (state.status !== "installed" || state.managed) && (
+            {!isBuiltin && !state.disabled && !isWorking && (state.status !== "installed" || state.managed) && (
               <button
                 onClick={onInstall}
                 disabled={requestPending}
@@ -1780,6 +1835,9 @@ function categoryClassName(category: AIAppCategory): string {
   if (category === "automation") {
     return "bg-indigo-50 text-indigo-700";
   }
+  if (category === "creative") {
+    return "bg-cyan-50 text-cyan-700";
+  }
   return "bg-violet-50 text-violet-700";
 }
 
@@ -1799,6 +1857,7 @@ function renderProgressValue(progressMode: AIAppProgressMode, progress: number |
 function installModeLabel(mode: AIAppInstallMode): string {
   if (mode === "npm") return t("aiApps.modeNpm");
   if (mode === "docker") return t("aiApps.modeDocker");
+  if (mode === "builtin") return t("aiApps.modeBuiltin");
   return t("aiApps.modeScript");
 }
 
@@ -1837,6 +1896,9 @@ function actionLabel(state: AIAppRuntimeState): string {
 }
 
 function drawerNotice(app: AIAppCatalogEntry, state: AIAppRuntimeState): string {
+  if (isBuiltinAIApp(app)) {
+    return t("aiApps.builtinReady");
+  }
   if (isDesktopAIApp(app) && state.status === "installed" && !state.disabled && !isLocalhostBrowserAccess()) {
     return t("aiApps.error.localhostRequired");
   }
@@ -1884,6 +1946,9 @@ function drawerNotice(app: AIAppCatalogEntry, state: AIAppRuntimeState): string 
 }
 
 function canOpenAIApp(app: AIAppCatalogEntry, state: AIAppRuntimeState): boolean {
+  if (isBuiltinAIApp(app)) {
+    return Boolean(app.openPath) && !state.disabled;
+  }
   if (isDesktopAIApp(app)) {
     return state.status === "installed" &&
       !state.disabled &&
@@ -1897,6 +1962,14 @@ function canOpenAIApp(app: AIAppCatalogEntry, state: AIAppRuntimeState): boolean
   return ["openclaw", "csgclaw", "claude-code", "open-code", "open-code-review", "codex", "pi"].includes(app.id) &&
     state.status === "installed" &&
     !state.disabled;
+}
+
+function isBuiltinAIApp(app: AIAppCatalogEntry | undefined): boolean {
+  return Boolean(app?.builtin);
+}
+
+function appDisplayName(app: AIAppCatalogEntry, currentLocale: Locale): string {
+  return app.localizedName ? getLocalizedText(app.localizedName, currentLocale) : app.name;
 }
 
 function canControlAIAppRuntime(state: AIAppRuntimeState): boolean {

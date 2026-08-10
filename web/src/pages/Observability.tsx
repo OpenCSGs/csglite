@@ -55,7 +55,7 @@ function sourceLabel(record: Pick<ObservabilityRequest, "source" | "source_name"
   return record.source_name || record.source || "—";
 }
 
-function StatusBadge({ status, code }: { status: string; code?: number }) {
+function StatusBadge({ status }: { status: string }) {
   const success = status === "completed";
   return (
     <span class={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
@@ -63,7 +63,6 @@ function StatusBadge({ status, code }: { status: string; code?: number }) {
     }`}>
       <span class={`h-1.5 w-1.5 rounded-full ${success ? "bg-emerald-500" : "bg-red-500"}`} />
       {success ? t("observability.statusCompleted") : t("observability.statusFailed")}
-      {code ? ` · ${code}` : ""}
     </span>
   );
 }
@@ -274,14 +273,13 @@ function RequestTable({ data, loading, onOpen, onOpenTrace }: {
   if (!loading && rows.length === 0) return <EmptyState />;
   return (
     <div class="overflow-x-auto">
-      <table class="w-full min-w-[1280px] text-left text-sm">
+      <table class="w-full min-w-[1120px] text-left text-sm">
         <thead class="bg-gray-50/80 text-xs uppercase tracking-wide text-gray-400">
           <tr>
             <th class="px-4 py-3">{t("observability.columnModel")}</th>
             <th class="px-4 py-3">{t("observability.columnTime")}</th>
             <th class="px-4 py-3">{t("observability.columnStatus")}</th>
             <th class="px-4 py-3">{t("observability.columnRoute")}</th>
-            <th class="px-4 py-3">{t("observability.columnEndpoint")}</th>
             <th class="px-4 py-3">{t("observability.columnLatency")}</th>
             <th class="px-4 py-3">{t("observability.columnTokens")}</th>
             <th class="px-4 py-3">{t("observability.columnCacheRead")}</th>
@@ -295,9 +293,8 @@ function RequestTable({ data, loading, onOpen, onOpenTrace }: {
             <tr key={row.id} onClick={() => onOpen(row.id)} class="cursor-pointer transition hover:bg-indigo-50/40">
               <td class="max-w-[190px] truncate px-4 py-3 font-medium text-gray-900" title={row.model}>{row.model || "—"}</td>
               <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-500">{formatDateTime(row.started_at)}</td>
-              <td class="px-4 py-3"><StatusBadge status={row.status} code={row.status_code} /></td>
+              <td class="px-4 py-3"><StatusBadge status={row.status} /></td>
               <td class="max-w-[190px] truncate px-4 py-3 text-gray-600" title={sourceLabel(row)}>{sourceLabel(row)}</td>
-              <td class="px-4 py-3"><span class="rounded-md bg-gray-100 px-2 py-1 font-mono text-[11px] text-gray-600">{row.protocol}</span></td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">
                 {formatObservabilityDuration(row.duration_ms)}
                 {row.stream && <span class="block text-[11px] text-gray-400">TTFT {formatObservabilityDuration(row.first_token_latency_ms)}</span>}
@@ -422,7 +419,7 @@ function DetailDrawer({ request, loading, onClose, onOpenTrace }: {
 
 function RequestDetail({ request, onOpenTrace }: { request: ObservabilityRequest; onOpenTrace: (id: string) => void }) {
   const metadata = [
-    [t("observability.columnStatus"), <StatusBadge status={request.status} code={request.status_code} />],
+    [t("observability.columnStatus"), <StatusBadge status={request.status} />],
     [t("observability.columnModel"), request.model || "—"],
     [t("observability.columnRoute"), sourceLabel(request)],
     [t("observability.columnEndpoint"), `${request.method} ${request.path}`],
@@ -692,7 +689,7 @@ function TraceDetail({ trace }: { trace: ObservabilityTraceDetailResponse }) {
               <p class="text-xs font-medium uppercase tracking-wide text-gray-400">{t("observability.requestDetail")}</p>
               <p class="mt-1 break-all font-mono text-sm font-medium text-gray-800">{selectedRequest.id}</p>
             </div>
-            <StatusBadge status={selectedRequest.status} code={selectedRequest.status_code} />
+            <StatusBadge status={selectedRequest.status} />
           </div>
           <div class="border-b border-gray-200 px-5">
             <div class="flex gap-6">

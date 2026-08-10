@@ -95,10 +95,11 @@ csghub-lite search "Qwen"
 
 ## 投机解码加速
 
-GGUF 文本模型可在运行参数窗口启用投机解码，也可通过 CLI 配置：
+本地文本生成模型（GGUF，以及会自动转换为 GGUF 的 SafeTensors/PyTorch）可在运行参数窗口启用投机解码，也可通过 CLI 配置：
 
 ```bash
-# 无需 draft 模型
+# 无需 draft 模型（原生 GGUF 或未转换的 SafeTensors 均可）
+csghub-lite run Qwen/Qwen3-0.6B --spec-type ngram-mod
 csghub-lite run Qwen/Qwen3-0.6B-GGUF --spec-type ngram-mod
 
 # 模型自带或同目录包含 MTP head
