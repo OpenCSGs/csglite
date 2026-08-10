@@ -121,6 +121,14 @@ func providerRouteIDForSource(source string) (string, error) {
 }
 
 func providerScopedBaseURL(baseURL, source string) (string, error) {
+	if poolID := poolIDFromSource(source); poolID != "" {
+		for _, pool := range config.GetProviderPools() {
+			if pool.ID == poolID && pool.Enabled {
+				return strings.TrimRight(strings.TrimSpace(baseURL), "/"), nil
+			}
+		}
+		return "", fmt.Errorf("provider pool not found or disabled")
+	}
 	providerID, err := providerRouteIDForSource(source)
 	if err != nil {
 		return "", err

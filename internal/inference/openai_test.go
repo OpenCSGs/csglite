@@ -55,6 +55,23 @@ func TestOpenAIEngineChatStream(t *testing.T) {
 	}
 }
 
+func TestOpenAIEngineChatStreamReturnsEmbeddedError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: error\ndata: {\"error\":{\"message\":\"Insufficient balance\"}}\n\n")
+	}))
+	defer ts.Close()
+
+	eng := NewOpenAIEngine(ts.URL, "cloud-model", "test-token")
+	_, err := eng.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, DefaultOptions(), func(string) {})
+	if err == nil {
+		t.Fatal("expected embedded stream error")
+	}
+	if got := HTTPErrorMessage(err); got != "Insufficient balance" {
+		t.Fatalf("error = %q, want Insufficient balance", got)
+	}
+}
+
 func TestOpenAIEngineChatStreamReasoningContent(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

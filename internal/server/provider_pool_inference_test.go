@@ -342,6 +342,121 @@ func TestProviderPoolFallsBackOnInsufficientBalance(t *testing.T) {
 	}
 }
 
+func TestProviderPoolFallsBackOnInsufficientBalanceStreamEvent(t *testing.T) {
+	now := time.Now()
+	fallbackCalls := 0
+	engine := newPoolRuntimeTestEngine(&now,
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "depleted", Source: "cloud", Priority: 0},
+			new: func() (inference.Engine, error) {
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					response := poolRuntimeResponse("event: error\ndata: {\"error\":{\"message\":\"Insufficient balance\"}}\n\n")
+					response.Header.Set("Content-Type", "text/event-stream")
+					return response, nil
+				}}, nil
+			},
+		},
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "fallback", Source: "provider:fallback", Priority: 1},
+			new: func() (inference.Engine, error) {
+				fallbackCalls++
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					response := poolRuntimeResponse("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n")
+					response.Header.Set("Content-Type", "text/event-stream")
+					return response, nil
+				}}, nil
+			},
+		},
+	)
+
+	response, err := engine.ChatCompletion(t.Context(), map[string]interface{}{"prompt": "x", "stream": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if fallbackCalls != 1 {
+		t.Fatalf("fallback calls = %d, want 1", fallbackCalls)
+	}
+	if !strings.Contains(string(body), `"content":"ok"`) {
+		t.Fatalf("fallback stream body = %q", body)
+	}
+	if got := response.Header.Get(providerPoolFallbackCountHeader); got != "1" {
+		t.Fatalf("fallback count = %q, want 1", got)
+	}
+}
+
+func TestProviderPoolFallsBackOnInsufficientBalanceHTTP200JSON(t *testing.T) {
+	now := time.Now()
+	fallbackCalls := 0
+	engine := newPoolRuntimeTestEngine(&now,
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "depleted", Priority: 0},
+			new: func() (inference.Engine, error) {
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					return poolRuntimeResponse(`{"error":{"message":"Insufficient balance"}}`), nil
+				}}, nil
+			},
+		},
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "fallback", Priority: 1},
+			new: func() (inference.Engine, error) {
+				fallbackCalls++
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					return poolRuntimeResponse(`{"choices":[{"message":{"content":"ok"}}]}`), nil
+				}}, nil
+			},
+		},
+	)
+
+	response, err := engine.ChatCompletion(t.Context(), map[string]interface{}{"prompt": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if fallbackCalls != 1 {
+		t.Fatalf("fallback calls = %d, want 1", fallbackCalls)
+	}
+}
+
+func TestProviderPoolDoesNotTreatSuccessfulContentAsBalanceError(t *testing.T) {
+	now := time.Now()
+	fallbackCalls := 0
+	engine := newPoolRuntimeTestEngine(&now,
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "primary", Priority: 0},
+			new: func() (inference.Engine, error) {
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					return poolRuntimeResponse(`{"choices":[{"message":{"content":"The phrase is Insufficient balance"}}]}`), nil
+				}}, nil
+			},
+		},
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "fallback", Priority: 1},
+			new: func() (inference.Engine, error) {
+				fallbackCalls++
+				return nil, errors.New("must not be called")
+			},
+		},
+	)
+
+	response, err := engine.ChatCompletion(t.Context(), map[string]interface{}{"prompt": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if fallbackCalls != 0 || !strings.Contains(string(body), "The phrase is Insufficient balance") {
+		t.Fatalf("fallback calls = %d, body = %q", fallbackCalls, body)
+	}
+}
+
 func TestProviderPoolDoesNotRetryAfterStreamingToken(t *testing.T) {
 	now := time.Now()
 	fallbackCalls := 0
