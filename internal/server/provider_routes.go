@@ -148,6 +148,16 @@ func providerRouteIDForSource(source string) (string, error) {
 	case "cloud":
 		return cloudProviderRouteID, nil
 	default:
+		if poolID := poolIDFromSource(source); poolID != "" {
+			pool, ok := providerPoolByID(poolID)
+			if !ok {
+				return "", fmt.Errorf("provider pool %q not found", poolID)
+			}
+			if !pool.Enabled {
+				return "", fmt.Errorf("provider pool %q is disabled", poolID)
+			}
+			return poolID, nil
+		}
 		if providerID := providerIDFromSource(source); providerID != "" {
 			if _, ok := getThirdPartyProvider(providerID); !ok {
 				return "", fmt.Errorf("provider %q not found", providerID)

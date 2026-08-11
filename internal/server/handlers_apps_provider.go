@@ -192,6 +192,14 @@ func (s *Server) sourceSwitchManagedValidator(group string) func([]byte) bool {
 			allowedURLs = append(allowedURLs, value)
 		}
 	}
+	for _, pool := range config.GetProviderPools() {
+		if !pool.Enabled {
+			continue
+		}
+		if value, err := providerScopedBaseURL(serverURL, poolSource(pool.ID)); err == nil {
+			allowedURLs = append(allowedURLs, value)
+		}
+	}
 	for _, appID := range []string{"codex", "codex-app"} {
 		if source := s.preferredAIAppModelSource(appID); source != "" {
 			if value, err := providerScopedBaseURL(serverURL, source); err == nil {

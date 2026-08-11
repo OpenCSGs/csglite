@@ -1716,6 +1716,62 @@ func TestPrepareAIAppShellLaunchUsesPiProviderConfig(t *testing.T) {
 	}
 }
 
+func TestPrepareAIAppShellLaunchUsesProviderPoolURL(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "pi")
+	content := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		commandPath = filepath.Join(binDir, "pi.cmd")
+		content = "@echo off\r\nexit /b 0\r\n"
+	}
+	if err := os.WriteFile(commandPath, []byte(content), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	config.ResetProviderPools()
+	t.Cleanup(config.ResetProviderPools)
+	if err := config.SaveProviderPools([]config.ProviderPool{{
+		ID: "pool-one", Name: "Pool One", Model: "my-model", Enabled: true,
+		Members: []config.ProviderPoolMember{{ID: "local", Source: "local", Model: "Qwen/Qwen3.5-2B"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(&config.Config{ListenAddr: ":11435"}, "test")
+	prepared, err := s.prepareAIAppShellLaunch(aiAppOpenTarget{
+		AppID:       "pi",
+		DisplayName: "Pi",
+		Binaries:    []string{"pi"},
+	}, "my-model", poolSource("pool-one"), []string{"my-model"}, t.TempDir())
+	if err != nil {
+		t.Fatalf("prepareAIAppShellLaunch returned error: %v", err)
+	}
+	if got := argValue(prepared.Args, "--model"); got != "my-model" {
+		t.Fatalf("--model = %q, want pool model in args %#v", got, prepared.Args)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".pi", "agent", "models.json"))
+	if err != nil {
+		t.Fatalf("read Pi models: %v", err)
+	}
+	var payload struct {
+		Providers map[string]struct {
+			BaseURL string `json:"baseUrl"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode Pi models: %v", err)
+	}
+	if got := payload.Providers["csghub-lite"].BaseURL; got != "http://127.0.0.1:11435/providers/pool-one/v1" {
+		t.Fatalf("provider baseUrl = %q, want provider-pool-scoped v1 URL", got)
+	}
+}
+
 func TestResolveAIAppLaunchBinaryUsesInstallDetectionFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

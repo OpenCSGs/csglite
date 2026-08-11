@@ -48,6 +48,34 @@ func TestProviderScopedBaseURL(t *testing.T) {
 	}
 }
 
+func TestProviderScopedBaseURLSupportsProviderPool(t *testing.T) {
+	if err := config.SaveProviderPools([]config.ProviderPool{{
+		ID: "pool-one", Name: "Pool One", Model: "public-model", Enabled: true,
+		Members: []config.ProviderPoolMember{{ID: "local", Source: "local", Model: "member-model"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := providerScopedBaseURL("http://localhost:11435/", poolSource("pool-one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://localhost:11435/providers/pool-one" {
+		t.Fatalf("providerScopedBaseURL = %q", got)
+	}
+}
+
+func TestProviderScopedBaseURLRejectsDisabledProviderPool(t *testing.T) {
+	if err := config.SaveProviderPools([]config.ProviderPool{{
+		ID: "pool-one", Name: "Pool One", Model: "public-model", Enabled: false,
+		Members: []config.ProviderPoolMember{{ID: "local", Source: "local", Model: "member-model"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := providerScopedBaseURL("http://localhost:11435/", poolSource("pool-one")); err == nil {
+		t.Fatal("providerScopedBaseURL accepted a disabled provider pool")
+	}
+}
+
 func TestFilterModelsByProviderRoute(t *testing.T) {
 	models := []api.ModelInfo{
 		{Model: "shared", Source: "local"},
