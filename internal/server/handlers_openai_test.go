@@ -1247,7 +1247,7 @@ func TestHandleOpenAIResponsesCloudWithoutTokenReturnsUnauthorized(t *testing.T)
 	}
 }
 
-func TestHandleOpenAIChatCompletionsForwardsROMAHeadersToAIGateway(t *testing.T) {
+func TestHandleOpenAIChatCompletionsDoesNotForwardClientROMAHeaders(t *testing.T) {
 	type receivedHeaders struct {
 		host   string
 		hwID   string
@@ -1293,13 +1293,113 @@ func TestHandleOpenAIChatCompletionsForwardsROMAHeadersToAIGateway(t *testing.T)
 		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
 	}
 	got := <-received
-	if got.host != "roma-group.example.gov.cn" {
-		t.Fatalf("Host = %q, want ROMA group domain", got.host)
+	wantHost := strings.TrimPrefix(apiServer.URL, "http://")
+	if got.host != wantHost {
+		t.Fatalf("Host = %q, want upstream host %q", got.host, wantHost)
 	}
-	if got.hwID != "integration-key" {
-		t.Fatalf("X-HW-ID = %q", got.hwID)
+	if got.hwID != "" {
+		t.Fatalf("X-HW-ID = %q, want client header omitted", got.hwID)
 	}
-	if got.appKey != "integration-secret" {
-		t.Fatalf("X-HW-AppKey = %q", got.appKey)
+	if got.appKey != "" {
+		t.Fatalf("X-HW-AppKey = %q, want client header omitted", got.appKey)
 	}
+}
+
+func TestProviderConfiguredHeadersAreAutomaticallyAddedToClientChatRequest(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
+	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
+
+	type receivedHeaders struct {
+		host   string
+		hwID   string
+		appKey string
+		custom string
+	}
+	received := make(chan receivedHeaders, 2)
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- receivedHeaders{
+			host:   r.Host,
+			hwID:   r.Header.Get("X-HW-ID"),
+			appKey: r.Header.Get("X-HW-AppKey"),
+			custom: r.Header.Get("X-Custom-Header"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			fmt.Fprint(w, `{"data":[{"id":"DeepSeekR1"}]}`)
+		case "/v1/chat/completions":
+			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/providers", strings.NewReader(`{
+		"name": "ROMA",
+		"base_url": "`+apiServer.URL+`/v1",
+		"api_key": "provider-token",
+		"provider": "openai",
+		"headers": [
+			{"name": "Host", "value": "roma.example.gov.cn"},
+			{"name": "X-HW-ID", "value": "integration-key"},
+			{"name": "X-HW-AppKey", "value": "integration-secret"},
+			{"name": "X-Custom-Header", "value": "custom-value"}
+		]
+	}`))
+	createRecorder := httptest.NewRecorder()
+	s.handleProviderCreate(createRecorder, createReq)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", createRecorder.Code, createRecorder.Body.String())
+	}
+	var created api.ThirdPartyProvider
+	if err := json.NewDecoder(createRecorder.Body).Decode(&created); err != nil {
+		t.Fatalf("decode provider response: %v", err)
+	}
+
+	validationHeaders := <-received
+	assertProviderHeaders := func(t *testing.T, got receivedHeaders) {
+		t.Helper()
+		if got.host != "roma.example.gov.cn" {
+			t.Fatalf("Host = %q, want configured host", got.host)
+		}
+		if got.hwID != "integration-key" {
+			t.Fatalf("X-HW-ID = %q, want configured value", got.hwID)
+		}
+		if got.appKey != "integration-secret" {
+			t.Fatalf("X-HW-AppKey = %q, want configured value", got.appKey)
+		}
+		if got.custom != "custom-value" {
+			t.Fatalf("X-Custom-Header = %q, want configured value", got.custom)
+		}
+	}
+	assertProviderHeaders(t, validationHeaders)
+
+	clientReq := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/chat/completions",
+		strings.NewReader(`{
+			"model": "DeepSeekR1",
+			"source": "provider:`+created.ID+`",
+			"messages": [{"role": "user", "content": "hi"}],
+			"stream": false
+		}`),
+	)
+	clientReq.Host = "client.example.com"
+	clientReq.Header.Set("X-HW-ID", "client-key")
+	clientReq.Header.Set("X-HW-AppKey", "client-secret")
+	clientReq.Header.Set("X-Custom-Header", "client-value")
+	clientRecorder := httptest.NewRecorder()
+	s.handleOpenAIChatCompletions(clientRecorder, clientReq)
+	if clientRecorder.Code != http.StatusOK {
+		t.Fatalf("chat status = %d body=%s", clientRecorder.Code, clientRecorder.Body.String())
+	}
+
+	assertProviderHeaders(t, <-received)
 }

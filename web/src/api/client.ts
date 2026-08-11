@@ -2211,6 +2211,12 @@ export interface ThirdPartyProvider {
   api_key?: string;
   provider?: string;
   enabled: boolean;
+  headers?: ProviderHeader[];
+}
+
+export interface ProviderHeader {
+  name: string;
+  value: string;
 }
 
 export interface ThirdPartyProvidersResponse {
@@ -2223,6 +2229,7 @@ export interface ThirdPartyProviderCreateRequest {
   api_key: string;
   provider?: string;
   enabled: boolean;
+  headers?: ProviderHeader[];
 }
 
 export interface ThirdPartyProviderUpdateRequest {
@@ -2231,6 +2238,7 @@ export interface ThirdPartyProviderUpdateRequest {
   api_key?: string;
   provider?: string;
   enabled?: boolean;
+  headers?: ProviderHeader[];
 }
 
 export interface ThirdPartyProviderValidateRequest {
@@ -2240,6 +2248,7 @@ export interface ThirdPartyProviderValidateRequest {
   api_key?: string;
   provider?: string;
   enabled: boolean;
+  headers?: ProviderHeader[];
 }
 
 export interface ThirdPartyProviderValidateResponse {

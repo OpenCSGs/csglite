@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -35,6 +36,7 @@ func (s *Server) handleThirdPartyProvidersList(w http.ResponseWriter, r *http.Re
 			APIKey:   p.APIKey,
 			Provider: p.Provider,
 			Enabled:  p.Enabled,
+			Headers:  providerHeadersAPI(p.Headers),
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -76,6 +78,11 @@ func (s *Server) handleProviderValidate(w http.ResponseWriter, r *http.Request) 
 		APIKey:   strings.TrimSpace(req.APIKey),
 		Provider: strings.TrimSpace(req.Provider),
 		Enabled:  boolDefault(req.Enabled, true),
+		Headers:  providerHeadersFromAPI(req.Headers),
+	}
+	if err := validateProviderHeaders(provider.Headers); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if provider.APIKey == "" && provider.ID != "" {
 		if existing, ok := getThirdPartyProvider(provider.ID); ok {
@@ -140,6 +147,11 @@ func (s *Server) handleProviderCreate(w http.ResponseWriter, r *http.Request) {
 		APIKey:   apiKey,
 		Provider: provider,
 		Enabled:  boolDefault(req.Enabled, true),
+		Headers:  providerHeadersFromAPI(req.Headers),
+	}
+	if err := validateProviderHeaders(newProvider.Headers); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	newProvider.BaseURL = normalizeThirdPartyProviderBaseURL(newProvider)
 	if newProvider.Enabled {
@@ -161,6 +173,7 @@ func (s *Server) handleProviderCreate(w http.ResponseWriter, r *http.Request) {
 		BaseURL:  newProvider.BaseURL,
 		Provider: newProvider.Provider,
 		Enabled:  newProvider.Enabled,
+		Headers:  providerHeadersAPI(newProvider.Headers),
 	})
 }
 
@@ -199,6 +212,13 @@ func (s *Server) handleProviderUpdate(w http.ResponseWriter, r *http.Request) {
 			if req.Enabled != nil {
 				candidate.Enabled = *req.Enabled
 			}
+			if req.Headers != nil {
+				candidate.Headers = providerHeadersFromAPI(req.Headers)
+			}
+			if err := validateProviderHeaders(candidate.Headers); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 			if providerNameExists(providers, candidate.Name, id) {
 				writeError(w, http.StatusBadRequest, "provider name already exists")
 				return
@@ -234,6 +254,7 @@ func (s *Server) handleProviderUpdate(w http.ResponseWriter, r *http.Request) {
 				BaseURL:  p.BaseURL,
 				Provider: p.Provider,
 				Enabled:  p.Enabled,
+				Headers:  providerHeadersAPI(p.Headers),
 			})
 			return
 		}
@@ -305,4 +326,37 @@ func boolDefault(value *bool, fallback bool) bool {
 		return fallback
 	}
 	return *value
+}
+
+func providerHeadersAPI(headers []config.ProviderHeader) []api.ProviderHeader {
+	out := make([]api.ProviderHeader, len(headers))
+	for i, header := range headers {
+		out[i] = api.ProviderHeader{Name: header.Name, Value: header.Value}
+	}
+	return out
+}
+
+func providerHeadersFromAPI(headers []api.ProviderHeader) []config.ProviderHeader {
+	out := make([]config.ProviderHeader, 0, len(headers))
+	for _, header := range headers {
+		name := strings.TrimSpace(header.Name)
+		value := strings.TrimSpace(header.Value)
+		if name == "" || value == "" {
+			continue
+		}
+		out = append(out, config.ProviderHeader{Name: name, Value: value})
+	}
+	return out
+}
+
+func validateProviderHeaders(headers []config.ProviderHeader) error {
+	for _, header := range headers {
+		if strings.IndexAny(header.Name, " \t\r\n:") >= 0 {
+			return fmt.Errorf("invalid provider header name %q", header.Name)
+		}
+		if strings.ContainsAny(header.Value, "\r\n") {
+			return fmt.Errorf("invalid provider header value for %q", header.Name)
+		}
+	}
+	return nil
 }

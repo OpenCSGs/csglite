@@ -175,6 +175,7 @@ func listOpenAICompatibleProviderModels(ctx context.Context, provider config.Thi
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(provider.APIKey))
+	inference.ApplyOpenAIForwardHeaders(req, providerForwardHeaders(provider))
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
@@ -270,7 +271,20 @@ func newThirdPartyProviderEngine(source, modelID string) (inference.Engine, erro
 	if baseURL == "" || apiKey == "" {
 		return nil, inference.NewHTTPStatusError(http.StatusBadRequest, "third-party provider is missing base URL or API key")
 	}
-	return inference.NewOpenAICompatibleEngine(baseURL, providerOriginalModelID(provider.ID, modelID), apiKey), nil
+	return inference.NewOpenAICompatibleEngineWithHeaders(
+		baseURL,
+		providerOriginalModelID(provider.ID, modelID),
+		apiKey,
+		providerForwardHeaders(provider),
+	), nil
+}
+
+func providerForwardHeaders(provider config.ThirdPartyProvider) []inference.ForwardHeader {
+	headers := make([]inference.ForwardHeader, 0, len(provider.Headers))
+	for _, header := range provider.Headers {
+		headers = append(headers, inference.ForwardHeader{Name: header.Name, Value: header.Value})
+	}
+	return headers
 }
 
 func providerOriginalModelID(providerID, modelID string) string {

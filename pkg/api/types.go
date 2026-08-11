@@ -925,12 +925,18 @@ type UpgradeProgressResponse struct {
 // -- Third-party Provider types --
 
 type ThirdPartyProvider struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key,omitempty"`
-	Provider string `json:"provider,omitempty"` // e.g., "openai", "anthropic", "deepseek"
-	Enabled  bool   `json:"enabled"`
+	ID       string           `json:"id"`
+	Name     string           `json:"name"`
+	BaseURL  string           `json:"base_url"`
+	APIKey   string           `json:"api_key,omitempty"`
+	Provider string           `json:"provider,omitempty"` // e.g., "openai", "anthropic", "deepseek"
+	Enabled  bool             `json:"enabled"`
+	Headers  []ProviderHeader `json:"headers,omitempty"`
+}
+
+type ProviderHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type ThirdPartyProvidersResponse struct {
@@ -949,20 +955,22 @@ type ProviderInfo struct {
 }
 
 type ThirdPartyProviderCreateRequest struct {
-	Name     string `json:"name"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key"`
-	Provider string `json:"provider,omitempty"`
-	Enabled  *bool  `json:"enabled,omitempty"`
+	Name     string           `json:"name"`
+	BaseURL  string           `json:"base_url"`
+	APIKey   string           `json:"api_key"`
+	Provider string           `json:"provider,omitempty"`
+	Enabled  *bool            `json:"enabled,omitempty"`
+	Headers  []ProviderHeader `json:"headers,omitempty"`
 }
 
 type ThirdPartyProviderValidateRequest struct {
-	ID       string `json:"id,omitempty"`
-	Name     string `json:"name,omitempty"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Enabled  *bool  `json:"enabled,omitempty"`
+	ID       string           `json:"id,omitempty"`
+	Name     string           `json:"name,omitempty"`
+	BaseURL  string           `json:"base_url"`
+	APIKey   string           `json:"api_key,omitempty"`
+	Provider string           `json:"provider,omitempty"`
+	Enabled  *bool            `json:"enabled,omitempty"`
+	Headers  []ProviderHeader `json:"headers,omitempty"`
 }
 
 type ThirdPartyProviderValidateResponse struct {
@@ -971,11 +979,12 @@ type ThirdPartyProviderValidateResponse struct {
 }
 
 type ThirdPartyProviderUpdateRequest struct {
-	Name     string `json:"name,omitempty"`
-	BaseURL  string `json:"base_url,omitempty"`
-	APIKey   string `json:"api_key,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Enabled  *bool  `json:"enabled,omitempty"`
+	Name     string           `json:"name,omitempty"`
+	BaseURL  string           `json:"base_url,omitempty"`
+	APIKey   string           `json:"api_key,omitempty"`
+	Provider string           `json:"provider,omitempty"`
+	Enabled  *bool            `json:"enabled,omitempty"`
+	Headers  []ProviderHeader `json:"headers,omitempty"`
 }
 
 // ProviderPool exposes one public model ID and selects one of its members.

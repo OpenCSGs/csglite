@@ -15,7 +15,6 @@ import (
 
 // POST /v1/chat/completions -- OpenAI-compatible chat completions
 func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Request) {
-	r = withOpenAIForwardHeaders(r)
 	var req api.OpenAIChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid request body")
@@ -179,22 +178,6 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 			}},
 		})
 	}
-}
-
-func withOpenAIForwardHeaders(r *http.Request) *http.Request {
-	if r == nil {
-		return nil
-	}
-	ctx := inference.WithOpenAIForwardHeaders(
-		r.Context(),
-		r.Host,
-		r.Header.Get("X-HW-ID"),
-		r.Header.Get("X-HW-AppKey"),
-	)
-	if ctx == r.Context() {
-		return r
-	}
-	return r.WithContext(ctx)
 }
 
 func (s *Server) handleOpenAIChatCompletionsProxy(

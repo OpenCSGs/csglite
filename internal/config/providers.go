@@ -11,12 +11,18 @@ import (
 
 // ThirdPartyProvider represents a third-party API provider configuration
 type ThirdPartyProvider struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key"`
-	Provider string `json:"provider,omitempty"`
-	Enabled  bool   `json:"enabled"`
+	ID       string           `json:"id"`
+	Name     string           `json:"name"`
+	BaseURL  string           `json:"base_url"`
+	APIKey   string           `json:"api_key"`
+	Provider string           `json:"provider,omitempty"`
+	Enabled  bool             `json:"enabled"`
+	Headers  []ProviderHeader `json:"headers,omitempty"`
+}
+
+type ProviderHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // ProvidersFile is the filename for storing third-party providers

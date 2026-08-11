@@ -480,25 +480,25 @@ func (s *Server) runThirdPartyProviderImageInference(r *http.Request, source str
 	return resp, nil
 }
 
-func thirdPartyProviderImageTarget(source, modelID string) (baseURL, apiKey, originalModel string, err error) {
+func thirdPartyProviderImageTarget(source, modelID string) (baseURL, apiKey, originalModel string, headers []inference.ForwardHeader, err error) {
 	providerID := providerIDFromSource(source)
 	provider, ok := getThirdPartyProvider(providerID)
 	if !ok {
-		return "", "", "", inference.NewHTTPStatusError(http.StatusNotFound, "third-party provider not found")
+		return "", "", "", nil, inference.NewHTTPStatusError(http.StatusNotFound, "third-party provider not found")
 	}
 	if !provider.Enabled {
-		return "", "", "", inference.NewHTTPStatusError(http.StatusForbidden, "third-party provider is disabled")
+		return "", "", "", nil, inference.NewHTTPStatusError(http.StatusForbidden, "third-party provider is disabled")
 	}
 	baseURL = normalizeThirdPartyProviderBaseURL(provider)
 	apiKey = strings.TrimSpace(provider.APIKey)
 	if baseURL == "" || apiKey == "" {
-		return "", "", "", inference.NewHTTPStatusError(http.StatusBadRequest, "third-party provider is missing base URL or API key")
+		return "", "", "", nil, inference.NewHTTPStatusError(http.StatusBadRequest, "third-party provider is missing base URL or API key")
 	}
-	return baseURL, apiKey, providerOriginalModelID(provider.ID, modelID), nil
+	return baseURL, apiKey, providerOriginalModelID(provider.ID, modelID), providerForwardHeaders(provider), nil
 }
 
 func (s *Server) generateThirdPartyProviderImage(ctx context.Context, source string, req api.OpenAIImagesGenerationRequest) (*api.OpenAIImagesGenerationResponse, error) {
-	baseURL, apiKey, originalModel, err := thirdPartyProviderImageTarget(source, req.Model)
+	baseURL, apiKey, originalModel, headers, err := thirdPartyProviderImageTarget(source, req.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -515,6 +515,7 @@ func (s *Server) generateThirdPartyProviderImage(ctx context.Context, source str
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	inference.ApplyOpenAIForwardHeaders(httpReq, headers)
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
@@ -537,7 +538,7 @@ func (s *Server) generateThirdPartyProviderImage(ctx context.Context, source str
 }
 
 func (s *Server) generateThirdPartyProviderImageEdit(ctx context.Context, source string, req imageInferenceRequest) (*api.OpenAIImagesGenerationResponse, error) {
-	baseURL, apiKey, originalModel, err := thirdPartyProviderImageTarget(source, req.Model)
+	baseURL, apiKey, originalModel, headers, err := thirdPartyProviderImageTarget(source, req.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -554,6 +555,7 @@ func (s *Server) generateThirdPartyProviderImageEdit(ctx context.Context, source
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	inference.ApplyOpenAIForwardHeaders(httpReq, headers)
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {

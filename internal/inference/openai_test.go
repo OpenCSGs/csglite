@@ -457,16 +457,27 @@ func TestOpenAICompatibleEngineDoesNotForceDisableThinkingForQwen3(t *testing.T)
 
 func TestOpenAIEngineForwardsROMAHeadersToOpenAIUpstreams(t *testing.T) {
 	type receivedHeaders struct {
-		host   string
-		hwID   string
-		appKey string
+		host       string
+		hwID       string
+		appKey     string
+		custom     string
+		customName string
 	}
-	received := make(chan receivedHeaders, 3)
+	received := make(chan receivedHeaders, 2)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		customName := ""
+		for name := range r.Header {
+			if strings.EqualFold(name, "X-Custom-Case") {
+				customName = name
+				break
+			}
+		}
 		received <- receivedHeaders{
-			host:   r.Host,
-			hwID:   r.Header.Get("X-HW-ID"),
-			appKey: r.Header.Get("X-HW-AppKey"),
+			host:       r.Host,
+			hwID:       r.Header.Get("X-HW-ID"),
+			appKey:     r.Header.Get("X-HW-AppKey"),
+			custom:     r.Header.Get("X-Custom-Case"),
+			customName: customName,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}]}`)
@@ -485,19 +496,30 @@ func TestOpenAIEngineForwardsROMAHeadersToOpenAIUpstreams(t *testing.T) {
 		return <-received
 	}
 
-	t.Run("CSGHub AI gateway", func(t *testing.T) {
-		ctx := WithOpenAIForwardHeaders(context.Background(), "roma.example.gov.cn", "integration-key", "integration-secret")
-		got := call(t, NewOpenAIEngine(ts.URL, "deepseek-r1", "token"), ctx)
+	t.Run("configured provider", func(t *testing.T) {
+		ctx := context.Background()
+		got := call(t, NewOpenAICompatibleEngineWithHeaders(ts.URL, "deepseek-r1", "token", []ForwardHeader{
+			{Name: "Host", Value: "roma.example.gov.cn"},
+			{Name: "X-HW-ID", Value: "integration-key"},
+			{Name: "X-HW-AppKey", Value: "integration-secret"},
+			{Name: "X-Custom-Case", Value: "Keep-Me"},
+		}), ctx)
 		if got.host != "roma.example.gov.cn" {
 			t.Fatalf("Host = %q, want ROMA group domain", got.host)
 		}
 		if got.hwID != "integration-key" || got.appKey != "integration-secret" {
 			t.Fatalf("ROMA headers = %#v", got)
 		}
+		if got.custom != "Keep-Me" {
+			t.Fatalf("custom header value = %q, want original value", got.custom)
+		}
+		if got.customName != "X-Custom-Case" {
+			t.Fatalf("custom header name = %q, want original casing", got.customName)
+		}
 	})
 
 	t.Run("standard request", func(t *testing.T) {
-		ctx := WithOpenAIForwardHeaders(context.Background(), "localhost:11435", "", "")
+		ctx := context.Background()
 		got := call(t, NewOpenAIEngine(ts.URL, "deepseek-r1", "token"), ctx)
 		wantHost := strings.TrimPrefix(ts.URL, "http://")
 		if got.host != wantHost {
@@ -508,14 +530,16 @@ func TestOpenAIEngineForwardsROMAHeadersToOpenAIUpstreams(t *testing.T) {
 		}
 	})
 
-	t.Run("third-party OpenAI provider", func(t *testing.T) {
-		ctx := WithOpenAIForwardHeaders(context.Background(), "roma.example.gov.cn", "integration-key", "integration-secret")
-		got := call(t, NewOpenAICompatibleEngine(ts.URL, "gpt-4o", "token"), ctx)
-		if got.host != "roma.example.gov.cn" {
-			t.Fatalf("Host = %q, want ROMA group domain", got.host)
-		}
-		if got.hwID != "integration-key" || got.appKey != "integration-secret" {
-			t.Fatalf("ROMA headers = %#v", got)
-		}
-	})
+}
+
+func TestAddHeaderPreservingName(t *testing.T) {
+	headers := http.Header{"Content-Type": []string{"application/json"}}
+	addHeaderPreservingName(headers, "content-type", "application/custom")
+
+	if _, ok := headers["Content-Type"]; ok {
+		t.Fatalf("original header casing remained: %#v", headers)
+	}
+	if got := headers["content-type"]; len(got) != 2 || got[0] != "application/json" || got[1] != "application/custom" {
+		t.Fatalf("content-type values = %#v", got)
+	}
 }

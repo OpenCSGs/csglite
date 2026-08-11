@@ -2757,7 +2757,13 @@
                 "name": "OpenAI",
                 "base_url": "https://api.openai.com/v1",
                 "api_key": "sk-...",
-                "provider": "openai"
+                "provider": "openai",
+                "headers": [
+                  {
+                    "name": "X-HW-AppKey",
+                    "value": "secret"
+                  }
+                ]
               }
             }
           }
@@ -2785,7 +2791,7 @@
           "Providers"
         ],
         "summary": "Validate a third-party provider",
-        "description": "Checks the provider base URL and API key by fetching its OpenAI-compatible `/models` endpoint. The provider is not saved.",
+        "description": "Checks the provider base URL and API key by fetching its OpenAI-compatible `/models` endpoint with any configured custom headers. The provider is not saved.",
         "operationId": "validateThirdPartyProvider",
         "requestBody": {
           "required": true,
@@ -2798,7 +2804,13 @@
                 "name": "OpenAI",
                 "base_url": "https://api.openai.com/v1",
                 "api_key": "sk-...",
-                "provider": "openai"
+                "provider": "openai",
+                "headers": [
+                  {
+                    "name": "X-HW-AppKey",
+                    "value": "secret"
+                  }
+                ]
               }
             }
           }
@@ -5511,6 +5523,24 @@
           }
         }
       },
+      "ProviderHeader": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Upstream header name. Host is supported as the request authority."
+          },
+          "value": {
+            "type": "string",
+            "writeOnly": true
+          }
+        }
+      },
       "ThirdPartyProvider": {
         "type": "object",
         "additionalProperties": false,
@@ -5541,6 +5571,13 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "headers": {
+            "type": "array",
+            "description": "Optional headers automatically added to requests sent to this provider.",
+            "items": {
+              "$ref": "#/components/schemas/ProviderHeader"
+            }
           }
         }
       },
@@ -5624,6 +5661,12 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderHeader"
+            }
           }
         }
       },
@@ -5654,6 +5697,12 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderHeader"
+            }
           }
         }
       },
@@ -5694,6 +5743,12 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderHeader"
+            }
           }
         }
       },

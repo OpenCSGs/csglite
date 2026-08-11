@@ -20,6 +20,7 @@ type openAIEngine struct {
 	modelName          string
 	token              string
 	disableThinking    bool
+	forwardHeaders     []ForwardHeader
 	// extendedSamplingParams controls whether non-standard OpenAI sampling
 	// parameters (top_k, repetition_penalty) are sent. Only the CSGHub cloud
 	// gateway accepts them; strict third-party OpenAI providers reject
@@ -43,6 +44,10 @@ func NewOpenAIEngine(baseURL, modelName, token string) Engine {
 }
 
 func NewOpenAICompatibleEngine(baseURL, modelName, token string) Engine {
+	return NewOpenAICompatibleEngineWithHeaders(baseURL, modelName, token, nil)
+}
+
+func NewOpenAICompatibleEngineWithHeaders(baseURL, modelName, token string, headers []ForwardHeader) Engine {
 	baseURL = strings.TrimRight(baseURL, "/")
 	return &openAIEngine{
 		baseURL:            baseURL,
@@ -51,6 +56,7 @@ func NewOpenAICompatibleEngine(baseURL, modelName, token string) Engine {
 		modelName:          modelName,
 		token:              strings.TrimSpace(token),
 		disableThinking:    false,
+		forwardHeaders:     append([]ForwardHeader(nil), headers...),
 		client:             &http.Client{Timeout: 0},
 	}
 }
@@ -109,7 +115,7 @@ func (e *openAIEngine) ChatCompletion(ctx context.Context, reqBody map[string]in
 	if e.token != "" {
 		req.Header.Set("Authorization", "Bearer "+e.token)
 	}
-	e.applyOpenAIForwardHeaders(ctx, req)
+	e.applyOpenAIForwardHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -141,7 +147,7 @@ func (e *openAIEngine) Embeddings(ctx context.Context, reqBody map[string]interf
 	if e.token != "" {
 		req.Header.Set("Authorization", "Bearer "+e.token)
 	}
-	e.applyOpenAIForwardHeaders(ctx, req)
+	e.applyOpenAIForwardHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -212,7 +218,7 @@ func (e *openAIEngine) Chat(ctx context.Context, messages []Message, opts Option
 	if e.token != "" {
 		req.Header.Set("Authorization", "Bearer "+e.token)
 	}
-	e.applyOpenAIForwardHeaders(ctx, req)
+	e.applyOpenAIForwardHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -346,50 +352,52 @@ func (e *openAIEngine) ModelName() string {
 	return e.modelName
 }
 
-type openAIForwardHeaders struct {
-	host   string
-	hwID   string
-	appKey string
+type ForwardHeader struct {
+	Name  string
+	Value string
 }
 
-type openAIForwardHeadersContextKey struct{}
-
-// WithOpenAIForwardHeaders carries optional ROMA headers to the selected
-// OpenAI-compatible upstream. Host is only carried when at least one ROMA
-// credential is present, because every HTTP request has a default Host and
-// forwarding the local server's Host would break standard OpenAI providers.
-func WithOpenAIForwardHeaders(ctx context.Context, host, hwID, appKey string) context.Context {
-	hwID = strings.TrimSpace(hwID)
-	appKey = strings.TrimSpace(appKey)
-	if hwID == "" && appKey == "" {
-		return ctx
+func (e *openAIEngine) applyOpenAIForwardHeaders(req *http.Request) {
+	if req == nil {
+		return
 	}
-	return context.WithValue(ctx, openAIForwardHeadersContextKey{}, openAIForwardHeaders{
-		host:   strings.TrimSpace(host),
-		hwID:   hwID,
-		appKey: appKey,
-	})
+	ApplyOpenAIForwardHeaders(req, e.forwardHeaders)
 }
 
-func (e *openAIEngine) applyOpenAIForwardHeaders(ctx context.Context, req *http.Request) {
-	if ctx == nil || req == nil {
+// ApplyOpenAIForwardHeaders adds configured compatibility headers to an
+// upstream request. Host is handled through Request.Host because net/http
+// does not send Header["Host"] as the authority.
+func ApplyOpenAIForwardHeaders(req *http.Request, headers []ForwardHeader) {
+	if req == nil {
 		return
 	}
-	headers, ok := ctx.Value(openAIForwardHeadersContextKey{}).(openAIForwardHeaders)
-	if !ok {
-		return
+	for _, header := range headers {
+		name := strings.TrimSpace(header.Name)
+		value := strings.TrimSpace(header.Value)
+		if name == "" || value == "" {
+			continue
+		}
+		if strings.EqualFold(name, "Host") {
+			// net/http treats Host specially; setting Header["Host"] does not
+			// change the authority sent on the wire.
+			req.Host = value
+			continue
+		}
+		addHeaderPreservingName(req.Header, name, value)
 	}
-	if headers.host != "" {
-		// net/http treats Host specially; setting Header["Host"] does not
-		// change the authority sent on the wire.
-		req.Host = headers.host
+}
+
+func addHeaderPreservingName(headers http.Header, name, value string) {
+	var existingValues []string
+	for existingName := range headers {
+		if strings.EqualFold(existingName, name) {
+			existingValues = append(existingValues, headers[existingName]...)
+			if existingName != name {
+				delete(headers, existingName)
+			}
+		}
 	}
-	if headers.hwID != "" {
-		req.Header.Set("X-HW-ID", headers.hwID)
-	}
-	if headers.appKey != "" {
-		req.Header.Set("X-HW-AppKey", headers.appKey)
-	}
+	headers[name] = append(existingValues, value)
 }
 
 func decodeOpenAIHTTPError(resp *http.Response) error {

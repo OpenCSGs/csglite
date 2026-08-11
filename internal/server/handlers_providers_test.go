@@ -42,7 +42,8 @@ func TestProviderListReturnsAPIKeyForLocalConfig(t *testing.T) {
 		"name": "OpenAI",
 		"base_url": "`+apiServer.URL+`/v1",
 		"api_key": "secret",
-		"provider": "openai"
+		"provider": "openai",
+		"headers": [{"name":"X-HW-AppKey","value":"SecretValue"}]
 	}`))
 	w := httptest.NewRecorder()
 	s.handleProviderCreate(w, createReq)
@@ -68,6 +69,11 @@ func TestProviderListReturnsAPIKeyForLocalConfig(t *testing.T) {
 	}
 	if got := listResp.Providers[0].APIKey; got != "secret" {
 		t.Fatalf("api_key = %q, want configured key returned in list", got)
+	}
+	if len(listResp.Providers[0].Headers) != 1 ||
+		listResp.Providers[0].Headers[0].Name != "X-HW-AppKey" ||
+		listResp.Providers[0].Headers[0].Value != "SecretValue" {
+		t.Fatalf("headers = %#v, want configured header with original casing", listResp.Providers[0].Headers)
 	}
 }
 
@@ -171,12 +177,13 @@ func TestProviderCreateRejectsDuplicateName(t *testing.T) {
 }
 
 func TestListOpenAICompatibleProviderModels(t *testing.T) {
-	var authHeader string
+	var authHeader, customHeader string
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		authHeader = r.Header.Get("Authorization")
+		customHeader = r.Header.Get("X-HW-AppKey")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]string{{"id": "gpt-4o-mini"}},
@@ -189,12 +196,16 @@ func TestListOpenAICompatibleProviderModels(t *testing.T) {
 		Name:    "OpenAI",
 		BaseURL: apiServer.URL + "/v1",
 		APIKey:  "secret",
+		Headers: []config.ProviderHeader{{Name: "X-HW-AppKey", Value: "SecretValue"}},
 	})
 	if err != nil {
 		t.Fatalf("list models returned error: %v", err)
 	}
 	if authHeader != "Bearer secret" {
 		t.Fatalf("Authorization header = %q, want bearer token", authHeader)
+	}
+	if customHeader != "SecretValue" {
+		t.Fatalf("custom header = %q, want configured value", customHeader)
 	}
 	if len(models) != 1 || models[0].Model != "gpt-4o-mini" || models[0].Source != "provider:provider1" {
 		t.Fatalf("models = %#v", models)

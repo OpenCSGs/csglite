@@ -29,7 +29,7 @@ import {
   validateProvider,
   updateLocalAPIKeySettings,
 } from "../api/client";
-import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
+import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
 
 type GatewayTab = "apiKeys" | "providers" | "pools" | "usage";
 type UsagePeriod = "week" | "month" | "year";
@@ -81,6 +81,7 @@ const editingProvider = signal<ThirdPartyProvider | null>(null);
 const providerFormName = signal("");
 const providerFormBaseURL = signal("");
 const providerFormAPIKey = signal("");
+const providerFormHeaders = signal<ProviderHeader[]>([]);
 const providerFormType = signal("openai");
 const providerFormEnabled = signal(true);
 const providerFormError = signal("");
@@ -333,6 +334,7 @@ function openProviderDialog(provider?: ThirdPartyProvider) {
   providerFormName.value = provider?.name || "";
   providerFormBaseURL.value = provider?.base_url || "";
   providerFormAPIKey.value = "";
+  providerFormHeaders.value = (provider?.headers || []).map((header) => ({ ...header }));
   providerFormType.value = provider?.provider || "openai";
   providerFormEnabled.value = provider?.enabled ?? true;
   providerFormError.value = "";
@@ -362,6 +364,7 @@ function closeProviderDialog() {
   providerModelDisplayNames.value = {};
   providerModelsError.value = "";
   providerFormError.value = "";
+  providerFormHeaders.value = [];
 }
 
 function openProviderModelEditDialog(provider: ManagedProvider, model: ModelInfo) {
@@ -478,6 +481,9 @@ async function saveProviderForm() {
   const apiKey = providerFormAPIKey.value.trim();
   const providerType = providerFormType.value.trim() || "openai";
   const enabled = providerFormEnabled.value;
+  const headers = providerFormHeaders.value
+    .map((header) => ({ name: header.name.trim(), value: header.value.trim() }))
+    .filter((header) => header.name && header.value);
 
   if (!name || !baseURL) {
     providerFormError.value = t("settings.providerNameURLRequired");
@@ -498,6 +504,7 @@ async function saveProviderForm() {
       api_key: apiKey || undefined,
       provider: providerType,
       enabled,
+      headers,
     });
     let savedProvider: ThirdPartyProvider;
     if (editingProvider.value) {
@@ -507,6 +514,7 @@ async function saveProviderForm() {
         api_key: apiKey || undefined,
         provider: providerType,
         enabled,
+        headers,
       });
     } else {
       savedProvider = await createProvider({
@@ -515,6 +523,7 @@ async function saveProviderForm() {
         api_key: apiKey,
         provider: providerType,
         enabled,
+        headers,
       });
     }
     await fetchProviderOptions();
@@ -896,6 +905,7 @@ export function AIGateway() {
         name={providerFormName.value}
         baseURL={providerFormBaseURL.value}
         apiKey={providerFormAPIKey.value}
+        headers={providerFormHeaders.value}
         providerType={providerFormType.value}
         enabled={providerFormEnabled.value}
         error={providerFormError.value}
@@ -917,6 +927,7 @@ export function AIGateway() {
         onChangeName={(value) => (providerFormName.value = value)}
         onChangeBaseURL={(value) => (providerFormBaseURL.value = value)}
         onChangeAPIKey={(value) => (providerFormAPIKey.value = value)}
+        onChangeHeaders={(headers) => (providerFormHeaders.value = headers)}
         onChangeProviderType={(value) => {
           providerFormType.value = value;
           const option = providerTypes.find((item) => item.value === value);
@@ -1799,6 +1810,7 @@ function ProviderDialog({
   name,
   baseURL,
   apiKey,
+  headers,
   providerType,
   enabled,
   error,
@@ -1820,6 +1832,7 @@ function ProviderDialog({
   onChangeName,
   onChangeBaseURL,
   onChangeAPIKey,
+  onChangeHeaders,
   onChangeProviderType,
   onChangeEnabled,
 }: {
@@ -1829,6 +1842,7 @@ function ProviderDialog({
   name: string;
   baseURL: string;
   apiKey: string;
+  headers: ProviderHeader[];
   providerType: string;
   enabled: boolean;
   error: string;
@@ -1850,6 +1864,7 @@ function ProviderDialog({
   onChangeName: (value: string) => void;
   onChangeBaseURL: (value: string) => void;
   onChangeAPIKey: (value: string) => void;
+  onChangeHeaders: (headers: ProviderHeader[]) => void;
   onChangeProviderType: (value: string) => void;
   onChangeEnabled: (value: boolean) => void;
 }) {
@@ -1908,6 +1923,55 @@ function ProviderDialog({
                 onInput={(e) => onChangeAPIKey((e.target as HTMLInputElement).value)}
                 placeholder={editing ? t("settings.providerAPIKeyUnchanged") : "sk-..."}
               />
+            </div>
+            <div>
+              <div class="mb-1 flex items-center justify-between">
+                <label class="block text-sm font-medium text-gray-700">{t("settings.providerHeaders")}</label>
+                <button
+                  type="button"
+                  class="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                  onClick={() => onChangeHeaders([...headers, { name: "", value: "" }])}
+                >
+                  {t("settings.providerHeaderAdd")}
+                </button>
+              </div>
+              <p class="mb-2 text-xs text-gray-500">{t("settings.providerHeadersHint")}</p>
+              <div class="space-y-2">
+                {headers.map((header, index) => (
+                  <div class="flex items-center gap-2" key={`${index}-${header.name}`}>
+                    <input
+                      class="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      value={header.name}
+                      placeholder={t("settings.providerHeaderName")}
+                      onInput={(e) => {
+                        const next = [...headers];
+                        next[index] = { ...next[index], name: (e.target as HTMLInputElement).value };
+                        onChangeHeaders(next);
+                      }}
+                    />
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      class="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      value={header.value}
+                      placeholder={t("settings.providerHeaderValue")}
+                      onInput={(e) => {
+                        const next = [...headers];
+                        next[index] = { ...next[index], value: (e.target as HTMLInputElement).value };
+                        onChangeHeaders(next);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      class="rounded-md px-2 py-1 text-sm text-gray-400 hover:bg-gray-100 hover:text-red-600"
+                      aria-label={t("settings.providerHeaderRemove")}
+                      onClick={() => onChangeHeaders(headers.filter((_, itemIndex) => itemIndex !== index))}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
             <div class="flex items-center gap-3">
               <label class="relative inline-flex cursor-pointer items-center">
