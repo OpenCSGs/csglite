@@ -3937,6 +3937,17 @@
         "summary": "OpenAI-compatible chat completions",
         "description": "Compatibility layer for OpenAI Chat Completions. When `stream` is true the server streams SSE chunks and ends with `data: [DONE]`. If `stream` is omitted, deployments can opt into streaming by starting the server with `--openai-stream-default` or setting `CSGHUB_LITE_OPENAI_STREAM_DEFAULT=true`.",
         "operationId": "openAIChatCompletions",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4099,6 +4110,17 @@
         "summary": "OpenAI-compatible embeddings",
         "description": "Compatibility layer for OpenAI Embeddings. Local models are served through llama-server in embedding mode.",
         "operationId": "openAIEmbeddings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4252,6 +4274,17 @@
         "summary": "OpenAI-compatible chat completions",
         "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for OpenAI Chat Completions. When `stream` is true the server streams SSE chunks and ends with `data: [DONE]`. If `stream` is omitted, deployments can opt into streaming by starting the server with `--openai-stream-default` or setting `CSGHUB_LITE_OPENAI_STREAM_DEFAULT=true`.",
         "operationId": "providerScopedOpenAIChatCompletions",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4349,6 +4382,17 @@
         "summary": "OpenAI-compatible Responses API",
         "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Minimal Responses API compatibility for Codex and OpenAI SDK clients. When `stream` is true the route emits Responses API-style SSE events and ends with `event: done` plus `[DONE]`.",
         "operationId": "providerScopedOpenAIResponses",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4541,6 +4585,17 @@
         "summary": "OpenAI-compatible embeddings",
         "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for OpenAI Embeddings. Local models are served through llama-server in embedding mode.",
         "operationId": "providerScopedOpenAIEmbeddings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4876,6 +4931,17 @@
         "summary": "OpenAI-compatible Responses API",
         "description": "Minimal Responses API compatibility for Codex and OpenAI SDK clients. When `stream` is true the route emits Responses API-style SSE events and ends with `event: done` plus `[DONE]`.",
         "operationId": "openAIResponses",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -5179,6 +5245,36 @@
     }
   },
   "components": {
+    "parameters": {
+      "ROMAHost": {
+        "name": "Host",
+        "in": "header",
+        "required": false,
+        "description": "ROMA API group domain. When ROMA credentials are also present and the request uses a remote model, this authority is forwarded to the selected OpenAI-compatible upstream.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "ROMAHWID": {
+        "name": "X-HW-ID",
+        "in": "header",
+        "required": false,
+        "description": "ROMA integration application Key. Forwarded to the selected OpenAI-compatible upstream when present.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "ROMAHWAppKey": {
+        "name": "X-HW-AppKey",
+        "in": "header",
+        "required": false,
+        "description": "ROMA integration application Secret. Forwarded to the selected OpenAI-compatible upstream when present.",
+        "schema": {
+          "type": "string",
+          "format": "password"
+        }
+      }
+    },
     "responses": {
       "BadRequest": {
         "description": "The request body, query parameters, or path parameters were invalid.",

@@ -138,6 +138,7 @@ func (s *Server) handleEmbeddingChat(w http.ResponseWriter, r *http.Request, req
 
 // POST /v1/embeddings -- OpenAI-compatible embeddings
 func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) {
+	r = withOpenAIForwardHeaders(r)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid request body")
