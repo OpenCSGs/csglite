@@ -5,6 +5,7 @@ import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
 
 export function ApiInfoDialog({
   model,
+  baseUrl,
   pipelineTag,
   isVision,
   isEmbedding,
@@ -12,19 +13,21 @@ export function ApiInfoDialog({
   onClose,
 }: {
   model: string;
+  baseUrl?: string;
   pipelineTag?: string;
   isVision?: boolean;
   isEmbedding?: boolean;
   isASR?: boolean;
   onClose: () => void;
 }) {
-  const baseUrl = useRuntimeAPIOrigin();
+  const runtimeBaseUrl = useRuntimeAPIOrigin();
+  const resolvedBaseUrl = (baseUrl || runtimeBaseUrl).replace(/\/+$/, "");
   const mode = isASR
     ? "asr"
     : isEmbedding
       ? "embedding"
       : apiExampleModeFromPipelineTag(pipelineTag, isVision);
-  const examples = buildApiExamples(baseUrl, model, mode);
+  const examples = buildApiExamples(resolvedBaseUrl, model, mode);
   const isTextToImage = mode === "text-to-image";
   const isImageToImage = mode === "image-to-image";
 
@@ -39,11 +42,11 @@ export function ApiInfoDialog({
             <h3 class="text-lg font-bold text-gray-900">{t("dash.apiTitle")}</h3>
             <p class="text-sm text-gray-500 mt-0.5">
               {t("dash.apiModel")}: <span class="font-mono text-indigo-600">{model}</span>
-              {isVision && <span class="ml-2 px-1.5 py-0.5 text-xs bg-purple-50 text-purple-700 rounded">Vision</span>}
-              {isEmbedding && <span class="ml-2 px-1.5 py-0.5 text-xs bg-emerald-50 text-emerald-700 rounded">Embedding</span>}
-              {isASR && <span class="ml-2 px-1.5 py-0.5 text-xs bg-cyan-50 text-cyan-700 rounded">ASR</span>}
-              {isTextToImage && <span class="ml-2 px-1.5 py-0.5 text-xs bg-fuchsia-50 text-fuchsia-700 rounded">Text-to-Image</span>}
-              {isImageToImage && <span class="ml-2 px-1.5 py-0.5 text-xs bg-orange-50 text-orange-700 rounded">Image-to-Image</span>}
+              {isVision && <span class="ml-2 px-1.5 py-0.5 text-xs bg-purple-50 text-purple-700 rounded">{t("dash.apiVision")}</span>}
+              {isEmbedding && <span class="ml-2 px-1.5 py-0.5 text-xs bg-emerald-50 text-emerald-700 rounded">{t("dash.apiEmbedding")}</span>}
+              {isASR && <span class="ml-2 px-1.5 py-0.5 text-xs bg-cyan-50 text-cyan-700 rounded">{t("dash.apiASR")}</span>}
+              {isTextToImage && <span class="ml-2 px-1.5 py-0.5 text-xs bg-fuchsia-50 text-fuchsia-700 rounded">{t("dash.apiTextToImage")}</span>}
+              {isImageToImage && <span class="ml-2 px-1.5 py-0.5 text-xs bg-orange-50 text-orange-700 rounded">{t("dash.apiImageToImage")}</span>}
             </p>
           </div>
         </div>

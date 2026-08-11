@@ -342,12 +342,56 @@ func TestProviderPoolFallsBackOnInsufficientBalance(t *testing.T) {
 	}
 }
 
+func TestProviderPoolFallsBackOnUnavailableCloudAuthentication(t *testing.T) {
+	now := time.Now()
+	fallbackCalls := 0
+	engine := newPoolRuntimeTestEngine(&now,
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "cloud", Source: "cloud", Priority: 0},
+			new: func() (inference.Engine, error) {
+				return nil, inference.NewHTTPStatusError(http.StatusUnauthorized, "Cloud login required")
+			},
+		},
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "local", Source: "local", Priority: 1},
+			new: func() (inference.Engine, error) {
+				fallbackCalls++
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					return poolRuntimeResponse(`{}`), nil
+				}}, nil
+			},
+		},
+	)
+
+	response, err := engine.ChatCompletion(t.Context(), map[string]interface{}{"prompt": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if fallbackCalls != 1 {
+		t.Fatalf("fallback calls = %d, want 1", fallbackCalls)
+	}
+	if got := response.Header.Get(providerPoolMemberSourceHeader); got != "local" {
+		t.Fatalf("member source = %q, want local", got)
+	}
+}
+
 func TestProviderPoolRetryableIncludesPaymentRequired(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
 		want bool
 	}{
+		{
+			name: "member authentication unavailable",
+			err:  inference.NewHTTPStatusError(http.StatusUnauthorized, "Cloud login required"),
+			want: true,
+		},
+		{
+			name: "member access forbidden",
+			err:  inference.NewHTTPStatusError(http.StatusForbidden, "model access forbidden"),
+			want: true,
+		},
 		{
 			name: "payment required without recognizable message",
 			err:  inference.NewHTTPStatusError(http.StatusPaymentRequired, "billing unavailable"),

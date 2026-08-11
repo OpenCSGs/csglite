@@ -49,6 +49,21 @@ func (s *Server) withProviderRouteSource(next http.HandlerFunc) http.HandlerFunc
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
+		if poolID := poolIDFromSource(source); poolID != "" {
+			pool, ok := providerPoolByID(poolID)
+			if !ok {
+				writeError(w, http.StatusNotFound, "provider pool not found")
+				return
+			}
+			if !pool.Enabled {
+				writeError(w, http.StatusForbidden, "provider pool is disabled")
+				return
+			}
+			if providerPoolRouteUnsupported(r.URL.Path) {
+				writeError(w, http.StatusNotImplemented, "provider pools do not support this inference endpoint")
+				return
+			}
+		}
 		if providerID := providerIDFromSource(source); providerID != "" {
 			provider, ok := getThirdPartyProvider(providerID)
 			if !ok {
@@ -65,6 +80,22 @@ func (s *Server) withProviderRouteSource(next http.HandlerFunc) http.HandlerFunc
 	}
 }
 
+func providerPoolRouteUnsupported(path string) bool {
+	return strings.HasSuffix(path, "/v1/images/generations") ||
+		strings.HasSuffix(path, "/v1/images/edits") ||
+		strings.HasSuffix(path, "/v1/audio/transcriptions")
+}
+
+func providerPoolByID(id string) (config.ProviderPool, bool) {
+	id = strings.TrimSpace(id)
+	for _, pool := range config.GetProviderPools() {
+		if pool.ID == id {
+			return pool, true
+		}
+	}
+	return config.ProviderPool{}, false
+}
+
 func providerRouteSource(providerID string) (string, error) {
 	providerID = strings.TrimSpace(providerID)
 	switch strings.ToLower(providerID) {
@@ -75,10 +106,13 @@ func providerRouteSource(providerID string) (string, error) {
 	case "":
 		return "", fmt.Errorf("provider ID is required")
 	default:
-		if _, ok := getThirdPartyProvider(providerID); !ok {
-			return "", fmt.Errorf("provider not found")
+		if _, ok := getThirdPartyProvider(providerID); ok {
+			return providerSource(providerID), nil
 		}
-		return providerSource(providerID), nil
+		if _, ok := providerPoolByID(providerID); ok {
+			return poolSource(providerID), nil
+		}
+		return "", fmt.Errorf("provider or provider pool not found")
 	}
 }
 
@@ -88,6 +122,10 @@ func providerRouteSourceFromContext(ctx context.Context) string {
 	}
 	source, _ := ctx.Value(providerRouteSourceContextKey{}).(string)
 	return strings.TrimSpace(source)
+}
+
+func withoutProviderRouteSource(ctx context.Context) context.Context {
+	return context.WithValue(ctx, providerRouteSourceContextKey{}, "")
 }
 
 func effectiveRequestSource(ctx context.Context, requested string) (string, error) {

@@ -4182,7 +4182,7 @@
           "name": "providerID",
           "in": "path",
           "required": true,
-          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "description": "Stable routing ID. Use `local`, `csghub`, a configured third-party Provider ID, or a Provider pool ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`. Provider pools currently support text and embedding inference; unsupported image and audio operations return HTTP 501.",
           "schema": {
             "type": "string"
           }
@@ -4193,7 +4193,7 @@
           "Compatibility"
         ],
         "summary": "List compatibility models",
-        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Returns an OpenAI model list by default. When Anthropic-style headers such as `anthropic-version` are present, the same route returns an Anthropic-compatible model list instead.",
+        "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. Returns an OpenAI model list by default. When Anthropic-style headers such as `anthropic-version` are present, the same route returns an Anthropic-compatible model list instead.",
         "operationId": "providerScopedListCompatibilityModels",
         "parameters": [
           {
@@ -4273,7 +4273,7 @@
           "name": "providerID",
           "in": "path",
           "required": true,
-          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "description": "Stable routing ID. Use `local`, `csghub`, a configured third-party Provider ID, or a Provider pool ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`. Provider pools currently support text and embedding inference; unsupported image and audio operations return HTTP 501.",
           "schema": {
             "type": "string"
           }
@@ -4284,7 +4284,7 @@
           "Compatibility"
         ],
         "summary": "OpenAI-compatible chat completions",
-        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for OpenAI Chat Completions. When `stream` is true the server streams SSE chunks and ends with `data: [DONE]`. If `stream` is omitted, deployments can opt into streaming by starting the server with `--openai-stream-default` or setting `CSGHUB_LITE_OPENAI_STREAM_DEFAULT=true`.",
+        "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for OpenAI Chat Completions. When `stream` is true the server streams SSE chunks and ends with `data: [DONE]`. If `stream` is omitted, deployments can opt into streaming by starting the server with `--openai-stream-default` or setting `CSGHUB_LITE_OPENAI_STREAM_DEFAULT=true`.",
         "operationId": "providerScopedOpenAIChatCompletions",
         "parameters": [
           {
@@ -4355,7 +4355,7 @@
           "name": "providerID",
           "in": "path",
           "required": true,
-          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "description": "Stable routing ID. Use `local`, `csghub`, a configured third-party Provider ID, or a Provider pool ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`. Provider pools currently support text and embedding inference; unsupported image and audio operations return HTTP 501.",
           "schema": {
             "type": "string"
           }
@@ -4366,7 +4366,7 @@
           "Compatibility"
         ],
         "summary": "Responses API probe guard",
-        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Returns a clear compatibility error for websocket probes and other unsupported GET requests to the Responses API endpoint.",
+        "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. Returns a clear compatibility error for websocket probes and other unsupported GET requests to the Responses API endpoint.",
         "operationId": "providerScopedGetResponsesUnsupported",
         "responses": {
           "426": {
@@ -4392,7 +4392,7 @@
           "Compatibility"
         ],
         "summary": "OpenAI-compatible Responses API",
-        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Minimal Responses API compatibility for Codex and OpenAI SDK clients. When `stream` is true the route emits Responses API-style SSE events and ends with `event: done` plus `[DONE]`.",
+        "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. Minimal Responses API compatibility for Codex and OpenAI SDK clients. When `stream` is true the route emits Responses API-style SSE events and ends with `event: done` plus `[DONE]`.",
         "operationId": "providerScopedOpenAIResponses",
         "parameters": [
           {
@@ -4458,7 +4458,7 @@
           "name": "providerID",
           "in": "path",
           "required": true,
-          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "description": "Stable routing ID. Use `local`, `csghub`, a configured third-party Provider ID, or a Provider pool ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`. Provider pools currently support text and embedding inference; unsupported image and audio operations return HTTP 501.",
           "schema": {
             "type": "string"
           }
@@ -4469,7 +4469,7 @@
           "Compatibility"
         ],
         "summary": "Anthropic-compatible messages API",
-        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Anthropic Messages compatibility endpoint. When `stream` is true the route emits Anthropic event-stream events such as `message_start`, `content_block_delta`, and `message_stop`.",
+        "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. Anthropic Messages compatibility endpoint. When `stream` is true the route emits Anthropic event-stream events such as `message_start`, `content_block_delta`, and `message_stop`.",
         "operationId": "providerScopedAnthropicMessages",
         "requestBody": {
           "required": true,
@@ -4530,7 +4530,7 @@
           "name": "providerID",
           "in": "path",
           "required": true,
-          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "description": "Stable routing ID. Use `local`, `csghub`, a configured third-party Provider ID, or a Provider pool ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`. Provider pools currently support text and embedding inference; unsupported image and audio operations return HTTP 501.",
           "schema": {
             "type": "string"
           }
@@ -4575,7 +4575,7 @@
             "$ref": "#/components/responses/AnthropicBadRequest"
           }
         },
-        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. "
+        "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. "
       }
     },
     "/providers/{providerID}/v1/embeddings": {
@@ -4584,7 +4584,7 @@
           "name": "providerID",
           "in": "path",
           "required": true,
-          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "description": "Stable routing ID. Use `local`, `csghub`, a configured third-party Provider ID, or a Provider pool ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`. Provider pools currently support text and embedding inference; unsupported image and audio operations return HTTP 501.",
           "schema": {
             "type": "string"
           }
@@ -4595,7 +4595,7 @@
           "Compatibility"
         ],
         "summary": "OpenAI-compatible embeddings",
-        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for OpenAI Embeddings. Local models are served through llama-server in embedding mode.",
+        "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for OpenAI Embeddings. Local models are served through llama-server in embedding mode.",
         "operationId": "providerScopedOpenAIEmbeddings",
         "parameters": [
           {
@@ -4657,7 +4657,7 @@
           "name": "providerID",
           "in": "path",
           "required": true,
-          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "description": "Stable routing ID. Use `local`, `csghub`, a configured third-party Provider ID, or a Provider pool ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`. Provider pools currently support text and embedding inference; unsupported image and audio operations return HTTP 501.",
           "schema": {
             "type": "string"
           }
@@ -4668,7 +4668,7 @@
           "Compatibility"
         ],
         "summary": "OpenAI-compatible image generation",
-        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for local text-to-image generation. The Diffusers runtime is checked lazily when this endpoint is called.",
+        "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. Compatibility layer for local text-to-image generation. The Diffusers runtime is checked lazily when this endpoint is called.",
         "operationId": "providerScopedOpenAIImagesGenerations",
         "requestBody": {
           "required": true,
@@ -4722,7 +4722,7 @@
           "name": "providerID",
           "in": "path",
           "required": true,
-          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "description": "Stable routing ID. Use `local`, `csghub`, a configured third-party Provider ID, or a Provider pool ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`. Provider pools currently support text and embedding inference; unsupported image and audio operations return HTTP 501.",
           "schema": {
             "type": "string"
           }
@@ -4733,7 +4733,7 @@
           "Compatibility"
         ],
         "summary": "OpenAI-compatible image edit",
-        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. OpenAI-compatible image editing endpoint. Accepts multipart/form-data with one or more input images and an edit prompt. Local Diffusers models such as Qwen-Image-Edit are supported through the shared image runtime.",
+        "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. OpenAI-compatible image editing endpoint. Accepts multipart/form-data with one or more input images and an edit prompt. Local Diffusers models such as Qwen-Image-Edit are supported through the shared image runtime.",
         "operationId": "providerScopedOpenAIImagesEdits",
         "requestBody": {
           "required": true,
@@ -4781,7 +4781,7 @@
           "name": "providerID",
           "in": "path",
           "required": true,
-          "description": "Stable routing ID. Use `local`, `csghub`, or a configured third-party Provider ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`.",
+          "description": "Stable routing ID. Use `local`, `csghub`, a configured third-party Provider ID, or a Provider pool ID. The legacy `cloud` ID remains accepted as a compatibility alias for `csghub`. Provider pools currently support text and embedding inference; unsupported image and audio operations return HTTP 501.",
           "schema": {
             "type": "string"
           }
@@ -4792,7 +4792,7 @@
           "OpenAI Compatibility"
         ],
         "summary": "Create audio transcription",
-        "description": "Provider-scoped form of this operation. The path Provider ID is authoritative; a conflicting request-body `source` returns HTTP 400. OpenAI-compatible audio transcription endpoint served by the local ASR runtime.",
+        "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. OpenAI-compatible audio transcription endpoint served by the local ASR runtime.",
         "operationId": "providerScopedCreateAudioTranscription",
         "requestBody": {
           "required": true,

@@ -4,6 +4,7 @@ import { t, locale } from "../i18n";
 import { formatNumber, formatDateTime, formatChartDate, chartXAxisLabels } from "../utils/format";
 import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
 import { ProviderModelModalityBadges, providerModelLabel, defaultProviderModelDisplayName } from "../components/ProviderModelBadges";
+import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import {
   clearCloudAPIKey,
   createProvider,
@@ -34,6 +35,10 @@ import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, Loca
 type GatewayTab = "apiKeys" | "providers" | "pools" | "usage";
 type UsagePeriod = "week" | "month" | "year";
 type ManagedProvider = ThirdPartyProvider & { builtIn?: boolean; source?: "cloud" | "provider" };
+type GatewayAPIInfoTarget = {
+  targetID: string;
+  model: ModelInfo;
+};
 
 const activeGatewayTab = signal<GatewayTab>("apiKeys");
 const localAPIKeys = signal<LocalAPIKeysResponse | null>(null);
@@ -68,6 +73,7 @@ const providerPoolSourceFilter = signal("local");
 const providerPoolModelSearch = signal("");
 const providerPoolMemberConfigIndex = signal<number | null>(null);
 const providerPoolMemberConfigDraft = signal<ProviderPoolMember | null>(null);
+const gatewayAPIInfoTarget = signal<GatewayAPIInfoTarget | null>(null);
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudAPIKeyInput = signal("");
 const cloudAPIKeyError = signal("");
@@ -232,6 +238,56 @@ function cloudProviderFromSettings(settings: Awaited<ReturnType<typeof getSettin
 function providerCards(): ManagedProvider[] {
 	const cloud = cloudManagedProvider.value;
 	return cloud ? [cloud, ...providers.value] : [...providers.value];
+}
+
+function openGatewayAPIInfo(targetID: string, model: ModelInfo) {
+  gatewayAPIInfoTarget.value = {
+    targetID,
+    model,
+  };
+}
+
+function providerPoolModelInfo(pool: ProviderPool): ModelInfo {
+  const primaryMember = sortProviderPoolMembers(pool.members)[0];
+  const primaryModel = primaryMember && providerPoolModels.value.find((model) =>
+    model.source === primaryMember.source && model.model === primaryMember.model
+  );
+  if (primaryModel) {
+    return {
+      ...primaryModel,
+      name: pool.model,
+      model: pool.model,
+      source: `pool:${pool.id}`,
+      provider: pool.name,
+    };
+  }
+  return {
+    name: pool.model,
+    model: pool.model,
+    size: 0,
+    format: "api",
+    modified_at: "",
+    source: `pool:${pool.id}`,
+    category: "chat",
+    pipeline_tag: "text-generation",
+  };
+}
+
+function isGatewayEmbeddingModel(model: ModelInfo): boolean {
+  const tag = (model.pipeline_tag || "").toLowerCase();
+  return (model.category || "").toLowerCase() === "embedding" ||
+    tag === "feature-extraction" || tag === "sentence-similarity" || tag === "text-embedding" || tag === "embedding";
+}
+
+function isGatewayVisionModel(model: ModelInfo): boolean {
+  return (model.pipeline_tag || "").toLowerCase() === "image-text-to-text" ||
+    Boolean(model.input_modalities?.includes("image"));
+}
+
+function isGatewayASRModel(model: ModelInfo): boolean {
+  return (model.pipeline_tag || "").toLowerCase() === "automatic-speech-recognition" ||
+    Boolean(model.input_modalities?.includes("audio")) ||
+    Boolean(model.output_modalities?.includes("transcription"));
 }
 
 async function saveCloudAPIKeyForm() {
@@ -855,6 +911,7 @@ function configuredCloudProviderName(): string {
 
 export function AIGateway() {
   void locale.value;
+  const runtimeAPIOrigin = useRuntimeAPIOrigin();
 
   useEffect(() => {
     void fetchLocalAPIKeys();
@@ -980,6 +1037,17 @@ export function AIGateway() {
         onSave={saveProviderPoolMemberConfigDialog}
         onChange={updateProviderPoolMemberConfigDraft}
       />
+      {gatewayAPIInfoTarget.value && (
+        <ApiInfoDialog
+          baseUrl={`${runtimeAPIOrigin.replace(/\/+$/, "")}/providers/${encodeURIComponent(gatewayAPIInfoTarget.value.targetID)}`}
+          model={gatewayAPIInfoTarget.value.model.model}
+          pipelineTag={gatewayAPIInfoTarget.value.model.pipeline_tag}
+          isVision={isGatewayVisionModel(gatewayAPIInfoTarget.value.model)}
+          isEmbedding={isGatewayEmbeddingModel(gatewayAPIInfoTarget.value.model)}
+          isASR={isGatewayASRModel(gatewayAPIInfoTarget.value.model)}
+          onClose={() => (gatewayAPIInfoTarget.value = null)}
+        />
+      )}
     </div>
   );
 }
@@ -1414,18 +1482,28 @@ function ProvidersSection() {
                               <p class="truncate text-xs font-medium text-indigo-700">{providerModelLabel(model)}</p>
                               <p class="truncate text-[11px] text-indigo-500">{model.model}</p>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => openProviderModelEditDialog(provider, model)}
-                              title={t("settings.providerModelEdit")}
-                              aria-label={t("settings.providerModelEdit")}
-                              class="shrink-0 rounded border border-indigo-100 bg-white/70 p-1 text-indigo-700 transition-colors hover:bg-white"
-                            >
-                              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 7.125L16.875 4.5" />
-                              </svg>
-                            </button>
+                            <div class="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => openGatewayAPIInfo(provider.id, model)}
+                                title={t("settings.providerCallMethod")}
+                                class="rounded border border-indigo-100 bg-white/70 px-2 py-1 text-[11px] text-indigo-700 transition-colors hover:bg-white"
+                              >
+                                {t("settings.providerCallMethod")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openProviderModelEditDialog(provider, model)}
+                                title={t("settings.providerModelEdit")}
+                                aria-label={t("settings.providerModelEdit")}
+                                class="rounded border border-indigo-100 bg-white/70 p-1 text-indigo-700 transition-colors hover:bg-white"
+                              >
+                                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 7.125L16.875 4.5" />
+                                </svg>
+                              </button>
+                            </div>
                           </div>
                           <div class="mt-1">
                             <ProviderModelModalityBadges model={model} showOutputs compact />
@@ -1532,6 +1610,9 @@ function ProviderPoolsSection() {
                 ))}
               </div>
               <div class="mt-4 flex justify-end gap-2">
+                <button type="button" onClick={() => openGatewayAPIInfo(pool.id, providerPoolModelInfo(pool))} class="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs text-indigo-700 transition-colors hover:bg-indigo-50">
+                  {t("settings.providerCallMethod")}
+                </button>
                 <button type="button" onClick={() => openProviderPoolDialog(pool)} class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 transition-colors hover:bg-gray-50">
                   {t("settings.providerEdit")}
                 </button>

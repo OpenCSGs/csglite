@@ -39,7 +39,8 @@ func poolIDFromSource(source string) string {
 func providerPoolForRequest(modelID, source string) (config.ProviderPool, bool) {
 	if poolID := poolIDFromSource(source); poolID != "" {
 		for _, pool := range config.GetProviderPools() {
-			if pool.ID == poolID && pool.Enabled {
+			if pool.ID == poolID && pool.Enabled &&
+				(strings.TrimSpace(modelID) == "" || pool.Model == strings.TrimSpace(modelID)) {
 				return pool, true
 			}
 		}
@@ -356,6 +357,8 @@ func providerPoolRetryable(err error) bool {
 	}
 	status := inference.HTTPStatusCode(err)
 	return status == 0 ||
+		status == http.StatusUnauthorized ||
+		status == http.StatusForbidden ||
 		status == http.StatusPaymentRequired ||
 		status == http.StatusTooManyRequests ||
 		status >= http.StatusInternalServerError
@@ -651,13 +654,14 @@ func (e *providerPoolEngine) orderedMembers() []providerPoolEngineMember {
 }
 
 func (s *Server) newProviderPoolChatEngine(ctx context.Context, pool config.ProviderPool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (inference.Engine, error) {
+	memberCtx := withoutProviderRouteSource(ctx)
 	members := make([]providerPoolEngineMember, 0, len(pool.Members))
 	for _, member := range pool.Members {
 		member := member
 		members = append(members, providerPoolEngineMember{
 			member: member,
 			new: func() (inference.Engine, error) {
-				return s.getChatEngine(ctx, member.Model, member.Source, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
+				return s.getChatEngine(memberCtx, member.Model, member.Source, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
 			},
 		})
 	}
@@ -669,13 +673,14 @@ func (s *Server) newProviderPoolChatEngine(ctx context.Context, pool config.Prov
 }
 
 func (s *Server) newProviderPoolEmbeddingEngine(ctx context.Context, pool config.ProviderPool, numCtx, nGPULayers int, dtype string) (inference.Engine, error) {
+	memberCtx := withoutProviderRouteSource(ctx)
 	members := make([]providerPoolEngineMember, 0, len(pool.Members))
 	for _, member := range pool.Members {
 		member := member
 		members = append(members, providerPoolEngineMember{
 			member: member,
 			new: func() (inference.Engine, error) {
-				return s.getEmbeddingEngine(ctx, member.Model, member.Source, numCtx, nGPULayers, dtype)
+				return s.getEmbeddingEngine(memberCtx, member.Model, member.Source, numCtx, nGPULayers, dtype)
 			},
 		})
 	}
