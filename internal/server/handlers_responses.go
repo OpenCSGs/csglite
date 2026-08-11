@@ -27,6 +27,7 @@ type openAIResponsesRequest struct {
 
 // POST /v1/responses -- minimal OpenAI Responses API compatibility for Codex/OpenAI SDK clients.
 func (s *Server) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
+	r = withOpenAIForwardHeaders(r)
 	var req openAIResponsesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid request body")

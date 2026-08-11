@@ -1246,3 +1246,60 @@ func TestHandleOpenAIResponsesCloudWithoutTokenReturnsUnauthorized(t *testing.T)
 		t.Fatalf("error message = %q, want Cloud login required", resp.Error.Message)
 	}
 }
+
+func TestHandleOpenAIChatCompletionsForwardsROMAHeadersToAIGateway(t *testing.T) {
+	type receivedHeaders struct {
+		host   string
+		hwID   string
+		appKey string
+	}
+	received := make(chan receivedHeaders, 1)
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"object":"list","data":[{"id":"DeepSeekR1","object":"model","owned_by":"opencsg"}]}`)
+		case "/v1/chat/completions":
+			received <- receivedHeaders{
+				host:   r.Host,
+				hwID:   r.Header.Get("X-HW-ID"),
+				appKey: r.Header.Get("X-HW-AppKey"),
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer apiServer.Close()
+
+	cfg := &config.Config{ModelDir: t.TempDir(), OpenCSGAPIKey: "test-token"}
+	s := New(cfg, "test")
+	s.cloud = cloud.NewService(apiServer.URL)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/chat/completions",
+		strings.NewReader(`{"model":"DeepSeekR1","messages":[{"role":"user","content":"hi"}],"stream":false}`),
+	)
+	req.Host = "roma-group.example.gov.cn"
+	req.Header.Set("X-HW-ID", "integration-key")
+	req.Header.Set("X-HW-AppKey", "integration-secret")
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	got := <-received
+	if got.host != "roma-group.example.gov.cn" {
+		t.Fatalf("Host = %q, want ROMA group domain", got.host)
+	}
+	if got.hwID != "integration-key" {
+		t.Fatalf("X-HW-ID = %q", got.hwID)
+	}
+	if got.appKey != "integration-secret" {
+		t.Fatalf("X-HW-AppKey = %q", got.appKey)
+	}
+}

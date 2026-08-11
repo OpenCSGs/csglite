@@ -109,6 +109,7 @@ func (e *openAIEngine) ChatCompletion(ctx context.Context, reqBody map[string]in
 	if e.token != "" {
 		req.Header.Set("Authorization", "Bearer "+e.token)
 	}
+	e.applyOpenAIForwardHeaders(ctx, req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -140,6 +141,7 @@ func (e *openAIEngine) Embeddings(ctx context.Context, reqBody map[string]interf
 	if e.token != "" {
 		req.Header.Set("Authorization", "Bearer "+e.token)
 	}
+	e.applyOpenAIForwardHeaders(ctx, req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -210,6 +212,7 @@ func (e *openAIEngine) Chat(ctx context.Context, messages []Message, opts Option
 	if e.token != "" {
 		req.Header.Set("Authorization", "Bearer "+e.token)
 	}
+	e.applyOpenAIForwardHeaders(ctx, req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -341,6 +344,52 @@ func (e *openAIEngine) Close() error {
 
 func (e *openAIEngine) ModelName() string {
 	return e.modelName
+}
+
+type openAIForwardHeaders struct {
+	host   string
+	hwID   string
+	appKey string
+}
+
+type openAIForwardHeadersContextKey struct{}
+
+// WithOpenAIForwardHeaders carries optional ROMA headers to the selected
+// OpenAI-compatible upstream. Host is only carried when at least one ROMA
+// credential is present, because every HTTP request has a default Host and
+// forwarding the local server's Host would break standard OpenAI providers.
+func WithOpenAIForwardHeaders(ctx context.Context, host, hwID, appKey string) context.Context {
+	hwID = strings.TrimSpace(hwID)
+	appKey = strings.TrimSpace(appKey)
+	if hwID == "" && appKey == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, openAIForwardHeadersContextKey{}, openAIForwardHeaders{
+		host:   strings.TrimSpace(host),
+		hwID:   hwID,
+		appKey: appKey,
+	})
+}
+
+func (e *openAIEngine) applyOpenAIForwardHeaders(ctx context.Context, req *http.Request) {
+	if ctx == nil || req == nil {
+		return
+	}
+	headers, ok := ctx.Value(openAIForwardHeadersContextKey{}).(openAIForwardHeaders)
+	if !ok {
+		return
+	}
+	if headers.host != "" {
+		// net/http treats Host specially; setting Header["Host"] does not
+		// change the authority sent on the wire.
+		req.Host = headers.host
+	}
+	if headers.hwID != "" {
+		req.Header.Set("X-HW-ID", headers.hwID)
+	}
+	if headers.appKey != "" {
+		req.Header.Set("X-HW-AppKey", headers.appKey)
+	}
 }
 
 func decodeOpenAIHTTPError(resp *http.Response) error {

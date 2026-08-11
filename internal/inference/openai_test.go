@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -452,4 +453,69 @@ func TestOpenAICompatibleEngineDoesNotForceDisableThinkingForQwen3(t *testing.T)
 	if _, ok := got["enable_thinking"]; ok {
 		t.Fatalf("enable_thinking = %#v, want omitted for openai-compatible providers", got["enable_thinking"])
 	}
+}
+
+func TestOpenAIEngineForwardsROMAHeadersToOpenAIUpstreams(t *testing.T) {
+	type receivedHeaders struct {
+		host   string
+		hwID   string
+		appKey string
+	}
+	received := make(chan receivedHeaders, 3)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- receivedHeaders{
+			host:   r.Host,
+			hwID:   r.Header.Get("X-HW-ID"),
+			appKey: r.Header.Get("X-HW-AppKey"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	}))
+	defer ts.Close()
+
+	call := func(t *testing.T, eng Engine, ctx context.Context) receivedHeaders {
+		t.Helper()
+		resp, err := eng.(ChatCompletionProxier).ChatCompletion(ctx, map[string]interface{}{
+			"messages": []map[string]interface{}{{"role": "user", "content": "hi"}},
+		})
+		if err != nil {
+			t.Fatalf("ChatCompletion returned error: %v", err)
+		}
+		resp.Body.Close()
+		return <-received
+	}
+
+	t.Run("CSGHub AI gateway", func(t *testing.T) {
+		ctx := WithOpenAIForwardHeaders(context.Background(), "roma.example.gov.cn", "integration-key", "integration-secret")
+		got := call(t, NewOpenAIEngine(ts.URL, "deepseek-r1", "token"), ctx)
+		if got.host != "roma.example.gov.cn" {
+			t.Fatalf("Host = %q, want ROMA group domain", got.host)
+		}
+		if got.hwID != "integration-key" || got.appKey != "integration-secret" {
+			t.Fatalf("ROMA headers = %#v", got)
+		}
+	})
+
+	t.Run("standard request", func(t *testing.T) {
+		ctx := WithOpenAIForwardHeaders(context.Background(), "localhost:11435", "", "")
+		got := call(t, NewOpenAIEngine(ts.URL, "deepseek-r1", "token"), ctx)
+		wantHost := strings.TrimPrefix(ts.URL, "http://")
+		if got.host != wantHost {
+			t.Fatalf("Host = %q, want upstream host %q", got.host, wantHost)
+		}
+		if got.hwID != "" || got.appKey != "" {
+			t.Fatalf("unexpected ROMA headers: %#v", got)
+		}
+	})
+
+	t.Run("third-party OpenAI provider", func(t *testing.T) {
+		ctx := WithOpenAIForwardHeaders(context.Background(), "roma.example.gov.cn", "integration-key", "integration-secret")
+		got := call(t, NewOpenAICompatibleEngine(ts.URL, "gpt-4o", "token"), ctx)
+		if got.host != "roma.example.gov.cn" {
+			t.Fatalf("Host = %q, want ROMA group domain", got.host)
+		}
+		if got.hwID != "integration-key" || got.appKey != "integration-secret" {
+			t.Fatalf("ROMA headers = %#v", got)
+		}
+	})
 }
