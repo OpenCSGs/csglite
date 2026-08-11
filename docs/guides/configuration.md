@@ -120,9 +120,9 @@ CSGHUB_LITE_HIDDEN_NAV_ITEMS=marketplace,datasets,ai-apps csghub-lite serve
 - `library`
 - `datasets`
 - `chat`
-- `images`
 - `ai-apps`
 - `ai-gateway`
+- `observability`
 - `settings`
 - `pricing`
 - `help`

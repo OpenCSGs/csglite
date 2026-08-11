@@ -28,7 +28,7 @@ csghub-lite serve
 | `CSGHUB_LITE_AI_GATEWAY_URL` | `https://ai.space.opencsg.com` | AI Gateway 地址。仅在配置文件未设置 `ai_gateway_url` 时作为默认值。 |
 | `CSGHUB_LITE_CLOUD_PROVIDER_NAME` | `csghub` | 云端模型 provider 名称。仅在配置文件未设置时生效。 |
 | `CSGHUB_LITE_OPENAI_STREAM_DEFAULT` | `false` | OpenAI Chat Completions 请求未传 `stream` 时是否默认使用流式响应。请求参数优先。 |
-| `CSGHUB_LITE_HIDDEN_NAV_ITEMS` | 空 | 用逗号分隔要隐藏的 Web UI 导航项。可用项：`dashboard`、`marketplace`、`library`、`datasets`、`chat`、`images`、`ai-apps`、`ai-gateway`、`settings`、`pricing`、`help`。只隐藏入口，不禁用 URL。 |
+| `CSGHUB_LITE_HIDDEN_NAV_ITEMS` | 空 | 用逗号分隔要隐藏的 Web UI 导航项。可用节点 ID 与说明见 [配置指南：隐藏左侧导航节点](configuration.md#隐藏左侧导航节点)。只隐藏入口，不禁用 URL。 |
 | `CSGHUB_LITE_LOG_STDERR` | `1` | 设置为 `0` 时停止向标准错误输出日志。 |
 | `CSGHUB_LITE_DISABLE_FILE_LOGGING` | 空 | 设置为任意非空值时禁用 `~/.csghub-lite/logs/` 文件日志。 |
 | `CSGHUB_LITE_REGION` | 自动检测 | 区域提示。常用值为 `CN` 或 `intl`，影响安装下载源、升级源、转换依赖和 Python 包镜像。 |
