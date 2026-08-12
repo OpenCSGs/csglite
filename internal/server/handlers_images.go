@@ -491,8 +491,8 @@ func thirdPartyProviderImageTarget(source, modelID string) (baseURL, apiKey, ori
 	}
 	baseURL = normalizeThirdPartyProviderBaseURL(provider)
 	apiKey = strings.TrimSpace(provider.APIKey)
-	if baseURL == "" || apiKey == "" {
-		return "", "", "", nil, inference.NewHTTPStatusError(http.StatusBadRequest, "third-party provider is missing base URL or API key")
+	if baseURL == "" {
+		return "", "", "", nil, inference.NewHTTPStatusError(http.StatusBadRequest, "third-party provider is missing base URL")
 	}
 	return baseURL, apiKey, providerOriginalModelID(provider.ID, modelID), providerForwardHeaders(provider), nil
 }
@@ -514,7 +514,9 @@ func (s *Server) generateThirdPartyProviderImage(ctx context.Context, source str
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	inference.ApplyOpenAIForwardHeaders(httpReq, headers)
 
 	resp, err := http.DefaultClient.Do(httpReq)
@@ -554,7 +556,9 @@ func (s *Server) generateThirdPartyProviderImageEdit(ctx context.Context, source
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	if apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	inference.ApplyOpenAIForwardHeaders(httpReq, headers)
 
 	resp, err := http.DefaultClient.Do(httpReq)

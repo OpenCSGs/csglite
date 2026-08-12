@@ -221,6 +221,162 @@ func TestListOpenAICompatibleProviderModels(t *testing.T) {
 	}
 }
 
+func TestListProviderModelsAllowsHeaderOnlyAuthentication(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want empty", got)
+		}
+		if got := r.Header.Get("X-HW-AppKey"); got != "app-secret" {
+			t.Fatalf("X-HW-AppKey = %q, want app-secret", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"data":[{"id":"header-auth-model"}]}`)
+	}))
+	defer apiServer.Close()
+
+	models, err := listOpenAICompatibleProviderModels(context.Background(), config.ThirdPartyProvider{
+		ID:      "provider1",
+		Name:    "Header Auth",
+		BaseURL: apiServer.URL,
+		Headers: []config.ProviderHeader{{Name: "X-HW-AppKey", Value: "app-secret"}},
+	})
+	if err != nil {
+		t.Fatalf("list models: %v", err)
+	}
+	if len(models) != 1 || models[0].Model != "header-auth-model" {
+		t.Fatalf("models = %#v", models)
+	}
+}
+
+func TestProviderXModelSkipsDiscoveryAndIsNotForwarded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviders()
+	config.ResetProviderModelAllowlist()
+	t.Cleanup(config.ResetProviders)
+	t.Cleanup(config.ResetProviderModelAllowlist)
+
+	modelRequests := 0
+	chatModel := ""
+	forwardedAuthorization := ""
+	forwardedModelHeader := ""
+	forwardedCustomHeader := ""
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			modelRequests++
+			http.Error(w, "models endpoint is unavailable", http.StatusNotFound)
+		case "/v1/chat/completions":
+			var body struct {
+				Model string `json:"model"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode chat request: %v", err)
+			}
+			chatModel = body.Model
+			forwardedAuthorization = r.Header.Get("Authorization")
+			forwardedModelHeader = r.Header.Get(providerModelHeader)
+			forwardedCustomHeader = r.Header.Get("X-HW-AppKey")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	validateReq := httptest.NewRequest(http.MethodPost, "/api/providers/validate", strings.NewReader(`{
+		"base_url": "`+apiServer.URL+`/v1",
+		"headers": [{"name":"X-Model","value":"roma-chat"}]
+	}`))
+	w := httptest.NewRecorder()
+	s.handleProviderValidate(w, validateReq)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"model_count":1`) {
+		t.Fatalf("validate status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/providers", strings.NewReader(`{
+		"name": "ROMA",
+		"base_url": "`+apiServer.URL+`/v1",
+		"provider": "openai",
+		"headers": [
+			{"name":"X-Model","value":"roma-chat"},
+			{"name":"X-HW-AppKey","value":"app-secret"}
+		]
+	}`))
+	w = httptest.NewRecorder()
+	s.handleProviderCreate(w, createReq)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", w.Code, w.Body.String())
+	}
+	if modelRequests != 0 {
+		t.Fatalf("/models requests = %d, want 0", modelRequests)
+	}
+
+	provider := config.GetProviders()[0]
+	models, err := listOpenAICompatibleProviderModels(context.Background(), provider)
+	if err != nil {
+		t.Fatalf("list configured models: %v", err)
+	}
+	if len(models) != 1 || models[0].Model != "roma-chat" {
+		t.Fatalf("models = %#v, want configured roma-chat model", models)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider="+provider.ID, nil)
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageList(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"model":"roma-chat"`) {
+		t.Fatalf("manage list status = %d body=%s", w.Code, w.Body.String())
+	}
+	if modelRequests != 0 {
+		t.Fatalf("/models requests after manage list = %d, want 0", modelRequests)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/tags/manage?provider="+provider.ID, strings.NewReader(`{"models":["roma-chat"]}`))
+	w = httptest.NewRecorder()
+	s.handleProviderTagsManageReplace(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("manage replace status = %d body=%s", w.Code, w.Body.String())
+	}
+	selected := s.listSelectedThirdPartyProviderModels(context.Background())
+	if len(selected) != 1 || selected[0].Model != "roma-chat" {
+		t.Fatalf("selected models = %#v, want roma-chat", selected)
+	}
+
+	eng, err := newThirdPartyProviderEngine(providerSource(provider.ID), "roma-chat")
+	if err != nil {
+		t.Fatalf("new provider engine: %v", err)
+	}
+	got, err := eng.Chat(context.Background(), nil, inference.DefaultOptions(), nil)
+	if err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+	if got != "ok" || chatModel != "roma-chat" {
+		t.Fatalf("chat = %q model = %q, want ok and roma-chat", got, chatModel)
+	}
+	if forwardedAuthorization != "" {
+		t.Fatalf("Authorization was forwarded with value %q", forwardedAuthorization)
+	}
+	if forwardedModelHeader != "" {
+		t.Fatalf("%s was forwarded with value %q", providerModelHeader, forwardedModelHeader)
+	}
+	if forwardedCustomHeader != "app-secret" {
+		t.Fatalf("custom header = %q, want app-secret", forwardedCustomHeader)
+	}
+}
+
+func TestProviderRejectsDuplicateXModelHeaders(t *testing.T) {
+	err := validateProviderHeaders([]config.ProviderHeader{
+		{Name: "X-Model", Value: "model-a"},
+		{Name: "x-model", Value: "model-b"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "only be configured once") {
+		t.Fatalf("validate duplicate X-Model headers error = %v", err)
+	}
+}
+
 func TestInferThirdPartyPipelineFromOpenRouterArchitecture(t *testing.T) {
 	cases := []struct {
 		name       string

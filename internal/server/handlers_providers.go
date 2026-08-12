@@ -130,10 +130,6 @@ func (s *Server) handleProviderCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "base_url is required")
 		return
 	}
-	if apiKey == "" {
-		writeError(w, http.StatusBadRequest, "api_key is required")
-		return
-	}
 
 	providers := config.GetProviders()
 	if providerNameExists(providers, name, "") {
@@ -350,12 +346,19 @@ func providerHeadersFromAPI(headers []api.ProviderHeader) []config.ProviderHeade
 }
 
 func validateProviderHeaders(headers []config.ProviderHeader) error {
+	hasModelHeader := false
 	for _, header := range headers {
 		if strings.IndexAny(header.Name, " \t\r\n:") >= 0 {
 			return fmt.Errorf("invalid provider header name %q", header.Name)
 		}
 		if strings.ContainsAny(header.Value, "\r\n") {
 			return fmt.Errorf("invalid provider header value for %q", header.Name)
+		}
+		if strings.EqualFold(header.Name, providerModelHeader) {
+			if hasModelHeader {
+				return fmt.Errorf("provider header %q may only be configured once", providerModelHeader)
+			}
+			hasModelHeader = true
 		}
 	}
 	return nil

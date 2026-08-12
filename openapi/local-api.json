@@ -5533,10 +5533,11 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "Upstream header name. Host is supported as the request authority."
+            "description": "Header name. Host is supported as the request authority. X-Model is reserved for one local model ID, skips provider model discovery, and is not forwarded upstream."
           },
           "value": {
             "type": "string",
+            "description": "Header value, or the local model ID when name is X-Model.",
             "writeOnly": true
           }
         }
@@ -5641,8 +5642,7 @@
         "additionalProperties": false,
         "required": [
           "name",
-          "base_url",
-          "api_key"
+          "base_url"
         ],
         "properties": {
           "name": {
@@ -5654,6 +5654,7 @@
           },
           "api_key": {
             "type": "string",
+            "description": "Optional Bearer token. Leave blank when the provider authenticates through custom headers or requires no authentication.",
             "writeOnly": true
           },
           "provider": {

@@ -503,7 +503,11 @@ async function saveProviderModelEdit() {
   }
 }
 
-async function loadProviderDialogModels(provider: ManagedProvider) {
+function providerConfiguredHeaderModel(provider: ManagedProvider): string {
+  return provider.headers?.find((header) => header.name.trim().toLowerCase() === "x-model")?.value.trim() || "";
+}
+
+async function loadProviderDialogModels(provider: ManagedProvider, defaultModelID = "") {
   providerModelsLoading.value = true;
   providerModelsError.value = "";
   try {
@@ -519,7 +523,9 @@ async function loadProviderDialogModels(provider: ManagedProvider) {
       return displayName && displayName !== defaultName ? [[model.model, displayName] as const] : [];
     }));
     providerModelCatalog.value = catalog;
-    providerModelSelected.value = Object.fromEntries(catalog.map((model) => [model.model, selectedIDs.has(model.model)]));
+    providerModelSelected.value = Object.fromEntries(
+      catalog.map((model) => [model.model, selectedIDs.has(model.model) || model.model === defaultModelID]),
+    );
     providerModelDisplayNames.value = selectedDisplayNames;
   } catch (err: any) {
     providerModelCatalog.value = [];
@@ -543,10 +549,6 @@ async function saveProviderForm() {
 
   if (!name || !baseURL) {
     providerFormError.value = t("settings.providerNameURLRequired");
-    return;
-  }
-  if (!editingProvider.value && !apiKey) {
-    providerFormError.value = t("settings.providerAPIKeyRequired");
     return;
   }
 
@@ -587,7 +589,7 @@ async function saveProviderForm() {
     editingProvider.value = savedProvider;
     providerModelTarget.value = savedProvider;
     providerDialogStep.value = "models";
-    await loadProviderDialogModels(savedProvider);
+    await loadProviderDialogModels(savedProvider, providerConfiguredHeaderModel(savedProvider));
   } catch (err: any) {
     providerFormError.value = err?.message || t("settings.providerSaveFailed");
   } finally {
@@ -1994,7 +1996,7 @@ function ProviderDialog({
               />
             </div>
             <div>
-              <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.providerAPIKey")}</label>
+              <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.providerAPIKeyOptional")}</label>
               <input
                 type="password"
                 autoComplete="off"
@@ -2019,7 +2021,7 @@ function ProviderDialog({
               <p class="mb-2 text-xs text-gray-500">{t("settings.providerHeadersHint")}</p>
               <div class="space-y-2">
                 {headers.map((header, index) => (
-                  <div class="flex items-center gap-2" key={`${index}-${header.name}`}>
+                  <div class="flex items-center gap-2" key={index}>
                     <input
                       class="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       value={header.name}
@@ -2031,7 +2033,6 @@ function ProviderDialog({
                       }}
                     />
                     <input
-                      type="password"
                       autoComplete="off"
                       class="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       value={header.value}

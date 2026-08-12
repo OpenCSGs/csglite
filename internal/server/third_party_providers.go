@@ -15,6 +15,8 @@ import (
 )
 
 const thirdPartyProviderSourcePrefix = "provider:"
+const providerModelHeader = "X-Model"
+
 const (
 	bigModelProviderType        = "bigmodel"
 	bigModelOfficialBaseURL     = "https://open.bigmodel.cn/api/paas/v4"
@@ -166,15 +168,20 @@ func providerManagedModelProviderID(provider modelManageProvider) string {
 
 func listOpenAICompatibleProviderModels(ctx context.Context, provider config.ThirdPartyProvider) ([]api.ModelInfo, error) {
 	baseURL := normalizeThirdPartyProviderBaseURL(provider)
-	if baseURL == "" || strings.TrimSpace(provider.APIKey) == "" {
+	if baseURL == "" {
 		return nil, nil
+	}
+	if modelID := providerConfiguredModelID(provider); modelID != "" {
+		return []api.ModelInfo{thirdPartyProviderModelInfo(provider, thirdPartyProviderModel{ID: modelID})}, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/models", nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(provider.APIKey))
+	if apiKey := strings.TrimSpace(provider.APIKey); apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	inference.ApplyOpenAIForwardHeaders(req, providerForwardHeaders(provider))
 
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -204,31 +211,37 @@ func listOpenAICompatibleProviderModels(ctx context.Context, provider config.Thi
 		if modelID == "" {
 			continue
 		}
-		labelName := modelID
-		if displayName := strings.TrimSpace(item.DisplayName); displayName != "" {
-			labelName = displayName
-		}
-		label := fmt.Sprintf("%s [%s]", labelName, provider.Name)
-		modelProvider := strings.TrimSpace(provider.Name)
-		if modelProvider == "" {
-			modelProvider = normalizeModelProvider(provider.ID)
-		}
-		pipelineTag, inputModalities, outputModalities := inferThirdPartyModelMetadata(provider, item)
-		models = append(models, api.ModelInfo{
-			Name:             modelID,
-			Model:            modelID,
-			Label:            label,
-			DisplayName:      label,
-			Format:           "api",
-			Source:           providerSource(provider.ID),
-			Provider:         modelProvider,
-			Category:         categoryForPipelineTag(pipelineTag),
-			PipelineTag:      pipelineTag,
-			InputModalities:  inputModalities,
-			OutputModalities: outputModalities,
-		})
+		item.ID = modelID
+		models = append(models, thirdPartyProviderModelInfo(provider, item))
 	}
 	return models, nil
+}
+
+func thirdPartyProviderModelInfo(provider config.ThirdPartyProvider, item thirdPartyProviderModel) api.ModelInfo {
+	modelID := strings.TrimSpace(item.ID)
+	labelName := modelID
+	if displayName := strings.TrimSpace(item.DisplayName); displayName != "" {
+		labelName = displayName
+	}
+	label := fmt.Sprintf("%s [%s]", labelName, provider.Name)
+	modelProvider := strings.TrimSpace(provider.Name)
+	if modelProvider == "" {
+		modelProvider = normalizeModelProvider(provider.ID)
+	}
+	pipelineTag, inputModalities, outputModalities := inferThirdPartyModelMetadata(provider, item)
+	return api.ModelInfo{
+		Name:             modelID,
+		Model:            modelID,
+		Label:            label,
+		DisplayName:      label,
+		Format:           "api",
+		Source:           providerSource(provider.ID),
+		Provider:         modelProvider,
+		Category:         categoryForPipelineTag(pipelineTag),
+		PipelineTag:      pipelineTag,
+		InputModalities:  inputModalities,
+		OutputModalities: outputModalities,
+	}
 }
 
 func normalizeThirdPartyProviderBaseURL(provider config.ThirdPartyProvider) string {
@@ -243,9 +256,6 @@ func normalizeThirdPartyProviderBaseURL(provider config.ThirdPartyProvider) stri
 func validateThirdPartyProvider(ctx context.Context, provider config.ThirdPartyProvider) (int, error) {
 	if strings.TrimSpace(provider.BaseURL) == "" {
 		return 0, fmt.Errorf("base_url is required")
-	}
-	if strings.TrimSpace(provider.APIKey) == "" {
-		return 0, fmt.Errorf("api_key is required")
 	}
 	models, err := listOpenAICompatibleProviderModels(ctx, provider)
 	if err != nil {
@@ -268,8 +278,8 @@ func newThirdPartyProviderEngine(source, modelID string) (inference.Engine, erro
 	}
 	baseURL := normalizeThirdPartyProviderBaseURL(provider)
 	apiKey := strings.TrimSpace(provider.APIKey)
-	if baseURL == "" || apiKey == "" {
-		return nil, inference.NewHTTPStatusError(http.StatusBadRequest, "third-party provider is missing base URL or API key")
+	if baseURL == "" {
+		return nil, inference.NewHTTPStatusError(http.StatusBadRequest, "third-party provider is missing base URL")
 	}
 	return inference.NewOpenAICompatibleEngineWithHeaders(
 		baseURL,
@@ -282,9 +292,21 @@ func newThirdPartyProviderEngine(source, modelID string) (inference.Engine, erro
 func providerForwardHeaders(provider config.ThirdPartyProvider) []inference.ForwardHeader {
 	headers := make([]inference.ForwardHeader, 0, len(provider.Headers))
 	for _, header := range provider.Headers {
+		if strings.EqualFold(strings.TrimSpace(header.Name), providerModelHeader) {
+			continue
+		}
 		headers = append(headers, inference.ForwardHeader{Name: header.Name, Value: header.Value})
 	}
 	return headers
+}
+
+func providerConfiguredModelID(provider config.ThirdPartyProvider) string {
+	for _, header := range provider.Headers {
+		if strings.EqualFold(strings.TrimSpace(header.Name), providerModelHeader) {
+			return strings.TrimSpace(header.Value)
+		}
+	}
+	return ""
 }
 
 func providerOriginalModelID(providerID, modelID string) string {

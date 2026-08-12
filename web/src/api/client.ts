@@ -2226,7 +2226,7 @@ export interface ThirdPartyProvidersResponse {
 export interface ThirdPartyProviderCreateRequest {
   name: string;
   base_url: string;
-  api_key: string;
+  api_key?: string;
   provider?: string;
   enabled: boolean;
   headers?: ProviderHeader[];
