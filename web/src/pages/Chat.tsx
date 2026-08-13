@@ -2106,7 +2106,7 @@ export function Chat() {
               ))}
             </div>
           </div>
-          <SliderSetting label="Temperature" value={temperature.value} min={0} max={2} step={0.05} onChange={(v) => (temperature.value = v)} />
+          <SliderSetting label={t("chat.temperature")} value={temperature.value} min={0} max={1} step={0.05} onChange={(v) => (temperature.value = v)} />
           <SliderSetting label="Top-P" value={topP.value} min={0} max={1} step={0.05} onChange={(v) => (topP.value = v)} />
 
           <button
