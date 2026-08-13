@@ -258,7 +258,9 @@ func TestProviderXModelSkipsDiscoveryAndIsNotForwarded(t *testing.T) {
 	t.Cleanup(config.ResetProviderModelAllowlist)
 
 	modelRequests := 0
+	chatRequests := 0
 	chatModel := ""
+	chatMaxTokens := 0
 	forwardedAuthorization := ""
 	forwardedModelHeader := ""
 	forwardedCustomHeader := ""
@@ -269,12 +271,15 @@ func TestProviderXModelSkipsDiscoveryAndIsNotForwarded(t *testing.T) {
 			http.Error(w, "models endpoint is unavailable", http.StatusNotFound)
 		case "/v1/chat/completions":
 			var body struct {
-				Model string `json:"model"`
+				Model     string `json:"model"`
+				MaxTokens int    `json:"max_tokens"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode chat request: %v", err)
 			}
+			chatRequests++
 			chatModel = body.Model
+			chatMaxTokens = body.MaxTokens
 			forwardedAuthorization = r.Header.Get("Authorization")
 			forwardedModelHeader = r.Header.Get(providerModelHeader)
 			forwardedCustomHeader = r.Header.Get("X-HW-AppKey")
@@ -289,12 +294,25 @@ func TestProviderXModelSkipsDiscoveryAndIsNotForwarded(t *testing.T) {
 	s := newTestServer(t)
 	validateReq := httptest.NewRequest(http.MethodPost, "/api/providers/validate", strings.NewReader(`{
 		"base_url": "`+apiServer.URL+`/v1",
-		"headers": [{"name":"X-Model","value":"roma-chat"}]
+		"headers": [
+			{"name":"X-Model","value":"roma-chat"},
+			{"name":"X-HW-AppKey","value":"app-secret"}
+		],
+		"probe": true
 	}`))
 	w := httptest.NewRecorder()
 	s.handleProviderValidate(w, validateReq)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"model_count":1`) {
 		t.Fatalf("validate status = %d body=%s", w.Code, w.Body.String())
+	}
+	if chatRequests != 1 || chatModel != "roma-chat" || chatMaxTokens != 1 {
+		t.Fatalf("probe requests = %d model = %q max_tokens = %d", chatRequests, chatModel, chatMaxTokens)
+	}
+	if forwardedAuthorization != "" || forwardedModelHeader != "" || forwardedCustomHeader != "app-secret" {
+		t.Fatalf("probe headers: Authorization=%q X-Model=%q X-HW-AppKey=%q", forwardedAuthorization, forwardedModelHeader, forwardedCustomHeader)
+	}
+	if providers := config.GetProviders(); len(providers) != 0 {
+		t.Fatalf("probe saved providers: %#v", providers)
 	}
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/providers", strings.NewReader(`{

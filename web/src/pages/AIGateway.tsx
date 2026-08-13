@@ -92,6 +92,8 @@ const providerFormType = signal("openai");
 const providerFormEnabled = signal(true);
 const providerFormError = signal("");
 const providerFormSaving = signal(false);
+const providerFormTesting = signal(false);
+const providerFormTestSuccess = signal("");
 const providerDialogStep = signal<"details" | "models">("details");
 const providerModelTarget = signal<ManagedProvider | null>(null);
 const providerModelCatalog = signal<ModelInfo[]>([]);
@@ -394,6 +396,7 @@ function openProviderDialog(provider?: ThirdPartyProvider) {
   providerFormType.value = provider?.provider || "openai";
   providerFormEnabled.value = provider?.enabled ?? true;
   providerFormError.value = "";
+  providerFormTestSuccess.value = "";
   isProviderDialogOpen.value = true;
 }
 
@@ -410,7 +413,7 @@ function openProviderModelsDialog(provider: ManagedProvider) {
 }
 
 function closeProviderDialog() {
-  if (providerFormSaving.value || providerModelsSaving.value) return;
+  if (providerFormSaving.value || providerFormTesting.value || providerModelsSaving.value) return;
   isProviderDialogOpen.value = false;
   editingProvider.value = null;
   providerModelTarget.value = null;
@@ -420,6 +423,7 @@ function closeProviderDialog() {
   providerModelDisplayNames.value = {};
   providerModelsError.value = "";
   providerFormError.value = "";
+  providerFormTestSuccess.value = "";
   providerFormHeaders.value = [];
 }
 
@@ -537,6 +541,40 @@ async function loadProviderDialogModels(provider: ManagedProvider, defaultModelI
   }
 }
 
+async function testProviderForm() {
+  const name = providerFormName.value.trim();
+  const baseURL = providerFormBaseURL.value.trim();
+  const apiKey = providerFormAPIKey.value.trim();
+  const headers = providerFormHeaders.value
+    .map((header) => ({ name: header.name.trim(), value: header.value.trim() }))
+    .filter((header) => header.name && header.value);
+  if (!name || !baseURL) {
+    providerFormError.value = t("settings.providerNameURLRequired");
+    return;
+  }
+
+  providerFormTesting.value = true;
+  providerFormError.value = "";
+  providerFormTestSuccess.value = "";
+  try {
+    await validateProvider({
+      id: editingProvider.value?.id,
+      name,
+      base_url: baseURL,
+      api_key: apiKey || undefined,
+      provider: providerFormType.value.trim() || "openai",
+      enabled: providerFormEnabled.value,
+      headers,
+      probe: true,
+    });
+    providerFormTestSuccess.value = t("settings.providerTestSucceeded");
+  } catch (err: any) {
+    providerFormError.value = err?.message || t("settings.providerTestFailed");
+  } finally {
+    providerFormTesting.value = false;
+  }
+}
+
 async function saveProviderForm() {
   const name = providerFormName.value.trim();
   const baseURL = providerFormBaseURL.value.trim();
@@ -554,6 +592,7 @@ async function saveProviderForm() {
 
   providerFormSaving.value = true;
   providerFormError.value = "";
+  providerFormTestSuccess.value = "";
   try {
     await validateProvider({
       id: editingProvider.value?.id,
@@ -969,6 +1008,8 @@ export function AIGateway() {
         enabled={providerFormEnabled.value}
         error={providerFormError.value}
         saving={providerFormSaving.value}
+        testing={providerFormTesting.value}
+        testSuccess={providerFormTestSuccess.value}
         modelTarget={providerModelTarget.value}
         modelCatalog={providerModelCatalog.value}
         modelSelected={providerModelSelected.value}
@@ -977,6 +1018,7 @@ export function AIGateway() {
         modelsSaving={providerModelsSaving.value}
         modelsError={providerModelsError.value}
         onClose={closeProviderDialog}
+        onTest={() => void testProviderForm()}
         onSave={() => void saveProviderForm()}
         onSaveModels={() => void saveProviderModels()}
         onToggleModel={toggleProviderModel}
@@ -1898,6 +1940,8 @@ function ProviderDialog({
   enabled,
   error,
   saving,
+  testing,
+  testSuccess,
   modelTarget,
   modelCatalog,
   modelSelected,
@@ -1906,6 +1950,7 @@ function ProviderDialog({
   modelsSaving,
   modelsError,
   onClose,
+  onTest,
   onSave,
   onSaveModels,
   onToggleModel,
@@ -1930,6 +1975,8 @@ function ProviderDialog({
   enabled: boolean;
   error: string;
   saving: boolean;
+  testing: boolean;
+  testSuccess: string;
 	modelTarget: ManagedProvider | null;
   modelCatalog: ModelInfo[];
   modelSelected: Record<string, boolean>;
@@ -1938,6 +1985,7 @@ function ProviderDialog({
   modelsSaving: boolean;
   modelsError: string;
   onClose: () => void;
+  onTest: () => void;
   onSave: () => void;
   onSaveModels: () => void;
   onToggleModel: (modelID: string, checked: boolean) => void;
@@ -2068,6 +2116,7 @@ function ProviderDialog({
               <span class="text-sm text-gray-700">{enabled ? t("settings.providerEnabled") : t("settings.providerDisabled")}</span>
             </div>
             {error && <p class="text-sm text-red-600">{error}</p>}
+            {testSuccess && <p class="text-sm text-green-600">{testSuccess}</p>}
           </div>
         ) : (
           <div class="px-6 py-5">
@@ -2128,15 +2177,25 @@ function ProviderDialog({
           <button
             type="button"
             onClick={onClose}
-            disabled={saving || modelsSaving}
+            disabled={saving || testing || modelsSaving}
             class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
           >
             {t("upgrade.cancel")}
           </button>
+          {step === "details" && (
+            <button
+              type="button"
+              onClick={onTest}
+              disabled={saving || testing}
+              class="rounded-lg border border-indigo-200 px-4 py-2 text-sm text-indigo-700 transition-colors hover:bg-indigo-50 disabled:opacity-60"
+            >
+              {testing ? "..." : t("settings.providerTest")}
+            </button>
+          )}
           <button
             type="button"
             onClick={step === "models" ? onSaveModels : onSave}
-            disabled={saving || modelsSaving || (step === "models" && modelsLoading)}
+            disabled={saving || testing || modelsSaving || (step === "models" && modelsLoading)}
             class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
           >
             {saving || modelsSaving ? "..." : step === "models" ? t("settings.providerModelsSave") : t("settings.providerSaveNext")}

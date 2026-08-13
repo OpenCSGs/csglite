@@ -2791,7 +2791,7 @@
           "Providers"
         ],
         "summary": "Validate a third-party provider",
-        "description": "Checks the provider base URL and API key by fetching its OpenAI-compatible `/models` endpoint with any configured custom headers. The provider is not saved.",
+        "description": "Checks the provider without saving it. By default this fetches `/models`, or validates the local X-Model configuration when discovery is skipped. Set `probe` to send one minimal chat completion for X-Model providers.",
         "operationId": "validateThirdPartyProvider",
         "requestBody": {
           "required": true,
@@ -5704,6 +5704,11 @@
             "items": {
               "$ref": "#/components/schemas/ProviderHeader"
             }
+          },
+          "probe": {
+            "type": "boolean",
+            "description": "When true and X-Model is configured, send a non-streaming chat completion with max_tokens=1 to verify the model, authentication, and custom headers.",
+            "default": false
           }
         }
       },

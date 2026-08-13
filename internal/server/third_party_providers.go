@@ -267,6 +267,26 @@ func validateThirdPartyProvider(ctx context.Context, provider config.ThirdPartyP
 	return len(models), nil
 }
 
+func probeThirdPartyProvider(ctx context.Context, provider config.ThirdPartyProvider) error {
+	modelID := providerConfiguredModelID(provider)
+	if modelID == "" {
+		return nil
+	}
+	engine := inference.NewOpenAICompatibleEngineWithHeaders(
+		normalizeThirdPartyProviderBaseURL(provider),
+		modelID,
+		strings.TrimSpace(provider.APIKey),
+		providerForwardHeaders(provider),
+	)
+	options := inference.DefaultOptions()
+	options.MaxTokens = 1
+	_, err := engine.Chat(ctx, []inference.Message{{Role: "user", Content: "hi"}}, options, nil)
+	if err != nil {
+		return fmt.Errorf("chat completion: %w", err)
+	}
+	return nil
+}
+
 func newThirdPartyProviderEngine(source, modelID string) (inference.Engine, error) {
 	providerID := providerIDFromSource(source)
 	provider, ok := getThirdPartyProvider(providerID)

@@ -2249,6 +2249,7 @@ export interface ThirdPartyProviderValidateRequest {
   provider?: string;
   enabled: boolean;
   headers?: ProviderHeader[];
+  probe?: boolean;
 }
 
 export interface ThirdPartyProviderValidateResponse {

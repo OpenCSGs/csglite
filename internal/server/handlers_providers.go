@@ -90,7 +90,7 @@ func (s *Server) handleProviderValidate(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if !provider.Enabled {
+	if !provider.Enabled && !req.Probe {
 		writeJSON(w, http.StatusOK, api.ThirdPartyProviderValidateResponse{
 			Valid:      true,
 			ModelCount: 0,
@@ -102,6 +102,12 @@ func (s *Server) handleProviderValidate(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "provider configuration is invalid: "+err.Error())
 		return
+	}
+	if req.Probe {
+		if err := probeThirdPartyProvider(r.Context(), provider); err != nil {
+			writeError(w, http.StatusBadRequest, "provider connection test failed: "+err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, api.ThirdPartyProviderValidateResponse{
 		Valid:      true,

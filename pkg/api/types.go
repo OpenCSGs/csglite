@@ -971,6 +971,7 @@ type ThirdPartyProviderValidateRequest struct {
 	Provider string           `json:"provider,omitempty"`
 	Enabled  *bool            `json:"enabled,omitempty"`
 	Headers  []ProviderHeader `json:"headers,omitempty"`
+	Probe    bool             `json:"probe,omitempty"`
 }
 
 type ThirdPartyProviderValidateResponse struct {
