@@ -517,8 +517,8 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
         zh: "下载并校验 macOS DMG 或 Windows 安装程序，然后安装桌面应用。",
       },
       {
-        en: "Write the selected csghub-lite model into config.toml, then launch CSGClaw Desktop.",
-        zh: "将选中的 csghub-lite 模型写入 config.toml，然后启动 CSGClaw Desktop。",
+        en: "Launch CSGClaw Desktop, which discovers and connects to csghub-lite automatically.",
+        zh: "启动 CSGClaw Desktop，由其自动发现并连接 csghub-lite。",
       },
     ],
     status: "idle",

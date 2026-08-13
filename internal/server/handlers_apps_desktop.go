@@ -119,7 +119,7 @@ func isDesktopAIAppID(appID string) bool {
 	return appID == "codex-app" || appID == "zcode" || appID == "csgclaw"
 }
 
-func (s *Server) launchCSGClawDesktopApp(ctx context.Context, requestedModelID, requestedSource string) error {
+func (s *Server) launchCSGClawDesktopApp(ctx context.Context, _, _ string) error {
 	s.csgclawMu.Lock()
 	defer s.csgclawMu.Unlock()
 
@@ -132,18 +132,6 @@ func (s *Server) launchCSGClawDesktopApp(ctx context.Context, requestedModelID, 
 	if err := prepareCSGClawDesktopLaunch(); err != nil {
 		return err
 	}
-	modelID, modelIDs, err := s.resolveCSGClawLaunchModels(ctx, requestedModelID, requestedSource)
-	if err != nil {
-		return err
-	}
-	modelSource, modelIDs, err := s.resolveAIAppModelSource(ctx, modelID, requestedSource)
-	if err != nil {
-		return err
-	}
-	if err := s.configureCSGClawDesktop(modelID, modelSource, modelIDs); err != nil {
-		return err
-	}
-	s.savePreferredAIAppSelection("csgclaw", modelID, modelSource)
 
 	target, err := apps.CSGClawDesktopLaunchTarget()
 	if err != nil {

@@ -174,15 +174,6 @@ func (s *Server) handleAppModelSave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "app_id and model_id are required")
 		return
 	}
-	if appID == "csgclaw" {
-		if err := s.saveCSGClawModel(r.Context(), req.ModelID, req.Source); err != nil {
-			log.Printf("AI APP csgclaw: model switch failed: %v", err)
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
 	if status, supported, err := s.aiAppProviderStatus(appID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -398,7 +389,7 @@ func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 	switch info.ID {
 	case "claude-code", "open-code", "codex", "pi", "zcode":
 		modelID, _, err = s.resolveAIAppShellLaunchModels(ctx, info.ID, "", "")
-	case "openclaw", "csgclaw":
+	case "openclaw":
 		preferred := s.preferredAIAppModel(info.ID)
 		modelID, _, err = s.resolveAIAppLaunchModels(ctx, preferred, "")
 		if err != nil && preferred != "" {

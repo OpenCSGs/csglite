@@ -67,63 +67,6 @@ func (s *Server) openCSGClawURL(ctx context.Context, modelID, modelSource string
 	return "http://" + csgclawDefaultAddr + "/", nil
 }
 
-func (s *Server) saveCSGClawModel(ctx context.Context, modelID, modelSource string) error {
-	s.csgclawMu.Lock()
-	defer s.csgclawMu.Unlock()
-
-	resolvedModel, modelIDs, err := s.resolveCSGClawLaunchModels(ctx, modelID, modelSource)
-	if err != nil {
-		return err
-	}
-	resolvedSource, modelIDs, err := s.resolveAIAppModelSource(ctx, resolvedModel, modelSource)
-	if err != nil {
-		return err
-	}
-	s.savePreferredAIAppSelection("csgclaw", resolvedModel, resolvedSource)
-
-	log.Printf("AI APP csgclaw: desktop model switch requested model=%q resolved=%q", modelID, resolvedModel)
-	return s.configureCSGClawDesktop(resolvedModel, resolvedSource, modelIDs)
-}
-
-func (s *Server) configureCSGClawDesktop(modelID, modelSource string, modelIDs []string) error {
-	listenAddr := ""
-	if s != nil && s.cfg != nil {
-		listenAddr = s.cfg.RuntimeAPIAddr()
-	}
-	serverURL := csgclawReachableBaseURL(listenAddr, csgclawInterfaceAddrs())
-	var err error
-	serverURL, err = providerScopedBaseURL(serverURL, modelSource)
-	if err != nil {
-		return err
-	}
-	apiKey := "csghub-lite"
-	if s != nil && s.cfg != nil && strings.TrimSpace(s.cfg.Token) != "" {
-		apiKey = strings.TrimSpace(s.cfg.Token)
-	}
-	models := csgclawOrderedModels(modelID, modelIDs)
-	if err := ensureCSGClawManagedConfig(strings.TrimRight(serverURL, "/")+"/v1", apiKey, modelID, models); err != nil {
-		return fmt.Errorf("writing CSGClaw config: %w", err)
-	}
-	if err := ensureCSGClawDesktopSandboxProvider(); err != nil {
-		return fmt.Errorf("writing CSGClaw Desktop sandbox config: %w", err)
-	}
-	log.Printf("AI APP csgclaw: desktop config synced model=%q models=%d", modelID, len(models))
-	return nil
-}
-
-func ensureCSGClawDesktopSandboxProvider() error {
-	path, err := csgclawConfigPath()
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	updated := setCSGClawSandboxProvider(string(data), "docker")
-	return os.WriteFile(path, []byte(updated), 0o600)
-}
-
 func setCSGClawSandboxProvider(input, provider string) string {
 	provider = csgclawNormalizedSandboxProvider(provider)
 	if provider == "" {

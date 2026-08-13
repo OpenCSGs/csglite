@@ -1031,7 +1031,11 @@ function LiveLogsDrawer({
   };
 
   const handleOpenCurrentApp = async () => {
-    if (!(await ensureCloudAuthForModel(currentModelInfo))) {
+    if (app.id !== "csgclaw" && !(await ensureCloudAuthForModel(currentModelInfo))) {
+      return;
+    }
+    if (app.id === "csgclaw") {
+      onOpenChat();
       return;
     }
     onOpenChat(currentModelID || undefined, currentModelInfo?.source);
@@ -1354,6 +1358,7 @@ function LiveLogsDrawer({
           )}
 
           {!isXiaozhi &&
+            app.id !== "csgclaw" &&
             (!state.providerSwitchSupported || state.providerMode === "opencsg") &&
             (canSelectModel || currentModelID) && (
             <section class="space-y-2">
@@ -1991,7 +1996,7 @@ function runtimeStatusDotClass(state: AIAppRuntimeState): string {
 }
 
 function canSelectAIAppModel(app: AIAppCatalogEntry): boolean {
-  return ["claude-code", "open-code", "open-code-review", "codex", "codex-app", "zcode", "pi", "openclaw", "csgclaw", "xiaozhi"].includes(app.id);
+  return ["claude-code", "open-code", "open-code-review", "codex", "codex-app", "zcode", "pi", "openclaw", "xiaozhi"].includes(app.id);
 }
 
 function isDesktopAIApp(app: AIAppCatalogEntry): boolean {
