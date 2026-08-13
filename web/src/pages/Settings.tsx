@@ -22,6 +22,8 @@ import type { AppSettings, CloudAuthStatus, LocalDirectoryBrowseResponse, WebSea
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
 const contextStorageKey = "csghub.chat.num_ctx";
+const contextModeStorageKey = "csghub.chat.num_ctx_mode";
+type ContextLengthMode = "global" | "model_max";
 const parallelSteps = [1, 2, 4, 8];
 const parallelLabels = ["1", "2", "4", "8"];
 const parallelStorageKey = "csghub.chat.num_parallel";
@@ -36,6 +38,7 @@ const localAPIURL = signal("");
 const autostartEnabled = signal(false);
 const isSavingAutostart = signal(false);
 const contextIndex = signal(1);
+const contextMode = signal<ContextLengthMode>("global");
 const parallelIndex = signal(2);
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudTokenInput = signal("");
@@ -131,6 +134,23 @@ function saveContextIndex(idx: number) {
   }
 }
 
+function loadContextMode(): ContextLengthMode {
+  try {
+    return localStorage.getItem(contextModeStorageKey) === "model_max" ? "model_max" : "global";
+  } catch {
+    return "global";
+  }
+}
+
+function saveContextMode(mode: ContextLengthMode) {
+  contextMode.value = mode;
+  try {
+    localStorage.setItem(contextModeStorageKey, mode);
+  } catch {
+    /* ignore */
+  }
+}
+
 function loadParallelIndex(): number {
   try {
     const raw = localStorage.getItem(parallelStorageKey);
@@ -158,6 +178,7 @@ async function resetDefaults() {
   resetDefaultsError.value = "";
   contextIndex.value = 1;
   saveContextIndex(1);
+  saveContextMode("global");
   parallelIndex.value = 2;
   saveParallelIndex(2);
   serviceUrlsError.value = "";
@@ -533,6 +554,7 @@ export function Settings() {
     fetchCloudAuth();
     void fetchUpgradeInfo();
     contextIndex.value = loadContextIndex();
+    contextMode.value = loadContextMode();
     parallelIndex.value = loadParallelIndex();
   }, []);
 
@@ -694,25 +716,59 @@ export function Settings() {
           <span class="font-semibold text-gray-900">{t("settings.contextLength")}</span>
         </div>
         <p class="text-sm text-gray-500 mb-4 ml-7">{t("settings.contextLengthDesc")}</p>
-        <div class="ml-7">
-          <input
-            type="range"
-            min="0"
-            max={contextLengthSteps.length - 1}
-            step="1"
-            value={contextIndex.value}
-            onInput={(e) => {
-              const idx = Number((e.target as HTMLInputElement).value);
-              contextIndex.value = idx;
-              saveContextIndex(idx);
-            }}
-            class="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-indigo-600"
-          />
-          <div class="flex justify-between mt-2">
-            {contextLengthLabels.map((label) => (
-              <span key={label} class="text-xs text-gray-400">{label}</span>
-            ))}
+        <div class="ml-7 space-y-4">
+          <div class="grid gap-3 sm:grid-cols-2">
+            {([
+              ["global", "settings.contextLengthGlobal", "settings.contextLengthGlobalDesc"],
+              ["model_max", "settings.contextLengthModelMax", "settings.contextLengthModelMaxDesc"],
+            ] as const).map(([mode, labelKey, descriptionKey]) => {
+              const selected = contextMode.value === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => saveContextMode(mode)}
+                  class={`rounded-xl border p-4 text-left transition ${
+                    selected
+                      ? "border-indigo-300 bg-indigo-50 ring-1 ring-indigo-200"
+                      : "border-gray-200 bg-white hover:border-gray-300"
+                  }`}
+                >
+                  <span class={`block text-sm font-medium ${selected ? "text-indigo-800" : "text-gray-800"}`}>
+                    {t(labelKey)}
+                  </span>
+                  <span class="mt-1 block text-xs leading-5 text-gray-500">{t(descriptionKey)}</span>
+                </button>
+              );
+            })}
           </div>
+          {contextMode.value === "global" && (
+            <div>
+              <input
+                type="range"
+                min="0"
+                max={contextLengthSteps.length - 1}
+                step="1"
+                value={contextIndex.value}
+                onInput={(e) => {
+                  const idx = Number((e.target as HTMLInputElement).value);
+                  contextIndex.value = idx;
+                  saveContextIndex(idx);
+                }}
+                class="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-indigo-600"
+              />
+              <div class="flex justify-between mt-2">
+                {contextLengthLabels.map((label) => (
+                  <span key={label} class="text-xs text-gray-400">{label}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {contextMode.value === "model_max" && (
+            <p class="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+              {t("settings.contextLengthModelMaxWarning")}
+            </p>
+          )}
         </div>
       </div>
 

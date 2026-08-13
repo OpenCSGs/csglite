@@ -69,6 +69,7 @@ const pendingAudio = signal<PendingAudio | null>(null);
 const audioPreviews = signal<Record<string, LocalAudioPreview>>({});
 const isRecordingAudio = signal(false);
 const contextStorageKey = "csghub.chat.num_ctx";
+const contextModeStorageKey = "csghub.chat.num_ctx_mode";
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
 const parallelStorageKey = "csghub.chat.num_parallel";
@@ -687,7 +688,21 @@ function readNumCtx(): number | undefined {
   return undefined;
 }
 
-function defaultNumCtx(): number {
+function useModelMaxContext(): boolean {
+  try {
+    return localStorage.getItem(contextModeStorageKey) === "model_max";
+  } catch {
+    return false;
+  }
+}
+
+function defaultNumCtx(model?: ModelInfo | null): number {
+  if (useModelMaxContext()) {
+    const modelMax = Number(model?.max_model_len || model?.context_window);
+    if (Number.isFinite(modelMax) && modelMax >= 1024) {
+      return Math.floor(modelMax);
+    }
+  }
   return readNumCtx() || 8192;
 }
 
@@ -1313,7 +1328,7 @@ export function Chat() {
     abortRef.current = ac;
 
     const savedNumCtx = conv.settings?.num_ctx;
-    const numCtx = savedNumCtx ? normalizeNumCtx(savedNumCtx) : readNumCtx();
+    const numCtx = savedNumCtx ? normalizeNumCtx(savedNumCtx) : defaultNumCtx(currentModel);
     const numParallel = conv.settings?.num_parallel || defaultNumParallel();
 
     chatError.value = "";
