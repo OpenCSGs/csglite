@@ -343,10 +343,7 @@ func (s *Server) Run(ctx context.Context) error {
 		fmt.Printf("CSGLITE_DESKTOP_READY %s\n", payload)
 	}
 	go func() {
-		addr := boundAddr
-		if strings.HasPrefix(addr, ":") {
-			addr = "localhost" + addr
-		}
+		addr := displayServerAddr(boundAddr)
 		log.Printf("csghub-lite server listening on %s", boundAddr)
 		log.Printf("  Web UI: %s", "http://"+addr+"/")
 		log.Printf("  Ollama API: %s", "http://"+addr+"/api/chat")
@@ -379,6 +376,20 @@ func (s *Server) Run(ctx context.Context) error {
 		defer cancel()
 		return s.shutdownHTTPServers(shutCtx)
 	}
+}
+
+func displayServerAddr(boundAddr string) string {
+	host, port, err := net.SplitHostPort(boundAddr)
+	if err != nil {
+		if strings.HasPrefix(boundAddr, ":") {
+			return "localhost" + boundAddr
+		}
+		return boundAddr
+	}
+	if ip := net.ParseIP(host); host == "" || (ip != nil && (ip.IsUnspecified() || ip.IsLoopback())) {
+		host = "localhost"
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func (s *Server) shutdownHTTPServers(ctx context.Context) error {

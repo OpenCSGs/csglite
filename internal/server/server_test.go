@@ -99,6 +99,26 @@ func newTestServer(t *testing.T) *Server {
 	return s
 }
 
+func TestDisplayServerAddr(t *testing.T) {
+	tests := map[string]string{
+		":11435":             "localhost:11435",
+		"[::]:11435":         "localhost:11435",
+		"0.0.0.0:11435":      "localhost:11435",
+		"127.0.0.1:11435":    "localhost:11435",
+		"[::1]:11435":        "localhost:11435",
+		"192.168.1.10:11435": "192.168.1.10:11435",
+		"example.test:11435": "example.test:11435",
+		"malformed-address":  "malformed-address",
+	}
+	for input, want := range tests {
+		t.Run(input, func(t *testing.T) {
+			if got := displayServerAddr(input); got != want {
+				t.Fatalf("displayServerAddr(%q) = %q, want %q", input, got, want)
+			}
+		})
+	}
+}
+
 func TestValidateDesktopConfig(t *testing.T) {
 	valid := &config.Config{
 		DesktopMode:         true,
