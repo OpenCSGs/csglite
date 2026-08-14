@@ -46,6 +46,21 @@ jobs:
         working-directory: dist
         run: sha256sum --check checksums.txt
 
+      - name: Generate release notes
+        run: |
+          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "${previous_tag}" ]; then
+            release_range="${previous_tag}..${GITHUB_REF_NAME}"
+          else
+            release_range="${GITHUB_REF_NAME}"
+          fi
+          {
+            echo "## Changes"
+            echo
+            git log --no-merges --reverse --format='- %s' "${release_range}"
+          } > release-notes.md
+          grep -Eq '^[-*] ' release-notes.md
+
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -59,7 +74,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
-          generate_release_notes: true
+          body_path: release-notes.md
           fail_on_unmatched_files: true
           files: |
             dist/csghub-lite_*.tar.gz

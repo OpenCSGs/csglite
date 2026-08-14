@@ -55,7 +55,7 @@ git push origin v0.1.0
 说明：
 
 - `.github/workflows/release.yml` 会测试 tag 对应提交、执行 `make package`、校验 checksums，并上传 macOS、Linux、Windows 资产。
-- GitHub Release 初始说明由 GitHub 自动生成；发布后应检查并按用户可见变更整理为简洁 bullet。
+- Workflow 会根据上一个 tag 之后的非 merge commit 生成初始 bullet；发布后应检查并按用户可见变更整理。
 - `sync-gitlab` job 使用 GitHub Actions 的 `gitlab-sync` environment 及其 `GITLAB_TOKEN` secret，自动同步 tag、Release 和资产。
 - 手动补发 GitLab 时，从 tag 的干净工作树执行 `make package`，再运行 `./scripts/push.sh --skip-github --skip-build --tag v0.1.0 --notes-file /tmp/csghub-lite-v0.1.0-notes.md`。
 - `scripts/push.sh` 会将本地 `dist/` 下的发布包上传到 GitHub Release 和 GitLab Generic Package/Release。

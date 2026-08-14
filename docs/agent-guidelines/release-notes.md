@@ -29,8 +29,8 @@
 - After GitHub publication, the `sync-gitlab` job uses the `gitlab-sync`
   environment to push the tag and publish the same archives and notes to the
   GitLab release.
-- GitHub-generated notes are acceptable as the initial body for an automated
-  tag release. Review them after publication and replace broad commit lists
+- The workflow generates initial bullet notes from non-merge commits since the
+  previous tag. Review them after publication and replace broad commit lists
   with 1-3 concrete user-facing bullets when needed.
 - Always build the Web UI before packaging so release binaries embed
   `internal/server/static` instead of falling back to a missing local `web/dist`.
