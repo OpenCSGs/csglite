@@ -42,6 +42,10 @@ Do not push to only one remote unless the user explicitly requests it.
 - Keep `local/secrets.env` local-only; it is gitignored.
 - `scripts/push.sh` auto-sources `local/secrets.env` when `GITLAB_TOKEN` is
   unset.
+- Automated tag releases load `GITLAB_TOKEN` from the GitHub Actions
+  `gitlab-sync` environment. Configure it as an environment secret with GitLab
+  `api` and `write_repository` access; never add the token to repository files
+  or workflow literals.
 
 ```sh
 if [ -z "${GITLAB_TOKEN:-}" ] && [ -f "./local/secrets.env" ]; then

@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build release packages
+        run: make package RELEASE_TAG="${GITHUB_REF_NAME}"
+
+      - name: Verify release checksums
+        working-directory: dist
+        run: sha256sum --check checksums.txt
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/csghub-lite_*.tar.gz
+            dist/csghub-lite_*.zip
+            dist/checksums.txt
+
+  sync-gitlab:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    environment:
+      name: gitlab-sync
+      url: https://git-devops.opencsg.com/opensource/csghub-lite/-/releases/${{ github.ref_name }}
+    concurrency:
+      group: gitlab-sync-${{ github.ref_name }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Validate GitLab credentials
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          if [ -z "${GITLAB_TOKEN}" ]; then
+            echo "::error::Configure GITLAB_TOKEN in the gitlab-sync environment."
+            exit 1
+          fi
+
+      - name: Push release tag to GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          askpass="${RUNNER_TEMP}/gitlab-askpass.sh"
+          cat > "${askpass}" <<'EOF'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' "oauth2" ;;
+            *Password*) printf '%s\n' "${GITLAB_TOKEN}" ;;
+          esac
+          EOF
+          chmod 700 "${askpass}"
+          GIT_ASKPASS="${askpass}" GIT_TERMINAL_PROMPT=0 \
+            git push https://git-devops.opencsg.com/opensource/csghub-lite.git \
+            "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          rm -f "${askpass}"
+
+      - name: Download GitHub release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view "${GITHUB_REF_NAME}" --json body --jq .body > release-notes.md
+
+      - name: Publish release assets to GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          ./scripts/push.sh \
+            --skip-github \
+            --skip-build \
+            --skip-gitlab-git \
+            --skip-converter-check \
+            --tag "${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md

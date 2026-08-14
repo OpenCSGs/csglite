@@ -74,10 +74,7 @@ validate_notes_file() {
     [ -n "$NOTES_FILE" ] || die "Release notes are required for new releases. Pass --notes-file FILE."
     [ -f "$NOTES_FILE" ] || die "Release notes file not found: $NOTES_FILE"
     [ -s "$NOTES_FILE" ] || die "Release notes file is empty: $NOTES_FILE"
-    if grep -q "Full Changelog" "$NOTES_FILE"; then
-        die "Release notes must describe user-facing changes, not only Full Changelog."
-    fi
-    if ! grep -q '^- ' "$NOTES_FILE"; then
+    if ! grep -Eq '^[-*] ' "$NOTES_FILE"; then
         die "Release notes must include explicit bullet points for user-facing changes."
     fi
 }

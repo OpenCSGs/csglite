@@ -1,6 +1,6 @@
 # 打包与发布
 
-CSGLite 当前以本地 `make package` + `scripts/push.sh` 手动发布为主。GoReleaser 仍然保留用于定义归档格式、生成 GitHub Release 产物，以及执行本地 snapshot 验证，但不再负责 Homebrew tap 发布。
+CSGLite 在 GitHub 推送 `v*` tag 后由 GitHub Actions 自动测试、打包并创建 GitHub Release，随后把 tag、发布说明和相同资产同步到 GitLab。本地 `make package` + `scripts/push.sh` 保留为手动补发流程。GoReleaser 仍用于本地 snapshot 验证和额外系统包构建，但不再负责 Homebrew tap 发布。
 
 ## 支持的分发形式
 
@@ -43,24 +43,21 @@ git push origin v0.1.0
 ## 推荐发布流程
 
 ```bash
-# 1. 确保测试通过
+# 1. 确保测试通过并推送代码
 make test
+git push origin main
 
-# 2. 创建发布 tag
+# 2. 创建并推送发布 tag；GitHub Actions 会自动打包并创建 Release
 git tag v0.1.0
-
-# 3. 本地打包（会构建 web 并生成 dist/checksums.txt）
-make package
-
-# 4. 更新仓库内 Homebrew formula
-./scripts/update-homebrew-formula.sh --tag v0.1.0
-
-# 5. 上传 GitHub / GitLab release 资产
-./scripts/push.sh --skip-build --tag v0.1.0 --notes-file /tmp/csghub-lite-v0.1.0-notes.md
+git push origin v0.1.0
 ```
 
 说明：
 
+- `.github/workflows/release.yml` 会测试 tag 对应提交、执行 `make package`、校验 checksums，并上传 macOS、Linux、Windows 资产。
+- GitHub Release 初始说明由 GitHub 自动生成；发布后应检查并按用户可见变更整理为简洁 bullet。
+- `sync-gitlab` job 使用 GitHub Actions 的 `gitlab-sync` environment 及其 `GITLAB_TOKEN` secret，自动同步 tag、Release 和资产。
+- 手动补发 GitLab 时，从 tag 的干净工作树执行 `make package`，再运行 `./scripts/push.sh --skip-github --skip-build --tag v0.1.0 --notes-file /tmp/csghub-lite-v0.1.0-notes.md`。
 - `scripts/push.sh` 会将本地 `dist/` 下的发布包上传到 GitHub Release 和 GitLab Generic Package/Release。
 - 新建 release 必须传入 `--notes-file`，且文件需要包含明确的用户可见变更 bullet，不能只写 `Full Changelog`。
 - GitLab 上传会自动从 `local/secrets.env` 读取 `GITLAB_TOKEN`（如果环境变量未设置）。
@@ -179,4 +176,5 @@ brew install opencsgs/csglite/csghub-lite
 
 - `.goreleaser.yml` 继续定义 archive、checksum、nfpm 和 GitHub release 相关配置
 - `make release-snapshot` 可在本地验证 GoReleaser 输出
-- GitHub Actions 仍会在 tag 上构建 release 产物，但仓库约定的正式发布方式仍然是本地打包后手动上传
+- `.github/workflows/release.yml` 是正式 GitHub 发布入口；推送 `v*` tag 后自动执行 `make package` 并创建 Release
+- `sync-gitlab` job 在 GitHub Release 成功后自动调用 `scripts/push.sh` 同步 GitLab
