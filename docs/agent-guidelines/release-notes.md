@@ -34,9 +34,22 @@
   with 1-3 concrete user-facing bullets when needed.
 - Always build the Web UI before packaging so release binaries embed
   `internal/server/static` instead of falling back to a missing local `web/dist`.
+- When the user asks to "release", "publish a version", or "发版":
+  1. Use the requested tag, or increment the latest stable tag by one patch
+     version when no version is specified.
+  2. Require a clean worktree and ensure the tagged commit is already on
+     `origin/main`. Do not include or commit unrelated local changes.
+  3. Create the tag locally and push that tag only to `origin` (GitHub).
+     The workflow is responsible for creating both releases and syncing the tag
+     to GitLab.
+  4. Monitor the `Release` workflow through the `sync-gitlab` job, then verify
+     that GitHub and GitLab each contain the expected release assets.
+- Do not manually build archives, create a GitHub Release, upload assets, or
+  push the release tag to GitLab during the normal flow.
 - For a manual fallback, build packages from the target tag in a clean checkout
   or temporary worktree with `make package`, then use `gh release create`,
-  `gh release upload`, or `scripts/push.sh --skip-build` as appropriate.
+  `gh release upload`, or `scripts/push.sh --skip-build` only when the automated
+  workflow cannot be repaired or rerun.
 - Follow repository network rules during release work:
   - GitLab and other internal services: direct connection, no proxy.
   - GitHub and other external services: `source ~/.myshrc` before upload

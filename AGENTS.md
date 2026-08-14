@@ -23,8 +23,8 @@ Copilot, and Aider.
   `go test ./internal/server` after API doc changes.
 - csghub-lite must work on macOS, Linux, and Windows. Use platform-aware path,
   binary, library, process, and environment handling.
-- Do not commit or paste secrets. Load GitLab and OSS credentials only from
-  `local/secrets.env`.
+- Do not commit or paste secrets. Load local GitLab and OSS credentials only
+  from `local/secrets.env`; automated releases use GitHub environment secrets.
 - Follow the repository network split: external sites such as GitHub need
   `source ~/.myshrc`; internal GitLab access should be direct.
 - Use only `http://localhost:11435` for local preview. Do not keep extra
@@ -33,6 +33,8 @@ Copilot, and Aider.
   `internal/server/static`, then restart the single backend preview.
 - Store all runtime files, including temporary files and subprocess temp output,
   under the csghub-lite storage root, defaulting to `~/.csghub-lite`.
+- When asked to release, push the next or requested `v*` tag only to GitHub and
+  let `.github/workflows/release.yml` publish and synchronize both releases.
 - Keep commit, PR, and release notes concise and focused on concrete user-facing
   changes.
 - When syncing llama.cpp binaries: use official `ggml-org/llama.cpp` GitHub

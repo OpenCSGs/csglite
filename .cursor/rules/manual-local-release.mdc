@@ -1,9 +1,9 @@
 ---
-description: Publish releases from local builds instead of GitHub Actions
+description: Publish releases by pushing GitHub tags through the automated workflow
 alwaysApply: true
 ---
 
-# Manual Local Release
+# Automated Tag Release
 
 Canonical rule: `docs/agent-guidelines/release-notes.md`.
 
