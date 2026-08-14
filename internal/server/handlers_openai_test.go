@@ -27,6 +27,14 @@ type fakeChatCompletionEngine struct {
 	lastReq map[string]interface{}
 }
 
+type fakeNativeToolStreamingEngine struct {
+	*fakeChatCompletionEngine
+}
+
+func (e *fakeNativeToolStreamingEngine) SupportsNativeToolStreaming() bool {
+	return true
+}
+
 type chunkedOpenAIStreamReader struct {
 	chunks []string
 }
@@ -686,6 +694,85 @@ func TestHandleOpenAIChatCompletionsWithToolsSynthesizesToolCalls(t *testing.T) 
 	tools, ok := engine.lastReq["tools"].([]api.Tool)
 	if !ok || len(tools) != 1 {
 		t.Fatalf("expected forwarded tools, got %#v", engine.lastReq["tools"])
+	}
+}
+
+func TestHandleOpenAIChatCompletionsLocalNativeToolStreamProxiesSSE(t *testing.T) {
+	baseEngine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-local-stream",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index: 0,
+				Message: &api.Message{
+					Role:    "assistant",
+					Content: "partial",
+					ToolCalls: []api.ToolCall{{
+						ID:   "call_1",
+						Type: "function",
+						Function: api.ToolFunction{
+							Name:      "get_time",
+							Arguments: `{}`,
+						},
+					}},
+				},
+			}},
+		},
+	}
+	engine := &fakeNativeToolStreamingEngine{fakeChatCompletionEngine: baseEngine}
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:    "test",
+		Name:         "model",
+		Format:       model.FormatGGUF,
+		Size:         1,
+		Files:        []string{"model.gguf", "config.json"},
+		DownloadedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("save model manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "test", "model")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	s := New(cfg, "test")
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 16384, numParallel: 1}
+
+	body := `{
+	  "model": "test/model",
+	  "messages": [{"role":"user","content":"Call get_time."}],
+	  "tools": [{
+	    "type":"function",
+	    "function":{"name":"get_time","description":"Get current time","parameters":{"type":"object","properties":{}}}
+	  }],
+	  "stream": true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if baseEngine.lastReq["stream"] != true {
+		t.Fatalf("expected local native tool request to keep streaming enabled, got %#v", baseEngine.lastReq["stream"])
+	}
+	respBody := w.Body.String()
+	if !strings.Contains(respBody, `"content":"partial"`) {
+		t.Fatalf("stream body missing content delta: %s", respBody)
+	}
+	if !strings.Contains(respBody, `"name":"get_time"`) {
+		t.Fatalf("stream body missing tool call delta: %s", respBody)
+	}
+	if !strings.Contains(respBody, "data: [DONE]") {
+		t.Fatalf("stream body missing [DONE]: %s", respBody)
 	}
 }
 

@@ -90,14 +90,15 @@ func (w *cappedWriter) String() string {
 // OpenAI-compatible HTTP API. This avoids CGO complexity while providing
 // full llama.cpp inference capabilities.
 type llamaEngine struct {
-	cmd           *exec.Cmd
-	port          int
-	modelPath     string
-	modelName     string
-	client        *http.Client
-	logBuf        *cappedWriter
-	logFile       *os.File
-	hasMultimodal bool
+	cmd                 *exec.Cmd
+	port                int
+	modelPath           string
+	modelName           string
+	client              *http.Client
+	logBuf              *cappedWriter
+	logFile             *os.File
+	hasMultimodal       bool
+	nativeToolStreaming bool
 }
 
 type inferenceHTTPError struct {
@@ -473,6 +474,7 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		"--port", fmt.Sprintf("%d", port),
 		"-c", strconv.Itoa(totalCtx),
 		"--parallel", strconv.Itoa(effectiveNumParallel),
+		"--jinja",
 	}
 	if embedding {
 		args = append(args, "--embedding")
@@ -571,7 +573,8 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		return nil, fmt.Errorf("llama-server failed to start: %w", err)
 	}
 
-	log.Printf("LLAMA: llama-server ready model=%q port=%d", modelName, port)
+	engine.detectNativeToolStreaming()
+	log.Printf("LLAMA: llama-server ready model=%q port=%d native_tool_streaming=%t", modelName, port, engine.nativeToolStreaming)
 	return engine, nil
 }
 
@@ -661,6 +664,54 @@ func (e *llamaEngine) ChatCompletion(ctx context.Context, reqBody map[string]int
 		return nil, &inferenceHTTPError{status: resp.StatusCode, body: string(errBody)}
 	}
 	return resp, nil
+}
+
+// SupportsNativeToolStreaming reports whether llama-server's active Jinja
+// template can both receive tool definitions and render assistant tool calls.
+// Unsupported templates keep the aggregate-and-normalize compatibility path.
+func (e *llamaEngine) SupportsNativeToolStreaming() bool {
+	return e.nativeToolStreaming
+}
+
+func (e *llamaEngine) detectNativeToolStreaming() {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.baseURL()+"/props", nil)
+	if err != nil {
+		log.Printf("LLAMA: native tool streaming disabled for model=%q: %v", e.modelName, err)
+		return
+	}
+	resp, err := e.client.Do(req)
+	if err != nil {
+		log.Printf("LLAMA: native tool streaming capability unavailable for model=%q: %v", e.modelName, err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("LLAMA: native tool streaming capability unavailable for model=%q: /props returned %d", e.modelName, resp.StatusCode)
+		return
+	}
+
+	supported, err := llamaPropsSupportNativeToolStreaming(resp.Body)
+	if err != nil {
+		log.Printf("LLAMA: native tool streaming capability invalid for model=%q: %v", e.modelName, err)
+		return
+	}
+	e.nativeToolStreaming = supported
+}
+
+func llamaPropsSupportNativeToolStreaming(r io.Reader) (bool, error) {
+	var props struct {
+		ChatTemplateCaps struct {
+			SupportsTools     bool `json:"supports_tools"`
+			SupportsToolCalls bool `json:"supports_tool_calls"`
+		} `json:"chat_template_caps"`
+	}
+	if err := json.NewDecoder(r).Decode(&props); err != nil {
+		return false, fmt.Errorf("decoding llama-server props: %w", err)
+	}
+	return props.ChatTemplateCaps.SupportsTools && props.ChatTemplateCaps.SupportsToolCalls, nil
 }
 
 func (e *llamaEngine) Embeddings(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {

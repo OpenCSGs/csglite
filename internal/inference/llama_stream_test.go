@@ -220,3 +220,57 @@ func TestBuildLlamaChatRequestBodyLeavesLlamaModelsUntouched(t *testing.T) {
 		t.Fatalf("chat_template_kwargs unexpectedly set: %#v", reqBody["chat_template_kwargs"])
 	}
 }
+
+func TestLlamaPropsSupportNativeToolStreaming(t *testing.T) {
+	tests := []struct {
+		name  string
+		props string
+		want  bool
+	}{
+		{
+			name:  "tools and tool calls supported",
+			props: `{"chat_template_caps":{"supports_tools":true,"supports_tool_calls":true}}`,
+			want:  true,
+		},
+		{
+			name:  "tool definitions unsupported",
+			props: `{"chat_template_caps":{"supports_tools":false,"supports_tool_calls":true}}`,
+			want:  false,
+		},
+		{
+			name:  "assistant tool calls unsupported",
+			props: `{"chat_template_caps":{"supports_tools":true,"supports_tool_calls":false}}`,
+			want:  false,
+		},
+		{
+			name:  "capabilities absent",
+			props: `{"chat_template":"plain"}`,
+			want:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := llamaPropsSupportNativeToolStreaming(strings.NewReader(tt.props))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("llamaPropsSupportNativeToolStreaming() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLlamaPropsSupportNativeToolStreamingRejectsInvalidJSON(t *testing.T) {
+	if _, err := llamaPropsSupportNativeToolStreaming(strings.NewReader(`{"chat_template_caps":`)); err == nil {
+		t.Fatal("expected invalid props JSON to fail")
+	}
+}
+
+func TestLlamaEngineReportsDetectedNativeToolStreaming(t *testing.T) {
+	engine := &llamaEngine{nativeToolStreaming: true}
+	if !SupportsNativeToolStreaming(engine) {
+		t.Fatal("expected llama engine to report native tool streaming")
+	}
+}
