@@ -637,7 +637,6 @@ func (e *llamaEngine) baseURL() string {
 }
 
 func (e *llamaEngine) ChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
-	applyLlamaThinkingControls(e.modelName, reqBody, false)
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
@@ -872,7 +871,7 @@ func (e *llamaEngine) Chat(ctx context.Context, messages []Message, opts Options
 }
 
 func (e *llamaEngine) chatOnce(ctx context.Context, messages []Message, opts Options, onToken TokenCallback) (string, error) {
-	reqBody := buildLlamaChatRequestBody(e.modelName, messages, opts, onToken != nil)
+	reqBody := buildLlamaChatRequestBody(messages, opts, onToken != nil)
 
 	resp, err := e.ChatCompletion(ctx, reqBody)
 	if err != nil {
@@ -887,7 +886,7 @@ func (e *llamaEngine) chatOnce(ctx context.Context, messages []Message, opts Opt
 	return e.handleNonStreamWithCacheUsage(resp.Body, opts, collector)
 }
 
-func buildLlamaChatRequestBody(modelName string, messages []Message, opts Options, stream bool) map[string]interface{} {
+func buildLlamaChatRequestBody(messages []Message, opts Options, stream bool) map[string]interface{} {
 	reqBody := map[string]interface{}{
 		"messages":    messages,
 		"temperature": opts.Temperature,
@@ -904,12 +903,12 @@ func buildLlamaChatRequestBody(modelName string, messages []Message, opts Option
 	if stream {
 		reqBody["stream_options"] = map[string]interface{}{"include_usage": true}
 	}
-	applyLlamaThinkingControls(modelName, reqBody, opts.DisableThinking)
+	applyLlamaThinkingControls(reqBody, opts.DisableThinking)
 	return reqBody
 }
 
-func applyLlamaThinkingControls(modelName string, reqBody map[string]interface{}, forceDisable bool) {
-	if reqBody == nil || (!forceDisable && !shouldDisableQwenThinkingByDefault(modelName)) {
+func applyLlamaThinkingControls(reqBody map[string]interface{}, disable bool) {
+	if reqBody == nil || !disable {
 		return
 	}
 	kwargs, _ := reqBody["chat_template_kwargs"].(map[string]interface{})
@@ -917,11 +916,7 @@ func applyLlamaThinkingControls(modelName string, reqBody map[string]interface{}
 		kwargs = map[string]interface{}{}
 		reqBody["chat_template_kwargs"] = kwargs
 	}
-	if _, exists := kwargs["enable_thinking"]; !exists || forceDisable {
-		// Qwen thinking-capable templates support `enable_thinking`; defaulting it
-		// to false reduces first-token latency in Lite chat and web-search routing.
-		kwargs["enable_thinking"] = false
-	}
+	kwargs["enable_thinking"] = false
 }
 
 func trimOldestNonSystemMessage(messages []Message) ([]Message, bool) {
@@ -1087,14 +1082,6 @@ func (e *llamaEngine) handleNonStreamWithCacheUsage(body io.Reader, opts Options
 
 func shouldDebugQwen35(modelName string) bool {
 	return strings.Contains(strings.ToLower(modelName), "qwen3.5")
-}
-
-func shouldDisableQwenThinkingByDefault(modelName string) bool {
-	modelName = strings.TrimSpace(strings.ToLower(modelName))
-	return strings.HasPrefix(modelName, "qwen/qwen3") ||
-		strings.HasPrefix(modelName, "qwen3") ||
-		strings.HasPrefix(modelName, "qwen/qwq") ||
-		strings.HasPrefix(modelName, "qwq")
 }
 
 func firstSystemText(messages []Message) string {

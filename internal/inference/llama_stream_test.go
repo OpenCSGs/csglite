@@ -115,12 +115,13 @@ func TestHandleNonStreamDisableThinkingIgnoresReasoning(t *testing.T) {
 	}
 }
 
-func TestBuildLlamaChatRequestBodyDisablesThinkingForQwen3508B(t *testing.T) {
+func TestBuildLlamaChatRequestBodyDisablesThinkingWhenRequested(t *testing.T) {
 	opts := DefaultOptions()
 	opts.Seed = 7
 	opts.Stop = []string{"</stop>"}
+	opts.DisableThinking = true
 
-	reqBody := buildLlamaChatRequestBody("Qwen/Qwen3.5-0.8B", []Message{{Role: "user", Content: "hi"}}, opts, true)
+	reqBody := buildLlamaChatRequestBody([]Message{{Role: "user", Content: "hi"}}, opts, true)
 
 	kwargs, ok := reqBody["chat_template_kwargs"].(map[string]interface{})
 	if !ok {
@@ -175,15 +176,11 @@ func TestHandleNonStreamRecordsLlamaCacheUsage(t *testing.T) {
 	}
 }
 
-func TestBuildLlamaChatRequestBodyDisablesThinkingForQwen3Family(t *testing.T) {
-	reqBody := buildLlamaChatRequestBody("Qwen/Qwen3-0.6B-GGUF", []Message{{Role: "user", Content: "hi"}}, DefaultOptions(), false)
+func TestBuildLlamaChatRequestBodyDoesNotDisableThinkingByDefault(t *testing.T) {
+	reqBody := buildLlamaChatRequestBody([]Message{{Role: "user", Content: "hi"}}, DefaultOptions(), false)
 
-	kwargs, ok := reqBody["chat_template_kwargs"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("chat_template_kwargs missing or wrong type: %#v", reqBody["chat_template_kwargs"])
-	}
-	if got, ok := kwargs["enable_thinking"].(bool); !ok || got {
-		t.Fatalf("enable_thinking = %#v, want false", kwargs["enable_thinking"])
+	if _, ok := reqBody["chat_template_kwargs"]; ok {
+		t.Fatalf("chat_template_kwargs unexpectedly set: %#v", reqBody["chat_template_kwargs"])
 	}
 }
 
@@ -192,7 +189,7 @@ func TestApplyLlamaThinkingControlsPreservesExplicitEnableThinking(t *testing.T)
 		"chat_template_kwargs": map[string]interface{}{"enable_thinking": true},
 	}
 
-	applyLlamaThinkingControls("Qwen3.5-2B", reqBody, false)
+	applyLlamaThinkingControls(reqBody, false)
 
 	kwargs := reqBody["chat_template_kwargs"].(map[string]interface{})
 	if got, ok := kwargs["enable_thinking"].(bool); !ok || !got {
@@ -200,24 +197,16 @@ func TestApplyLlamaThinkingControlsPreservesExplicitEnableThinking(t *testing.T)
 	}
 }
 
-func TestApplyLlamaThinkingControlsForceDisableOverridesExplicitValue(t *testing.T) {
+func TestApplyLlamaThinkingControlsDisableOverridesExplicitValue(t *testing.T) {
 	reqBody := map[string]interface{}{
 		"chat_template_kwargs": map[string]interface{}{"enable_thinking": true},
 	}
 
-	applyLlamaThinkingControls("Qwen3.5-2B", reqBody, true)
+	applyLlamaThinkingControls(reqBody, true)
 
 	kwargs := reqBody["chat_template_kwargs"].(map[string]interface{})
 	if got, ok := kwargs["enable_thinking"].(bool); !ok || got {
 		t.Fatalf("enable_thinking = %#v, want false", kwargs["enable_thinking"])
-	}
-}
-
-func TestBuildLlamaChatRequestBodyLeavesLlamaModelsUntouched(t *testing.T) {
-	reqBody := buildLlamaChatRequestBody("meta-llama/Llama-3.1-8B-Instruct", []Message{{Role: "user", Content: "hi"}}, DefaultOptions(), false)
-
-	if _, ok := reqBody["chat_template_kwargs"]; ok {
-		t.Fatalf("chat_template_kwargs unexpectedly set: %#v", reqBody["chat_template_kwargs"])
 	}
 }
 
