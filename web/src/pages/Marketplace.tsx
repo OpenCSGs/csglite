@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { signal, computed } from "@preact/signals";
 import {
   getMarketplaceModels,
+  getMarketplaceModelExtras,
   getMarketplaceDatasets,
   getMarketplaceModelDetail,
   getTags,
@@ -72,6 +73,7 @@ const loading = signal(false);
 
 const localModelNames = signal<Set<string>>(new Set());
 const localDatasetNames = signal<Set<string>>(new Set());
+let loadDataRequestID = 0;
 
 function loadLocalModels() {
   getTags().then((m) => {
@@ -88,6 +90,7 @@ function loadLocalDatasets() {
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / perPage)));
 
 async function loadData() {
+  const requestID = ++loadDataRequestID;
   loading.value = true;
   try {
     if (activeTab.value === "models") {
@@ -102,8 +105,22 @@ async function loadData() {
         page: page.value,
         per: perPage,
       });
+      if (requestID !== loadDataRequestID) return;
       models.value = res.data || [];
       total.value = res.total;
+      const repoIDs = models.value
+        .map((model) => model.repository_id || 0)
+        .filter((id) => id > 0);
+      if (repoIDs.length > 0) {
+        void getMarketplaceModelExtras(repoIDs).then((extras) => {
+          if (requestID !== loadDataRequestID) return;
+          const sizes = new Map(extras.map((extra) => [extra.repo_id, extra.size]));
+          models.value = models.value.map((model) => ({
+            ...model,
+            repo_size: sizes.get(model.repository_id || 0) ?? model.repo_size,
+          }));
+        }).catch(() => {});
+      }
     } else {
       const res = await getMarketplaceDatasets({
         search: searchQuery.value,
@@ -111,13 +128,17 @@ async function loadData() {
         page: page.value,
         per: perPage,
       });
+      if (requestID !== loadDataRequestID) return;
       datasets.value = res.data || [];
       total.value = res.total;
     }
   } catch {
     /* ignore */
+  } finally {
+    if (requestID === loadDataRequestID) {
+      loading.value = false;
+    }
   }
-  loading.value = false;
 }
 
 export function Marketplace() {

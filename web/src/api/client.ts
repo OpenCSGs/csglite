@@ -139,6 +139,12 @@ export interface MarketplaceModel {
   repo_size?: number;
 }
 
+export interface MarketplaceModelExtra {
+  repo_id: number;
+  size: number;
+  last_commit_size?: number;
+}
+
 export interface MarketplaceModelQuantization {
   name: string;
   file_count: number;
@@ -1983,6 +1989,15 @@ export async function getMarketplaceModels(params: {
     `/api/marketplace/models?${q}`
   );
   return resp;
+}
+
+export async function getMarketplaceModelExtras(repoIDs: number[]): Promise<MarketplaceModelExtra[]> {
+  const resp = await fetchJSON<{ data: MarketplaceModelExtra[] }>("/api/marketplace/models/extra", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo_ids: repoIDs }),
+  });
+  return resp.data || [];
 }
 
 export async function getMarketplaceModelDetail(model: string): Promise<MarketplaceModelDetailResponse> {

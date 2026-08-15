@@ -1853,6 +1853,88 @@
         }
       }
     },
+    "/api/marketplace/models/extra": {
+      "post": {
+        "tags": [
+          "Marketplace"
+        ],
+        "summary": "Get marketplace model repository metadata",
+        "description": "Fetches repository sizes separately from the marketplace model list so list rendering does not wait for secondary upstream metadata.",
+        "operationId": "getMarketplaceModelExtras",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo_ids"
+                ],
+                "properties": {
+                  "repo_ids": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Repository metadata keyed by repository ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "repo_id",
+                          "size"
+                        ],
+                        "properties": {
+                          "repo_id": {
+                            "type": "integer"
+                          },
+                          "size": {
+                            "type": "integer",
+                            "format": "int64"
+                          },
+                          "last_commit_size": {
+                            "type": "integer",
+                            "format": "int64"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "description": "Upstream rate limit exceeded."
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          }
+        }
+      }
+    },
     "/api/marketplace/models/{namespace}/{name}": {
       "get": {
         "tags": [

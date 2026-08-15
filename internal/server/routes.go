@@ -67,6 +67,7 @@ func (s *Server) routes() http.Handler {
 
 	// New: marketplace, system, logs, settings
 	mux.HandleFunc("GET /api/marketplace/models", s.handleMarketplaceModels)
+	mux.HandleFunc("POST /api/marketplace/models/extra", s.handleMarketplaceModelExtras)
 	mux.HandleFunc("GET /api/marketplace/models/{namespace}/{name}", s.handleMarketplaceModelDetail)
 	mux.HandleFunc("GET /api/marketplace/datasets", s.handleMarketplaceDatasets)
 	mux.HandleFunc("GET /api/system", s.handleSystem)

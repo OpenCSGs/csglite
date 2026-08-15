@@ -90,14 +90,49 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	if err := enrichMarketplaceModelSizes(r.Context(), client, models); err != nil {
-		log.Printf("marketplace model sizes unavailable: %v", err)
-	}
-
 	writeMarketplaceListResponse(w, cacheKey, map[string]interface{}{
 		"data":  models,
 		"total": total,
 	})
+}
+
+type marketplaceModelExtrasRequest struct {
+	RepoIDs []int `json:"repo_ids"`
+}
+
+// POST /api/marketplace/models/extra -- fetch repository sizes separately so
+// the marketplace list does not block on secondary upstream metadata.
+func (s *Server) handleMarketplaceModelExtras(w http.ResponseWriter, r *http.Request) {
+	var req marketplaceModelExtrasRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	repoIDs := make([]int, 0, len(req.RepoIDs))
+	seen := make(map[int]struct{}, len(req.RepoIDs))
+	for _, id := range req.RepoIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		repoIDs = append(repoIDs, id)
+	}
+	if len(repoIDs) > 100 {
+		writeError(w, http.StatusBadRequest, "repo_ids must contain at most 100 unique IDs")
+		return
+	}
+
+	client := csghub.NewClient(s.cfg.ServerURL, s.cfg.Token)
+	extras, err := client.GetRepoExtras(r.Context(), repoIDs)
+	if err != nil {
+		writeError(w, marketplaceErrorStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"data": extras})
 }
 
 type marketplaceModelQuantization struct {

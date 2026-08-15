@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -54,7 +55,8 @@ func TestHandleMarketplaceModelsMapsFrameworkToTagFilter(t *testing.T) {
 	}
 }
 
-func TestHandleMarketplaceModelsEnrichesRepositorySizes(t *testing.T) {
+func TestHandleMarketplaceModelsDoesNotBlockOnRepositorySizes(t *testing.T) {
+	extrasCalls := 0
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -68,22 +70,8 @@ func TestHandleMarketplaceModelsEnrichesRepositorySizes(t *testing.T) {
 				Total: 2,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/extra":
-			var req struct {
-				RepoIDs []int `json:"repo_ids"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode extras request: %v", err)
-			}
-			if len(req.RepoIDs) != 2 || req.RepoIDs[0] != 101 || req.RepoIDs[1] != 202 {
-				t.Fatalf("repo_ids = %#v, want [101 202]", req.RepoIDs)
-			}
-			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoExtraItem]{
-				Msg: "OK",
-				Data: []csghub.RepoExtraItem{
-					{RepoID: 101, Size: 7_516_192_768},
-					{RepoID: 202, Size: 2_147_483_648},
-				},
-			})
+			extrasCalls++
+			t.Fatal("model list must not request repository extras")
 		default:
 			t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
 		}
@@ -109,8 +97,56 @@ func TestHandleMarketplaceModelsEnrichesRepositorySizes(t *testing.T) {
 	if len(resp.Data) != 2 {
 		t.Fatalf("data len = %d, want 2", len(resp.Data))
 	}
-	if resp.Data[0].RepoSize != 7_516_192_768 || resp.Data[1].RepoSize != 2_147_483_648 {
-		t.Fatalf("repo sizes = [%d %d], want [7516192768 2147483648]", resp.Data[0].RepoSize, resp.Data[1].RepoSize)
+	if extrasCalls != 0 {
+		t.Fatalf("extras calls = %d, want 0", extrasCalls)
+	}
+	if resp.Data[0].RepoSize != 0 || resp.Data[1].RepoSize != 0 {
+		t.Fatalf("repo sizes = [%d %d], want [0 0]", resp.Data[0].RepoSize, resp.Data[1].RepoSize)
+	}
+}
+
+func TestHandleMarketplaceModelExtrasFetchesRepositorySizes(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/repos/extra" {
+			t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+		}
+		var req struct {
+			RepoIDs []int `json:"repo_ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode extras request: %v", err)
+		}
+		if len(req.RepoIDs) != 2 || req.RepoIDs[0] != 101 || req.RepoIDs[1] != 202 {
+			t.Fatalf("repo_ids = %#v, want [101 202]", req.RepoIDs)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoExtraItem]{
+			Msg: "OK",
+			Data: []csghub.RepoExtraItem{
+				{RepoID: 101, Size: 7_516_192_768},
+				{RepoID: 202, Size: 2_147_483_648},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodPost, "/api/marketplace/models/extra", bytes.NewBufferString(`{"repo_ids":[101,202,101,-1]}`))
+	w := httptest.NewRecorder()
+	s.handleMarketplaceModelExtras(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp struct {
+		Data []csghub.RepoExtraItem `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Data) != 2 || resp.Data[0].Size != 7_516_192_768 || resp.Data[1].Size != 2_147_483_648 {
+		t.Fatalf("extras = %#v", resp.Data)
 	}
 }
 
