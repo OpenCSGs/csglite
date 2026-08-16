@@ -77,12 +77,12 @@ type codexTruncationPolicy struct {
 	Limit int64  `json:"limit"`
 }
 
-func resolveLaunchModel(serverURL, defaultModel, requested string, skipPrompt, hasCloudToken bool) (string, error) {
-	selection, err := resolveLaunchModelSelection(serverURL, defaultModel, requested, "", skipPrompt, hasCloudToken)
+func resolveLaunchModel(serverURL, defaultModel, requested string, skipPrompt, hasCloudCredential bool) (string, error) {
+	selection, err := resolveLaunchModelSelection(serverURL, defaultModel, requested, "", skipPrompt, hasCloudCredential)
 	return selection.ID, err
 }
 
-func resolveLaunchModelSelection(serverURL, defaultModel, requested, requestedProvider string, skipPrompt, hasCloudToken bool) (launchModelChoice, error) {
+func resolveLaunchModelSelection(serverURL, defaultModel, requested, requestedProvider string, skipPrompt, hasCloudCredential bool) (launchModelChoice, error) {
 	models, err := getLaunchModels(serverURL)
 	if err != nil {
 		return launchModelChoice{}, err
@@ -116,8 +116,8 @@ func resolveLaunchModelSelection(serverURL, defaultModel, requested, requestedPr
 				return candidate, nil
 			}
 		}
-		if !hasCloudToken {
-			return launchModelChoice{}, fmt.Errorf("model %q is not available for AI apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings and save an Access Token first", requested)
+		if !hasCloudCredential {
+			return launchModelChoice{}, fmt.Errorf("model %q is not available for AI apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings and sign in or save an API Key first", requested)
 		}
 		return launchModelChoice{}, fmt.Errorf("model %q is not available for AI apps", requested)
 	}

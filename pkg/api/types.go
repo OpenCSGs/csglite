@@ -532,6 +532,85 @@ type ObservabilityTraceDetailResponse struct {
 	Requests []ObservabilityRequest `json:"requests"`
 }
 
+type DatasetExportRequest struct {
+	TraceIDs        []string                  `json:"trace_ids,omitempty"`
+	Filter          *DatasetExportTraceFilter `json:"filter,omitempty"`
+	Format          string                    `json:"format"`
+	RedactionPolicy string                    `json:"redaction_policy,omitempty"`
+	Confirmed       bool                      `json:"confirmed,omitempty"`
+	DatasetName     string                    `json:"dataset_name,omitempty"`
+}
+
+type DatasetExportTraceFilter struct {
+	From   *time.Time `json:"from,omitempty"`
+	To     *time.Time `json:"to,omitempty"`
+	Status string     `json:"status,omitempty"`
+	Model  string     `json:"model,omitempty"`
+	Source string     `json:"source,omitempty"`
+	Query  string     `json:"q,omitempty"`
+}
+
+type DatasetExportRisk struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
+}
+
+type DatasetExportPreviewResponse struct {
+	Selected int                 `json:"selected"`
+	Exported int                 `json:"exported"`
+	Excluded int                 `json:"excluded"`
+	Degraded int                 `json:"degraded"`
+	Risks    []DatasetExportRisk `json:"risks"`
+	Sample   json.RawMessage     `json:"sample,omitempty"`
+}
+
+type DatasetExportFile struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+}
+
+type DatasetExportResponse struct {
+	ID          string              `json:"id"`
+	DatasetID   string              `json:"dataset_id"`
+	Format      string              `json:"format"`
+	CreatedAt   time.Time           `json:"created_at"`
+	Selected    int                 `json:"selected"`
+	Exported    int                 `json:"exported"`
+	Excluded    int                 `json:"excluded"`
+	Degraded    int                 `json:"degraded"`
+	Risks       []DatasetExportRisk `json:"risks"`
+	Files       []DatasetExportFile `json:"files"`
+	DownloadURL string              `json:"download_url"`
+}
+
+type DatasetExportJobResponse struct {
+	ID        string                 `json:"id"`
+	Status    string                 `json:"status"`
+	CreatedAt time.Time              `json:"created_at"`
+	UpdatedAt time.Time              `json:"updated_at"`
+	Error     string                 `json:"error,omitempty"`
+	Export    *DatasetExportResponse `json:"export,omitempty"`
+}
+
+type DatasetPublishRequest struct {
+	Create        bool   `json:"create"`
+	Name          string `json:"name"`
+	Nickname      string `json:"nickname,omitempty"`
+	Description   string `json:"description,omitempty"`
+	Private       bool   `json:"private"`
+	ConfirmPublic bool   `json:"confirm_public,omitempty"`
+	License       string `json:"license,omitempty"`
+}
+
+type DatasetPublishResponse struct {
+	DatasetID     string              `json:"dataset_id"`
+	Revision      string              `json:"revision"`
+	URL           string              `json:"url"`
+	AgenticHubURL string              `json:"agentichub_url"`
+	Files         []DatasetExportFile `json:"files"`
+}
+
 type APIKeyInfo struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`

@@ -1,7 +1,22 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { signal } from "@preact/signals";
-import { getDatasetTags, searchDatasets, getDatasetFiles, deleteDataset, getDatasetManifest } from "../api/client";
-import type { DatasetInfo, DatasetFileEntry, DatasetManifestResponse, DatasetDownloadFile } from "../api/client";
+import {
+  deleteDataset,
+  getDatasetFiles,
+  getDatasetManifest,
+  getDatasetTags,
+  localDatasetExportURL,
+  openExternalURL,
+  publishLocalDataset,
+  searchDatasets,
+} from "../api/client";
+import type {
+  DatasetDownloadFile,
+  DatasetFileEntry,
+  DatasetInfo,
+  DatasetManifestResponse,
+  DatasetPublishResponse,
+} from "../api/client";
 import { t, locale } from "../i18n";
 import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
 import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../components/Pagination";
@@ -90,6 +105,7 @@ function datasetRows(datasets: DatasetInfo[]): DatasetTableRow[] {
 function datasetOriginLabel(origin?: string): string {
   if (origin === "upload") return t("ds.originUpload");
   if (origin === "marketplace") return t("ds.originMarketplace");
+  if (origin === "export") return t("ds.originExport");
   return t("ds.notAvailable");
 }
 
@@ -293,6 +309,7 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
   const [manifest, setManifest] = useState<DatasetManifestResponse | null>(null);
   const [detailError, setDetailError] = useState("");
   const [copiedKey, setCopiedKey] = useState("");
+  const [showPublish, setShowPublish] = useState(false);
   const copyResetRef = useRef<number | null>(null);
   const runtimeAPIOrigin = useRuntimeAPIOrigin();
 
@@ -359,20 +376,30 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
 
   return (
     <div class="page-shell">
-      <div class="flex items-center gap-3 mb-4">
-        <button
-          onClick={goBack}
-          class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 transition-colors text-gray-600"
-          aria-label={t("ds.back")}
-          title={t("ds.back")}
-        >
-          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-        <div class="min-w-0">
-          <h1 class="text-xl font-bold text-gray-900 break-all">{dataset}</h1>
-          <p class="text-sm text-gray-500 mt-1">{t("ds.detailSubtitle")}</p>
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex min-w-0 items-center gap-3">
+          <button
+            onClick={goBack}
+            class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 transition-colors text-gray-600"
+            aria-label={t("ds.back")}
+            title={t("ds.back")}
+          >
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <div class="min-w-0">
+            <h1 class="text-xl font-bold text-gray-900 break-all">{dataset}</h1>
+            <p class="text-sm text-gray-500 mt-1">{t("ds.detailSubtitle")}</p>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <a href={localDatasetExportURL(dataset)} class="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:border-indigo-200 hover:text-indigo-700">
+            {t("ds.exportZip")}
+          </a>
+          <button type="button" onClick={() => setShowPublish(true)} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+            {t("ds.uploadCSGHub")}
+          </button>
         </div>
       </div>
 
@@ -567,6 +594,114 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
           </tbody>
         </table>
       </div>
+      {showPublish && <DatasetPublishDialog dataset={dataset} manifest={manifest} onClose={() => setShowPublish(false)} />}
+    </div>
+  );
+}
+
+function DatasetPublishDialog({ dataset, manifest, onClose }: {
+  dataset: string;
+  manifest: DatasetManifestResponse | null;
+  onClose: () => void;
+}) {
+  const localName = dataset.split("/").pop() || dataset;
+  const [create, setCreate] = useState(true);
+  const [name, setName] = useState(localName);
+  const [description, setDescription] = useState(manifest?.details.description || "");
+  const [isPrivate, setIsPrivate] = useState(true);
+  const [confirmPublic, setConfirmPublic] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<DatasetPublishResponse | null>(null);
+
+  async function publish() {
+    setPublishing(true);
+    setError("");
+    try {
+      const response = await publishLocalDataset(dataset, {
+        create,
+        name: name.trim(),
+        description: description.trim() || undefined,
+        private: isPrivate,
+        confirm_public: !isPrivate ? confirmPublic : undefined,
+        license: manifest?.details.license || undefined,
+      });
+      setResult(response);
+    } catch (err: any) {
+      setError(err?.message || t("ds.publishFailed"));
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function openURL(url: string) {
+    try {
+      if (await openExternalURL(url)) return;
+    } catch {
+      // Fall back to a normal browser tab outside desktop mode.
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  const canPublish = name.trim() && (isPrivate || confirmPublic) && !publishing;
+  return (
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4" onClick={() => { if (!publishing) onClose(); }}>
+      <section class="w-full max-w-xl rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <header class="flex items-start justify-between border-b border-gray-200 px-6 py-5">
+          <div>
+            <h2 class="text-lg font-semibold text-gray-950">{t("ds.publishTitle")}</h2>
+            <p class="mt-1 break-all text-sm text-gray-500">{dataset}</p>
+          </div>
+          <button type="button" disabled={publishing} onClick={onClose} class="rounded-lg p-2 text-gray-400 hover:bg-gray-100 disabled:opacity-40">×</button>
+        </header>
+        <div class="space-y-4 p-6">
+          {result ? (
+            <>
+              <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                <p class="font-semibold">{t("ds.publishCompleted")}</p>
+                <p class="mt-1 font-mono text-xs">{result.dataset_id}@{result.revision}</p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" onClick={() => void openURL(result.url)} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white">{t("ds.openCSGHub")}</button>
+                <button type="button" onClick={() => void openURL(result.agentichub_url)} class="rounded-lg border border-indigo-200 px-4 py-2 text-sm font-medium text-indigo-700">{t("ds.openAgenticHub")}</button>
+                <button type="button" onClick={onClose} class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700">{t("ds.close")}</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <label class="flex items-center gap-3 text-sm text-gray-700">
+                <input type="checkbox" checked={create} onChange={(event) => setCreate(event.currentTarget.checked)} class="h-4 w-4 rounded border-gray-300 text-indigo-600" />
+                {t("ds.createRemoteDataset")}
+              </label>
+              <label class="block space-y-1.5 text-sm">
+                <span class="font-medium text-gray-700">{t("ds.remoteName")}</span>
+                <input value={name} onInput={(event) => setName((event.currentTarget as HTMLInputElement).value)} class="w-full rounded-lg border border-gray-200 px-3 py-2" />
+              </label>
+              <label class="block space-y-1.5 text-sm">
+                <span class="font-medium text-gray-700">{t("ds.description")}</span>
+                <textarea value={description} onInput={(event) => setDescription((event.currentTarget as HTMLTextAreaElement).value)} rows={3} class="w-full rounded-lg border border-gray-200 px-3 py-2" />
+              </label>
+              <label class="flex items-center gap-3 text-sm text-gray-700">
+                <input type="checkbox" checked={isPrivate} onChange={(event) => { setIsPrivate(event.currentTarget.checked); setConfirmPublic(false); }} class="h-4 w-4 rounded border-gray-300 text-indigo-600" />
+                {t("ds.privateDataset")}
+              </label>
+              {!isPrivate && (
+                <label class="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                  <input type="checkbox" checked={confirmPublic} onChange={(event) => setConfirmPublic(event.currentTarget.checked)} class="mt-0.5 h-4 w-4 rounded border-red-300" />
+                  {t("ds.confirmPublic")}
+                </label>
+              )}
+              {error && <div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+              <div class="flex justify-end gap-3">
+                <button type="button" disabled={publishing} onClick={onClose} class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 disabled:opacity-40">{t("ds.cancel")}</button>
+                <button type="button" disabled={!canPublish} onClick={() => void publish()} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
+                  {publishing ? t("ds.publishing") : t("ds.publishNow")}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

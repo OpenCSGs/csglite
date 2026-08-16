@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -135,5 +136,83 @@ func TestStoreCleanupAndDeleteAll(t *testing.T) {
 	}
 	if page.Total != 0 {
 		t.Fatalf("requests remain after delete: %+v", page)
+	}
+}
+
+func TestStoreTraceFiltersPreserveCompleteTraceAggregates(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	start := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	records := []RequestRecord{
+		{ID: "mixed-1", TraceID: "trace-mixed", StartedAt: start, CompletedAt: start, Method: "POST", Path: "/api/chat", Status: "completed", StatusCode: 200, Model: "model-a"},
+		{ID: "mixed-2", TraceID: "trace-mixed", StartedAt: start.Add(time.Minute), CompletedAt: start.Add(time.Minute), Method: "POST", Path: "/api/chat", Status: "failed", StatusCode: 500, Model: "model-b"},
+		{ID: "later-1", TraceID: "trace-later", StartedAt: start.Add(48 * time.Hour), CompletedAt: start.Add(48 * time.Hour), Method: "POST", Path: "/api/chat", Status: "completed", StatusCode: 200, Model: "model-a"},
+	}
+	for _, record := range records {
+		if err := store.Add(t.Context(), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page, err := store.ListTraces(t.Context(), RequestFilter{Model: "model-b", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].TraceID != "trace-mixed" {
+		t.Fatalf("model-filtered traces = %+v", page)
+	}
+	if page.Items[0].RequestCount != 2 || page.Items[0].Status != "failed" {
+		t.Fatalf("filtered trace lost its complete aggregate: %+v", page.Items[0])
+	}
+
+	from := start.Add(24 * time.Hour)
+	ids, err := store.ListTraceIDs(t.Context(), RequestFilter{From: &from})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != "trace-later" {
+		t.Fatalf("time-filtered trace IDs = %v, want [trace-later]", ids)
+	}
+}
+
+func TestStoreVisitTracesReadsSelectedBodiesInBatches(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for index := range 130 {
+		traceID := fmt.Sprintf("trace-%03d", index)
+		if err := store.Add(ctx, RequestRecord{
+			ID: fmt.Sprintf("request-%03d", index), TraceID: traceID,
+			StartedAt: now, CompletedAt: now, Method: "POST", Path: "/api/chat",
+			Status: "completed", StatusCode: 200,
+			RequestBody:  `{"messages":[{"role":"user","content":"hello"}]}`,
+			ResponseBody: `{"message":{"role":"assistant","content":"world"}}`,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	selected := make([]string, 0, 66)
+	for index := 0; index < 130; index += 2 {
+		selected = append(selected, fmt.Sprintf("trace-%03d", index))
+	}
+	visited := make(map[string]bool)
+	if err := store.VisitTraces(ctx, selected, func(traceID string, records []RequestRecord) error {
+		if len(records) != 1 || !strings.Contains(records[0].RequestBody, "hello") {
+			t.Fatalf("records for %s = %+v", traceID, records)
+		}
+		visited[traceID] = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(visited) != len(selected) {
+		t.Fatalf("visited %d traces, want %d", len(visited), len(selected))
 	}
 }

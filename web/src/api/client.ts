@@ -529,6 +529,83 @@ export interface ObservabilityTraceDetailResponse {
   requests: ObservabilityRequest[];
 }
 
+export type DatasetExportFormat = "openai_messages" | "sharegpt" | "alpaca" | "prompt_completion";
+export type DatasetRedactionPolicy = "redact" | "exclude" | "detect";
+
+export interface DatasetExportTraceFilter {
+  from?: string;
+  to?: string;
+  status?: string;
+  model?: string;
+  source?: string;
+  q?: string;
+}
+
+export interface DatasetExportRequest {
+  trace_ids?: string[];
+  filter?: DatasetExportTraceFilter;
+  format: DatasetExportFormat;
+  redaction_policy?: DatasetRedactionPolicy;
+  confirmed?: boolean;
+  dataset_name?: string;
+}
+
+export interface DatasetExportRisk {
+  type: string;
+  count: number;
+}
+
+export interface DatasetExportFile {
+  path: string;
+  size: number;
+  sha256: string;
+}
+
+export interface DatasetExportPreview {
+  selected: number;
+  exported: number;
+  excluded: number;
+  degraded: number;
+  risks: DatasetExportRisk[];
+  sample?: unknown;
+}
+
+export interface DatasetExport extends DatasetExportPreview {
+  id: string;
+  dataset_id: string;
+  format: DatasetExportFormat;
+  created_at: string;
+  files: DatasetExportFile[];
+  download_url: string;
+}
+
+export interface DatasetExportJob {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  created_at: string;
+  updated_at: string;
+  error?: string;
+  export?: DatasetExport;
+}
+
+export interface DatasetPublishRequest {
+  create: boolean;
+  name: string;
+  nickname?: string;
+  description?: string;
+  private: boolean;
+  confirm_public?: boolean;
+  license?: string;
+}
+
+export interface DatasetPublishResponse {
+  dataset_id: string;
+  revision: string;
+  url: string;
+  agentichub_url: string;
+  files: DatasetExportFile[];
+}
+
 export interface ObservabilityQuery {
   from?: string;
   to?: string;
@@ -1310,6 +1387,43 @@ export async function getObservabilityTraces(query?: ObservabilityQuery): Promis
 
 export async function getObservabilityTrace(traceID: string): Promise<ObservabilityTraceDetailResponse> {
   return fetchJSON<ObservabilityTraceDetailResponse>(`/api/observability/traces/${encodeURIComponent(traceID)}`);
+}
+
+export async function previewTraceDatasetExport(request: DatasetExportRequest): Promise<DatasetExportPreview> {
+  return fetchJSON<DatasetExportPreview>("/api/observability/dataset-exports/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+}
+
+export async function createTraceDatasetExport(request: DatasetExportRequest): Promise<DatasetExportJob> {
+  return fetchJSON<DatasetExportJob>("/api/observability/dataset-exports", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+}
+
+export async function getTraceDatasetExportJob(jobID: string): Promise<DatasetExportJob> {
+  return fetchJSON<DatasetExportJob>(`/api/observability/dataset-export-jobs/${encodeURIComponent(jobID)}`);
+}
+
+export async function publishLocalDataset(dataset: string, request: DatasetPublishRequest): Promise<DatasetPublishResponse> {
+  const { namespace, name } = splitModelID(dataset);
+  return fetchJSON<DatasetPublishResponse>(
+    `/api/datasets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/publish`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export function localDatasetExportURL(dataset: string): string {
+  const { namespace, name } = splitModelID(dataset);
+  return `/api/datasets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/export`;
 }
 
 export async function clearObservabilityData(): Promise<void> {

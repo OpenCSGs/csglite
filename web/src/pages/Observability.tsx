@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { useLocation, type RoutePropsForPath } from "preact-iso";
 import {
+  createTraceDatasetExport,
   getObservabilityRequest,
   getObservabilityRequests,
   getObservabilityTrace,
   getObservabilityTraces,
+  getTraceDatasetExportJob,
+  previewTraceDatasetExport,
 } from "../api/client";
 import type {
+  DatasetExport,
+  DatasetExportFormat,
+  DatasetExportPreview,
+  DatasetExportTraceFilter,
+  DatasetRedactionPolicy,
   ObservabilityQuery,
   ObservabilityRequest,
   ObservabilityRequestListResponse,
@@ -19,15 +27,34 @@ import {
   observabilityFromForPeriod,
   type ObservabilityPeriod,
 } from "../utils/observability";
-import { parseTracePayload, type TraceSectionKind } from "../utils/tracePayload";
+import {
+  buildTraceFlowSections,
+  parseTracePayload,
+  type TraceFlowSection,
+  type TraceSectionKind,
+} from "../utils/tracePayload";
 
 type ObservabilityTab = "requests" | "traces";
 
-const pageSize = 20;
+const defaultPageSize = 20;
 
 function initialParam(name: string, fallback = ""): string {
   if (typeof window === "undefined") return fallback;
   return new URLSearchParams(window.location.search).get(name) || fallback;
+}
+
+function dateTimeLocalValue(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function dateTimeISO(value: string): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 function formatNumber(value: number): string {
@@ -82,12 +109,20 @@ export function Observability() {
   void locale.value;
   const { route } = useLocation();
   const [tab, setTab] = useState<ObservabilityTab>(initialParam("tab", "requests") === "traces" ? "traces" : "requests");
-  const [period, setPeriod] = useState<ObservabilityPeriod>((initialParam("period", "24h") as ObservabilityPeriod));
+  const initialPeriod = initialParam("period", "24h") as ObservabilityPeriod;
+  const [period, setPeriod] = useState<ObservabilityPeriod>(
+    ["24h", "7d", "30d", "custom", "all"].includes(initialPeriod) ? initialPeriod : "24h",
+  );
+  const [customFrom, setCustomFrom] = useState(dateTimeLocalValue(initialParam("from")));
+  const [customTo, setCustomTo] = useState(dateTimeLocalValue(initialParam("to")));
   const [status, setStatus] = useState(initialParam("status"));
   const [model, setModel] = useState(initialParam("model"));
   const [source, setSource] = useState(initialParam("source"));
   const [search, setSearch] = useState(initialParam("q"));
   const [page, setPage] = useState(Math.max(1, Number(initialParam("page", "1")) || 1));
+  const [pageSize, setPageSize] = useState(
+    [20, 50, 100].includes(Number(initialParam("page_size"))) ? Number(initialParam("page_size")) : defaultPageSize,
+  );
   const [requests, setRequests] = useState<ObservabilityRequestListResponse | null>(null);
   const [traces, setTraces] = useState<ObservabilityTraceListResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -95,28 +130,42 @@ export function Observability() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [requestDetail, setRequestDetail] = useState<ObservabilityRequest | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [showExport, setShowExport] = useState(false);
 
   const query = useMemo<ObservabilityQuery>(() => ({
-    from: observabilityFromForPeriod(period),
+    from: period === "custom" ? dateTimeISO(customFrom) : observabilityFromForPeriod(period),
+    to: period === "custom" ? dateTimeISO(customTo) : undefined,
     status: status || undefined,
     model: model.trim() || undefined,
     source: source.trim() || undefined,
     q: search.trim() || undefined,
     limit: pageSize,
     offset: (page - 1) * pageSize,
-  }), [period, status, model, source, search, page]);
+  }), [period, customFrom, customTo, status, model, source, search, page, pageSize]);
+
+  const exportFilter = useMemo<DatasetExportTraceFilter>(() => ({
+    from: query.from,
+    to: query.to,
+    status: query.status,
+    model: query.model,
+    source: query.source,
+    q: query.q,
+  }), [query]);
 
   useEffect(() => {
     const params = new URLSearchParams();
     params.set("tab", tab);
     params.set("period", period);
+    if (period === "custom" && query.from) params.set("from", query.from);
+    if (period === "custom" && query.to) params.set("to", query.to);
     if (status) params.set("status", status);
     if (model.trim()) params.set("model", model.trim());
     if (source.trim()) params.set("source", source.trim());
     if (search.trim()) params.set("q", search.trim());
     if (page > 1) params.set("page", String(page));
+    if (pageSize !== defaultPageSize) params.set("page_size", String(pageSize));
     window.history.replaceState(null, "", `/observability?${params}`);
-  }, [tab, period, status, model, source, search, page]);
+  }, [tab, period, status, model, source, search, page, pageSize, query.from, query.to]);
 
   useEffect(() => {
     let active = true;
@@ -171,17 +220,29 @@ export function Observability() {
           <h1 class="text-2xl font-bold text-gray-950">{t("observability.title")}</h1>
           <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-500">{t("observability.subtitle")}</p>
         </div>
-        <button
-          type="button"
-          disabled={loading}
-          onClick={() => setRefreshKey((value) => value + 1)}
-          class="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:border-indigo-200 hover:text-indigo-700 disabled:opacity-50"
-        >
-          <svg class={`h-4 w-4 ${loading ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 10-2.34 5.66M20 4v7h-7" />
-          </svg>
-          {loading ? t("observability.refreshing") : t("observability.refresh")}
-        </button>
+        <div class="flex flex-wrap gap-2">
+          {tab === "traces" && (
+            <button
+              type="button"
+              disabled={(traces?.total || 0) === 0}
+              onClick={() => setShowExport(true)}
+              class="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-40"
+            >
+              {t("observability.exportDataset")}
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => setRefreshKey((value) => value + 1)}
+            class="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:border-indigo-200 hover:text-indigo-700 disabled:opacity-50"
+          >
+            <svg class={`h-4 w-4 ${loading ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M20 11a8 8 0 10-2.34 5.66M20 4v7h-7" />
+            </svg>
+            {loading ? t("observability.refreshing") : t("observability.refresh")}
+          </button>
+        </div>
       </header>
 
       <div class="inline-flex rounded-xl border border-gray-200 bg-white p-1 shadow-sm">
@@ -210,10 +271,23 @@ export function Observability() {
 
       <section class="rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div class="grid gap-3 border-b border-gray-100 p-4 md:grid-cols-2 xl:grid-cols-[auto_1fr_1fr_1fr_1.25fr]">
-          <select value={period} onInput={(event) => changeFilter(() => setPeriod((event.currentTarget as HTMLSelectElement).value as ObservabilityPeriod))} class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500">
+          <select
+            value={period}
+            onInput={(event) => changeFilter(() => {
+              const next = (event.currentTarget as HTMLSelectElement).value as ObservabilityPeriod;
+              setPeriod(next);
+              if (next === "custom" && !customFrom && !customTo) {
+                const now = new Date();
+                setCustomTo(dateTimeLocalValue(now.toISOString()));
+                setCustomFrom(dateTimeLocalValue(new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()));
+              }
+            })}
+            class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500"
+          >
             <option value="24h">{t("observability.period24h")}</option>
             <option value="7d">{t("observability.period7d")}</option>
             <option value="30d">{t("observability.period30d")}</option>
+            <option value="custom">{t("observability.periodCustom")}</option>
             <option value="all">{t("observability.periodAll")}</option>
           </select>
           <select value={status} onInput={(event) => changeFilter(() => setStatus((event.currentTarget as HTMLSelectElement).value))} class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:ring-2 focus:ring-indigo-500">
@@ -228,20 +302,59 @@ export function Observability() {
             <input value={search} onInput={(event) => changeFilter(() => setSearch((event.currentTarget as HTMLInputElement).value))} placeholder={t("observability.filterSearch")} class="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:ring-2 focus:ring-indigo-500" />
           </div>
         </div>
+        {period === "custom" && (
+          <div class="grid gap-3 border-b border-gray-100 bg-indigo-50/30 px-4 py-3 sm:grid-cols-2">
+            <label class="space-y-1 text-xs font-medium text-gray-600">
+              <span>{t("observability.timeFrom")}</span>
+              <input
+                type="datetime-local"
+                value={customFrom}
+                max={customTo || undefined}
+                onInput={(event) => changeFilter(() => setCustomFrom((event.currentTarget as HTMLInputElement).value))}
+                class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-normal text-gray-700 focus:ring-2 focus:ring-indigo-500"
+              />
+            </label>
+            <label class="space-y-1 text-xs font-medium text-gray-600">
+              <span>{t("observability.timeTo")}</span>
+              <input
+                type="datetime-local"
+                value={customTo}
+                min={customFrom || undefined}
+                onInput={(event) => changeFilter(() => setCustomTo((event.currentTarget as HTMLInputElement).value))}
+                class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-normal text-gray-700 focus:ring-2 focus:ring-indigo-500"
+              />
+            </label>
+          </div>
+        )}
 
         {error && <div class="m-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
         {tab === "requests" ? (
           <RequestTable data={requests} loading={loading} onOpen={openRequest} onOpenTrace={navigateToTrace} />
         ) : (
-          <TraceTable data={traces} loading={loading} onOpen={navigateToTrace} onOpenFull={navigateToTrace} />
+          <TraceTable
+            data={traces}
+            loading={loading}
+            onOpen={navigateToTrace}
+            onOpenFull={navigateToTrace}
+          />
         )}
         {(() => {
           const total = tab === "requests" ? requests?.total || 0 : traces?.total || 0;
           const pages = Math.max(1, Math.ceil(total / pageSize));
+          const first = total === 0 ? 0 : (page - 1) * pageSize + 1;
+          const last = Math.min(page * pageSize, total);
           return (
             <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 bg-gray-50/50 px-4 py-3">
-              <span class="text-xs text-gray-500">{t("observability.total", total)}</span>
+              <span class="text-xs text-gray-500">{t("observability.pageRange", first, last, total)}</span>
               <div class="flex items-center gap-2">
+                <select
+                  value={pageSize}
+                  onInput={(event) => { setPageSize(Number((event.currentTarget as HTMLSelectElement).value)); setPage(1); }}
+                  aria-label={t("observability.pageSize")}
+                  class="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-600"
+                >
+                  {[20, 50, 100].map((size) => <option key={size} value={size}>{t("observability.perPage", size)}</option>)}
+                </select>
                 <button type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">{t("pager.prev")}</button>
                 <span class="min-w-[64px] text-center text-xs tabular-nums text-gray-500">{page} / {pages}</span>
                 <button type="button" disabled={page >= pages} onClick={() => setPage((value) => Math.min(pages, value + 1))} class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">{t("pager.next")}</button>
@@ -257,6 +370,13 @@ export function Observability() {
           loading={detailLoading}
           onClose={() => setRequestDetail(null)}
           onOpenTrace={navigateToTrace}
+        />
+      )}
+      {showExport && (
+        <DatasetExportWizard
+          filter={exportFilter}
+          matchingTotal={traces?.total || 0}
+          onClose={() => setShowExport(false)}
         />
       )}
     </div>
@@ -389,6 +509,310 @@ function EmptyState() {
 
 function LoadingRow() {
   return <div class="border-t border-gray-100 px-4 py-6 text-center text-sm text-gray-400">{t("observability.loading")}</div>;
+}
+
+function DatasetExportWizard({ filter, matchingTotal, onClose }: {
+  filter: DatasetExportTraceFilter;
+  matchingTotal: number;
+  onClose: () => void;
+}) {
+  const [step, setStep] = useState<1 | 2>(1);
+  const [exportFrom, setExportFrom] = useState(dateTimeLocalValue(filter.from || ""));
+  const [exportTo, setExportTo] = useState(dateTimeLocalValue(filter.to || (filter.from ? new Date().toISOString() : "")));
+  const [exportStatus, setExportStatus] = useState(filter.status || "");
+  const [exportModel, setExportModel] = useState(filter.model || "");
+  const [exportSource, setExportSource] = useState(filter.source || "");
+  const [exportQuery, setExportQuery] = useState(filter.q || "");
+  const [format, setFormat] = useState<DatasetExportFormat>("openai_messages");
+  const [policy, setPolicy] = useState<DatasetRedactionPolicy>("redact");
+  const [datasetName, setDatasetName] = useState("");
+  const [preview, setPreview] = useState<DatasetExportPreview | null>(null);
+  const [previewing, setPreviewing] = useState(true);
+  const [confirmed, setConfirmed] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [result, setResult] = useState<DatasetExport | null>(null);
+  const [error, setError] = useState("");
+
+  const selection = useMemo(() => ({
+    filter: {
+      from: dateTimeISO(exportFrom),
+      to: dateTimeISO(exportTo),
+      status: exportStatus || undefined,
+      model: exportModel.trim() || undefined,
+      source: exportSource.trim() || undefined,
+      q: exportQuery.trim() || undefined,
+    },
+  }), [exportFrom, exportTo, exportStatus, exportModel, exportSource, exportQuery]);
+
+  useEffect(() => {
+    if (step !== 2) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setPreviewing(true);
+      setError("");
+      previewTraceDatasetExport({
+        ...selection,
+        format,
+        redaction_policy: policy,
+      }).then((data) => {
+        if (active) setPreview(data);
+      }).catch((err: any) => {
+        if (active) setError(err?.message || t("observability.exportPreviewFailed"));
+      }).finally(() => {
+        if (active) setPreviewing(false);
+      });
+    }, 150);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [step, selection, format, policy]);
+
+  async function exportDataset() {
+    setExporting(true);
+    setError("");
+    try {
+      let job = await createTraceDatasetExport({
+        ...selection,
+        format,
+        redaction_policy: policy,
+        confirmed: policy !== "detect" || confirmed,
+        dataset_name: datasetName.trim() || undefined,
+      });
+      while (job.status === "queued" || job.status === "running") {
+        await new Promise((resolve) => window.setTimeout(resolve, 400));
+        job = await getTraceDatasetExportJob(job.id);
+      }
+      if (job.status !== "completed" || !job.export) {
+        throw new Error(job.error || t("observability.exportFailed"));
+      }
+      setResult(job.export);
+    } catch (err: any) {
+      setError(err?.message || t("observability.exportFailed"));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const requiresConfirmation = policy === "detect" && (preview?.risks.length || 0) > 0;
+  const canExport = !!preview?.exported && !previewing && !exporting && (!requiresConfirmation || confirmed);
+  const invalidRange = !!exportFrom && !!exportTo && new Date(exportFrom).getTime() > new Date(exportTo).getTime();
+  const canContinue = !!exportFrom && !!exportTo && !invalidRange;
+  const formats: Array<{ value: DatasetExportFormat; label: string }> = [
+    { value: "openai_messages", label: t("observability.exportFormat.openai") },
+    { value: "sharegpt", label: t("observability.exportFormat.sharegpt") },
+    { value: "alpaca", label: t("observability.exportFormat.alpaca") },
+    { value: "prompt_completion", label: t("observability.exportFormat.completion") },
+  ];
+
+  return (
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4" onClick={() => { if (!exporting) onClose(); }}>
+      <section class="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <header class="sticky top-0 z-10 flex items-start justify-between border-b border-gray-200 bg-white px-6 py-5">
+          <div>
+            <h2 class="text-lg font-semibold text-gray-950">{t("observability.exportTitle")}</h2>
+            <p class="mt-1 text-sm text-gray-500">{t("observability.exportStep", step, 2)}</p>
+          </div>
+          <button type="button" disabled={exporting} onClick={onClose} class="rounded-lg p-2 text-gray-400 hover:bg-gray-100 disabled:opacity-40" aria-label={t("observability.close")}>×</button>
+        </header>
+        <div class="space-y-5 p-6">
+          {result ? (
+            <div class="space-y-4">
+              <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                <p class="font-semibold">{t("observability.exportCompleted")}</p>
+                <p class="mt-1 break-all font-mono text-xs">{result.dataset_id}</p>
+              </div>
+              <div class="flex flex-wrap gap-3">
+                <a href="/datasets" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">{t("observability.openLocalDataset")}</a>
+                <a href={result.download_url} class="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">{t("observability.downloadExport")}</a>
+                <button type="button" onClick={onClose} class="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">{t("observability.close")}</button>
+              </div>
+            </div>
+          ) : step === 1 ? (
+            <DatasetExportFilterStep
+              matchingTotal={matchingTotal}
+              from={exportFrom}
+              to={exportTo}
+              status={exportStatus}
+              model={exportModel}
+              source={exportSource}
+              query={exportQuery}
+              invalidRange={invalidRange}
+              canContinue={canContinue}
+              onFrom={setExportFrom}
+              onTo={setExportTo}
+              onStatus={setExportStatus}
+              onModel={setExportModel}
+              onSource={setExportSource}
+              onQuery={setExportQuery}
+              onCancel={onClose}
+              onNext={() => {
+                setPreview(null);
+                setPreviewing(true);
+                setError("");
+                setStep(2);
+              }}
+            />
+          ) : (
+            <>
+              <div class="grid gap-4 md:grid-cols-2">
+                <label class="space-y-1.5 text-sm">
+                  <span class="font-medium text-gray-700">{t("observability.exportFormat")}</span>
+                  <select value={format} onInput={(event) => setFormat((event.currentTarget as HTMLSelectElement).value as DatasetExportFormat)} class="w-full rounded-lg border border-gray-200 px-3 py-2">
+                    {formats.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </select>
+                </label>
+                <label class="space-y-1.5 text-sm">
+                  <span class="font-medium text-gray-700">{t("observability.redactionPolicy")}</span>
+                  <select value={policy} onInput={(event) => { setPolicy((event.currentTarget as HTMLSelectElement).value as DatasetRedactionPolicy); setConfirmed(false); }} class="w-full rounded-lg border border-gray-200 px-3 py-2">
+                    <option value="redact">{t("observability.redaction.redact")}</option>
+                    <option value="exclude">{t("observability.redaction.exclude")}</option>
+                    <option value="detect">{t("observability.redaction.detect")}</option>
+                  </select>
+                </label>
+              </div>
+              <label class="block space-y-1.5 text-sm">
+                <span class="font-medium text-gray-700">{t("observability.localDatasetName")}</span>
+                <input value={datasetName} onInput={(event) => setDatasetName((event.currentTarget as HTMLInputElement).value)} placeholder={t("observability.localDatasetNameHint")} class="w-full rounded-lg border border-gray-200 px-3 py-2" />
+              </label>
+              <section class="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                <h3 class="text-sm font-semibold text-gray-900">{t("observability.exportPreview")}</h3>
+                {previewing ? <p class="mt-3 text-sm text-gray-400">{t("observability.loading")}</p> : preview && (
+                  <div class="mt-3 space-y-3">
+                    <p class="text-xs text-gray-500">{t("observability.exportMatched", preview.selected)}</p>
+                    <div class="grid grid-cols-3 gap-3 text-center text-sm">
+                      <div class="rounded-lg bg-white p-3"><strong class="block text-lg text-emerald-700">{preview.exported}</strong>{t("observability.exportable")}</div>
+                      <div class="rounded-lg bg-white p-3"><strong class="block text-lg text-amber-700">{preview.degraded}</strong>{t("observability.degraded")}</div>
+                      <div class="rounded-lg bg-white p-3"><strong class="block text-lg text-red-700">{preview.excluded}</strong>{t("observability.excluded")}</div>
+                    </div>
+                    {preview.risks.length > 0 && (
+                      <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                        {t("observability.risksFound", preview.risks.reduce((sum, risk) => sum + risk.count, 0))}
+                        <span class="ml-2">{preview.risks.map((risk) => `${risk.type}: ${risk.count}`).join(" · ")}</span>
+                      </div>
+                    )}
+                    {preview.sample !== undefined && <pre class="max-h-52 overflow-auto rounded-lg bg-gray-950 p-3 text-xs text-gray-200">{JSON.stringify(preview.sample, null, 2)}</pre>}
+                  </div>
+                )}
+              </section>
+              {requiresConfirmation && (
+                <label class="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                  <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.currentTarget.checked)} class="mt-0.5 h-4 w-4 rounded border-red-300" />
+                  <span>{t("observability.confirmSensitiveExport")}</span>
+                </label>
+              )}
+              {error && <div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+              <div class="flex justify-end gap-3">
+                <button type="button" disabled={exporting} onClick={() => setStep(1)} class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 disabled:opacity-40">{t("observability.back")}</button>
+                <button type="button" disabled={!canExport} onClick={() => void exportDataset()} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40">
+                  {exporting ? t("observability.exporting") : t("observability.createLocalDataset")}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DatasetExportFilterStep({
+  matchingTotal,
+  from,
+  to,
+  status,
+  model,
+  source,
+  query,
+  invalidRange,
+  canContinue,
+  onFrom,
+  onTo,
+  onStatus,
+  onModel,
+  onSource,
+  onQuery,
+  onCancel,
+  onNext,
+}: {
+  matchingTotal: number;
+  from: string;
+  to: string;
+  status: string;
+  model: string;
+  source: string;
+  query: string;
+  invalidRange: boolean;
+  canContinue: boolean;
+  onFrom: (value: string) => void;
+  onTo: (value: string) => void;
+  onStatus: (value: string) => void;
+  onModel: (value: string) => void;
+  onSource: (value: string) => void;
+  onQuery: (value: string) => void;
+  onCancel: () => void;
+  onNext: () => void;
+}) {
+  const [showValidation, setShowValidation] = useState(false);
+  const missingFrom = !from;
+  const missingTo = !to;
+  return (
+    <>
+      <section class="space-y-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900">{t("observability.exportConditions")}</h3>
+            <p class="mt-1 text-xs text-gray-500">{t("observability.exportAllMatching", matchingTotal)}</p>
+          </div>
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="space-y-1.5 text-sm">
+              <span class="font-medium text-gray-700">{t("observability.timeFrom")} <span class="text-red-500">*</span></span>
+              <input required aria-invalid={showValidation && missingFrom} type="datetime-local" value={from} max={to || undefined} onInput={(event) => onFrom((event.currentTarget as HTMLInputElement).value)} class={`w-full rounded-lg border bg-white px-3 py-2 ${showValidation && missingFrom ? "border-red-400" : "border-gray-200"}`} />
+              {showValidation && missingFrom && <span class="block text-xs text-red-600">{t("observability.requiredField")}</span>}
+            </label>
+            <label class="space-y-1.5 text-sm">
+              <span class="font-medium text-gray-700">{t("observability.timeTo")} <span class="text-red-500">*</span></span>
+              <input required aria-invalid={showValidation && missingTo} type="datetime-local" value={to} min={from || undefined} onInput={(event) => onTo((event.currentTarget as HTMLInputElement).value)} class={`w-full rounded-lg border bg-white px-3 py-2 ${showValidation && missingTo ? "border-red-400" : "border-gray-200"}`} />
+              {showValidation && missingTo && <span class="block text-xs text-red-600">{t("observability.requiredField")}</span>}
+            </label>
+            <label class="space-y-1.5 text-sm">
+              <span class="font-medium text-gray-700">{t("observability.columnStatus")}</span>
+              <select value={status} onInput={(event) => onStatus((event.currentTarget as HTMLSelectElement).value)} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2">
+                <option value="">{t("observability.statusAll")}</option>
+                <option value="completed">{t("observability.statusCompleted")}</option>
+                <option value="failed">{t("observability.statusFailed")}</option>
+              </select>
+            </label>
+            <label class="space-y-1.5 text-sm">
+              <span class="font-medium text-gray-700">{t("observability.columnModel")}</span>
+              <input value={model} onInput={(event) => onModel((event.currentTarget as HTMLInputElement).value)} placeholder={t("observability.filterModel")} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2" />
+            </label>
+            <label class="space-y-1.5 text-sm">
+              <span class="font-medium text-gray-700">{t("observability.columnRoute")}</span>
+              <input value={source} onInput={(event) => onSource((event.currentTarget as HTMLInputElement).value)} placeholder={t("observability.filterSource")} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2" />
+            </label>
+            <label class="space-y-1.5 text-sm">
+              <span class="font-medium text-gray-700">{t("observability.filterKeyword")}</span>
+              <input value={query} onInput={(event) => onQuery((event.currentTarget as HTMLInputElement).value)} placeholder={t("observability.filterSearch")} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2" />
+            </label>
+          </div>
+          {showValidation && invalidRange && <p class="text-xs text-red-600">{t("observability.invalidTimeRange")}</p>}
+      </section>
+
+      <div class="flex justify-end gap-3">
+        <button type="button" onClick={onCancel} class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700">{t("observability.cancel")}</button>
+        <button
+          type="button"
+          onClick={() => {
+            setShowValidation(true);
+            if (canContinue) onNext();
+          }}
+          class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+        >
+          {t("observability.next")}
+        </button>
+      </div>
+    </>
+  );
 }
 
 function DetailDrawer({ request, loading, onClose, onOpenTrace }: {
@@ -601,7 +1025,9 @@ function TraceDetail({ trace }: { trace: ObservabilityTraceDetailResponse }) {
             <h3 class="text-sm font-semibold text-gray-900">
               {traceView === "waterfall" ? t("observability.timeline") : t("observability.flowTitle")}
             </h3>
-            <p class="mt-1 text-xs text-gray-400">{t("observability.timelineHint")}</p>
+            <p class="mt-1 text-xs text-gray-400">
+              {traceView === "waterfall" ? t("observability.timelineHint") : t("observability.flowHint")}
+            </p>
           </div>
           <div class="flex rounded-lg bg-gray-100 p-1">
             {(["waterfall", "flow"] as const).map((view) => (
@@ -760,82 +1186,301 @@ function TraceFlowDiagram({ trace, selectedRequestID, onSelectRequest }: {
   selectedRequestID?: string;
   onSelectRequest: (id: string) => void;
 }) {
+  const sections = useMemo(() => buildTraceFlowSections(trace.requests), [trace.requests]);
+  const [selectedSectionIndex, setSelectedSectionIndex] = useState<number | null>(null);
+  useEffect(() => {
+    setSelectedSectionIndex(null);
+  }, [trace.trace.trace_id]);
+  const toolCallIndexes = useMemo(() => {
+    const indexes = new Map<string, number>();
+    sections.forEach((section, index) => {
+      if (section.kind === "toolUse" && section.callID) indexes.set(section.callID, index);
+    });
+    return indexes;
+  }, [sections]);
+  const toolResultIndexes = useMemo(() => {
+    const indexes = new Map<string, number>();
+    sections.forEach((section, index) => {
+      if (section.kind === "toolResult" && section.callID) indexes.set(section.callID, index);
+    });
+    return indexes;
+  }, [sections]);
+  const toolCalls = sections.filter((section) => section.kind === "toolUse").length;
+  const toolResults = sections.filter((section) => section.kind === "toolResult").length;
+  const jumpTo = (index: number) => {
+    setSelectedSectionIndex(index);
+    const section = sections[index];
+    if (section) onSelectRequest(section.requestID);
+    document.getElementById(`trace-flow-section-${index}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+  const selectedSection = selectedSectionIndex == null ? null : sections[selectedSectionIndex];
+
   return (
-    <div
-      class="overflow-x-auto bg-gray-50/60 p-6"
-      style={{ backgroundImage: "radial-gradient(circle, rgb(209 213 219 / 0.7) 1px, transparent 1px)", backgroundSize: "18px 18px" }}
-    >
-      <div class="flex min-h-[280px] min-w-max items-center">
-        <div class="w-56 shrink-0 rounded-xl border border-indigo-200 bg-white shadow-sm">
-          <div class="flex items-center gap-3 border-b border-gray-100 px-4 py-3">
-            <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
-              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="5" cy="12" r="2" /><circle cx="19" cy="5" r="2" /><circle cx="19" cy="19" r="2" />
-                <path d="M7 12h4a4 4 0 0 0 4-4V7M11 12h4a4 4 0 0 1 4 4v1" />
-              </svg>
-            </span>
-            <div>
-              <p class="text-xs font-semibold text-gray-900">{t("observability.flowRoot")}</p>
-              <p class="mt-0.5 text-[10px] text-gray-400">{formatNumber(trace.trace.request_count)} {t("observability.columnRequests")}</p>
-            </div>
-          </div>
-          <div class="space-y-2 px-4 py-3 text-[11px]">
-            <p class="truncate font-mono text-gray-500" title={trace.trace.trace_id}>{trace.trace.trace_id}</p>
-            <div class="flex items-center justify-between text-gray-500">
-              <span>{formatNumber(trace.trace.total_tokens)} {t("observability.columnTokens")}</span>
-              <span>{formatObservabilityDuration(trace.trace.duration_ms)}</span>
-            </div>
+    <div class="bg-gray-50/60 p-4 sm:p-6">
+      <div class="mb-5 flex flex-wrap items-center gap-2">
+        <span class="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
+          {t("observability.flowItems", sections.length)}
+        </span>
+        <span class="rounded-full border border-fuchsia-200 bg-fuchsia-50 px-3 py-1 text-xs font-medium text-fuchsia-700">
+          {t("observability.flowToolCalls", toolCalls)}
+        </span>
+        <span class="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-700">
+          {t("observability.flowToolResults", toolResults)}
+        </span>
+      </div>
+
+      <div class="mx-auto flex max-w-3xl flex-col items-center">
+        <div class="flex w-full max-w-xl items-center gap-3 rounded-xl border border-indigo-200 bg-white px-4 py-3 shadow-sm">
+          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-sm">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="5" cy="12" r="2" /><circle cx="19" cy="5" r="2" /><circle cx="19" cy="19" r="2" />
+              <path d="M7 12h4a4 4 0 0 0 4-4V7M11 12h4a4 4 0 0 1 4 4v1" />
+            </svg>
+          </span>
+          <div class="min-w-0">
+            <p class="text-xs font-semibold text-gray-900">{t("observability.flowRoot")}</p>
+            <p class="mt-1 break-all font-mono text-[10px] text-gray-400">{trace.trace.trace_id}</p>
           </div>
         </div>
 
-        {trace.requests.map((request, index) => (
-          <div key={request.id} class="flex items-center">
-            <div class="flex w-16 items-center" aria-hidden="true">
-              <div class="h-px flex-1 bg-indigo-300" />
-              <svg class="h-3 w-3 -ml-0.5 text-indigo-400" viewBox="0 0 12 12" fill="currentColor">
-                <path d="M2 1l8 5-8 5V1z" />
-              </svg>
-            </div>
-            <button
-              type="button"
-              onClick={() => onSelectRequest(request.id)}
-              class={`w-64 shrink-0 overflow-hidden rounded-xl border bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
-                selectedRequestID === request.id
-                  ? "border-indigo-400 ring-2 ring-indigo-100"
-                  : request.status === "completed" ? "border-gray-200" : "border-red-200"
-              }`}
-            >
-              <div class={`h-1 ${request.status === "completed" ? "bg-indigo-500" : "bg-red-500"}`} />
-              <div class="flex items-start gap-3 border-b border-gray-100 px-4 py-3">
-                <span class={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
-                  request.status === "completed" ? "bg-indigo-100 text-indigo-700" : "bg-red-100 text-red-700"
-                }`}>{index + 1}</span>
-                <div class="min-w-0 flex-1">
-                  <div class="flex items-center justify-between gap-2">
-                    <p class="truncate text-xs font-semibold text-gray-900">{request.model || request.protocol}</p>
-                    <span class={`h-2 w-2 shrink-0 rounded-full ${request.status === "completed" ? "bg-emerald-500" : "bg-red-500"}`} />
+        {trace.requests.map((request, requestIndex) => {
+          const requestSections = sections
+            .map((section, index) => ({ section, index }))
+            .filter(({ section }) => section.requestID === request.id);
+          const selected = selectedRequestID === request.id;
+          return (
+            <div key={request.id} class="flex w-full flex-col items-center">
+              <TraceFlowConnector tone="indigo" />
+              <button
+                type="button"
+                onClick={() => onSelectRequest(request.id)}
+                class={`flex w-full max-w-2xl flex-wrap items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3 text-left shadow-sm transition ${
+                  selected ? "border-indigo-400 ring-2 ring-indigo-100" : "border-gray-200 hover:border-indigo-200"
+                }`}
+                aria-label={t("observability.flowSelectRequest", requestIndex + 1)}
+              >
+                <div class="flex min-w-0 items-center gap-3">
+                  <span class={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                    request.status === "completed" ? "bg-indigo-100 text-indigo-700" : "bg-red-100 text-red-700"
+                  }`}>{requestIndex + 1}</span>
+                  <div class="min-w-0">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="text-xs font-semibold text-gray-900">{t("observability.flowRequest", requestIndex + 1)}</span>
+                      <span class="rounded bg-gray-100 px-2 py-0.5 font-mono text-[10px] text-gray-600">{request.model || request.protocol}</span>
+                      <StatusBadge status={request.status} />
+                    </div>
+                    <p class="mt-1 truncate font-mono text-[10px] text-gray-400">{request.id}</p>
                   </div>
-                  <p class="mt-1 truncate font-mono text-[10px] text-gray-400">{request.id}</p>
                 </div>
-              </div>
-              <div class="space-y-2 px-4 py-3 text-[11px] text-gray-500">
-                <div class="flex items-center justify-between gap-3">
-                  <span class="truncate" title={sourceLabel(request)}>{sourceLabel(request)}</span>
-                  <span class="shrink-0 font-medium tabular-nums text-gray-700">{formatObservabilityDuration(request.duration_ms)}</span>
+                <div class="flex shrink-0 items-center gap-3 text-[11px] text-gray-500">
+                  <span>{formatObservabilityDuration(request.duration_ms)}</span>
+                  <span>{formatNumber(request.total_tokens)} {t("observability.columnTokens")}</span>
                 </div>
-                <div class="flex items-center justify-between gap-3 border-t border-gray-100 pt-2">
-                  <span>↑ {formatNumber(request.input_tokens)} · ↓ {formatNumber(request.output_tokens)}</span>
-                  {request.cache_eligible_input_tokens > 0 && (
-                    <span class="shrink-0 text-emerald-600">{formatCacheHitRate(request)}</span>
-                  )}
-                </div>
-              </div>
-            </button>
-          </div>
-        ))}
+              </button>
+              {requestSections.length === 0 ? (
+                <>
+                  <TraceFlowConnector />
+                  <p class="w-full max-w-xl rounded-xl border border-dashed border-gray-300 bg-white px-4 py-4 text-center text-sm text-gray-400">{t("observability.flowNoSpans")}</p>
+                </>
+              ) : (
+                requestSections.map(({ section, index }) => (
+                  <div key={`${section.kind}-${index}`} class="flex w-full flex-col items-center">
+                    <TraceFlowConnector tone={section.isError ? "red" : traceFlowConnectorTone(section.kind)} />
+                    <TraceFlowStepNode
+                        key={`${section.kind}-${index}`}
+                        section={section}
+                        index={index}
+                        selected={selectedSectionIndex === index}
+                        onSelect={() => {
+                          setSelectedSectionIndex(index);
+                          onSelectRequest(section.requestID);
+                        }}
+                      />
+                  </div>
+                ))
+              )}
+            </div>
+          );
+        })}
       </div>
+      {selectedSection && selectedSectionIndex != null && (
+        <TraceFlowStepDrawer
+          section={selectedSection}
+          index={selectedSectionIndex}
+          request={trace.requests[selectedSection.requestIndex]}
+          linkedIndex={selectedSection.callID
+            ? selectedSection.kind === "toolUse"
+              ? toolResultIndexes.get(selectedSection.callID)
+              : toolCallIndexes.get(selectedSection.callID)
+            : undefined}
+          onJump={jumpTo}
+          onClose={() => setSelectedSectionIndex(null)}
+        />
+      )}
     </div>
   );
+}
+
+function TraceFlowConnector({ tone = "gray" }: { tone?: "gray" | "indigo" | "fuchsia" | "cyan" | "amber" | "red" }) {
+  const colors = {
+    gray: "text-gray-300",
+    indigo: "text-indigo-300",
+    fuchsia: "text-fuchsia-300",
+    cyan: "text-cyan-300",
+    amber: "text-amber-300",
+    red: "text-red-300",
+  };
+  return (
+    <div class={`flex h-10 flex-col items-center ${colors[tone]}`} aria-hidden="true">
+      <span class="w-0.5 flex-1 bg-current" />
+      <svg class="h-3 w-4 shrink-0" viewBox="0 0 16 10" fill="currentColor">
+        <path d="M1 1h14L8 9 1 1Z" />
+      </svg>
+    </div>
+  );
+}
+
+function TraceFlowStepNode({ section, index, selected, onSelect }: {
+  section: TraceFlowSection;
+  index: number;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const preview = traceFlowPreview(section.content);
+  return (
+    <button
+      id={`trace-flow-section-${index}`}
+      type="button"
+      onClick={onSelect}
+      class={`flex w-full max-w-xl scroll-mt-24 items-center gap-3 rounded-xl border bg-white px-4 py-3 text-left shadow-sm transition ${
+        selected ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-100" : "border-gray-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-md"
+      }`}
+    >
+      <span class={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-bold ${traceSectionTone[section.kind]}`}>
+        {traceFlowStepIcon(section.kind)}
+      </span>
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${traceSectionTone[section.kind]}`}>
+            {t(`observability.span.${section.kind}`)}
+          </span>
+          {section.name && <span class="font-mono text-xs font-semibold text-gray-700">{section.name}</span>}
+          {section.isError && <span class="rounded bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">{t("observability.flowToolError")}</span>}
+        </div>
+        <p class="mt-1 truncate text-xs text-gray-500">{preview || t("observability.flowNoContent")}</p>
+      </div>
+      <span class="shrink-0 text-[10px] uppercase tracking-wide text-gray-400">
+        {section.phase === "input" ? t("observability.flowPhaseInput") : t("observability.flowPhaseOutput")}
+      </span>
+      <span class="shrink-0 text-gray-300" aria-hidden="true">›</span>
+    </button>
+  );
+}
+
+function TraceFlowStepDrawer({ section, index, request, linkedIndex, onJump, onClose }: {
+  section: TraceFlowSection;
+  index: number;
+  request?: ObservabilityRequest;
+  linkedIndex?: number;
+  onJump: (index: number) => void;
+  onClose: () => void;
+}) {
+  const content = prettyTraceFlowContent(section.content);
+  const copy = async () => {
+    if (content) await navigator.clipboard.writeText(content);
+  };
+  return (
+    <div class="fixed inset-0 z-50 bg-gray-950/30" onClick={onClose}>
+      <aside class="absolute inset-y-0 right-0 flex w-full max-w-xl flex-col bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <header class="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${traceSectionTone[section.kind]}`}>
+                {t(`observability.span.${section.kind}`)}
+              </span>
+              {section.name && <span class="font-mono text-sm font-semibold text-gray-800">{section.name}</span>}
+              {section.isError && <span class="rounded bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">{t("observability.flowToolError")}</span>}
+            </div>
+            <h3 class="mt-2 text-lg font-semibold text-gray-950">{t("observability.flowStepDetail")}</h3>
+          </div>
+          <button type="button" onClick={onClose} class="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700" aria-label={t("observability.close")}>×</button>
+        </header>
+
+        <div class="flex-1 space-y-5 overflow-y-auto p-5">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <TraceDetailField label={t("observability.flowStep")} value={String(index + 1)} />
+            <TraceDetailField label={t("observability.flowPhase")} value={section.phase === "input" ? t("observability.flowPhaseInput") : t("observability.flowPhaseOutput")} />
+            <TraceDetailField label={t("observability.flowRequestID")} value={request?.id || section.requestID} mono />
+            <TraceDetailField label={t("observability.columnModel")} value={request?.model || request?.protocol || "—"} />
+          </div>
+
+          {section.callID && (
+            <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <p class="text-[11px] font-medium uppercase tracking-wide text-gray-400">{t("observability.flowCallID")}</p>
+              <p class="mt-1 break-all font-mono text-xs text-gray-700">{section.callID}</p>
+            </div>
+          )}
+
+          {linkedIndex !== undefined && linkedIndex !== index && (
+            <button type="button" onClick={() => onJump(linkedIndex)} class="w-full rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-left text-sm font-medium text-indigo-700 hover:bg-indigo-100">
+              {section.kind === "toolUse" ? t("observability.flowViewResult") : t("observability.flowViewCall")}
+            </button>
+          )}
+
+          <section class="overflow-hidden rounded-xl border border-gray-200">
+            <div class="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-3">
+              <h4 class="text-sm font-semibold text-gray-900">
+                {section.kind === "toolUse"
+                  ? t("observability.flowToolArguments")
+                  : section.kind === "toolResult"
+                    ? t("observability.flowToolResultContent")
+                    : t("observability.flowContent")}
+              </h4>
+              <button type="button" disabled={!content} onClick={() => void copy()} class="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-40">{t("observability.copy")}</button>
+            </div>
+            <pre class={`min-h-32 max-h-[60vh] overflow-auto whitespace-pre-wrap break-words p-4 text-sm leading-6 text-gray-700 ${
+              section.kind === "toolUse" || section.kind === "toolResult" ? "font-mono text-xs" : "font-sans"
+            }`}>{content || t("observability.flowNoContent")}</pre>
+          </section>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function traceFlowStepIcon(kind: TraceSectionKind): string {
+  switch (kind) {
+    case "system": return "S";
+    case "user": return "U";
+    case "assistant": return "A";
+    case "thinking": return "T";
+    case "toolUse": return "↗";
+    case "toolResult": return "↙";
+    default: return "•";
+  }
+}
+
+function traceFlowConnectorTone(kind: TraceSectionKind): "gray" | "fuchsia" | "cyan" | "amber" {
+  switch (kind) {
+    case "toolUse": return "fuchsia";
+    case "toolResult": return "cyan";
+    case "thinking": return "amber";
+    default: return "gray";
+  }
+}
+
+function traceFlowPreview(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function prettyTraceFlowContent(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch {
+    return value;
+  }
 }
 
 function TraceDetailField({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {

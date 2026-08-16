@@ -161,24 +161,25 @@ type Server struct {
 	externalHTTP   *http.Server
 	logBuf         *LogBuffer
 
-	mu           sync.RWMutex
-	engines      map[string]*managedEngine
-	loading      map[string]*engineLoadState
-	selfHeal     map[string]selfHealBreakerState
-	imageEngines map[string]*managedImageEngine
-	imageLoading map[string]*imageEngineLoadState
-	asrEngines   map[string]*managedASREngine
-	asrLoading   map[string]*asrEngineLoadState
-	imageJobs    *imageGenerationJobStore
-	pullJobs     *pullJobStore
-	loadStepMu   sync.Mutex
-	loadSteps    map[string]loadStepState
-	prefsMu      sync.Mutex
-	openclawMu   sync.Mutex
-	csgclawMu    sync.Mutex
-	poolMu       sync.Mutex
-	poolCurrent  map[string]int
-	poolRuntime  map[string]*providerPoolMemberRuntime
+	mu                sync.RWMutex
+	engines           map[string]*managedEngine
+	loading           map[string]*engineLoadState
+	selfHeal          map[string]selfHealBreakerState
+	imageEngines      map[string]*managedImageEngine
+	imageLoading      map[string]*imageEngineLoadState
+	asrEngines        map[string]*managedASREngine
+	asrLoading        map[string]*asrEngineLoadState
+	imageJobs         *imageGenerationJobStore
+	pullJobs          *pullJobStore
+	datasetExportJobs *datasetExportJobStore
+	loadStepMu        sync.Mutex
+	loadSteps         map[string]loadStepState
+	prefsMu           sync.Mutex
+	openclawMu        sync.Mutex
+	csgclawMu         sync.Mutex
+	poolMu            sync.Mutex
+	poolCurrent       map[string]int
+	poolRuntime       map[string]*providerPoolMemberRuntime
 
 	cloudRefreshMu   sync.Mutex
 	cloudRefreshAt   time.Time
@@ -226,26 +227,27 @@ func New(cfg *config.Config, version string) *Server {
 	}
 
 	s := &Server{
-		cfg:            cfg,
-		version:        version,
-		manager:        mgr,
-		datasetManager: dsMgr,
-		appManager:     apps.NewManager(cfg),
-		sourceSwitches: apps.NewSourceSwitchManager(storageRoot),
-		cloud:          cloudSvc,
-		engines:        make(map[string]*managedEngine),
-		loading:        make(map[string]*engineLoadState),
-		poolCurrent:    make(map[string]int),
-		poolRuntime:    make(map[string]*providerPoolMemberRuntime),
-		selfHeal:       make(map[string]selfHealBreakerState),
-		imageEngines:   make(map[string]*managedImageEngine),
-		imageLoading:   make(map[string]*imageEngineLoadState),
-		asrEngines:     make(map[string]*managedASREngine),
-		asrLoading:     make(map[string]*asrEngineLoadState),
-		imageJobs:      newImageGenerationJobStore(cfg.StorageDir()),
-		pullJobs:       newPullJobStore(),
-		loadSteps:      make(map[string]loadStepState),
-		logBuf:         logBuf,
+		cfg:               cfg,
+		version:           version,
+		manager:           mgr,
+		datasetManager:    dsMgr,
+		appManager:        apps.NewManager(cfg),
+		sourceSwitches:    apps.NewSourceSwitchManager(storageRoot),
+		cloud:             cloudSvc,
+		engines:           make(map[string]*managedEngine),
+		loading:           make(map[string]*engineLoadState),
+		poolCurrent:       make(map[string]int),
+		poolRuntime:       make(map[string]*providerPoolMemberRuntime),
+		selfHeal:          make(map[string]selfHealBreakerState),
+		imageEngines:      make(map[string]*managedImageEngine),
+		imageLoading:      make(map[string]*imageEngineLoadState),
+		asrEngines:        make(map[string]*managedASREngine),
+		asrLoading:        make(map[string]*asrEngineLoadState),
+		imageJobs:         newImageGenerationJobStore(cfg.StorageDir()),
+		pullJobs:          newPullJobStore(),
+		datasetExportJobs: newDatasetExportJobStore(),
+		loadSteps:         make(map[string]loadStepState),
+		logBuf:            logBuf,
 	}
 	s.appShells = newAIAppShellManager()
 	if store, err := observability.Open(storageRoot); err != nil {

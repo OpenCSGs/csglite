@@ -163,7 +163,7 @@ func runLaunch(cmd *cobra.Command, args []string, opts launchOptions) error {
 	if providerHint == "" && opts.Model == "" {
 		providerHint = strings.TrimPrefix(strings.TrimSpace(app.ModelSource), "provider:")
 	}
-	selection, err := resolveLaunchModelSelection(serverURL, app.ModelID, opts.Model, providerHint, opts.SkipConfirm, strings.TrimSpace(cfg.Token) != "")
+	selection, err := resolveLaunchModelSelection(serverURL, app.ModelID, opts.Model, providerHint, opts.SkipConfirm, hasUsableCloudCredential(serverURL, cfg))
 	if err != nil {
 		return err
 	}
@@ -198,6 +198,28 @@ func runLaunch(cmd *cobra.Command, args []string, opts launchOptions) error {
 	fmt.Printf("Using model %s [%s]\n", modelID, selection.ProviderName)
 	fmt.Printf("Launching %s...\n", target.DisplayName)
 	return launchProcess(prepared.Binary, prepared.Args, prepared.Env)
+}
+
+type launchCloudAuthStatus struct {
+	Authenticated bool `json:"authenticated"`
+	HasAPIKey     bool `json:"has_api_key"`
+}
+
+func hasUsableCloudCredential(serverURL string, cfg *config.Config) bool {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(unscopedLaunchServerURL(serverURL) + "/api/cloud/auth")
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			var status launchCloudAuthStatus
+			if json.NewDecoder(resp.Body).Decode(&status) == nil {
+				return status.Authenticated || status.HasAPIKey
+			}
+		}
+	}
+	// A manually configured API Key is still a usable fallback if an older
+	// local server does not expose the cloud-auth status endpoint.
+	return cfg != nil && strings.TrimSpace(cfg.OpenCSGAPIKey) != ""
 }
 
 func launchProviderScopedBaseURL(serverURL, source string) (string, error) {

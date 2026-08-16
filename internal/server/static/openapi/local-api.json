@@ -1504,6 +1504,53 @@
         }
       }
     },
+    "/api/datasets/{namespace}/{name}/export": {
+      "get": {
+        "tags": ["Datasets"],
+        "summary": "Export a local dataset as ZIP",
+        "operationId": "exportLocalDataset",
+        "parameters": [
+          {"name": "namespace", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "A streamed ZIP archive containing the local dataset files.",
+            "content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}}
+          },
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/api/datasets/{namespace}/{name}/publish": {
+      "post": {
+        "tags": ["Datasets"],
+        "summary": "Upload a local dataset to CSGHub",
+        "operationId": "publishLocalDataset",
+        "parameters": [
+          {"name": "namespace", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/DatasetPublishRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Dataset files uploaded to CSGHub.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetPublishResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"description": "CSGHub login is required."},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "502": {"$ref": "#/components/responses/BadGateway"}
+        }
+      }
+    },
     "/api/datasets/{namespace}/{name}/files/{path...}": {
       "get": {
         "tags": [
@@ -2760,6 +2807,74 @@
               }
             }
           },
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/api/observability/dataset-exports/preview": {
+      "post": {
+        "tags": ["System"],
+        "summary": "Preview selected or filtered traces as a training dataset",
+        "operationId": "previewTraceDatasetExport",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetExportRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Exportable, converted, excluded, and privacy-risk counts with a sanitized sample.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetExportPreview"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/api/observability/dataset-exports": {
+      "post": {
+        "tags": ["System"],
+        "summary": "Start a local trace dataset export",
+        "description": "Accepts explicit trace IDs or a server-side trace filter spanning every page, then queues a bounded-memory export job. Completed exports are registered in the local dataset library.",
+        "operationId": "createTraceDatasetExport",
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetExportRequest"}}}
+        },
+        "responses": {
+          "202": {
+            "description": "Dataset export job queued.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetExportJob"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/api/observability/dataset-export-jobs/{jobID}": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Get a trace dataset export job",
+        "operationId": "getTraceDatasetExportJob",
+        "parameters": [
+          {"name": "jobID", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Current export status and completed local dataset metadata.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetExportJob"}}}
+          },
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/api/observability/dataset-exports/{exportID}/download": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Download a completed trace dataset export",
+        "operationId": "downloadTraceDatasetExport",
+        "parameters": [
+          {"name": "exportID", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "307": {"description": "Redirects to the local dataset streaming ZIP endpoint."},
           "404": {"$ref": "#/components/responses/NotFound"}
         }
       }
@@ -6665,6 +6780,132 @@
           "duration_ms": {"type": "integer", "format": "int64"}
         }
       },
+      "DatasetExportRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["format"],
+        "oneOf": [
+          {"required": ["trace_ids"]},
+          {"required": ["filter"]}
+        ],
+        "properties": {
+          "trace_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100000,
+            "items": {"type": "string"}
+          },
+          "filter": {"$ref": "#/components/schemas/DatasetExportTraceFilter"},
+          "format": {
+            "type": "string",
+            "enum": ["openai_messages", "sharegpt", "alpaca", "prompt_completion"]
+          },
+          "redaction_policy": {
+            "type": "string",
+            "enum": ["redact", "exclude", "detect"],
+            "default": "redact"
+          },
+          "confirmed": {"type": "boolean"},
+          "dataset_name": {"type": "string", "maxLength": 100}
+        }
+      },
+      "DatasetExportTraceFilter": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Selects every trace matching these server-side conditions across all result pages. Time bounds apply to trace start time.",
+        "properties": {
+          "from": {"type": "string", "format": "date-time"},
+          "to": {"type": "string", "format": "date-time"},
+          "status": {"type": "string", "enum": ["completed", "failed"]},
+          "model": {"type": "string"},
+          "source": {"type": "string"},
+          "q": {"type": "string"}
+        }
+      },
+      "DatasetExportRisk": {
+        "type": "object",
+        "required": ["type", "count"],
+        "properties": {
+          "type": {"type": "string"},
+          "count": {"type": "integer"}
+        }
+      },
+      "DatasetExportFile": {
+        "type": "object",
+        "required": ["path", "size", "sha256"],
+        "properties": {
+          "path": {"type": "string"},
+          "size": {"type": "integer", "format": "int64"},
+          "sha256": {"type": "string"}
+        }
+      },
+      "DatasetExportPreview": {
+        "type": "object",
+        "required": ["selected", "exported", "excluded", "degraded", "risks"],
+        "properties": {
+          "selected": {"type": "integer"},
+          "exported": {"type": "integer"},
+          "excluded": {"type": "integer"},
+          "degraded": {"type": "integer"},
+          "risks": {"type": "array", "items": {"$ref": "#/components/schemas/DatasetExportRisk"}},
+          "sample": {"type": "object", "additionalProperties": true}
+        }
+      },
+      "DatasetExport": {
+        "allOf": [
+          {"$ref": "#/components/schemas/DatasetExportPreview"},
+          {
+            "type": "object",
+            "required": ["id", "dataset_id", "format", "created_at", "files", "download_url"],
+            "properties": {
+              "id": {"type": "string"},
+              "dataset_id": {"type": "string"},
+              "format": {"type": "string"},
+              "created_at": {"type": "string", "format": "date-time"},
+              "files": {"type": "array", "items": {"$ref": "#/components/schemas/DatasetExportFile"}},
+              "download_url": {"type": "string"}
+            }
+          }
+        ]
+      },
+      "DatasetExportJob": {
+        "type": "object",
+        "required": ["id", "status", "created_at", "updated_at"],
+        "properties": {
+          "id": {"type": "string"},
+          "status": {"type": "string", "enum": ["queued", "running", "completed", "failed"]},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"},
+          "error": {"type": "string"},
+          "export": {"$ref": "#/components/schemas/DatasetExport"}
+        }
+      },
+      "DatasetPublishRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Publishes into the authenticated CSGHub user's username namespace.",
+        "required": ["create", "name", "private"],
+        "properties": {
+          "create": {"type": "boolean"},
+          "name": {"type": "string"},
+          "nickname": {"type": "string"},
+          "description": {"type": "string"},
+          "private": {"type": "boolean"},
+          "confirm_public": {"type": "boolean"},
+          "license": {"type": "string"}
+        }
+      },
+      "DatasetPublishResponse": {
+        "type": "object",
+        "required": ["dataset_id", "revision", "url", "agentichub_url", "files"],
+        "properties": {
+          "dataset_id": {"type": "string"},
+          "revision": {"type": "string"},
+          "url": {"type": "string", "format": "uri"},
+          "agentichub_url": {"type": "string", "format": "uri"},
+          "files": {"type": "array", "items": {"$ref": "#/components/schemas/DatasetExportFile"}}
+        }
+      },
       "ConversationSettings": {
         "type": "object",
         "additionalProperties": false,
@@ -8061,9 +8302,10 @@
             "type": "string",
             "enum": [
               "upload",
-              "marketplace"
+              "marketplace",
+              "export"
             ],
-            "description": "Local dataset origin. `upload` means imported by the user; `marketplace` means downloaded from the marketplace."
+            "description": "Local dataset origin. `upload` means imported by the user, `marketplace` means downloaded from the marketplace, and `export` means generated from local observability traces."
           },
           "description": {
             "type": "string"

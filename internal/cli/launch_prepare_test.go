@@ -65,7 +65,7 @@ func TestResolveLaunchModelSelectionUsesProviderName(t *testing.T) {
 	}
 }
 
-func TestResolveLaunchModelMissingCloudTokenShowsSettingsHint(t *testing.T) {
+func TestResolveLaunchModelMissingCloudCredentialShowsSettingsHint(t *testing.T) {
 	server := launchModelTestServer([]api.ModelInfo{
 		{Model: "Qwen/Qwen3.5-2B", Source: "local"},
 	})
@@ -75,8 +75,23 @@ func TestResolveLaunchModelMissingCloudTokenShowsSettingsHint(t *testing.T) {
 	if err == nil {
 		t.Fatal("resolveLaunchModel returned nil error, want settings hint")
 	}
-	if got := err.Error(); !strings.Contains(got, "open csghub-lite Settings and save an Access Token first") {
-		t.Fatalf("error = %q, want settings hint for missing cloud token", got)
+	if got := err.Error(); !strings.Contains(got, "sign in or save an API Key first") {
+		t.Fatalf("error = %q, want settings hint for missing cloud credential", got)
+	}
+}
+
+func TestResolveLaunchModelConfiguredAPIKeySuppressesLoginHint(t *testing.T) {
+	server := launchModelTestServer([]api.ModelInfo{
+		{Model: "Qwen/Qwen3.5-2B", Source: "local"},
+	})
+	defer server.Close()
+
+	_, err := resolveLaunchModel(server.URL, "Qwen/Qwen3.5-2B", "missing-cloud-model", true, true)
+	if err == nil {
+		t.Fatal("resolveLaunchModel returned nil error, want unavailable model error")
+	}
+	if got := err.Error(); strings.Contains(got, "sign in") || strings.Contains(got, "API Key") {
+		t.Fatalf("error = %q, should not prompt for credentials when an API Key is configured", got)
 	}
 }
 

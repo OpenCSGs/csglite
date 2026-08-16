@@ -83,6 +83,51 @@ func TestHandleCloudAuthStatus(t *testing.T) {
 	}
 }
 
+func TestCloudAuthStatusKeepsAPIKeyUsableWhenJWTExpires(t *testing.T) {
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "expired", http.StatusUnauthorized)
+	}))
+	defer authServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = authServer.URL
+	s.cfg.Token = "expired-token"
+	s.cfg.OpenCSGAPIKey = "gateway-key"
+
+	status := s.cloudAuthStatus(t.Context())
+	if status.Authenticated {
+		t.Fatal("expired JWT should not be reported as authenticated")
+	}
+	if !status.HasToken || !status.HasAPIKey || status.APIKeySource != "manual" {
+		t.Fatalf("status = %+v, want expired token plus usable manual API Key", status)
+	}
+}
+
+func TestCloudAPIKeyUsesManualKeyWithoutValidatingExpiredJWT(t *testing.T) {
+	authRequests := 0
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		authRequests++
+		http.Error(w, "expired", http.StatusUnauthorized)
+	}))
+	defer authServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = authServer.URL
+	s.cfg.Token = "expired-token"
+	s.cfg.OpenCSGAPIKey = "gateway-key"
+
+	apiKey, err := s.cloudAPIKey(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if apiKey != "gateway-key" {
+		t.Fatalf("API Key = %q, want gateway-key", apiKey)
+	}
+	if authRequests != 0 {
+		t.Fatalf("JWT validation requests = %d, want 0 when a manual API Key is configured", authRequests)
+	}
+}
+
 func TestHandleCloudAuthStatusWithUser(t *testing.T) {
 	api := newCloudAuthAPIServer(t, "test-token", "alice")
 	defer api.Close()

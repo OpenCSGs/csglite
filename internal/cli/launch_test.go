@@ -7,7 +7,47 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/opencsgs/csglite/internal/config"
 )
+
+func TestHasUsableCloudCredentialUsesValidatedServerStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		cfg    *config.Config
+		want   bool
+	}{
+		{name: "api key", status: `{"authenticated":false,"has_api_key":true}`, cfg: &config.Config{Token: "expired"}, want: true},
+		{name: "valid jwt", status: `{"authenticated":true,"has_api_key":false}`, cfg: &config.Config{Token: "valid"}, want: true},
+		{name: "expired jwt without api key", status: `{"authenticated":false,"has_api_key":false}`, cfg: &config.Config{Token: "expired"}, want: false},
+		{name: "no credentials", status: `{"authenticated":false,"has_api_key":false}`, cfg: &config.Config{}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/cloud/auth" {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(test.status))
+			}))
+			defer server.Close()
+			if got := hasUsableCloudCredential(server.URL, test.cfg); got != test.want {
+				t.Fatalf("hasUsableCloudCredential() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestHasUsableCloudCredentialFallsBackToConfiguredAPIKey(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	if !hasUsableCloudCredential(server.URL, &config.Config{OpenCSGAPIKey: "gateway-key"}) {
+		t.Fatal("configured AI Gateway API Key should remain usable with an older local server")
+	}
+}
 
 func TestResolveLaunchTarget(t *testing.T) {
 	tests := []struct {

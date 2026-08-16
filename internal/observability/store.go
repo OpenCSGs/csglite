@@ -320,16 +320,7 @@ func (s *Store) GetRequest(ctx context.Context, id string) (RequestRecord, error
 
 func (s *Store) ListTraces(ctx context.Context, filter RequestFilter) (TracePage, error) {
 	filter = normalizeFilter(filter)
-	traceStatus := strings.TrimSpace(filter.Status)
-	filter.Status = ""
-	where, args := requestWhere(filter)
-	having := ""
-	switch traceStatus {
-	case "completed":
-		having = " HAVING SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END) = 0"
-	case "failed":
-		having = " HAVING SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END) > 0"
-	}
+	where, args, having := traceQueryParts(filter)
 	var page TracePage
 	countQuery := "SELECT COUNT(*) FROM (SELECT trace_id FROM requests" + where + " GROUP BY trace_id" + having + ")"
 	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&page.Total); err != nil {
@@ -369,6 +360,31 @@ LIMIT ? OFFSET ?`
 		page.Items = append(page.Items, item)
 	}
 	return page, rows.Err()
+}
+
+// ListTraceIDs returns every trace matching the same server-side filters used
+// by ListTraces. It intentionally ignores pagination so callers can operate on
+// the complete filtered result without sending thousands of IDs from the UI.
+func (s *Store) ListTraceIDs(ctx context.Context, filter RequestFilter) ([]string, error) {
+	where, args, having := traceQueryParts(filter)
+	query := "SELECT trace_id FROM requests" + where + " GROUP BY trace_id" + having + " ORDER BY MIN(started_at) DESC"
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing filtered observability trace IDs: %w", err)
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning filtered observability trace ID: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading filtered observability trace IDs: %w", err)
+	}
+	return ids, nil
 }
 
 func (s *Store) GetTrace(ctx context.Context, traceID string) (TraceRecord, []RequestRecord, error) {
@@ -420,6 +436,65 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) (TraceRecord, []Re
 	}
 	trace.DurationMS = trace.CompletedAt.Sub(trace.StartedAt).Milliseconds()
 	return trace, requests, nil
+}
+
+// VisitTraces reads selected traces in bounded batches. It avoids one SQL query
+// per trace and releases the SQLite connection between batches so observation
+// writes can continue during large exports.
+func (s *Store) VisitTraces(ctx context.Context, traceIDs []string, visit func(string, []RequestRecord) error) error {
+	const batchSize = 64
+	if s == nil || s.db == nil {
+		return errors.New("observability store is unavailable")
+	}
+	if visit == nil {
+		return errors.New("trace visitor is required")
+	}
+	for start := 0; start < len(traceIDs); start += batchSize {
+		end := min(start+batchSize, len(traceIDs))
+		batch := traceIDs[start:end]
+		placeholders := make([]string, 0, len(batch))
+		args := make([]any, 0, len(batch))
+		for _, traceID := range batch {
+			placeholders = append(placeholders, "?")
+			args = append(args, strings.TrimSpace(traceID))
+		}
+		query := requestSelect(true) + " WHERE trace_id IN (" + strings.Join(placeholders, ",") + ") ORDER BY trace_id, started_at"
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("loading observability traces for export: %w", err)
+		}
+		currentID := ""
+		records := make([]RequestRecord, 0, 4)
+		for rows.Next() {
+			record, scanErr := scanRequest(rows, true)
+			if scanErr != nil {
+				_ = rows.Close()
+				return scanErr
+			}
+			if currentID != "" && record.TraceID != currentID {
+				if err := visit(currentID, records); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				records = make([]RequestRecord, 0, 4)
+			}
+			currentID = record.TraceID
+			records = append(records, record)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("reading observability traces for export: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("closing observability trace export rows: %w", err)
+		}
+		if currentID != "" {
+			if err := visit(currentID, records); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) DeleteAll(ctx context.Context) error {
@@ -490,6 +565,48 @@ func requestWhere(filter RequestFilter) (string, []any) {
 		return "", args
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func traceQueryParts(filter RequestFilter) (string, []any, string) {
+	clauses := make([]string, 0, 7)
+	args := make([]any, 0, 12)
+	if filter.From != nil {
+		clauses = append(clauses, "MIN(started_at) >= ?")
+		args = append(args, millis(*filter.From))
+	}
+	if filter.To != nil {
+		clauses = append(clauses, "MIN(started_at) <= ?")
+		args = append(args, millis(*filter.To))
+	}
+	switch strings.TrimSpace(filter.Status) {
+	case "completed":
+		clauses = append(clauses, "SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END) = 0")
+	case "failed":
+		clauses = append(clauses, "SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END) > 0")
+	}
+	if value := strings.TrimSpace(filter.Model); value != "" {
+		clauses = append(clauses, "SUM(CASE WHEN LOWER(model) LIKE ? THEN 1 ELSE 0 END) > 0")
+		args = append(args, "%"+strings.ToLower(value)+"%")
+	}
+	if value := strings.TrimSpace(filter.Source); value != "" {
+		clauses = append(clauses, "SUM(CASE WHEN source = ? OR source_type = ? OR pool_id = ? THEN 1 ELSE 0 END) > 0")
+		args = append(args, value, value, value)
+	}
+	if value := strings.TrimSpace(filter.APIKeyID); value != "" {
+		clauses = append(clauses, "SUM(CASE WHEN api_key_id = ? THEN 1 ELSE 0 END) > 0")
+		args = append(args, value)
+	}
+	if value := strings.TrimSpace(filter.Query); value != "" {
+		like := "%" + strings.ToLower(value) + "%"
+		clauses = append(clauses, `SUM(CASE WHEN
+			LOWER(id) LIKE ? OR LOWER(trace_id) LIKE ? OR LOWER(thread_id) LIKE ? OR LOWER(model) LIKE ?
+			THEN 1 ELSE 0 END) > 0`)
+		args = append(args, like, like, like, like)
+	}
+	if len(clauses) == 0 {
+		return "", args, ""
+	}
+	return "", args, " HAVING " + strings.Join(clauses, " AND ")
 }
 
 func requestSelect(includeBodies bool) string {

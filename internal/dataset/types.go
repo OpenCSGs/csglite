@@ -11,6 +11,7 @@ type LocalDatasetOrigin string
 const (
 	LocalDatasetOriginUpload      LocalDatasetOrigin = "upload"
 	LocalDatasetOriginMarketplace LocalDatasetOrigin = "marketplace"
+	LocalDatasetOriginExport      LocalDatasetOrigin = "export"
 )
 
 type LocalDataset struct {
