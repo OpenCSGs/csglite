@@ -65,44 +65,67 @@ func TestObservationResponseCacheUsage(t *testing.T) {
 	tests := []struct {
 		name     string
 		body     string
+		input    int64
+		output   int64
 		read     int64
 		creation int64
 		eligible int64
 	}{
 		{
 			name:     "openai chat",
-			body:     `{"usage":{"prompt_tokens":100,"prompt_tokens_details":{"cached_tokens":75}}}`,
+			body:     `{"usage":{"prompt_tokens":100,"completion_tokens":12,"total_tokens":112,"prompt_tokens_details":{"cached_tokens":75}}}`,
+			input:    100,
+			output:   12,
 			read:     75,
 			eligible: 100,
 		},
 		{
 			name:     "responses streaming",
-			body:     "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":80,\"input_tokens_details\":{\"cached_tokens\":20,\"cache_write_tokens\":10}}}}\n\ndata: [DONE]\n",
+			body:     "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":80,\"output_tokens\":7,\"total_tokens\":87,\"input_tokens_details\":{\"cached_tokens\":20,\"cache_write_tokens\":10}}}}\n\ndata: [DONE]\n",
+			input:    80,
+			output:   7,
 			read:     20,
 			creation: 10,
 			eligible: 80,
 		},
 		{
 			name:     "anthropic streaming",
-			body:     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":60,\"cache_creation_input_tokens\":30}}}\n",
+			body:     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":1,\"cache_read_input_tokens\":60,\"cache_creation_input_tokens\":30}}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":8}}\n",
+			input:    10,
+			output:   8,
 			read:     60,
 			creation: 30,
 			eligible: 100,
 		},
 		{
 			name:     "moonshot top level cache",
-			body:     `{"usage":{"prompt_tokens":10,"cached_tokens":60}}`,
+			body:     `{"usage":{"prompt_tokens":10,"completion_tokens":4,"cached_tokens":60}}`,
+			input:    10,
+			output:   4,
 			read:     60,
 			eligible: 70,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			usage := observationResponseCacheUsage([]byte(test.body))
-			if usage.readTokens != test.read || usage.creationTokens != test.creation || usage.eligibleTokens != test.eligible {
-				t.Fatalf("cache usage = %+v, want read=%d creation=%d eligible=%d", usage, test.read, test.creation, test.eligible)
+			usage := observationResponseUsageFromBodies([]byte(test.body))
+			if usage.inputTokens != test.input || usage.outputTokens != test.output ||
+				usage.readTokens != test.read || usage.creationTokens != test.creation || usage.eligibleTokens != test.eligible {
+				t.Fatalf("usage = %+v, want input=%d output=%d read=%d creation=%d eligible=%d",
+					usage, test.input, test.output, test.read, test.creation, test.eligible)
 			}
 		})
+	}
+}
+
+func TestObservationResponseUsageReadsFinalUsageFromTruncatedTail(t *testing.T) {
+	var writer observationResponseWriter
+	writer.capture([]byte("data: " + strings.Repeat("x", observabilityBodyLimit) + "\n"))
+	writer.capture([]byte("data: {\"usage\":{\"prompt_tokens\":79953,\"completion_tokens\":5082,\"total_tokens\":85035,\"prompt_tokens_details\":{\"cached_tokens\":79616}}}\n"))
+
+	usage := observationResponseUsageFromBodies(writer.body.Bytes(), writer.usageTail)
+	if usage.inputTokens != 79953 || usage.outputTokens != 5082 || usage.readTokens != 79616 || usage.eligibleTokens != 79953 {
+		t.Fatalf("usage = %+v", usage)
 	}
 }
 

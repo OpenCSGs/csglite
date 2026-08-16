@@ -254,6 +254,12 @@ func New(cfg *config.Config, version string) *Server {
 		log.Printf("OBSERVABILITY: database unavailable: %v", err)
 	} else {
 		s.observability = store
+		if err := store.ReconcileUsage(context.Background(), func(body string) (int64, int64, bool) {
+			usage := observationResponseUsageFromBodies([]byte(body))
+			return usage.inputTokens, usage.outputTokens, usage.hasInputTokens && usage.hasOutputTokens
+		}); err != nil {
+			log.Printf("OBSERVABILITY: usage reconciliation failed: %v", err)
+		}
 		if _, err := store.Cleanup(context.Background(), config.ObservabilityRetentionDays(cfg.Observability)); err != nil {
 			log.Printf("OBSERVABILITY: retention cleanup failed: %v", err)
 		}

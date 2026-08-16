@@ -27,6 +27,7 @@ const (
 	observabilityTraceIDHeader   = "X-CSGLite-Trace-ID"
 	observabilityThreadIDHeader  = "X-CSGLite-Thread-ID"
 	observabilityBodyLimit       = 1024 * 1024
+	observabilityUsageTailLimit  = 64 * 1024
 )
 
 type observationContextKey struct{}
@@ -85,6 +86,7 @@ type observationResponseWriter struct {
 	status     int
 	firstWrite time.Time
 	body       bytes.Buffer
+	usageTail  []byte
 	truncated  bool
 }
 
@@ -107,6 +109,7 @@ func (w *observationResponseWriter) Write(p []byte) (int, error) {
 }
 
 func (w *observationResponseWriter) capture(p []byte) {
+	w.captureUsageTail(p)
 	remaining := observabilityBodyLimit - w.body.Len()
 	if remaining <= 0 {
 		w.truncated = true
@@ -118,6 +121,19 @@ func (w *observationResponseWriter) capture(p []byte) {
 		return
 	}
 	_, _ = w.body.Write(p)
+}
+
+func (w *observationResponseWriter) captureUsageTail(p []byte) {
+	if len(p) >= observabilityUsageTailLimit {
+		w.usageTail = append(w.usageTail[:0], p[len(p)-observabilityUsageTailLimit:]...)
+		return
+	}
+	overflow := len(w.usageTail) + len(p) - observabilityUsageTailLimit
+	if overflow > 0 {
+		copy(w.usageTail, w.usageTail[overflow:])
+		w.usageTail = w.usageTail[:len(w.usageTail)-overflow]
+	}
+	w.usageTail = append(w.usageTail, p...)
 }
 
 func (w *observationResponseWriter) Flush() {
@@ -199,11 +215,20 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			status = "failed"
 		}
 		responseBody := sanitizeObservationBody(ow.body.Bytes())
-		cacheUsage := observationResponseCacheUsage(ow.body.Bytes())
+		responseUsage := observationResponseUsageFromBodies(ow.body.Bytes(), ow.usageTail)
+		if responseUsage.hasInputTokens {
+			snapshot.inputTokens = responseUsage.inputTokens
+		}
+		if responseUsage.hasOutputTokens {
+			snapshot.outputTokens = responseUsage.outputTokens
+		}
 		inferenceCacheUsage := cacheCollector.Snapshot()
-		cacheUsage.readTokens += inferenceCacheUsage.ReadInputTokens
-		cacheUsage.creationTokens += inferenceCacheUsage.CreationInputTokens
-		cacheUsage.eligibleTokens += inferenceCacheUsage.EligibleInputTokens
+		if !responseUsage.hasCacheUsage {
+			responseUsage.readTokens = inferenceCacheUsage.ReadInputTokens
+			responseUsage.creationTokens = inferenceCacheUsage.CreationInputTokens
+			responseUsage.eligibleTokens = inferenceCacheUsage.EligibleInputTokens
+		}
+		snapshot.inputTokens = observationMax64(snapshot.inputTokens, responseUsage.eligibleTokens)
 		record := observability.RequestRecord{
 			ID:                    requestID,
 			TraceID:               traceID,
@@ -224,9 +249,9 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			APIKeyName:            keyName,
 			InputTokens:           snapshot.inputTokens,
 			OutputTokens:          snapshot.outputTokens,
-			CacheReadInputTokens:  cacheUsage.readTokens,
-			CacheCreationTokens:   cacheUsage.creationTokens,
-			CacheEligibleTokens:   cacheUsage.eligibleTokens,
+			CacheReadInputTokens:  responseUsage.readTokens,
+			CacheCreationTokens:   responseUsage.creationTokens,
+			CacheEligibleTokens:   responseUsage.eligibleTokens,
 			DurationMS:            completedAt.Sub(startedAt).Milliseconds(),
 			RequestBody:           string(capturedRequest),
 			ResponseBody:          string(responseBody),
@@ -309,18 +334,42 @@ func observationRequestModelAndSource(body []byte) (string, string) {
 	return strings.TrimSpace(value.Model), strings.TrimSpace(value.Source)
 }
 
-type observationCacheUsage struct {
-	readTokens     int64
-	creationTokens int64
-	eligibleTokens int64
+type observationResponseUsage struct {
+	inputTokens     int64
+	outputTokens    int64
+	totalTokens     int64
+	readTokens      int64
+	creationTokens  int64
+	eligibleTokens  int64
+	hasInputTokens  bool
+	hasOutputTokens bool
+	hasTotalTokens  bool
+	hasCacheUsage   bool
 }
 
-func observationResponseCacheUsage(body []byte) observationCacheUsage {
-	var result observationCacheUsage
+func observationResponseUsageFromBodies(bodies ...[]byte) observationResponseUsage {
+	var result observationResponseUsage
+	for _, body := range bodies {
+		collectObservationResponseBodyUsage(body, &result)
+	}
+	if result.hasTotalTokens {
+		switch {
+		case result.hasInputTokens && !result.hasOutputTokens && result.totalTokens >= result.inputTokens:
+			result.outputTokens = result.totalTokens - result.inputTokens
+			result.hasOutputTokens = true
+		case result.hasOutputTokens && !result.hasInputTokens && result.totalTokens >= result.outputTokens:
+			result.inputTokens = result.totalTokens - result.outputTokens
+			result.hasInputTokens = true
+		}
+	}
+	return result
+}
+
+func collectObservationResponseBodyUsage(body []byte, result *observationResponseUsage) {
 	var value any
 	if json.Unmarshal(body, &value) == nil {
-		collectObservationCacheUsage(value, &result)
-		return result
+		collectObservationResponseUsage(value, result)
+		return
 	}
 	for _, line := range bytes.Split(body, []byte("\n")) {
 		line = bytes.TrimSpace(line)
@@ -332,28 +381,41 @@ func observationResponseCacheUsage(body []byte) observationCacheUsage {
 		}
 		value = nil
 		if json.Unmarshal(line, &value) == nil {
-			collectObservationCacheUsage(value, &result)
+			collectObservationResponseUsage(value, result)
 		}
 	}
-	return result
 }
 
-func collectObservationCacheUsage(value any, result *observationCacheUsage) {
+func collectObservationResponseUsage(value any, result *observationResponseUsage) {
 	switch typed := value.(type) {
 	case map[string]any:
-		updateObservationCacheUsage(typed, result)
+		updateObservationResponseUsage(typed, result)
 		for _, child := range typed {
-			collectObservationCacheUsage(child, result)
+			collectObservationResponseUsage(child, result)
 		}
 	case []any:
 		for _, child := range typed {
-			collectObservationCacheUsage(child, result)
+			collectObservationResponseUsage(child, result)
 		}
 	}
 }
 
-func updateObservationCacheUsage(value map[string]any, result *observationCacheUsage) {
-	inputTokens := maxObservationJSONInt(value, "input_tokens", "prompt_tokens")
+func updateObservationResponseUsage(value map[string]any, result *observationResponseUsage) {
+	inputTokens, hasInputTokens := observationJSONInt(value, "input_tokens", "prompt_tokens")
+	outputTokens, hasOutputTokens := observationJSONInt(value, "output_tokens", "completion_tokens")
+	totalTokens, hasTotalTokens := observationJSONInt(value, "total_tokens")
+	if hasInputTokens {
+		result.inputTokens = observationMax64(result.inputTokens, inputTokens)
+		result.hasInputTokens = true
+	}
+	if hasOutputTokens {
+		result.outputTokens = observationMax64(result.outputTokens, outputTokens)
+		result.hasOutputTokens = true
+	}
+	if hasTotalTokens {
+		result.totalTokens = observationMax64(result.totalTokens, totalTokens)
+		result.hasTotalTokens = true
+	}
 	readTokens, hasAnthropicRead := observationJSONInt(value, "cache_read_input_tokens", "cache_read_tokens")
 	topLevelRead, hasTopLevelRead := observationJSONInt(value, "cached_tokens")
 	readTokens = observationMax64(readTokens, topLevelRead)
@@ -366,6 +428,9 @@ func updateObservationCacheUsage(value map[string]any, result *observationCacheU
 	if nestedCreation > 0 {
 		hasCreation = true
 		creationTokens = observationMax64(creationTokens, nestedCreation)
+	}
+	if hasAnthropicRead || hasTopLevelRead || hasNestedRead || hasCreation {
+		result.hasCacheUsage = true
 	}
 	result.readTokens = observationMax64(result.readTokens, readTokens)
 	result.creationTokens = observationMax64(result.creationTokens, creationTokens)

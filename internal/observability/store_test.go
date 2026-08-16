@@ -23,7 +23,7 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 			CompletedAt: start.Add(1200 * time.Millisecond), Method: "POST", Path: "/v1/chat/completions",
 			Protocol: "openai", Status: "completed", StatusCode: 200, Stream: true, Model: "model-a",
 			Source: "local", SourceType: "local", APIKeyID: "key-a", APIKeyName: "Client",
-			InputTokens: 10, OutputTokens: 5, CacheReadInputTokens: 4, CacheCreationTokens: 2,
+			InputTokens: 6, OutputTokens: 5, CacheReadInputTokens: 4, CacheCreationTokens: 2,
 			CacheEligibleTokens: 10, DurationMS: 1200, FirstTokenLatencyMS: 120,
 			RequestBody:  `{"model":"model-a","messages":[{"role":"user","content":"hello"}]}`,
 			ResponseBody: `data: {"choices":[]}`,
@@ -94,6 +94,49 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 	}
 	if !strings.Contains(requests[0].RequestBody, "hello") || !strings.Contains(requests[0].ResponseBody, "choices") {
 		t.Fatalf("trace detail omitted input/output payloads: %+v", requests[0])
+	}
+}
+
+func TestStoreReconcileUsageRepairsHistoricalRecordsOnce(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	record := RequestRecord{
+		ID: "req-old", TraceID: "trace-old", StartedAt: time.Now(), CompletedAt: time.Now(),
+		Method: "POST", Path: "/v1/chat/completions", Status: "completed", StatusCode: 200,
+		InputTokens: 66, CacheEligibleTokens: 80,
+		ResponseBody: `data: {"usage":{"prompt_tokens":80,"completion_tokens":5,"total_tokens":85}}`,
+	}
+	if err := store.Add(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, "UPDATE requests SET usage_reconciled = 0 WHERE id = ?", record.ID); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	reconcile := func(string) (int64, int64, bool) {
+		calls++
+		return 80, 5, true
+	}
+	if err := store.ReconcileUsage(ctx, reconcile); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReconcileUsage(ctx, reconcile); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("reconciler calls = %d, want 1", calls)
+	}
+	detail, err := store.GetRequest(ctx, record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.InputTokens != 80 || detail.OutputTokens != 5 {
+		t.Fatalf("reconciled usage = input %d output %d, want 80 and 5", detail.InputTokens, detail.OutputTokens)
 	}
 }
 

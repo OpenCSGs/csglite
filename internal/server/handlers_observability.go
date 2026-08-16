@@ -209,7 +209,7 @@ func observabilityRequestResponse(record observability.RequestRecord) api.Observ
 		LimitedCount:          record.LimitedCount,
 		InputTokens:           record.InputTokens,
 		OutputTokens:          record.OutputTokens,
-		TotalTokens:           record.InputTokens + record.OutputTokens,
+		TotalTokens:           max(record.InputTokens, record.CacheEligibleTokens) + record.OutputTokens,
 		CacheReadInputTokens:  record.CacheReadInputTokens,
 		CacheCreationTokens:   record.CacheCreationTokens,
 		CacheEligibleTokens:   record.CacheEligibleTokens,

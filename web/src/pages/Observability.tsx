@@ -401,9 +401,8 @@ function RequestTable({ data, loading, onOpen, onOpenTrace }: {
             <th class="px-4 py-3">{t("observability.columnStatus")}</th>
             <th class="px-4 py-3">{t("observability.columnRoute")}</th>
             <th class="px-4 py-3">{t("observability.columnLatency")}</th>
-            <th class="px-4 py-3">{t("observability.columnTokens")}</th>
             <th class="px-4 py-3">{t("observability.columnCacheRead")}</th>
-            <th class="px-4 py-3">{t("observability.columnCacheWrite")}</th>
+            <th class="px-4 py-3">{t("observability.columnTokens")}</th>
             <th class="px-4 py-3">{t("observability.columnCacheHitRate")}</th>
             <th class="px-4 py-3">{t("observability.columnTrace")}</th>
           </tr>
@@ -419,9 +418,8 @@ function RequestTable({ data, loading, onOpen, onOpenTrace }: {
                 {formatObservabilityDuration(row.duration_ms)}
                 {row.stream && <span class="block text-[11px] text-gray-400">TTFT {formatObservabilityDuration(row.first_token_latency_ms)}</span>}
               </td>
-              <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.total_tokens)}</td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatCacheTokens(row, row.cache_read_input_tokens)}</td>
-              <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatCacheTokens(row, row.cache_creation_input_tokens)}</td>
+              <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.total_tokens)}</td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600" title={
                 row.cache_eligible_input_tokens > 0
                   ? `${t("observability.cacheReadTokens")}: ${formatNumber(row.cache_read_input_tokens)} / ${formatNumber(row.cache_eligible_input_tokens)}`
@@ -852,7 +850,7 @@ function RequestDetail({ request, onOpenTrace }: { request: ObservabilityRequest
     [t("observability.inputTokens"), formatNumber(request.input_tokens)],
     [t("observability.outputTokens"), formatNumber(request.output_tokens)],
     [t("observability.columnCacheRead"), formatCacheTokens(request, request.cache_read_input_tokens)],
-    [t("observability.columnCacheWrite"), formatCacheTokens(request, request.cache_creation_input_tokens)],
+    [t("observability.columnTokens"), formatNumber(request.total_tokens)],
     [t("observability.columnCacheHitRate"), formatCacheHitRate(request)],
     [t("observability.caller"), request.api_key_name || "—"],
     [t("observability.columnTime"), formatDateTime(request.started_at)],
@@ -1157,10 +1155,6 @@ function TraceDetail({ trace }: { trace: ObservabilityTraceDetailResponse }) {
                   <TraceDetailField
                     label={t("observability.columnCacheRead")}
                     value={formatCacheTokens(selectedRequest, selectedRequest.cache_read_input_tokens)}
-                  />
-                  <TraceDetailField
-                    label={t("observability.columnCacheWrite")}
-                    value={formatCacheTokens(selectedRequest, selectedRequest.cache_creation_input_tokens)}
                   />
                 </div>
                 {selectedRequest.error_message && (

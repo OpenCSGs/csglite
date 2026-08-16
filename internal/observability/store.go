@@ -177,7 +177,8 @@ CREATE TABLE IF NOT EXISTS requests (
 	request_body BLOB,
 	response_body BLOB,
 	request_body_truncated INTEGER NOT NULL DEFAULT 0,
-	response_body_truncated INTEGER NOT NULL DEFAULT 0
+	response_body_truncated INTEGER NOT NULL DEFAULT 0,
+	usage_reconciled INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_requests_started_at ON requests(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_requests_trace_id ON requests(trace_id, started_at);
@@ -195,6 +196,7 @@ CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model, started_at DESC
 		{"cache_read_input_tokens", "INTEGER NOT NULL DEFAULT 0"},
 		{"cache_creation_input_tokens", "INTEGER NOT NULL DEFAULT 0"},
 		{"cache_eligible_input_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"usage_reconciled", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.addColumnIfMissing("requests", migration.name, migration.definition); err != nil {
 			return err
@@ -259,8 +261,8 @@ INSERT OR REPLACE INTO requests (
 	fallback_count, limited_count, input_tokens, output_tokens, duration_ms,
 	cache_read_input_tokens, cache_creation_input_tokens, cache_eligible_input_tokens,
 	first_token_latency_ms, error_message, request_body, response_body,
-	request_body_truncated, response_body_truncated
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	request_body_truncated, response_body_truncated, usage_reconciled
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.ID, record.TraceID, record.ThreadID, millis(record.StartedAt), millis(record.CompletedAt),
 		record.Method, record.Path, record.Protocol, record.Status, record.StatusCode, boolInt(record.Stream),
 		record.Model, record.Source, record.SourceType, record.SourceName, record.APIKeyID, record.APIKeyName,
@@ -268,10 +270,81 @@ INSERT OR REPLACE INTO requests (
 		record.LimitedCount, record.InputTokens, record.OutputTokens, record.DurationMS,
 		record.CacheReadInputTokens, record.CacheCreationTokens, record.CacheEligibleTokens,
 		record.FirstTokenLatencyMS, record.ErrorMessage, requestBody, responseBody,
-		boolInt(record.RequestBodyTruncated), boolInt(record.ResponseBodyTruncated),
+		boolInt(record.RequestBodyTruncated), boolInt(record.ResponseBodyTruncated), 1,
 	)
 	if err != nil {
 		return fmt.Errorf("saving observability request: %w", err)
+	}
+	return nil
+}
+
+// ReconcileUsage repairs records written before response usage was captured.
+// Each stored response is processed at most once.
+func (s *Store) ReconcileUsage(ctx context.Context, reconcile func(string) (int64, int64, bool)) error {
+	if s == nil || s.db == nil {
+		return errors.New("observability store is unavailable")
+	}
+	if reconcile == nil {
+		return errors.New("usage reconciler is required")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, response_body
+FROM requests
+WHERE usage_reconciled = 0 AND response_body IS NOT NULL`)
+	if err != nil {
+		return fmt.Errorf("loading observability usage for reconciliation: %w", err)
+	}
+	type correction struct {
+		id               string
+		inputTokens      int64
+		outputTokens     int64
+		hasProviderUsage bool
+	}
+	corrections := make([]correction, 0)
+	for rows.Next() {
+		var id string
+		var compressed []byte
+		if err := rows.Scan(&id, &compressed); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scanning observability usage for reconciliation: %w", err)
+		}
+		body, err := decompress(compressed)
+		if err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("decompressing observability response %s: %w", id, err)
+		}
+		inputTokens, outputTokens, ok := reconcile(body)
+		corrections = append(corrections, correction{
+			id: id, inputTokens: inputTokens, outputTokens: outputTokens, hasProviderUsage: ok,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("reading observability usage for reconciliation: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("closing observability usage reconciliation rows: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("starting observability usage reconciliation: %w", err)
+	}
+	defer tx.Rollback()
+	for _, item := range corrections {
+		if item.hasProviderUsage {
+			_, err = tx.ExecContext(ctx, `
+UPDATE requests
+SET input_tokens = MAX(?, cache_eligible_input_tokens), output_tokens = ?, usage_reconciled = 1
+WHERE id = ?`, item.inputTokens, item.outputTokens, item.id)
+		} else {
+			_, err = tx.ExecContext(ctx, "UPDATE requests SET usage_reconciled = 1 WHERE id = ?", item.id)
+		}
+		if err != nil {
+			return fmt.Errorf("reconciling observability usage %s: %w", item.id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing observability usage reconciliation: %w", err)
 	}
 	return nil
 }
@@ -287,7 +360,7 @@ func (s *Store) ListRequests(ctx context.Context, filter RequestFilter) (Request
 SELECT COUNT(*),
 	COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
 	COALESCE(SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END), 0),
-	COALESCE(SUM(input_tokens + output_tokens), 0),
+	COALESCE(SUM(MAX(input_tokens, cache_eligible_input_tokens) + output_tokens), 0),
 	COALESCE(AVG(duration_ms), 0)
 FROM requests`+where, args...).Scan(
 		&page.Summary.Requests, &page.Summary.Succeeded, &page.Summary.Failed,
@@ -329,7 +402,7 @@ func (s *Store) ListTraces(ctx context.Context, filter RequestFilter) (TracePage
 	query := `
 SELECT trace_id, MAX(thread_id), MIN(started_at), MAX(completed_at),
 	CASE WHEN SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END) > 0 THEN 'failed' ELSE 'completed' END,
-	COUNT(*), GROUP_CONCAT(DISTINCT model), SUM(input_tokens + output_tokens)
+	COUNT(*), GROUP_CONCAT(DISTINCT model), SUM(MAX(input_tokens, cache_eligible_input_tokens) + output_tokens)
 FROM requests` + where + `
 GROUP BY trace_id
 ` + having + `
@@ -417,7 +490,7 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) (TraceRecord, []Re
 	models := map[string]struct{}{}
 	for _, record := range requests {
 		trace.RequestCount++
-		trace.TotalTokens += record.InputTokens + record.OutputTokens
+		trace.TotalTokens += requestTotalTokens(record)
 		if record.StartedAt.Before(trace.StartedAt) {
 			trace.StartedAt = record.StartedAt
 		}
@@ -436,6 +509,10 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) (TraceRecord, []Re
 	}
 	trace.DurationMS = trace.CompletedAt.Sub(trace.StartedAt).Milliseconds()
 	return trace, requests, nil
+}
+
+func requestTotalTokens(record RequestRecord) int64 {
+	return max64(record.InputTokens, record.CacheEligibleTokens) + record.OutputTokens
 }
 
 // VisitTraces reads selected traces in bounded batches. It avoids one SQL query
