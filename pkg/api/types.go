@@ -836,6 +836,7 @@ type OpenAIChatRequest struct {
 	ToolChoice         interface{}            `json:"tool_choice,omitempty"`
 	ParallelToolCalls  *bool                  `json:"parallel_tool_calls,omitempty"`
 	ChatTemplateKwargs map[string]interface{} `json:"chat_template_kwargs,omitempty"`
+	StreamOptions      map[string]interface{} `json:"stream_options,omitempty"`
 	Stream             *bool                  `json:"stream,omitempty"`
 	Temperature        *float64               `json:"temperature,omitempty"`
 	TopP               *float64               `json:"top_p,omitempty"`

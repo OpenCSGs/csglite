@@ -428,6 +428,13 @@ func openAIChatRequestToProxyBody(req api.OpenAIChatRequest, opts inference.Opti
 		"top_p":       opts.TopP,
 		"stream":      stream,
 	}
+	if stream {
+		streamOptions := map[string]interface{}{"include_usage": true}
+		for key, value := range req.StreamOptions {
+			streamOptions[key] = value
+		}
+		body["stream_options"] = streamOptions
+	}
 	if opts.MaxTokens > 0 {
 		body["max_tokens"] = opts.MaxTokens
 	}

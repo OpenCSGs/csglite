@@ -232,14 +232,19 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 		}
 		responseBody := sanitizeObservationBody(ow.body.Bytes())
 		responseUsage := observationResponseUsageFromBodies(ow.body.Bytes(), ow.usageTail)
-		if responseUsage.hasInputTokens {
-			snapshot.inputTokens = responseUsage.inputTokens
-		}
-		if responseUsage.hasOutputTokens {
-			snapshot.outputTokens = responseUsage.outputTokens
+		hasMeaningfulTokenUsage := responseUsage.inputTokens > 0 ||
+			responseUsage.outputTokens > 0 ||
+			responseUsage.totalTokens > 0
+		if hasMeaningfulTokenUsage {
+			if responseUsage.hasInputTokens {
+				snapshot.inputTokens = responseUsage.inputTokens
+			}
+			if responseUsage.hasOutputTokens {
+				snapshot.outputTokens = responseUsage.outputTokens
+			}
 		}
 		inferenceCacheUsage := cacheCollector.Snapshot()
-		if !responseUsage.hasCacheUsage {
+		if !responseUsage.hasCacheUsage || responseUsage.eligibleTokens <= 0 {
 			responseUsage.readTokens = inferenceCacheUsage.ReadInputTokens
 			responseUsage.creationTokens = inferenceCacheUsage.CreationInputTokens
 			responseUsage.eligibleTokens = inferenceCacheUsage.EligibleInputTokens

@@ -9818,6 +9818,11 @@
             "additionalProperties": true,
             "description": "llama.cpp chat template variables, such as {\"enable_thinking\": false} for Qwen thinking models."
           },
+          "stream_options": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "OpenAI-compatible streaming options. Proxied streaming requests default include_usage to true so token usage can be observed."
+          },
           "stream": {
             "type": "boolean",
             "default": false,

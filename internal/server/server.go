@@ -180,6 +180,7 @@ type Server struct {
 	poolMu            sync.Mutex
 	poolCurrent       map[string]int
 	poolRuntime       map[string]*providerPoolMemberRuntime
+	poolAffinity      map[string]providerPoolAffinityEntry
 
 	cloudRefreshMu   sync.Mutex
 	cloudRefreshAt   time.Time
@@ -238,6 +239,7 @@ func New(cfg *config.Config, version string) *Server {
 		loading:           make(map[string]*engineLoadState),
 		poolCurrent:       make(map[string]int),
 		poolRuntime:       make(map[string]*providerPoolMemberRuntime),
+		poolAffinity:      make(map[string]providerPoolAffinityEntry),
 		selfHeal:          make(map[string]selfHealBreakerState),
 		imageEngines:      make(map[string]*managedImageEngine),
 		imageLoading:      make(map[string]*imageEngineLoadState),

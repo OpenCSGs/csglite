@@ -61,6 +61,39 @@ func TestObservabilityMiddlewareCapturesTextGenerationAndRedactsSecrets(t *testi
 	}
 }
 
+func TestObservabilityMiddlewareKeepsFallbackUsageWhenStreamReportsZeros(t *testing.T) {
+	s := newTestServer(t)
+	handler := s.observabilityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observationFromContext(r.Context()).setUsage("pool/model", "pool:test", "pool", "test", 37, 0, nil)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0,\"prompt_tokens_details\":{\"cached_tokens\":0}}}\n\ndata: [DONE]\n\n"))
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/providers/test/v1/chat/completions",
+		strings.NewReader(`{"model":"pool/model","stream":true,"messages":[{"role":"user","content":"hello"}]}`))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	s.observabilityMu.RLock()
+	page, err := s.observability.ListRequests(req.Context(), observability.RequestFilter{})
+	s.observabilityMu.RUnlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 {
+		t.Fatalf("captured requests = %d, want 1", page.Total)
+	}
+	s.observabilityMu.RLock()
+	detail, err := s.observability.GetRequest(req.Context(), page.Items[0].ID)
+	s.observabilityMu.RUnlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.InputTokens != 37 || detail.OutputTokens != 0 {
+		t.Fatalf("fallback usage was overwritten: %+v", detail)
+	}
+}
+
 func TestObservationResponseCacheUsage(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -37,13 +37,14 @@ func (e *poolRuntimeTestEngine) ChatCompletion(context.Context, map[string]inter
 
 func newPoolRuntimeTestEngine(now *time.Time, members ...providerPoolEngineMember) *providerPoolEngine {
 	return &providerPoolEngine{
-		poolID:  "pool",
-		modelID: "pool-model",
-		members: members,
-		mu:      &sync.Mutex{},
-		current: make(map[string]int),
-		runtime: make(map[string]*providerPoolMemberRuntime),
-		now:     func() time.Time { return *now },
+		poolID:   "pool",
+		modelID:  "pool-model",
+		members:  members,
+		mu:       &sync.Mutex{},
+		current:  make(map[string]int),
+		runtime:  make(map[string]*providerPoolMemberRuntime),
+		affinity: make(map[string]providerPoolAffinityEntry),
+		now:      func() time.Time { return *now },
 	}
 }
 
@@ -124,6 +125,127 @@ func TestProviderPoolWeightedRoundRobin(t *testing.T) {
 	}
 	if calls["heavy"] != 6 || calls["light"] != 2 {
 		t.Fatalf("weighted calls = %#v, want heavy:6 light:2", calls)
+	}
+}
+
+func TestProviderPoolRequestAffinityKeyUsesExplicitThread(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/providers/pool/v1/chat/completions",
+		strings.NewReader(`{"model":"pool-model","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set(observabilityTraceIDHeader, "trace-one")
+	req.Header.Set(observabilityThreadIDHeader, "thread-one")
+
+	if got := providerPoolRequestAffinityKey(req); got != "thread::thread-one" {
+		t.Fatalf("affinity key = %q, want explicit thread", got)
+	}
+}
+
+func TestProviderPoolRequestAffinityKeyFollowsAgentToolLoop(t *testing.T) {
+	first := httptest.NewRequest(http.MethodPost, "/providers/pool/v1/chat/completions", strings.NewReader(`{
+		"model":"pool-model",
+		"messages":[
+			{"role":"system","content":"system"},
+			{"role":"user","content":"inspect the repository"}
+		]
+	}`))
+	next := httptest.NewRequest(http.MethodPost, "/providers/pool/v1/chat/completions", strings.NewReader(`{
+		"model":"pool-model",
+		"messages":[
+			{"role":"system","content":"system"},
+			{"role":"user","content":"inspect the repository"},
+			{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"Read","arguments":"{}"}}]},
+			{"role":"tool","tool_call_id":"call-1","content":"result"}
+		]
+	}`))
+	other := httptest.NewRequest(http.MethodPost, "/providers/pool/v1/chat/completions", strings.NewReader(`{
+		"model":"pool-model",
+		"messages":[
+			{"role":"system","content":"system"},
+			{"role":"user","content":"a different task"}
+		]
+	}`))
+
+	firstKey := providerPoolRequestAffinityKey(first)
+	nextKey := providerPoolRequestAffinityKey(next)
+	otherKey := providerPoolRequestAffinityKey(other)
+	if firstKey == "" || firstKey != nextKey {
+		t.Fatalf("tool-loop affinity keys differ: first=%q next=%q", firstKey, nextKey)
+	}
+	if otherKey == firstKey {
+		t.Fatalf("different conversations share affinity key %q", firstKey)
+	}
+}
+
+func TestProviderPoolAffinityKeepsSuccessfulMember(t *testing.T) {
+	now := time.Now()
+	calls := map[string]int{}
+	member := func(id string) providerPoolEngineMember {
+		return providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: id, Priority: 0, Weight: 1},
+			new: func() (inference.Engine, error) {
+				calls[id]++
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					return poolRuntimeResponse(`{}`), nil
+				}}, nil
+			},
+		}
+	}
+	members := []providerPoolEngineMember{member("first"), member("second")}
+	firstRequest := newPoolRuntimeTestEngine(&now, members...)
+	firstRequest.affinityKey = "conversation:test"
+	response, err := firstRequest.ChatCompletion(t.Context(), map[string]interface{}{"prompt": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+
+	nextRequest := newPoolRuntimeTestEngine(&now, members...)
+	nextRequest.mu = firstRequest.mu
+	nextRequest.current = firstRequest.current
+	nextRequest.runtime = firstRequest.runtime
+	nextRequest.affinity = firstRequest.affinity
+	nextRequest.affinityKey = firstRequest.affinityKey
+	response, err = nextRequest.ChatCompletion(t.Context(), map[string]interface{}{"prompt": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if calls["first"] != 2 || calls["second"] != 0 {
+		t.Fatalf("sticky calls = %#v, want first member twice", calls)
+	}
+}
+
+func TestProviderPoolAffinityMovesAfterFailover(t *testing.T) {
+	now := time.Now()
+	engine := newPoolRuntimeTestEngine(&now,
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "first", Priority: 0},
+			new: func() (inference.Engine, error) {
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					response := poolRuntimeResponse(`{"error":"limited"}`)
+					response.StatusCode = http.StatusTooManyRequests
+					return response, nil
+				}}, nil
+			},
+		},
+		providerPoolEngineMember{
+			member: config.ProviderPoolMember{ID: "fallback", Priority: 0},
+			new: func() (inference.Engine, error) {
+				return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+					return poolRuntimeResponse(`{}`), nil
+				}}, nil
+			},
+		},
+	)
+	engine.affinityKey = "conversation:test"
+	engine.rememberAffinity("first")
+
+	response, err := engine.ChatCompletion(t.Context(), map[string]interface{}{"prompt": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if got := engine.preferredMemberID(); got != "fallback" {
+		t.Fatalf("preferred member after failover = %q, want fallback", got)
 	}
 }
 

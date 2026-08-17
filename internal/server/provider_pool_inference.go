@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ const providerPoolMemberSourceHeader = "X-CSGLite-Pool-Member-Source"
 const providerPoolMemberModelHeader = "X-CSGLite-Pool-Member-Model"
 const providerPoolFallbackCountHeader = "X-CSGLite-Pool-Fallback-Count"
 const providerPoolLimitedCountHeader = "X-CSGLite-Pool-Limited-Count"
+const providerPoolAffinityTTL = 30 * time.Minute
 
 func poolSource(id string) string {
 	return providerPoolSourcePrefix + strings.TrimSpace(id)
@@ -58,15 +60,17 @@ func providerPoolForRequest(modelID, source string) (config.ProviderPool, bool) 
 }
 
 type providerPoolEngine struct {
-	poolID   string
-	poolName string
-	modelID  string
-	members  []providerPoolEngineMember
-	mu       *sync.Mutex
-	current  map[string]int
-	runtime  map[string]*providerPoolMemberRuntime
-	now      func() time.Time
-	usage    *providerPoolUsageCapture
+	poolID      string
+	poolName    string
+	modelID     string
+	members     []providerPoolEngineMember
+	mu          *sync.Mutex
+	current     map[string]int
+	runtime     map[string]*providerPoolMemberRuntime
+	affinity    map[string]providerPoolAffinityEntry
+	affinityKey string
+	now         func() time.Time
+	usage       *providerPoolUsageCapture
 }
 
 type providerPoolEngineMember struct {
@@ -88,6 +92,11 @@ type providerPoolMemberRuntime struct {
 	cooldown   time.Time
 }
 
+type providerPoolAffinityEntry struct {
+	memberID  string
+	expiresAt time.Time
+}
+
 type providerPoolAdmission struct {
 	key       string
 	tokenID   uint64
@@ -98,16 +107,78 @@ type providerPoolUsageCapture struct {
 	mu       sync.Mutex
 	source   string
 	metadata *apiUsagePoolMetadata
+	affinity string
 }
 
 type providerPoolUsageContextKey struct{}
 
 func providerPoolUsageMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capture := &providerPoolUsageCapture{}
+		capture := &providerPoolUsageCapture{affinity: providerPoolRequestAffinityKey(r)}
 		ctx := context.WithValue(r.Context(), providerPoolUsageContextKey{}, capture)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func providerPoolRequestAffinityKey(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	identity := ""
+	if key, ok := authenticatedAPIKey(r); ok {
+		identity = key.ID
+	}
+	if threadID := normalizedObservationID(r.Header.Get(observabilityThreadIDHeader)); threadID != "" {
+		return "thread:" + identity + ":" + threadID
+	}
+	if traceID := normalizedObservationID(r.Header.Get(observabilityTraceIDHeader)); traceID != "" {
+		return "trace:" + identity + ":" + traceID
+	}
+	if r.Body == nil || r.Method != http.MethodPost {
+		return ""
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return ""
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	var payload struct {
+		Model    string            `json:"model"`
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if json.Unmarshal(body, &payload) != nil || len(payload.Messages) == 0 {
+		return ""
+	}
+	leading := make([]map[string]any, 0, 2)
+	for _, raw := range payload.Messages {
+		var message map[string]any
+		if json.Unmarshal(raw, &message) != nil {
+			return ""
+		}
+		role, _ := message["role"].(string)
+		if role == "assistant" || role == "tool" {
+			break
+		}
+		leading = append(leading, message)
+		if role == "user" {
+			break
+		}
+	}
+	if len(leading) == 0 {
+		return ""
+	}
+	canonical, err := json.Marshal(struct {
+		Identity  string           `json:"identity"`
+		UserAgent string           `json:"user_agent"`
+		Model     string           `json:"model"`
+		Messages  []map[string]any `json:"messages"`
+	}{
+		Identity: identity, UserAgent: r.UserAgent(), Model: payload.Model, Messages: leading,
+	})
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("conversation:%x", sha256.Sum256(canonical))
 }
 
 func providerPoolUsageCaptureFromContext(ctx context.Context) *providerPoolUsageCapture {
@@ -137,6 +208,15 @@ func (c *providerPoolUsageCapture) get() (string, *apiUsagePoolMetadata) {
 	}
 	copy := *c.metadata
 	return c.source, &copy
+}
+
+func (c *providerPoolUsageCapture) affinityKey() string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.affinity
 }
 
 type providerPoolResponseBody struct {
@@ -338,6 +418,7 @@ func (e *providerPoolEngine) runProxy(ctx context.Context, estimatedTokens int, 
 }
 
 func (e *providerPoolEngine) captureUsage(member config.ProviderPoolMember, fallbackCount, limitedCount int64) {
+	e.rememberAffinity(member.ID)
 	e.usage.set(member.Source, apiUsagePoolMetadata{
 		PoolID:        e.poolID,
 		PoolName:      e.poolName,
@@ -346,6 +427,51 @@ func (e *providerPoolEngine) captureUsage(member config.ProviderPoolMember, fall
 		FallbackCount: fallbackCount,
 		LimitedCount:  limitedCount,
 	})
+}
+
+func (e *providerPoolEngine) affinityCacheKey() string {
+	if strings.TrimSpace(e.affinityKey) == "" {
+		return ""
+	}
+	return e.poolID + "\x00" + e.affinityKey
+}
+
+func (e *providerPoolEngine) preferredMemberID() string {
+	key := e.affinityCacheKey()
+	if key == "" || e.mu == nil || e.affinity == nil {
+		return ""
+	}
+	now := e.clock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	entry, ok := e.affinity[key]
+	if !ok {
+		return ""
+	}
+	if !entry.expiresAt.After(now) {
+		delete(e.affinity, key)
+		return ""
+	}
+	return entry.memberID
+}
+
+func (e *providerPoolEngine) rememberAffinity(memberID string) {
+	key := e.affinityCacheKey()
+	if key == "" || strings.TrimSpace(memberID) == "" || e.mu == nil || e.affinity == nil {
+		return
+	}
+	now := e.clock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for affinityKey, entry := range e.affinity {
+		if !entry.expiresAt.After(now) {
+			delete(e.affinity, affinityKey)
+		}
+	}
+	e.affinity[key] = providerPoolAffinityEntry{
+		memberID:  memberID,
+		expiresAt: now.Add(providerPoolAffinityTTL),
+	}
 }
 
 func providerPoolRetryable(err error) bool {
@@ -629,6 +755,14 @@ func (e *providerPoolEngine) orderedMembers() []providerPoolEngineMember {
 	for end < len(members) && members[end].member.Priority == firstPriority {
 		end++
 	}
+	if preferred := e.preferredMemberID(); preferred != "" {
+		for i := 0; i < end; i++ {
+			if members[i].member.ID == preferred {
+				members[0], members[i] = members[i], members[0]
+				return members
+			}
+		}
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.current == nil {
@@ -655,6 +789,7 @@ func (e *providerPoolEngine) orderedMembers() []providerPoolEngineMember {
 
 func (s *Server) newProviderPoolChatEngine(ctx context.Context, pool config.ProviderPool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (inference.Engine, error) {
 	memberCtx := withoutProviderRouteSource(ctx)
+	affinityKey := providerPoolUsageCaptureFromContext(ctx).affinityKey()
 	members := make([]providerPoolEngineMember, 0, len(pool.Members))
 	for _, member := range pool.Members {
 		member := member
@@ -668,6 +803,7 @@ func (s *Server) newProviderPoolChatEngine(ctx context.Context, pool config.Prov
 	return &providerPoolEngine{
 		poolID: pool.ID, poolName: pool.Name, modelID: pool.Model, members: members,
 		mu: &s.poolMu, current: s.poolCurrent, runtime: s.poolRuntime,
+		affinity: s.poolAffinity, affinityKey: affinityKey,
 		usage: providerPoolUsageCaptureFromContext(ctx),
 	}, nil
 }
@@ -687,6 +823,7 @@ func (s *Server) newProviderPoolEmbeddingEngine(ctx context.Context, pool config
 	return &providerPoolEngine{
 		poolID: pool.ID, poolName: pool.Name, modelID: pool.Model, members: members,
 		mu: &s.poolMu, current: s.poolCurrent, runtime: s.poolRuntime,
-		usage: providerPoolUsageCaptureFromContext(ctx),
+		affinity: s.poolAffinity,
+		usage:    providerPoolUsageCaptureFromContext(ctx),
 	}, nil
 }

@@ -1165,6 +1165,13 @@ func TestHandleOpenAIChatCompletionsCloudStreamPreservesReasoningContent(t *test
 			if body["stream"] != true {
 				t.Fatalf("stream = %#v, want true", body["stream"])
 			}
+			streamOptions, ok := body["stream_options"].(map[string]interface{})
+			if !ok || streamOptions["include_usage"] != true {
+				t.Fatalf("stream_options = %#v, want include_usage=true", body["stream_options"])
+			}
+			if streamOptions["custom"] != "preserved" {
+				t.Fatalf("custom stream option = %#v, want preserved", streamOptions["custom"])
+			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"think\"}}]}\n\n")
 			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n\n")
@@ -1178,7 +1185,7 @@ func TestHandleOpenAIChatCompletionsCloudStreamPreservesReasoningContent(t *test
 	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService(apiServer.URL)
 
-	body := `{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	body := `{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true,"custom":"preserved"}}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	w := httptest.NewRecorder()
 
@@ -1210,6 +1217,10 @@ func TestHandleOpenAIChatCompletionsCloudStreamWithToolsProxiesSSE(t *testing.T)
 			}
 			if body["stream"] != true {
 				t.Fatalf("stream = %#v, want true", body["stream"])
+			}
+			streamOptions, ok := body["stream_options"].(map[string]interface{})
+			if !ok || streamOptions["include_usage"] != true {
+				t.Fatalf("default stream_options = %#v, want include_usage=true", body["stream_options"])
 			}
 			if _, ok := body["tools"]; !ok {
 				t.Fatalf("upstream request missing tools: %#v", body)
