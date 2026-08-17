@@ -46,7 +46,7 @@ func browserAccessHost(r *http.Request) string {
 }
 
 func (s *Server) ensureCodexAppLaunchConfig(ctx context.Context, requestedModelID, requestedSource string) (string, error) {
-	modelID, modelIDs, err := s.resolveAIAppShellLaunchModels(ctx, "codex-app", requestedModelID, requestedSource)
+	modelID, _, err := s.resolveAIAppShellLaunchModels(ctx, "codex-app", requestedModelID, requestedSource)
 	if err != nil {
 		return "", err
 	}
@@ -225,7 +225,7 @@ func removeCSGClawStaleSandboxSockets(configRoot string) error {
 }
 
 func (s *Server) ensureZCodeLaunchConfig(ctx context.Context, requestedModelID, requestedSource string) (string, error) {
-	modelID, modelIDs, err := s.resolveAIAppShellLaunchModels(ctx, "zcode", requestedModelID, requestedSource)
+	modelID, _, err := s.resolveAIAppShellLaunchModels(ctx, "zcode", requestedModelID, requestedSource)
 	if err != nil {
 		return "", err
 	}

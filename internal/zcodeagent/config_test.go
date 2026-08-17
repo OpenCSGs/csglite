@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -103,12 +104,14 @@ func TestSyncConfigPreservesExistingProviders(t *testing.T) {
 		!gotSettings.Other {
 		t.Fatalf("settings = %#v, want selected model and preserved fields", gotSettings)
 	}
-	info, err := os.Stat(settingsPath)
-	if err != nil {
-		t.Fatalf("stat settings: %v", err)
-	}
-	if info.Mode().Perm() != 0o640 {
-		t.Fatalf("settings mode = %v, want 0640", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(settingsPath)
+		if err != nil {
+			t.Fatalf("stat settings: %v", err)
+		}
+		if info.Mode().Perm() != 0o640 {
+			t.Fatalf("settings mode = %v, want 0640", info.Mode().Perm())
+		}
 	}
 }
 

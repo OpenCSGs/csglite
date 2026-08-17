@@ -329,7 +329,9 @@ WHERE usage_reconciled = 0 AND response_body IS NOT NULL`)
 	if err != nil {
 		return fmt.Errorf("starting observability usage reconciliation: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 	for _, item := range corrections {
 		if item.hasProviderUsage {
 			_, err = tx.ExecContext(ctx, `

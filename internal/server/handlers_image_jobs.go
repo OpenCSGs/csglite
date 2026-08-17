@@ -391,7 +391,7 @@ func resizeImageMaxSide(src image.Image, maxSide int) image.Image {
 	if width <= maxSide && height <= maxSide {
 		return src
 	}
-	newWidth, newHeight := width, height
+	var newWidth, newHeight int
 	if width >= height {
 		newWidth = maxSide
 		newHeight = maxSide * height / width

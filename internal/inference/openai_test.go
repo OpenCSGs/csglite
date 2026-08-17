@@ -539,7 +539,8 @@ func TestAddHeaderPreservingName(t *testing.T) {
 	if _, ok := headers["Content-Type"]; ok {
 		t.Fatalf("original header casing remained: %#v", headers)
 	}
-	if got := headers["content-type"]; len(got) != 2 || got[0] != "application/json" || got[1] != "application/custom" {
+	lowercaseName := strings.ToLower("Content-Type")
+	if got := headers[lowercaseName]; len(got) != 2 || got[0] != "application/json" || got[1] != "application/custom" {
 		t.Fatalf("content-type values = %#v", got)
 	}
 }

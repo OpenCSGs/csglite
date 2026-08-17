@@ -94,8 +94,15 @@ func newTestServer(t *testing.T) *Server {
 		ModelDir:   filepath.Join(dir, "models"),
 		DatasetDir: filepath.Join(dir, "datasets"),
 	}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService("")
+	return s
+}
+
+func newTestServerWithConfig(t *testing.T, cfg *config.Config) *Server {
+	t.Helper()
+	s := New(cfg, "test")
+	t.Cleanup(s.shutdownRuntime)
 	return s
 }
 
@@ -176,7 +183,7 @@ func TestDesktopRunFailsWhenExternalAPIPortIsOccupied(t *testing.T) {
 	cfg.DesktopSessionToken = strings.Repeat("b", 64)
 	cfg.DesktopControlToken = strings.Repeat("c", 64)
 	cfg.DesktopInstanceID = strings.Repeat("d", 32)
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 
 	err = s.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "desktop API port") {
@@ -201,7 +208,7 @@ func TestDesktopRunServesExternalAPIOnStablePort(t *testing.T) {
 	cfg.DesktopSessionToken = strings.Repeat("b", 64)
 	cfg.DesktopControlToken = strings.Repeat("c", 64)
 	cfg.DesktopInstanceID = strings.Repeat("d", 32)
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

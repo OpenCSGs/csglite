@@ -43,6 +43,16 @@ type observationMetadata struct {
 	outputTokens int64
 }
 
+type observationMetadataSnapshot struct {
+	model        string
+	source       string
+	sourceType   string
+	sourceName   string
+	pool         *apiUsagePoolMetadata
+	inputTokens  int64
+	outputTokens int64
+}
+
 func observationFromContext(ctx context.Context) *observationMetadata {
 	metadata, _ := ctx.Value(observationContextKey{}).(*observationMetadata)
 	return metadata
@@ -66,19 +76,25 @@ func (m *observationMetadata) setUsage(model, source, sourceType, sourceName str
 	}
 }
 
-func (m *observationMetadata) snapshot() observationMetadata {
+func (m *observationMetadata) snapshot() observationMetadataSnapshot {
 	if m == nil {
-		return observationMetadata{}
+		return observationMetadataSnapshot{}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	copy := *m
-	copy.mu = sync.Mutex{}
+	snapshot := observationMetadataSnapshot{
+		model:        m.model,
+		source:       m.source,
+		sourceType:   m.sourceType,
+		sourceName:   m.sourceName,
+		inputTokens:  m.inputTokens,
+		outputTokens: m.outputTokens,
+	}
 	if m.pool != nil {
 		pool := *m.pool
-		copy.pool = &pool
+		snapshot.pool = &pool
 	}
-	return copy
+	return snapshot
 }
 
 type observationResponseWriter struct {

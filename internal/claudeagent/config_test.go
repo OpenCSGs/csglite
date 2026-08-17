@@ -10,6 +10,7 @@ import (
 func TestSyncConfigWritesEnvSettings(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	err := SyncConfig("http://127.0.0.1:11435", "test-token", "glm-5(infini-ai)")
 	if err != nil {
@@ -66,6 +67,7 @@ func TestSyncConfigWritesEnvSettings(t *testing.T) {
 func TestSyncConfigPreservesClaudeDotJSONFields(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	existing := `{"installMethod": "native", "autoUpdates": false}`
 	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(existing), 0o644); err != nil {
@@ -98,6 +100,7 @@ func TestSyncConfigPreservesClaudeDotJSONFields(t *testing.T) {
 func TestSyncConfigPreservesExistingSettings(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	claudeDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {

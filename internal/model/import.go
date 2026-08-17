@@ -336,7 +336,7 @@ func extractTarArchive(archivePath, dst string, gzipped bool) error {
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			if err := writeArchiveFile(tr, target, fs.FileMode(header.Mode).Perm()); err != nil {
 				return err
 			}

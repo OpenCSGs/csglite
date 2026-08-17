@@ -203,6 +203,7 @@ func TestHandleAppOpenZCodeRequiresLocalhost(t *testing.T) {
 func TestCodexAppLaunchTarget(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	appDir := filepath.Join(home, ".local", "share", "codex-app", "versions", "26.527.31326")
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
@@ -292,7 +293,7 @@ func TestEnsureCodexAppLaunchConfigWritesSharedCodexConfig(t *testing.T) {
 		t.Fatalf("save model manifest: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService("")
 
 	modelID, err := s.ensureCodexAppLaunchConfig(context.Background(), "", "")
@@ -350,7 +351,7 @@ func TestEnsureZCodeLaunchConfigWritesLocalProvider(t *testing.T) {
 		t.Fatalf("save model manifest: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService("")
 	modelID, err := s.ensureZCodeLaunchConfig(context.Background(), "", "")
 	if err != nil {
@@ -417,7 +418,7 @@ func TestHandleAppModelSaveImmediatelySyncsZCodeConfig(t *testing.T) {
 		t.Fatalf("save model manifest: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService("")
 	req := httptest.NewRequest(http.MethodPost, "/api/apps/model", strings.NewReader(
 		`{"app_id":"zcode","model_id":"Qwen3.5-2B","source":"local"}`,

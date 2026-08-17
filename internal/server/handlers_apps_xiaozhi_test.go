@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -160,8 +161,10 @@ func TestSyncXiaozhiConfigMergesScenariosAndPreservesUnknownFields(t *testing.T)
 		copilot["unknown_copilot"] != float64(7) || root["unknown_root"] == nil {
 		t.Fatalf("unknown fields or rerank were not preserved: %#v", root)
 	}
-	if mode := fileModePerm(t, path); mode != 0o600 {
-		t.Fatalf("config permissions = %#o, want 0600", mode)
+	if runtime.GOOS != "windows" {
+		if mode := fileModePerm(t, path); mode != 0o600 {
+			t.Fatalf("config permissions = %#o, want 0600", mode)
+		}
 	}
 }
 
@@ -189,7 +192,7 @@ func TestHandleAppModelSaveAcceptsXiaozhiBindingsAndPersists(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save model manifest: %v", err)
 	}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = nil
 
 	body := `{"app_id":"xiaozhi","model_bindings":[{"task":"language_model","model_id":"chat","source":"local"}]}`
@@ -228,7 +231,7 @@ func TestEnrichXiaozhiReturnsFourModelSlots(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = nil
 	info := api.AIAppInfo{ID: xiaozhiAppID}
 	s.enrichXiaozhiModelSlots(context.Background(), &info)

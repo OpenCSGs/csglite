@@ -101,7 +101,7 @@ func TestHandleOpenAIAudioTranscriptionsUsesLiteTempDir(t *testing.T) {
 		ModelDir:   config.ModelDirForStorage(storageDir),
 		DatasetDir: config.DatasetDirForStorage(storageDir),
 	}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	w := httptest.NewRecorder()
@@ -136,10 +136,10 @@ func TestHandleOpenAIAudioTranscriptionsParsesFieldsFromStreamedMultipart(t *tes
 		t.Fatalf("close multipart writer: %v", err)
 	}
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:   config.ModelDirForStorage(t.TempDir()),
 		DatasetDir: config.DatasetDirForStorage(t.TempDir()),
-	}, "test")
+	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	w := httptest.NewRecorder()
@@ -154,10 +154,10 @@ func TestHandleOpenAIAudioTranscriptionsParsesFieldsFromStreamedMultipart(t *tes
 func TestStreamAudioTranscriptionClosesFailedWorker(t *testing.T) {
 	modelID := "AIWizards/Fun-ASR-Nano-2512"
 	engine := &failingStreamASREngine{}
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:   config.ModelDirForStorage(t.TempDir()),
 		DatasetDir: config.DatasetDirForStorage(t.TempDir()),
-	}, "test")
+	})
 	s.asrEngines[modelID] = &managedASREngine{engine: engine}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", nil)
@@ -179,10 +179,10 @@ func TestStreamAudioTranscriptionClosesFailedWorker(t *testing.T) {
 func TestStreamAudioTranscriptionEmitsLocalChunks(t *testing.T) {
 	modelID := "local-asr"
 	engine := &chunkingStreamASREngine{chunks: []string{"hello ", "world"}}
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:   config.ModelDirForStorage(t.TempDir()),
 		DatasetDir: config.DatasetDirForStorage(t.TempDir()),
-	}, "test")
+	})
 	s.asrEngines[modelID] = &managedASREngine{engine: engine}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", nil)
@@ -251,12 +251,12 @@ func TestHandleOpenAIAudioTranscriptionsProxiesCloudSource(t *testing.T) {
 		t.Fatalf("close multipart writer: %v", err)
 	}
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:      config.ModelDirForStorage(t.TempDir()),
 		DatasetDir:    config.DatasetDirForStorage(t.TempDir()),
 		AIGatewayURL:  apiServer.URL,
 		OpenCSGAPIKey: "test-key",
-	}, "test")
+	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	w := httptest.NewRecorder()
@@ -323,12 +323,12 @@ func TestHandleOpenAIAudioTranscriptionsFallsBackToCloudModelWithoutSource(t *te
 		t.Fatalf("close multipart writer: %v", err)
 	}
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:      config.ModelDirForStorage(t.TempDir()),
 		DatasetDir:    config.DatasetDirForStorage(t.TempDir()),
 		AIGatewayURL:  apiServer.URL,
 		OpenCSGAPIKey: "test-key",
-	}, "test")
+	})
 	attachCloudTestService(s, apiServer.URL)
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -374,12 +374,12 @@ func TestHandleOpenAIAudioTranscriptionsLocalSourceDoesNotFallbackToCloudModel(t
 		t.Fatalf("close multipart writer: %v", err)
 	}
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:      config.ModelDirForStorage(t.TempDir()),
 		DatasetDir:    config.DatasetDirForStorage(t.TempDir()),
 		AIGatewayURL:  apiServer.URL,
 		OpenCSGAPIKey: "test-key",
-	}, "test")
+	})
 	attachCloudTestService(s, apiServer.URL)
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -433,12 +433,12 @@ func TestHandleOpenAIAudioTranscriptionsStreamsCloudSource(t *testing.T) {
 		t.Fatalf("close multipart writer: %v", err)
 	}
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:      config.ModelDirForStorage(t.TempDir()),
 		DatasetDir:    config.DatasetDirForStorage(t.TempDir()),
 		AIGatewayURL:  apiServer.URL,
 		OpenCSGAPIKey: "test-key",
-	}, "test")
+	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	w := httptest.NewRecorder()
@@ -501,12 +501,12 @@ func TestHandleOpenAIAudioTranscriptionsStreamsCloudPlainText(t *testing.T) {
 		t.Fatalf("close multipart writer: %v", err)
 	}
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:      config.ModelDirForStorage(t.TempDir()),
 		DatasetDir:    config.DatasetDirForStorage(t.TempDir()),
 		AIGatewayURL:  apiServer.URL,
 		OpenCSGAPIKey: "test-key",
-	}, "test")
+	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	w := httptest.NewRecorder()

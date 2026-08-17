@@ -115,7 +115,7 @@ func newAnthropicProxyTestServer(t *testing.T, engine inference.Engine) *Server 
 		t.Fatalf("write config.json: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: defaultAnthropicMaxInputTokens, numParallel: inference.ResolveNumParallel(0), nGPULayers: inference.ResolveNGPULayers(-1)}
 	return s
 }

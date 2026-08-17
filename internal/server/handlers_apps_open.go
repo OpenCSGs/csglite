@@ -151,7 +151,7 @@ func (s *Server) refreshOpenClawModelCatalog(ctx context.Context) {
 }
 
 func (s *Server) ensureOpenClawProfile(ctx context.Context, binary, requestedModelID, requestedSource string) error {
-	modelID, modelIDs, err := s.resolveAIAppLaunchModels(ctx, requestedModelID, requestedSource)
+	modelID, _, err := s.resolveAIAppLaunchModels(ctx, requestedModelID, requestedSource)
 	if err != nil {
 		return err
 	}

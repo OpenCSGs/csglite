@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	neturl "net/url"
@@ -260,9 +259,7 @@ func (s *aiAppShellSession) streamOutput() {
 			s.broadcast(aiAppShellEvent{output: chunk})
 		}
 		if err != nil {
-			if err != io.EOF {
-				// Best effort: the wait goroutine will publish the final exit state.
-			}
+			// Best effort: the wait goroutine will publish the final exit state.
 			return
 		}
 	}

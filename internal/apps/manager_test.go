@@ -544,6 +544,8 @@ func TestWriteTempScriptRecreatesMissingTMPDIR(t *testing.T) {
 
 	staleTempDir := filepath.Join(t.TempDir(), "stale-tmpdir")
 	t.Setenv("TMPDIR", staleTempDir)
+	t.Setenv("TMP", staleTempDir)
+	t.Setenv("TEMP", staleTempDir)
 
 	content := []byte("#!/usr/bin/env bash\necho ok\n")
 	mgr := &Manager{}
@@ -644,6 +646,19 @@ func writeFakeBinary(t *testing.T, dir, name string) string {
 	}
 	if err := os.WriteFile(commandPath, []byte(content), 0o755); err != nil {
 		t.Fatalf("write fake binary: %v", err)
+	}
+	return commandPath
+}
+
+func writeFakeManagedBinary(t *testing.T, dir, name string) string {
+	t.Helper()
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir bin dir: %v", err)
+	}
+	commandPath := filepath.Join(dir, launcherBinaryName(name))
+	if err := os.WriteFile(commandPath, []byte("stub"), 0o755); err != nil {
+		t.Fatalf("write fake managed binary: %v", err)
 	}
 	return commandPath
 }

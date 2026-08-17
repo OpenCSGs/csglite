@@ -17,6 +17,9 @@ import (
 )
 
 func TestHandleAppsHidesPreferredModelIDInNativeProviderMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cfg := &config.Config{
 		ModelDir:   t.TempDir(),
 		ListenAddr: ":11435",
@@ -49,7 +52,7 @@ func TestHandleAppsHidesPreferredModelIDInNativeProviderMode(t *testing.T) {
 
 	addFakeAppBinary(t, "claude")
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/apps", nil)
 	s.handleApps(rec, req)
@@ -70,6 +73,9 @@ func TestHandleAppsHidesPreferredModelIDInNativeProviderMode(t *testing.T) {
 }
 
 func TestHandleAppsDoesNotResolveDefaultModelIDWithoutPreference(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cfg := &config.Config{
 		ModelDir:             t.TempDir(),
 		ListenAddr:           ":11435",
@@ -88,7 +94,7 @@ func TestHandleAppsDoesNotResolveDefaultModelIDWithoutPreference(t *testing.T) {
 
 	addFakeAppBinary(t, "claude")
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/apps", nil)
 	s.handleApps(rec, req)
@@ -148,11 +154,11 @@ func TestHandleAppsReturnsBeforeLatestVersionLookup(t *testing.T) {
 	defer release()
 	t.Setenv("CSGHUB_LITE_CLAUDE_DIST_BASE_URL", latestServer.URL)
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:             t.TempDir(),
 		ListenAddr:           ":11435",
 		AIAppPreferredModels: map[string]string{},
-	}, "test")
+	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/apps", nil)
 

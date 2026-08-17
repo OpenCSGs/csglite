@@ -815,13 +815,10 @@ func flattenInstruction(messages []Message) (string, string, string, bool, error
 	instruction := contentText(messages[userIndex].Content)
 	output := contentText(messages[lastAssistant].Content)
 	var context []string
-	for index, message := range messages[:userIndex] {
+	for _, message := range messages[:userIndex] {
 		text := strings.TrimSpace(contentText(message.Content))
 		if text != "" {
 			context = append(context, fmt.Sprintf("%s: %s", message.Role, text))
-		}
-		if message.ToolCalls != nil || index > 0 {
-			// Complex histories are deliberately flattened and reported as degraded.
 		}
 	}
 	return instruction, strings.Join(context, "\n"), output, len(messages) > 2, nil

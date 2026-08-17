@@ -37,7 +37,7 @@ func (s *Server) openCSGClawURL(ctx context.Context, modelID, modelSource string
 	}
 
 	requestedModel := strings.TrimSpace(modelID)
-	resolvedModel, modelIDs, err := s.resolveCSGClawLaunchModels(ctx, requestedModel, modelSource)
+	resolvedModel, _, err := s.resolveCSGClawLaunchModels(ctx, requestedModel, modelSource)
 	if err != nil {
 		return "", err
 	}

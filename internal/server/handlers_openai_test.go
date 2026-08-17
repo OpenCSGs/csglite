@@ -335,7 +335,7 @@ func TestHandleOpenAIEmbeddingsProxiesLocalEmbeddingEngine(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{ModelDir: t.TempDir()}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.engines[engineCacheKey("BAAI/bge-m3", engineModeEmbed)] = &managedEngine{
 		engine:    engine,
 		lastUsed:  time.Now(),
@@ -430,7 +430,7 @@ func TestHandleOpenAIEmbeddingsRoutesUnsupportedHFEmbeddingToPythonRuntime(t *te
 		t.Fatalf("write config: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"` + modelID + `","input":{"text":"hello"},"source":"local"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -489,7 +489,7 @@ func TestHandleLoadStreamRoutesShortUnsupportedHFEmbeddingToPythonRuntime(t *tes
 		t.Fatalf("write config: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"jina-embeddings-v5-omni-nano","stream":true}`
 	req := httptest.NewRequest(http.MethodPost, "/api/load", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -540,7 +540,7 @@ func TestUnsupportedHFEmbeddingDoesNotUsePythonRuntimeWithoutCompatibleArchitect
 		t.Fatalf("write config: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	if s.shouldUsePythonEmbeddingRuntime("unsupported-embedding") {
 		t.Fatal("unknown embedding architecture should not use Python embedding runtime without an explicit compatible worker path")
 	}
@@ -573,7 +573,7 @@ func TestHandleChatWithEmbeddingModelReturnsEmbeddingJSON(t *testing.T) {
 		t.Fatalf("save manifest: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.engines[engineCacheKey("BAAI/bge-m3", engineModeEmbed)] = &managedEngine{
 		engine:    engine,
 		lastUsed:  time.Now(),
@@ -638,7 +638,7 @@ func TestHandleOpenAIChatCompletionsWithToolsSynthesizesToolCalls(t *testing.T) 
 		t.Fatalf("write config.json: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 16384, numParallel: 4}
 
 	body := `{
@@ -741,7 +741,7 @@ func TestHandleOpenAIChatCompletionsLocalNativeToolStreamProxiesSSE(t *testing.T
 		t.Fatalf("write config.json: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 16384, numParallel: 1}
 
 	body := `{
@@ -950,7 +950,7 @@ func TestHandleModelsAnthropicFormatUsesCloudTokenLimits(t *testing.T) {
 	defer apiServer.Close()
 
 	cfg := &config.Config{ModelDir: t.TempDir()}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService(apiServer.URL)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -995,7 +995,7 @@ func TestHandleOpenAIChatCompletionsForwardsChatTemplateKwargs(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{ModelDir: t.TempDir()}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.engines["Qwen3.5-2B"] = &managedEngine{engine: engine, numCtx: 8192, numParallel: 1}
 
 	body := `{
@@ -1038,7 +1038,7 @@ func TestHandleOpenAIChatCompletionsDisableThinkingHeaderSetsTemplateKwargs(t *t
 		},
 	}
 	cfg := &config.Config{ModelDir: t.TempDir()}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.engines["Qwen3.5-2B"] = &managedEngine{engine: engine, numCtx: 8192, numParallel: 1}
 
 	body := `{"model":"Qwen3.5-2B","messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":true}}`
@@ -1080,7 +1080,7 @@ func TestHandleModelsAnthropicFormatUsesLoadedContextWhenLarger(t *testing.T) {
 		t.Fatalf("write config.json: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.engines["MiniMaxAI/MiniMax-M2.5"] = &managedEngine{
 		engine:      &fakeChatCompletionEngine{},
 		numCtx:      160000,
@@ -1121,7 +1121,7 @@ func TestHandleAnthropicMessagesSupportsCloudModels(t *testing.T) {
 	apiServer := newCloudOpenAIAPIServer(t, "test-token")
 	defer apiServer.Close()
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService(apiServer.URL)
 
 	body := `{"model":"cloud/model","messages":[{"role":"user","content":"hi"}]}`
@@ -1175,7 +1175,7 @@ func TestHandleOpenAIChatCompletionsCloudStreamPreservesReasoningContent(t *test
 	}))
 	defer apiServer.Close()
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService(apiServer.URL)
 
 	body := `{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`
@@ -1225,7 +1225,7 @@ func TestHandleOpenAIChatCompletionsCloudStreamWithToolsProxiesSSE(t *testing.T)
 	}))
 	defer apiServer.Close()
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService(apiServer.URL)
 
 	body := `{
@@ -1361,7 +1361,7 @@ func TestHandleOpenAIChatCompletionsDoesNotForwardClientROMAHeaders(t *testing.T
 	defer apiServer.Close()
 
 	cfg := &config.Config{ModelDir: t.TempDir(), OpenCSGAPIKey: "test-token"}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService(apiServer.URL)
 
 	req := httptest.NewRequest(

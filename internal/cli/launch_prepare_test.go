@@ -245,6 +245,7 @@ func TestLaunchUserArgsRejectsClaudeDangerouslySkipPermissionsForOtherApps(t *te
 func TestWriteOpenCodeLaunchConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	path, err := writeOpenCodeLaunchConfig("http://127.0.0.1:11435", "Qwen/Qwen3.5-2B")
 	if err != nil {
@@ -309,6 +310,7 @@ func TestPrepareCodexLaunchIncludesModelCatalog(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	binDir := t.TempDir()
 	commandPath := filepath.Join(binDir, "codex")
@@ -408,6 +410,7 @@ func TestPreparePiLaunchSyncsConfigAndSetsProviderArgs(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	binDir := t.TempDir()
 	commandPath := filepath.Join(binDir, "pi")
@@ -452,6 +455,7 @@ func TestPreparePiLaunchSyncsConfigAndSetsProviderArgs(t *testing.T) {
 func TestOpenClawProfileMatches(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfgDir := filepath.Join(home, ".openclaw-"+openClawLaunchProfile)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -490,6 +494,7 @@ func TestOpenClawProfileMatches(t *testing.T) {
 func TestSyncOpenClawProfileRewritesStaleModelCatalog(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	profileDir := filepath.Join(home, ".openclaw-"+openClawLaunchProfile)
 	agentDir := filepath.Join(profileDir, "agents", "main", "agent")

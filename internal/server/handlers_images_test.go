@@ -116,7 +116,7 @@ func TestHandleOpenAIImagesGenerations(t *testing.T) {
 		t.Fatalf("mkdir model dir: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"Qwen/Qwen-Image","prompt":"a cat","size":"1024x1024","response_format":"b64_json","steps":8}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -140,7 +140,7 @@ func TestHandleOpenAIImagesGenerations(t *testing.T) {
 
 func TestHandleOpenAIImagesGenerationsRejectsInputImage(t *testing.T) {
 	cfg := &config.Config{ModelDir: t.TempDir()}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"Qwen/Qwen-Image-Edit-2511","prompt":"edit","image":"aW5wdXQ="}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -186,7 +186,7 @@ func TestHandleOpenAIImagesEditsForwardsInputImage(t *testing.T) {
 		t.Fatalf("mkdir model dir: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("model", "Qwen/Qwen-Image-Edit-2511")
@@ -238,7 +238,7 @@ func TestHandleOpenAIImagesEditsAvoidsSystemTempDir(t *testing.T) {
 		ModelDir:   config.ModelDirForStorage(storageDir),
 		DatasetDir: config.DatasetDirForStorage(storageDir),
 	}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	w := httptest.NewRecorder()
@@ -294,7 +294,7 @@ func TestHandleOpenAIImagesGenerationsSupportsCloudModels(t *testing.T) {
 	defer apiServer.Close()
 
 	cfg := &config.Config{ModelDir: t.TempDir(), AIGatewayURL: apiServer.URL, OpenCSGAPIKey: "test-key"}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"Qwen/Qwen-Image-2512:s-test","source":"cloud","prompt":"a cat","negative_prompt":"bad","size":"1024x1024","response_format":"b64_json","steps":8,"seed":123,"cfg_scale":7.5}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -335,7 +335,7 @@ func TestHandleOpenAIImagesGenerationsFallsBackToCloudModelWithoutSource(t *test
 	defer apiServer.Close()
 
 	cfg := &config.Config{ModelDir: t.TempDir(), AIGatewayURL: apiServer.URL, OpenCSGAPIKey: "test-key"}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	attachCloudTestService(s, apiServer.URL)
 	body := `{"model":"Qwen/Qwen-Image-2512:s-test","prompt":"a cat","size":"1024x1024"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
@@ -363,7 +363,7 @@ func TestHandleOpenAIImagesGenerationsLocalSourceDoesNotFallbackToCloudModel(t *
 	defer apiServer.Close()
 
 	cfg := &config.Config{ModelDir: t.TempDir(), AIGatewayURL: apiServer.URL, OpenCSGAPIKey: "test-key"}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	attachCloudTestService(s, apiServer.URL)
 	body := `{"model":"Qwen/Qwen-Image-2512:s-test","source":"local","prompt":"a cat","size":"1024x1024"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
@@ -397,7 +397,7 @@ func TestHandleOpenAIImagesGenerationsRejectsTextModel(t *testing.T) {
 		t.Fatalf("mkdir model dir: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"Qwen/Qwen3","prompt":"a cat"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -445,7 +445,7 @@ func TestHandleOpenAIImagesGenerationsSupportsThirdPartyProviderModels(t *testin
 	}
 
 	cfg := &config.Config{ModelDir: t.TempDir()}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"gpt-image-2","source":"provider:provider1","prompt":"a cat","size":"1024x1024"}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -495,7 +495,7 @@ func TestHandleImageGenerationJobSupportsThirdPartyProviderModels(t *testing.T) 
 	}
 
 	cfg := &config.Config{ModelDir: t.TempDir()}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"gpt-image-2","source":"provider:provider1","prompt":"a cat","size":"1024x1024"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/images/jobs", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -544,7 +544,7 @@ func TestHandleImageGenerationJobSupportsCloudModels(t *testing.T) {
 	defer apiServer.Close()
 
 	cfg := &config.Config{ModelDir: t.TempDir(), AIGatewayURL: apiServer.URL, OpenCSGAPIKey: "test-key"}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"Qwen/Qwen-Image-2512:s-test","source":"cloud","prompt":"a cat","size":"1024x1024","response_format":"b64_json"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/images/jobs", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -587,7 +587,7 @@ func TestHandleImageGenerationJobFallsBackToCloudModelWithoutSource(t *testing.T
 	defer apiServer.Close()
 
 	cfg := &config.Config{ModelDir: t.TempDir(), AIGatewayURL: apiServer.URL, OpenCSGAPIKey: "test-key"}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	attachCloudTestService(s, apiServer.URL)
 	body := `{"model":"Qwen/Qwen-Image-2512:s-test","prompt":"a cat","size":"1024x1024","response_format":"b64_json"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/images/jobs", strings.NewReader(body))
@@ -651,7 +651,7 @@ func TestHandleImageGenerationJobLifecycle(t *testing.T) {
 		t.Fatalf("mkdir model dir: %v", err)
 	}
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"Qwen/Qwen-Image","prompt":"a cat","size":"1024x1024","response_format":"b64_json"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/images/jobs", strings.NewReader(body))
 	req.SetPathValue("jobID", "")
@@ -728,7 +728,7 @@ func TestHandleImageGenerationJobListPersistsHistory(t *testing.T) {
 		AIGatewayURL:  apiServer.URL,
 		OpenCSGAPIKey: "test-key",
 	}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	body := `{"model":"Qwen/Qwen-Image-2512:s-test","source":"cloud","prompt":"persist this","size":"1024x1024","response_format":"b64_json"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/images/jobs", strings.NewReader(body))
 	w := httptest.NewRecorder()
@@ -774,7 +774,7 @@ func TestHandleImageGenerationJobListPersistsHistory(t *testing.T) {
 		t.Fatalf("list = %#v, want persisted succeeded job", list)
 	}
 
-	reloaded := New(cfg, "test")
+	reloaded := newTestServerWithConfig(t, cfg)
 	req = httptest.NewRequest(http.MethodGet, "/api/images/jobs", nil)
 	w = httptest.NewRecorder()
 	reloaded.handleImageGenerationJobList(w, req)
@@ -812,7 +812,7 @@ func TestHandleImageGenerationJobListPersistsHistory(t *testing.T) {
 		t.Fatalf("delete status = %d body=%s", w.Code, w.Body.String())
 	}
 
-	afterDelete := New(cfg, "test")
+	afterDelete := newTestServerWithConfig(t, cfg)
 	req = httptest.NewRequest(http.MethodGet, "/api/images/jobs", nil)
 	w = httptest.NewRecorder()
 	afterDelete.handleImageGenerationJobList(w, req)

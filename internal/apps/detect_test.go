@@ -23,7 +23,7 @@ func TestDetectCLIAppBinaryFromVersionedShare(t *testing.T) {
 	t.Setenv("PATH", "")
 
 	runtimeDir := filepath.Join(home, ".local", "share", "codex", "versions", "1.2.3")
-	binaryPath := writeFakeBinary(t, runtimeDir, "codex")
+	binaryPath := writeFakeManagedBinary(t, runtimeDir, "codex")
 
 	got, ok := detectCLIAppBinary("codex", installDetectProfile{versionedShare: "codex"})
 	if !ok {
@@ -39,7 +39,7 @@ func TestDetectCLIAppBinaryFromShareBinDir(t *testing.T) {
 	t.Setenv("PATH", "")
 
 	binDir := filepath.Join(home, ".local", "share", "pi-coding-agent", "bin")
-	binaryPath := writeFakeBinary(t, binDir, "pi")
+	binaryPath := writeFakeManagedBinary(t, binDir, "pi")
 
 	got, ok := detectCLIAppBinary("pi", installDetectProfile{shareBinRel: "pi-coding-agent/bin"})
 	if !ok {
@@ -55,7 +55,7 @@ func TestDetectCLIAppBinaryFromLibBundle(t *testing.T) {
 	t.Setenv("PATH", "")
 
 	bundleDir := filepath.Join(home, ".local", "lib", "csgclaw", "v0.2.8", "csgclaw", "bin")
-	binaryPath := writeFakeBinary(t, bundleDir, "csgclaw")
+	binaryPath := writeFakeManagedBinary(t, bundleDir, "csgclaw")
 
 	got, ok := detectCLIAppBinary("csgclaw", installDetectProfile{libBundleName: "csgclaw"})
 	if !ok {

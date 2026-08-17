@@ -143,7 +143,7 @@ func TestHandleTagsSendsLoginTokenToCloudGateway(t *testing.T) {
 		DatasetDir:   t.TempDir(),
 		Token:        "access-token",
 	}
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/tags?refresh=1", nil)
 	w := httptest.NewRecorder()
@@ -511,11 +511,11 @@ func TestResolveAIAppLaunchModelsRefreshesRequestedCloudModelAfterCacheMiss(t *t
 	apiServer := newCloudModelListServer(&requests, &currentModel)
 	defer apiServer.Close()
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:   t.TempDir(),
 		ListenAddr: ":11435",
 		Token:      "test-token",
-	}, "test")
+	})
 	s.cloud = cloud.NewService(apiServer.URL)
 
 	if _, err := s.refreshCloudChatModels(context.Background()); err != nil {
@@ -550,12 +550,12 @@ func TestResolveAIAppLaunchModelsPreservesCloudAlias(t *testing.T) {
 	apiServer := newCloudModelListServer(&requests, &currentModel)
 	defer apiServer.Close()
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:             t.TempDir(),
 		ListenAddr:           ":11435",
 		Token:                "test-token",
 		AIAppPreferredModels: map[string]string{},
-	}, "test")
+	})
 	s.cloud = cloud.NewService(apiServer.URL)
 	if err := config.AddProviderModelSelection(config.DefaultCloudProviderName, config.ProviderModelSelection{
 		Model:         "glm-5.1-1",

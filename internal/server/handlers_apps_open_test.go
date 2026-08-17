@@ -52,10 +52,10 @@ func TestCodexProviderRestorePreservesUnrelatedConfigChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ListenAddr: ":11435",
 		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
-	}, "test")
+	})
 	enableOpenCSGProviderForTest(t, s, "codex", func() error {
 		return codexagent.SyncConfig(
 			s.localBaseURL(),
@@ -159,6 +159,7 @@ func TestAIAppPublicBaseURLUsesRequestHost(t *testing.T) {
 func TestOpenClawURLWithGatewayToken(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cfgDir := filepath.Join(home, ".openclaw-"+openClawWebProfile)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
@@ -187,6 +188,7 @@ func TestOpenClawURLWithGatewayToken(t *testing.T) {
 func TestOpenClawURLWithGatewayTokenKeepsExistingToken(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cfgDir := filepath.Join(home, ".openclaw-"+openClawWebProfile)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
@@ -215,6 +217,7 @@ func TestOpenClawURLWithGatewayTokenKeepsExistingToken(t *testing.T) {
 func TestOpenClawDashboardURLFromConfigUsesDefaultPort(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("OPENCLAW_GATEWAY_PORT", "")
 	cfgDir := filepath.Join(home, ".openclaw-"+openClawWebProfile)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -244,6 +247,7 @@ func TestOpenClawDashboardURLFromConfigUsesDefaultPort(t *testing.T) {
 func TestOpenClawDashboardURLFromConfigUsesConfiguredPortAndTLS(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("OPENCLAW_GATEWAY_PORT", "")
 	cfgDir := filepath.Join(home, ".openclaw-"+openClawWebProfile)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -277,6 +281,7 @@ func TestOpenClawDashboardURLFromConfigUsesConfiguredPortAndTLS(t *testing.T) {
 func TestOpenClawDashboardURLFromConfigUsesGatewayPortEnv(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("OPENCLAW_GATEWAY_PORT", "19002")
 	cfgDir := filepath.Join(home, ".openclaw-"+openClawWebProfile)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -307,6 +312,7 @@ func TestOpenClawDashboardURLFromConfigUsesGatewayPortEnv(t *testing.T) {
 func TestOpenClawProfileMatches(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfgDir := filepath.Join(home, ".openclaw-"+openClawWebProfile)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -345,6 +351,7 @@ func TestOpenClawProfileMatches(t *testing.T) {
 func TestSyncOpenClawProfileRewritesStaleModelCatalog(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	profileDir := filepath.Join(home, ".openclaw-"+openClawWebProfile)
 	agentDir := filepath.Join(profileDir, "agents", "main", "agent")
@@ -545,6 +552,7 @@ func TestCSGClawReachableBaseURLFallsBackToLoopback(t *testing.T) {
 func TestCSGClawConfigNeedsManagerRecreateWhenModelConfigDrifts(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfgDir := filepath.Join(home, ".csgclaw")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -595,6 +603,7 @@ models = ["glm-5", "Qwen/Qwen3-0.6B-GGUF"]
 func TestCSGClawConfigNeedsManagerRecreateForLegacyDefaultProvider(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfgDir := filepath.Join(home, ".csgclaw")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -620,6 +629,7 @@ models = ["glm-5"]
 func TestCSGClawConfigNeedsManagerRecreateForLegacyManagerImage(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfgDir := filepath.Join(home, ".csgclaw")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -698,6 +708,7 @@ default = "old.model"
 func TestCSGClawConfigNeedsManagerRecreateKeepsUserSandboxProvider(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfgDir := filepath.Join(home, ".csgclaw")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -863,7 +874,7 @@ func TestOpenAIAppShellURLReturnsShellPage(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 
 	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "", "", "")
 	if err != nil {
@@ -911,7 +922,7 @@ func TestOpenAIAppShellURLUsesPublicBaseURL(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "", "", "", "http://192.168.10.110:11435")
 	if err != nil {
 		t.Fatalf("openAIAppShellURL returned error: %v", err)
@@ -954,7 +965,7 @@ func TestOpenAIAppShellURLUsesRequestedWorkDir(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	workDir := t.TempDir()
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 
 	url, err := s.openAIAppShellURL(context.Background(), "claude-code", "", "", workDir)
 	if err != nil {
@@ -982,6 +993,7 @@ func TestOpenAIAppShellURLUsesRequestedWorkDir(t *testing.T) {
 func TestOpenAIAppShellURLRemembersRequestedModel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfg := &config.Config{
 		ModelDir:             t.TempDir(),
@@ -1023,7 +1035,7 @@ func TestOpenAIAppShellURLRemembersRequestedModel(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	if err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "Qwen/Qwen2.5-Coder-1.5B", ""); err != nil {
 		t.Fatalf("switchAIAppProvider returned error: %v", err)
 	}
@@ -1054,6 +1066,7 @@ func TestOpenAIAppShellURLRemembersRequestedModel(t *testing.T) {
 func TestOpenAIAppShellURLUsesRememberedModelWhenRequestOmitted(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfg := &config.Config{
 		ModelDir:   t.TempDir(),
@@ -1097,7 +1110,7 @@ func TestOpenAIAppShellURLUsesRememberedModelWhenRequestOmitted(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	if err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "", ""); err != nil {
 		t.Fatalf("switchAIAppProvider returned error: %v", err)
 	}
@@ -1124,6 +1137,7 @@ func TestOpenAIAppShellURLUsesRememberedModelWhenRequestOmitted(t *testing.T) {
 func TestResolveCSGClawLaunchModelsUsesRememberedModelWhenRequestOmitted(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	cfg := &config.Config{
 		ModelDir:   t.TempDir(),
@@ -1159,7 +1173,7 @@ func TestResolveCSGClawLaunchModelsUsesRememberedModelWhenRequestOmitted(t *test
 	}))
 	defer apiServer.Close()
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService(apiServer.URL)
 
 	modelID, modelIDs, err := s.resolveCSGClawLaunchModels(context.Background(), "", "")
@@ -1211,7 +1225,7 @@ func TestResolveAIAppLaunchModelsIncludesCloudModels(t *testing.T) {
 	}))
 	defer apiServer.Close()
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	s.cloud = cloud.NewService(apiServer.URL)
 
 	modelID, modelIDs, err := s.resolveAIAppLaunchModels(context.Background(), "", "")
@@ -1262,7 +1276,7 @@ func TestOpenAIAppShellURLMissingCloudTokenShowsSettingsHint(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 
 	err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "afrideva/Qwen2-0.5B-Instruct-GGUF:fh23aijhzx8g", "")
 	if err == nil {
@@ -1274,10 +1288,10 @@ func TestOpenAIAppShellURLMissingCloudTokenShowsSettingsHint(t *testing.T) {
 }
 
 func TestOpenAIAppShellURLWithoutLocalModelsShowsOpenCSGLoginHint(t *testing.T) {
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:   t.TempDir(),
 		ListenAddr: ":11435",
-	}, "test")
+	})
 
 	err := s.switchAIAppProvider(context.Background(), "codex", "opencsg", "", "")
 	if err == nil {
@@ -1306,10 +1320,10 @@ func TestPrepareAIAppShellLaunchSetsTerminalEnvForClaudeCode(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "old-token")
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ListenAddr: ":11435",
 		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
-	}, "test")
+	})
 	enableOpenCSGProviderForTest(t, s, "claude-code", func() error {
 		return claudeagent.SyncConfig(s.localBaseURL(), "csghub-lite", "Qwen/Qwen3.5-2B")
 	})
@@ -1391,7 +1405,7 @@ func TestPrepareAIAppShellLaunchConfiguresOpenCodeReview(t *testing.T) {
 	t.Setenv("OCR_LLM_URL", "https://example.invalid/v1")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "old-token")
 
-	s := New(cfg, "test")
+	s := newTestServerWithConfig(t, cfg)
 	workDir := t.TempDir()
 	modelIDs := []string{"Qwen/Qwen3.5-2B", "Qwen/Qwen2.5-Coder-1.5B"}
 	prepared, err := s.prepareAIAppShellLaunch(aiAppOpenTarget{
@@ -1474,6 +1488,7 @@ func TestPrepareAIAppShellLaunchConfiguresOpenCodeReview(t *testing.T) {
 func TestPrepareAIAppShellLaunchUsesCustomProviderForCodex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	codexConfigDir := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(codexConfigDir, 0o755); err != nil {
 		t.Fatalf("mkdir codex config dir: %v", err)
@@ -1497,10 +1512,10 @@ mcp_servers.remotion-documentation.args = ["@remotion/mcp@latest"]
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ListenAddr: ":11435",
 		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
-	}, "test")
+	})
 	workDir := t.TempDir()
 	modelIDs := []string{
 		"Qwen/Qwen3.5-2B",
@@ -1618,10 +1633,10 @@ func TestPrepareAIAppShellLaunchPreservesNativeCodexConfig(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := New(&config.Config{
+	s := newTestServerWithConfig(t, &config.Config{
 		ListenAddr: ":11435",
 		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
-	}, "test")
+	})
 	prepared, err := s.prepareAIAppShellLaunch(aiAppOpenTarget{
 		AppID:       "codex",
 		DisplayName: "Codex",
@@ -1656,6 +1671,7 @@ func configValueFromConfig(configText, key string) string {
 func TestPrepareAIAppShellLaunchUsesPiProviderConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	binDir := t.TempDir()
 	commandPath := filepath.Join(binDir, "pi")
@@ -1669,7 +1685,7 @@ func TestPrepareAIAppShellLaunchUsesPiProviderConfig(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s := New(&config.Config{ListenAddr: ":11435"}, "test")
+	s := newTestServerWithConfig(t, &config.Config{ListenAddr: ":11435"})
 	workDir := t.TempDir()
 	prepared, err := s.prepareAIAppShellLaunch(aiAppOpenTarget{
 		AppID:       "pi",
@@ -1742,7 +1758,7 @@ func TestPrepareAIAppShellLaunchUsesProviderPoolURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := New(&config.Config{ListenAddr: ":11435"}, "test")
+	s := newTestServerWithConfig(t, &config.Config{ListenAddr: ":11435"})
 	prepared, err := s.prepareAIAppShellLaunch(aiAppOpenTarget{
 		AppID:       "pi",
 		DisplayName: "Pi",
@@ -1804,6 +1820,7 @@ func TestResolveAIAppLaunchBinaryUsesInstallDetectionFallback(t *testing.T) {
 func TestWriteOpenCodeWebLaunchConfigIncludesAllModels(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	path, err := writeOpenCodeWebLaunchConfig("http://127.0.0.1:11435", "Qwen/Qwen3.5-2B", []string{
 		"Qwen/Qwen3.5-2B",

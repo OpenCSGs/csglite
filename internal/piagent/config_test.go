@@ -12,6 +12,7 @@ import (
 func TestSyncConfigWritesProviderAndPreservesOtherProviders(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	agentDir := filepath.Join(home, ".pi", "agent")
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
