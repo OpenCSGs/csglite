@@ -80,8 +80,8 @@ const allModels = signal<ModelInfo[]>([]);
 const runningModels = signal<RunningModel[]>([]);
 const searchQuery = signal("");
 const formatFilter = signal<FormatFilter>("all");
-const sortField = signal<"name" | "size" | "modified_at">("name");
-const sortAsc = signal(true);
+const sortField = signal<"name" | "size" | "modified_at">("modified_at");
+const sortAsc = signal(false);
 const currentPage = signal(1);
 const pageSize = signal<PageSize>(DEFAULT_PAGE_SIZE);
 const modelsLoading = signal(false);
@@ -871,7 +871,7 @@ export function Library() {
                     <DownloadTableCell task={task} onComplete={() => void loadModels()} showActions={false} />
                   </td>
                   <td class="px-4 py-3 min-w-0">
-                    <DownloadStatusCell task={task} />
+                    <DownloadStatusCell task={task} completeWhenMissing={!downloadOnly} />
                   </td>
                   <td class="px-4 py-3 text-gray-500 whitespace-nowrap">
                     {new Date(m.modified_at).toLocaleDateString("en-US", { day: "numeric", month: "long" })}

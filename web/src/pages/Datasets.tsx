@@ -34,8 +34,8 @@ type DatasetTableRow = {
 
 const allDatasets = signal<DatasetInfo[]>([]);
 const searchQuery = signal("");
-const sortField = signal<"name" | "size" | "modified_at">("name");
-const sortAsc = signal(true);
+const sortField = signal<"name" | "size" | "modified_at">("modified_at");
+const sortAsc = signal(false);
 const currentPage = signal(1);
 const pageSize = signal<PageSize>(DEFAULT_PAGE_SIZE);
 const currentView = signal<View>({ kind: "list" });
@@ -269,7 +269,7 @@ function DatasetList() {
                     <DownloadTableCell task={task} onComplete={loadDatasets} showActions={false} />
                   </td>
                   <td class="px-4 py-3 min-w-0">
-                    <DownloadStatusCell task={task} />
+                    <DownloadStatusCell task={task} completeWhenMissing={!downloadOnly} />
                   </td>
                   <td class="px-4 py-3 text-gray-500">
                     {new Date(d.modified_at).toLocaleDateString("en-US", { day: "numeric", month: "long" })}

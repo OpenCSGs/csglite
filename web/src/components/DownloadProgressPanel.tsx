@@ -62,9 +62,12 @@ export function DownloadTableCell({ task, onComplete, showActions = true }: { ta
   );
 }
 
-export function DownloadStatusCell({ task }: { task?: DownloadTask }) {
+export function DownloadStatusCell({ task, completeWhenMissing = false }: { task?: DownloadTask; completeWhenMissing?: boolean }) {
   void locale.value;
   if (!task) {
+    if (completeWhenMissing) {
+      return <span class="text-xs font-medium text-emerald-600">{t("downloads.done")}</span>;
+    }
     return <span class="text-xs text-gray-300">{t("downloads.none")}</span>;
   }
 
