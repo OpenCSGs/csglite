@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+if [ "${SKIP_LINT:-}" = "1" ]; then
+  echo "pre-commit: skipping lint because SKIP_LINT=1"
+  exit 0
+fi
+
+echo "pre-commit: running golangci-lint"
+make lint

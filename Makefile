@@ -3,7 +3,9 @@ RELEASE_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || true)
 VERSION := $(if $(RELEASE_TAG),$(patsubst v%,%,$(RELEASE_TAG)),$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev"))
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 
-.PHONY: build build-web build-all clean-dist package release install test test-cover lint clean release-snapshot sync-converter check-converter-fresh
+GOLANGCI_LINT_VERSION ?= v1.64.8
+
+.PHONY: build build-web build-all clean-dist package release install test test-cover lint hooks clean release-snapshot sync-converter check-converter-fresh
 
 build-web:
 	cd web && npm install && npm run build
@@ -75,7 +77,13 @@ test-cover:
 	go tool cover -html=coverage.out -o coverage.html
 
 lint:
-	golangci-lint run ./...
+	go run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
+
+hooks:
+	@mkdir -p .git/hooks
+	@cp .githooks/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "Installed .git/hooks/pre-commit (runs make lint)"
 
 release-snapshot: build-web
 	goreleaser release --snapshot --clean

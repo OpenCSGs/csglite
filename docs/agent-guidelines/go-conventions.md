@@ -26,3 +26,9 @@
 - Config is loaded via `config.Load()` using a singleton with `sync.Once`.
 - Model operations go through `model.NewManager(cfg)`.
 - Inference uses `inference.LoadEngineWithProgress()` or `newLlamaEngine()`.
+
+## Lint
+
+- Local and CI lint use golangci-lint `v1.64.8` via `make lint`.
+- Install the repo pre-commit hook with `make hooks`. It runs `make lint`
+  before each commit. Set `SKIP_LINT=1` only when you must bypass it.
