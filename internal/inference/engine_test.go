@@ -13,7 +13,9 @@ import (
 func TestLoadEngine_SafeTensorsAutoConvert(t *testing.T) {
 	dir := t.TempDir()
 	// SafeTensors without config.json should fail during conversion (missing config).
-	os.WriteFile(filepath.Join(dir, "model.safetensors"), []byte("data"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "model.safetensors"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("write weights: %v", err)
+	}
 
 	lm := &model.LocalModel{
 		Namespace: "test",
@@ -64,7 +66,9 @@ func TestLoadEngine_UnsupportedSafeTensorsArchitectureDoesNotConvert(t *testing.
 
 func TestLoadEngine_NoModelFile(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	lm := &model.LocalModel{
 		Namespace: "test",

@@ -962,7 +962,9 @@ func TestHandleTags_WithModels(t *testing.T) {
 		Files:        []string{"model.gguf"},
 		DownloadedAt: time.Now(),
 	}
-	model.SaveManifest(s.cfg.ModelDir, lm)
+	if err := model.SaveManifest(s.cfg.ModelDir, lm); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/tags", nil)
 	w := httptest.NewRecorder()
@@ -974,7 +976,9 @@ func TestHandleTags_WithModels(t *testing.T) {
 	}
 
 	var resp api.TagsResponse
-	json.NewDecoder(w.Body).Decode(&resp)
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode tags: %v", err)
+	}
 	if len(resp.Models) != 1 {
 		t.Fatalf("models len = %d, want 1", len(resp.Models))
 	}
@@ -1025,7 +1029,9 @@ func TestHandleTagsProviderFilterLocal(t *testing.T) {
 		Files:        []string{"model.gguf"},
 		DownloadedAt: time.Now(),
 	}
-	model.SaveManifest(s.cfg.ModelDir, lm)
+	if err := model.SaveManifest(s.cfg.ModelDir, lm); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/tags?provider=local", nil)
 	w := httptest.NewRecorder()
@@ -1068,7 +1074,9 @@ func TestHandleShow(t *testing.T) {
 		Files:        []string{"model.gguf"},
 		DownloadedAt: time.Now(),
 	}
-	model.SaveManifest(s.cfg.ModelDir, lm)
+	if err := model.SaveManifest(s.cfg.ModelDir, lm); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
 
 	body := `{"model": "ns/mdl"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/show", strings.NewReader(body))
@@ -1081,7 +1089,9 @@ func TestHandleShow(t *testing.T) {
 	}
 
 	var resp api.ShowResponse
-	json.NewDecoder(w.Body).Decode(&resp)
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode show: %v", err)
+	}
 	if resp.Details.Name != "mdl" {
 		t.Errorf("details.name = %q, want %q", resp.Details.Name, "mdl")
 	}
@@ -1112,7 +1122,9 @@ func TestHandleDelete(t *testing.T) {
 		Size:      100,
 		Files:     []string{"model.gguf"},
 	}
-	model.SaveManifest(s.cfg.ModelDir, lm)
+	if err := model.SaveManifest(s.cfg.ModelDir, lm); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
 
 	body := `{"model": "ns/todelete"}`
 	req := httptest.NewRequest(http.MethodDelete, "/api/delete", strings.NewReader(body))

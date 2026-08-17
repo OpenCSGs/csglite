@@ -111,7 +111,9 @@ func SaveProviders(provs []ThirdPartyProvider) error {
 // GenerateProviderID generates a random ID for a new provider
 func GenerateProviderID() string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand unavailable: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 

@@ -514,7 +514,7 @@ func writeOpenAIInferenceError(w http.ResponseWriter, err error) {
 func writeOpenAIError(w http.ResponseWriter, status int, errType, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"errorCode": status,
 		"error": map[string]interface{}{
 			"message": msg,

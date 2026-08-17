@@ -389,10 +389,10 @@ func compareVersions(v1, v2 string) int {
 	for i := 0; i < maxLen; i++ {
 		var n1, n2 int
 		if i < len(v1Parts) {
-			fmt.Sscanf(v1Parts[i], "%d", &n1)
+			_, _ = fmt.Sscanf(v1Parts[i], "%d", &n1)
 		}
 		if i < len(v2Parts) {
-			fmt.Sscanf(v2Parts[i], "%d", &n2)
+			_, _ = fmt.Sscanf(v2Parts[i], "%d", &n2)
 		}
 
 		if n1 < n2 {

@@ -85,7 +85,7 @@ func testDarwinRoundTrip(t *testing.T) {
 	if err := Enable(); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	defer Disable() // cleanup
+	defer func() { _ = Disable() }()
 
 	enabled, err = IsEnabled()
 	if err != nil {

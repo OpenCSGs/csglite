@@ -354,7 +354,7 @@ func providerHeadersFromAPI(headers []api.ProviderHeader) []config.ProviderHeade
 func validateProviderHeaders(headers []config.ProviderHeader) error {
 	hasModelHeader := false
 	for _, header := range headers {
-		if strings.IndexAny(header.Name, " \t\r\n:") >= 0 {
+		if strings.ContainsAny(header.Name, " \t\r\n:") {
 			return fmt.Errorf("invalid provider header name %q", header.Name)
 		}
 		if strings.ContainsAny(header.Value, "\r\n") {

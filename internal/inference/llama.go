@@ -1134,10 +1134,10 @@ func summarizeMessageText(content interface{}) string {
 
 func (e *llamaEngine) Close() error {
 	if e.cmd != nil && e.cmd.Process != nil {
-		e.cmd.Process.Kill()
+		_ = e.cmd.Process.Kill()
 		done := make(chan struct{})
 		go func() {
-			e.cmd.Wait()
+			_ = e.cmd.Wait()
 			close(done)
 		}()
 		select {

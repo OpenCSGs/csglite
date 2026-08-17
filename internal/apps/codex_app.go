@@ -98,11 +98,6 @@ func codexAppLauncherCandidates(home string) []string {
 	return []string{filepath.Join(dir, "codex-app")}
 }
 
-func codexAppLauncherPath(home string) string {
-	candidates := codexAppLauncherCandidates(home)
-	return candidates[0]
-}
-
 func existingCodexAppLauncher(home string) (string, bool) {
 	for _, candidate := range codexAppLauncherCandidates(home) {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {

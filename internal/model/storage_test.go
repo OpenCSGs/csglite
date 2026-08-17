@@ -96,8 +96,12 @@ func TestRemoveModelDir_KeepsOtherModels(t *testing.T) {
 
 func TestListNamespaces(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "ns1", "model"), 0o755)
-	os.MkdirAll(filepath.Join(dir, "ns2", "model"), 0o755)
+	if err := os.MkdirAll(filepath.Join(dir, "ns1", "model"), 0o755); err != nil {
+		t.Fatalf("mkdir ns1: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "ns2", "model"), 0o755); err != nil {
+		t.Fatalf("mkdir ns2: %v", err)
+	}
 
 	namespaces, err := ListNamespaces(dir)
 	if err != nil {
@@ -131,8 +135,12 @@ func TestListNamespaces_NonExistent(t *testing.T) {
 
 func TestListModelsInNamespace(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "ns", "model-a"), 0o755)
-	os.MkdirAll(filepath.Join(dir, "ns", "model-b"), 0o755)
+	if err := os.MkdirAll(filepath.Join(dir, "ns", "model-a"), 0o755); err != nil {
+		t.Fatalf("mkdir model-a: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "ns", "model-b"), 0o755); err != nil {
+		t.Fatalf("mkdir model-b: %v", err)
+	}
 
 	models, err := ListModelsInNamespace(dir, "ns")
 	if err != nil {

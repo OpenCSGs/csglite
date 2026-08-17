@@ -167,7 +167,9 @@ func TestManager_Exists(t *testing.T) {
 	mgr := NewManager(cfg)
 
 	lm := &LocalModel{Namespace: "test", Name: "exists"}
-	SaveManifest(dir, lm)
+	if err := SaveManifest(dir, lm); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
 
 	if !mgr.Exists("test/exists") {
 		t.Error("Exists() = false, want true")
@@ -186,7 +188,9 @@ func TestManager_ModelPath(t *testing.T) {
 	mgr := NewManager(cfg)
 
 	lm := &LocalModel{Namespace: "test", Name: "pathtest"}
-	SaveManifest(dir, lm)
+	if err := SaveManifest(dir, lm); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
 
 	path, err := mgr.ModelPath("test/pathtest")
 	if err != nil {

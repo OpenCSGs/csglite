@@ -47,6 +47,6 @@ func runStop(cmd *cobra.Command, args []string) error {
 	var errResp struct {
 		Error string `json:"error"`
 	}
-	json.NewDecoder(resp.Body).Decode(&errResp)
+	_ = json.NewDecoder(resp.Body).Decode(&errResp)
 	return fmt.Errorf("stop failed: %s", errResp.Error)
 }

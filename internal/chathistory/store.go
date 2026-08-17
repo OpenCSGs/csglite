@@ -1,6 +1,7 @@
 package chathistory
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,7 +23,7 @@ type Store struct {
 
 func NewStore(appHome string) *Store {
 	dir := filepath.Join(appHome, conversationsDir)
-	os.MkdirAll(dir, 0o755)
+	_ = os.MkdirAll(dir, 0o755)
 	return &Store{dir: dir}
 }
 
@@ -247,14 +248,10 @@ func generateID() string {
 
 func randomHex(n int) string {
 	b := make([]byte, n)
-	f, err := os.Open("/dev/urandom")
-	if err != nil {
+	if _, err := rand.Read(b); err != nil {
 		for i := range b {
 			b[i] = byte(time.Now().UnixNano() >> (i * 8))
 		}
-	} else {
-		f.Read(b)
-		f.Close()
 	}
 	const hex = "0123456789abcdef"
 	out := make([]byte, n*2)

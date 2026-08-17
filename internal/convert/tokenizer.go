@@ -92,7 +92,7 @@ func parseTokenizer(modelDir, architecture string) (*parsedTokenizer, error) {
 		return nil, fmt.Errorf("parsing tokenizer.json: %w", err)
 	}
 
-	if tj.Model.Vocab == nil || len(tj.Model.Vocab) == 0 {
+	if len(tj.Model.Vocab) == 0 {
 		return nil, fmt.Errorf("tokenizer.json has no vocabulary")
 	}
 
@@ -269,31 +269,31 @@ func parseMerges(raw []json.RawMessage) ([]string, error) {
 func preTokenizerForArch(arch string) string {
 	m := map[string]string{
 		// Qwen family → qwen2 pre-tokenizer
-		"QWenLMHeadModel":                            "qwen2",
-		"Qwen2ForCausalLM":                           "qwen2",
-		"Qwen2Model":                                 "qwen2",
-		"Qwen2MoeForCausalLM":                        "qwen2",
-		"Qwen2AudioForConditionalGeneration":          "qwen2",
-		"KORMoForCausalLM":                            "qwen2",
-		"AudioFlamingo3ForConditionalGeneration":       "qwen2",
-		"Qwen3ForCausalLM":                            "qwen2",
-		"Qwen3MoeForCausalLM":                         "qwen2",
-		"Qwen3VLForConditionalGeneration":             "qwen2",
-		"Qwen3VLMoeForConditionalGeneration":          "qwen2",
-		"Qwen3NextForCausalLM":                        "qwen2",
-		"Qwen3_5ForConditionalGeneration":             "qwen2",
-		"Qwen3_5ForCausalLM":                          "qwen2",
-		"Qwen3_5MoeForConditionalGeneration":          "qwen2",
-		"Qwen3_5MoeForCausalLM":                       "qwen2",
+		"QWenLMHeadModel":                        "qwen2",
+		"Qwen2ForCausalLM":                       "qwen2",
+		"Qwen2Model":                             "qwen2",
+		"Qwen2MoeForCausalLM":                    "qwen2",
+		"Qwen2AudioForConditionalGeneration":     "qwen2",
+		"KORMoForCausalLM":                       "qwen2",
+		"AudioFlamingo3ForConditionalGeneration": "qwen2",
+		"Qwen3ForCausalLM":                       "qwen2",
+		"Qwen3MoeForCausalLM":                    "qwen2",
+		"Qwen3VLForConditionalGeneration":        "qwen2",
+		"Qwen3VLMoeForConditionalGeneration":     "qwen2",
+		"Qwen3NextForCausalLM":                   "qwen2",
+		"Qwen3_5ForConditionalGeneration":        "qwen2",
+		"Qwen3_5ForCausalLM":                     "qwen2",
+		"Qwen3_5MoeForConditionalGeneration":     "qwen2",
+		"Qwen3_5MoeForCausalLM":                  "qwen2",
 
 		// DeepSeek → deepseek-llm
 		"DeepseekV2ForCausalLM": "deepseek-llm",
 		"DeepseekV3ForCausalLM": "deepseek-llm",
 
 		// ChatGLM → chatglm-bpe
-		"ChatGLMModel":                      "chatglm-bpe",
-		"ChatGLMForConditionalGeneration":    "chatglm-bpe",
-		"GlmForCausalLM":                    "chatglm-bpe",
+		"ChatGLMModel":                    "chatglm-bpe",
+		"ChatGLMForConditionalGeneration": "chatglm-bpe",
+		"GlmForCausalLM":                  "chatglm-bpe",
 
 		// RWKV → rwkv-world
 		"Rwkv6ForCausalLM":      "rwkv-world",
