@@ -1,5 +1,7 @@
 # CSGLite
 
+[![engineering momentum](https://signals.gitdealflow.com/api/badge/opencsgs)](https://signals.gitdealflow.com/startup/opencsgs)
+
 <p align="center">
   <img src="docs/images/apps.png" alt="AI Apps" width="80%">
 </p>
