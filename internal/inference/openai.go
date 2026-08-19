@@ -7,20 +7,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
 type openAIEngine struct {
-	baseURL            string
-	chatCompletionsURL string
-	embeddingsURL      string
-	modelName          string
-	token              string
-	disableThinking    bool
-	forwardHeaders     []ForwardHeader
+	baseURL              string
+	chatCompletionsURL   string
+	anthropicMessagesURL string
+	embeddingsURL        string
+	modelName            string
+	token                string
+	disableThinking      bool
+	preferAnthropic      bool
+	forwardHeaders       []ForwardHeader
 	// extendedSamplingParams controls whether non-standard OpenAI sampling
 	// parameters (top_k, repetition_penalty) are sent. Only the CSGHub cloud
 	// gateway accepts them; strict third-party OpenAI providers reject
@@ -34,6 +38,7 @@ func NewOpenAIEngine(baseURL, modelName, token string) Engine {
 	return &openAIEngine{
 		baseURL:                baseURL,
 		chatCompletionsURL:     openAIChatCompletionsURL(baseURL),
+		anthropicMessagesURL:   openAIAnthropicMessagesURL(baseURL),
 		embeddingsURL:          openAIEmbeddingsURL(baseURL),
 		modelName:              modelName,
 		token:                  strings.TrimSpace(token),
@@ -50,14 +55,16 @@ func NewOpenAICompatibleEngine(baseURL, modelName, token string) Engine {
 func NewOpenAICompatibleEngineWithHeaders(baseURL, modelName, token string, headers []ForwardHeader) Engine {
 	baseURL = strings.TrimRight(baseURL, "/")
 	return &openAIEngine{
-		baseURL:            baseURL,
-		chatCompletionsURL: openAICompatibleChatCompletionsURL(baseURL),
-		embeddingsURL:      openAICompatibleEmbeddingsURL(baseURL),
-		modelName:          modelName,
-		token:              strings.TrimSpace(token),
-		disableThinking:    false,
-		forwardHeaders:     append([]ForwardHeader(nil), headers...),
-		client:             &http.Client{Timeout: 0},
+		baseURL:              baseURL,
+		chatCompletionsURL:   openAICompatibleChatCompletionsURL(baseURL),
+		anthropicMessagesURL: openAICompatibleAnthropicMessagesURL(baseURL),
+		embeddingsURL:        openAICompatibleEmbeddingsURL(baseURL),
+		modelName:            modelName,
+		token:                strings.TrimSpace(token),
+		disableThinking:      false,
+		preferAnthropic:      true,
+		forwardHeaders:       append([]ForwardHeader(nil), headers...),
+		client:               &http.Client{Timeout: 0},
 	}
 }
 
@@ -69,8 +76,16 @@ func openAIEmbeddingsURL(baseURL string) string {
 	return strings.TrimRight(baseURL, "/") + "/v1/embeddings"
 }
 
+func openAIAnthropicMessagesURL(baseURL string) string {
+	return strings.TrimRight(baseURL, "/") + "/v1/messages"
+}
+
 func openAICompatibleChatCompletionsURL(baseURL string) string {
 	return strings.TrimRight(baseURL, "/") + "/chat/completions"
+}
+
+func openAICompatibleAnthropicMessagesURL(baseURL string) string {
+	return strings.TrimRight(baseURL, "/") + "/messages"
 }
 
 func openAICompatibleEmbeddingsURL(baseURL string) string {
@@ -89,6 +104,13 @@ func (e *openAIEngine) embeddingsEndpoint() string {
 		return e.embeddingsURL
 	}
 	return openAIEmbeddingsURL(e.baseURL)
+}
+
+func (e *openAIEngine) anthropicMessagesEndpoint() string {
+	if strings.TrimSpace(e.anthropicMessagesURL) != "" {
+		return e.anthropicMessagesURL
+	}
+	return openAIAnthropicMessagesURL(e.baseURL)
 }
 
 func (e *openAIEngine) ChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
@@ -119,13 +141,84 @@ func (e *openAIEngine) ChatCompletion(ctx context.Context, reqBody map[string]in
 
 	resp, err := e.client.Do(req)
 	if err != nil {
+		logUpstreamInference("openai_chat_completions", e.chatCompletionsEndpoint(), 0)
 		return nil, fmt.Errorf("chat completion request failed: %w", err)
 	}
+	logUpstreamInference("openai_chat_completions", e.chatCompletionsEndpoint(), resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		return nil, decodeOpenAIHTTPError(resp)
 	}
 	return resp, nil
+}
+
+func (e *openAIEngine) AnthropicMessages(ctx context.Context, reqBody map[string]interface{}, headers http.Header) (*http.Response, error) {
+	bodyMap := cloneOpenAIRequestBody(reqBody)
+	bodyMap["model"] = e.modelName
+	delete(bodyMap, "source")
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling Anthropic messages request: %w", err)
+	}
+
+	endpoint := e.anthropicMessagesEndpoint()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating Anthropic messages request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	applyAnthropicForwardHeaders(req.Header, headers)
+	if req.Header.Get("Accept") == "" {
+		req.Header.Set("Accept", "application/json")
+	}
+	if e.token != "" {
+		req.Header.Set("Authorization", "Bearer "+e.token)
+		req.Header.Set("X-Api-Key", e.token)
+	}
+	e.applyOpenAIForwardHeaders(req)
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		logUpstreamInference("anthropic_messages", endpoint, 0)
+		return nil, fmt.Errorf("Anthropic messages request failed: %w", err)
+	}
+	logUpstreamInference("anthropic_messages", endpoint, resp.StatusCode)
+	return resp, nil
+}
+
+func (e *openAIEngine) PrefersNativeAnthropicMessages() bool {
+	return e.preferAnthropic
+}
+
+func applyAnthropicForwardHeaders(dst, src http.Header) {
+	for name, values := range src {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower != "accept" && lower != "user-agent" &&
+			!strings.HasPrefix(lower, "anthropic-") &&
+			!strings.HasPrefix(lower, "x-stainless-") {
+			continue
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) != "" {
+				dst.Add(name, value)
+			}
+		}
+	}
+}
+
+func logUpstreamInference(protocol, endpoint string, status int) {
+	log.Printf("INFERENCE upstream protocol=%s url=%q status=%d", protocol, sanitizedUpstreamURL(endpoint), status)
+}
+
+func sanitizedUpstreamURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "<invalid>"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func (e *openAIEngine) Embeddings(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {

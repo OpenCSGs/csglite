@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,8 +17,18 @@ import (
 
 // POST /v1/messages -- Anthropic-compatible messages API
 func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 	var req api.AnthropicMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var rawReq map[string]interface{}
+	if err := json.Unmarshal(body, &rawReq); err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -54,6 +65,21 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	defer s.touchEngine(req.Model)
 
 	inputTokens := countAnthropicRequestTokens(req)
+	if inference.PrefersNativeAnthropicMessages(eng) {
+		if proxy, ok := eng.(inference.AnthropicMessagesProxier); ok {
+			handled, err := s.tryNativeAnthropicMessages(w, r, req, rawReq, proxy, inputTokens)
+			if err != nil {
+				if !handled {
+					writeAnthropicInferenceError(w, err)
+				}
+				return
+			}
+			if handled {
+				return
+			}
+		}
+	}
+
 	id := fmt.Sprintf("msg_%d", time.Now().UnixNano())
 	if anthropicRequestHasToolFeatures(req) {
 		s.handleAnthropicMessagesWithTools(w, r, req, eng, opts, inputTokens, id)
@@ -137,6 +163,82 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	anthropicResp := buildAnthropicMessageResponse(id, req.Model, response, inputTokens)
 	s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 	writeJSON(w, http.StatusOK, anthropicResp)
+}
+
+func (s *Server) tryNativeAnthropicMessages(
+	w http.ResponseWriter,
+	r *http.Request,
+	req api.AnthropicMessageRequest,
+	rawReq map[string]interface{},
+	proxy inference.AnthropicMessagesProxier,
+	inputTokens int,
+) (bool, error) {
+	resp, err := proxy.AnthropicMessages(r.Context(), rawReq, r.Header)
+	if err != nil {
+		return false, err
+	}
+	if resp == nil {
+		return false, fmt.Errorf("Anthropic messages upstream returned no response")
+	}
+	if anthropicNativeFallbackStatus(resp.StatusCode) {
+		_ = resp.Body.Close()
+		return false, nil
+	}
+	defer resp.Body.Close()
+
+	copyAnthropicUpstreamHeaders(w.Header(), resp.Header)
+	if req.Stream && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		w.WriteHeader(resp.StatusCode)
+		_, err = io.Copy(openAIStreamWriter{ResponseWriter: w}, resp.Body)
+		if err == nil {
+			s.recordAPIUsage(r, req.Model, req.Source, inputTokens, 0)
+		}
+		return true, err
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, fmt.Errorf("reading Anthropic messages response: %w", err)
+	}
+	w.WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(w, bytes.NewReader(body)); err != nil {
+		return true, fmt.Errorf("writing Anthropic messages response: %w", err)
+	}
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		var usageEnvelope struct {
+			Usage api.AnthropicUsage `json:"usage"`
+		}
+		if json.Unmarshal(body, &usageEnvelope) == nil {
+			recordInput := usageEnvelope.Usage.InputTokens
+			if recordInput == 0 {
+				recordInput = inputTokens
+			}
+			s.recordAPIUsage(r, req.Model, req.Source, recordInput, usageEnvelope.Usage.OutputTokens)
+		}
+	}
+	return true, nil
+}
+
+func anthropicNativeFallbackStatus(status int) bool {
+	return status == http.StatusNotFound ||
+		status == http.StatusMethodNotAllowed ||
+		status == http.StatusNotImplemented
+}
+
+func copyAnthropicUpstreamHeaders(dst, src http.Header) {
+	for name, values := range src {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower != "content-type" && lower != "cache-control" &&
+			lower != "request-id" && lower != "x-request-id" &&
+			lower != "retry-after" &&
+			!strings.HasPrefix(lower, "anthropic-") &&
+			!strings.HasPrefix(lower, "x-ratelimit-") {
+			continue
+		}
+		for _, value := range values {
+			dst.Add(name, value)
+		}
+	}
 }
 
 func (s *Server) handleAnthropicMessagesProxy(

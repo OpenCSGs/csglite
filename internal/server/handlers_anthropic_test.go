@@ -25,6 +25,22 @@ type delayedAnthropicStreamEngine struct {
 	lastReq map[string]interface{}
 }
 
+type nativeAnthropicTestProxy struct {
+	status  int
+	body    string
+	headers http.Header
+	calls   int
+}
+
+func (p *nativeAnthropicTestProxy) AnthropicMessages(context.Context, map[string]interface{}, http.Header) (*http.Response, error) {
+	p.calls++
+	return &http.Response{
+		StatusCode: p.status,
+		Body:       io.NopCloser(strings.NewReader(p.body)),
+		Header:     p.headers.Clone(),
+	}, nil
+}
+
 func (e *delayedAnthropicStreamEngine) Generate(context.Context, string, inference.Options, inference.TokenCallback) (string, error) {
 	return "", nil
 }
@@ -706,5 +722,88 @@ func TestHandleAnthropicMessagesStreamWithTools(t *testing.T) {
 	}
 	if stream, _ := engine.lastReq["stream"].(bool); !stream {
 		t.Fatalf("upstream stream = %#v, want true", engine.lastReq["stream"])
+	}
+}
+
+func TestTryNativeAnthropicMessagesRelaysSuccessfulResponse(t *testing.T) {
+	s := newTestServer(t)
+	proxy := &nativeAnthropicTestProxy{
+		status: http.StatusOK,
+		body:   `{"type":"message","content":[{"type":"text","text":"native"}],"usage":{"input_tokens":4,"output_tokens":2}}`,
+		headers: http.Header{
+			"Content-Type":        {"application/json"},
+			"Request-Id":          {"req_native"},
+			"X-Internal-Secret":   {"do-not-forward"},
+			"Anthropic-Ratelimit": {"remaining=10"},
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	w := httptest.NewRecorder()
+
+	handled, err := s.tryNativeAnthropicMessages(
+		w,
+		req,
+		api.AnthropicMessageRequest{Model: "test/model", Source: "provider:test"},
+		map[string]interface{}{"model": "test/model"},
+		proxy,
+		4,
+	)
+	if err != nil {
+		t.Fatalf("tryNativeAnthropicMessages returned error: %v", err)
+	}
+	if !handled || proxy.calls != 1 {
+		t.Fatalf("handled=%v calls=%d, want native response handled", handled, proxy.calls)
+	}
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"text":"native"`) {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Request-Id") != "req_native" || w.Header().Get("Anthropic-Ratelimit") != "remaining=10" {
+		t.Fatalf("response headers = %#v", w.Header())
+	}
+	if w.Header().Get("X-Internal-Secret") != "" {
+		t.Fatalf("internal upstream header leaked: %#v", w.Header())
+	}
+}
+
+func TestTryNativeAnthropicMessagesFallsBackOnlyForUnsupportedEndpoint(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			s := newTestServer(t)
+			proxy := &nativeAnthropicTestProxy{status: status, headers: make(http.Header)}
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			w := httptest.NewRecorder()
+
+			handled, err := s.tryNativeAnthropicMessages(
+				w,
+				req,
+				api.AnthropicMessageRequest{Model: "test/model"},
+				map[string]interface{}{"model": "test/model"},
+				proxy,
+				1,
+			)
+			if err != nil || handled {
+				t.Fatalf("handled=%v err=%v, want Chat Completions fallback", handled, err)
+			}
+		})
+	}
+
+	s := newTestServer(t)
+	proxy := &nativeAnthropicTestProxy{
+		status:  http.StatusUnauthorized,
+		body:    `{"type":"error","error":{"type":"authentication_error","message":"bad key"}}`,
+		headers: http.Header{"Content-Type": {"application/json"}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	w := httptest.NewRecorder()
+	handled, err := s.tryNativeAnthropicMessages(
+		w,
+		req,
+		api.AnthropicMessageRequest{Model: "test/model"},
+		map[string]interface{}{"model": "test/model"},
+		proxy,
+		1,
+	)
+	if err != nil || !handled || w.Code != http.StatusUnauthorized {
+		t.Fatalf("handled=%v status=%d err=%v, want native authentication error relayed", handled, w.Code, err)
 	}
 }

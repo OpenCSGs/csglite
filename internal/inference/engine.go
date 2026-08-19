@@ -39,6 +39,26 @@ type ChatCompletionProxier interface {
 	ChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error)
 }
 
+// AnthropicMessagesProxier exposes direct access to an Anthropic-compatible
+// /v1/messages API. Request headers are supplied separately so protocol
+// version and beta feature headers can be preserved without forwarding local
+// authentication credentials.
+type AnthropicMessagesProxier interface {
+	AnthropicMessages(ctx context.Context, reqBody map[string]interface{}, headers http.Header) (*http.Response, error)
+}
+
+type nativeAnthropicMessagesPreferer interface {
+	PrefersNativeAnthropicMessages() bool
+}
+
+// PrefersNativeAnthropicMessages reports whether an engine represents a
+// third-party compatible API where an incoming Messages request should be
+// preserved before falling back to Chat Completions.
+func PrefersNativeAnthropicMessages(eng Engine) bool {
+	preferer, ok := eng.(nativeAnthropicMessagesPreferer)
+	return ok && preferer.PrefersNativeAnthropicMessages()
+}
+
 // EmbeddingsProxier exposes direct access to the underlying
 // OpenAI-compatible /v1/embeddings API.
 type EmbeddingsProxier interface {

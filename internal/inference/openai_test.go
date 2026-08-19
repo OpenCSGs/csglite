@@ -544,3 +544,79 @@ func TestAddHeaderPreservingName(t *testing.T) {
 		t.Fatalf("content-type values = %#v", got)
 	}
 }
+
+func TestOpenAICompatibleEngineProxiesNativeAnthropicMessages(t *testing.T) {
+	var gotPath string
+	var gotHeaders http.Header
+	var gotBody map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotHeaders = r.Header.Clone()
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"type":"message","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer ts.Close()
+
+	eng := NewOpenAICompatibleEngineWithHeaders(ts.URL, "upstream-model", "provider-key", []ForwardHeader{
+		{Name: "X-Gateway-Route", Value: "coding"},
+	})
+	if !PrefersNativeAnthropicMessages(eng) {
+		t.Fatal("OpenAI-compatible provider should prefer native Anthropic Messages")
+	}
+	if PrefersNativeAnthropicMessages(NewOpenAIEngine(ts.URL, "cloud-model", "cloud-key")) {
+		t.Fatal("built-in cloud engine should retain its existing Chat Completions routing")
+	}
+	resp, err := eng.(AnthropicMessagesProxier).AnthropicMessages(
+		context.Background(),
+		map[string]interface{}{
+			"model":          "public-model",
+			"source":         "provider:test",
+			"messages":       []map[string]interface{}{{"role": "user", "content": "hi"}},
+			"future_feature": true,
+		},
+		http.Header{
+			"Anthropic-Version": {"2023-06-01"},
+			"Anthropic-Beta":    {"prompt-caching-2024-07-31"},
+			"X-Api-Key":         {"local-key"},
+			"Authorization":     {"Bearer local-key"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("AnthropicMessages returned error: %v", err)
+	}
+	resp.Body.Close()
+
+	if gotPath != "/messages" {
+		t.Fatalf("path = %q, want /messages", gotPath)
+	}
+	if gotBody["model"] != "upstream-model" {
+		t.Fatalf("model = %#v, want upstream-model", gotBody["model"])
+	}
+	if _, ok := gotBody["source"]; ok {
+		t.Fatalf("source leaked upstream: %#v", gotBody)
+	}
+	if gotBody["future_feature"] != true {
+		t.Fatalf("unknown Anthropic field was not preserved: %#v", gotBody)
+	}
+	if gotHeaders.Get("Anthropic-Version") != "2023-06-01" ||
+		gotHeaders.Get("Anthropic-Beta") != "prompt-caching-2024-07-31" {
+		t.Fatalf("Anthropic headers = %#v", gotHeaders)
+	}
+	if gotHeaders.Get("Authorization") != "Bearer provider-key" ||
+		gotHeaders.Get("X-Api-Key") != "provider-key" {
+		t.Fatalf("upstream credentials = %#v, want provider credentials", gotHeaders)
+	}
+	if gotHeaders.Get("X-Gateway-Route") != "coding" {
+		t.Fatalf("configured gateway header = %q", gotHeaders.Get("X-Gateway-Route"))
+	}
+}
+
+func TestSanitizedUpstreamURLRemovesCredentialsAndQuery(t *testing.T) {
+	got := sanitizedUpstreamURL("https://user:secret@example.com/v1/messages?api_key=secret#fragment")
+	if got != "https://example.com/v1/messages" {
+		t.Fatalf("sanitized URL = %q", got)
+	}
+}
