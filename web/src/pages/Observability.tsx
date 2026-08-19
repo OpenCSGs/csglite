@@ -23,7 +23,9 @@ import type {
 } from "../api/client";
 import { locale, t } from "../i18n";
 import {
+  formatObservabilityDateTime,
   formatObservabilityDuration,
+  formatObservabilityModel,
   observabilityFromForPeriod,
   type ObservabilityPeriod,
 } from "../utils/observability";
@@ -59,11 +61,6 @@ function dateTimeISO(value: string): string | undefined {
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat(locale.value === "zh" ? "zh-CN" : "en-US").format(value || 0);
-}
-
-function formatDateTime(value: string): string {
-  if (!value) return "—";
-  return new Date(value).toLocaleString(locale.value === "zh" ? "zh-CN" : "en-US");
 }
 
 function prettyBody(value?: string): string {
@@ -410,8 +407,8 @@ function RequestTable({ data, loading, onOpen, onOpenTrace }: {
         <tbody class="divide-y divide-gray-100">
           {rows.map((row) => (
             <tr key={row.id} onClick={() => onOpen(row.id)} class="cursor-pointer transition hover:bg-indigo-50/40">
-              <td class="max-w-[190px] truncate px-4 py-3 font-medium text-gray-900" title={row.model}>{row.model || "—"}</td>
-              <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-500">{formatDateTime(row.started_at)}</td>
+              <td class="max-w-[190px] truncate px-4 py-3 font-medium text-gray-900" title={row.model}>{formatObservabilityModel(row.model)}</td>
+              <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-500">{formatObservabilityDateTime(row.started_at)}</td>
               <td class="px-4 py-3"><StatusBadge status={row.status} /></td>
               <td class="max-w-[190px] truncate px-4 py-3 text-gray-600" title={sourceLabel(row)}>{sourceLabel(row)}</td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">
@@ -478,10 +475,10 @@ function TraceTable({ data, loading, onOpen, onOpenFull }: {
                 </button>
               </td>
               <td class="px-4 py-3"><StatusBadge status={row.status} /></td>
-              <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-500">{formatDateTime(row.started_at)}</td>
+              <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-500">{formatObservabilityDateTime(row.started_at)}</td>
               <td class="max-w-[150px] truncate px-4 py-3 font-mono text-xs text-gray-500" title={row.thread_id}>{row.thread_id || "—"}</td>
               <td class="px-4 py-3 tabular-nums text-gray-700">{row.request_count}</td>
-              <td class="max-w-[220px] truncate px-4 py-3 text-gray-700" title={row.models.join(", ")}>{row.models.join(", ") || "—"}</td>
+              <td class="max-w-[220px] truncate px-4 py-3 text-gray-700" title={row.models.join(", ")}>{formatObservabilityModel(row.models.join(", "))}</td>
               <td class="px-4 py-3 tabular-nums text-gray-600">{formatObservabilityDuration(row.duration_ms)}</td>
               <td class="px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.total_tokens)}</td>
             </tr>
@@ -853,7 +850,7 @@ function RequestDetail({ request, onOpenTrace }: { request: ObservabilityRequest
     [t("observability.columnTokens"), formatNumber(request.total_tokens)],
     [t("observability.columnCacheHitRate"), formatCacheHitRate(request)],
     [t("observability.caller"), request.api_key_name || "—"],
-    [t("observability.columnTime"), formatDateTime(request.started_at)],
+    [t("observability.columnTime"), formatObservabilityDateTime(request.started_at)],
   ];
   return (
     <div class="space-y-5 p-6">
@@ -1141,7 +1138,7 @@ function TraceDetail({ trace }: { trace: ObservabilityTraceDetailResponse }) {
                   <TraceDetailField label={t("observability.columnRoute")} value={sourceLabel(selectedRequest)} />
                   <TraceDetailField label={t("observability.columnEndpoint")} value={`${selectedRequest.method} ${selectedRequest.path}`} mono />
                   <TraceDetailField label={t("observability.caller")} value={selectedRequest.api_key_name || "—"} />
-                  <TraceDetailField label={t("observability.columnTime")} value={formatDateTime(selectedRequest.started_at)} />
+                  <TraceDetailField label={t("observability.columnTime")} value={formatObservabilityDateTime(selectedRequest.started_at)} />
                   <TraceDetailField label={t("observability.columnLatency")} value={formatObservabilityDuration(selectedRequest.duration_ms)} />
                   <TraceDetailField label="TTFT" value={formatObservabilityDuration(selectedRequest.first_token_latency_ms)} />
                   <TraceDetailField
