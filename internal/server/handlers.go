@@ -111,7 +111,13 @@ func runWithLocalInferenceSelfHealWhen[T any](
 	canRetry func() bool,
 	reload func() (inference.Engine, error),
 ) (T, error) {
-	result, err := run(current)
+	runProtected := func(engine inference.Engine) (T, error) {
+		release := s.beginEngineUse(modelID, mode, engine)
+		defer release()
+		return run(engine)
+	}
+
+	result, err := runProtected(current)
 	if err == nil {
 		s.resetSelfHealBreaker(engineCacheKey(s.resolveLocalModelStorageID(modelID), mode))
 		return result, nil
@@ -138,7 +144,7 @@ func runWithLocalInferenceSelfHealWhen[T any](
 	s.closeEngineKey(cacheKey)
 
 	if eng, reloadErr := reload(); reloadErr == nil {
-		result, err = run(eng)
+		result, err = runProtected(eng)
 		if err == nil {
 			s.resetSelfHealBreaker(cacheKey)
 			return result, nil
@@ -161,7 +167,7 @@ func runWithLocalInferenceSelfHealWhen[T any](
 		log.Printf("MODEL %s: %s retry failed; fallback close-all + reload: %v", modelID, mode, err)
 		s.closeAllInferenceEngines()
 		if eng, reloadErr = reload(); reloadErr == nil {
-			result, err = run(eng)
+			result, err = runProtected(eng)
 			if err == nil {
 				s.resetSelfHealBreaker(cacheKey)
 			}

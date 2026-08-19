@@ -54,6 +54,7 @@ type managedEngine struct {
 	speculativeKey string
 	lastUsed       time.Time
 	keepAlive      time.Duration
+	activeRequests int
 }
 
 // loadStepState records the latest load/conversion progress step for a model
@@ -476,6 +477,9 @@ func (s *Server) evictExpired(now time.Time) {
 		if me.keepAliveForever() {
 			continue
 		}
+		if me.activeRequests > 0 {
+			continue
+		}
 		if now.After(me.expiresAt()) {
 			log.Printf("evicting idle model %s (unused for %s)", id, me.keepAlive)
 			me.engine.Close()
@@ -516,6 +520,30 @@ func (s *Server) touchEngineKey(key string) {
 		me.lastUsed = time.Now()
 	}
 	s.mu.Unlock()
+}
+
+// beginEngineUse keeps a cached engine alive while an inference request is in
+// progress. Engines not managed by the local cache return a no-op release.
+func (s *Server) beginEngineUse(modelID, mode string, engine inference.Engine) func() {
+	key := engineCacheKey(s.resolveLocalModelStorageID(modelID), mode)
+	s.mu.Lock()
+	me, ok := s.engines[key]
+	if !ok || me.engine != engine {
+		s.mu.Unlock()
+		return func() {}
+	}
+	me.activeRequests++
+	me.lastUsed = time.Now()
+	s.mu.Unlock()
+
+	return func() {
+		s.mu.Lock()
+		if me.activeRequests > 0 {
+			me.activeRequests--
+		}
+		me.lastUsed = time.Now()
+		s.mu.Unlock()
+	}
 }
 
 // closeEngineKey removes a text inference engine from the cache and closes it.
@@ -796,12 +824,15 @@ func (s *Server) getOrLoadPythonEmbeddingEngine(ctx context.Context, modelID str
 	modelID = s.resolveLocalModelStorageID(modelID)
 	cacheKey := engineCacheKey(modelID, engineModeEmbed)
 
-	s.mu.RLock()
+	s.mu.Lock()
 	me, ok := s.engines[cacheKey]
-	s.mu.RUnlock()
 	if ok {
-		return me.engine, nil
+		me.lastUsed = time.Now()
+		eng := me.engine
+		s.mu.Unlock()
+		return eng, nil
 	}
+	s.mu.Unlock()
 
 	modelDir, err := s.manager.ModelPath(modelID)
 	if err != nil {
@@ -811,6 +842,7 @@ func (s *Server) getOrLoadPythonEmbeddingEngine(ctx context.Context, modelID str
 	for {
 		s.mu.Lock()
 		if me, ok := s.engines[cacheKey]; ok {
+			me.lastUsed = time.Now()
 			eng := me.engine
 			s.mu.Unlock()
 			return eng, nil
@@ -892,13 +924,16 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	requestedOverrides := runtimeOverrides || speculativeRequested
 	cacheKey := engineCacheKey(modelID, mode)
 
-	s.mu.RLock()
+	s.mu.Lock()
 	me, ok := s.engines[cacheKey]
-	s.mu.RUnlock()
 	if ok && !runtimeOverrides && normalizedDType == "" && (!speculativeRequested || me.speculativeKey == speculativeKey) {
+		me.lastUsed = time.Now()
+		eng := me.engine
+		s.mu.Unlock()
 		log.Printf("MODEL %s: using already loaded %s engine", modelID, mode)
-		return me.engine, nil
+		return eng, nil
 	}
+	s.mu.Unlock()
 
 	modelDir, err := s.manager.ModelPath(modelID)
 	if err != nil {
@@ -931,6 +966,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 
 		if me, ok := s.engines[cacheKey]; ok {
 			if !requestedOverrides && normalizedDType == "" {
+				me.lastUsed = time.Now()
 				eng := me.engine
 				s.mu.Unlock()
 				return eng, nil
@@ -938,6 +974,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 			dtypeReady := normalizedDType == "" || (loadedDTypeMatchesRequest(me.dtype, normalizedDType) && !needsRequestedDTypeConversion)
 			speculativeReady := !speculativeRequested || me.speculativeKey == speculativeKey
 			if me.numCtx == effectiveNumCtx && me.numParallel == effectiveNumParallel && me.nGPULayers == effectiveNGPULayers && me.cacheTypeK == normalizedCacheTypeK && me.cacheTypeV == normalizedCacheTypeV && speculativeReady && dtypeReady {
+				me.lastUsed = time.Now()
 				eng := me.engine
 				s.mu.Unlock()
 				return eng, nil

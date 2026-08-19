@@ -295,6 +295,41 @@ func TestRunWithLocalInferenceSelfHealReloadsAndRetries(t *testing.T) {
 	}
 }
 
+func TestRunWithLocalInferenceSelfHealPreventsActiveEngineEviction(t *testing.T) {
+	s := newTestServer(t)
+	engine := &scriptedChatEngine{}
+	s.engines["test/model"] = &managedEngine{
+		engine:    engine,
+		lastUsed:  time.Now().Add(-time.Hour),
+		keepAlive: 0,
+	}
+
+	_, err := runWithLocalInferenceSelfHeal(s, "local", "test/model", engineModeChat, engine,
+		func(inference.Engine) (string, error) {
+			s.evictExpired(time.Now().Add(time.Second))
+			if _, ok := s.engines["test/model"]; !ok {
+				t.Fatal("active inference engine was evicted")
+			}
+			return "ok", nil
+		},
+		func() (inference.Engine, error) {
+			t.Fatal("unexpected reload")
+			return nil, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runWithLocalInferenceSelfHeal() error = %v", err)
+	}
+	if got := s.engines["test/model"].activeRequests; got != 0 {
+		t.Fatalf("activeRequests = %d, want 0 after inference", got)
+	}
+
+	s.evictExpired(time.Now().Add(time.Second))
+	if _, ok := s.engines["test/model"]; ok {
+		t.Fatal("completed inference engine should be eligible for eviction")
+	}
+}
+
 func TestRunWithLocalInferenceSelfHealEvictsWithoutRetryWhenCannotRetry(t *testing.T) {
 	s := newTestServer(t)
 	streamErr := errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
@@ -455,11 +490,12 @@ func TestHandleHealth(t *testing.T) {
 func TestGetChatEngineReusesLoadedEngineWhenOverridesOmitted(t *testing.T) {
 	s := newTestServer(t)
 	engine := &fakeChatCompletionEngine{}
+	lastUsed := time.Now().Add(-time.Hour)
 	s.engines["test/model"] = &managedEngine{
 		engine:      engine,
 		numCtx:      160000,
 		numParallel: 4,
-		lastUsed:    time.Now(),
+		lastUsed:    lastUsed,
 		keepAlive:   DefaultKeepAlive,
 	}
 
@@ -475,6 +511,9 @@ func TestGetChatEngineReusesLoadedEngineWhenOverridesOmitted(t *testing.T) {
 	}
 	if s.engines["test/model"].numParallel != 4 {
 		t.Fatalf("numParallel = %d, want 4", s.engines["test/model"].numParallel)
+	}
+	if !s.engines["test/model"].lastUsed.After(lastUsed) {
+		t.Fatalf("lastUsed = %v, want later than %v", s.engines["test/model"].lastUsed, lastUsed)
 	}
 }
 
@@ -1269,6 +1308,36 @@ func TestEvictExpiredSkipsForeverKeepAlive(t *testing.T) {
 
 	if _, ok := s.engines["test/model"]; !ok {
 		t.Fatal("expected forever keep-alive engine to remain loaded")
+	}
+}
+
+func TestEvictExpiredSkipsActiveInference(t *testing.T) {
+	s := newTestServer(t)
+	engine := &scriptedChatEngine{}
+	s.engines["test/model"] = &managedEngine{
+		engine:         engine,
+		lastUsed:       time.Now().Add(-time.Hour),
+		keepAlive:      DefaultKeepAlive,
+		activeRequests: 1,
+	}
+
+	s.evictExpired(time.Now())
+
+	if _, ok := s.engines["test/model"]; !ok {
+		t.Fatal("expected engine with active inference to remain loaded")
+	}
+	if engine.closeCalls != 0 {
+		t.Fatalf("closeCalls = %d, want 0", engine.closeCalls)
+	}
+
+	s.engines["test/model"].activeRequests = 0
+	s.evictExpired(time.Now())
+
+	if _, ok := s.engines["test/model"]; ok {
+		t.Fatal("expected idle engine to be evicted after inference completed")
+	}
+	if engine.closeCalls != 1 {
+		t.Fatalf("closeCalls = %d, want 1", engine.closeCalls)
 	}
 }
 
