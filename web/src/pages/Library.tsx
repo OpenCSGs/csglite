@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
 import { deleteModel, getModelManifest, getPs, loadModel, searchLocalModels, stopModel, uploadLocalModel } from "../api/client";
-import type { LoadModelOptions, LocalModelUploadFile, ModelFileEntry, ModelInfo, RunningModel } from "../api/client";
+import type { ArtifactSource, LoadModelOptions, LocalModelUploadFile, ModelFileEntry, ModelInfo, RunningModel } from "../api/client";
 import { locale, t } from "../i18n";
 import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
@@ -11,6 +11,7 @@ import { isImageGenerationModel } from "../utils/imageModels";
 import { formatLoadStep } from "../utils/loadSteps";
 import { getDownloadTask, getDownloadTasks, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
+import { displayLocalModelID } from "../modelIds";
 
 type FormatFilter = "all" | "gguf" | "safetensors";
 type RunModelParams = {
@@ -333,7 +334,7 @@ function sortModelRows(rows: ModelTableRow[]): ModelTableRow[] {
   return [...rows].sort((a, b) => {
     let cmp = 0;
     if (field === "name") {
-      cmp = a.model.name.localeCompare(b.model.name);
+      cmp = displayLocalModelID(a.model).localeCompare(displayLocalModelID(b.model));
     } else if (field === "size") {
       cmp = (a.model.size || 0) - (b.model.size || 0);
     } else {
@@ -341,7 +342,7 @@ function sortModelRows(rows: ModelTableRow[]): ModelTableRow[] {
       const bt = new Date(b.model.modified_at).getTime() || 0;
       cmp = at - bt;
     }
-    if (cmp === 0) cmp = a.model.name.localeCompare(b.model.name);
+    if (cmp === 0) cmp = displayLocalModelID(a.model).localeCompare(displayLocalModelID(b.model));
     return asc ? cmp : -cmp;
   });
 }
@@ -350,9 +351,13 @@ function isCloudModel(model: Pick<ModelInfo, "source">): boolean {
   return model.source === "cloud";
 }
 
-function modelOriginLabel(origin?: string): string {
+function modelOriginLabel(origin?: string, artifactSource?: string): string {
   if (origin === "upload") return t("lib.originUpload");
-  if (origin === "marketplace") return t("lib.originMarketplace");
+  if (origin === "marketplace") {
+    if (artifactSource === "huggingface") return t("lib.originHuggingFace");
+    if (artifactSource === "modelscope") return t("lib.originModelScope");
+    return t("lib.originOpenCSG");
+  }
   return t("lib.notAvailable");
 }
 
@@ -365,25 +370,38 @@ function modelIDBasename(modelID: string): string {
   return parts[parts.length - 1] || modelID.trim();
 }
 
-function localModelMatchesDownloadTask(model: Pick<ModelInfo, "name" | "model">, task: DownloadTask): boolean {
+function artifactSourceForModel(model: Pick<ModelInfo, "artifact_source">): ArtifactSource {
+  if (model.artifact_source === "huggingface" || model.artifact_source === "modelscope") {
+    return model.artifact_source;
+  }
+  return "opencsg";
+}
+
+function localModelMatchesDownloadTask(
+  model: Pick<ModelInfo, "name" | "model" | "artifact_source" | "repository">,
+  task: DownloadTask,
+): boolean {
   const taskName = task.name.trim();
   if (!taskName) return false;
-  return model.name === taskName || model.model === taskName || model.name === modelIDBasename(taskName);
+  if (artifactSourceForModel(model) !== (task.artifactSource || "opencsg")) return false;
+  return model.repository === taskName || model.name === taskName || model.model === taskName || model.name === modelIDBasename(taskName);
 }
 
 function modelRows(models: ModelInfo[]): ModelTableRow[] {
   const rows = models.map((model) => ({
     model,
-    task: getDownloadTask("model", model.name),
+    task: getDownloadTask("model", model.repository || model.name, {
+      artifactSource: artifactSourceForModel(model),
+      revision: model.requested_revision,
+    }),
     downloadOnly: false,
   }));
-  const known = new Set(models.map((model) => model.name));
   const downloadTasks = [...getDownloadTasks("model")].sort((a, b) => {
     const createdAtDiff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     return createdAtDiff || a.name.localeCompare(b.name);
   });
   for (const task of downloadTasks) {
-    if (known.has(task.name) || (task.status === "success" && models.some((model) => localModelMatchesDownloadTask(model, task)))) continue;
+    if (models.some((model) => localModelMatchesDownloadTask(model, task))) continue;
     rows.push({
       model: {
         name: task.name,
@@ -574,14 +592,17 @@ export function Library() {
   const handleDelete = async (name: string, task?: DownloadTask, downloadOnly = false) => {
     if (!confirm(t("lib.deleteConfirm", name))) return;
     if (downloadOnly && task) {
-      clearDownloadTask(task);
+      await clearDownloadTask(task);
       await loadModels();
       return;
     }
     await deleteModel(name);
     for (const task of getDownloadTasks("model")) {
-      if (task.name === name || localModelMatchesDownloadTask({ name, model: name }, task)) {
-        clearDownloadTask(task);
+      const sourceQualifiedTaskName = task.artifactSource && task.artifactSource !== "opencsg"
+        ? `${task.artifactSource}/${task.name}`
+        : task.name;
+      if (task.name === name || sourceQualifiedTaskName === name) {
+        await clearDownloadTask(task);
       }
     }
     await loadModels();
@@ -841,10 +862,10 @@ export function Library() {
               </tr>
             ) : (
               pagedRows.map(({ model: m, task, downloadOnly }) => (
-                <tr key={m.name} class="border-b border-gray-50 hover:bg-gray-50/50">
+                <tr key={`${m.artifact_source || "opencsg"}:${m.name}`} class="border-b border-gray-50 hover:bg-gray-50/50">
                   <td class="px-4 py-3 min-w-0">
                     <a href={downloadOnly ? undefined : modelDetailHref(m.model)} class={`font-medium break-all ${downloadOnly ? "text-gray-400 cursor-not-allowed" : "text-indigo-600 hover:text-indigo-800 hover:underline"}`}>
-                      {m.name}
+                      {displayLocalModelID(m)}
                     </a>
                   </td>
                   <td class="px-4 py-3 min-w-0">
@@ -858,8 +879,8 @@ export function Library() {
                     </span>
                   </td>
                   <td class="px-4 py-3 min-w-0 text-gray-600">
-                    <span class="block truncate whitespace-nowrap" title={downloadOnly ? "—" : modelOriginLabel(m.origin)}>
-                      {downloadOnly ? "—" : modelOriginLabel(m.origin)}
+                    <span class="block truncate whitespace-nowrap" title={downloadOnly ? "—" : modelOriginLabel(m.origin, m.artifact_source)}>
+                      {downloadOnly ? "—" : modelOriginLabel(m.origin, m.artifact_source)}
                     </span>
                   </td>
                   <td class="px-4 py-3 whitespace-nowrap">
@@ -893,14 +914,18 @@ export function Library() {
                       </button>
                       {task?.status === "downloading" || task?.status === "queued" ? (
                         <button
-                          onClick={() => pauseDownload(task.kind, task.name)}
+                          onClick={() => pauseDownload(task.kind, task.name, { artifactSource: task.artifactSource, revision: task.revision })}
                           class="inline-flex shrink-0 items-center justify-center w-16 px-3 py-1 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-700 transition-colors font-medium"
                         >
                           {t("downloads.pause")}
                         </button>
                       ) : task?.status === "paused" || task?.status === "error" ? (
                         <button
-                          onClick={() => startDownload(task.kind, task.name, () => void loadModels())}
+          onClick={() => startDownload(task.kind, task.name, () => void loadModels(), {
+            artifactSource: task.artifactSource,
+            revision: task.revision,
+            quants: task.quants,
+          })}
                           class="inline-flex shrink-0 items-center justify-center w-16 px-3 py-1 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors font-medium"
                         >
                           {t("downloads.resume")}
@@ -1227,12 +1252,12 @@ function RunParamsDialog({
           <h2 class="text-lg font-semibold text-gray-900">{t("lib.runParamsTitle")}</h2>
           <p class="text-sm text-gray-500 mt-1">
             {imageGenerationModel
-              ? t("lib.runParamsDescImage", model.name)
+              ? t("lib.runParamsDescImage", displayLocalModelID(model))
               : asrModel
-                ? t("lib.runParamsDescASR", model.name)
+                ? t("lib.runParamsDescASR", displayLocalModelID(model))
               : embeddingModel
-                ? t("lib.runParamsDescEmbedding", model.name)
-                : t("lib.runParamsDesc", model.name)}
+                ? t("lib.runParamsDescEmbedding", displayLocalModelID(model))
+                : t("lib.runParamsDesc", displayLocalModelID(model))}
           </p>
         </div>
 

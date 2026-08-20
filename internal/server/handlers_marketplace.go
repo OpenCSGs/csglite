@@ -15,6 +15,7 @@ import (
 	"github.com/opencsgs/csglite/internal/ggufpick"
 	"github.com/opencsgs/csglite/internal/localinference"
 	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/internal/modelregistry"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -46,6 +47,11 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 
 	requestedFramework := normalizeMarketplaceFramework(q.Get("framework"))
 	requestedTask := normalizeMarketplaceTask(q.Get("task"))
+	artifactSource, err := modelregistry.NormalizeSource(q.Get("artifact_source"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	listParams := csghub.ModelListParams{
 		Search:         q.Get("search"),
 		Sort:           q.Get("sort"),
@@ -70,7 +76,22 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 	}
 
 	client := csghub.NewClient(s.cfg.ServerURL, s.cfg.Token)
-	models, total, err := client.ListModels(r.Context(), listParams)
+	registry, err := modelregistry.New(s.cfg, artifactSource)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	models, total, err := registry.ListModels(r.Context(), modelregistry.ListOptions{
+		Search:         listParams.Search,
+		Sort:           listParams.Sort,
+		Page:           listParams.Page,
+		PerPage:        listParams.PerPage,
+		Framework:      requestedFramework,
+		Task:           requestedTask,
+		UpstreamSource: listParams.Source,
+		ModelParamsMin: listParams.ModelParamsMin,
+		ModelParamsMax: listParams.ModelParamsMax,
+	})
 	if err != nil {
 		if body, ok := getAnyMarketplaceCache(cacheKey); ok {
 			writeCachedMarketplaceResponse(w, body, "stale")
@@ -79,7 +100,7 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 		writeError(w, marketplaceErrorStatus(err), err.Error())
 		return
 	}
-	if requestedFramework != "" && !marketplaceModelsMatchFramework(models, requestedFramework) {
+	if artifactSource == modelregistry.SourceOpenCSG && requestedFramework != "" && !marketplaceModelsMatchFramework(models, requestedFramework) {
 		models, total, err = listMarketplaceModelsWithFrameworkFallback(r.Context(), client, listParams, requestedFramework)
 		if err != nil {
 			if body, ok := getAnyMarketplaceCache(cacheKey); ok {
@@ -184,18 +205,31 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 		return
 	}
 	requestedModelID := strings.TrimSpace(namespace) + "/" + strings.TrimSpace(name)
+	artifactSource, err := modelregistry.NormalizeSource(r.URL.Query().Get("artifact_source"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	revision := strings.TrimSpace(r.URL.Query().Get("revision"))
 
-	client := csghub.NewClient(s.cfg.ServerURL, s.cfg.Token)
-	details, err := client.GetModel(r.Context(), namespace, name)
+	registry, err := modelregistry.New(s.cfg, artifactSource)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	details, err := registry.GetModel(r.Context(), requestedModelID, revision)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	modelWithSize := []csghub.Model{*details}
-	if err := enrichMarketplaceModelSizes(r.Context(), client, modelWithSize); err != nil {
-		log.Printf("marketplace model size unavailable for %s: %v", requestedModelID, err)
-	} else {
-		*details = modelWithSize[0]
+	if artifactSource == modelregistry.SourceOpenCSG {
+		client := csghub.NewClient(s.cfg.ServerURL, s.cfg.Token)
+		modelWithSize := []csghub.Model{*details}
+		if err := enrichMarketplaceModelSizes(r.Context(), client, modelWithSize); err != nil {
+			log.Printf("marketplace model size unavailable for %s: %v", requestedModelID, err)
+		} else {
+			*details = modelWithSize[0]
+		}
 	}
 
 	format := marketplaceModelFormat(details.Tags)
@@ -207,8 +241,9 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 		filesFetched  bool
 		quantizations []marketplaceModelQuantization
 	)
-	if format == "gguf" || format == "" || architecture == "" {
-		if fetched, err := client.GetModelTree(r.Context(), namespace, name); err == nil {
+	if format == "gguf" || format == "" || architecture == "" ||
+		(artifactSource != modelregistry.SourceOpenCSG && details.RepoSize <= 0) {
+		if fetched, _, err := registry.ListFiles(r.Context(), requestedModelID, revision); err == nil {
 			files = fetched
 			filesFetched = true
 		}
@@ -217,7 +252,7 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 		format = marketplaceModelFormatFromFiles(files)
 	}
 	if architecture == "" && filesFetched && marketplaceRepoHasFile(files, "config.json") {
-		if rawConfig, err := client.GetModelRawFile(r.Context(), namespace, name, "config.json"); err == nil {
+		if rawConfig, err := registry.ReadFile(r.Context(), requestedModelID, revision, "config.json"); err == nil {
 			configMetadata = marketplaceMetadataFromConfig(rawConfig)
 			architecture = configMetadata.Architecture
 		}
@@ -226,13 +261,20 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 	pipelineTag := marketplaceModelTaskTag(details.Tags)
 	if format == "gguf" {
 		if !filesFetched {
-			if fetched, err := client.GetModelTree(r.Context(), namespace, name); err == nil {
+			if fetched, _, err := registry.ListFiles(r.Context(), requestedModelID, revision); err == nil {
 				files = fetched
 				filesFetched = true
 			}
 		}
 		if filesFetched {
 			quantizations = summarizeMarketplaceQuantizations(files)
+		}
+	}
+	if details.RepoSize <= 0 && filesFetched {
+		for _, file := range files {
+			if file.Type == "file" && file.Size > 0 {
+				details.RepoSize += file.Size
+			}
 		}
 	}
 
@@ -246,11 +288,11 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 			details.Path,
 			pipelineTag,
 		),
-		LocalModel: s.marketplaceLocalModelStatus(details, requestedModelID),
+		LocalModel: s.marketplaceLocalModelStatus(details, requestedModelID, artifactSource, revision),
 	})
 }
 
-func (s *Server) marketplaceLocalModelStatus(details *csghub.Model, requestedModelID string) marketplaceLocalModelStatus {
+func (s *Server) marketplaceLocalModelStatus(details *csghub.Model, requestedModelID string, artifactSource modelregistry.Source, revision string) marketplaceLocalModelStatus {
 	models, err := s.manager.List()
 	if err != nil {
 		return marketplaceLocalModelStatus{}
@@ -261,12 +303,26 @@ func (s *Server) marketplaceLocalModelStatus(details *csghub.Model, requestedMod
 		if lm == nil {
 			continue
 		}
+		localSource, sourceErr := modelregistry.NormalizeSource(lm.ArtifactSource)
+		if sourceErr != nil || localSource != artifactSource {
+			continue
+		}
+		revision = strings.TrimSpace(revision)
+		if revision != "" &&
+			revision != strings.TrimSpace(lm.RequestedRevision) &&
+			revision != strings.TrimSpace(lm.ResolvedRevision) {
+			continue
+		}
 		fullName := strings.TrimSpace(lm.FullName())
 		publicID := strings.TrimSpace(publicIDs[fullName])
 		if publicID == "" {
 			publicID = model.InferenceModelID(lm)
 		}
-		if candidates[fullName] || candidates[publicID] || candidates[model.InferenceModelID(lm)] {
+		repository := strings.TrimSpace(lm.Repository)
+		if repository == "" {
+			repository = strings.TrimSpace(lm.Namespace) + "/" + strings.TrimSpace(lm.Name)
+		}
+		if candidates[repository] || candidates[fullName] || candidates[publicID] || candidates[model.InferenceModelID(lm)] {
 			return marketplaceLocalModelStatus{
 				Downloaded: true,
 				FullName:   fullName,

@@ -14,6 +14,17 @@ func TestModelDir(t *testing.T) {
 	}
 }
 
+func TestRegistryModelDirUsesReservedSubtree(t *testing.T) {
+	got := RegistryModelDir("/base", "huggingface", "ns", "name")
+	want := filepath.Join("/base", ".registries", "huggingface", "ns", "name")
+	if got != want {
+		t.Fatalf("RegistryModelDir() = %q, want %q", got, want)
+	}
+	if legacy := RegistryModelDir("/base", "opencsg", "ns", "name"); legacy != ModelDir("/base", "ns", "name") {
+		t.Fatalf("OpenCSG path changed: %q", legacy)
+	}
+}
+
 func TestManifestPath(t *testing.T) {
 	got := ManifestPath("/base", "ns", "name")
 	want := filepath.Join("/base", "ns", "name", "manifest.json")

@@ -55,6 +55,48 @@ func TestHandleMarketplaceModelsMapsFrameworkToTagFilter(t *testing.T) {
 	}
 }
 
+func TestHandleMarketplaceModelsDispatchesHuggingFaceSource(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/models" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{{
+			"id":      "acme/demo",
+			"modelId": "acme/demo",
+			"tags":    []string{"gguf"},
+		}})
+	}))
+	defer apiServer.Close()
+	t.Setenv("HF_ENDPOINT", apiServer.URL)
+
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?artifact_source=huggingface", nil)
+	w := httptest.NewRecorder()
+	s.handleMarketplaceModels(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data []csghub.Model `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0].ArtifactSource != "huggingface" {
+		t.Fatalf("models = %#v", response.Data)
+	}
+}
+
+func TestHandleMarketplaceModelsRejectsUnknownArtifactSource(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?artifact_source=unknown", nil)
+	w := httptest.NewRecorder()
+	s.handleMarketplaceModels(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
 func TestHandleMarketplaceModelsDoesNotBlockOnRepositorySizes(t *testing.T) {
 	extrasCalls := 0
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1,11 +1,13 @@
 import { computed, signal } from "@preact/signals";
 import {
   cancelPullJob,
+  clearPartialModelPull,
   createDatasetPullJob,
   createPullJob,
   getPullJob,
 } from "./api/client";
 import type { PullJob, PullProgress } from "./api/client";
+import type { ArtifactSource } from "./api/client";
 
 export type DownloadKind = "model" | "dataset";
 export type DownloadStatus = "queued" | "downloading" | "paused" | "success" | "error";
@@ -23,6 +25,8 @@ export interface DownloadTask {
   error?: string;
   jobId?: string;
   quants?: string[];
+  artifactSource?: ArtifactSource;
+  revision?: string;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -33,9 +37,13 @@ const STORAGE_KEY = "csghub-lite-download-tasks";
 const POLL_MS = 1000;
 const activePollers = new Map<string, number>();
 const completionCallbacks = new Map<string, () => void>();
+const pollFailureCounts = new Map<string, number>();
 
-function taskKey(kind: DownloadKind, name: string): string {
-  return `${kind}:${name}`;
+export function downloadTaskKey(kind: DownloadKind, name: string, artifactSource?: ArtifactSource, revision?: string): string {
+  const base = `${kind}:${name}`;
+  revision = revision?.trim();
+  if (kind !== "model") return base;
+  return `${base}:${artifactSource || "opencsg"}@${revision || ""}`;
 }
 
 function nowISO(): string {
@@ -51,7 +59,7 @@ function normalizeTask(raw: any): DownloadTask | null {
       ? raw.status
       : "paused";
   return {
-    key: taskKey(raw.kind, raw.name),
+    key: downloadTaskKey(raw.kind, raw.name, raw.artifactSource, raw.revision),
     kind: raw.kind,
     name: raw.name,
     status,
@@ -68,6 +76,10 @@ function normalizeTask(raw: any): DownloadTask | null {
     quants: Array.isArray(raw.quants)
       ? raw.quants.map((value: any) => String(value || "").trim()).filter(Boolean)
       : undefined,
+    artifactSource: raw.artifactSource === "huggingface" || raw.artifactSource === "modelscope" || raw.artifactSource === "opencsg"
+      ? raw.artifactSource
+      : undefined,
+    revision: typeof raw.revision === "string" ? raw.revision : undefined,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : nowISO(),
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : nowISO(),
     completedAt: typeof raw.completedAt === "string" ? raw.completedAt : undefined,
@@ -218,6 +230,7 @@ async function pollJob(key: string) {
   }
   try {
     const job = await getPullJob(task.jobId);
+    pollFailureCounts.delete(key);
     const updated = applyJobToTask(task, job);
     if (job.status === "succeeded") {
       setTask(updated);
@@ -242,7 +255,22 @@ async function pollJob(key: string) {
     }
     setTask(updated);
   } catch {
+    const failures = (pollFailureCounts.get(key) || 0) + 1;
+    pollFailureCounts.set(key, failures);
+    if (failures < 3) return;
+    pollFailureCounts.delete(key);
     stopPolling(key);
+    completionCallbacks.delete(key);
+    const current = downloadTasks.value[key];
+    if (current) {
+      setTask({
+        ...current,
+        jobId: undefined,
+        status: "paused",
+        statusText: "interrupted",
+        updatedAt: nowISO(),
+      });
+    }
   }
 }
 
@@ -270,7 +298,28 @@ async function syncDownloadsFromServer() {
         }
         setTask(applyJobToTask(task, job));
       } catch {
-        /* job no longer exists */
+        const interrupted: DownloadTask = {
+          ...task,
+          jobId: undefined,
+          status: "paused",
+          statusText: "interrupted",
+          updatedAt: nowISO(),
+        };
+        setTask(interrupted);
+        try {
+          const replacement =
+            interrupted.kind === "model"
+              ? await createPullJob(interrupted.name, {
+                  quants: interrupted.quants,
+                  artifactSource: interrupted.artifactSource,
+                  revision: interrupted.revision,
+                })
+              : await createDatasetPullJob(interrupted.name);
+          setTask(applyJobToTask(interrupted, replacement));
+          startPolling(interrupted.key);
+        } catch {
+          /* backend remains unavailable; keep the task interrupted */
+        }
       }
       continue;
     }
@@ -282,7 +331,9 @@ async function syncDownloadsFromServer() {
 
     try {
       const job =
-        task.kind === "model" ? await createPullJob(task.name, { quants: task.quants }) : await createDatasetPullJob(task.name);
+        task.kind === "model"
+          ? await createPullJob(task.name, { quants: task.quants, artifactSource: task.artifactSource, revision: task.revision })
+          : await createDatasetPullJob(task.name);
       if (job.status === "running" || job.status === "queued") {
         setTask(applyJobToTask(task, job));
         startPolling(task.key);
@@ -303,23 +354,40 @@ export const hasActiveDownload = computed(() => !!activeDownload.value);
 
 void syncDownloadsFromServer();
 
-export function getDownloadTask(kind: DownloadKind, name: string): DownloadTask | undefined {
-  return downloadTasks.value[taskKey(kind, name)];
+export function getDownloadTask(kind: DownloadKind, name: string, options?: { artifactSource?: ArtifactSource; revision?: string }): DownloadTask | undefined {
+  return downloadTasks.value[downloadTaskKey(kind, name, options?.artifactSource, options?.revision)];
 }
 
 export function getDownloadTasks(kind?: DownloadKind): DownloadTask[] {
   return downloadTaskList.value.filter((task) => !kind || task.kind === kind);
 }
 
-export function clearDownloadTask(task: DownloadTask) {
+export async function clearDownloadTask(task: DownloadTask) {
   if (task.status === "downloading" || task.status === "queued") {
-    pauseDownload(task.kind, task.name);
+    pauseDownload(task.kind, task.name, { artifactSource: task.artifactSource, revision: task.revision });
+    return;
+  }
+  if (task.kind === "model") {
+    try {
+      await clearPartialModelPull(task.name, {
+        artifactSource: task.artifactSource,
+        revision: task.revision,
+      });
+    } catch (err: any) {
+      setTask({
+        ...task,
+        status: "error",
+        error: err?.message || "failed to clear partial download",
+        updatedAt: nowISO(),
+      });
+      return;
+    }
   }
   removeTask(task.key);
 }
 
-export function pauseDownload(kind: DownloadKind, name: string) {
-  const key = taskKey(kind, name);
+export function pauseDownload(kind: DownloadKind, name: string, options?: { artifactSource?: ArtifactSource; revision?: string }) {
+  const key = downloadTaskKey(kind, name, options?.artifactSource, options?.revision);
   stopPolling(key);
   completionCallbacks.delete(key);
 
@@ -337,10 +405,10 @@ export function pauseDownload(kind: DownloadKind, name: string) {
   }
 }
 
-export function startDownload(kind: DownloadKind, name: string, onComplete?: () => void, options?: { quants?: string[] }): boolean {
-  const key = taskKey(kind, name);
+export function startDownload(kind: DownloadKind, name: string, onComplete?: () => void, options?: { quants?: string[]; artifactSource?: ArtifactSource; revision?: string }): void {
+  const key = downloadTaskKey(kind, name, options?.artifactSource, options?.revision);
   if (activePollers.has(key)) {
-    return true;
+    return;
   }
 
   const startedAt = nowISO();
@@ -361,6 +429,8 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
     totalBytes: resumableBase?.totalBytes || 0,
     jobId: resumableBase?.jobId,
     quants,
+    artifactSource: kind === "model" ? options?.artifactSource : undefined,
+    revision: kind === "model" ? options?.revision?.trim() || undefined : undefined,
     createdAt: base?.createdAt || startedAt,
     updatedAt: startedAt,
     files: resumableBase?.files || {},
@@ -391,7 +461,9 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
       }
 
       const job =
-        kind === "model" ? await createPullJob(name, { quants }) : await createDatasetPullJob(name);
+        kind === "model"
+          ? await createPullJob(name, { quants, artifactSource: task.artifactSource, revision: task.revision })
+          : await createDatasetPullJob(name);
       setTask(applyJobToTask(downloadTasks.value[key] || task, job));
       startPolling(key);
     } catch (err: any) {
@@ -408,5 +480,4 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
     }
   })();
 
-  return true;
 }

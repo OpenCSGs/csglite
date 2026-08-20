@@ -113,6 +113,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	var aiGatewayURLUpdated bool
 	var cloudTokenUpdated bool
 	var observabilityUpdated bool
+	var registrySettingsUpdated bool
 	storageDir := strings.TrimSpace(req.StorageDir)
 	if storageDir != "" {
 		storageDir = filepath.Clean(storageDir)
@@ -180,6 +181,45 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		s.cfg.CloudProviderName = config.NormalizeCloudProviderName(*req.CloudProviderName)
 		configUpdated = true
 	}
+	if req.HuggingFaceEndpoint != nil {
+		endpoint := strings.TrimSpace(*req.HuggingFaceEndpoint)
+		if endpoint == "" {
+			endpoint = config.DefaultHuggingFaceEndpoint
+		}
+		registrySettingsUpdated = registrySettingsUpdated || endpoint != strings.TrimSpace(s.cfg.HuggingFaceEndpoint)
+		s.cfg.HuggingFaceEndpoint = endpoint
+		configUpdated = true
+	}
+	if req.HuggingFaceToken != nil {
+		token := strings.TrimSpace(*req.HuggingFaceToken)
+		registrySettingsUpdated = registrySettingsUpdated || token != strings.TrimSpace(s.cfg.HuggingFaceToken)
+		s.cfg.HuggingFaceToken = token
+		configUpdated = true
+	}
+	if req.ModelScopeEndpoint != nil {
+		endpoint := strings.TrimSpace(*req.ModelScopeEndpoint)
+		if endpoint == "" {
+			endpoint = config.DefaultModelScopeEndpoint
+		}
+		registrySettingsUpdated = registrySettingsUpdated || endpoint != strings.TrimSpace(s.cfg.ModelScopeEndpoint)
+		s.cfg.ModelScopeEndpoint = endpoint
+		configUpdated = true
+	}
+	if req.ModelScopeToken != nil {
+		token := strings.TrimSpace(*req.ModelScopeToken)
+		registrySettingsUpdated = registrySettingsUpdated || token != strings.TrimSpace(s.cfg.ModelScopeToken)
+		s.cfg.ModelScopeToken = token
+		configUpdated = true
+	}
+	if req.MarketplaceModelSource != nil {
+		source := strings.ToLower(strings.TrimSpace(*req.MarketplaceModelSource))
+		if !config.IsSupportedMarketplaceModelSource(source) {
+			writeError(w, http.StatusBadRequest, "marketplace model source must be opencsg, huggingface, or modelscope")
+			return
+		}
+		s.cfg.MarketplaceModelSource = source
+		configUpdated = true
+	}
 
 	if dirsUpdated {
 		if err := os.MkdirAll(s.cfg.ModelDir, 0o755); err != nil {
@@ -197,11 +237,17 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.applyRuntimeSettingsUpdate(serverURLUpdated, aiGatewayURLUpdated, cloudTokenUpdated)
+		if registrySettingsUpdated {
+			clearMarketplaceCache()
+		}
 	}
 	if dirsUpdated {
 		if err := s.reopenObservability(s.cfg.StorageDir()); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to open observability storage: "+err.Error())
 			return
+		}
+		if err := s.reopenModelMetadata(s.cfg.StorageDir()); err != nil {
+			log.Printf("MODEL METADATA: cache unavailable after storage update: %v", err)
 		}
 	} else if observabilityUpdated {
 		s.cleanupObservability()
@@ -258,6 +304,11 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		DefaultCloudProviderName: config.DefaultCloudProviderName,
 		DefaultServerURL:         config.DefaultServerURL,
 		DefaultAIGatewayURL:      cloud.DefaultBaseURL,
+		HuggingFaceEndpoint:      firstNonEmptySetting(cfg.HuggingFaceEndpoint, config.DefaultHuggingFaceEndpoint),
+		HuggingFaceTokenSet:      strings.TrimSpace(cfg.HuggingFaceToken) != "",
+		ModelScopeEndpoint:       firstNonEmptySetting(cfg.ModelScopeEndpoint, config.DefaultModelScopeEndpoint),
+		ModelScopeTokenSet:       strings.TrimSpace(cfg.ModelScopeToken) != "",
+		MarketplaceModelSource:   config.NormalizeMarketplaceModelSource(cfg.MarketplaceModelSource),
 		Autostart:                autostartEnabled,
 		DesktopMode:              cfg.DesktopMode,
 		LocalAPIURL:              localAPIURL,
@@ -267,6 +318,15 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		},
 		HiddenNavItems: append([]string{}, cfg.HiddenNavItems...),
 	}
+}
+
+func firstNonEmptySetting(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func webSearchConfigToSettings(cfg config.WebSearchConfig) api.WebSearchSettings {

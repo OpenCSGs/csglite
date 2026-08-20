@@ -74,6 +74,12 @@ const cloudProviderNameInput = signal("");
 const defaultServerUrl = signal("");
 const defaultAiGatewayUrl = signal("");
 const defaultCloudProviderName = signal("");
+const huggingFaceEndpointInput = signal("");
+const huggingFaceTokenInput = signal("");
+const huggingFaceTokenConfigured = signal(false);
+const modelScopeEndpointInput = signal("");
+const modelScopeTokenInput = signal("");
+const modelScopeTokenConfigured = signal(false);
 const serviceUrlsError = signal("");
 const serviceUrlsMessage = signal("");
 const isSavingServiceUrls = signal(false);
@@ -211,6 +217,10 @@ function applySettings(data: AppSettings) {
   defaultServerUrl.value = data.default_server_url || "";
   defaultAiGatewayUrl.value = data.default_ai_gateway_url || "";
   defaultCloudProviderName.value = data.default_cloud_provider_name || "csghub";
+  huggingFaceEndpointInput.value = data.huggingface_endpoint || "https://huggingface.co";
+  huggingFaceTokenConfigured.value = data.huggingface_token_configured ?? false;
+  modelScopeEndpointInput.value = data.modelscope_endpoint || "https://modelscope.cn";
+  modelScopeTokenConfigured.value = data.modelscope_token_configured ?? false;
   appVersion.value = data.version || "";
   desktopMode.value = data.desktop_mode ?? false;
   localAPIURL.value = data.local_api_url || "";
@@ -464,11 +474,34 @@ async function saveServiceURLs() {
       server_url: serverUrlInput.value,
       ai_gateway_url: aiGatewayUrlInput.value,
       cloud_provider_name: cloudProviderNameInput.value,
+      huggingface_endpoint: huggingFaceEndpointInput.value,
+      modelscope_endpoint: modelScopeEndpointInput.value,
+      ...(huggingFaceTokenInput.value.trim() ? { huggingface_token: huggingFaceTokenInput.value.trim() } : {}),
+      ...(modelScopeTokenInput.value.trim() ? { modelscope_token: modelScopeTokenInput.value.trim() } : {}),
     });
+    huggingFaceTokenInput.value = "";
+    modelScopeTokenInput.value = "";
     applySettings(data);
     notifyProvidersChanged();
     serviceUrlsMessage.value = t("settings.serviceUrlsSaveSuccess");
     fetchCloudAuth();
+  } catch (err: any) {
+    serviceUrlsError.value = err?.message || t("settings.serviceUrlsSaveFailed");
+  } finally {
+    isSavingServiceUrls.value = false;
+  }
+}
+
+async function clearRegistryToken(source: "huggingface" | "modelscope") {
+  isSavingServiceUrls.value = true;
+  serviceUrlsError.value = "";
+  serviceUrlsMessage.value = "";
+  try {
+    const data = await saveSettings(source === "huggingface"
+      ? { huggingface_token: "" }
+      : { modelscope_token: "" });
+    applySettings(data);
+    serviceUrlsMessage.value = t("settings.registryTokenCleared");
   } catch (err: any) {
     serviceUrlsError.value = err?.message || t("settings.serviceUrlsSaveFailed");
   } finally {
@@ -543,6 +576,69 @@ function cloudUserLabel(status: CloudAuthStatus | null): string {
 function cloudUserInitial(status: CloudAuthStatus | null): string {
   const label = cloudUserLabel(status);
   return label ? label[0].toUpperCase() : "?";
+}
+
+function RegistryCredentialFields({
+  name,
+  endpoint,
+  token,
+  configured,
+  disabled,
+  onEndpointChange,
+  onTokenChange,
+  onClear,
+}: {
+  name: string;
+  endpoint: string;
+  token: string;
+  configured: boolean;
+  disabled: boolean;
+  onEndpointChange: (value: string) => void;
+  onTokenChange: (value: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div class="rounded-lg border border-gray-200 p-3">
+      <div class="mb-3 flex items-center justify-between gap-2">
+        <span class="text-sm font-semibold text-gray-800">{name}</span>
+        <span class={`text-xs ${configured ? "text-emerald-600" : "text-gray-400"}`}>
+          {configured ? t("settings.registryTokenConfigured") : t("settings.registryTokenNotConfigured")}
+        </span>
+      </div>
+      <label class="block">
+        <span class="text-xs font-medium text-gray-600">{t("settings.registryEndpoint")}</span>
+        <input
+          type="url"
+          value={endpoint}
+          disabled={disabled}
+          onInput={(event) => onEndpointChange((event.currentTarget as HTMLInputElement).value)}
+          class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+        />
+      </label>
+      <label class="mt-3 block">
+        <span class="text-xs font-medium text-gray-600">{t("settings.registryToken")}</span>
+        <input
+          type="password"
+          value={token}
+          disabled={disabled}
+          autocomplete="new-password"
+          placeholder={configured ? t("settings.registryTokenKeep") : t("settings.registryTokenPlaceholder")}
+          onInput={(event) => onTokenChange((event.currentTarget as HTMLInputElement).value)}
+          class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+        />
+      </label>
+      {configured && (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onClear}
+          class="mt-2 text-xs text-red-600 hover:text-red-700 disabled:opacity-60"
+        >
+          {t("settings.registryTokenClear")}
+        </button>
+      )}
+    </div>
+  );
 }
 
 export function Settings() {
@@ -867,6 +963,28 @@ export function Settings() {
             />
             <span class="mt-1 block text-xs text-gray-400">{t("settings.cloudProviderNameHint", defaultCloudProviderName.value || "csghub")}</span>
           </label>
+          <div class="grid gap-4 border-t border-gray-100 pt-4 lg:grid-cols-2">
+            <RegistryCredentialFields
+              name={t("mp.sourceHuggingFace")}
+              endpoint={huggingFaceEndpointInput.value}
+              token={huggingFaceTokenInput.value}
+              configured={huggingFaceTokenConfigured.value}
+              disabled={isSavingServiceUrls.value}
+              onEndpointChange={(value) => (huggingFaceEndpointInput.value = value)}
+              onTokenChange={(value) => (huggingFaceTokenInput.value = value)}
+              onClear={() => void clearRegistryToken("huggingface")}
+            />
+            <RegistryCredentialFields
+              name={t("mp.sourceModelScope")}
+              endpoint={modelScopeEndpointInput.value}
+              token={modelScopeTokenInput.value}
+              configured={modelScopeTokenConfigured.value}
+              disabled={isSavingServiceUrls.value}
+              onEndpointChange={(value) => (modelScopeEndpointInput.value = value)}
+              onTokenChange={(value) => (modelScopeTokenInput.value = value)}
+              onClear={() => void clearRegistryToken("modelscope")}
+            />
+          </div>
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="text-sm">
               {serviceUrlsError.value && <span class="text-red-600">{serviceUrlsError.value}</span>}

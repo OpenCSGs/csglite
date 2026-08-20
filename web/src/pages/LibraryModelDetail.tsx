@@ -10,6 +10,7 @@ import {
   localInferenceValueKey,
 } from "../utils/localInference";
 import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
+import { displayLocalModelID } from "../modelIds";
 
 type LibraryModelDetailProps = RoutePropsForPath<"/library/detail/:model">;
 
@@ -49,6 +50,9 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
   }, []);
 
   const manifestURL = buildManifestURL(modelID, runtimeAPIOrigin);
+  const displayedModelID = manifest?.details
+    ? displayLocalModelID(manifest.details)
+    : modelID.replace(/^(huggingface|modelscope)\//, "");
   const manifestCurl = buildCurlCommand(manifestURL);
   const exampleFile = manifest?.files?.[0];
   const exampleCurl = exampleFile ? buildFileCurlCommand(exampleFile, runtimeAPIOrigin) : "";
@@ -85,7 +89,7 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
         </a>
         <div class="min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
-            <h1 class="text-2xl font-bold text-gray-900 break-all">{modelID}</h1>
+            <h1 class="text-2xl font-bold text-gray-900 break-all">{displayedModelID}</h1>
             {manifest?.details?.format && (
               <span
                 class={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${

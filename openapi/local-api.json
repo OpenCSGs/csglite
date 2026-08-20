@@ -850,6 +850,80 @@
         }
       }
     },
+    "/api/model-files/{artifactSource}/{namespace}/{name}/{path...}": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Download a source-qualified local model file",
+        "description": "Downloads a cached model file from an external artifact registry model.",
+        "operationId": "downloadSourceModelFile",
+        "parameters": [
+          {
+            "name": "artifactSource",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactSource"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path...",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requested file.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Partial file content for a range request.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/api/models/{namespace}/{name}/files/{path...}": {
       "get": {
         "tags": [
@@ -1115,6 +1189,57 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/pull/partial": {
+      "delete": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Clear an incomplete model download",
+        "description": "Removes source-scoped partial files only when no completed manifest or active pull job exists.",
+        "operationId": "clearPartialModelPull",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PullRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Partial files cleared.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "status",
+                    "path"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           }
         }
       }
@@ -1830,7 +1955,7 @@
           "Marketplace"
         ],
         "summary": "List marketplace models",
-        "description": "Proxies the upstream CSGHub model listing API and normalizes the response to `{ data, total }`.",
+        "description": "Lists models from OpenCSG, Hugging Face, or ModelScope and normalizes the response to `{ data, total }`. Omitting `artifact_source` preserves the historical OpenCSG behavior.",
         "operationId": "getMarketplaceModels",
         "parameters": [
           {
@@ -1867,9 +1992,17 @@
             }
           },
           {
+            "name": "artifact_source",
+            "in": "query",
+            "description": "Artifact registry used for model discovery. Defaults to `opencsg`.",
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactSource"
+            }
+          },
+          {
             "name": "source",
             "in": "query",
-            "description": "Optional upstream source filter forwarded to CSGHub.",
+            "description": "Optional OpenCSG upstream source filter. Ignored by registries that do not expose an equivalent filter.",
             "schema": {
               "type": "string"
             }
@@ -1877,7 +2010,7 @@
           {
             "name": "framework",
             "in": "query",
-            "description": "Optional model type filter forwarded to CSGHub, such as `gguf` or `safetensors`.",
+            "description": "Optional model framework/type filter translated to the selected artifact registry, such as `gguf` or `safetensors`.",
             "schema": {
               "type": "string"
             }
@@ -1885,7 +2018,7 @@
           {
             "name": "task",
             "in": "query",
-            "description": "Optional task tag filter forwarded to CSGHub, such as `text-generation`.",
+            "description": "Optional task filter translated to the selected artifact registry, such as `text-generation`.",
             "schema": {
               "type": "string"
             }
@@ -2011,6 +2144,22 @@
             "name": "name",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artifact_source",
+            "in": "query",
+            "description": "Artifact registry used for model metadata and files. Defaults to `opencsg`.",
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactSource"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "description": "Branch, tag, or commit. Empty selects the registry default. Custom OpenCSG revisions are not currently supported.",
             "schema": {
               "type": "string"
             }
@@ -6286,6 +6435,11 @@
           "default_server_url",
           "default_ai_gateway_url",
           "default_cloud_provider_name",
+          "huggingface_endpoint",
+          "huggingface_token_configured",
+          "modelscope_endpoint",
+          "modelscope_token_configured",
+          "marketplace_model_source",
           "autostart",
           "desktop_mode",
           "web_search",
@@ -6323,6 +6477,27 @@
           },
           "default_cloud_provider_name": {
             "type": "string"
+          },
+          "huggingface_endpoint": {
+            "type": "string",
+            "description": "Hugging Face Hub endpoint."
+          },
+          "huggingface_token_configured": {
+            "type": "boolean",
+            "description": "Whether a persisted Hugging Face access token is configured. The token itself is never returned."
+          },
+          "modelscope_endpoint": {
+            "type": "string",
+            "description": "ModelScope Hub endpoint."
+          },
+          "modelscope_token_configured": {
+            "type": "boolean",
+            "description": "Whether a persisted ModelScope access token is configured. The token itself is never returned."
+          },
+          "marketplace_model_source": {
+            "type": "string",
+            "enum": ["opencsg", "huggingface", "modelscope"],
+            "description": "Persisted model registry selected by the Marketplace UI."
           },
           "autostart": {
             "type": "boolean"
@@ -6369,6 +6544,29 @@
           "cloud_provider_name": {
             "type": "string",
             "description": "Provider name shown for built-in cloud models. Empty string restores the default provider name."
+          },
+          "huggingface_endpoint": {
+            "type": "string",
+            "description": "Hugging Face Hub endpoint. Empty string restores the default endpoint."
+          },
+          "huggingface_token": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "Hugging Face access token. Empty string clears the persisted token."
+          },
+          "modelscope_endpoint": {
+            "type": "string",
+            "description": "ModelScope Hub endpoint. Empty string restores the default endpoint."
+          },
+          "modelscope_token": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "ModelScope access token. Empty string clears the persisted token."
+          },
+          "marketplace_model_source": {
+            "type": "string",
+            "enum": ["opencsg", "huggingface", "modelscope"],
+            "description": "Model registry to restore when the Marketplace UI opens."
           },
           "autostart": {
             "type": "boolean"
@@ -7542,6 +7740,15 @@
           }
         }
       },
+      "ArtifactSource": {
+        "type": "string",
+        "enum": [
+          "opencsg",
+          "huggingface",
+          "modelscope"
+        ],
+        "default": "opencsg"
+      },
       "PullRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -7551,6 +7758,14 @@
         "properties": {
           "model": {
             "type": "string"
+          },
+          "artifact_source": {
+            "$ref": "#/components/schemas/ArtifactSource",
+            "description": "Model artifact registry. Empty preserves the historical OpenCSG behavior."
+          },
+          "revision": {
+            "type": "string",
+            "description": "Branch, tag, or commit. Empty selects the registry default."
           },
           "quant": {
             "type": "string",
@@ -7628,6 +7843,12 @@
             ]
           },
           "name": {
+            "type": "string"
+          },
+          "artifact_source": {
+            "$ref": "#/components/schemas/ArtifactSource"
+          },
+          "revision": {
             "type": "string"
           },
           "quant": {
@@ -7856,6 +8077,22 @@
           "provider": {
             "type": "string",
             "description": "Provider display name. Local models use `local`; cloud and third-party models preserve the provider name from configuration. Use `source` for stable routing; the `/api/tags` provider filter remains case-insensitive and accepts provider aliases."
+          },
+          "artifact_source": {
+            "$ref": "#/components/schemas/ArtifactSource",
+            "description": "Registry from which this local model artifact was downloaded."
+          },
+          "repository": {
+            "type": "string",
+            "description": "Source repository ID in `namespace/name` form."
+          },
+          "requested_revision": {
+            "type": "string",
+            "description": "Branch, tag, or commit requested by the user."
+          },
+          "resolved_revision": {
+            "type": "string",
+            "description": "Immutable commit when supplied by the registry, otherwise the resolved branch or tag."
           },
           "category": {
             "type": "string",
@@ -9049,6 +9286,41 @@
           }
         }
       },
+      "HuggingFaceModelMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "author": { "type": "string" },
+          "pipeline_tag": { "type": "string" },
+          "library_name": { "type": "string" },
+          "languages": { "type": "array", "items": { "type": "string" } },
+          "base_models": { "type": "array", "items": { "type": "string" } },
+          "original_tags": { "type": "array", "items": { "type": "string" } },
+          "gated": { "type": "boolean" },
+          "sha": { "type": "string" }
+        }
+      },
+      "ModelScopeModelMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "display_name": { "type": "string" },
+          "tasks": { "type": "array", "items": { "type": "string" } },
+          "libraries": { "type": "array", "items": { "type": "string" } },
+          "model_type": { "type": "string" },
+          "original_tags": { "type": "array", "items": { "type": "string" } },
+          "gated": { "type": "boolean" }
+        }
+      },
+      "MarketplaceModelProviderMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Source-native display metadata. Only the object matching artifact_source is populated.",
+        "properties": {
+          "huggingface": { "$ref": "#/components/schemas/HuggingFaceModelMetadata" },
+          "modelscope": { "$ref": "#/components/schemas/ModelScopeModelMetadata" }
+        }
+      },
       "MarketplaceModel": {
         "type": "object",
         "additionalProperties": false,
@@ -9131,6 +9403,16 @@
             "format": "int64",
             "minimum": 0,
             "description": "Total repository download size in bytes, including LFS objects."
+          },
+          "artifact_source": {
+            "$ref": "#/components/schemas/ArtifactSource"
+          },
+          "revision": {
+            "type": "string",
+            "description": "Resolved registry revision when available."
+          },
+          "provider": {
+            "$ref": "#/components/schemas/MarketplaceModelProviderMetadata"
           }
         }
       },

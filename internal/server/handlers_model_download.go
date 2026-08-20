@@ -45,7 +45,7 @@ func (s *Server) handleModelManifestForID(w http.ResponseWriter, modelID string)
 			Size:        entry.Size,
 			SHA256:      entry.SHA256,
 			LFS:         entry.LFS,
-			DownloadURL: buildModelFileDownloadURL(lm.Namespace, lm.Name, entry.Path),
+			DownloadURL: buildModelFileDownloadURLForID(lm.FullName(), entry.Path),
 		})
 	}
 
@@ -119,18 +119,39 @@ func (s *Server) handleModelFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func modelIDFromPathValues(r *http.Request) string {
-	return strings.TrimSpace(r.PathValue("namespace")) + "/" + strings.TrimSpace(r.PathValue("name"))
+	if modelID := strings.TrimSpace(r.PathValue("model")); modelID != "" {
+		return modelID
+	}
+	repository := strings.TrimSpace(r.PathValue("namespace")) + "/" + strings.TrimSpace(r.PathValue("name"))
+	if source := strings.TrimSpace(r.PathValue("artifactSource")); source != "" {
+		return source + "/" + repository
+	}
+	return repository
 }
 
 func buildModelFileDownloadURL(namespace, name, relPath string) string {
+	return buildModelFileDownloadURLForID(namespace+"/"+name, relPath)
+}
+
+func buildModelFileDownloadURLForID(modelID, relPath string) string {
+	modelSegments := strings.Split(strings.Trim(modelID, "/"), "/")
+	for i, segment := range modelSegments {
+		modelSegments[i] = url.PathEscape(segment)
+	}
 	segments := strings.Split(relPath, "/")
 	for i, segment := range segments {
 		segments[i] = url.PathEscape(segment)
 	}
+	if len(modelSegments) > 2 {
+		return fmt.Sprintf(
+			"/api/model-files/%s/%s",
+			strings.Join(modelSegments, "/"),
+			strings.Join(segments, "/"),
+		)
+	}
 	return fmt.Sprintf(
-		"/api/models/%s/%s/files/%s",
-		url.PathEscape(namespace),
-		url.PathEscape(name),
+		"/api/models/%s/files/%s",
+		strings.Join(modelSegments, "/"),
 		strings.Join(segments, "/"),
 	)
 }

@@ -454,6 +454,16 @@ func filterTransformersWeightDownload(files []RepoFile) []RepoFile {
 	return out
 }
 
+// FilterModelSnapshotFiles applies the model snapshot compatibility policy
+// shared by artifact registry adapters.
+func FilterModelSnapshotFiles(files []RepoFile, quants []string) ([]RepoFile, error) {
+	filtered, err := filterGGUFMultiQuantDownload(files, quants)
+	if err != nil {
+		return nil, err
+	}
+	return filterTransformersWeightDownload(filtered), nil
+}
+
 func repoHasGGUFWeight(files []RepoFile) bool {
 	for _, f := range files {
 		if ggufpick.IsWeightGGUF(repoFilePath(f)) {

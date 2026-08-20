@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +12,52 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/internal/modelmetadata"
 	"github.com/opencsgs/csglite/pkg/api"
 )
+
+func TestLocalModelInfoPersistsAndInvalidatesDerivedMetadata(t *testing.T) {
+	s := newTestServer(t)
+	lm := &model.LocalModel{
+		Namespace:   "Acme",
+		Name:        "cached-model",
+		Format:      model.FormatSafeTensors,
+		PipelineTag: "text-generation",
+	}
+	modelDir := model.ModelDir(s.cfg.ModelDir, lm.Namespace, lm.Name)
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"max_position_embeddings":4096}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.SaveManifestInDir(modelDir, lm); err != nil {
+		t.Fatal(err)
+	}
+
+	first := s.localModelInfo(lm)
+	if first.MaxModelLen != 4096 {
+		t.Fatalf("first max model len = %d", first.MaxModelLen)
+	}
+	fingerprint, err := modelmetadata.Fingerprint(modelDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.modelMetadataMu.RLock()
+	_, ok, err := s.modelMetadata.Get(context.Background(), lm.FullName(), fingerprint)
+	s.modelMetadataMu.RUnlock()
+	if err != nil || !ok {
+		t.Fatalf("persisted cache entry = %v, %v", ok, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte("{\n\"max_position_embeddings\":8192\n}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second := s.localModelInfo(lm)
+	if second.MaxModelLen != 8192 {
+		t.Fatalf("invalidated max model len = %d", second.MaxModelLen)
+	}
+}
 
 func TestHandleLocalModelSearch_QueryAndPagination(t *testing.T) {
 	s := newTestServer(t)

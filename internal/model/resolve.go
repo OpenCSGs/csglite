@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"github.com/opencsgs/csglite/internal/csghub"
 )
 
 // InferenceModelID returns the public model identifier used for local inference APIs.
@@ -15,12 +13,17 @@ func InferenceModelID(lm *LocalModel) string {
 	if lm == nil {
 		return ""
 	}
+	source := strings.ToLower(strings.TrimSpace(lm.ArtifactSource))
+	if source != "" && source != "opencsg" {
+		return lm.FullName()
+	}
 	return strings.TrimSpace(lm.Name)
 }
 
 // PublicModelIDs returns stable short model IDs keyed by each model's full
-// namespace/name ID. When names collide, the first downloaded model keeps the
-// bare name and later colliding models get a stable hash suffix.
+// storage ID. OpenCSG and imported models preserve short IDs for compatibility;
+// external registry models use source/namespace/name and therefore do not
+// collide across registries.
 func PublicModelIDs(models []*LocalModel) map[string]string {
 	groups := make(map[string][]*LocalModel, len(models))
 	baseNames := make(map[string]struct{}, len(models))
@@ -96,8 +99,8 @@ func uniqueSuffixedPublicModelID(lm *LocalModel, baseNames map[string]struct{}, 
 	return name + "-" + hash
 }
 
-// ResolveLocalModel resolves a downloaded local model by full ID (namespace/name)
-// or by short name (name only).
+// ResolveLocalModel resolves a downloaded local model by storage ID
+// ([source/]namespace/name) or by its public inference ID.
 func (m *Manager) ResolveLocalModel(modelID string) (*LocalModel, error) {
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
@@ -156,13 +159,10 @@ func (m *Manager) PublicModelID(modelID string) (string, error) {
 	return InferenceModelID(lm), nil
 }
 
-// ResolveLocalModelID returns the on-disk namespace/name identifier for a local model.
+// ResolveLocalModelID returns the on-disk [source/]namespace/name identifier.
 func (m *Manager) ResolveLocalModelID(modelID string) (string, error) {
 	lm, err := m.ResolveLocalModel(modelID)
 	if err != nil {
-		return "", err
-	}
-	if _, _, err := csghub.ParseModelID(lm.FullName()); err != nil {
 		return "", err
 	}
 	return lm.FullName(), nil

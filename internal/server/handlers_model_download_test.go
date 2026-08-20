@@ -85,6 +85,50 @@ func TestHandleModelManifest_BackfillsLegacyManifest(t *testing.T) {
 	}
 }
 
+func TestBuildModelFileDownloadURLForSourceQualifiedModel(t *testing.T) {
+	got := buildModelFileDownloadURLForID("huggingface/Acme/demo", "weights/model.gguf")
+	want := "/api/model-files/huggingface/Acme/demo/weights/model.gguf"
+	if got != want {
+		t.Fatalf("download URL = %q, want %q", got, want)
+	}
+}
+
+func TestHandleModelManifestBySourceQualifiedID(t *testing.T) {
+	s := newTestServer(t)
+	modelDir := model.RegistryModelDir(s.cfg.ModelDir, "huggingface", "Acme", "demo")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model.gguf"), []byte("gguf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lm := &model.LocalModel{
+		Namespace:      "Acme",
+		Name:           "demo",
+		Repository:     "Acme/demo",
+		ArtifactSource: "huggingface",
+		Format:         model.FormatGGUF,
+		Files:          []string{"model.gguf"},
+	}
+	if err := model.SaveManifestInDir(modelDir, lm); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/models/huggingface%2FAcme%2Fdemo/manifest", nil)
+	recorder := httptest.NewRecorder()
+	s.externalAPIRoutes().ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response api.ModelManifestResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Files) != 1 || response.Files[0].DownloadURL != "/api/model-files/huggingface/Acme/demo/model.gguf" {
+		t.Fatalf("files = %#v", response.Files)
+	}
+}
+
 func TestHandleModelManifestByPublicID(t *testing.T) {
 	s := newTestServer(t)
 	modelDir := filepath.Join(s.cfg.ModelDir, "AIWizards", "Fun-ASR-Nano-2512")

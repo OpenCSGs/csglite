@@ -12,6 +12,10 @@ export interface ModelInfo {
   source?: string;
   origin?: string;
   provider?: string;
+  artifact_source?: ArtifactSource;
+  repository?: string;
+  requested_revision?: string;
+  resolved_revision?: string;
   category?: string;
   pipeline_tag?: string;
   input_modalities?: string[];
@@ -137,6 +141,32 @@ export interface MarketplaceModel {
   metadata?: MarketplaceModelMetadata;
   hf_path?: string;
   repo_size?: number;
+  artifact_source?: ArtifactSource;
+  revision?: string;
+  provider?: MarketplaceModelProviderMetadata;
+}
+
+export type ArtifactSource = "opencsg" | "huggingface" | "modelscope";
+
+export interface MarketplaceModelProviderMetadata {
+  huggingface?: {
+    author?: string;
+    pipeline_tag?: string;
+    library_name?: string;
+    languages?: string[];
+    base_models?: string[];
+    original_tags?: string[];
+    gated?: boolean;
+    sha?: string;
+  };
+  modelscope?: {
+    display_name?: string;
+    tasks?: string[];
+    libraries?: string[];
+    model_type?: string;
+    original_tags?: string[];
+    gated?: boolean;
+  };
 }
 
 export interface MarketplaceModelExtra {
@@ -210,6 +240,11 @@ export interface AppSettings {
   default_server_url: string;
   default_ai_gateway_url: string;
   default_cloud_provider_name: string;
+  huggingface_endpoint: string;
+  huggingface_token_configured: boolean;
+  modelscope_endpoint: string;
+  modelscope_token_configured: boolean;
+  marketplace_model_source: ArtifactSource;
   desktop_mode: boolean;
   local_api_url?: string;
   autostart: boolean;
@@ -740,6 +775,8 @@ export interface PullJob {
   status: string;
   kind: "model" | "dataset";
   name: string;
+  artifact_source?: ArtifactSource;
+  revision?: string;
   quant?: string;
   quants?: string[];
   created_at: string;
@@ -1314,6 +1351,11 @@ export async function saveSettings(patch: {
   server_url?: string;
   ai_gateway_url?: string;
   cloud_provider_name?: string;
+  huggingface_endpoint?: string;
+  huggingface_token?: string;
+  modelscope_endpoint?: string;
+  modelscope_token?: string;
+  marketplace_model_source?: ArtifactSource;
   autostart?: boolean;
   web_search?: WebSearchSettings;
   observability?: ObservabilitySettings;
@@ -1492,89 +1534,7 @@ export async function showModel(model: string) {
   });
 }
 
-export function pullModel(
-  model: string,
-  onProgress: (p: PullProgress) => void,
-  signal?: AbortSignal
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    fetch("/api/pull", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
-      signal,
-    })
-      .then((resp) => {
-        if (!resp.ok || !resp.body) {
-          reject(new Error("pull failed"));
-          return;
-        }
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        let lastUpdate = 0;
-        let pending: PullProgress | null = null;
-        let flushTimer = 0;
-
-        function flushPending() {
-          if (pending) {
-            onProgress(pending);
-            pending = null;
-          }
-        }
-
-        function processLine(line: string) {
-          if (!line.startsWith("data: ")) return;
-          try {
-            const p: PullProgress = JSON.parse(line.slice(6));
-            if (p.status === "success" || p.status.startsWith("error")) {
-              clearTimeout(flushTimer);
-              pending = null;
-              onProgress(p);
-              return;
-            }
-            const now = Date.now();
-            if (now - lastUpdate >= 200) {
-              lastUpdate = now;
-              onProgress(p);
-            } else {
-              pending = p;
-              clearTimeout(flushTimer);
-              flushTimer = window.setTimeout(flushPending, 200);
-            }
-          } catch {
-            /* skip */
-          }
-        }
-
-        function read(): Promise<void> {
-          return reader.read().then(({ done, value }) => {
-            if (done) {
-              clearTimeout(flushTimer);
-              flushPending();
-              resolve();
-              return;
-            }
-            buf += decoder.decode(value, { stream: true });
-            const lines = buf.split("\n");
-            buf = lines.pop() || "";
-            for (const line of lines) {
-              processLine(line);
-            }
-            return read();
-          });
-        }
-
-        read().catch((err) => {
-          clearTimeout(flushTimer);
-          reject(err);
-        });
-      })
-      .catch(reject);
-  });
-}
-
-export async function createPullJob(model: string, options?: string | { quant?: string; quants?: string[] }): Promise<PullJob> {
+export async function createPullJob(model: string, options?: string | { quant?: string; quants?: string[]; artifactSource?: ArtifactSource; revision?: string }): Promise<PullJob> {
   const normalizedOptions = typeof options === "string" ? { quant: options } : options;
   const quants = normalizedOptions?.quants?.map((value) => value.trim()).filter(Boolean);
   return fetchJSON<PullJob>("/api/pull/jobs", {
@@ -1584,6 +1544,8 @@ export async function createPullJob(model: string, options?: string | { quant?: 
       model,
       quant: normalizedOptions?.quant || undefined,
       quants: quants && quants.length > 0 ? quants : undefined,
+      artifact_source: normalizedOptions?.artifactSource || undefined,
+      revision: normalizedOptions?.revision?.trim() || undefined,
     }),
   });
 }
@@ -1603,6 +1565,21 @@ export async function getPullJob(jobId: string): Promise<PullJob> {
 export async function cancelPullJob(jobId: string): Promise<PullJob> {
   return fetchJSON<PullJob>(`/api/pull/jobs/${encodeURIComponent(jobId)}`, {
     method: "DELETE",
+  });
+}
+
+export async function clearPartialModelPull(
+  model: string,
+  options?: { artifactSource?: ArtifactSource; revision?: string },
+): Promise<{ status: string; path: string }> {
+  return fetchJSON<{ status: string; path: string }>("/api/pull/partial", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      artifact_source: options?.artifactSource,
+      revision: options?.revision,
+    }),
   });
 }
 
@@ -2091,6 +2068,7 @@ export async function getMarketplaceModels(params: {
   modelParamsMax?: string;
   page?: number;
   per?: number;
+  artifactSource?: ArtifactSource;
 }): Promise<{ data: MarketplaceModel[]; total: number }> {
   const q = new URLSearchParams();
   if (params.search) q.set("search", params.search);
@@ -2099,6 +2077,7 @@ export async function getMarketplaceModels(params: {
   if (params.task) q.set("task", params.task);
   if (params.modelParamsMin) q.set("model_params_min", params.modelParamsMin);
   if (params.modelParamsMax) q.set("model_params_max", params.modelParamsMax);
+  if (params.artifactSource) q.set("artifact_source", params.artifactSource);
   q.set("page", String(params.page || 1));
   q.set("per", String(params.per || 16));
   const resp = await fetchJSON<{ data: MarketplaceModel[]; total: number }>(
@@ -2116,10 +2095,14 @@ export async function getMarketplaceModelExtras(repoIDs: number[]): Promise<Mark
   return resp.data || [];
 }
 
-export async function getMarketplaceModelDetail(model: string): Promise<MarketplaceModelDetailResponse> {
+export async function getMarketplaceModelDetail(model: string, options?: { artifactSource?: ArtifactSource; revision?: string }): Promise<MarketplaceModelDetailResponse> {
   const { namespace, name } = splitModelID(model);
+  const q = new URLSearchParams();
+  if (options?.artifactSource) q.set("artifact_source", options.artifactSource);
+  if (options?.revision?.trim()) q.set("revision", options.revision.trim());
+  const suffix = q.size > 0 ? `?${q}` : "";
   return fetchJSON<MarketplaceModelDetailResponse>(
-    `/api/marketplace/models/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`
+    `/api/marketplace/models/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${suffix}`
   );
 }
 

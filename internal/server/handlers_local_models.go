@@ -9,6 +9,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/internal/modelregistry"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -99,40 +100,50 @@ func (s *Server) listLocalModelInfos() ([]api.ModelInfo, error) {
 func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
 	storageID := strings.TrimSpace(item.FullName())
 	inferenceID := model.InferenceModelID(item)
-	pipelineTag := s.resolvedLocalPipelineTag(storageID, strings.TrimSpace(item.PipelineTag))
+	pipelineTag := strings.TrimSpace(item.PipelineTag)
 	hasMMProj := false
 	var contextWindow int64
 	var maxModelLen int64
 
 	if dir, err := s.manager.ModelPath(storageID); err == nil {
-		hasMMProj = model.FindMMProj(dir) != ""
-		contextWindow = s.localModelContextWindow(storageID, dir)
-		// Native length metadata is optional; malformed or incomplete model
-		// metadata must not make the local library endpoint unavailable.
-		maxModelLen, _ = model.MaxModelLen(dir, item.Format)
+		metadata := s.localModelMetadata(storageID, dir, pipelineTag, item.Format)
+		pipelineTag = metadata.PipelineTag
+		hasMMProj = metadata.HasMMProj
+		contextWindow = s.localModelContextWindowWithFallback(storageID, metadata.ContextWindow)
+		maxModelLen = metadata.MaxModelLen
 	}
 	if pipelineTag == "" {
 		pipelineTag = "text-generation"
 	}
+	artifactSource := ""
+	if item.Origin == model.LocalModelOriginMarketplace {
+		if source, err := modelregistry.NormalizeSource(item.ArtifactSource); err == nil {
+			artifactSource = string(source)
+		}
+	}
 
 	return api.ModelInfo{
-		Name:          inferenceID,
-		Model:         inferenceID,
-		Size:          item.Size,
-		Format:        string(item.Format),
-		ModifiedAt:    item.DownloadedAt,
-		Label:         inferenceID,
-		DisplayName:   inferenceID,
-		Source:        "local",
-		Origin:        string(item.Origin),
-		Provider:      "local",
-		Category:      categoryForPipelineTag(pipelineTag),
-		PipelineTag:   pipelineTag,
-		HasMMProj:     hasMMProj,
-		ContextWindow: contextWindow,
-		MaxModelLen:   maxModelLen,
-		Description:   strings.TrimSpace(item.Description),
-		License:       strings.TrimSpace(item.License),
+		Name:              inferenceID,
+		Model:             inferenceID,
+		Size:              item.Size,
+		Format:            string(item.Format),
+		ModifiedAt:        item.DownloadedAt,
+		Label:             inferenceID,
+		DisplayName:       inferenceID,
+		Source:            "local",
+		Origin:            string(item.Origin),
+		Provider:          "local",
+		ArtifactSource:    artifactSource,
+		Repository:        strings.TrimSpace(item.Repository),
+		RequestedRevision: strings.TrimSpace(item.RequestedRevision),
+		ResolvedRevision:  strings.TrimSpace(item.ResolvedRevision),
+		Category:          categoryForPipelineTag(pipelineTag),
+		PipelineTag:       pipelineTag,
+		HasMMProj:         hasMMProj,
+		ContextWindow:     contextWindow,
+		MaxModelLen:       maxModelLen,
+		Description:       strings.TrimSpace(item.Description),
+		License:           strings.TrimSpace(item.License),
 	}
 }
 
@@ -207,7 +218,7 @@ func isASRPipelineTag(pipelineTag string) bool {
 	}
 }
 
-func (s *Server) localModelContextWindow(modelID, modelDir string) int64 {
+func (s *Server) localModelContextWindowWithFallback(modelID string, fallback int64) int64 {
 	s.mu.RLock()
 	if me, ok := s.engines[modelID]; ok && me.numCtx > 0 {
 		numCtx := me.numCtx
@@ -215,7 +226,11 @@ func (s *Server) localModelContextWindow(modelID, modelDir string) int64 {
 		return int64(numCtx)
 	}
 	s.mu.RUnlock()
-	return int64(inference.ResolveNumCtx(modelDir, 0))
+	return fallback
+}
+
+func (s *Server) localModelContextWindow(modelID, modelDir string) int64 {
+	return s.localModelContextWindowWithFallback(modelID, int64(inference.ResolveNumCtx(modelDir, 0)))
 }
 
 func matchesLocalModelSearch(item api.ModelInfo, query, formatFilter, pipelineTagFilter string) bool {

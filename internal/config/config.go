@@ -11,22 +11,31 @@ import (
 )
 
 const (
-	DefaultServerURL          = "https://hub.opencsg.com"
-	DefaultDisplayURL         = "https://opencsg.com"
-	DefaultListenAddr         = ":11435"
-	DefaultDesktopAPIAddr     = "127.0.0.1:11436"
-	DefaultDesktopAPIBindAddr = "0.0.0.0:11436"
-	DefaultCloudProviderName  = "csghub"
-	EnvServerURL              = "CSGHUB_LITE_SERVER_URL"
-	EnvAIGatewayURL           = "CSGHUB_LITE_AI_GATEWAY_URL"
-	EnvCloudProviderName      = "CSGHUB_LITE_CLOUD_PROVIDER_NAME"
-	EnvOpenAIStreamDefault    = "CSGHUB_LITE_OPENAI_STREAM_DEFAULT"
-	EnvHiddenNavItems         = "CSGHUB_LITE_HIDDEN_NAV_ITEMS"
-	AppDir                    = ".csghub-lite"
-	ConfigFile                = "config.json"
-	ModelsDir                 = "models"
-	DatasetsDir               = "datasets"
-	TmpDir                    = "tmp"
+	DefaultServerURL           = "https://hub.opencsg.com"
+	DefaultDisplayURL          = "https://opencsg.com"
+	DefaultListenAddr          = ":11435"
+	DefaultDesktopAPIAddr      = "127.0.0.1:11436"
+	DefaultDesktopAPIBindAddr  = "0.0.0.0:11436"
+	DefaultCloudProviderName   = "csghub"
+	DefaultMarketplaceSource   = "opencsg"
+	DefaultHuggingFaceEndpoint = "https://huggingface.co"
+	DefaultModelScopeEndpoint  = "https://modelscope.cn"
+	EnvServerURL               = "CSGHUB_LITE_SERVER_URL"
+	EnvAIGatewayURL            = "CSGHUB_LITE_AI_GATEWAY_URL"
+	EnvCloudProviderName       = "CSGHUB_LITE_CLOUD_PROVIDER_NAME"
+	EnvOpenAIStreamDefault     = "CSGHUB_LITE_OPENAI_STREAM_DEFAULT"
+	EnvHiddenNavItems          = "CSGHUB_LITE_HIDDEN_NAV_ITEMS"
+	EnvHuggingFaceEndpoint     = "HF_ENDPOINT"
+	EnvHuggingFaceToken        = "HF_TOKEN"
+	EnvHuggingFaceHubToken     = "HUGGING_FACE_HUB_TOKEN"
+	EnvModelScopeEndpoint      = "MODELSCOPE_ENDPOINT"
+	EnvModelScopeToken         = "MODELSCOPE_API_TOKEN"
+	EnvModelScopeAPIKey        = "MODELSCOPE_API_KEY"
+	AppDir                     = ".csghub-lite"
+	ConfigFile                 = "config.json"
+	ModelsDir                  = "models"
+	DatasetsDir                = "datasets"
+	TmpDir                     = "tmp"
 )
 
 func (c *Config) DisplayURL() string {
@@ -45,31 +54,36 @@ func (c *Config) TempDir() string {
 }
 
 type Config struct {
-	ServerURL             string                             `json:"server_url"`
-	AIGatewayURL          string                             `json:"ai_gateway_url,omitempty"`
-	CloudProviderName     string                             `json:"cloud_provider_name,omitempty"`
-	Token                 string                             `json:"token,omitempty"`
-	OpenCSGAPIKey         string                             `json:"opencsg_api_key,omitempty"`
-	ListenAddr            string                             `json:"listen_addr"`
-	ModelDir              string                             `json:"model_dir"`
-	DatasetDir            string                             `json:"dataset_dir"`
-	OpenAIStreamDefault   bool                               `json:"-"`
-	HiddenNavItems        []string                           `json:"-"`
-	AIAppPreferredModels  map[string]string                  `json:"ai_app_preferred_models,omitempty"`
-	AIAppPreferredSources map[string]string                  `json:"ai_app_preferred_sources,omitempty"`
-	AIAppModelBindings    map[string][]api.AIAppModelBinding `json:"ai_app_model_bindings,omitempty"`
-	WebSearch             WebSearchConfig                    `json:"web_search,omitempty"`
-	Observability         ObservabilityConfig                `json:"observability,omitempty"`
-	DesktopMode           bool                               `json:"-"`
-	DesktopToken          string                             `json:"-"`
-	DesktopSessionToken   string                             `json:"-"`
-	DesktopControlToken   string                             `json:"-"`
-	DesktopInstanceID     string                             `json:"-"`
-	ListenAddrOverride    string                             `json:"-"`
-	BoundAddr             string                             `json:"-"`
-	DesktopAPIAddr        string                             `json:"-"`
-	DesktopAPIBindAddr    string                             `json:"-"`
-	DesktopAPIBoundAddr   string                             `json:"-"`
+	ServerURL              string                             `json:"server_url"`
+	AIGatewayURL           string                             `json:"ai_gateway_url,omitempty"`
+	CloudProviderName      string                             `json:"cloud_provider_name,omitempty"`
+	Token                  string                             `json:"token,omitempty"`
+	OpenCSGAPIKey          string                             `json:"opencsg_api_key,omitempty"`
+	HuggingFaceEndpoint    string                             `json:"huggingface_endpoint,omitempty"`
+	HuggingFaceToken       string                             `json:"huggingface_token,omitempty"`
+	ModelScopeEndpoint     string                             `json:"modelscope_endpoint,omitempty"`
+	ModelScopeToken        string                             `json:"modelscope_token,omitempty"`
+	MarketplaceModelSource string                             `json:"marketplace_model_source,omitempty"`
+	ListenAddr             string                             `json:"listen_addr"`
+	ModelDir               string                             `json:"model_dir"`
+	DatasetDir             string                             `json:"dataset_dir"`
+	OpenAIStreamDefault    bool                               `json:"-"`
+	HiddenNavItems         []string                           `json:"-"`
+	AIAppPreferredModels   map[string]string                  `json:"ai_app_preferred_models,omitempty"`
+	AIAppPreferredSources  map[string]string                  `json:"ai_app_preferred_sources,omitempty"`
+	AIAppModelBindings     map[string][]api.AIAppModelBinding `json:"ai_app_model_bindings,omitempty"`
+	WebSearch              WebSearchConfig                    `json:"web_search,omitempty"`
+	Observability          ObservabilityConfig                `json:"observability,omitempty"`
+	DesktopMode            bool                               `json:"-"`
+	DesktopToken           string                             `json:"-"`
+	DesktopSessionToken    string                             `json:"-"`
+	DesktopControlToken    string                             `json:"-"`
+	DesktopInstanceID      string                             `json:"-"`
+	ListenAddrOverride     string                             `json:"-"`
+	BoundAddr              string                             `json:"-"`
+	DesktopAPIAddr         string                             `json:"-"`
+	DesktopAPIBindAddr     string                             `json:"-"`
+	DesktopAPIBoundAddr    string                             `json:"-"`
 }
 
 func (c *Config) EffectiveListenAddr() string {
@@ -259,6 +273,13 @@ func Load() (*Config, error) {
 		if globalConfig.ServerURL == "" {
 			globalConfig.ServerURL = DefaultServerURL
 		}
+		if strings.TrimSpace(globalConfig.HuggingFaceEndpoint) == "" {
+			globalConfig.HuggingFaceEndpoint = DefaultHuggingFaceEndpoint
+		}
+		if strings.TrimSpace(globalConfig.ModelScopeEndpoint) == "" {
+			globalConfig.ModelScopeEndpoint = DefaultModelScopeEndpoint
+		}
+		globalConfig.MarketplaceModelSource = NormalizeMarketplaceModelSource(globalConfig.MarketplaceModelSource)
 		if globalConfig.ListenAddr == "" {
 			globalConfig.ListenAddr = DefaultListenAddr
 		}
@@ -286,6 +307,26 @@ func Load() (*Config, error) {
 		globalConfig.WebSearch = NormalizeWebSearchConfig(globalConfig.WebSearch)
 	})
 	return globalConfig, loadErr
+}
+
+func NormalizeMarketplaceModelSource(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "huggingface":
+		return "huggingface"
+	case "modelscope":
+		return "modelscope"
+	default:
+		return DefaultMarketplaceSource
+	}
+}
+
+func IsSupportedMarketplaceModelSource(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "opencsg", "huggingface", "modelscope":
+		return true
+	default:
+		return false
+	}
 }
 
 func ApplyEnvironmentDefaults(cfg *Config) {
@@ -401,7 +442,10 @@ func Save(cfg *Config) error {
 	}
 
 	globalConfig = cfg
-	return os.WriteFile(cfgPath, data, 0o644)
+	if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(cfgPath, 0o600)
 }
 
 func Reset() {

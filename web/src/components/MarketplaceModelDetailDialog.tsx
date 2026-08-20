@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { getMarketplaceModelDetail } from "../api/client";
 import type {
+  ArtifactSource,
   MarketplaceModel,
   MarketplaceModelDetailResponse,
   MarketplaceTag,
@@ -16,14 +17,29 @@ import {
 
 type MarketplaceModelDetailDialogProps = {
   modelPath: string;
+  artifactSource?: ArtifactSource;
+  revision?: string;
   isLocal?: boolean;
   pulling?: DownloadTask;
   onDownload?: (modelPath: string) => void;
   onClose: () => void;
 };
 
+function artifactSourceLabel(source?: ArtifactSource): string {
+  switch (source) {
+    case "huggingface":
+      return t("mp.sourceHuggingFace");
+    case "modelscope":
+      return t("mp.sourceModelScope");
+    default:
+      return t("mp.sourceOpenCSG");
+  }
+}
+
 export function MarketplaceModelDetailDialog({
   modelPath,
+  artifactSource,
+  revision,
   isLocal,
   pulling,
   onDownload,
@@ -41,7 +57,7 @@ export function MarketplaceModelDetailDialog({
     setError("");
     setDetail(null);
 
-    getMarketplaceModelDetail(modelPath)
+    getMarketplaceModelDetail(modelPath, { artifactSource, revision })
       .then((data) => {
         if (!cancelled) {
           setDetail(data);
@@ -61,7 +77,7 @@ export function MarketplaceModelDetailDialog({
     return () => {
       cancelled = true;
     };
-  }, [modelPath]);
+  }, [modelPath, artifactSource, revision]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -97,7 +113,9 @@ export function MarketplaceModelDetailDialog({
         <div class="flex items-start justify-between gap-4 px-6 py-5 border-b border-gray-100">
           <div class="min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
-              <h2 class="text-xl font-bold text-gray-900 break-all">{modelPath}</h2>
+              <h2 class="text-xl font-bold text-gray-900 break-all">
+                {model?.artifact_source === "modelscope" && model.nickname ? model.nickname : modelPath}
+              </h2>
               {formatTags.map((tag) => (
                 <span
                   key={`format:${tag.name}`}
@@ -115,7 +133,9 @@ export function MarketplaceModelDetailDialog({
                 <LocalInferenceBadge mode={localInferenceMode} prefix="mp" />
               )}
             </div>
-            <p class="mt-1 text-sm text-gray-500">{t("mp.detailSubtitle")}</p>
+            <p class="mt-1 text-sm text-gray-500">
+              {model?.artifact_source === "modelscope" && model.nickname ? modelPath : t("mp.detailSubtitle")}
+            </p>
           </div>
           <div class="flex items-center gap-3 flex-shrink-0">
             <DetailDownloadAction
@@ -148,45 +168,15 @@ export function MarketplaceModelDetailDialog({
             </div>
           ) : model ? (
             <div class="space-y-6">
-              <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                <SummaryTile label={t("mp.format")} value={formatTags.length > 0 ? formatTags.map(formatBadgeLabel).join(" / ") : t("lib.notAvailable")} />
-                <SummaryTile
-                  label={t(localInferenceLabelKey("mp"))}
-                  value={t(localInferenceValueKey(localInferenceMode, "mp"))}
-                  tone={localInferenceMode === "none" ? "danger" : "default"}
-                />
-                <SummaryTile label={t("mp.modelParams")} value={formatModelParams(model.metadata?.model_params)} />
-                <SummaryTile label={t("mp.repoSize")} value={formatRepoSize(model.repo_size)} />
-                <SummaryTile label={t("mp.architecture")} value={model.metadata?.architecture || model.metadata?.class_name || t("lib.notAvailable")} />
-                <SummaryTile label={t("mp.tensorType")} value={model.metadata?.tensor_type || t("lib.notAvailable")} />
-                <SummaryTile label={t("mp.downloads")} value={formatCount(model.downloads)} />
-                <SummaryTile label={t("mp.updated")} value={formatDate(model.updated_at)} />
-              </div>
-
-              {(model.description || model.license) && (
-                <section class="rounded-xl border border-gray-200 bg-white p-5 space-y-3">
-                  {model.description && (
-                    <div>
-                      <h3 class="text-sm font-semibold text-gray-900 mb-1">{t("lib.description")}</h3>
-                      <p class="text-sm text-gray-600 whitespace-pre-wrap">{model.description}</p>
-                    </div>
-                  )}
-                  {model.license && (
-                    <div class="text-sm text-gray-600">
-                      <span class="font-semibold text-gray-900 mr-2">{t("lib.licenseLabel")}</span>
-                      <span>{model.license}</span>
-                    </div>
-                  )}
-                </section>
-              )}
-
-              {runtimeTags.length > 0 && (
-                <TagSection title={t("mp.runtimeFrameworks")} tags={runtimeTags} tone="bg-indigo-50 text-indigo-700" />
-              )}
-
-              {taskTags.length > 0 && (
-                <TagSection title={t("mp.tasks")} tags={taskTags} tone="bg-gray-100 text-gray-700" />
-              )}
+              <ProviderModelDetails
+                model={model}
+                artifactSource={model.artifact_source || artifactSource}
+                revision={revision}
+                formatTags={formatTags}
+                localInferenceMode={localInferenceMode}
+                taskTags={taskTags}
+                runtimeTags={runtimeTags}
+              />
 
               {quantizations.length > 0 && (
                 <section class="rounded-xl border border-gray-200 bg-white p-5 space-y-3">
@@ -213,6 +203,154 @@ export function MarketplaceModelDetailDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+function ProviderModelDetails({
+  model,
+  artifactSource,
+  revision,
+  formatTags,
+  localInferenceMode,
+  taskTags,
+  runtimeTags,
+}: {
+  model: MarketplaceModel;
+  artifactSource?: ArtifactSource;
+  revision?: string;
+  formatTags: MarketplaceTag[];
+  localInferenceMode: ReturnType<typeof localInferenceModeFromSupport>;
+  taskTags: MarketplaceTag[];
+  runtimeTags: MarketplaceTag[];
+}) {
+  const source = model.artifact_source || artifactSource || "opencsg";
+  const format = formatTags.length > 0 ? formatTags.map(formatBadgeLabel).join(" / ") : t("lib.notAvailable");
+  const huggingFace = model.provider?.huggingface;
+  const modelScope = model.provider?.modelscope;
+  const task = huggingFace?.pipeline_tag || modelScope?.tasks?.join(" / ") ||
+    taskTags.map(displayTagName).join(" / ") || t("lib.notAvailable");
+  const runtime = huggingFace?.library_name || modelScope?.libraries?.join(" / ") ||
+    runtimeTags.map(displayTagName).join(" / ") || t("lib.notAvailable");
+  const commonTechnical = (
+    <>
+      <SummaryTile label={t("mp.modelParams")} value={formatModelParams(model.metadata?.model_params)} />
+      <SummaryTile label={t("mp.repoSize")} value={formatRepoSize(model.repo_size)} />
+      <SummaryTile label={t("mp.architecture")} value={model.metadata?.architecture || model.metadata?.class_name || t("lib.notAvailable")} />
+      <SummaryTile label={t("mp.tensorType")} value={model.metadata?.tensor_type || t("lib.notAvailable")} />
+    </>
+  );
+
+  if (source === "huggingface") {
+    return (
+      <>
+        <section class="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <div class="flex items-center gap-2 border-b border-gray-100 px-5 py-3 text-sm font-semibold text-gray-900">
+            <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">{t("mp.sourceHuggingFaceShort")}</span>
+            {t("mp.sourceHuggingFace")}
+          </div>
+          <div class="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+            <SummaryTile label={t("mp.author")} value={huggingFace?.author || model.path.split("/")[0] || t("lib.notAvailable")} />
+            <SummaryTile label={t("mp.tasks")} value={task} />
+            <SummaryTile label={t("mp.library")} value={runtime} />
+            <SummaryTile label={t("mp.format")} value={format} />
+            <SummaryTile label={t("mp.downloads")} value={formatCount(model.downloads)} />
+            <SummaryTile label={t("mp.likes")} value={formatCount(model.likes)} />
+            <SummaryTile label={t("mp.commit")} value={model.revision || revision || t("mp.defaultRevision")} />
+            <SummaryTile label={t("mp.languages")} value={huggingFace?.languages?.join(", ") || t("lib.notAvailable")} />
+            <SummaryTile label={t("mp.baseModel")} value={huggingFace?.base_models?.join(" / ") || t("lib.notAvailable")} />
+            {huggingFace?.gated && <SummaryTile label={t("mp.access")} value={t("mp.gatedAccess")} />}
+          </div>
+        </section>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {commonTechnical}
+          <SummaryTile label={t("mp.updated")} value={formatDate(model.updated_at)} />
+          <SummaryTile
+            label={t(localInferenceLabelKey("mp"))}
+            value={t(localInferenceValueKey(localInferenceMode, "mp"))}
+            tone={localInferenceMode === "none" ? "danger" : "default"}
+          />
+        </div>
+        <ModelDescription model={model} />
+        {taskTags.length > 0 && <TagSection title={t("mp.tasks")} tags={taskTags} tone="bg-gray-100 text-gray-700" />}
+      </>
+    );
+  }
+
+  if (source === "modelscope") {
+    return (
+      <>
+        <section class="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <div class="flex items-center gap-2 border-b border-gray-100 px-5 py-3 text-sm font-semibold text-gray-900">
+            <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">{t("mp.sourceModelScopeShort")}</span>
+            {t("mp.sourceModelScope")}
+          </div>
+          <div class="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+            <SummaryTile label={t("mp.modelId")} value={model.path} />
+            <SummaryTile label={t("mp.tasks")} value={task} />
+            <SummaryTile label={t("mp.library")} value={runtime} />
+            <SummaryTile label={t("mp.modelType")} value={modelScope?.model_type || model.metadata?.model_type || t("lib.notAvailable")} />
+            <SummaryTile label={t("mp.downloads")} value={formatCount(model.downloads)} />
+            <SummaryTile label={t("mp.likes")} value={formatCount(model.likes)} />
+            <SummaryTile label={t("lib.licenseLabel")} value={model.license || t("lib.notAvailable")} />
+            {modelScope?.gated && <SummaryTile label={t("mp.access")} value={t("mp.gatedAccess")} />}
+          </div>
+        </section>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {commonTechnical}
+          <SummaryTile label={t("mp.format")} value={format} />
+          <SummaryTile label={t("mp.updated")} value={formatDate(model.updated_at)} />
+          <SummaryTile
+            label={t(localInferenceLabelKey("mp"))}
+            value={t(localInferenceValueKey(localInferenceMode, "mp"))}
+            tone={localInferenceMode === "none" ? "danger" : "default"}
+          />
+        </div>
+        <ModelDescription model={model} />
+        {runtimeTags.length > 0 && <TagSection title={t("mp.runtimeFrameworks")} tags={runtimeTags} tone="bg-gray-100 text-gray-700" />}
+        {taskTags.length > 0 && <TagSection title={t("mp.tasks")} tags={taskTags} tone="bg-gray-100 text-gray-700" />}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <SummaryTile label={t("mp.format")} value={format} />
+        <SummaryTile label={t("mp.artifactSource")} value={artifactSourceLabel(source)} />
+        <SummaryTile label={t("mp.revision")} value={model.revision || revision || t("mp.defaultRevision")} />
+        <SummaryTile
+          label={t(localInferenceLabelKey("mp"))}
+          value={t(localInferenceValueKey(localInferenceMode, "mp"))}
+          tone={localInferenceMode === "none" ? "danger" : "default"}
+        />
+        {commonTechnical}
+        <SummaryTile label={t("mp.downloads")} value={formatCount(model.downloads)} />
+        <SummaryTile label={t("mp.updated")} value={formatDate(model.updated_at)} />
+      </div>
+      <ModelDescription model={model} />
+      {runtimeTags.length > 0 && <TagSection title={t("mp.runtimeFrameworks")} tags={runtimeTags} tone="bg-indigo-50 text-indigo-700" />}
+      {taskTags.length > 0 && <TagSection title={t("mp.tasks")} tags={taskTags} tone="bg-gray-100 text-gray-700" />}
+    </>
+  );
+}
+
+function ModelDescription({ model }: { model: MarketplaceModel }) {
+  if (!model.description && !model.license) return null;
+  return (
+    <section class="rounded-xl border border-gray-200 bg-white p-5 space-y-3">
+      {model.description && (
+        <div>
+          <h3 class="mb-1 text-sm font-semibold text-gray-900">{t("lib.description")}</h3>
+          <p class="text-sm text-gray-600 whitespace-pre-wrap">{model.description}</p>
+        </div>
+      )}
+      {model.license && (
+        <div class="text-sm text-gray-600">
+          <span class="mr-2 font-semibold text-gray-900">{t("lib.licenseLabel")}</span>
+          <span>{model.license}</span>
+        </div>
+      )}
+    </section>
   );
 }
 

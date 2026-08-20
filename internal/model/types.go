@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Format string
 
@@ -19,17 +22,21 @@ const (
 )
 
 type LocalModel struct {
-	Namespace    string           `json:"namespace"`
-	Name         string           `json:"name"`
-	Format       Format           `json:"format"`
-	Size         int64            `json:"size"`
-	Files        []string         `json:"files"`
-	FileEntries  []LocalModelFile `json:"file_entries,omitempty"`
-	DownloadedAt time.Time        `json:"downloaded_at"`
-	Origin       LocalModelOrigin `json:"origin,omitempty"`
-	Description  string           `json:"description,omitempty"`
-	License      string           `json:"license,omitempty"`
-	PipelineTag  string           `json:"pipeline_tag,omitempty"`
+	Namespace         string           `json:"namespace"`
+	Name              string           `json:"name"`
+	Format            Format           `json:"format"`
+	Size              int64            `json:"size"`
+	Files             []string         `json:"files"`
+	FileEntries       []LocalModelFile `json:"file_entries,omitempty"`
+	DownloadedAt      time.Time        `json:"downloaded_at"`
+	Origin            LocalModelOrigin `json:"origin,omitempty"`
+	Description       string           `json:"description,omitempty"`
+	License           string           `json:"license,omitempty"`
+	PipelineTag       string           `json:"pipeline_tag,omitempty"`
+	ArtifactSource    string           `json:"artifact_source,omitempty"`
+	Repository        string           `json:"repository,omitempty"`
+	RequestedRevision string           `json:"requested_revision,omitempty"`
+	ResolvedRevision  string           `json:"resolved_revision,omitempty"`
 }
 
 type LocalModelFile struct {
@@ -40,5 +47,13 @@ type LocalModelFile struct {
 }
 
 func (m *LocalModel) FullName() string {
-	return m.Namespace + "/" + m.Name
+	repository := strings.Trim(strings.TrimSpace(m.Repository), "/")
+	if repository == "" {
+		repository = strings.TrimSpace(m.Namespace) + "/" + strings.TrimSpace(m.Name)
+	}
+	source := strings.ToLower(strings.TrimSpace(m.ArtifactSource))
+	if source == "" || source == "opencsg" {
+		return repository
+	}
+	return source + "/" + repository
 }

@@ -157,7 +157,7 @@ function DatasetList() {
   const handleDelete = async (name: string, task?: DownloadTask, downloadOnly = false) => {
     if (!confirm(t("ds.deleteConfirm", name))) return;
     if (downloadOnly && task) {
-      clearDownloadTask(task);
+      await clearDownloadTask(task);
       allDatasets.value = allDatasets.value.filter((d) => d.name !== name);
       return;
     }
@@ -165,7 +165,7 @@ function DatasetList() {
     await deleteDataset(name);
     // 清除对应的下载任务记录
     const existingTask = getDownloadTask("dataset", name);
-    if (existingTask) clearDownloadTask(existingTask);
+    if (existingTask) await clearDownloadTask(existingTask);
     allDatasets.value = allDatasets.value.filter((d) => d.name !== name);
   };
 

@@ -7,10 +7,13 @@ import {
   getMarketplaceModelDetail,
   getTags,
   getDatasetTags,
+  getSettings,
+  saveSettings,
 } from "../api/client";
-import type { MarketplaceModel, MarketplaceDataset, MarketplaceModelQuantization } from "../api/client";
+import type { ArtifactSource, MarketplaceModel, MarketplaceDataset, MarketplaceModelQuantization, MarketplaceTag } from "../api/client";
 import { t, locale } from "../i18n";
 import { startDownload, getDownloadTask } from "../downloads";
+import { modelOwnerIdentity, normalizeMarketplaceModelSource } from "../modelSources";
 import {
   MarketplaceModelDetailDialog,
   getMarketplaceModelFormats,
@@ -27,6 +30,7 @@ type FilterOption<T extends string> = {
 type GGUFQuantSelection = {
   modelPath: string;
   quantizations: MarketplaceModelQuantization[];
+  artifactSource: ArtifactSource;
 };
 const modelParamsMinLimit = 0;
 const modelParamsMaxLimit = 1000;
@@ -56,6 +60,8 @@ const modelTaskOptions: FilterOption<ModelTaskFilter>[] = [
   { value: "image-to-image", label: "mp.taskImageToImage" },
 ];
 const activeTab = signal<Tab>("models");
+const artifactSource = signal<ArtifactSource>("opencsg");
+const artifactSourceReady = signal(false);
 const searchQuery = signal("");
 const sortBy = signal("trending");
 const frameworkFilter = signal<ModelFrameworkFilter>("");
@@ -75,9 +81,16 @@ const localModelNames = signal<Set<string>>(new Set());
 const localDatasetNames = signal<Set<string>>(new Set());
 let loadDataRequestID = 0;
 
+function localModelKey(source: ArtifactSource, name: string): string {
+  return `${source}:${name}`;
+}
+
 function loadLocalModels() {
   getTags().then((m) => {
-    localModelNames.value = new Set(m.map((x) => x.name));
+    localModelNames.value = new Set(
+      m.filter((x) => x.source === "local")
+        .map((x) => localModelKey(x.artifact_source || "opencsg", x.repository || x.name)),
+    );
   }).catch(() => {});
 }
 
@@ -90,20 +103,24 @@ function loadLocalDatasets() {
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / perPage)));
 
 async function loadData() {
+  if (!artifactSourceReady.value) return;
   const requestID = ++loadDataRequestID;
   loading.value = true;
   try {
     if (activeTab.value === "models") {
-      const modelParamsRangeActive = modelParamsMin.value > modelParamsMinLimit || modelParamsMax.value < modelParamsMaxLimit;
+      const supportsModelParamsFilter = artifactSource.value === "opencsg";
+      const modelParamsRangeActive = supportsModelParamsFilter &&
+        (modelParamsMin.value > modelParamsMinLimit || modelParamsMax.value < modelParamsMaxLimit);
       const res = await getMarketplaceModels({
         search: searchQuery.value,
         sort: sortBy.value,
         framework: frameworkFilter.value || undefined,
         task: taskFilter.value || undefined,
-        modelParamsMin: modelParamsMin.value > modelParamsMinLimit ? String(modelParamsMin.value) : undefined,
+        modelParamsMin: supportsModelParamsFilter && modelParamsMin.value > modelParamsMinLimit ? String(modelParamsMin.value) : undefined,
         modelParamsMax: modelParamsRangeActive ? formatModelParamsMax(modelParamsMax.value) : undefined,
         page: page.value,
         per: perPage,
+        artifactSource: artifactSource.value,
       });
       if (requestID !== loadDataRequestID) return;
       models.value = res.data || [];
@@ -145,26 +162,41 @@ export function Marketplace() {
   void locale.value;
   const [selectedModelPath, setSelectedModelPath] = useState("");
   const [ggufSelection, setGGUFSelection] = useState<GGUFQuantSelection | null>(null);
-  const [downloadError, setDownloadError] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     loadLocalModels();
     loadLocalDatasets();
+    let cancelled = false;
+    getSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        artifactSource.value = normalizeMarketplaceModelSource(settings.marketplace_model_source);
+      })
+      .catch(() => {
+        if (!cancelled) artifactSource.value = "opencsg";
+      })
+      .finally(() => {
+        if (!cancelled) artifactSourceReady.value = true;
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     page.value = 1;
     loadData();
-  }, [activeTab.value, sortBy.value, frameworkFilter.value, taskFilter.value, modelParamsMin.value, modelParamsMax.value]);
+  }, [artifactSourceReady.value, activeTab.value, artifactSource.value, sortBy.value, frameworkFilter.value, taskFilter.value, modelParamsMin.value, modelParamsMax.value]);
 
   useEffect(() => {
+    setSelectedModelPath("");
+    setGGUFSelection(null);
     if (activeTab.value !== "models") {
-      setSelectedModelPath("");
       setFiltersOpen(false);
     }
-  }, [activeTab.value]);
+  }, [activeTab.value, artifactSource.value]);
 
   useEffect(() => {
     if (!filtersOpen) return;
@@ -187,27 +219,40 @@ export function Marketplace() {
     loadData();
   };
 
-  const beginModelDownload = (modelPath: string, quants?: string[]) => {
-    const started = startDownload("model", modelPath, () => {
-      loadLocalModels();
-    }, { quants });
-    if (!started) {
-      setDownloadError(t("downloads.activeHint"));
+  const selectArtifactSource = (source: ArtifactSource) => {
+    const previous = artifactSource.value;
+    if (source === previous) return;
+    artifactSource.value = source;
+    page.value = 1;
+    if (source !== "opencsg") {
+      modelParamsMin.value = modelParamsMinLimit;
+      modelParamsMax.value = modelParamsMaxLimit;
     }
-    return started;
+    void saveSettings({ marketplace_model_source: source }).catch(() => {
+      if (artifactSource.value === source) {
+        artifactSource.value = previous;
+        page.value = 1;
+      }
+    });
+  };
+
+  const beginModelDownload = (modelPath: string, quants?: string[], source = artifactSource.value) => {
+    startDownload("model", modelPath, () => {
+      loadLocalModels();
+    }, { quants, artifactSource: source });
   };
 
   const handleDownload = (modelPath: string) => {
-    setDownloadError("");
-    getMarketplaceModelDetail(modelPath).then((detail) => {
+    const source = artifactSource.value;
+    getMarketplaceModelDetail(modelPath, { artifactSource: source }).then((detail) => {
       const quants = detail.quantizations || [];
       if (quants.length > 1) {
-        setGGUFSelection({ modelPath, quantizations: quants });
+        setGGUFSelection({ modelPath, quantizations: quants, artifactSource: source });
         return;
       }
-      beginModelDownload(modelPath, quants.length === 1 ? [quants[0].name] : undefined);
+      beginModelDownload(modelPath, quants.length === 1 ? [quants[0].name] : undefined, source);
     }).catch(() => {
-      beginModelDownload(modelPath);
+      beginModelDownload(modelPath, undefined, source);
     });
   };
 
@@ -215,7 +260,7 @@ export function Marketplace() {
     if (!ggufSelection) return;
     const modelPath = ggufSelection.modelPath;
     setGGUFSelection(null);
-    beginModelDownload(modelPath, quants);
+    beginModelDownload(modelPath, quants, ggufSelection.artifactSource);
   };
 
   const handleDatasetDownload = (datasetPath: string) => {
@@ -225,8 +270,8 @@ export function Marketplace() {
   };
   const hasModelFilters = frameworkFilter.value !== ""
     || taskFilter.value !== ""
-    || modelParamsMin.value !== modelParamsMinLimit
-    || modelParamsMax.value !== modelParamsMaxLimit;
+    || (artifactSource.value === "opencsg" &&
+      (modelParamsMin.value !== modelParamsMinLimit || modelParamsMax.value !== modelParamsMaxLimit));
   const clearModelFilters = () => {
     frameworkFilter.value = "";
     taskFilter.value = "";
@@ -236,8 +281,43 @@ export function Marketplace() {
 
   return (
     <div class="page-shell">
-      <h1 class="text-2xl font-bold text-gray-900">{t("mp.title")}</h1>
-      <p class="text-gray-500 text-sm mt-1 mb-6">{t("mp.subtitle")}</p>
+      <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">{t("mp.title")}</h1>
+          <p class="mt-1 text-sm text-gray-500">{t("mp.subtitle")}</p>
+        </div>
+        {activeTab.value === "models" && (
+          <div class="inline-flex w-fit items-center gap-2 rounded-xl border border-gray-200 bg-white p-1.5 shadow-sm">
+            <span class="pl-2 text-xs font-medium text-gray-500">{t("mp.artifactSource")}</span>
+            <div class="flex rounded-lg bg-gray-100 p-0.5" role="group" aria-label={t("mp.artifactSource")}>
+              {([
+                ["opencsg", t("mp.sourceOpenCSG")],
+                ["huggingface", t("mp.sourceHuggingFace")],
+                ["modelscope", t("mp.sourceModelScope")],
+              ] as Array<[ArtifactSource, string]>).map(([source, label]) => (
+                <button
+                  key={source}
+                  type="button"
+                  aria-pressed={artifactSource.value === source}
+                  disabled={!artifactSourceReady.value}
+                  onClick={() => selectArtifactSource(source)}
+                  class={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
+                    artifactSource.value === source
+                      ? source === "huggingface"
+                        ? "bg-amber-400 text-amber-950 shadow-sm"
+                        : source === "modelscope"
+                          ? "bg-blue-600 text-white shadow-sm"
+                          : "bg-emerald-100 text-emerald-700 shadow-sm ring-1 ring-inset ring-emerald-200"
+                      : "text-gray-500 hover:bg-white hover:text-gray-800"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Tabs + Search + View Toggle */}
       <div class="flex items-center gap-3 mb-6 flex-wrap">
@@ -323,20 +403,22 @@ export function Marketplace() {
                     options={modelTaskOptions.map((option) => ({ ...option, label: t(option.label) }))}
                     onChange={(value) => (taskFilter.value = value)}
                   />
-                  <ModelParamsRangeSlider
-                    min={modelParamsMin.value}
-                    max={modelParamsMax.value}
-                    onMinChange={(value) => {
-                      modelParamsMin.value = Math.min(value, modelParamsMax.value);
-                    }}
-                    onMaxChange={(value) => {
-                      modelParamsMax.value = Math.max(value, modelParamsMin.value);
-                    }}
-                    onRangeChange={(min, max) => {
-                      modelParamsMin.value = min;
-                      modelParamsMax.value = max;
-                    }}
-                  />
+                  {artifactSource.value === "opencsg" && (
+                    <ModelParamsRangeSlider
+                      min={modelParamsMin.value}
+                      max={modelParamsMax.value}
+                      onMinChange={(value) => {
+                        modelParamsMin.value = Math.min(value, modelParamsMax.value);
+                      }}
+                      onMaxChange={(value) => {
+                        modelParamsMax.value = Math.max(value, modelParamsMin.value);
+                      }}
+                      onRangeChange={(min, max) => {
+                        modelParamsMin.value = min;
+                        modelParamsMax.value = max;
+                      }}
+                    />
+                  )}
                 </div>
               </div>
             )}
@@ -370,10 +452,10 @@ export function Marketplace() {
           <div class="grid grid-cols-2 gap-4 2xl:grid-cols-3">
             {models.value.map((m) => (
               <ModelGridCard
-                key={m.id}
+                key={m.path}
                 model={m}
-                pulling={getDownloadTask("model", m.path)}
-                isLocal={localModelNames.value.has(m.path)}
+                pulling={getDownloadTask("model", m.path, { artifactSource: artifactSource.value })}
+                isLocal={localModelNames.value.has(localModelKey(artifactSource.value, m.path))}
                 onDownload={handleDownload}
                 onOpenDetail={setSelectedModelPath}
               />
@@ -384,10 +466,10 @@ export function Marketplace() {
           <div class="space-y-0 divide-y divide-gray-100">
             {models.value.map((m) => (
               <ModelCard
-                key={m.id}
+                key={m.path}
                 model={m}
-                pulling={getDownloadTask("model", m.path)}
-                isLocal={localModelNames.value.has(m.path)}
+                pulling={getDownloadTask("model", m.path, { artifactSource: artifactSource.value })}
+                isLocal={localModelNames.value.has(localModelKey(artifactSource.value, m.path))}
                 onDownload={handleDownload}
                 onOpenDetail={setSelectedModelPath}
               />
@@ -437,8 +519,9 @@ export function Marketplace() {
       {selectedModelPath && (
         <MarketplaceModelDetailDialog
           modelPath={selectedModelPath}
-          isLocal={localModelNames.value.has(selectedModelPath)}
-          pulling={getDownloadTask("model", selectedModelPath)}
+          artifactSource={artifactSource.value}
+          isLocal={localModelNames.value.has(localModelKey(artifactSource.value, selectedModelPath))}
+          pulling={getDownloadTask("model", selectedModelPath, { artifactSource: artifactSource.value })}
           onDownload={handleDownload}
           onClose={() => setSelectedModelPath("")}
         />
@@ -450,22 +533,6 @@ export function Marketplace() {
           onConfirm={handleConfirmGGUFDownload}
           onClose={() => setGGUFSelection(null)}
         />
-      )}
-
-      {downloadError && (
-        <div class="fixed bottom-4 right-4 z-50 max-w-sm rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 shadow-lg">
-          <div class="flex items-start gap-3">
-            <span class="flex-1">{downloadError}</span>
-            <button
-              type="button"
-              class="text-amber-600 hover:text-amber-900"
-              onClick={() => setDownloadError("")}
-              aria-label={t("dash.close")}
-            >
-              x
-            </button>
-          </div>
-        </div>
       )}
 
     </div>
@@ -800,30 +867,33 @@ function ModelCard({
   onOpenDetail: (path: string) => void;
 }) {
   void locale.value;
-  const tags = model.tags?.filter((t) => t.category === "task" || t.category === "license").slice(0, 3) || [];
+  const presentation = modelSourcePresentation(model);
+  const tags = providerCardTags(model, 3);
 
   return (
     <div class="flex items-center justify-between py-4">
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 flex-wrap">
+          <ModelSourceMark source={presentation.source} modelPath={model.path} />
           <button
             onClick={() => onOpenDetail(model.path)}
-            class="font-medium text-gray-900 hover:text-indigo-600 transition-colors text-left break-all"
+            class={`font-medium text-gray-900 transition-colors text-left break-all ${presentation.hoverText}`}
             title={t("mp.viewDetails")}
           >
-            {model.path}
+            {presentation.title}
           </button>
           <ModelFormatBadges model={model} />
           {isLocal && (
             <span class="px-1.5 py-0.5 text-xs bg-indigo-50 text-indigo-600 rounded font-medium">{t("mp.downloaded")}</span>
           )}
         </div>
+        {presentation.subtitle && <div class="mt-0.5 text-xs text-gray-400">{presentation.subtitle}</div>}
         {model.description && (
           <p class="text-sm text-gray-500 mt-1 line-clamp-1">{model.description}</p>
         )}
         <div class="flex items-center gap-3 mt-2 text-xs text-gray-400">
           {tags.map((tg) => (
-            <span key={tg.name} class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+            <span key={`${tg.category}:${tg.name}`} class={`px-2 py-0.5 rounded ${presentation.tagTone}`}>
               {tg.show_name || tg.name}
             </span>
           ))}
@@ -908,32 +978,30 @@ function ModelGridCard({
   onOpenDetail: (path: string) => void;
 }) {
   void locale.value;
-  const tags = model.tags?.filter((t) => t.category === "task" || t.category === "license").slice(0, 2) || [];
+  const presentation = modelSourcePresentation(model);
+  const tags = providerCardTags(model, 2);
 
   return (
-    <div class="border border-gray-200 rounded-xl bg-white p-5 flex flex-col justify-between">
+    <div class={`rounded-xl border bg-white p-5 flex flex-col justify-between ${presentation.border}`}>
       <div>
         <div class="flex items-center gap-2 mb-2">
-          <div class="w-6 h-6 rounded-md bg-indigo-100 flex items-center justify-center flex-shrink-0">
-            <svg class="w-3.5 h-3.5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-            </svg>
-          </div>
+          <ModelSourceMark source={presentation.source} modelPath={model.path} />
           <button
             onClick={() => onOpenDetail(model.path)}
-            class="min-w-0 flex-1 font-medium text-gray-900 text-sm truncate text-left hover:text-indigo-600 transition-colors"
+            class={`min-w-0 flex-1 font-medium text-gray-900 text-sm truncate text-left transition-colors ${presentation.hoverText}`}
             title={t("mp.viewDetails")}
           >
-            {model.path}
+            {presentation.title}
           </button>
           <ModelFormatBadges model={model} />
         </div>
+        {presentation.subtitle && <div class="mb-2 truncate text-xs text-gray-400">{presentation.subtitle}</div>}
         <p class="text-sm text-gray-500 line-clamp-2 mb-3 min-h-[2.5rem]">
           {model.description || ""}
         </p>
         <div class="flex items-center gap-2 flex-wrap text-xs text-gray-400">
           {tags.map((tg) => (
-            <span key={tg.name} class="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded">
+            <span key={`${tg.category}:${tg.name}`} class={`px-2 py-0.5 rounded ${presentation.tagTone}`}>
               {tg.show_name || tg.name}
             </span>
           ))}
@@ -984,6 +1052,93 @@ function ModelGridCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function modelSourcePresentation(model: MarketplaceModel): {
+  source: ArtifactSource;
+  title: string;
+  subtitle: string;
+  border: string;
+  hoverText: string;
+  tagTone: string;
+} {
+  const source = model.artifact_source || "opencsg";
+  if (source === "huggingface") {
+    const metadata = model.provider?.huggingface;
+    const subtitle = [metadata?.pipeline_tag, metadata?.library_name].filter(Boolean).join(" · ");
+    return {
+      source,
+      title: model.path,
+      subtitle,
+      border: "border-gray-200 hover:border-gray-300",
+      hoverText: "hover:text-indigo-600",
+      tagTone: "bg-gray-100 text-gray-600",
+    };
+  }
+  if (source === "modelscope") {
+    const title = model.provider?.modelscope?.display_name?.trim() || model.nickname?.trim() || model.name || model.path;
+    return {
+      source,
+      title,
+      subtitle: title === model.path ? "" : model.path,
+      border: "border-gray-200 hover:border-gray-300",
+      hoverText: "hover:text-indigo-600",
+      tagTone: "bg-gray-100 text-gray-600",
+    };
+  }
+  return {
+    source,
+    title: model.path,
+    subtitle: "",
+    border: "border-gray-200 hover:border-gray-300",
+    hoverText: "hover:text-indigo-600",
+    tagTone: "bg-gray-100 text-gray-600",
+  };
+}
+
+function providerCardTags(model: MarketplaceModel, limit: number): MarketplaceTag[] {
+  const source = model.artifact_source || "opencsg";
+  const categories = source === "huggingface"
+    ? ["task", "runtime_framework", "license"]
+    : source === "modelscope"
+      ? ["task", "runtime_framework", "license"]
+      : ["task", "license"];
+  const ordered: MarketplaceTag[] = [];
+  for (const category of categories) {
+    for (const tag of model.tags || []) {
+      if (tag.category === category) ordered.push(tag);
+    }
+  }
+  return ordered.slice(0, limit);
+}
+
+function ModelSourceMark({ source, modelPath }: { source: ArtifactSource; modelPath: string }) {
+  if (source === "huggingface" || source === "modelscope") {
+    const identity = modelOwnerIdentity(modelPath);
+    const palettes = [
+      "bg-blue-100 text-blue-700",
+      "bg-indigo-100 text-indigo-700",
+      "bg-violet-100 text-violet-700",
+      "bg-cyan-100 text-cyan-700",
+      "bg-emerald-100 text-emerald-700",
+      "bg-slate-200 text-slate-700",
+    ];
+    return (
+      <span
+        class={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-[11px] font-bold ${palettes[identity.palette]}`}
+        title={`${identity.owner} · ${t(source === "huggingface" ? "mp.sourceHuggingFace" : "mp.sourceModelScope")}`}
+      >
+        {identity.initial}
+      </span>
+    );
+  }
+  return (
+    <span class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-gray-100" title={t("mp.sourceOpenCSG")}>
+      <svg class="h-3.5 w-3.5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+      </svg>
+    </span>
   );
 }
 

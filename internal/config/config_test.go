@@ -277,6 +277,40 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 }
 
+func TestMarketplaceModelSourcePersistsAndDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	clearCloudServiceEnv(t)
+	Reset()
+	t.Cleanup(Reset)
+	cfg := &Config{MarketplaceModelSource: "modelscope"}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	Reset()
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.MarketplaceModelSource != "modelscope" {
+		t.Fatalf("MarketplaceModelSource = %q", loaded.MarketplaceModelSource)
+	}
+
+	loaded.MarketplaceModelSource = "unsupported"
+	if err := Save(loaded); err != nil {
+		t.Fatal(err)
+	}
+	Reset()
+	loaded, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.MarketplaceModelSource != DefaultMarketplaceSource {
+		t.Fatalf("invalid source normalized to %q", loaded.MarketplaceModelSource)
+	}
+}
+
 func TestSaveCreatesDirectory(t *testing.T) {
 	Reset()
 

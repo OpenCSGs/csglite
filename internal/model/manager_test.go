@@ -1,13 +1,109 @@
 package model
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
 )
+
+func TestManagerListsSameRepositoryAcrossSources(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(&config.Config{ModelDir: dir})
+	for _, source := range []string{"opencsg", "huggingface", "modelscope"} {
+		lm := &LocalModel{
+			Namespace:      "acme",
+			Name:           "demo",
+			Repository:     "acme/demo",
+			ArtifactSource: source,
+		}
+		modelDir := RegistryModelDir(dir, source, "acme", "demo")
+		if err := os.MkdirAll(modelDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveManifestInDir(modelDir, lm); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	models, err := mgr.List()
+	if err != nil || len(models) != 3 {
+		t.Fatalf("List() = %#v, %v", models, err)
+	}
+	for _, modelID := range []string{"acme/demo", "huggingface/acme/demo", "modelscope/acme/demo"} {
+		if _, err := mgr.Get(modelID); err != nil {
+			t.Fatalf("Get(%q): %v", modelID, err)
+		}
+	}
+}
+
+func TestManagerPullFromDoesNotMergeExternalSnapshots(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(&config.Config{ModelDir: dir})
+	modelDir := RegistryModelDir(dir, "huggingface", "acme", "demo")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveManifestInDir(modelDir, &LocalModel{
+		Namespace:      "acme",
+		Name:           "demo",
+		Repository:     "acme/demo",
+		ArtifactSource: "huggingface",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.PullFrom(context.Background(), "acme/demo", "huggingface", "main", nil, nil); err == nil ||
+		!strings.Contains(err.Error(), "already installed") {
+		t.Fatalf("PullFrom() error = %v", err)
+	}
+}
+
+func TestManagerRemovePartialIsSourceScoped(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(&config.Config{ModelDir: dir})
+	hfDir := RegistryModelDir(dir, "huggingface", "acme", "demo")
+	if err := os.MkdirAll(hfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveModelPullState(hfDir, modelPullState{ArtifactSource: "huggingface"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hfDir, "partial.bin"), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opencsgDir := RegistryModelDir(dir, "opencsg", "acme", "demo")
+	if err := os.MkdirAll(opencsgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveManifestInDir(opencsgDir, &LocalModel{Namespace: "acme", Name: "demo"}); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := mgr.RemovePartial("acme/demo", "huggingface")
+	if err != nil || removed != hfDir {
+		t.Fatalf("RemovePartial() = %q, %v", removed, err)
+	}
+	if _, err := os.Stat(hfDir); !os.IsNotExist(err) {
+		t.Fatalf("Hugging Face partial directory still exists: %v", err)
+	}
+	if _, err := os.Stat(opencsgDir); err != nil {
+		t.Fatalf("OpenCSG model was removed: %v", err)
+	}
+}
+
+func TestManagerRejectsSourceQualifiedPathTraversal(t *testing.T) {
+	mgr := NewManager(&config.Config{ModelDir: t.TempDir()})
+	if _, err := mgr.RemovePartial("../escape", "huggingface"); err == nil {
+		t.Fatal("RemovePartial accepted path traversal")
+	}
+	if _, err := mgr.Get("huggingface/../escape"); err == nil {
+		t.Fatal("Get accepted path traversal")
+	}
+}
 
 func TestManager_List_Empty(t *testing.T) {
 	dir := t.TempDir()

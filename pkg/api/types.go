@@ -27,6 +27,10 @@ type ChatRequest struct {
 
 type PullRequest struct {
 	Model string `json:"model"`
+	// ArtifactSource selects the model registry. Empty keeps the historical OpenCSG behavior.
+	ArtifactSource string `json:"artifact_source,omitempty"`
+	// Revision selects a branch, tag, or commit when supported by the registry.
+	Revision string `json:"revision,omitempty"`
 	// Quant selects a GGUF weight variant when multiple quantizations exist (e.g. Q4_K_M). Ignored for non-GGUF models.
 	Quant string `json:"quant,omitempty"`
 	// Quants selects one or more GGUF weight variants. When set, it takes precedence over Quant.
@@ -203,17 +207,19 @@ type PullResponse struct {
 }
 
 type PullJobResponse struct {
-	ID          string       `json:"id"`
-	Status      string       `json:"status"`
-	Kind        string       `json:"kind"`
-	Name        string       `json:"name"`
-	Quant       string       `json:"quant,omitempty"`
-	Quants      []string     `json:"quants,omitempty"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
-	CompletedAt *time.Time   `json:"completed_at,omitempty"`
-	Progress    PullResponse `json:"progress"`
-	Error       string       `json:"error,omitempty"`
+	ID             string       `json:"id"`
+	Status         string       `json:"status"`
+	Kind           string       `json:"kind"`
+	Name           string       `json:"name"`
+	ArtifactSource string       `json:"artifact_source,omitempty"`
+	Revision       string       `json:"revision,omitempty"`
+	Quant          string       `json:"quant,omitempty"`
+	Quants         []string     `json:"quants,omitempty"`
+	CreatedAt      time.Time    `json:"created_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
+	CompletedAt    *time.Time   `json:"completed_at,omitempty"`
+	Progress       PullResponse `json:"progress"`
+	Error          string       `json:"error,omitempty"`
 }
 
 type PsResponse struct {
@@ -276,28 +282,32 @@ type ToolFunction struct {
 }
 
 type ModelInfo struct {
-	Name             string        `json:"name"`
-	Model            string        `json:"model"`
-	Size             int64         `json:"size"`
-	Format           string        `json:"format"`
-	ModifiedAt       time.Time     `json:"modified_at"`
-	Label            string        `json:"label,omitempty"`
-	DisplayName      string        `json:"display_name,omitempty"`
-	Source           string        `json:"source,omitempty"`
-	Origin           string        `json:"origin,omitempty"`
-	Provider         string        `json:"provider,omitempty"`
-	Category         string        `json:"category,omitempty"`
-	PipelineTag      string        `json:"pipeline_tag,omitempty"`
-	InputModalities  []string      `json:"input_modalities,omitempty"`
-	OutputModalities []string      `json:"output_modalities,omitempty"`
-	HasMMProj        bool          `json:"has_mmproj,omitempty"`
-	ContextWindow    int64         `json:"context_window,omitempty"`
-	MaxModelLen      int64         `json:"max_model_len,omitempty"`
-	Description      string        `json:"description,omitempty"`
-	License          string        `json:"license,omitempty"`
-	LLMType          string        `json:"llm_type,omitempty"`
-	OwnedBy          string        `json:"owned_by,omitempty"`
-	Pricing          *ModelPricing `json:"pricing,omitempty"`
+	Name              string        `json:"name"`
+	Model             string        `json:"model"`
+	Size              int64         `json:"size"`
+	Format            string        `json:"format"`
+	ModifiedAt        time.Time     `json:"modified_at"`
+	Label             string        `json:"label,omitempty"`
+	DisplayName       string        `json:"display_name,omitempty"`
+	Source            string        `json:"source,omitempty"`
+	Origin            string        `json:"origin,omitempty"`
+	Provider          string        `json:"provider,omitempty"`
+	ArtifactSource    string        `json:"artifact_source,omitempty"`
+	Repository        string        `json:"repository,omitempty"`
+	RequestedRevision string        `json:"requested_revision,omitempty"`
+	ResolvedRevision  string        `json:"resolved_revision,omitempty"`
+	Category          string        `json:"category,omitempty"`
+	PipelineTag       string        `json:"pipeline_tag,omitempty"`
+	InputModalities   []string      `json:"input_modalities,omitempty"`
+	OutputModalities  []string      `json:"output_modalities,omitempty"`
+	HasMMProj         bool          `json:"has_mmproj,omitempty"`
+	ContextWindow     int64         `json:"context_window,omitempty"`
+	MaxModelLen       int64         `json:"max_model_len,omitempty"`
+	Description       string        `json:"description,omitempty"`
+	License           string        `json:"license,omitempty"`
+	LLMType           string        `json:"llm_type,omitempty"`
+	OwnedBy           string        `json:"owned_by,omitempty"`
+	Pricing           *ModelPricing `json:"pricing,omitempty"`
 }
 
 type ModelPricing struct {
@@ -427,6 +437,11 @@ type SettingsResponse struct {
 	DefaultCloudProviderName string                `json:"default_cloud_provider_name"`
 	DefaultServerURL         string                `json:"default_server_url"`
 	DefaultAIGatewayURL      string                `json:"default_ai_gateway_url"`
+	HuggingFaceEndpoint      string                `json:"huggingface_endpoint"`
+	HuggingFaceTokenSet      bool                  `json:"huggingface_token_configured"`
+	ModelScopeEndpoint       string                `json:"modelscope_endpoint"`
+	ModelScopeTokenSet       bool                  `json:"modelscope_token_configured"`
+	MarketplaceModelSource   string                `json:"marketplace_model_source"`
 	Autostart                bool                  `json:"autostart"`
 	DesktopMode              bool                  `json:"desktop_mode"`
 	LocalAPIURL              string                `json:"local_api_url,omitempty"`
@@ -436,15 +451,20 @@ type SettingsResponse struct {
 }
 
 type SettingsUpdateRequest struct {
-	StorageDir        string                 `json:"storage_dir,omitempty"`
-	ModelDir          string                 `json:"model_dir,omitempty"`
-	DatasetDir        string                 `json:"dataset_dir,omitempty"`
-	ServerURL         *string                `json:"server_url,omitempty"`
-	AIGatewayURL      *string                `json:"ai_gateway_url,omitempty"`
-	CloudProviderName *string                `json:"cloud_provider_name,omitempty"`
-	Autostart         *bool                  `json:"autostart,omitempty"`
-	WebSearch         *WebSearchSettings     `json:"web_search,omitempty"`
-	Observability     *ObservabilitySettings `json:"observability,omitempty"`
+	StorageDir             string                 `json:"storage_dir,omitempty"`
+	ModelDir               string                 `json:"model_dir,omitempty"`
+	DatasetDir             string                 `json:"dataset_dir,omitempty"`
+	ServerURL              *string                `json:"server_url,omitempty"`
+	AIGatewayURL           *string                `json:"ai_gateway_url,omitempty"`
+	CloudProviderName      *string                `json:"cloud_provider_name,omitempty"`
+	HuggingFaceEndpoint    *string                `json:"huggingface_endpoint,omitempty"`
+	HuggingFaceToken       *string                `json:"huggingface_token,omitempty"`
+	ModelScopeEndpoint     *string                `json:"modelscope_endpoint,omitempty"`
+	ModelScopeToken        *string                `json:"modelscope_token,omitempty"`
+	MarketplaceModelSource *string                `json:"marketplace_model_source,omitempty"`
+	Autostart              *bool                  `json:"autostart,omitempty"`
+	WebSearch              *WebSearchSettings     `json:"web_search,omitempty"`
+	Observability          *ObservabilitySettings `json:"observability,omitempty"`
 }
 
 type ObservabilitySettings struct {

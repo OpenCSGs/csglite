@@ -30,6 +30,7 @@ import (
 	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/internal/modelmetadata"
 	"github.com/opencsgs/csglite/internal/observability"
 )
 
@@ -193,6 +194,8 @@ type Server struct {
 	observabilityMu        sync.RWMutex
 	observability          *observability.Store
 	observabilityCleanupAt atomic.Int64
+	modelMetadataMu        sync.RWMutex
+	modelMetadata          *modelmetadata.Store
 	desktopBootstrapped    atomic.Bool
 
 	// shutdownCancel stops the Run loop. It is set in Run and invoked by the
@@ -266,6 +269,11 @@ func New(cfg *config.Config, version string) *Server {
 		if _, err := store.Cleanup(context.Background(), config.ObservabilityRetentionDays(cfg.Observability)); err != nil {
 			log.Printf("OBSERVABILITY: retention cleanup failed: %v", err)
 		}
+	}
+	if store, err := modelmetadata.Open(storageRoot); err != nil {
+		log.Printf("MODEL METADATA: cache unavailable: %v", err)
+	} else {
+		s.modelMetadata = store
 	}
 
 	if appHome, err := config.AppHome(); err == nil {
@@ -454,6 +462,12 @@ func (s *Server) shutdownRuntime() {
 		s.observability = nil
 	}
 	s.observabilityMu.Unlock()
+	s.modelMetadataMu.Lock()
+	if s.modelMetadata != nil {
+		_ = s.modelMetadata.Close()
+		s.modelMetadata = nil
+	}
+	s.modelMetadataMu.Unlock()
 }
 
 // startEvictor periodically closes engines that have exceeded their keep-alive.

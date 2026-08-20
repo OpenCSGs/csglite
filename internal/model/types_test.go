@@ -12,6 +12,21 @@ func TestLocalModel_FullName(t *testing.T) {
 	}
 }
 
+func TestExternalLocalModelFullNameIncludesSource(t *testing.T) {
+	m := &LocalModel{
+		Namespace:      "Qwen",
+		Name:           "Qwen2.5",
+		Repository:     "Qwen/Qwen2.5",
+		ArtifactSource: "huggingface",
+	}
+	if got := m.FullName(); got != "huggingface/Qwen/Qwen2.5" {
+		t.Fatalf("FullName() = %q", got)
+	}
+	if got := InferenceModelID(m); got != "huggingface/Qwen/Qwen2.5" {
+		t.Fatalf("InferenceModelID() = %q", got)
+	}
+}
+
 func TestFormat_String(t *testing.T) {
 	tests := []struct {
 		format Format

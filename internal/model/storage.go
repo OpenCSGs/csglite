@@ -3,11 +3,24 @@ package model
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+const registryModelsDir = ".registries"
 
 // ModelDir returns the directory for a specific model.
 func ModelDir(baseDir, namespace, name string) string {
 	return filepath.Join(baseDir, namespace, name)
+}
+
+// RegistryModelDir keeps historical OpenCSG/import paths stable while
+// namespacing external registries so identical repository IDs can coexist.
+func RegistryModelDir(baseDir, artifactSource, namespace, name string) string {
+	source := strings.ToLower(strings.TrimSpace(artifactSource))
+	if source == "" || source == "opencsg" {
+		return ModelDir(baseDir, namespace, name)
+	}
+	return filepath.Join(baseDir, registryModelsDir, source, namespace, name)
 }
 
 // ManifestPath returns the path to the manifest file for a model.
@@ -31,6 +44,28 @@ func RemoveModelDir(baseDir, namespace, name string) error {
 	entries, err := os.ReadDir(nsDir)
 	if err == nil && len(entries) == 0 {
 		os.Remove(nsDir)
+	}
+	return nil
+}
+
+func RemoveRegistryModelDir(baseDir, artifactSource, namespace, name string) error {
+	source := strings.ToLower(strings.TrimSpace(artifactSource))
+	if source == "" || source == "opencsg" {
+		return RemoveModelDir(baseDir, namespace, name)
+	}
+	dir := RegistryModelDir(baseDir, source, namespace, name)
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	for _, parent := range []string{
+		filepath.Join(baseDir, registryModelsDir, source, namespace),
+		filepath.Join(baseDir, registryModelsDir, source),
+		filepath.Join(baseDir, registryModelsDir),
+	} {
+		entries, err := os.ReadDir(parent)
+		if err == nil && len(entries) == 0 {
+			_ = os.Remove(parent)
+		}
 	}
 	return nil
 }

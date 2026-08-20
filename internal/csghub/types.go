@@ -40,26 +40,56 @@ type User struct {
 
 // Model represents a model returned by the CSGHub API.
 type Model struct {
-	ID            int           `json:"id"`
-	Name          string        `json:"name"`
-	Nickname      string        `json:"nickname"`
-	Description   string        `json:"description"`
-	Likes         int           `json:"likes"`
-	Downloads     int           `json:"downloads"`
-	Path          string        `json:"path"`
-	RepositoryID  int           `json:"repository_id"`
-	Private       bool          `json:"private"`
-	Tags          []Tag         `json:"tags"`
-	Repository    Repository    `json:"repository"`
-	DefaultBranch string        `json:"default_branch"`
-	CreatedAt     time.Time     `json:"created_at"`
-	UpdatedAt     time.Time     `json:"updated_at"`
-	License       string        `json:"license"`
-	Source        string        `json:"source"`
-	SyncStatus    string        `json:"sync_status"`
-	Metadata      ModelMetadata `json:"metadata"`
-	HFPath        string        `json:"hf_path"`
-	RepoSize      int64         `json:"repo_size"`
+	ID             int                    `json:"id"`
+	Name           string                 `json:"name"`
+	Nickname       string                 `json:"nickname"`
+	Description    string                 `json:"description"`
+	Likes          int                    `json:"likes"`
+	Downloads      int                    `json:"downloads"`
+	Path           string                 `json:"path"`
+	RepositoryID   int                    `json:"repository_id"`
+	Private        bool                   `json:"private"`
+	Tags           []Tag                  `json:"tags"`
+	Repository     Repository             `json:"repository"`
+	DefaultBranch  string                 `json:"default_branch"`
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
+	License        string                 `json:"license"`
+	Source         string                 `json:"source"`
+	SyncStatus     string                 `json:"sync_status"`
+	Metadata       ModelMetadata          `json:"metadata"`
+	HFPath         string                 `json:"hf_path"`
+	RepoSize       int64                  `json:"repo_size"`
+	ArtifactSource string                 `json:"artifact_source,omitempty"`
+	Revision       string                 `json:"revision,omitempty"`
+	Provider       *ModelProviderMetadata `json:"provider,omitempty"`
+}
+
+// ModelProviderMetadata preserves source-native display fields without forcing
+// Hugging Face or ModelScope payloads into the OpenCSG model shape.
+type ModelProviderMetadata struct {
+	HuggingFace *HuggingFaceModelMetadata `json:"huggingface,omitempty"`
+	ModelScope  *ModelScopeModelMetadata  `json:"modelscope,omitempty"`
+}
+
+type HuggingFaceModelMetadata struct {
+	Author       string   `json:"author,omitempty"`
+	PipelineTag  string   `json:"pipeline_tag,omitempty"`
+	LibraryName  string   `json:"library_name,omitempty"`
+	Languages    []string `json:"languages,omitempty"`
+	BaseModels   []string `json:"base_models,omitempty"`
+	OriginalTags []string `json:"original_tags,omitempty"`
+	Gated        bool     `json:"gated,omitempty"`
+	SHA          string   `json:"sha,omitempty"`
+}
+
+type ModelScopeModelMetadata struct {
+	DisplayName  string   `json:"display_name,omitempty"`
+	Tasks        []string `json:"tasks,omitempty"`
+	Libraries    []string `json:"libraries,omitempty"`
+	ModelType    string   `json:"model_type,omitempty"`
+	OriginalTags []string `json:"original_tags,omitempty"`
+	Gated        bool     `json:"gated,omitempty"`
 }
 
 type Tag struct {

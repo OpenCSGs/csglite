@@ -12,6 +12,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/modelmetadata"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -95,6 +96,10 @@ func TestHandleSettingsUpdateStorageDirUpdatesModelAndDatasetDirs(t *testing.T) 
 	}
 	if resp.DatasetDir != wantDatasetDir {
 		t.Fatalf("dataset_dir = %q, want %q", resp.DatasetDir, wantDatasetDir)
+	}
+	wantCachePath := filepath.Join(root, modelmetadata.DirName, modelmetadata.DatabaseFile)
+	if s.modelMetadata == nil || s.modelMetadata.Path() != wantCachePath {
+		t.Fatalf("model metadata cache path = %v, want %q", s.modelMetadata, wantCachePath)
 	}
 
 	if _, err := os.Stat(wantModelDir); err != nil {
@@ -243,5 +248,76 @@ func TestHandleSettingsUpdatesObservabilityRetention(t *testing.T) {
 	}
 	if response.Observability.RetentionDays != 90 {
 		t.Fatalf("response retention days = %d, want 90", response.Observability.RetentionDays)
+	}
+}
+
+func TestHandleSettingsUpdatesRegistryCredentialsWithoutReturningSecrets(t *testing.T) {
+	s := newTestServer(t)
+	body := []byte(`{
+		"huggingface_endpoint":"https://hf.example.test",
+		"huggingface_token":"hf-secret",
+		"modelscope_endpoint":"https://ms.example.test",
+		"modelscope_token":"ms-secret"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	recorder := httptest.NewRecorder()
+
+	s.handleSettingsUpdate(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "hf-secret") || strings.Contains(recorder.Body.String(), "ms-secret") {
+		t.Fatal("settings response exposed a registry token")
+	}
+	var response api.SettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.HuggingFaceTokenSet || !response.ModelScopeTokenSet {
+		t.Fatalf("token status = HF %v MS %v", response.HuggingFaceTokenSet, response.ModelScopeTokenSet)
+	}
+	if s.cfg.HuggingFaceToken != "hf-secret" || s.cfg.ModelScopeToken != "ms-secret" {
+		t.Fatal("registry tokens were not saved in server config")
+	}
+}
+
+func TestHandleSettingsPersistsMarketplaceModelSource(t *testing.T) {
+	s := newTestServer(t)
+	source := "huggingface"
+	body, err := json.Marshal(api.SettingsUpdateRequest{MarketplaceModelSource: &source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	recorder := httptest.NewRecorder()
+	s.handleSettingsUpdate(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if s.cfg.MarketplaceModelSource != source {
+		t.Fatalf("MarketplaceModelSource = %q", s.cfg.MarketplaceModelSource)
+	}
+	var response api.SettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.MarketplaceModelSource != source {
+		t.Fatalf("response source = %q", response.MarketplaceModelSource)
+	}
+}
+
+func TestHandleSettingsRejectsUnknownMarketplaceModelSource(t *testing.T) {
+	s := newTestServer(t)
+	source := "unknown"
+	body, err := json.Marshal(api.SettingsUpdateRequest{MarketplaceModelSource: &source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	recorder := httptest.NewRecorder()
+	s.handleSettingsUpdate(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

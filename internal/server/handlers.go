@@ -14,6 +14,7 @@ import (
 	"github.com/opencsgs/csglite/internal/csghub"
 	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/modelregistry"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -464,14 +465,21 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	}
 
 	quants := normalizePullQuants(req.Quant, req.Quants)
-	_, err := s.manager.Pull(r.Context(), req.Model, quants, progress)
+	source, sourceErr := modelregistry.NormalizeSource(req.ArtifactSource)
+	if sourceErr != nil {
+		safeSSE(api.PullResponse{Status: "error: " + sourceErr.Error()})
+		return
+	}
+	_, err := s.manager.PullFrom(r.Context(), req.Model, string(source), strings.TrimSpace(req.Revision), quants, progress)
 	if err != nil {
 		log.Printf("pull %s failed: %v", req.Model, err)
 		s.reportModelDownloadFailure(&pullJob{
-			kind:   "model",
-			name:   req.Model,
-			quant:  firstPullQuant(quants),
-			quants: quants,
+			kind:     "model",
+			name:     req.Model,
+			source:   string(source),
+			revision: strings.TrimSpace(req.Revision),
+			quant:    firstPullQuant(quants),
+			quants:   quants,
 		}, err)
 		safeSSE(api.PullResponse{Status: "error: " + err.Error()})
 		return

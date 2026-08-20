@@ -27,6 +27,7 @@ func newPullCmd() *cobra.Command {
 NAME should be in the format namespace/name.
 
 By default it downloads a model. Use --dataset to download a dataset instead.
+Hugging Face and ModelScope downloads are currently available through the Marketplace UI and local API, not this CLI command.
 
 For GGUF repositories that publish several quantization variants, use --quant to pick one
 (for example Q4_K_M or Q8_0). Other model formats ignore --quant.

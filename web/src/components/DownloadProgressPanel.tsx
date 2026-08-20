@@ -2,24 +2,6 @@ import { locale, t } from "../i18n";
 import { clearDownloadTask, pauseDownload, startDownload } from "../downloads";
 import type { DownloadTask } from "../downloads";
 
-export function DownloadInlineStatus({ task }: { task: DownloadTask }) {
-  const isComplete = isDownloadComplete(task);
-  const label = downloadStatusLabel(task, false);
-  return (
-    <div class="w-full min-w-0">
-      <div class="flex items-center justify-between gap-2 mb-1">
-        {!isComplete && (
-          <span title={label} class={`min-w-0 truncate text-xs font-medium ${task.status === "error" ? "text-red-600" : task.kind === "dataset" ? "text-purple-600" : "text-indigo-600"}`}>
-            {label}
-          </span>
-        )}
-        {(isComplete || task.percent > 0) && <span class="ml-auto shrink-0 text-xs text-gray-400">{displayPercent(task)}%</span>}
-      </div>
-      <ProgressBar task={task} />
-    </div>
-  );
-}
-
 export function DownloadTableCell({ task, onComplete, showActions = true }: { task?: DownloadTask; onComplete?: () => void; showActions?: boolean }) {
   void locale.value;
   if (!task) {
@@ -34,7 +16,11 @@ export function DownloadTableCell({ task, onComplete, showActions = true }: { ta
         <span class="ml-auto shrink-0 text-xs text-gray-400">{displayPercent(task)}%</span>
         {showActions && !isComplete && canResume && (
           <button
-            onClick={() => startDownload(task.kind, task.name, onComplete)}
+            onClick={() => startDownload(task.kind, task.name, onComplete, {
+              artifactSource: task.artifactSource,
+              revision: task.revision,
+              quants: task.quants,
+            })}
             class="shrink-0 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
           >
             {t("downloads.resume")}
@@ -42,7 +28,7 @@ export function DownloadTableCell({ task, onComplete, showActions = true }: { ta
         )}
         {showActions && !isComplete && isDownloading && (
           <button
-            onClick={() => pauseDownload(task.kind, task.name)}
+            onClick={() => pauseDownload(task.kind, task.name, { artifactSource: task.artifactSource, revision: task.revision })}
             class="shrink-0 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
           >
             {t("downloads.pause")}
@@ -50,10 +36,13 @@ export function DownloadTableCell({ task, onComplete, showActions = true }: { ta
         )}
         {showActions && !isComplete && !isDownloading && (
           <button
-            onClick={() => clearDownloadTask(task)}
+            onClick={() => {
+              if (task.kind === "model" && !window.confirm(t("downloads.removePartialConfirm", task.name))) return;
+              void clearDownloadTask(task);
+            }}
             class="shrink-0 text-xs text-gray-400 hover:text-gray-600"
           >
-            {t("downloads.clear")}
+            {task.kind === "model" ? t("downloads.removePartial") : t("downloads.clear")}
           </button>
         )}
       </div>

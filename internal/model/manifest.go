@@ -445,8 +445,12 @@ func SaveManifest(baseDir string, m *LocalModel) error {
 
 // LoadManifest reads a model manifest from disk.
 func LoadManifest(baseDir, namespace, name string) (*LocalModel, error) {
-	mpath := ManifestPath(baseDir, namespace, name)
-	data, err := os.ReadFile(mpath)
+	return LoadManifestInDir(ModelDir(baseDir, namespace, name))
+}
+
+// LoadManifestInDir reads a manifest from an already resolved model directory.
+func LoadManifestInDir(modelDir string) (*LocalModel, error) {
+	data, err := os.ReadFile(filepath.Join(modelDir, "manifest.json"))
 	if err != nil {
 		return nil, err
 	}
