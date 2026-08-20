@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/internal/logutil"
 )
 
@@ -203,7 +204,11 @@ func LogMiddleware(next http.Handler) http.Handler {
 		if isQuietRequestLog(r) && lw.status < http.StatusBadRequest && elapsed < 5*time.Second {
 			return
 		}
-		log.Printf("REQUEST: %s %s (%s)", r.Method, r.URL.Path, elapsed.Round(time.Millisecond))
+		values, _ := correlation.FromContext(r.Context())
+		log.Printf(
+			"REQUEST: %s %s status=%d request_id=%q trace_id=%q (%s)",
+			r.Method, r.URL.Path, lw.status, values.RequestID, values.B3TraceID, elapsed.Round(time.Millisecond),
+		)
 	})
 }
 

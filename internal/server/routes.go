@@ -146,7 +146,11 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /", devStaticHandler("web/dist"))
 	}
 
-	return s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(s.observabilityMiddleware(providerPoolUsageMiddleware(LogMiddleware(mux))))))
+	return correlationMiddleware(LogMiddleware(
+		s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(
+			s.observabilityMiddleware(providerPoolUsageMiddleware(mux)),
+		))),
+	))
 }
 
 func (s *Server) externalAPIRoutes() http.Handler {
@@ -183,7 +187,11 @@ func (s *Server) externalAPIRoutes() http.Handler {
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
 	s.registerProviderInferenceRoutes(mux)
 
-	return desktopExternalAPIMiddleware(s.apiAuthMiddleware(s.observabilityMiddleware(providerPoolUsageMiddleware(LogMiddleware(mux)))))
+	return correlationMiddleware(LogMiddleware(
+		desktopExternalAPIMiddleware(s.apiAuthMiddleware(
+			s.observabilityMiddleware(providerPoolUsageMiddleware(mux)),
+		)),
+	))
 }
 
 func desktopExternalAPIMiddleware(next http.Handler) http.Handler {
@@ -211,9 +219,9 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 		} else {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
-		w.Header().Set("Access-Control-Expose-Headers", "X-CSGLite-Request-ID, X-CSGLite-Trace-ID, X-CSGLite-Thread-ID")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-B3-TraceId, X-CSGLite-Request-ID, X-CSGLite-Trace-ID, X-CSGLite-Thread-ID")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Range, Authorization, x-api-key, X-CSGLite-Desktop-Token, X-CSGLite-Trace-ID, X-CSGLite-Thread-ID")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Range, Authorization, x-api-key, X-Request-ID, X-B3-TraceId, X-CSGLite-Desktop-Token, X-CSGLite-Trace-ID, X-CSGLite-Thread-ID")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

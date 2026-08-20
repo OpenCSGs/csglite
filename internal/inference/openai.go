@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -138,6 +139,7 @@ func (e *openAIEngine) ChatCompletion(ctx context.Context, reqBody map[string]in
 		req.Header.Set("Authorization", "Bearer "+e.token)
 	}
 	e.applyOpenAIForwardHeaders(req)
+	correlation.ApplyRequestHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -176,6 +178,7 @@ func (e *openAIEngine) AnthropicMessages(ctx context.Context, reqBody map[string
 		req.Header.Set("X-Api-Key", e.token)
 	}
 	e.applyOpenAIForwardHeaders(req)
+	correlation.ApplyRequestHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -241,6 +244,7 @@ func (e *openAIEngine) Embeddings(ctx context.Context, reqBody map[string]interf
 		req.Header.Set("Authorization", "Bearer "+e.token)
 	}
 	e.applyOpenAIForwardHeaders(req)
+	correlation.ApplyRequestHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -312,6 +316,7 @@ func (e *openAIEngine) Chat(ctx context.Context, messages []Message, opts Option
 		req.Header.Set("Authorization", "Bearer "+e.token)
 	}
 	e.applyOpenAIForwardHeaders(req)
+	correlation.ApplyRequestHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -54,6 +55,7 @@ func (e *remoteEngine) ChatCompletion(ctx context.Context, reqBody map[string]in
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	correlation.ApplyRequestHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -83,6 +85,7 @@ func (e *remoteEngine) Embeddings(ctx context.Context, reqBody map[string]interf
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	correlation.ApplyRequestHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -155,6 +158,7 @@ func (e *remoteEngine) Chat(ctx context.Context, messages []Message, opts Option
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("X-CSGHUB-Stream", "sse")
+	correlation.ApplyRequestHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {

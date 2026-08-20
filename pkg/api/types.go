@@ -454,7 +454,9 @@ type ObservabilitySettings struct {
 
 type ObservabilityRequest struct {
 	ID                    string    `json:"id"`
+	RequestID             string    `json:"request_id,omitempty"`
 	TraceID               string    `json:"trace_id"`
+	B3TraceID             string    `json:"b3_trace_id,omitempty"`
 	ThreadID              string    `json:"thread_id,omitempty"`
 	StartedAt             time.Time `json:"started_at"`
 	CompletedAt           time.Time `json:"completed_at"`

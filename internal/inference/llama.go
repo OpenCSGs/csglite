@@ -22,6 +22,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/convert"
+	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/internal/ggufmeta"
 	"github.com/opencsgs/csglite/internal/ggufpick"
 	"github.com/opencsgs/csglite/internal/logutil"
@@ -647,6 +648,7 @@ func (e *llamaEngine) ChatCompletion(ctx context.Context, reqBody map[string]int
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	correlation.ApplyRequestHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -725,6 +727,7 @@ func (e *llamaEngine) Embeddings(ctx context.Context, reqBody map[string]interfa
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	correlation.ApplyRequestHeaders(req)
 
 	resp, err := e.client.Do(req)
 	if err != nil {

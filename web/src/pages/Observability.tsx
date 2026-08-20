@@ -866,6 +866,10 @@ function RequestDetail({ request, onOpenTrace }: { request: ObservabilityRequest
         <span class="text-xs text-indigo-400">{t("observability.columnTrace")}</span>
         <span class="mt-1 block break-all font-mono">{request.trace_id}</span>
       </button>
+      <div class="grid gap-3 sm:grid-cols-2">
+        {request.request_id && <CopyableID label={t("observability.correlationRequestID")} value={request.request_id} />}
+        {request.b3_trace_id && <CopyableID label={t("observability.b3TraceID")} value={request.b3_trace_id} />}
+      </div>
       {request.error_message && <div class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{request.error_message}</div>}
       <PayloadPanel title={t("observability.requestPayload")} value={request.request_body} truncated={request.request_body_truncated} />
       <PayloadPanel title={t("observability.responsePayload")} value={request.response_body} truncated={request.response_body_truncated} />
@@ -1139,6 +1143,8 @@ function TraceDetail({ trace }: { trace: ObservabilityTraceDetailResponse }) {
                   <TraceDetailField label={t("observability.columnEndpoint")} value={`${selectedRequest.method} ${selectedRequest.path}`} mono />
                   <TraceDetailField label={t("observability.caller")} value={selectedRequest.api_key_name || "—"} />
                   <TraceDetailField label={t("observability.columnTime")} value={formatObservabilityDateTime(selectedRequest.started_at)} />
+                  {selectedRequest.request_id && <CopyableID label={t("observability.correlationRequestID")} value={selectedRequest.request_id} />}
+                  {selectedRequest.b3_trace_id && <CopyableID label={t("observability.b3TraceID")} value={selectedRequest.b3_trace_id} />}
                   <TraceDetailField label={t("observability.columnLatency")} value={formatObservabilityDuration(selectedRequest.duration_ms)} />
                   <TraceDetailField label="TTFT" value={formatObservabilityDuration(selectedRequest.first_token_latency_ms)} />
                   <TraceDetailField
@@ -1479,6 +1485,20 @@ function TraceDetailField({ label, value, mono = false }: { label: string; value
     <div class="min-w-0 rounded-xl border border-gray-200 bg-gray-50/60 p-3">
       <p class="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
       <p class={`mt-1.5 truncate text-sm font-medium text-gray-800 ${mono ? "font-mono text-xs" : ""}`} title={value}>{value}</p>
+    </div>
+  );
+}
+
+function CopyableID({ label, value }: { label: string; value: string }) {
+  return (
+    <div class="min-w-0 rounded-xl border border-gray-200 bg-gray-50/60 p-3">
+      <div class="flex items-center justify-between gap-2">
+        <p class="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
+        <button type="button" onClick={() => void navigator.clipboard.writeText(value)} class="text-xs font-medium text-indigo-600 hover:text-indigo-800">
+          {t("observability.copy")}
+        </button>
+      </div>
+      <p class="mt-1.5 truncate font-mono text-xs font-medium text-gray-800" title={value}>{value}</p>
     </div>
   );
 }

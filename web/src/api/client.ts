@@ -451,7 +451,9 @@ export interface LocalAPIUsageResponse {
 
 export interface ObservabilityRequest {
   id: string;
+  request_id?: string;
   trace_id: string;
+  b3_trace_id?: string;
   thread_id?: string;
   started_at: string;
   completed_at: string;

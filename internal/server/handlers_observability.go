@@ -185,7 +185,9 @@ func optionalRFC3339(value string) (*time.Time, error) {
 func observabilityRequestResponse(record observability.RequestRecord) api.ObservabilityRequest {
 	return api.ObservabilityRequest{
 		ID:                    record.ID,
+		RequestID:             record.RequestID,
 		TraceID:               record.TraceID,
+		B3TraceID:             record.B3TraceID,
 		ThreadID:              record.ThreadID,
 		StartedAt:             record.StartedAt,
 		CompletedAt:           record.CompletedAt,

@@ -23,7 +23,9 @@ const (
 
 type RequestRecord struct {
 	ID                    string
+	RequestID             string
 	TraceID               string
+	B3TraceID             string
 	ThreadID              string
 	StartedAt             time.Time
 	CompletedAt           time.Time
@@ -144,7 +146,9 @@ PRAGMA busy_timeout=5000;
 PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS requests (
 	id TEXT PRIMARY KEY,
+	request_id TEXT NOT NULL DEFAULT '',
 	trace_id TEXT NOT NULL,
+	b3_trace_id TEXT NOT NULL DEFAULT '',
 	thread_id TEXT NOT NULL DEFAULT '',
 	started_at INTEGER NOT NULL,
 	completed_at INTEGER NOT NULL,
@@ -193,6 +197,8 @@ CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model, started_at DESC
 		name       string
 		definition string
 	}{
+		{"request_id", "TEXT NOT NULL DEFAULT ''"},
+		{"b3_trace_id", "TEXT NOT NULL DEFAULT ''"},
 		{"cache_read_input_tokens", "INTEGER NOT NULL DEFAULT 0"},
 		{"cache_creation_input_tokens", "INTEGER NOT NULL DEFAULT 0"},
 		{"cache_eligible_input_tokens", "INTEGER NOT NULL DEFAULT 0"},
@@ -255,15 +261,16 @@ func (s *Store) Add(ctx context.Context, record RequestRecord) error {
 	}
 	_, err = s.db.ExecContext(ctx, `
 INSERT OR REPLACE INTO requests (
-	id, trace_id, thread_id, started_at, completed_at, method, path, protocol,
+	id, request_id, trace_id, b3_trace_id, thread_id, started_at, completed_at, method, path, protocol,
 	status, status_code, stream, model, source, source_type, source_name,
 	api_key_id, api_key_name, pool_id, pool_name, pool_model, member_model,
 	fallback_count, limited_count, input_tokens, output_tokens, duration_ms,
 	cache_read_input_tokens, cache_creation_input_tokens, cache_eligible_input_tokens,
 	first_token_latency_ms, error_message, request_body, response_body,
 	request_body_truncated, response_body_truncated, usage_reconciled
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		record.ID, record.TraceID, record.ThreadID, millis(record.StartedAt), millis(record.CompletedAt),
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.ID, record.RequestID, record.TraceID, record.B3TraceID, record.ThreadID,
+		millis(record.StartedAt), millis(record.CompletedAt),
 		record.Method, record.Path, record.Protocol, record.Status, record.StatusCode, boolInt(record.Stream),
 		record.Model, record.Source, record.SourceType, record.SourceName, record.APIKeyID, record.APIKeyName,
 		record.PoolID, record.PoolName, record.PoolModel, record.MemberModel, record.FallbackCount,
@@ -637,8 +644,8 @@ func requestWhere(filter RequestFilter) (string, []any) {
 	}
 	if value := strings.TrimSpace(filter.Query); value != "" {
 		like := "%" + strings.ToLower(value) + "%"
-		clauses = append(clauses, "(LOWER(id) LIKE ? OR LOWER(trace_id) LIKE ? OR LOWER(thread_id) LIKE ? OR LOWER(model) LIKE ?)")
-		args = append(args, like, like, like, like)
+		clauses = append(clauses, "(LOWER(id) LIKE ? OR LOWER(request_id) LIKE ? OR LOWER(trace_id) LIKE ? OR LOWER(b3_trace_id) LIKE ? OR LOWER(thread_id) LIKE ? OR LOWER(model) LIKE ?)")
+		args = append(args, like, like, like, like, like, like)
 	}
 	if len(clauses) == 0 {
 		return "", args
@@ -678,9 +685,10 @@ func traceQueryParts(filter RequestFilter) (string, []any, string) {
 	if value := strings.TrimSpace(filter.Query); value != "" {
 		like := "%" + strings.ToLower(value) + "%"
 		clauses = append(clauses, `SUM(CASE WHEN
-			LOWER(id) LIKE ? OR LOWER(trace_id) LIKE ? OR LOWER(thread_id) LIKE ? OR LOWER(model) LIKE ?
+			LOWER(id) LIKE ? OR LOWER(request_id) LIKE ? OR LOWER(trace_id) LIKE ? OR
+			LOWER(b3_trace_id) LIKE ? OR LOWER(thread_id) LIKE ? OR LOWER(model) LIKE ?
 			THEN 1 ELSE 0 END) > 0`)
-		args = append(args, like, like, like, like)
+		args = append(args, like, like, like, like, like, like)
 	}
 	if len(clauses) == 0 {
 		return "", args, ""
@@ -693,7 +701,7 @@ func requestSelect(includeBodies bool) string {
 	if includeBodies {
 		bodyColumns = ", request_body, response_body"
 	}
-	return `SELECT id, trace_id, thread_id, started_at, completed_at, method, path, protocol,
+	return `SELECT id, request_id, trace_id, b3_trace_id, thread_id, started_at, completed_at, method, path, protocol,
 status, status_code, stream, model, source, source_type, source_name, api_key_id, api_key_name,
 pool_id, pool_name, pool_model, member_model, fallback_count, limited_count, input_tokens,
 output_tokens, duration_ms, cache_read_input_tokens, cache_creation_input_tokens,
@@ -710,7 +718,8 @@ func scanRequest(row scanner, includeBodies bool) (RequestRecord, error) {
 	var started, completed int64
 	var stream, requestTruncated, responseTruncated int
 	dest := []any{
-		&record.ID, &record.TraceID, &record.ThreadID, &started, &completed, &record.Method,
+		&record.ID, &record.RequestID, &record.TraceID, &record.B3TraceID, &record.ThreadID,
+		&started, &completed, &record.Method,
 		&record.Path, &record.Protocol, &record.Status, &record.StatusCode, &stream, &record.Model,
 		&record.Source, &record.SourceType, &record.SourceName, &record.APIKeyID, &record.APIKeyName,
 		&record.PoolID, &record.PoolName, &record.PoolModel, &record.MemberModel, &record.FallbackCount,

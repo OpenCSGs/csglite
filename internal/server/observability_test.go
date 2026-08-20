@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/internal/observability"
 )
 
@@ -20,6 +21,8 @@ func TestObservabilityMiddlewareCapturesTextGenerationAndRedactsSecrets(t *testi
 	}))
 	body := `{"model":"test/model","stream":true,"api_key":"request-secret","messages":[{"role":"user","content":"hello"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set(correlation.RequestIDHeader, "gateway-request")
+	req.Header.Set(correlation.B3TraceIDHeader, "463ac35c9f6413ad48485a3953bb6124")
 	req.Header.Set(observabilityTraceIDHeader, "trace-client")
 	req.Header.Set(observabilityThreadIDHeader, "thread-client")
 	recorder := httptest.NewRecorder()
@@ -28,6 +31,10 @@ func TestObservabilityMiddlewareCapturesTextGenerationAndRedactsSecrets(t *testi
 
 	if recorder.Header().Get(observabilityTraceIDHeader) != "trace-client" {
 		t.Fatalf("trace header = %q", recorder.Header().Get(observabilityTraceIDHeader))
+	}
+	if recorder.Header().Get(correlation.RequestIDHeader) != "gateway-request" ||
+		recorder.Header().Get(correlation.B3TraceIDHeader) != "463ac35c9f6413ad48485a3953bb6124" {
+		t.Fatalf("standard correlation headers = %v", recorder.Header())
 	}
 	s.observabilityMu.RLock()
 	page, err := s.observability.ListRequests(req.Context(), observability.RequestFilter{})
@@ -46,6 +53,9 @@ func TestObservabilityMiddlewareCapturesTextGenerationAndRedactsSecrets(t *testi
 	}
 	if detail.TraceID != "trace-client" || detail.ThreadID != "thread-client" || !detail.Stream {
 		t.Fatalf("unexpected trace metadata: %+v", detail)
+	}
+	if detail.RequestID != "gateway-request" || detail.B3TraceID != "463ac35c9f6413ad48485a3953bb6124" {
+		t.Fatalf("unexpected standard correlation metadata: %+v", detail)
 	}
 	if detail.InputTokens != 7 || detail.OutputTokens != 3 || detail.FirstTokenLatencyMS < 0 {
 		t.Fatalf("unexpected usage metadata: %+v", detail)

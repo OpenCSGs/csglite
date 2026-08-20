@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,8 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 	start := time.Date(2026, 8, 10, 8, 0, 0, 0, time.UTC)
 	records := []RequestRecord{
 		{
-			ID: "req-1", TraceID: "trace-1", ThreadID: "thread-1", StartedAt: start,
+			ID: "req-1", RequestID: "gateway-request", TraceID: "trace-1",
+			B3TraceID: "463ac35c9f6413ad", ThreadID: "thread-1", StartedAt: start,
 			CompletedAt: start.Add(1200 * time.Millisecond), Method: "POST", Path: "/v1/chat/completions",
 			Protocol: "openai", Status: "completed", StatusCode: 200, Stream: true, Model: "model-a",
 			Source: "local", SourceType: "local", APIKeyID: "key-a", APIKeyName: "Client",
@@ -55,6 +57,13 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 	if page.Items[0].RequestBody != "" {
 		t.Fatal("list response must not load request bodies")
 	}
+	correlated, err := store.ListRequests(ctx, RequestFilter{Query: "463ac35c", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if correlated.Total != 1 || correlated.Items[0].ID != "req-1" {
+		t.Fatalf("B3-filtered requests = %+v", correlated)
+	}
 
 	detail, err := store.GetRequest(ctx, "req-1")
 	if err != nil {
@@ -65,6 +74,9 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 	}
 	if detail.CacheReadInputTokens != 4 || detail.CacheCreationTokens != 2 || detail.CacheEligibleTokens != 10 {
 		t.Fatalf("cache usage did not round trip: %+v", detail)
+	}
+	if detail.RequestID != "gateway-request" || detail.B3TraceID != "463ac35c9f6413ad" {
+		t.Fatalf("correlation identifiers did not round trip: %+v", detail)
 	}
 
 	traces, err := store.ListTraces(ctx, RequestFilter{Limit: 10})
@@ -94,6 +106,31 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 	}
 	if !strings.Contains(requests[0].RequestBody, "hello") || !strings.Contains(requests[0].ResponseBody, "choices") {
 		t.Fatalf("trace detail omitted input/output payloads: %+v", requests[0])
+	}
+}
+
+func TestStoreDoesNotUseCorrelationRequestIDAsPrimaryKey(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().UTC()
+	for _, id := range []string{"internal-one", "internal-two"} {
+		if err := store.Add(t.Context(), RequestRecord{
+			ID: id, RequestID: "shared-client-id", TraceID: "trace",
+			StartedAt: now, CompletedAt: now, Method: "POST", Path: "/api/chat",
+			Status: "completed", StatusCode: http.StatusOK,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := store.ListRequests(t.Context(), RequestFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 {
+		t.Fatalf("stored requests = %d, want 2", page.Total)
 	}
 }
 

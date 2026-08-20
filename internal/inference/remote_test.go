@@ -8,11 +8,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func TestRemoteEngineChatIncludesRequestedContextOptions(t *testing.T) {
 	var got api.ChatRequest
+	values := correlation.Values{
+		RequestID: "gateway-request", TraceID: "logical-trace",
+		B3TraceID: "463ac35c9f6413ad", ThreadID: "thread-one",
+	}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/chat" {
@@ -21,13 +26,18 @@ func TestRemoteEngineChatIncludesRequestedContextOptions(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
+		if r.Header.Get(correlation.RequestIDHeader) != values.RequestID ||
+			r.Header.Get(correlation.B3TraceIDHeader) != values.B3TraceID {
+			t.Fatalf("correlation headers = %v", r.Header)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"message":{"role":"assistant","content":"ok"},"done":true}`)
 	}))
 	defer ts.Close()
 
 	eng := NewRemoteEngine(ts.URL, "Qwen/Qwen3-0.6B-GGUF", 131072, 1, 48, "q8_0", "bf16", "q8_0")
-	resp, err := eng.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, DefaultOptions(), nil)
+	ctx := correlation.WithContext(context.Background(), values)
+	resp, err := eng.Chat(ctx, []Message{{Role: "user", Content: "hi"}}, DefaultOptions(), nil)
 	if err != nil {
 		t.Fatalf("Chat returned error: %v", err)
 	}

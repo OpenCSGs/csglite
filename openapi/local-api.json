@@ -3,7 +3,7 @@
   "info": {
     "title": "CSGHub Lite Local API",
     "version": "0.1.0",
-    "description": "Structured documentation for the local `/api/*` and `/v1/*` endpoints served by `csghub-lite`.\n\nMaintenance note: whenever you add, remove, or rename an `/api/*` or `/v1/*` route in `internal/server/routes.go`, update this file and run the OpenAPI sync test before merging."
+    "description": "Structured documentation for the local `/api/*` and `/v1/*` endpoints served by `csghub-lite`.\n\nRequest correlation: every API response includes `X-Request-ID` and `X-B3-TraceId`. Callers may provide `X-Request-ID` using up to 128 alphanumeric or `-_.:` characters and may provide a non-zero 16- or 32-hex-character `X-B3-TraceId`; invalid values are replaced. Text-generation requests also accept `X-CSGLite-Trace-ID` and `X-CSGLite-Thread-ID`. A valid CSGLite trace ID remains the logical Observability grouping key, while B3 identifies the distributed path through trusted inference services.\n\nMaintenance note: whenever you add, remove, or rename an `/api/*` or `/v1/*` route in `internal/server/routes.go`, update this file and run the OpenAPI sync test before merging."
   },
   "servers": [
     {
@@ -1267,6 +1267,10 @@
         "summary": "Generate text",
         "description": "Generates text from a prompt. By default the endpoint streams tokens as Server-Sent Events unless `stream` is set to `false`.",
         "operationId": "generateText",
+        "parameters": [
+          {"$ref": "#/components/parameters/CorrelationRequestID"},
+          {"$ref": "#/components/parameters/B3TraceID"}
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1320,6 +1324,10 @@
         "summary": "Generate chat completions",
         "description": "Supports local models and, when `source` is `cloud`, OpenCSG-backed chat models. Streaming responses are sent as SSE when `Accept: text/event-stream` or `X-CSGHUB-Stream: sse` is provided; otherwise streaming defaults to NDJSON.",
         "operationId": "chatCompletions",
+        "parameters": [
+          {"$ref": "#/components/parameters/CorrelationRequestID"},
+          {"$ref": "#/components/parameters/B3TraceID"}
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -4148,6 +4156,12 @@
         "operationId": "openAIChatCompletions",
         "parameters": [
           {
+            "$ref": "#/components/parameters/CorrelationRequestID"
+          },
+          {
+            "$ref": "#/components/parameters/B3TraceID"
+          },
+          {
             "$ref": "#/components/parameters/ROMAHost"
           },
           {
@@ -4485,6 +4499,12 @@
         "operationId": "providerScopedOpenAIChatCompletions",
         "parameters": [
           {
+            "$ref": "#/components/parameters/CorrelationRequestID"
+          },
+          {
+            "$ref": "#/components/parameters/B3TraceID"
+          },
+          {
             "$ref": "#/components/parameters/ROMAHost"
           },
           {
@@ -4593,6 +4613,12 @@
         "operationId": "providerScopedOpenAIResponses",
         "parameters": [
           {
+            "$ref": "#/components/parameters/CorrelationRequestID"
+          },
+          {
+            "$ref": "#/components/parameters/B3TraceID"
+          },
+          {
             "$ref": "#/components/parameters/ROMAHost"
           },
           {
@@ -4668,6 +4694,10 @@
         "summary": "Anthropic-compatible messages API",
         "description": "Provider-or-pool-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. Anthropic Messages compatibility endpoint. When `stream` is true the route emits Anthropic event-stream events such as `message_start`, `content_block_delta`, and `message_stop`.",
         "operationId": "providerScopedAnthropicMessages",
+        "parameters": [
+          {"$ref": "#/components/parameters/CorrelationRequestID"},
+          {"$ref": "#/components/parameters/B3TraceID"}
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -5142,6 +5172,12 @@
         "operationId": "openAIResponses",
         "parameters": [
           {
+            "$ref": "#/components/parameters/CorrelationRequestID"
+          },
+          {
+            "$ref": "#/components/parameters/B3TraceID"
+          },
+          {
             "$ref": "#/components/parameters/ROMAHost"
           },
           {
@@ -5206,6 +5242,10 @@
         "summary": "Anthropic-compatible messages API",
         "description": "Anthropic Messages compatibility endpoint. When `stream` is true the route emits Anthropic event-stream events such as `message_start`, `content_block_delta`, and `message_stop`.",
         "operationId": "anthropicMessages",
+        "parameters": [
+          {"$ref": "#/components/parameters/CorrelationRequestID"},
+          {"$ref": "#/components/parameters/B3TraceID"}
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -5455,6 +5495,27 @@
   },
   "components": {
     "parameters": {
+      "CorrelationRequestID": {
+        "name": "X-Request-ID",
+        "in": "header",
+        "required": false,
+        "description": "End-to-end request correlation ID. Invalid or missing values are replaced and the effective value is returned in the response.",
+        "schema": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        }
+      },
+      "B3TraceID": {
+        "name": "X-B3-TraceId",
+        "in": "header",
+        "required": false,
+        "description": "B3-compatible distributed trace ID propagated to trusted inference services. Must be a non-zero 16- or 32-character hexadecimal value.",
+        "schema": {
+          "type": "string",
+          "pattern": "^(?!0+$)(?:[0-9A-Fa-f]{16}|[0-9A-Fa-f]{32})$"
+        }
+      },
       "ROMAHost": {
         "name": "Host",
         "in": "header",
@@ -6717,7 +6778,9 @@
         "required": ["id", "trace_id", "started_at", "completed_at", "method", "path", "protocol", "status", "status_code", "stream", "model", "input_tokens", "output_tokens", "total_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "cache_eligible_input_tokens", "cache_hit_rate", "duration_ms", "first_token_latency_ms"],
         "properties": {
           "id": {"type": "string"},
+          "request_id": {"type": "string", "description": "Effective X-Request-ID used for end-to-end request correlation."},
           "trace_id": {"type": "string"},
+          "b3_trace_id": {"type": "string", "pattern": "^[0-9a-f]{16}(?:[0-9a-f]{16})?$", "description": "Effective X-B3-TraceId propagated through trusted inference services."},
           "thread_id": {"type": "string"},
           "started_at": {"type": "string", "format": "date-time"},
           "completed_at": {"type": "string", "format": "date-time"},

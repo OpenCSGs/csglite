@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/opencsgs/csglite/internal/correlation"
 )
 
 func TestOpenAIEngineChatUnauthorized(t *testing.T) {
@@ -28,6 +30,30 @@ func TestOpenAIEngineChatUnauthorized(t *testing.T) {
 	}
 	if HTTPErrorMessage(err) != "AUTH-ERR-1: User not found, please login first" {
 		t.Fatalf("error = %q", HTTPErrorMessage(err))
+	}
+}
+
+func TestOpenAIEnginePropagatesCorrelationHeaders(t *testing.T) {
+	values := correlation.Values{
+		RequestID: "gateway-request", TraceID: "logical-trace",
+		B3TraceID: "463ac35c9f6413ad", ThreadID: "thread-one",
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(correlation.RequestIDHeader) != values.RequestID ||
+			r.Header.Get(correlation.B3TraceIDHeader) != values.B3TraceID ||
+			r.Header.Get(correlation.TraceIDHeader) != values.TraceID ||
+			r.Header.Get(correlation.ThreadIDHeader) != values.ThreadID {
+			t.Fatalf("correlation headers = %v", r.Header)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer ts.Close()
+
+	eng := NewOpenAICompatibleEngine(ts.URL, "test-model", "test-token")
+	ctx := correlation.WithContext(context.Background(), values)
+	if _, err := eng.Chat(ctx, []Message{{Role: "user", Content: "hi"}}, DefaultOptions(), nil); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -549,6 +575,10 @@ func TestOpenAICompatibleEngineProxiesNativeAnthropicMessages(t *testing.T) {
 	var gotPath string
 	var gotHeaders http.Header
 	var gotBody map[string]interface{}
+	values := correlation.Values{
+		RequestID: "anthropic-request", TraceID: "anthropic-trace",
+		B3TraceID: "463ac35c9f6413ad", ThreadID: "thread-one",
+	}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotHeaders = r.Header.Clone()
@@ -570,7 +600,7 @@ func TestOpenAICompatibleEngineProxiesNativeAnthropicMessages(t *testing.T) {
 		t.Fatal("built-in cloud engine should retain its existing Chat Completions routing")
 	}
 	resp, err := eng.(AnthropicMessagesProxier).AnthropicMessages(
-		context.Background(),
+		correlation.WithContext(context.Background(), values),
 		map[string]interface{}{
 			"model":          "public-model",
 			"source":         "provider:test",
@@ -591,6 +621,10 @@ func TestOpenAICompatibleEngineProxiesNativeAnthropicMessages(t *testing.T) {
 
 	if gotPath != "/messages" {
 		t.Fatalf("path = %q, want /messages", gotPath)
+	}
+	if gotHeaders.Get(correlation.RequestIDHeader) != values.RequestID ||
+		gotHeaders.Get(correlation.B3TraceIDHeader) != values.B3TraceID {
+		t.Fatalf("correlation headers = %v", gotHeaders)
 	}
 	if gotBody["model"] != "upstream-model" {
 		t.Fatalf("model = %#v, want upstream-model", gotBody["model"])

@@ -18,14 +18,15 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/observability"
 )
 
 const (
 	observabilityRequestIDHeader = "X-CSGLite-Request-ID"
-	observabilityTraceIDHeader   = "X-CSGLite-Trace-ID"
-	observabilityThreadIDHeader  = "X-CSGLite-Thread-ID"
+	observabilityTraceIDHeader   = correlation.TraceIDHeader
+	observabilityThreadIDHeader  = correlation.ThreadIDHeader
 	observabilityBodyLimit       = 1024 * 1024
 	observabilityUsageTailLimit  = 64 * 1024
 )
@@ -181,18 +182,16 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 		}
 
 		startedAt := time.Now().UTC()
+		values, ok := correlation.FromContext(r.Context())
+		if !ok {
+			values = correlation.FromHeaders(r.Header)
+			r = r.WithContext(correlation.WithContext(r.Context(), values))
+		}
 		requestID := newObservationID("req")
-		traceID := normalizedObservationID(r.Header.Get(observabilityTraceIDHeader))
-		if traceID == "" {
-			traceID = newObservationID("trace")
-		}
-		threadID := normalizedObservationID(r.Header.Get(observabilityThreadIDHeader))
-		if threadID == "" {
-			threadID = newObservationID("thread")
-		}
+		traceID := values.TraceID
+		threadID := values.ThreadID
+		correlation.ApplyResponseHeaders(w.Header(), values)
 		w.Header().Set(observabilityRequestIDHeader, requestID)
-		w.Header().Set(observabilityTraceIDHeader, traceID)
-		w.Header().Set(observabilityThreadIDHeader, threadID)
 
 		requestBody, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -252,7 +251,9 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 		snapshot.inputTokens = observationMax64(snapshot.inputTokens, responseUsage.eligibleTokens)
 		record := observability.RequestRecord{
 			ID:                    requestID,
+			RequestID:             values.RequestID,
 			TraceID:               traceID,
+			B3TraceID:             values.B3TraceID,
 			ThreadID:              threadID,
 			StartedAt:             startedAt,
 			CompletedAt:           completedAt,
@@ -619,18 +620,7 @@ func observationErrorMessage(body []byte) string {
 }
 
 func normalizedObservationID(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 128 {
-		return ""
-	}
-	for _, char := range value {
-		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') || strings.ContainsRune("-_.:", char) {
-			continue
-		}
-		return ""
-	}
-	return value
+	return correlation.NormalizeID(value)
 }
 
 func newObservationID(prefix string) string {
