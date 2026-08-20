@@ -93,8 +93,7 @@ func TestModelScopeParameterBillionsSupportsBothUnits(t *testing.T) {
 }
 
 func TestHuggingFaceRegistryNormalizesAndDownloads(t *testing.T) {
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/models":
 			if r.URL.Query().Get("expand") == "" {
