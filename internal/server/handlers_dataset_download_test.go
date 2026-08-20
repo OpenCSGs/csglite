@@ -164,6 +164,72 @@ func TestHandleDatasetFile_RejectsInvalidPath(t *testing.T) {
 	}
 }
 
+func TestHandleDatasetManifest_SourceQualifiedRoute(t *testing.T) {
+	s := newTestServer(t)
+	datasetDir := dataset.RegistryDatasetDir(s.cfg.DatasetDir, "huggingface", "Acme", "demo")
+	if err := os.MkdirAll(datasetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(datasetDir, "data.jsonl"), []byte("demo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := dataset.SaveManifestInDir(datasetDir, &dataset.LocalDataset{
+		Namespace: "Acme", Name: "demo", ArtifactSource: "huggingface",
+		Repository: "Acme/demo", RequestedRevision: "main",
+		Files: []string{"data.jsonl"}, DownloadedAt: time.Unix(100, 0),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dataset-manifests/huggingface/Acme/demo", nil)
+	w := httptest.NewRecorder()
+	s.externalAPIRoutes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	var response api.DatasetManifestResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Details.Dataset != "huggingface/Acme/demo" ||
+		response.Details.ArtifactSource != "huggingface" ||
+		response.Details.Repository != "Acme/demo" {
+		t.Fatalf("details = %#v", response.Details)
+	}
+	if len(response.Files) != 1 ||
+		response.Files[0].DownloadURL != "/api/dataset-files/huggingface/Acme/demo/data.jsonl" {
+		t.Fatalf("files = %#v", response.Files)
+	}
+}
+
+func TestHandleLocalDatasetExport_UsesSourceQualifiedManagerID(t *testing.T) {
+	s := newTestServer(t)
+	datasetDir := dataset.RegistryDatasetDir(s.cfg.DatasetDir, "modelscope", "Acme", "demo")
+	if err := os.MkdirAll(datasetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(datasetDir, "data.jsonl"), []byte("demo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := dataset.SaveManifestInDir(datasetDir, &dataset.LocalDataset{
+		Namespace: "Acme", Name: "demo", ArtifactSource: "modelscope",
+		Repository: "Acme/demo", Files: []string{"data.jsonl"},
+		FileEntries: []dataset.LocalDatasetFile{{Path: "data.jsonl", Size: 4}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/datasets/Acme/demo/export?artifact_source=modelscope", nil)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/zip" {
+		t.Fatalf("Content-Type = %q, want application/zip", got)
+	}
+}
+
 func mustSaveLocalDataset(t *testing.T, baseDir string, d *dataset.LocalDataset) {
 	t.Helper()
 	if err := dataset.SaveManifest(baseDir, d); err != nil {

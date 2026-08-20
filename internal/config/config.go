@@ -54,36 +54,37 @@ func (c *Config) TempDir() string {
 }
 
 type Config struct {
-	ServerURL              string                             `json:"server_url"`
-	AIGatewayURL           string                             `json:"ai_gateway_url,omitempty"`
-	CloudProviderName      string                             `json:"cloud_provider_name,omitempty"`
-	Token                  string                             `json:"token,omitempty"`
-	OpenCSGAPIKey          string                             `json:"opencsg_api_key,omitempty"`
-	HuggingFaceEndpoint    string                             `json:"huggingface_endpoint,omitempty"`
-	HuggingFaceToken       string                             `json:"huggingface_token,omitempty"`
-	ModelScopeEndpoint     string                             `json:"modelscope_endpoint,omitempty"`
-	ModelScopeToken        string                             `json:"modelscope_token,omitempty"`
-	MarketplaceModelSource string                             `json:"marketplace_model_source,omitempty"`
-	ListenAddr             string                             `json:"listen_addr"`
-	ModelDir               string                             `json:"model_dir"`
-	DatasetDir             string                             `json:"dataset_dir"`
-	OpenAIStreamDefault    bool                               `json:"-"`
-	HiddenNavItems         []string                           `json:"-"`
-	AIAppPreferredModels   map[string]string                  `json:"ai_app_preferred_models,omitempty"`
-	AIAppPreferredSources  map[string]string                  `json:"ai_app_preferred_sources,omitempty"`
-	AIAppModelBindings     map[string][]api.AIAppModelBinding `json:"ai_app_model_bindings,omitempty"`
-	WebSearch              WebSearchConfig                    `json:"web_search,omitempty"`
-	Observability          ObservabilityConfig                `json:"observability,omitempty"`
-	DesktopMode            bool                               `json:"-"`
-	DesktopToken           string                             `json:"-"`
-	DesktopSessionToken    string                             `json:"-"`
-	DesktopControlToken    string                             `json:"-"`
-	DesktopInstanceID      string                             `json:"-"`
-	ListenAddrOverride     string                             `json:"-"`
-	BoundAddr              string                             `json:"-"`
-	DesktopAPIAddr         string                             `json:"-"`
-	DesktopAPIBindAddr     string                             `json:"-"`
-	DesktopAPIBoundAddr    string                             `json:"-"`
+	ServerURL                string                             `json:"server_url"`
+	AIGatewayURL             string                             `json:"ai_gateway_url,omitempty"`
+	CloudProviderName        string                             `json:"cloud_provider_name,omitempty"`
+	Token                    string                             `json:"token,omitempty"`
+	OpenCSGAPIKey            string                             `json:"opencsg_api_key,omitempty"`
+	HuggingFaceEndpoint      string                             `json:"huggingface_endpoint,omitempty"`
+	HuggingFaceToken         string                             `json:"huggingface_token,omitempty"`
+	ModelScopeEndpoint       string                             `json:"modelscope_endpoint,omitempty"`
+	ModelScopeToken          string                             `json:"modelscope_token,omitempty"`
+	MarketplaceModelSource   string                             `json:"marketplace_model_source,omitempty"`
+	MarketplaceDatasetSource string                             `json:"marketplace_dataset_source,omitempty"`
+	ListenAddr               string                             `json:"listen_addr"`
+	ModelDir                 string                             `json:"model_dir"`
+	DatasetDir               string                             `json:"dataset_dir"`
+	OpenAIStreamDefault      bool                               `json:"-"`
+	HiddenNavItems           []string                           `json:"-"`
+	AIAppPreferredModels     map[string]string                  `json:"ai_app_preferred_models,omitempty"`
+	AIAppPreferredSources    map[string]string                  `json:"ai_app_preferred_sources,omitempty"`
+	AIAppModelBindings       map[string][]api.AIAppModelBinding `json:"ai_app_model_bindings,omitempty"`
+	WebSearch                WebSearchConfig                    `json:"web_search,omitempty"`
+	Observability            ObservabilityConfig                `json:"observability,omitempty"`
+	DesktopMode              bool                               `json:"-"`
+	DesktopToken             string                             `json:"-"`
+	DesktopSessionToken      string                             `json:"-"`
+	DesktopControlToken      string                             `json:"-"`
+	DesktopInstanceID        string                             `json:"-"`
+	ListenAddrOverride       string                             `json:"-"`
+	BoundAddr                string                             `json:"-"`
+	DesktopAPIAddr           string                             `json:"-"`
+	DesktopAPIBindAddr       string                             `json:"-"`
+	DesktopAPIBoundAddr      string                             `json:"-"`
 }
 
 func (c *Config) EffectiveListenAddr() string {
@@ -280,6 +281,7 @@ func Load() (*Config, error) {
 			globalConfig.ModelScopeEndpoint = DefaultModelScopeEndpoint
 		}
 		globalConfig.MarketplaceModelSource = NormalizeMarketplaceModelSource(globalConfig.MarketplaceModelSource)
+		globalConfig.MarketplaceDatasetSource = NormalizeMarketplaceDatasetSource(globalConfig.MarketplaceDatasetSource)
 		if globalConfig.ListenAddr == "" {
 			globalConfig.ListenAddr = DefaultListenAddr
 		}
@@ -327,6 +329,14 @@ func IsSupportedMarketplaceModelSource(value string) bool {
 	default:
 		return false
 	}
+}
+
+func NormalizeMarketplaceDatasetSource(value string) string {
+	return NormalizeMarketplaceModelSource(value)
+}
+
+func IsSupportedMarketplaceDatasetSource(value string) bool {
+	return IsSupportedMarketplaceModelSource(value)
 }
 
 func ApplyEnvironmentDefaults(cfg *Config) {

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sort"
@@ -12,10 +13,12 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/datasetregistry"
 	"github.com/opencsgs/csglite/internal/ggufpick"
 	"github.com/opencsgs/csglite/internal/localinference"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelregistry"
+	artifactregistry "github.com/opencsgs/csglite/internal/registry"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -362,6 +365,11 @@ func (s *Server) handleMarketplaceDatasets(w http.ResponseWriter, r *http.Reques
 	if per <= 0 {
 		per = 16
 	}
+	artifactSource, err := datasetregistry.NormalizeSource(q.Get("artifact_source"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	cacheKey := marketplaceCacheKey("datasets", r.URL.RawQuery)
 	if body, ok := getFreshMarketplaceCache(cacheKey, time.Now()); ok {
@@ -369,13 +377,20 @@ func (s *Server) handleMarketplaceDatasets(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	client := csghub.NewClient(s.cfg.ServerURL, s.cfg.Token)
-	datasets, total, err := client.ListDatasets(r.Context(), csghub.DatasetListParams{
-		Search:  q.Get("search"),
-		Sort:    q.Get("sort"),
-		Page:    page,
-		PerPage: per,
-		Source:  q.Get("source"),
+	registry, err := datasetregistry.New(s.cfg, artifactSource)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	datasets, total, err := registry.ListDatasets(r.Context(), datasetregistry.ListOptions{
+		Search:         q.Get("search"),
+		Sort:           q.Get("sort"),
+		Page:           page,
+		PerPage:        per,
+		Task:           q.Get("task"),
+		Language:       q.Get("language"),
+		License:        q.Get("license"),
+		UpstreamSource: q.Get("source"),
 	})
 	if err != nil {
 		if body, ok := getAnyMarketplaceCache(cacheKey); ok {
@@ -390,6 +405,135 @@ func (s *Server) handleMarketplaceDatasets(w http.ResponseWriter, r *http.Reques
 		"data":  datasets,
 		"total": total,
 	})
+}
+
+type marketplaceLocalDatasetStatus struct {
+	Downloaded bool   `json:"downloaded"`
+	Dataset    string `json:"dataset,omitempty"`
+}
+
+type marketplaceDatasetDetailResponse struct {
+	Details      *csghub.Dataset               `json:"details"`
+	LocalDataset marketplaceLocalDatasetStatus `json:"local_dataset"`
+}
+
+type marketplaceDatasetExtrasResponse struct {
+	RepoSize  int64  `json:"repo_size,omitempty"`
+	FileCount int    `json:"file_count,omitempty"`
+	Revision  string `json:"revision,omitempty"`
+	Available bool   `json:"available"`
+	TimedOut  bool   `json:"timed_out,omitempty"`
+}
+
+// GET /api/marketplace/datasets/{namespace}/{name} -- normalized dataset detail.
+func (s *Server) handleMarketplaceDatasetDetail(w http.ResponseWriter, r *http.Request) {
+	namespace := strings.TrimSpace(r.PathValue("namespace"))
+	name := strings.TrimSpace(r.PathValue("name"))
+	if namespace == "" || name == "" {
+		writeError(w, http.StatusBadRequest, "missing namespace or name")
+		return
+	}
+	repository := namespace + "/" + name
+	source, err := datasetregistry.NormalizeSource(r.URL.Query().Get("artifact_source"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	revision := strings.TrimSpace(r.URL.Query().Get("revision"))
+	registry, err := datasetregistry.New(s.cfg, source)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	details, err := registry.GetDataset(r.Context(), repository, revision)
+	if err != nil {
+		writeError(w, marketplaceErrorStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, marketplaceDatasetDetailResponse{
+		Details:      details,
+		LocalDataset: s.marketplaceLocalDatasetStatus(repository, source, revision),
+	})
+}
+
+// GET /api/marketplace/datasets/{namespace}/{name}/extras -- best-effort file
+// metrics. This intentionally stays outside the primary detail request because
+// large Hub repositories can require many paginated tree requests.
+func (s *Server) handleMarketplaceDatasetExtras(w http.ResponseWriter, r *http.Request) {
+	namespace := strings.TrimSpace(r.PathValue("namespace"))
+	name := strings.TrimSpace(r.PathValue("name"))
+	if namespace == "" || name == "" {
+		writeError(w, http.StatusBadRequest, "missing namespace or name")
+		return
+	}
+	source, err := datasetregistry.NormalizeSource(r.URL.Query().Get("artifact_source"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	revision := strings.TrimSpace(r.URL.Query().Get("revision"))
+	cacheKey := marketplaceCacheKey("dataset-extras:"+string(source)+":"+namespace+"/"+name, revision)
+	if body, ok := getFreshMarketplaceCache(cacheKey, time.Now()); ok {
+		writeCachedMarketplaceResponse(w, body, "fresh")
+		return
+	}
+	registry, err := datasetregistry.New(s.cfg, source)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	files, resolved, err := registry.ListFiles(ctx, namespace+"/"+name, revision)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			writeJSON(w, http.StatusOK, marketplaceDatasetExtrasResponse{TimedOut: true})
+			return
+		}
+		writeError(w, marketplaceErrorStatus(err), err.Error())
+		return
+	}
+	response := marketplaceDatasetExtrasResponse{Available: true, Revision: strings.TrimSpace(resolved)}
+	for _, file := range files {
+		if file.Type == "dir" {
+			continue
+		}
+		response.FileCount++
+		if file.Size > 0 {
+			response.RepoSize += file.Size
+		}
+	}
+	writeMarketplaceListResponse(w, cacheKey, response)
+}
+
+func (s *Server) marketplaceLocalDatasetStatus(repository string, source datasetregistry.Source, revision string) marketplaceLocalDatasetStatus {
+	localDatasets, err := s.datasetManager.List()
+	if err != nil {
+		return marketplaceLocalDatasetStatus{}
+	}
+	for _, local := range localDatasets {
+		if local == nil {
+			continue
+		}
+		localSource, sourceErr := datasetregistry.NormalizeSource(local.ArtifactSource)
+		if sourceErr != nil || localSource != source {
+			continue
+		}
+		localRepository := strings.Trim(strings.TrimSpace(local.Repository), "/")
+		if localRepository == "" {
+			localRepository = strings.TrimSpace(local.Namespace) + "/" + strings.TrimSpace(local.Name)
+		}
+		if localRepository != repository {
+			continue
+		}
+		if revision != "" && revision != strings.TrimSpace(local.RequestedRevision) &&
+			revision != strings.TrimSpace(local.ResolvedRevision) {
+			continue
+		}
+		return marketplaceLocalDatasetStatus{Downloaded: true, Dataset: local.FullName()}
+	}
+	return marketplaceLocalDatasetStatus{}
 }
 
 func marketplaceCacheKey(kind, rawQuery string) string {
@@ -449,6 +593,13 @@ func writeCachedMarketplaceResponse(w http.ResponseWriter, body []byte, cacheSta
 }
 
 func marketplaceErrorStatus(err error) int {
+	var statusErr *artifactregistry.HTTPError
+	if errors.As(err, &statusErr) {
+		switch statusErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
+			return statusErr.StatusCode
+		}
+	}
 	msg := err.Error()
 	if strings.Contains(msg, "API error 429") {
 		return http.StatusTooManyRequests

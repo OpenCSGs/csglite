@@ -12,6 +12,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/csghub"
 	"github.com/opencsgs/csglite/internal/dataset"
+	"github.com/opencsgs/csglite/internal/datasetregistry"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -39,9 +40,14 @@ func (s *Server) handleDatasetShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ld, err := s.datasetManager.Get(req.Dataset)
+	datasetID, err := sourceQualifiedDatasetID(req.Dataset, req.ArtifactSource)
 	if err != nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("dataset %q not found", req.Dataset))
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ld, err := s.datasetManager.Get(datasetID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("dataset %q not found", datasetID))
 		return
 	}
 
@@ -81,7 +87,12 @@ func (s *Server) handleDatasetPull(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	_, err := s.datasetManager.Pull(r.Context(), req.Dataset, progress)
+	datasetID, source, specErr := remoteDatasetPullSpec(req.Dataset, req.ArtifactSource)
+	if specErr != nil {
+		safeSSE(api.DatasetPullResponse{Status: "error: " + specErr.Error()})
+		return
+	}
+	_, err := s.datasetManager.PullFrom(r.Context(), datasetID, string(source), req.Revision, progress)
 	if err != nil {
 		log.Printf("pull dataset %s failed: %v", req.Dataset, err)
 		safeSSE(api.DatasetPullResponse{Status: "error: " + err.Error()})
@@ -99,7 +110,12 @@ func (s *Server) handleDatasetFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := s.datasetManager.ListFiles(req.Dataset, req.Path)
+	datasetID, err := sourceQualifiedDatasetID(req.Dataset, req.ArtifactSource)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	entries, err := s.datasetManager.ListFiles(datasetID, req.Path)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("cannot list files: %v", err))
 		return
@@ -116,7 +132,7 @@ func (s *Server) handleDatasetFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, api.DatasetFilesResponse{
-		Dataset: req.Dataset,
+		Dataset: datasetID,
 		Path:    req.Path,
 		Entries: apiEntries,
 	})
@@ -130,7 +146,12 @@ func (s *Server) handleDatasetDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.datasetManager.Remove(req.Dataset); err != nil {
+	datasetID, err := sourceQualifiedDatasetID(req.Dataset, req.ArtifactSource)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.datasetManager.Remove(datasetID); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -244,14 +265,55 @@ func parseDatasetSearchOffset(s string) (int, error) {
 }
 
 func localDatasetInfo(d *dataset.LocalDataset) api.DatasetInfo {
-	return api.DatasetInfo{
-		Name:        d.FullName(),
-		Dataset:     d.FullName(),
-		Size:        d.Size,
-		Files:       len(d.Files),
-		ModifiedAt:  d.DownloadedAt,
-		Origin:      string(d.Origin),
-		Description: strings.TrimSpace(d.Description),
-		License:     strings.TrimSpace(d.License),
+	repository := strings.Trim(strings.TrimSpace(d.Repository), "/")
+	if repository == "" {
+		repository = strings.TrimSpace(d.Namespace) + "/" + strings.TrimSpace(d.Name)
 	}
+	source, err := datasetregistry.NormalizeSource(d.ArtifactSource)
+	if err != nil {
+		source = datasetregistry.SourceOpenCSG
+	}
+	return api.DatasetInfo{
+		Name:              d.FullName(),
+		Dataset:           d.FullName(),
+		Size:              d.Size,
+		Files:             len(d.Files),
+		ModifiedAt:        d.DownloadedAt,
+		Origin:            string(d.Origin),
+		Description:       strings.TrimSpace(d.Description),
+		License:           strings.TrimSpace(d.License),
+		ArtifactSource:    string(source),
+		Repository:        repository,
+		RequestedRevision: strings.TrimSpace(d.RequestedRevision),
+		ResolvedRevision:  strings.TrimSpace(d.ResolvedRevision),
+	}
+}
+
+func sourceQualifiedDatasetID(datasetID, sourceValue string) (string, error) {
+	datasetID = strings.Trim(strings.TrimSpace(datasetID), "/")
+	if strings.TrimSpace(sourceValue) == "" {
+		return datasetID, nil
+	}
+	source, err := datasetregistry.NormalizeSource(sourceValue)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(datasetID, "/")
+	if len(parts) == 3 {
+		idSource, sourceErr := datasetregistry.NormalizeSource(parts[0])
+		if sourceErr != nil {
+			return "", sourceErr
+		}
+		if idSource != source {
+			return "", fmt.Errorf("dataset ID source %q does not match artifact_source %q", idSource, source)
+		}
+		return datasetID, nil
+	}
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid dataset ID %q", datasetID)
+	}
+	if source == datasetregistry.SourceOpenCSG {
+		return datasetID, nil
+	}
+	return string(source) + "/" + datasetID, nil
 }

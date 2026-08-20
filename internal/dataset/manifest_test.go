@@ -85,3 +85,26 @@ func TestLoadManifest_NormalizesFileEntries(t *testing.T) {
 		t.Fatalf("entry path = %q, want train/data.jsonl", loaded.FileEntries[0].Path)
 	}
 }
+
+func TestSaveAndLoadManifestInArbitraryDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "staging", "snapshot")
+	original := &LocalDataset{
+		Namespace:         "acme",
+		Name:              "demo",
+		ArtifactSource:    "huggingface",
+		Repository:        "acme/demo",
+		RequestedRevision: "main",
+		ResolvedRevision:  "abc123",
+	}
+	if err := SaveManifestInDir(dir, original); err != nil {
+		t.Fatalf("SaveManifestInDir() error: %v", err)
+	}
+	loaded, err := LoadManifestInDir(dir)
+	if err != nil {
+		t.Fatalf("LoadManifestInDir() error: %v", err)
+	}
+	if loaded.FullName() != "huggingface/acme/demo" ||
+		loaded.RequestedRevision != "main" || loaded.ResolvedRevision != "abc123" {
+		t.Fatalf("loaded manifest = %#v", loaded)
+	}
+}

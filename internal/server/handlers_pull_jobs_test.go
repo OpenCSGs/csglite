@@ -5,12 +5,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/opencsgs/csglite/internal/cloud"
+	"github.com/opencsgs/csglite/internal/dataset"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -64,6 +67,92 @@ func TestPullJobCreateReturnsExistingActiveJob(t *testing.T) {
 	}
 	if second.ID != first.ID {
 		t.Fatalf("second job id = %q, want %q", second.ID, first.ID)
+	}
+}
+
+func TestDatasetPullJobsDedupeBySourceRepositoryAndRevision(t *testing.T) {
+	store := newPullJobStore()
+	now := time.Now()
+	first := &pullJob{
+		id: "first", kind: "dataset", name: "acme/demo", source: "huggingface",
+		revision: "main", status: pullJobQueued, createdAt: now, updatedAt: now,
+	}
+	store.add(first)
+
+	if got := store.getActive("dataset", "acme/demo", "huggingface", "main", nil); got != first {
+		t.Fatalf("matching active job = %#v, want first", got)
+	}
+	if got := store.getActive("dataset", "acme/demo", "modelscope", "main", nil); got != nil {
+		t.Fatalf("different-source active job = %#v, want nil", got)
+	}
+	if got := store.getActive("dataset", "acme/demo", "huggingface", "v2", nil); got != nil {
+		t.Fatalf("different-revision active job = %#v, want nil", got)
+	}
+	duplicate := &pullJob{
+		id: "duplicate", kind: "dataset", name: "acme/demo", source: "huggingface",
+		revision: "main", status: pullJobQueued, createdAt: now, updatedAt: now,
+	}
+	if got := store.addIfAbsent(duplicate); got != first {
+		t.Fatalf("addIfAbsent duplicate = %#v, want first", got)
+	}
+	if len(store.jobs) != 1 {
+		t.Fatalf("jobs len = %d, want 1", len(store.jobs))
+	}
+}
+
+func TestHandleDatasetPullJobCreateCarriesSourceAndRevision(t *testing.T) {
+	s := newTestServer(t)
+	for i := 0; i < maxConcurrentPullJobs; i++ {
+		now := time.Now()
+		s.pullJobs.add(&pullJob{
+			id: "blocker-" + string(rune('a'+i)), kind: "model", name: "acme/blocker-" + string(rune('a'+i)),
+			status: pullJobRunning, createdAt: now, updatedAt: now,
+		})
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/datasets/pull/jobs", strings.NewReader(
+		`{"dataset":"acme/demo","artifact_source":"huggingface","revision":"refs/pr/1"}`,
+	))
+	w := httptest.NewRecorder()
+	s.handleDatasetPullJobCreate(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 body=%s", w.Code, w.Body.String())
+	}
+	var response api.PullJobResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Kind != "dataset" || response.Name != "acme/demo" ||
+		response.ArtifactSource != "huggingface" || response.Revision != "refs/pr/1" {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestHandlePartialDatasetPullDeleteProtectsActiveSourceScopedJob(t *testing.T) {
+	s := newTestServer(t)
+	partialDir := dataset.RegistryDatasetDir(s.cfg.DatasetDir, "huggingface", "acme", "demo")
+	if err := os.MkdirAll(partialDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(partialDir, ".csghub-lite-pull.json"),
+		[]byte(`{"artifact_source":"huggingface","revision":"main"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	s.pullJobs.add(&pullJob{
+		id: "active-dataset", kind: "dataset", name: "acme/demo", source: "huggingface",
+		revision: "other-revision", status: pullJobRunning, createdAt: now, updatedAt: now,
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/datasets/pull/partial", strings.NewReader(
+		`{"dataset":"acme/demo","artifact_source":"huggingface","revision":"main"}`,
+	))
+	w := httptest.NewRecorder()
+	s.handlePartialDatasetPullDelete(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 body=%s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(partialDir); err != nil {
+		t.Fatalf("active partial directory was removed: %v", err)
 	}
 }
 

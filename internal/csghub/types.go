@@ -161,24 +161,52 @@ type ModelListParams struct {
 
 // Dataset represents a dataset returned by the CSGHub API.
 type Dataset struct {
-	ID            int        `json:"id"`
-	Name          string     `json:"name"`
-	Nickname      string     `json:"nickname"`
-	Description   string     `json:"description"`
-	Likes         int        `json:"likes"`
-	Downloads     int        `json:"downloads"`
-	Path          string     `json:"path"`
-	RepositoryID  int        `json:"repository_id"`
-	Private       bool       `json:"private"`
-	Tags          []Tag      `json:"tags"`
-	Repository    Repository `json:"repository"`
-	DefaultBranch string     `json:"default_branch"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	License       string     `json:"license"`
-	Source        string     `json:"source"`
-	SyncStatus    string     `json:"sync_status"`
-	HFPath        string     `json:"hf_path"`
+	ID             int                      `json:"id"`
+	Name           string                   `json:"name"`
+	Nickname       string                   `json:"nickname"`
+	Description    string                   `json:"description"`
+	Likes          int                      `json:"likes"`
+	Downloads      int                      `json:"downloads"`
+	Path           string                   `json:"path"`
+	RepositoryID   int                      `json:"repository_id"`
+	Private        bool                     `json:"private"`
+	Tags           []Tag                    `json:"tags"`
+	Repository     Repository               `json:"repository"`
+	DefaultBranch  string                   `json:"default_branch"`
+	CreatedAt      time.Time                `json:"created_at"`
+	UpdatedAt      time.Time                `json:"updated_at"`
+	License        string                   `json:"license"`
+	Source         string                   `json:"source"`
+	SyncStatus     string                   `json:"sync_status"`
+	HFPath         string                   `json:"hf_path"`
+	ArtifactSource string                   `json:"artifact_source,omitempty"`
+	Revision       string                   `json:"revision,omitempty"`
+	RepoSize       int64                    `json:"repo_size,omitempty"`
+	FileCount      int                      `json:"file_count,omitempty"`
+	Provider       *DatasetProviderMetadata `json:"provider,omitempty"`
+}
+
+type DatasetProviderMetadata struct {
+	HuggingFace *HuggingFaceDatasetMetadata `json:"huggingface,omitempty"`
+	ModelScope  *ModelScopeDatasetMetadata  `json:"modelscope,omitempty"`
+}
+
+type HuggingFaceDatasetMetadata struct {
+	Author         string   `json:"author,omitempty"`
+	Languages      []string `json:"languages,omitempty"`
+	TaskCategories []string `json:"task_categories,omitempty"`
+	PrettyName     string   `json:"pretty_name,omitempty"`
+	OriginalTags   []string `json:"original_tags,omitempty"`
+	Gated          bool     `json:"gated,omitempty"`
+	SHA            string   `json:"sha,omitempty"`
+}
+
+type ModelScopeDatasetMetadata struct {
+	DisplayName  string   `json:"display_name,omitempty"`
+	Languages    []string `json:"languages,omitempty"`
+	Tasks        []string `json:"tasks,omitempty"`
+	OriginalTags []string `json:"original_tags,omitempty"`
+	Gated        bool     `json:"gated,omitempty"`
 }
 
 // DatasetListParams holds parameters for listing datasets.

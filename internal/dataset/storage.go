@@ -3,10 +3,21 @@ package dataset
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+const registryDatasetsDir = ".registries"
 
 func DatasetDir(baseDir, namespace, name string) string {
 	return filepath.Join(baseDir, namespace, name)
+}
+
+func RegistryDatasetDir(baseDir, artifactSource, namespace, name string) string {
+	source := strings.ToLower(strings.TrimSpace(artifactSource))
+	if source == "" || source == "opencsg" {
+		return DatasetDir(baseDir, namespace, name)
+	}
+	return filepath.Join(baseDir, registryDatasetsDir, source, namespace, name)
 }
 
 func ManifestPath(baseDir, namespace, name string) string {
@@ -26,6 +37,28 @@ func RemoveDatasetDir(baseDir, namespace, name string) error {
 	entries, err := os.ReadDir(nsDir)
 	if err == nil && len(entries) == 0 {
 		os.Remove(nsDir)
+	}
+	return nil
+}
+
+func RemoveRegistryDatasetDir(baseDir, artifactSource, namespace, name string) error {
+	source := strings.ToLower(strings.TrimSpace(artifactSource))
+	if source == "" || source == "opencsg" {
+		return RemoveDatasetDir(baseDir, namespace, name)
+	}
+	dir := RegistryDatasetDir(baseDir, source, namespace, name)
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	for _, parent := range []string{
+		filepath.Join(baseDir, registryDatasetsDir, source, namespace),
+		filepath.Join(baseDir, registryDatasetsDir, source),
+		filepath.Join(baseDir, registryDatasetsDir),
+	} {
+		entries, err := os.ReadDir(parent)
+		if err == nil && len(entries) == 0 {
+			_ = os.Remove(parent)
+		}
 	}
 	return nil
 }

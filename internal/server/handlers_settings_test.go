@@ -321,3 +321,43 @@ func TestHandleSettingsRejectsUnknownMarketplaceModelSource(t *testing.T) {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestHandleSettingsPersistsMarketplaceDatasetSource(t *testing.T) {
+	s := newTestServer(t)
+	source := "modelscope"
+	body, err := json.Marshal(api.SettingsUpdateRequest{MarketplaceDatasetSource: &source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	recorder := httptest.NewRecorder()
+	s.handleSettingsUpdate(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if s.cfg.MarketplaceDatasetSource != source {
+		t.Fatalf("MarketplaceDatasetSource = %q", s.cfg.MarketplaceDatasetSource)
+	}
+	var response api.SettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.MarketplaceDatasetSource != source {
+		t.Fatalf("response source = %q", response.MarketplaceDatasetSource)
+	}
+}
+
+func TestHandleSettingsRejectsUnknownMarketplaceDatasetSource(t *testing.T) {
+	s := newTestServer(t)
+	source := "unknown"
+	body, err := json.Marshal(api.SettingsUpdateRequest{MarketplaceDatasetSource: &source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	recorder := httptest.NewRecorder()
+	s.handleSettingsUpdate(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}

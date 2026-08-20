@@ -220,6 +220,15 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		s.cfg.MarketplaceModelSource = source
 		configUpdated = true
 	}
+	if req.MarketplaceDatasetSource != nil {
+		source := strings.ToLower(strings.TrimSpace(*req.MarketplaceDatasetSource))
+		if !config.IsSupportedMarketplaceDatasetSource(source) {
+			writeError(w, http.StatusBadRequest, "marketplace dataset source must be opencsg, huggingface, or modelscope")
+			return
+		}
+		s.cfg.MarketplaceDatasetSource = source
+		configUpdated = true
+	}
 
 	if dirsUpdated {
 		if err := os.MkdirAll(s.cfg.ModelDir, 0o755); err != nil {
@@ -309,6 +318,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		ModelScopeEndpoint:       firstNonEmptySetting(cfg.ModelScopeEndpoint, config.DefaultModelScopeEndpoint),
 		ModelScopeTokenSet:       strings.TrimSpace(cfg.ModelScopeToken) != "",
 		MarketplaceModelSource:   config.NormalizeMarketplaceModelSource(cfg.MarketplaceModelSource),
+		MarketplaceDatasetSource: config.NormalizeMarketplaceDatasetSource(cfg.MarketplaceDatasetSource),
 		Autostart:                autostartEnabled,
 		DesktopMode:              cfg.DesktopMode,
 		LocalAPIURL:              localAPIURL,

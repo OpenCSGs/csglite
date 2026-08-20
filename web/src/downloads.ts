@@ -1,6 +1,7 @@
 import { computed, signal } from "@preact/signals";
 import {
   cancelPullJob,
+  clearPartialDatasetPull,
   clearPartialModelPull,
   createDatasetPullJob,
   createPullJob,
@@ -42,7 +43,6 @@ const pollFailureCounts = new Map<string, number>();
 export function downloadTaskKey(kind: DownloadKind, name: string, artifactSource?: ArtifactSource, revision?: string): string {
   const base = `${kind}:${name}`;
   revision = revision?.trim();
-  if (kind !== "model") return base;
   return `${base}:${artifactSource || "opencsg"}@${revision || ""}`;
 }
 
@@ -314,7 +314,10 @@ async function syncDownloadsFromServer() {
                   artifactSource: interrupted.artifactSource,
                   revision: interrupted.revision,
                 })
-              : await createDatasetPullJob(interrupted.name);
+              : await createDatasetPullJob(interrupted.name, {
+                  artifactSource: interrupted.artifactSource,
+                  revision: interrupted.revision,
+                });
           setTask(applyJobToTask(interrupted, replacement));
           startPolling(interrupted.key);
         } catch {
@@ -333,7 +336,10 @@ async function syncDownloadsFromServer() {
       const job =
         task.kind === "model"
           ? await createPullJob(task.name, { quants: task.quants, artifactSource: task.artifactSource, revision: task.revision })
-          : await createDatasetPullJob(task.name);
+          : await createDatasetPullJob(task.name, {
+              artifactSource: task.artifactSource,
+              revision: task.revision,
+            });
       if (job.status === "running" || job.status === "queued") {
         setTask(applyJobToTask(task, job));
         startPolling(task.key);
@@ -367,21 +373,26 @@ export async function clearDownloadTask(task: DownloadTask) {
     pauseDownload(task.kind, task.name, { artifactSource: task.artifactSource, revision: task.revision });
     return;
   }
-  if (task.kind === "model") {
-    try {
+  try {
+    if (task.kind === "model") {
       await clearPartialModelPull(task.name, {
         artifactSource: task.artifactSource,
         revision: task.revision,
       });
-    } catch (err: any) {
-      setTask({
-        ...task,
-        status: "error",
-        error: err?.message || "failed to clear partial download",
-        updatedAt: nowISO(),
+    } else {
+      await clearPartialDatasetPull(task.name, {
+        artifactSource: task.artifactSource,
+        revision: task.revision,
       });
-      return;
     }
+  } catch (err: any) {
+    setTask({
+      ...task,
+      status: "error",
+      error: err?.message || "failed to clear partial download",
+      updatedAt: nowISO(),
+    });
+    return;
   }
   removeTask(task.key);
 }
@@ -429,8 +440,8 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
     totalBytes: resumableBase?.totalBytes || 0,
     jobId: resumableBase?.jobId,
     quants,
-    artifactSource: kind === "model" ? options?.artifactSource : undefined,
-    revision: kind === "model" ? options?.revision?.trim() || undefined : undefined,
+    artifactSource: options?.artifactSource,
+    revision: options?.revision?.trim() || undefined,
     createdAt: base?.createdAt || startedAt,
     updatedAt: startedAt,
     files: resumableBase?.files || {},
@@ -463,7 +474,10 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
       const job =
         kind === "model"
           ? await createPullJob(name, { quants, artifactSource: task.artifactSource, revision: task.revision })
-          : await createDatasetPullJob(name);
+          : await createDatasetPullJob(name, {
+              artifactSource: task.artifactSource,
+              revision: task.revision,
+            });
       setTask(applyJobToTask(downloadTasks.value[key] || task, job));
       startPolling(key);
     } catch (err: any) {

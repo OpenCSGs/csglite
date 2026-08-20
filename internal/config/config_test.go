@@ -311,6 +311,40 @@ func TestMarketplaceModelSourcePersistsAndDefaults(t *testing.T) {
 	}
 }
 
+func TestMarketplaceDatasetSourcePersistsAndDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	clearCloudServiceEnv(t)
+	Reset()
+	t.Cleanup(Reset)
+	cfg := &Config{MarketplaceDatasetSource: "huggingface"}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	Reset()
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.MarketplaceDatasetSource != "huggingface" {
+		t.Fatalf("MarketplaceDatasetSource = %q", loaded.MarketplaceDatasetSource)
+	}
+
+	loaded.MarketplaceDatasetSource = "unsupported"
+	if err := Save(loaded); err != nil {
+		t.Fatal(err)
+	}
+	Reset()
+	loaded, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.MarketplaceDatasetSource != DefaultMarketplaceSource {
+		t.Fatalf("invalid dataset source normalized to %q", loaded.MarketplaceDatasetSource)
+	}
+}
+
 func TestSaveCreatesDirectory(t *testing.T) {
 	Reset()
 

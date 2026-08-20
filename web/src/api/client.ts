@@ -213,6 +213,52 @@ export interface MarketplaceDataset {
   license: string;
   created_at: string;
   updated_at: string;
+  nickname?: string;
+  repository_id?: number;
+  private?: boolean;
+  repository?: MarketplaceRepository;
+  default_branch?: string;
+  source?: string;
+  sync_status?: string;
+  hf_path?: string;
+  repo_size?: number;
+  file_count?: number;
+  artifact_source?: ArtifactSource;
+  revision?: string;
+  provider?: {
+    huggingface?: {
+      author?: string;
+      languages?: string[];
+      task_categories?: string[];
+      pretty_name?: string;
+      original_tags?: string[];
+      gated?: boolean;
+      sha?: string;
+    };
+    modelscope?: {
+      display_name?: string;
+      languages?: string[];
+      tasks?: string[];
+      original_tags?: string[];
+      gated?: boolean;
+    };
+  };
+}
+
+export interface MarketplaceDatasetDetailResponse {
+  details: MarketplaceDataset;
+  local_dataset: {
+    downloaded: boolean;
+    dataset?: string;
+  };
+}
+
+export interface MarketplaceDatasetExtras {
+  repo_size?: number;
+  file_count?: number;
+  revision?: string;
+  available: boolean;
+  timed_out?: boolean;
 }
 
 export interface SystemInfo {
@@ -245,6 +291,7 @@ export interface AppSettings {
   modelscope_endpoint: string;
   modelscope_token_configured: boolean;
   marketplace_model_source: ArtifactSource;
+  marketplace_dataset_source: ArtifactSource;
   desktop_mode: boolean;
   local_api_url?: string;
   autostart: boolean;
@@ -954,6 +1001,20 @@ function splitModelID(model: string): { namespace: string; name: string } {
   };
 }
 
+function splitLocalDatasetID(dataset: string): { namespace: string; name: string; artifactSource: ArtifactSource } {
+  const parts = dataset.trim().split("/").filter(Boolean);
+  if (parts.length === 2) {
+    return { namespace: parts[0], name: parts[1], artifactSource: "opencsg" };
+  }
+  if (
+    parts.length === 3 &&
+    (parts[0] === "opencsg" || parts[0] === "huggingface" || parts[0] === "modelscope")
+  ) {
+    return { namespace: parts[1], name: parts[2], artifactSource: parts[0] };
+  }
+  throw new Error(`Invalid dataset ID: ${dataset}`);
+}
+
 export async function getModelManifest(model: string): Promise<ModelManifestResponse> {
   const trimmed = model.trim();
   if (!trimmed.includes("/")) {
@@ -1356,6 +1417,7 @@ export async function saveSettings(patch: {
   modelscope_endpoint?: string;
   modelscope_token?: string;
   marketplace_model_source?: ArtifactSource;
+  marketplace_dataset_source?: ArtifactSource;
   autostart?: boolean;
   web_search?: WebSearchSettings;
   observability?: ObservabilitySettings;
@@ -1454,9 +1516,10 @@ export async function getTraceDatasetExportJob(jobID: string): Promise<DatasetEx
 }
 
 export async function publishLocalDataset(dataset: string, request: DatasetPublishRequest): Promise<DatasetPublishResponse> {
-  const { namespace, name } = splitModelID(dataset);
+  const { namespace, name, artifactSource } = splitLocalDatasetID(dataset);
+  const query = artifactSource === "opencsg" ? "" : `?artifact_source=${encodeURIComponent(artifactSource)}`;
   return fetchJSON<DatasetPublishResponse>(
-    `/api/datasets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/publish`,
+    `/api/datasets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/publish${query}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1466,8 +1529,9 @@ export async function publishLocalDataset(dataset: string, request: DatasetPubli
 }
 
 export function localDatasetExportURL(dataset: string): string {
-  const { namespace, name } = splitModelID(dataset);
-  return `/api/datasets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/export`;
+  const { namespace, name, artifactSource } = splitLocalDatasetID(dataset);
+  const query = artifactSource === "opencsg" ? "" : `?artifact_source=${encodeURIComponent(artifactSource)}`;
+  return `/api/datasets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/export${query}`;
 }
 
 export async function clearObservabilityData(): Promise<void> {
@@ -1550,11 +1614,18 @@ export async function createPullJob(model: string, options?: string | { quant?: 
   });
 }
 
-export async function createDatasetPullJob(dataset: string): Promise<PullJob> {
+export async function createDatasetPullJob(
+  dataset: string,
+  options?: { artifactSource?: ArtifactSource; revision?: string },
+): Promise<PullJob> {
   return fetchJSON<PullJob>("/api/datasets/pull/jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dataset }),
+    body: JSON.stringify({
+      dataset,
+      artifact_source: options?.artifactSource,
+      revision: options?.revision?.trim() || undefined,
+    }),
   });
 }
 
@@ -1577,6 +1648,21 @@ export async function clearPartialModelPull(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
+      artifact_source: options?.artifactSource,
+      revision: options?.revision,
+    }),
+  });
+}
+
+export async function clearPartialDatasetPull(
+  dataset: string,
+  options?: { artifactSource?: ArtifactSource; revision?: string },
+): Promise<{ status: string; path: string }> {
+  return fetchJSON<{ status: string; path: string }>("/api/datasets/pull/partial", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      dataset,
       artifact_source: options?.artifactSource,
       revision: options?.revision,
     }),
@@ -1914,6 +2000,10 @@ export interface DatasetInfo {
   origin?: string;
   description?: string;
   license?: string;
+  artifact_source?: ArtifactSource;
+  repository?: string;
+  requested_revision?: string;
+  resolved_revision?: string;
 }
 
 export interface DatasetDownloadFile {
@@ -1941,20 +2031,28 @@ export async function searchDatasets(query: string, limit = 20, offset = 0): Pro
 }
 
 export async function getDatasetManifest(dataset: string): Promise<DatasetManifestResponse> {
-  const { namespace, name } = splitModelID(dataset);
-  return fetchJSON<DatasetManifestResponse>(`/api/datasets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/manifest`);
+  const { namespace, name, artifactSource } = splitLocalDatasetID(dataset);
+  const query = artifactSource === "opencsg" ? "" : `?artifact_source=${encodeURIComponent(artifactSource)}`;
+  return fetchJSON<DatasetManifestResponse>(
+    `/api/datasets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/manifest${query}`,
+  );
 }
 
 export function pullDataset(
   dataset: string,
   onProgress: (p: PullProgress) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: { artifactSource?: ArtifactSource; revision?: string },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     fetch("/api/datasets/pull", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dataset }),
+      body: JSON.stringify({
+        dataset,
+        artifact_source: options?.artifactSource,
+        revision: options?.revision?.trim() || undefined,
+      }),
       signal,
     })
       .then((resp) => {
@@ -2109,18 +2207,55 @@ export async function getMarketplaceModelDetail(model: string, options?: { artif
 export async function getMarketplaceDatasets(params: {
   search?: string;
   sort?: string;
+  task?: string;
+  language?: string;
+  license?: string;
   page?: number;
   per?: number;
+  artifactSource?: ArtifactSource;
 }): Promise<{ data: MarketplaceDataset[]; total: number }> {
   const q = new URLSearchParams();
   if (params.search) q.set("search", params.search);
   q.set("sort", params.sort || "trending");
+  if (params.task) q.set("task", params.task);
+  if (params.language) q.set("language", params.language);
+  if (params.license) q.set("license", params.license);
+  if (params.artifactSource) q.set("artifact_source", params.artifactSource);
   q.set("page", String(params.page || 1));
   q.set("per", String(params.per || 16));
   const resp = await fetchJSON<{ data: MarketplaceDataset[]; total: number }>(
     `/api/marketplace/datasets?${q}`
   );
   return resp;
+}
+
+export async function getMarketplaceDatasetDetail(
+  dataset: string,
+  options?: { artifactSource?: ArtifactSource; revision?: string },
+): Promise<MarketplaceDatasetDetailResponse> {
+  const { namespace, name } = splitModelID(dataset);
+  const q = new URLSearchParams();
+  if (options?.artifactSource) q.set("artifact_source", options.artifactSource);
+  if (options?.revision?.trim()) q.set("revision", options.revision.trim());
+  const suffix = q.size > 0 ? `?${q}` : "";
+  return fetchJSON<MarketplaceDatasetDetailResponse>(
+    `/api/marketplace/datasets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}${suffix}`,
+  );
+}
+
+export async function getMarketplaceDatasetExtras(
+  dataset: string,
+  options?: { artifactSource?: ArtifactSource; revision?: string; signal?: AbortSignal },
+): Promise<MarketplaceDatasetExtras> {
+  const { namespace, name } = splitModelID(dataset);
+  const q = new URLSearchParams();
+  if (options?.artifactSource) q.set("artifact_source", options.artifactSource);
+  if (options?.revision?.trim()) q.set("revision", options.revision.trim());
+  const suffix = q.size > 0 ? `?${q}` : "";
+  return fetchJSON<MarketplaceDatasetExtras>(
+    `/api/marketplace/datasets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/extras${suffix}`,
+    { signal: options?.signal },
+  );
 }
 
 export async function getSystemInfo(): Promise<SystemInfo> {

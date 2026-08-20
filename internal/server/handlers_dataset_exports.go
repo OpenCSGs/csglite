@@ -109,15 +109,24 @@ func (s *Server) handleDatasetExportDownload(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	namespace, name, ok := strings.Cut(artifact.DatasetID, "/")
-	if !ok {
+	parts := strings.Split(strings.Trim(artifact.DatasetID, "/"), "/")
+	if len(parts) != 2 && len(parts) != 3 {
 		writeError(w, http.StatusInternalServerError, "dataset export index is invalid")
 		return
+	}
+	redirectURL := ""
+	if len(parts) == 2 {
+		redirectURL = fmt.Sprintf("/api/datasets/%s/%s/export", url.PathEscape(parts[0]), url.PathEscape(parts[1]))
+	} else {
+		redirectURL = fmt.Sprintf(
+			"/api/datasets/%s/%s/export?artifact_source=%s",
+			url.PathEscape(parts[1]), url.PathEscape(parts[2]), url.QueryEscape(parts[0]),
+		)
 	}
 	http.Redirect(
 		w,
 		r,
-		fmt.Sprintf("/api/datasets/%s/%s/export", url.PathEscape(namespace), url.PathEscape(name)),
+		redirectURL,
 		http.StatusTemporaryRedirect,
 	)
 }

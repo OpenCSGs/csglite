@@ -7,8 +7,14 @@ import (
 )
 
 func SaveManifest(baseDir string, d *LocalDataset) error {
+	return SaveManifestInDir(DatasetDir(baseDir, d.Namespace, d.Name), d)
+}
+
+// SaveManifestInDir writes a manifest into an already resolved dataset
+// directory. The directory is created when necessary.
+func SaveManifestInDir(datasetDir string, d *LocalDataset) error {
 	normalizeLocalDataset(d)
-	mpath := ManifestPath(baseDir, d.Namespace, d.Name)
+	mpath := filepath.Join(datasetDir, "manifest.json")
 	if err := os.MkdirAll(filepath.Dir(mpath), 0o755); err != nil {
 		return err
 	}
@@ -20,8 +26,13 @@ func SaveManifest(baseDir string, d *LocalDataset) error {
 }
 
 func LoadManifest(baseDir, namespace, name string) (*LocalDataset, error) {
-	mpath := ManifestPath(baseDir, namespace, name)
-	data, err := os.ReadFile(mpath)
+	return LoadManifestInDir(DatasetDir(baseDir, namespace, name))
+}
+
+// LoadManifestInDir reads a manifest from an already resolved dataset
+// directory.
+func LoadManifestInDir(datasetDir string) (*LocalDataset, error) {
+	data, err := os.ReadFile(filepath.Join(datasetDir, "manifest.json"))
 	if err != nil {
 		return nil, err
 	}

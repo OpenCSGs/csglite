@@ -347,27 +347,37 @@ type SpeculativeOptions struct {
 
 type DatasetPullRequest struct {
 	Dataset string `json:"dataset"`
+	// ArtifactSource selects the dataset registry. Empty keeps the historical OpenCSG behavior.
+	ArtifactSource string `json:"artifact_source,omitempty"`
+	// Revision selects a branch, tag, or commit when supported by the registry.
+	Revision string `json:"revision,omitempty"`
 }
 
 type DatasetDeleteRequest struct {
-	Dataset string `json:"dataset"`
+	Dataset        string `json:"dataset"`
+	ArtifactSource string `json:"artifact_source,omitempty"`
 }
 
 type DatasetShowRequest struct {
-	Dataset string `json:"dataset"`
+	Dataset        string `json:"dataset"`
+	ArtifactSource string `json:"artifact_source,omitempty"`
 }
 
 // -- Dataset response types --
 
 type DatasetInfo struct {
-	Name        string    `json:"name"`
-	Dataset     string    `json:"dataset"`
-	Size        int64     `json:"size"`
-	Files       int       `json:"files"`
-	ModifiedAt  time.Time `json:"modified_at"`
-	Origin      string    `json:"origin,omitempty"`
-	Description string    `json:"description,omitempty"`
-	License     string    `json:"license,omitempty"`
+	Name              string    `json:"name"`
+	Dataset           string    `json:"dataset"`
+	Size              int64     `json:"size"`
+	Files             int       `json:"files"`
+	ModifiedAt        time.Time `json:"modified_at"`
+	Origin            string    `json:"origin,omitempty"`
+	Description       string    `json:"description,omitempty"`
+	License           string    `json:"license,omitempty"`
+	ArtifactSource    string    `json:"artifact_source,omitempty"`
+	Repository        string    `json:"repository,omitempty"`
+	RequestedRevision string    `json:"requested_revision,omitempty"`
+	ResolvedRevision  string    `json:"resolved_revision,omitempty"`
 }
 
 type DatasetTagsResponse struct {
@@ -389,8 +399,9 @@ type DatasetShowResponse struct {
 }
 
 type DatasetFilesRequest struct {
-	Dataset string `json:"dataset"`
-	Path    string `json:"path"`
+	Dataset        string `json:"dataset"`
+	Path           string `json:"path"`
+	ArtifactSource string `json:"artifact_source,omitempty"`
 }
 
 type DatasetFileEntry struct {
@@ -442,6 +453,7 @@ type SettingsResponse struct {
 	ModelScopeEndpoint       string                `json:"modelscope_endpoint"`
 	ModelScopeTokenSet       bool                  `json:"modelscope_token_configured"`
 	MarketplaceModelSource   string                `json:"marketplace_model_source"`
+	MarketplaceDatasetSource string                `json:"marketplace_dataset_source"`
 	Autostart                bool                  `json:"autostart"`
 	DesktopMode              bool                  `json:"desktop_mode"`
 	LocalAPIURL              string                `json:"local_api_url,omitempty"`
@@ -451,20 +463,21 @@ type SettingsResponse struct {
 }
 
 type SettingsUpdateRequest struct {
-	StorageDir             string                 `json:"storage_dir,omitempty"`
-	ModelDir               string                 `json:"model_dir,omitempty"`
-	DatasetDir             string                 `json:"dataset_dir,omitempty"`
-	ServerURL              *string                `json:"server_url,omitempty"`
-	AIGatewayURL           *string                `json:"ai_gateway_url,omitempty"`
-	CloudProviderName      *string                `json:"cloud_provider_name,omitempty"`
-	HuggingFaceEndpoint    *string                `json:"huggingface_endpoint,omitempty"`
-	HuggingFaceToken       *string                `json:"huggingface_token,omitempty"`
-	ModelScopeEndpoint     *string                `json:"modelscope_endpoint,omitempty"`
-	ModelScopeToken        *string                `json:"modelscope_token,omitempty"`
-	MarketplaceModelSource *string                `json:"marketplace_model_source,omitempty"`
-	Autostart              *bool                  `json:"autostart,omitempty"`
-	WebSearch              *WebSearchSettings     `json:"web_search,omitempty"`
-	Observability          *ObservabilitySettings `json:"observability,omitempty"`
+	StorageDir               string                 `json:"storage_dir,omitempty"`
+	ModelDir                 string                 `json:"model_dir,omitempty"`
+	DatasetDir               string                 `json:"dataset_dir,omitempty"`
+	ServerURL                *string                `json:"server_url,omitempty"`
+	AIGatewayURL             *string                `json:"ai_gateway_url,omitempty"`
+	CloudProviderName        *string                `json:"cloud_provider_name,omitempty"`
+	HuggingFaceEndpoint      *string                `json:"huggingface_endpoint,omitempty"`
+	HuggingFaceToken         *string                `json:"huggingface_token,omitempty"`
+	ModelScopeEndpoint       *string                `json:"modelscope_endpoint,omitempty"`
+	ModelScopeToken          *string                `json:"modelscope_token,omitempty"`
+	MarketplaceModelSource   *string                `json:"marketplace_model_source,omitempty"`
+	MarketplaceDatasetSource *string                `json:"marketplace_dataset_source,omitempty"`
+	Autostart                *bool                  `json:"autostart,omitempty"`
+	WebSearch                *WebSearchSettings     `json:"web_search,omitempty"`
+	Observability            *ObservabilitySettings `json:"observability,omitempty"`
 }
 
 type ObservabilitySettings struct {

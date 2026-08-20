@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/opencsgs/csglite/internal/dataset"
+	"github.com/opencsgs/csglite/internal/datasetregistry"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -31,7 +32,7 @@ func (s *Server) handleDatasetManifest(w http.ResponseWriter, r *http.Request) {
 			Size:        entry.Size,
 			SHA256:      entry.SHA256,
 			LFS:         entry.LFS,
-			DownloadURL: buildDatasetFileDownloadURL(ld.Namespace, ld.Name, entry.Path),
+			DownloadURL: buildDatasetFileDownloadURL(ld.ArtifactSource, ld.Namespace, ld.Name, entry.Path),
 		})
 	}
 
@@ -98,13 +99,31 @@ func (s *Server) handleDatasetFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func datasetIDFromPathValues(r *http.Request) string {
-	return strings.TrimSpace(r.PathValue("namespace")) + "/" + strings.TrimSpace(r.PathValue("name"))
+	repository := strings.TrimSpace(r.PathValue("namespace")) + "/" + strings.TrimSpace(r.PathValue("name"))
+	source := strings.TrimSpace(r.PathValue("artifactSource"))
+	if source == "" {
+		source = strings.TrimSpace(r.URL.Query().Get("artifact_source"))
+	}
+	if source == "" {
+		return repository
+	}
+	return source + "/" + repository
 }
 
-func buildDatasetFileDownloadURL(namespace, name, relPath string) string {
+func buildDatasetFileDownloadURL(artifactSource, namespace, name, relPath string) string {
 	segments := strings.Split(relPath, "/")
 	for i, segment := range segments {
 		segments[i] = url.PathEscape(segment)
+	}
+	source, err := datasetregistry.NormalizeSource(artifactSource)
+	if err == nil && source != datasetregistry.SourceOpenCSG {
+		return fmt.Sprintf(
+			"/api/dataset-files/%s/%s/%s/%s",
+			url.PathEscape(string(source)),
+			url.PathEscape(namespace),
+			url.PathEscape(name),
+			strings.Join(segments, "/"),
+		)
 	}
 	return fmt.Sprintf(
 		"/api/datasets/%s/%s/files/%s",

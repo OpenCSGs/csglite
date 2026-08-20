@@ -3,6 +3,7 @@ package dataset
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -15,15 +16,19 @@ const (
 )
 
 type LocalDataset struct {
-	Namespace    string             `json:"namespace"`
-	Name         string             `json:"name"`
-	Size         int64              `json:"size"`
-	Files        []string           `json:"files"`
-	FileEntries  []LocalDatasetFile `json:"file_entries,omitempty"`
-	DownloadedAt time.Time          `json:"downloaded_at"`
-	Origin       LocalDatasetOrigin `json:"origin,omitempty"`
-	Description  string             `json:"description,omitempty"`
-	License      string             `json:"license,omitempty"`
+	Namespace         string             `json:"namespace"`
+	Name              string             `json:"name"`
+	Size              int64              `json:"size"`
+	Files             []string           `json:"files"`
+	FileEntries       []LocalDatasetFile `json:"file_entries,omitempty"`
+	DownloadedAt      time.Time          `json:"downloaded_at"`
+	Origin            LocalDatasetOrigin `json:"origin,omitempty"`
+	Description       string             `json:"description,omitempty"`
+	License           string             `json:"license,omitempty"`
+	ArtifactSource    string             `json:"artifact_source,omitempty"`
+	Repository        string             `json:"repository,omitempty"`
+	RequestedRevision string             `json:"requested_revision,omitempty"`
+	ResolvedRevision  string             `json:"resolved_revision,omitempty"`
 }
 
 type LocalDatasetFile struct {
@@ -34,7 +39,15 @@ type LocalDatasetFile struct {
 }
 
 func (d *LocalDataset) FullName() string {
-	return d.Namespace + "/" + d.Name
+	repository := strings.Trim(strings.TrimSpace(d.Repository), "/")
+	if repository == "" {
+		repository = strings.TrimSpace(d.Namespace) + "/" + strings.TrimSpace(d.Name)
+	}
+	source := strings.ToLower(strings.TrimSpace(d.ArtifactSource))
+	if source == "" || source == "opencsg" {
+		return repository
+	}
+	return source + "/" + repository
 }
 
 type FileEntry struct {

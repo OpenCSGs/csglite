@@ -13,7 +13,10 @@ import {
 import type { ArtifactSource, MarketplaceModel, MarketplaceDataset, MarketplaceModelQuantization, MarketplaceTag } from "../api/client";
 import { t, locale } from "../i18n";
 import { startDownload, getDownloadTask } from "../downloads";
-import { modelOwnerIdentity, normalizeMarketplaceModelSource } from "../modelSources";
+import { normalizeMarketplaceModelSource } from "../modelSources";
+import { datasetMarketplaceMetadata } from "../datasetMetadata";
+import { ArtifactOwnerAvatar } from "../components/ArtifactOwnerAvatar";
+import { MarketplaceDatasetDetailDialog } from "../components/MarketplaceDatasetDetailDialog";
 import {
   MarketplaceModelDetailDialog,
   getMarketplaceModelFormats,
@@ -59,13 +62,38 @@ const modelTaskOptions: FilterOption<ModelTaskFilter>[] = [
   { value: "text-to-image", label: "mp.taskTextToImage" },
   { value: "image-to-image", label: "mp.taskImageToImage" },
 ];
+const datasetTaskOptions: FilterOption<string>[] = [
+  { value: "", label: "mp.allDatasetTasks" },
+  { value: "text-classification", label: "mp.datasetTaskTextClassification" },
+  { value: "question-answering", label: "mp.datasetTaskQuestionAnswering" },
+  { value: "text-generation", label: "mp.taskTextGeneration" },
+  { value: "image-classification", label: "mp.datasetTaskImageClassification" },
+  { value: "automatic-speech-recognition", label: "mp.taskASR" },
+];
+const datasetLanguageOptions: FilterOption<string>[] = [
+  { value: "", label: "mp.allDatasetLanguages" },
+  { value: "en", label: "mp.datasetLanguageEnglish" },
+  { value: "zh", label: "mp.datasetLanguageChinese" },
+  { value: "multilingual", label: "mp.datasetLanguageMultilingual" },
+];
+const datasetLicenseOptions: FilterOption<string>[] = [
+  { value: "", label: "mp.allDatasetLicenses" },
+  { value: "apache-2.0", label: "mp.datasetLicenseApache" },
+  { value: "mit", label: "mp.datasetLicenseMIT" },
+  { value: "cc-by-4.0", label: "mp.datasetLicenseCCBY" },
+  { value: "cc0-1.0", label: "mp.datasetLicenseCC0" },
+];
 const activeTab = signal<Tab>("models");
 const artifactSource = signal<ArtifactSource>("opencsg");
+const datasetArtifactSource = signal<ArtifactSource>("opencsg");
 const artifactSourceReady = signal(false);
 const searchQuery = signal("");
 const sortBy = signal("trending");
 const frameworkFilter = signal<ModelFrameworkFilter>("");
 const taskFilter = signal<ModelTaskFilter>("");
+const datasetTaskFilter = signal("");
+const datasetLanguageFilter = signal("");
+const datasetLicenseFilter = signal("");
 const modelParamsMin = signal(modelParamsMinLimit);
 const modelParamsMax = signal(modelParamsMaxLimit);
 const viewMode = signal<ViewMode>("grid");
@@ -85,6 +113,14 @@ function localModelKey(source: ArtifactSource, name: string): string {
   return `${source}:${name}`;
 }
 
+function localDatasetKey(source: ArtifactSource, name: string): string {
+  return `${source}:${name}`;
+}
+
+function marketplaceDatasetRevision(dataset: MarketplaceDataset, source: ArtifactSource): string | undefined {
+  return source === "opencsg" ? undefined : dataset.revision || dataset.default_branch || undefined;
+}
+
 function loadLocalModels() {
   getTags().then((m) => {
     localModelNames.value = new Set(
@@ -96,7 +132,7 @@ function loadLocalModels() {
 
 function loadLocalDatasets() {
   getDatasetTags().then((d) => {
-    localDatasetNames.value = new Set(d.map((x) => x.name));
+    localDatasetNames.value = new Set(d.map((x) => localDatasetKey(x.artifact_source || "opencsg", x.repository || x.name)));
   }).catch(() => {});
 }
 
@@ -142,8 +178,12 @@ async function loadData() {
       const res = await getMarketplaceDatasets({
         search: searchQuery.value,
         sort: sortBy.value,
+        task: datasetArtifactSource.value === "opencsg" ? undefined : datasetTaskFilter.value || undefined,
+        language: datasetArtifactSource.value === "opencsg" ? undefined : datasetLanguageFilter.value || undefined,
+        license: datasetArtifactSource.value === "opencsg" ? undefined : datasetLicenseFilter.value || undefined,
         page: page.value,
         per: perPage,
+        artifactSource: datasetArtifactSource.value,
       });
       if (requestID !== loadDataRequestID) return;
       datasets.value = res.data || [];
@@ -161,7 +201,9 @@ async function loadData() {
 export function Marketplace() {
   void locale.value;
   const [selectedModelPath, setSelectedModelPath] = useState("");
+  const [selectedDatasetPath, setSelectedDatasetPath] = useState("");
   const [ggufSelection, setGGUFSelection] = useState<GGUFQuantSelection | null>(null);
+  const [datasetDownloadConfirmation, setDatasetDownloadConfirmation] = useState<MarketplaceDataset | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersRef = useRef<HTMLDivElement>(null);
 
@@ -173,6 +215,7 @@ export function Marketplace() {
       .then((settings) => {
         if (cancelled) return;
         artifactSource.value = normalizeMarketplaceModelSource(settings.marketplace_model_source);
+        datasetArtifactSource.value = normalizeMarketplaceModelSource(settings.marketplace_dataset_source);
       })
       .catch(() => {
         if (!cancelled) artifactSource.value = "opencsg";
@@ -188,15 +231,17 @@ export function Marketplace() {
   useEffect(() => {
     page.value = 1;
     loadData();
-  }, [artifactSourceReady.value, activeTab.value, artifactSource.value, sortBy.value, frameworkFilter.value, taskFilter.value, modelParamsMin.value, modelParamsMax.value]);
+  }, [artifactSourceReady.value, activeTab.value, artifactSource.value, datasetArtifactSource.value, sortBy.value, frameworkFilter.value, taskFilter.value, datasetTaskFilter.value, datasetLanguageFilter.value, datasetLicenseFilter.value, modelParamsMin.value, modelParamsMax.value]);
 
   useEffect(() => {
     setSelectedModelPath("");
+    setSelectedDatasetPath("");
     setGGUFSelection(null);
+    setDatasetDownloadConfirmation(null);
     if (activeTab.value !== "models") {
       setFiltersOpen(false);
     }
-  }, [activeTab.value, artifactSource.value]);
+  }, [activeTab.value, artifactSource.value, datasetArtifactSource.value]);
 
   useEffect(() => {
     if (!filtersOpen) return;
@@ -220,17 +265,21 @@ export function Marketplace() {
   };
 
   const selectArtifactSource = (source: ArtifactSource) => {
-    const previous = artifactSource.value;
+    const target = activeTab.value === "models" ? artifactSource : datasetArtifactSource;
+    const previous = target.value;
     if (source === previous) return;
-    artifactSource.value = source;
+    target.value = source;
     page.value = 1;
-    if (source !== "opencsg") {
+    if (activeTab.value === "models" && source !== "opencsg") {
       modelParamsMin.value = modelParamsMinLimit;
       modelParamsMax.value = modelParamsMaxLimit;
     }
-    void saveSettings({ marketplace_model_source: source }).catch(() => {
-      if (artifactSource.value === source) {
-        artifactSource.value = previous;
+    const patch = activeTab.value === "models"
+      ? { marketplace_model_source: source }
+      : { marketplace_dataset_source: source };
+    void saveSettings(patch).catch(() => {
+      if (target.value === source) {
+        target.value = previous;
         page.value = 1;
       }
     });
@@ -263,10 +312,20 @@ export function Marketplace() {
     beginModelDownload(modelPath, quants, ggufSelection.artifactSource);
   };
 
-  const handleDatasetDownload = (datasetPath: string) => {
+  const handleDatasetDownload = (dataset: MarketplaceDataset) => {
+    setDatasetDownloadConfirmation(dataset);
+  };
+
+  const confirmDatasetDownload = () => {
+    const dataset = datasetDownloadConfirmation;
+    if (!dataset) return;
+    setDatasetDownloadConfirmation(null);
+    const source = dataset.artifact_source || datasetArtifactSource.value;
+    const revision = marketplaceDatasetRevision(dataset, source);
+    const datasetPath = dataset.path;
     startDownload("dataset", datasetPath, () => {
       loadLocalDatasets();
-    });
+    }, { artifactSource: source, revision });
   };
   const hasModelFilters = frameworkFilter.value !== ""
     || taskFilter.value !== ""
@@ -278,6 +337,7 @@ export function Marketplace() {
     modelParamsMin.value = modelParamsMinLimit;
     modelParamsMax.value = modelParamsMaxLimit;
   };
+  const selectedDataset = datasets.value.find((dataset) => dataset.path === selectedDatasetPath);
 
   return (
     <div class="page-shell">
@@ -286,8 +346,7 @@ export function Marketplace() {
           <h1 class="text-2xl font-bold text-gray-900">{t("mp.title")}</h1>
           <p class="mt-1 text-sm text-gray-500">{t("mp.subtitle")}</p>
         </div>
-        {activeTab.value === "models" && (
-          <div class="inline-flex w-fit items-center gap-2 rounded-xl border border-gray-200 bg-white p-1.5 shadow-sm">
+        <div class="inline-flex w-fit items-center gap-2 rounded-xl border border-gray-200 bg-white p-1.5 shadow-sm">
             <span class="pl-2 text-xs font-medium text-gray-500">{t("mp.artifactSource")}</span>
             <div class="flex rounded-lg bg-gray-100 p-0.5" role="group" aria-label={t("mp.artifactSource")}>
               {([
@@ -298,16 +357,12 @@ export function Marketplace() {
                 <button
                   key={source}
                   type="button"
-                  aria-pressed={artifactSource.value === source}
+                  aria-pressed={(activeTab.value === "models" ? artifactSource.value : datasetArtifactSource.value) === source}
                   disabled={!artifactSourceReady.value}
                   onClick={() => selectArtifactSource(source)}
                   class={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
-                    artifactSource.value === source
-                      ? source === "huggingface"
-                        ? "bg-amber-400 text-amber-950 shadow-sm"
-                        : source === "modelscope"
-                          ? "bg-blue-600 text-white shadow-sm"
-                          : "bg-emerald-100 text-emerald-700 shadow-sm ring-1 ring-inset ring-emerald-200"
+                    (activeTab.value === "models" ? artifactSource.value : datasetArtifactSource.value) === source
+                      ? "bg-indigo-600 text-white shadow-sm"
                       : "text-gray-500 hover:bg-white hover:text-gray-800"
                   }`}
                 >
@@ -316,7 +371,6 @@ export function Marketplace() {
               ))}
             </div>
           </div>
-        )}
       </div>
 
       {/* Tabs + Search + View Toggle */}
@@ -424,6 +478,13 @@ export function Marketplace() {
             )}
           </div>
         )}
+        {activeTab.value === "datasets" && datasetArtifactSource.value !== "opencsg" && (
+          <div class="flex items-center gap-2">
+            <DatasetFilterSelect label={t("mp.taskType")} value={datasetTaskFilter.value} options={datasetTaskOptions.map((option) => ({ ...option, label: t(option.label) }))} onChange={(value) => (datasetTaskFilter.value = value)} />
+            <DatasetFilterSelect label={t("mp.languages")} value={datasetLanguageFilter.value} options={datasetLanguageOptions.map((option) => ({ ...option, label: t(option.label) }))} onChange={(value) => (datasetLanguageFilter.value = value)} />
+            <DatasetFilterSelect label={t("ds.licenseLabel")} value={datasetLicenseFilter.value} options={datasetLicenseOptions.map((option) => ({ ...option, label: t(option.label) }))} onChange={(value) => (datasetLicenseFilter.value = value)} />
+          </div>
+        )}
         <div class="flex border border-gray-200 rounded-lg overflow-hidden">
           <button
             onClick={() => (viewMode.value = "grid")}
@@ -480,14 +541,28 @@ export function Marketplace() {
       ) : viewMode.value === "grid" ? (
         <div class="grid grid-cols-2 gap-4 2xl:grid-cols-3">
           {datasets.value.map((d) => (
-            <DatasetGridCard key={d.id} dataset={d} pulling={getDownloadTask("dataset", d.path)} isLocal={localDatasetNames.value.has(d.path)} onDownload={handleDatasetDownload} />
+            <DatasetGridCard
+              key={`${datasetArtifactSource.value}:${d.path}`}
+              dataset={d}
+              pulling={getDownloadTask("dataset", d.path, { artifactSource: datasetArtifactSource.value, revision: marketplaceDatasetRevision(d, datasetArtifactSource.value) })}
+              isLocal={localDatasetNames.value.has(localDatasetKey(datasetArtifactSource.value, d.path))}
+              onDownload={handleDatasetDownload}
+              onOpenDetail={() => setSelectedDatasetPath(d.path)}
+            />
           ))}
           {datasets.value.length === 0 && <p class="col-span-2 text-center py-16 text-gray-400">{t("mp.noDatasets")}</p>}
         </div>
       ) : (
         <div class="space-y-0 divide-y divide-gray-100">
           {datasets.value.map((d) => (
-            <DatasetCard key={d.id} dataset={d} pulling={getDownloadTask("dataset", d.path)} isLocal={localDatasetNames.value.has(d.path)} onDownload={handleDatasetDownload} />
+            <DatasetCard
+              key={`${datasetArtifactSource.value}:${d.path}`}
+              dataset={d}
+              pulling={getDownloadTask("dataset", d.path, { artifactSource: datasetArtifactSource.value, revision: marketplaceDatasetRevision(d, datasetArtifactSource.value) })}
+              isLocal={localDatasetNames.value.has(localDatasetKey(datasetArtifactSource.value, d.path))}
+              onDownload={handleDatasetDownload}
+              onOpenDetail={() => setSelectedDatasetPath(d.path)}
+            />
           ))}
           {datasets.value.length === 0 && <p class="text-center py-16 text-gray-400">{t("mp.noDatasets")}</p>}
         </div>
@@ -527,11 +602,34 @@ export function Marketplace() {
         />
       )}
 
+      {selectedDatasetPath && (
+        <MarketplaceDatasetDetailDialog
+          datasetPath={selectedDatasetPath}
+          artifactSource={datasetArtifactSource.value}
+          revision={selectedDataset ? marketplaceDatasetRevision(selectedDataset, datasetArtifactSource.value) : undefined}
+          isLocal={localDatasetNames.value.has(localDatasetKey(datasetArtifactSource.value, selectedDatasetPath))}
+          pulling={getDownloadTask("dataset", selectedDatasetPath, {
+            artifactSource: datasetArtifactSource.value,
+            revision: selectedDataset ? marketplaceDatasetRevision(selectedDataset, datasetArtifactSource.value) : undefined,
+          })}
+          onDownload={handleDatasetDownload}
+          onClose={() => setSelectedDatasetPath("")}
+        />
+      )}
+
       {ggufSelection && (
         <GGUFQuantSelectionDialog
           selection={ggufSelection}
           onConfirm={handleConfirmGGUFDownload}
           onClose={() => setGGUFSelection(null)}
+        />
+      )}
+
+      {datasetDownloadConfirmation && (
+        <DatasetDownloadConfirmationDialog
+          dataset={datasetDownloadConfirmation}
+          onConfirm={confirmDatasetDownload}
+          onClose={() => setDatasetDownloadConfirmation(null)}
         />
       )}
 
@@ -549,6 +647,58 @@ function TabButton({ label, active, onClick }: { label: string; active: boolean;
     >
       {label}
     </button>
+  );
+}
+
+function DatasetDownloadConfirmationDialog({
+  dataset,
+  onConfirm,
+  onClose,
+}: {
+  dataset: MarketplaceDataset;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  void locale.value;
+  const knownSize = formatRepoSize(dataset.repo_size || 0);
+  const source = dataset.artifact_source || datasetArtifactSource.value;
+  const partialPath = source === "opencsg"
+    ? `<dataset_dir>/${dataset.path}`
+    : `<dataset_dir>/.registries/${source}/${dataset.path}`;
+  return (
+    <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4 py-6" onClick={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <section class="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+        <h2 class="text-lg font-semibold text-gray-900">{t("mp.datasetSnapshotConfirmTitle")}</h2>
+        <p class="mt-2 text-sm leading-6 text-gray-600">{t("mp.datasetSnapshotConfirmDescription")}</p>
+        <dl class="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm">
+          <div class="flex gap-4">
+            <dt class="w-24 flex-shrink-0 text-gray-400">{t("mp.datasetId")}</dt>
+            <dd class="break-all font-medium text-gray-800">{dataset.path}</dd>
+          </div>
+          <div class="mt-2 flex gap-4">
+            <dt class="w-24 flex-shrink-0 text-gray-400">{t("mp.repoSize")}</dt>
+            <dd class="font-medium text-gray-800">{knownSize || t("mp.unknownSize")}</dd>
+          </div>
+          <div class="mt-2 flex gap-4">
+            <dt class="w-24 flex-shrink-0 text-gray-400">{t("mp.partialStoragePath")}</dt>
+            <dd class="break-all font-mono text-xs text-gray-700">{partialPath}</dd>
+          </div>
+        </dl>
+        <p class="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+          {t("mp.datasetSnapshotPartialHint")}
+        </p>
+        <div class="mt-6 flex justify-end gap-3">
+          <button type="button" onClick={onClose} class="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">
+            {t("ds.cancel")}
+          </button>
+          <button type="button" onClick={onConfirm} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+            {t("mp.downloadFullSnapshot")}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -1114,32 +1264,7 @@ function providerCardTags(model: MarketplaceModel, limit: number): MarketplaceTa
 }
 
 function ModelSourceMark({ source, modelPath }: { source: ArtifactSource; modelPath: string }) {
-  if (source === "huggingface" || source === "modelscope") {
-    const identity = modelOwnerIdentity(modelPath);
-    const palettes = [
-      "bg-blue-100 text-blue-700",
-      "bg-indigo-100 text-indigo-700",
-      "bg-violet-100 text-violet-700",
-      "bg-cyan-100 text-cyan-700",
-      "bg-emerald-100 text-emerald-700",
-      "bg-slate-200 text-slate-700",
-    ];
-    return (
-      <span
-        class={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-[11px] font-bold ${palettes[identity.palette]}`}
-        title={`${identity.owner} · ${t(source === "huggingface" ? "mp.sourceHuggingFace" : "mp.sourceModelScope")}`}
-      >
-        {identity.initial}
-      </span>
-    );
-  }
-  return (
-    <span class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-gray-100" title={t("mp.sourceOpenCSG")}>
-      <svg class="h-3.5 w-3.5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-      </svg>
-    </span>
-  );
+  return <ArtifactOwnerAvatar source={source} path={modelPath} />;
 }
 
 function DatasetGridCard({
@@ -1147,44 +1272,64 @@ function DatasetGridCard({
   pulling,
   isLocal,
   onDownload,
+  onOpenDetail,
 }: {
   dataset: MarketplaceDataset;
   pulling?: { status: string; percent: number; error?: string };
   isLocal?: boolean;
-  onDownload: (path: string) => void;
+  onDownload: (dataset: MarketplaceDataset) => void;
+  onOpenDetail: () => void;
 }) {
   void locale.value;
-  const tags = dataset.tags?.filter((t) => t.category === "task" || t.category === "license").slice(0, 2) || [];
+  const metadata = datasetMarketplaceMetadata(dataset);
+  const primaryTags = [
+    ...metadata.tasks.slice(0, 1),
+    ...(dataset.license ? [dataset.license] : []),
+  ].slice(0, 2);
+  const technicalTags = [
+    ...metadata.formats.map((value) => value.toUpperCase()),
+    ...metadata.modalities,
+    ...metadata.topics,
+  ].slice(0, 3);
 
   return (
-    <div class="border border-gray-200 rounded-xl bg-white p-5 flex flex-col justify-between">
-      <div>
-        <div class="flex items-center gap-2 mb-2">
-          <div class="w-6 h-6 rounded-md bg-purple-100 flex items-center justify-center flex-shrink-0">
-            <svg class="w-3.5 h-3.5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-            </svg>
+    <div class="flex h-full min-h-[270px] flex-col rounded-xl border border-gray-200 bg-white p-5 transition-shadow hover:shadow-sm">
+      <div class="flex-1">
+        <div class="mb-2 flex min-h-[58px] items-start gap-2">
+          <ArtifactOwnerAvatar source={dataset.artifact_source || "opencsg"} path={dataset.path} />
+          <div class="min-w-0 flex-1">
+            <button onClick={onOpenDetail} class="block w-full truncate text-left text-sm font-semibold text-gray-900 hover:text-indigo-600">{dataset.path}</button>
+            <p class="mt-0.5 h-4 truncate text-xs text-gray-500">
+              {dataset.nickname && dataset.nickname !== dataset.name ? dataset.nickname : "\u00a0"}
+            </p>
+            <div class="mt-1 flex min-h-5 flex-wrap items-center gap-1.5">
+              {metadata.type && <DatasetBadge value={metadata.type} tone="blue" />}
+              {metadata.sizeCategory && <DatasetBadge value={metadata.sizeCategory} />}
+              {dataset.private && <DatasetBadge value={t("mp.privateAccess")} tone="amber" />}
+            </div>
           </div>
-          <span class="font-medium text-gray-900 text-sm truncate">{dataset.path}</span>
         </div>
-        <p class="text-sm text-gray-500 line-clamp-2 mb-3 min-h-[2.5rem]">
-          {dataset.description || ""}
+        <p class="mb-3 min-h-10 line-clamp-2 text-sm text-gray-500">
+          {dataset.description || "\u00a0"}
         </p>
-        <div class="flex items-center gap-2 flex-wrap text-xs text-gray-400">
-          {tags.map((tg) => (
-            <span key={tg.name} class="bg-purple-50 text-purple-600 px-2 py-0.5 rounded">
-              {tg.show_name || tg.name}
-            </span>
-          ))}
+        <div class="flex min-h-6 items-center gap-1.5 overflow-hidden">
+          {primaryTags.map((value) => <DatasetBadge key={value} value={value} tone="purple" />)}
+          {technicalTags.map((value) => <DatasetBadge key={value} value={value} />)}
+        </div>
+      </div>
+      <div class="mt-4 flex min-h-5 flex-wrap items-center gap-3 text-xs text-gray-400">
           <span class="flex items-center gap-1">
             <DownloadIcon /> {formatDownloadCount(dataset.downloads)}
           </span>
           <span class="flex items-center gap-1">
             <StarIcon /> {dataset.likes}
           </span>
-        </div>
+          {Boolean(dataset.repo_size) && <span>{formatRepoSize(dataset.repo_size || 0)}</span>}
+          {metadata.languages.length > 0 && (
+            <span title={metadata.languages.join(", ")}>{metadata.languages.slice(0, 2).join(" · ")}</span>
+          )}
       </div>
-      <div class="flex items-center justify-between mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400">
+      <div class="mt-3 flex items-center justify-between border-t border-gray-100 pt-3 text-xs text-gray-400">
         <span class="flex items-center gap-1">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1211,7 +1356,7 @@ function DatasetGridCard({
             )
           ) : (
             <button
-              onClick={() => onDownload(dataset.path)}
+              onClick={() => onDownload(dataset)}
               class="flex items-center gap-1 text-indigo-600 hover:text-indigo-700 font-medium"
             >
               <DownloadIcon /> {t("mp.download")}
@@ -1228,20 +1373,31 @@ function DatasetCard({
   pulling,
   isLocal,
   onDownload,
+  onOpenDetail,
 }: {
   dataset: MarketplaceDataset;
   pulling?: { status: string; percent: number; error?: string };
   isLocal?: boolean;
-  onDownload: (path: string) => void;
+  onDownload: (dataset: MarketplaceDataset) => void;
+  onOpenDetail: () => void;
 }) {
   void locale.value;
-  const tags = dataset.tags?.filter((t) => t.category === "task" || t.category === "license").slice(0, 3) || [];
+  const metadata = datasetMarketplaceMetadata(dataset);
+  const badges = [
+    ...(metadata.type ? [metadata.type] : []),
+    ...metadata.tasks.slice(0, 1),
+    ...metadata.formats.map((value) => value.toUpperCase()).slice(0, 1),
+    ...metadata.topics.slice(0, 1),
+    ...(dataset.license ? [dataset.license] : []),
+  ].slice(0, 4);
 
   return (
     <div class="flex items-center justify-between py-4">
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2">
-          <span class="font-medium text-gray-900">{dataset.path}</span>
+          <ArtifactOwnerAvatar source={dataset.artifact_source || "opencsg"} path={dataset.path} />
+          <button onClick={onOpenDetail} class="font-medium text-gray-900 hover:text-indigo-600">{dataset.path}</button>
+          {badges.map((value) => <DatasetBadge key={value} value={value} />)}
           {isLocal && (
             <span class="px-1.5 py-0.5 text-xs bg-purple-50 text-purple-600 rounded font-medium">{t("mp.downloaded")}</span>
           )}
@@ -1250,11 +1406,9 @@ function DatasetCard({
           <p class="text-sm text-gray-500 mt-1 line-clamp-1">{dataset.description}</p>
         )}
         <div class="flex items-center gap-3 mt-2 text-xs text-gray-400">
-          {tags.map((tg) => (
-            <span key={tg.name} class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-              {tg.show_name || tg.name}
-            </span>
-          ))}
+          {metadata.sizeCategory && <span>{metadata.sizeCategory}</span>}
+          {metadata.languages.length > 0 && <span>{metadata.languages.slice(0, 2).join(" · ")}</span>}
+          {Boolean(dataset.repo_size) && <span>{formatRepoSize(dataset.repo_size || 0)}</span>}
           <span>&middot;</span>
           <span>{new Date(dataset.updated_at).toLocaleDateString()}</span>
           <span>&middot;</span>
@@ -1308,7 +1462,7 @@ function DatasetCard({
           </div>
         ) : (
           <button
-            onClick={() => onDownload(dataset.path)}
+            onClick={() => onDownload(dataset)}
             class="flex items-center justify-center gap-1.5 w-full px-4 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-700 transition-colors"
           >
             <DownloadIcon /> {t("mp.download")}
@@ -1316,6 +1470,54 @@ function DatasetCard({
         )}
       </div>
     </div>
+  );
+}
+
+function DatasetBadge({
+  value,
+  tone = "gray",
+}: {
+  value: string;
+  tone?: "gray" | "blue" | "purple" | "amber";
+}) {
+  const tones = {
+    gray: "bg-gray-100 text-gray-600",
+    blue: "bg-blue-50 text-blue-700",
+    purple: "bg-purple-50 text-purple-700",
+    amber: "bg-amber-50 text-amber-700",
+  };
+  return (
+    <span class={`inline-flex max-w-32 truncate rounded px-2 py-0.5 text-[11px] font-medium ${tones[tone]}`} title={value}>
+      {value}
+    </span>
+  );
+}
+
+function DatasetFilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: FilterOption<string>[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label class="sr-only">
+      {label}
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+        class="not-sr-only rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+      >
+        {options.map((option) => (
+          <option key={option.value || "all"} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
   );
 }
 

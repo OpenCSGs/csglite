@@ -24,8 +24,9 @@ import type { PageSize } from "../components/Pagination";
 import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
+import { datasetArtifactSource, displayLocalDatasetID, localDatasetID } from "../datasetIds";
 
-type View = { kind: "list" } | { kind: "detail"; dataset: string; path: string };
+type View = { kind: "list" } | { kind: "detail"; dataset: DatasetInfo; path: string };
 type DatasetTableRow = {
   dataset: DatasetInfo;
   task?: DownloadTask;
@@ -65,7 +66,7 @@ function sortDatasetRows(rows: DatasetTableRow[]): DatasetTableRow[] {
   return [...rows].sort((a, b) => {
     let cmp = 0;
     if (field === "name") {
-      cmp = a.dataset.name.localeCompare(b.dataset.name);
+      cmp = displayLocalDatasetID(a.dataset).localeCompare(displayLocalDatasetID(b.dataset));
     } else if (field === "size") {
       cmp = (a.dataset.size || 0) - (b.dataset.size || 0);
     } else {
@@ -73,7 +74,7 @@ function sortDatasetRows(rows: DatasetTableRow[]): DatasetTableRow[] {
       const bt = new Date(b.dataset.modified_at).getTime() || 0;
       cmp = at - bt;
     }
-    if (cmp === 0) cmp = a.dataset.name.localeCompare(b.dataset.name);
+    if (cmp === 0) cmp = localDatasetID(a.dataset).localeCompare(localDatasetID(b.dataset));
     return asc ? cmp : -cmp;
   });
 }
@@ -81,19 +82,28 @@ function sortDatasetRows(rows: DatasetTableRow[]): DatasetTableRow[] {
 function datasetRows(datasets: DatasetInfo[]): DatasetTableRow[] {
   const rows = datasets.map((dataset) => ({
     dataset,
-    task: getDownloadTask("dataset", dataset.name),
+    task: getDownloadTask("dataset", displayLocalDatasetID(dataset), {
+      artifactSource: datasetArtifactSource(dataset),
+      revision: dataset.requested_revision,
+    }),
     downloadOnly: false,
   }));
-  const known = new Set(datasets.map((dataset) => dataset.name));
+  const known = new Set(datasets.map((dataset) => localDatasetID(dataset)));
   for (const task of getDownloadTasks("dataset")) {
-    if (known.has(task.name)) continue;
+    const taskID = task.artifactSource && task.artifactSource !== "opencsg"
+      ? `${task.artifactSource}/${task.name}`
+      : task.name;
+    if (known.has(taskID)) continue;
     rows.push({
       dataset: {
-        name: task.name,
+        name: taskID,
         dataset: task.name,
         size: task.totalBytes || task.completedBytes,
         files: 0,
         modified_at: task.updatedAt,
+        artifact_source: task.artifactSource,
+        repository: task.name,
+        requested_revision: task.revision,
       },
       task,
       downloadOnly: true,
@@ -107,6 +117,12 @@ function datasetOriginLabel(origin?: string): string {
   if (origin === "marketplace") return t("ds.originMarketplace");
   if (origin === "export") return t("ds.originExport");
   return t("ds.notAvailable");
+}
+
+function sourceLabel(source: string): string {
+  if (source === "huggingface") return t("mp.sourceHuggingFace");
+  if (source === "modelscope") return t("mp.sourceModelScope");
+  return t("mp.sourceOpenCSG");
 }
 
 async function loadFiles(dataset: string, path: string) {
@@ -154,25 +170,30 @@ function DatasetList() {
     if (downloadCompletionVersion.value > 0) loadDatasets();
   }, [downloadCompletionVersion.value]);
 
-  const handleDelete = async (name: string, task?: DownloadTask, downloadOnly = false) => {
-    if (!confirm(t("ds.deleteConfirm", name))) return;
+  const handleDelete = async (dataset: DatasetInfo, task?: DownloadTask, downloadOnly = false) => {
+    const id = localDatasetID(dataset);
+    const displayID = displayLocalDatasetID(dataset);
+    if (!confirm(t("ds.deleteConfirm", displayID))) return;
     if (downloadOnly && task) {
       await clearDownloadTask(task);
-      allDatasets.value = allDatasets.value.filter((d) => d.name !== name);
+      allDatasets.value = allDatasets.value.filter((d) => localDatasetID(d) !== id);
       return;
     }
     if (hasActiveDownload.value) return;
-    await deleteDataset(name);
+    await deleteDataset(id);
     // 清除对应的下载任务记录
-    const existingTask = getDownloadTask("dataset", name);
+    const existingTask = getDownloadTask("dataset", displayID, {
+      artifactSource: datasetArtifactSource(dataset),
+      revision: dataset.requested_revision,
+    });
     if (existingTask) await clearDownloadTask(existingTask);
-    allDatasets.value = allDatasets.value.filter((d) => d.name !== name);
+    allDatasets.value = allDatasets.value.filter((d) => localDatasetID(d) !== id);
   };
 
-  const handleDetails = (name: string) => {
+  const handleDetails = (dataset: DatasetInfo) => {
     if (hasActiveDownload.value) return;
-    currentView.value = { kind: "detail", dataset: name, path: "" };
-    loadFiles(name, "");
+    currentView.value = { kind: "detail", dataset, path: "" };
+    loadFiles(localDatasetID(dataset), "");
   };
 
   const toggleSort = (field: "name" | "size" | "modified_at") => {
@@ -217,9 +238,10 @@ function DatasetList() {
 
       <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[860px] table-fixed text-sm">
+          <table class="w-full min-w-[940px] table-fixed text-sm">
             <colgroup>
-              <col class="w-[28%]" />
+              <col class="w-[22%]" />
+              <col class="w-[11%]" />
               <col class="w-[12%]" />
               <col class="w-[12%]" />
               <col class="w-[16%]" />
@@ -230,6 +252,7 @@ function DatasetList() {
             <thead>
               <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
                 <SortHeader label={t("ds.datasetName")} field="name" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
+                <th class="px-4 py-3 font-medium">{t("ds.source")}</th>
                 <th class="px-4 py-3 font-medium">{t("ds.origin")}</th>
                 <SortHeader label={t("ds.fileSize")} field="size" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
                 <th class="px-4 py-3 font-medium">{t("downloads.progress")}</th>
@@ -241,22 +264,23 @@ function DatasetList() {
             <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} class="text-center py-12 text-gray-400">
+                <td colSpan={8} class="text-center py-12 text-gray-400">
                   {t("ds.noDatasets")}
                 </td>
               </tr>
             ) : (
               pagedRows.map(({ dataset: d, task, downloadOnly }) => (
-                <tr key={d.name} class="border-b border-gray-50 hover:bg-gray-50/50">
+                <tr key={localDatasetID(d)} class="border-b border-gray-50 hover:bg-gray-50/50">
                   <td class="px-4 py-3 min-w-0">
                     <button
-                      onClick={() => handleDetails(d.name)}
+                      onClick={() => handleDetails(d)}
                       disabled={downloading || downloadOnly}
                       class="font-medium text-indigo-600 hover:text-indigo-800 hover:underline break-all text-left disabled:text-gray-400 disabled:hover:text-gray-400 disabled:cursor-not-allowed"
                     >
-                      {d.name}
+                      {displayLocalDatasetID(d)}
                     </button>
                   </td>
+                  <td class="px-4 py-3 text-gray-600 whitespace-nowrap">{sourceLabel(datasetArtifactSource(d))}</td>
                   <td class="px-4 py-3 text-gray-600 whitespace-nowrap">
                     {downloadOnly ? "—" : datasetOriginLabel(d.origin)}
                   </td>
@@ -272,11 +296,11 @@ function DatasetList() {
                     <DownloadStatusCell task={task} completeWhenMissing={!downloadOnly} />
                   </td>
                   <td class="px-4 py-3 text-gray-500">
-                    {new Date(d.modified_at).toLocaleDateString("en-US", { day: "numeric", month: "long" })}
+                    {new Date(d.modified_at).toLocaleDateString(locale.value === "zh" ? "zh-CN" : "en-US", { day: "numeric", month: "long" })}
                   </td>
                   <td class="px-4 py-3">
                     <div class="flex items-center justify-end gap-3">
-                      <button disabled={downloading && !downloadOnly} onClick={() => void handleDelete(d.name, task, downloadOnly)} class="text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                      <button disabled={downloading && !downloadOnly} onClick={() => void handleDelete(d, task, downloadOnly)} class="text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                         {t("ds.delete")}
                       </button>
                     </div>
@@ -305,29 +329,31 @@ function DatasetList() {
   );
 }
 
-function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
+function DatasetDetail({ dataset, path }: { dataset: DatasetInfo; path: string }) {
   const [manifest, setManifest] = useState<DatasetManifestResponse | null>(null);
   const [detailError, setDetailError] = useState("");
   const [copiedKey, setCopiedKey] = useState("");
   const [showPublish, setShowPublish] = useState(false);
   const copyResetRef = useRef<number | null>(null);
   const runtimeAPIOrigin = useRuntimeAPIOrigin();
+  const datasetID = localDatasetID(dataset);
+  const displayID = displayLocalDatasetID(dataset);
 
   useEffect(() => {
-    loadFiles(dataset, path);
-  }, [dataset, path]);
+    loadFiles(datasetID, path);
+  }, [datasetID, path]);
 
   useEffect(() => {
     setManifest(null);
     setDetailError("");
-    getDatasetManifest(dataset)
+    getDatasetManifest(datasetID)
       .then((data) => {
         setManifest(data);
       })
       .catch((err: any) => {
         setDetailError(err?.message || t("ds.failedLoadDetail"));
       });
-  }, [dataset]);
+  }, [datasetID]);
 
   useEffect(() => {
     return () => {
@@ -351,8 +377,8 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
     }
   };
 
-  const breadcrumbs = buildBreadcrumbs(dataset, path);
-  const manifestURL = buildDatasetManifestURL(dataset, runtimeAPIOrigin);
+  const breadcrumbs = buildBreadcrumbs(displayID, path);
+  const manifestURL = buildDatasetManifestURL(datasetID, runtimeAPIOrigin);
   const manifestCurl = buildCurlCommand(manifestURL);
   const exampleFile = manifest?.files?.[0];
   const exampleCurl = exampleFile ? buildDatasetFileCurlCommand(exampleFile, runtimeAPIOrigin) : "";
@@ -389,12 +415,12 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
             </svg>
           </button>
           <div class="min-w-0">
-            <h1 class="text-xl font-bold text-gray-900 break-all">{dataset}</h1>
+            <h1 class="text-xl font-bold text-gray-900 break-all">{displayID}</h1>
             <p class="text-sm text-gray-500 mt-1">{t("ds.detailSubtitle")}</p>
           </div>
         </div>
         <div class="flex flex-wrap gap-2">
-          <a href={localDatasetExportURL(dataset)} class="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:border-indigo-200 hover:text-indigo-700">
+          <a href={localDatasetExportURL(datasetID)} class="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:border-indigo-200 hover:text-indigo-700">
             {t("ds.exportZip")}
           </a>
           <button type="button" onClick={() => setShowPublish(true)} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
@@ -529,7 +555,7 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
               fileEntries.value.map((f) => {
                 const relPath = path ? `${path}/${f.name}` : f.name;
                 const fileMeta = fileMetaMap.get(relPath);
-                const fileURL = fileMeta ? absoluteURL(fileMeta.download_url, runtimeAPIOrigin) : buildDatasetFileURL(dataset, relPath, runtimeAPIOrigin);
+                const fileURL = fileMeta ? absoluteURL(fileMeta.download_url, runtimeAPIOrigin) : buildDatasetFileURL(datasetID, relPath, runtimeAPIOrigin);
                 const fileCurl = fileMeta ? buildDatasetFileCurlCommand(fileMeta, runtimeAPIOrigin) : buildDatasetFileCurlCommand({
                   path: relPath,
                   size: f.size,
@@ -594,17 +620,18 @@ function DatasetDetail({ dataset, path }: { dataset: string; path: string }) {
           </tbody>
         </table>
       </div>
-      {showPublish && <DatasetPublishDialog dataset={dataset} manifest={manifest} onClose={() => setShowPublish(false)} />}
+      {showPublish && <DatasetPublishDialog dataset={datasetID} displayID={displayID} manifest={manifest} onClose={() => setShowPublish(false)} />}
     </div>
   );
 }
 
-function DatasetPublishDialog({ dataset, manifest, onClose }: {
+function DatasetPublishDialog({ dataset, displayID, manifest, onClose }: {
   dataset: string;
+  displayID: string;
   manifest: DatasetManifestResponse | null;
   onClose: () => void;
 }) {
-  const localName = dataset.split("/").pop() || dataset;
+  const localName = displayID.split("/").pop() || displayID;
   const [create, setCreate] = useState(true);
   const [name, setName] = useState(localName);
   const [description, setDescription] = useState(manifest?.details.description || "");
@@ -650,7 +677,7 @@ function DatasetPublishDialog({ dataset, manifest, onClose }: {
         <header class="flex items-start justify-between border-b border-gray-200 px-6 py-5">
           <div>
             <h2 class="text-lg font-semibold text-gray-950">{t("ds.publishTitle")}</h2>
-            <p class="mt-1 break-all text-sm text-gray-500">{dataset}</p>
+            <p class="mt-1 break-all text-sm text-gray-500">{displayID}</p>
           </div>
           <button type="button" disabled={publishing} onClick={onClose} class="rounded-lg p-2 text-gray-400 hover:bg-gray-100 disabled:opacity-40">×</button>
         </header>
@@ -812,7 +839,8 @@ function buildDatasetManifestURL(dataset: string, origin: string): string {
   if (!parts) {
     return absoluteURL(`/api/datasets/${encodeURIComponent(dataset)}/manifest`, origin);
   }
-  return absoluteURL(`/api/datasets/${encodeURIComponent(parts.namespace)}/${encodeURIComponent(parts.name)}/manifest`, origin);
+  const query = parts.source === "opencsg" ? "" : `?artifact_source=${encodeURIComponent(parts.source)}`;
+  return absoluteURL(`/api/datasets/${encodeURIComponent(parts.namespace)}/${encodeURIComponent(parts.name)}/manifest${query}`, origin);
 }
 
 function buildDatasetFileURL(dataset: string, relPath: string, origin: string): string {
@@ -821,7 +849,8 @@ function buildDatasetFileURL(dataset: string, relPath: string, origin: string): 
     return absoluteURL(`/api/datasets/${encodeURIComponent(dataset)}/files/${encodeURIComponent(relPath)}`, origin);
   }
   const segments = relPath.split("/").filter(Boolean).map((segment) => encodeURIComponent(segment));
-  return absoluteURL(`/api/datasets/${encodeURIComponent(parts.namespace)}/${encodeURIComponent(parts.name)}/files/${segments.join("/")}`, origin);
+  const query = parts.source === "opencsg" ? "" : `?artifact_source=${encodeURIComponent(parts.source)}`;
+  return absoluteURL(`/api/datasets/${encodeURIComponent(parts.namespace)}/${encodeURIComponent(parts.name)}/files/${segments.join("/")}${query}`, origin);
 }
 
 function buildCurlCommand(url: string): string {
@@ -841,15 +870,15 @@ function absoluteURL(path: string, origin: string): string {
   return new URL(path, origin).toString();
 }
 
-function splitDatasetID(dataset: string): { namespace: string; name: string } | null {
-  const slash = dataset.indexOf("/");
-  if (slash <= 0 || slash === dataset.length - 1) {
-    return null;
+function splitDatasetID(dataset: string): { namespace: string; name: string; source: string } | null {
+  const parts = dataset.split("/").filter(Boolean);
+  if (parts.length === 2) {
+    return { namespace: parts[0], name: parts[1], source: "opencsg" };
   }
-  return {
-    namespace: dataset.slice(0, slash),
-    name: dataset.slice(slash + 1),
-  };
+  if (parts.length === 3 && ["opencsg", "huggingface", "modelscope"].includes(parts[0])) {
+    return { namespace: parts[1], name: parts[2], source: parts[0] };
+  }
+  return null;
 }
 
 function shellQuote(value: string): string {

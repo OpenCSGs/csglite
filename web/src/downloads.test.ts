@@ -19,10 +19,13 @@ describe("downloadTaskKey", () => {
     expect(downloadTaskKey("model", "Qwen/demo", "modelscope")).toBe("model:Qwen/demo:modelscope@");
   });
 
-  it("includes revisions without changing dataset keys", () => {
+  it("separates dataset repositories by source and revision", () => {
     expect(downloadTaskKey("model", "Qwen/demo", "huggingface", "refs/pr/1")).toBe(
       "model:Qwen/demo:huggingface@refs/pr/1",
     );
-    expect(downloadTaskKey("dataset", "acme/data")).toBe("dataset:acme/data");
+    expect(downloadTaskKey("dataset", "acme/data")).toBe("dataset:acme/data:opencsg@");
+    expect(downloadTaskKey("dataset", "acme/data", "huggingface", "refs/pr/1")).toBe(
+      "dataset:acme/data:huggingface@refs/pr/1",
+    );
   });
 });

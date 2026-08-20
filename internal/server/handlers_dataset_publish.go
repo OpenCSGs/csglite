@@ -19,7 +19,7 @@ const agenticHubURL = "https://opencsg.com/agentichub"
 var datasetRepositoryPartPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 func (s *Server) handleLocalDatasetExport(w http.ResponseWriter, r *http.Request) {
-	datasetID := r.PathValue("namespace") + "/" + r.PathValue("name")
+	datasetID := datasetIDFromPathValues(r)
 	local, err := s.datasetManager.GetWithFileEntries(datasetID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "local dataset not found")
@@ -58,7 +58,7 @@ func (s *Server) handleLocalDatasetExport(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleLocalDatasetPublish(w http.ResponseWriter, r *http.Request) {
-	localID := r.PathValue("namespace") + "/" + r.PathValue("name")
+	localID := datasetIDFromPathValues(r)
 	local, err := s.datasetManager.GetWithFileEntries(localID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "local dataset not found")

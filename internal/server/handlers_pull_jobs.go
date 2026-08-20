@@ -14,6 +14,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/datasetregistry"
 	"github.com/opencsgs/csglite/internal/modelregistry"
 	"github.com/opencsgs/csglite/pkg/api"
 )
@@ -97,12 +98,52 @@ func (s *Server) handleDatasetPullJobCreate(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "dataset is required")
 		return
 	}
-	job, err := s.createPullJob("dataset", req.Dataset, "", "", nil)
+	datasetID, source, err := remoteDatasetPullSpec(req.Dataset, req.ArtifactSource)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	job, err := s.createPullJob("dataset", datasetID, string(source), strings.TrimSpace(req.Revision), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusAccepted, pullJobResponse(job))
+}
+
+func (s *Server) handlePartialDatasetPullDelete(w http.ResponseWriter, r *http.Request) {
+	var req api.DatasetPullRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	datasetID, source, err := remoteDatasetPullSpec(req.Dataset, req.ArtifactSource)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.pullJobs.hasActiveSourceRepo("dataset", datasetID, string(source)) {
+		writeError(w, http.StatusConflict, "cancel the active download before clearing partial files")
+		return
+	}
+	removedPath, err := s.datasetManager.RemovePartial(datasetID, string(source))
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cleared", "path": removedPath})
+}
+
+func (s *pullJobStore) hasActiveSourceRepo(kind, name, source string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, jobID := range s.activeKey {
+		job := s.jobs[jobID]
+		if job != nil && job.kind == kind && job.name == name && job.source == source {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handlePullJobGet(w http.ResponseWriter, r *http.Request) {
@@ -164,11 +205,15 @@ func (s *Server) handlePartialModelPullDelete(w http.ResponseWriter, r *http.Req
 }
 
 func (s *pullJobStore) hasActiveModel(name, source, revision string) bool {
+	return s.hasActive("model", name, source, revision)
+}
+
+func (s *pullJobStore) hasActive(kind, name, source, revision string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, jobID := range s.activeKey {
 		job := s.jobs[jobID]
-		if job != nil && job.kind == "model" && job.name == name &&
+		if job != nil && job.kind == kind && job.name == name &&
 			job.source == source && job.revision == revision {
 			return true
 		}
@@ -205,7 +250,10 @@ func (s *Server) createPullJob(kind, name, source, revision string, quants []str
 		ctx:    ctx,
 		cancel: cancel,
 	}
-	s.pullJobs.add(job)
+	if existing := s.pullJobs.addIfAbsent(job); existing != job {
+		cancel()
+		return existing, nil
+	}
 	log.Printf("PULL JOB %s: queued kind=%s name=%q source=%q revision=%q", id, kind, name, source, revision)
 	s.startQueuedPullJobs()
 	return job, nil
@@ -247,7 +295,7 @@ func (s *Server) runPullJob(job *pullJob) {
 	case "model":
 		_, err = s.manager.PullFrom(ctx, job.name, job.source, job.revision, job.quants, progress)
 	case "dataset":
-		_, err = s.datasetManager.Pull(ctx, job.name, progress)
+		_, err = s.datasetManager.PullFrom(ctx, job.name, job.source, job.revision, progress)
 	default:
 		err = fmt.Errorf("unsupported pull job kind %q", job.kind)
 	}
@@ -358,11 +406,29 @@ func firstPullQuant(values []string) string {
 }
 
 func (s *pullJobStore) add(job *pullJob) {
+	_ = s.addIfAbsent(job)
+}
+
+func (s *pullJobStore) addIfAbsent(job *pullJob) *pullJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	key := pullJobActiveKey(job.kind, job.name, job.source, job.revision, job.quants)
+	if id := s.activeKey[key]; id != "" {
+		existing := s.jobs[id]
+		if existing != nil {
+			existing.mu.Lock()
+			status := existing.status
+			existing.mu.Unlock()
+			if status == pullJobQueued || status == pullJobRunning {
+				return existing
+			}
+		}
+		delete(s.activeKey, key)
+	}
 	s.jobs[job.id] = job
-	s.activeKey[pullJobActiveKey(job.kind, job.name, job.source, job.revision, job.quants)] = job.id
+	s.activeKey[key] = job.id
 	s.queue = append(s.queue, job.id)
+	return job
 }
 
 func (s *pullJobStore) get(id string) *pullJob {
@@ -442,14 +508,40 @@ func (s *pullJobStore) runningCountLocked() int {
 }
 
 func pullJobActiveKey(kind, name, source, revision string, quants []string) string {
-	key := kind + ":" + name
-	if kind == "model" {
-		key += ":" + source + "@" + revision
-	}
+	key := kind + ":" + source + ":" + name + "@" + revision
 	if kind == "model" && len(quants) > 0 {
 		key += "#" + strings.Join(quants, ",")
 	}
 	return key
+}
+
+func remoteDatasetPullSpec(datasetID, sourceValue string) (string, datasetregistry.Source, error) {
+	datasetID = strings.Trim(strings.TrimSpace(datasetID), "/")
+	parts := strings.Split(datasetID, "/")
+	if len(parts) == 3 {
+		source, err := datasetregistry.NormalizeSource(parts[0])
+		if err != nil {
+			return "", "", err
+		}
+		if strings.TrimSpace(sourceValue) != "" {
+			requested, normalizeErr := datasetregistry.NormalizeSource(sourceValue)
+			if normalizeErr != nil {
+				return "", "", normalizeErr
+			}
+			if requested != source {
+				return "", "", fmt.Errorf("dataset ID source %q does not match artifact_source %q", source, requested)
+			}
+		}
+		return strings.Join(parts[1:], "/"), source, nil
+	}
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid dataset ID %q", datasetID)
+	}
+	source, err := datasetregistry.NormalizeSource(sourceValue)
+	if err != nil {
+		return "", "", err
+	}
+	return datasetID, source, nil
 }
 
 func pullJobResponse(job *pullJob) api.PullJobResponse {

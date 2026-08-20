@@ -590,6 +590,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "artifact_source",
+            "in": "query",
+            "required": false,
+            "description": "Dataset registry identity. Omit for legacy OpenCSG datasets.",
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactSource"
+            }
           }
         ],
         "responses": {
@@ -1637,6 +1646,25 @@
         }
       }
     },
+    "/api/dataset-manifests/{artifactSource}/{namespace}/{name}": {
+      "get": {
+        "tags": ["Datasets"],
+        "summary": "Get a source-qualified local dataset download manifest",
+        "operationId": "getSourceQualifiedDatasetManifest",
+        "parameters": [
+          {"name": "artifactSource", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/ArtifactSource"}},
+          {"name": "namespace", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Local dataset metadata with downloadable files.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DatasetManifestResponse"}}}
+          },
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
     "/api/datasets/{namespace}/{name}/export": {
       "get": {
         "tags": ["Datasets"],
@@ -1644,7 +1672,8 @@
         "operationId": "exportLocalDataset",
         "parameters": [
           {"name": "namespace", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}}
+          {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "artifact_source", "in": "query", "required": false, "schema": {"$ref": "#/components/schemas/ArtifactSource"}}
         ],
         "responses": {
           "200": {
@@ -1662,7 +1691,8 @@
         "operationId": "publishLocalDataset",
         "parameters": [
           {"name": "namespace", "in": "path", "required": true, "schema": {"type": "string"}},
-          {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}}
+          {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "artifact_source", "in": "query", "required": false, "schema": {"$ref": "#/components/schemas/ArtifactSource"}}
         ],
         "requestBody": {
           "required": true,
@@ -1717,6 +1747,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "artifact_source",
+            "in": "query",
+            "required": false,
+            "description": "Dataset registry identity. Omit for legacy OpenCSG datasets.",
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactSource"
+            }
           }
         ],
         "responses": {
@@ -1748,6 +1787,26 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           }
+        }
+      }
+    },
+    "/api/dataset-files/{artifactSource}/{namespace}/{name}/{path...}": {
+      "get": {
+        "tags": ["Datasets"],
+        "summary": "Download a source-qualified cached local dataset file",
+        "description": "Downloads a cached dataset file and supports HEAD and HTTP Range requests.",
+        "operationId": "downloadSourceQualifiedDatasetFile",
+        "parameters": [
+          {"name": "artifactSource", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/ArtifactSource"}},
+          {"name": "namespace", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "path...", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "The requested file.", "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
+          "206": {"description": "Partial file content for a range request.", "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"}
         }
       }
     },
@@ -1903,6 +1962,29 @@
           "400": {
             "$ref": "#/components/responses/BadRequest"
           }
+        }
+      }
+    },
+    "/api/datasets/pull/partial": {
+      "delete": {
+        "tags": ["Datasets"],
+        "summary": "Remove an incomplete dataset download",
+        "operationId": "clearPartialDatasetPull",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/DatasetPullRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Partial dataset files removed.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PartialPullDeleteResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "409": {"$ref": "#/components/responses/Conflict"}
         }
       }
     },
@@ -2191,7 +2273,7 @@
           "Marketplace"
         ],
         "summary": "List marketplace datasets",
-        "description": "Proxies the upstream CSGHub dataset listing API and normalizes the response to `{ data, total }`.",
+        "description": "Lists datasets from OpenCSG, Hugging Face, or ModelScope and normalizes the response to `{ data, total }`. Omitting `artifact_source` preserves the historical OpenCSG behavior.",
         "operationId": "getMarketplaceDatasets",
         "parameters": [
           {
@@ -2234,6 +2316,38 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "artifact_source",
+            "in": "query",
+            "description": "Dataset registry provider.",
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactSource"
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "description": "Provider-native dataset task filter.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "Provider-native dataset language filter.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "license",
+            "in": "query",
+            "description": "Provider-native dataset license filter.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2247,9 +2361,67 @@
               }
             }
           },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Registry access denied."
+          },
+          "429": {
+            "description": "Registry request rate limited."
+          },
           "502": {
             "$ref": "#/components/responses/BadGateway"
           }
+        }
+      }
+    },
+    "/api/marketplace/datasets/{namespace}/{name}": {
+      "get": {
+        "tags": ["Marketplace"],
+        "summary": "Get marketplace dataset details",
+        "operationId": "getMarketplaceDatasetDetail",
+        "parameters": [
+          {"name": "namespace", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "artifact_source", "in": "query", "required": false, "schema": {"$ref": "#/components/schemas/ArtifactSource"}},
+          {"name": "revision", "in": "query", "required": false, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Normalized provider dataset details and source-scoped local status.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MarketplaceDatasetDetailResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"description": "Registry access denied."},
+          "429": {"description": "Registry request rate limited."},
+          "502": {"$ref": "#/components/responses/BadGateway"}
+        }
+      }
+    },
+    "/api/marketplace/datasets/{namespace}/{name}/extras": {
+      "get": {
+        "tags": ["Marketplace"],
+        "summary": "Get best-effort dataset file metrics",
+        "description": "Calculates total snapshot bytes and file count outside the primary detail request. The operation is time-bounded and may return `available: false` with `timed_out: true` for very large repositories.",
+        "operationId": "getMarketplaceDatasetExtras",
+        "parameters": [
+          {"name": "namespace", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "name", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "artifact_source", "in": "query", "required": false, "schema": {"$ref": "#/components/schemas/ArtifactSource"}},
+          {"name": "revision", "in": "query", "required": false, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Best-effort repository metrics or a timeout fallback.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MarketplaceDatasetExtras"}}}
+          },
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"description": "Registry access denied."},
+          "429": {"description": "Registry request rate limited."},
+          "502": {"$ref": "#/components/responses/BadGateway"}
         }
       }
     },
@@ -6440,6 +6612,7 @@
           "modelscope_endpoint",
           "modelscope_token_configured",
           "marketplace_model_source",
+          "marketplace_dataset_source",
           "autostart",
           "desktop_mode",
           "web_search",
@@ -6498,6 +6671,11 @@
             "type": "string",
             "enum": ["opencsg", "huggingface", "modelscope"],
             "description": "Persisted model registry selected by the Marketplace UI."
+          },
+          "marketplace_dataset_source": {
+            "type": "string",
+            "enum": ["opencsg", "huggingface", "modelscope"],
+            "description": "Persisted dataset registry selected by the Marketplace UI."
           },
           "autostart": {
             "type": "boolean"
@@ -6567,6 +6745,11 @@
             "type": "string",
             "enum": ["opencsg", "huggingface", "modelscope"],
             "description": "Model registry to restore when the Marketplace UI opens."
+          },
+          "marketplace_dataset_source": {
+            "type": "string",
+            "enum": ["opencsg", "huggingface", "modelscope"],
+            "description": "Dataset registry to restore when the Marketplace UI opens."
           },
           "autostart": {
             "type": "boolean"
@@ -8528,7 +8711,23 @@
         "properties": {
           "dataset": {
             "type": "string"
+          },
+          "artifact_source": {
+            "$ref": "#/components/schemas/ArtifactSource"
+          },
+          "revision": {
+            "type": "string",
+            "description": "Requested provider branch, tag, or commit."
           }
+        }
+      },
+      "PartialPullDeleteResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "path"],
+        "properties": {
+          "status": {"type": "string"},
+          "path": {"type": "string"}
         }
       },
       "DatasetDeleteRequest": {
@@ -8540,6 +8739,9 @@
         "properties": {
           "dataset": {
             "type": "string"
+          },
+          "artifact_source": {
+            "$ref": "#/components/schemas/ArtifactSource"
           }
         }
       },
@@ -8552,6 +8754,9 @@
         "properties": {
           "dataset": {
             "type": "string"
+          },
+          "artifact_source": {
+            "$ref": "#/components/schemas/ArtifactSource"
           }
         }
       },
@@ -8568,6 +8773,9 @@
           },
           "path": {
             "type": "string"
+          },
+          "artifact_source": {
+            "$ref": "#/components/schemas/ArtifactSource"
           }
         }
       },
@@ -8611,6 +8819,19 @@
             "type": "string"
           },
           "license": {
+            "type": "string"
+          },
+          "artifact_source": {
+            "$ref": "#/components/schemas/ArtifactSource"
+          },
+          "repository": {
+            "type": "string",
+            "description": "Provider repository ID without the source prefix."
+          },
+          "requested_revision": {
+            "type": "string"
+          },
+          "resolved_revision": {
             "type": "string"
           }
         }
@@ -9489,6 +9710,103 @@
           },
           "hf_path": {
             "type": "string"
+          },
+          "repo_size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Total repository download size in bytes, including LFS objects when the provider exposes file metadata."
+          },
+          "file_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of downloadable files when supplied by the provider."
+          },
+          "artifact_source": {
+            "$ref": "#/components/schemas/ArtifactSource"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/MarketplaceDatasetProviderMetadata"
+          }
+        }
+      },
+      "HuggingFaceDatasetMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "author": {"type": "string"},
+          "languages": {"type": "array", "items": {"type": "string"}},
+          "task_categories": {"type": "array", "items": {"type": "string"}},
+          "pretty_name": {"type": "string"},
+          "original_tags": {"type": "array", "items": {"type": "string"}},
+          "gated": {"type": "boolean"},
+          "sha": {"type": "string"}
+        }
+      },
+      "ModelScopeDatasetMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {"type": "string"},
+          "languages": {"type": "array", "items": {"type": "string"}},
+          "tasks": {"type": "array", "items": {"type": "string"}},
+          "original_tags": {"type": "array", "items": {"type": "string"}},
+          "gated": {"type": "boolean"}
+        }
+      },
+      "MarketplaceDatasetProviderMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "huggingface": {"$ref": "#/components/schemas/HuggingFaceDatasetMetadata"},
+          "modelscope": {"$ref": "#/components/schemas/ModelScopeDatasetMetadata"}
+        }
+      },
+      "MarketplaceLocalDatasetStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["downloaded"],
+        "properties": {
+          "downloaded": {"type": "boolean"},
+          "dataset": {"type": "string"}
+        }
+      },
+      "MarketplaceDatasetDetailResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["details", "local_dataset"],
+        "properties": {
+          "details": {"$ref": "#/components/schemas/MarketplaceDataset"},
+          "local_dataset": {"$ref": "#/components/schemas/MarketplaceLocalDatasetStatus"}
+        }
+      },
+      "MarketplaceDatasetExtras": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["available"],
+        "properties": {
+          "repo_size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Total bytes reported by the paginated repository tree."
+          },
+          "file_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "revision": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "timed_out": {
+            "type": "boolean",
+            "description": "True when metric collection exceeded its short server-side deadline."
           }
         }
       },

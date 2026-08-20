@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/opencsgs/csglite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/dataset"
 	"github.com/opencsgs/csglite/internal/model"
 )
 
@@ -94,6 +96,146 @@ func TestHandleMarketplaceModelsRejectsUnknownArtifactSource(t *testing.T) {
 	s.handleMarketplaceModels(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestHandleMarketplaceDatasetsDispatchesProviderFilters(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/datasets" {
+			t.Fatalf("path = %q, want /api/datasets", r.URL.Path)
+		}
+		filters := r.URL.Query()["filter"]
+		want := map[string]bool{
+			"task_categories:text-classification": true,
+			"language:en":                         true,
+			"license:apache-2.0":                  true,
+		}
+		for _, filter := range filters {
+			delete(want, filter)
+		}
+		if len(want) != 0 {
+			t.Fatalf("filters = %#v, missing %#v", filters, want)
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{{
+			"id": "acme/demo", "tags": []string{"license:apache-2.0"},
+		}})
+	}))
+	defer apiServer.Close()
+	t.Setenv("HF_ENDPOINT", apiServer.URL)
+	clearMarketplaceCache()
+
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/marketplace/datasets?artifact_source=huggingface&task=text-classification&language=en&license=apache-2.0", nil)
+	w := httptest.NewRecorder()
+	s.handleMarketplaceDatasets(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data []csghub.Dataset `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0].ArtifactSource != "huggingface" {
+		t.Fatalf("datasets = %#v", response.Data)
+	}
+}
+
+func TestHandleMarketplaceDatasetsPreservesRegistryAuthStatus(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, http.StatusText(status), status)
+			}))
+			defer apiServer.Close()
+			t.Setenv("HF_ENDPOINT", apiServer.URL)
+			clearMarketplaceCache()
+
+			s := newTestServer(t)
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/marketplace/datasets?artifact_source=huggingface&search=auth-"+strconv.Itoa(status), nil)
+			w := httptest.NewRecorder()
+			s.handleMarketplaceDatasets(w, req)
+			if w.Code != status {
+				t.Fatalf("status = %d, want %d body=%s", w.Code, status, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandleMarketplaceDatasetDetailReportsSourceScopedLocalStatus(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/datasets/acme/demo/revision/main":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"id": "acme/demo", "sha": "abc123", "lastModified": "2026-08-20T00:00:00Z",
+			})
+		case "/api/datasets/acme/demo/tree/main":
+			w.Header().Set("X-Repo-Commit", "abc123")
+			_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+				{"type": "file", "path": "README.md", "size": 12},
+				{"type": "file", "path": "data/train.jsonl", "size": 88},
+				{"type": "directory", "path": "data", "size": 0},
+			})
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+	t.Setenv("HF_ENDPOINT", apiServer.URL)
+
+	s := newTestServer(t)
+	local := &dataset.LocalDataset{
+		Namespace: "acme", Name: "demo", ArtifactSource: "huggingface",
+		Repository: "acme/demo", RequestedRevision: "main", ResolvedRevision: "abc123",
+		DownloadedAt: time.Now(),
+	}
+	if err := dataset.SaveManifestInDir(
+		dataset.RegistryDatasetDir(s.cfg.DatasetDir, "huggingface", "acme", "demo"), local,
+	); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/marketplace/datasets/acme/demo?artifact_source=huggingface&revision=main", nil)
+	req.SetPathValue("namespace", "acme")
+	req.SetPathValue("name", "demo")
+	w := httptest.NewRecorder()
+	s.handleMarketplaceDatasetDetail(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	var response marketplaceDatasetDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Details == nil || response.Details.ArtifactSource != "huggingface" ||
+		response.Details.Path != "acme/demo" {
+		t.Fatalf("details = %#v", response.Details)
+	}
+	if response.Details.RepoSize != 0 || response.Details.FileCount != 0 {
+		t.Fatalf("primary detail unexpectedly blocked on repository metrics: size %d files %d", response.Details.RepoSize, response.Details.FileCount)
+	}
+	if !response.LocalDataset.Downloaded || response.LocalDataset.Dataset != "huggingface/acme/demo" {
+		t.Fatalf("local_dataset = %#v", response.LocalDataset)
+	}
+
+	extrasReq := httptest.NewRequest(http.MethodGet,
+		"/api/marketplace/datasets/acme/demo/extras?artifact_source=huggingface&revision=main", nil)
+	extrasReq.SetPathValue("namespace", "acme")
+	extrasReq.SetPathValue("name", "demo")
+	extrasW := httptest.NewRecorder()
+	s.handleMarketplaceDatasetExtras(extrasW, extrasReq)
+	if extrasW.Code != http.StatusOK {
+		t.Fatalf("extras status = %d, want 200 body=%s", extrasW.Code, extrasW.Body.String())
+	}
+	var extras marketplaceDatasetExtrasResponse
+	if err := json.NewDecoder(extrasW.Body).Decode(&extras); err != nil {
+		t.Fatal(err)
+	}
+	if !extras.Available || extras.RepoSize != 100 || extras.FileCount != 2 || extras.Revision != "abc123" {
+		t.Fatalf("extras = %#v", extras)
 	}
 }
 

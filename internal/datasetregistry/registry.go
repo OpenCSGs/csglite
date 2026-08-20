@@ -1,4 +1,4 @@
-package modelregistry
+package datasetregistry
 
 import (
 	"context"
@@ -25,24 +25,21 @@ type ListOptions struct {
 	Sort           string
 	Page           int
 	PerPage        int
-	Framework      string
 	Task           string
+	Language       string
+	License        string
 	UpstreamSource string
-	ModelParamsMin string
-	ModelParamsMax string
 }
 
-// Registry is the provider-neutral model artifact contract. csghub.Model and
-// csghub.RepoFile remain the canonical wire DTOs for compatibility with the
-// existing Marketplace API; adapters must normalize their provider payloads.
+// Registry is the provider-neutral remote dataset artifact contract.
+// csghub.Dataset and csghub.RepoFile remain the normalized wire DTOs.
 type Registry interface {
 	Source() Source
 	DefaultRevision() string
-	ListModels(context.Context, ListOptions) ([]csghub.Model, int, error)
-	GetModel(context.Context, string, string) (*csghub.Model, error)
+	ListDatasets(context.Context, ListOptions) ([]csghub.Dataset, int, error)
+	GetDataset(context.Context, string, string) (*csghub.Dataset, error)
 	ListFiles(context.Context, string, string) ([]csghub.RepoFile, string, error)
-	ReadFile(context.Context, string, string, string) (string, error)
-	DownloadSnapshot(context.Context, string, string, string, []string, csghub.SnapshotProgressFunc) ([]csghub.RepoFile, string, error)
+	DownloadSnapshot(context.Context, string, string, string, csghub.SnapshotProgressFunc) ([]csghub.RepoFile, string, error)
 }
 
 func NormalizeSource(value string) (Source, error) {
@@ -80,10 +77,11 @@ func firstEnvironmentValue(names ...string) string {
 	return ""
 }
 
-func ResolveRevision(requested, fallback string) string {
-	return artifactregistry.ResolveRevision(requested, fallback)
-}
-
-func ParseRepoID(repoID string) (string, string, error) {
-	return artifactregistry.ParseRepoID(repoID)
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
