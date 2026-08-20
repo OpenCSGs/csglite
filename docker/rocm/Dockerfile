@@ -1,16 +1,23 @@
 ARG BASE_IMAGE=docker.1ms.run/rocm/pytorch:rocm7.2.2_ubuntu22.04_py3.10_pytorch_release_2.10.0
 FROM ${BASE_IMAGE}
 
+ARG CSGHUB_LITE_VERSION
+ARG CSGHUB_LITE_LLAMA_CPP_TAG
+ARG CSGHUB_LITE_INSTALL_POLICY=if-missing
+ARG CSGHUB_LITE_LLAMA_ROCM_VERSION=7.2
+
 LABEL org.opencontainers.image.title="csghub-lite ROCm runtime"
-LABEL org.opencontainers.image.description="ROCm 7.2.3 Ubuntu 24.04 image that downloads csghub-lite and ROCm llama-server on container start"
+LABEL org.opencontainers.image.description="ROCm 7.2.2 Ubuntu 22.04 image that downloads csghub-lite and ROCm llama-server on container start"
 LABEL org.opencontainers.image.source="https://github.com/OpenCSGs/csglite"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     INSTALL_DIR=/root/.csghub-lite/bin \
     CSGHUB_LITE_LLAMA_SERVER_INSTALL_DIR=/root/.csghub-lite/bin \
-    CSGHUB_LITE_INSTALL_POLICY=if-missing \
+    CSGHUB_LITE_VERSION=${CSGHUB_LITE_VERSION} \
+    CSGHUB_LITE_LLAMA_CPP_TAG=${CSGHUB_LITE_LLAMA_CPP_TAG} \
+    CSGHUB_LITE_INSTALL_POLICY=${CSGHUB_LITE_INSTALL_POLICY} \
     CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER=1 \
-    CSGHUB_LITE_LLAMA_ROCM_VERSION=7.2 \
+    CSGHUB_LITE_LLAMA_ROCM_VERSION=${CSGHUB_LITE_LLAMA_ROCM_VERSION} \
     CSGHUB_LITE_FORCE=1 \
     PIP_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple \
     CSGHUB_LITE_TORCH_PACKAGE=torch==2.12.0+cpu \

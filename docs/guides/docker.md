@@ -81,6 +81,9 @@ docker run -d --name csghub-lite-rocm \
   opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite-rocm:latest
 ```
 
+For a reproducible ROCm image with pinned CSGLite and llama.cpp versions, see
+[`docker/rocm/README.md`](../../docker/rocm/README.md).
+
 The ROCm image prebuilds the SafeTensors-to-GGUF Python conversion environment
 with CPU PyTorch, `safetensors`, `transformers`, and `sentencepiece`. On first
 start, the entrypoint seeds that environment into `/root/.csghub-lite/tools/python`
