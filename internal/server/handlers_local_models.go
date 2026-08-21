@@ -109,7 +109,7 @@ func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
 		metadata := s.localModelMetadata(storageID, dir, pipelineTag, item.Format)
 		pipelineTag = metadata.PipelineTag
 		hasMMProj = metadata.HasMMProj
-		contextWindow = s.localModelContextWindowWithFallback(storageID, metadata.ContextWindow)
+		contextWindow = s.localModelContextWindow(storageID, dir)
 		maxModelLen = metadata.MaxModelLen
 	}
 	if pipelineTag == "" {
@@ -230,7 +230,8 @@ func (s *Server) localModelContextWindowWithFallback(modelID string, fallback in
 }
 
 func (s *Server) localModelContextWindow(modelID, modelDir string) int64 {
-	return s.localModelContextWindowWithFallback(modelID, int64(inference.ResolveNumCtx(modelDir, 0)))
+	resolved := inference.ResolveNumCtxWithModelMax(modelDir, 0, s.cfg.Inference.LlamaUseModelMaxCtx)
+	return s.localModelContextWindowWithFallback(modelID, int64(resolved))
 }
 
 func matchesLocalModelSearch(item api.ModelInfo, query, formatFilter, pipelineTagFilter string) bool {

@@ -1,0 +1,12 @@
+---
+description: Keep the csghub-lite config schema consolidated and stable
+globs: "{internal/config/**/*.go,internal/server/**/*.go}"
+alwaysApply: false
+---
+
+# Configuration Schema Discipline
+
+Canonical rule: `docs/agent-guidelines/config-schema.md`.
+
+Follow that file. Do not add duplicated rule text here; update the canonical
+guideline instead.

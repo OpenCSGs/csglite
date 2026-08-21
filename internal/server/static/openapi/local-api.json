@@ -6615,6 +6615,7 @@
           "marketplace_dataset_source",
           "autostart",
           "desktop_mode",
+          "llama_use_model_max_ctx",
           "web_search",
           "observability",
           "hidden_nav_items"
@@ -6682,6 +6683,10 @@
           },
           "desktop_mode": {
             "type": "boolean"
+          },
+          "llama_use_model_max_ctx": {
+            "type": "boolean",
+            "description": "Whether local models use their native maximum context when a request does not explicitly set num_ctx. CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX takes precedence when set."
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"
@@ -6753,6 +6758,10 @@
           },
           "autostart": {
             "type": "boolean"
+          },
+          "llama_use_model_max_ctx": {
+            "type": "boolean",
+            "description": "Use each local model's native maximum context when requests omit num_ctx."
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"

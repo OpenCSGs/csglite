@@ -459,6 +459,7 @@ type SettingsResponse struct {
 	LocalAPIURL              string                `json:"local_api_url,omitempty"`
 	WebSearch                WebSearchSettings     `json:"web_search"`
 	Observability            ObservabilitySettings `json:"observability"`
+	LlamaUseModelMaxCtx      bool                  `json:"llama_use_model_max_ctx"`
 	HiddenNavItems           []string              `json:"hidden_nav_items"`
 }
 
@@ -478,6 +479,7 @@ type SettingsUpdateRequest struct {
 	Autostart                *bool                  `json:"autostart,omitempty"`
 	WebSearch                *WebSearchSettings     `json:"web_search,omitempty"`
 	Observability            *ObservabilitySettings `json:"observability,omitempty"`
+	LlamaUseModelMaxCtx      *bool                  `json:"llama_use_model_max_ctx,omitempty"`
 }
 
 type ObservabilitySettings struct {

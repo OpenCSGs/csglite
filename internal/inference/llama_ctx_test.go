@@ -49,6 +49,29 @@ func TestResolveNumCtxUsesModelMaxWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestResolveNumCtxUsesPersistedModelMaxSetting(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	if got := ResolveNumCtxWithModelMax(dir, 0, true); got != 40960 {
+		t.Fatalf("ResolveNumCtxWithModelMax returned %d, want %d", got, 40960)
+	}
+}
+
+func TestResolveNumCtxEnvOverridesPersistedModelMaxSetting(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	t.Setenv(useModelMaxCtxEnv, "false")
+
+	if got := ResolveNumCtxWithModelMax(dir, 0, true); got != 16384 {
+		t.Fatalf("ResolveNumCtxWithModelMax returned %d, want %d", got, 16384)
+	}
+}
+
 func TestResolveNumCtxUsesNestedModelMaxWhenEnabled(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"text_config":{"max_position_embeddings":262144}}`), 0o644); err != nil {

@@ -49,6 +49,12 @@ csghub-lite serve
 | `CSGHUB_LITE_ROCM_UNIFIED_MEMORY` | AMD APU 自动开启 | 控制 `GGML_CUDA_ENABLE_UNIFIED_MEMORY`。仅 APU 默认开启；ROCm 独显默认关闭。 |
 | `CSGHUB_LITE_CONVERTER_URL` | 内置转换器 | 覆盖 `convert_hf_to_gguf.py` 下载地址。通常只用于镜像测试或版本调试。 |
 
+设置页面的“按模型最大上下文”持久化为
+`config.json` 中的 `inference.llama_use_model_max_ctx`。该默认值同时作用于
+Web UI 和未显式传入 `num_ctx` 的外部 API 请求；环境变量
+`CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX` 显式设置时优先。此前配置中没有本地推理
+默认值分组，因此该选项使用独立的 `inference` 配置段，而不复用浏览器状态。
+
 未显式设置 GPU 层数时，CSGLite 不向当前 `llama-server` 传递 `-ngl`，
 由 llama.cpp 根据空闲设备内存自动 fit。GPU 层数目前通过 API/CLI 运行参数设置，
 没有对应环境变量。

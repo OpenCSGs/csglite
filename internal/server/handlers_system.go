@@ -20,6 +20,7 @@ import (
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/hardware"
+	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -153,6 +154,10 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		retentionDays := req.Observability.RetentionDays
 		s.cfg.Observability.RetentionDays = &retentionDays
 		observabilityUpdated = true
+		configUpdated = true
+	}
+	if req.LlamaUseModelMaxCtx != nil {
+		s.cfg.Inference.LlamaUseModelMaxCtx = *req.LlamaUseModelMaxCtx
 		configUpdated = true
 	}
 	if req.ServerURL != nil {
@@ -326,7 +331,8 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		Observability: api.ObservabilitySettings{
 			RetentionDays: config.ObservabilityRetentionDays(cfg.Observability),
 		},
-		HiddenNavItems: append([]string{}, cfg.HiddenNavItems...),
+		LlamaUseModelMaxCtx: inference.UseModelMaxCtxByDefault(cfg.Inference.LlamaUseModelMaxCtx),
+		HiddenNavItems:      append([]string{}, cfg.HiddenNavItems...),
 	}
 }
 

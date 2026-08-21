@@ -295,6 +295,7 @@ export interface AppSettings {
   desktop_mode: boolean;
   local_api_url?: string;
   autostart: boolean;
+  llama_use_model_max_ctx: boolean;
   web_search: WebSearchSettings;
   observability: ObservabilitySettings;
   hidden_nav_items: string[];
@@ -1419,6 +1420,7 @@ export async function saveSettings(patch: {
   marketplace_model_source?: ArtifactSource;
   marketplace_dataset_source?: ArtifactSource;
   autostart?: boolean;
+  llama_use_model_max_ctx?: boolean;
   web_search?: WebSearchSettings;
   observability?: ObservabilitySettings;
 }): Promise<AppSettings> {

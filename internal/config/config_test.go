@@ -239,6 +239,7 @@ func TestSaveAndLoad(t *testing.T) {
 		AIAppPreferredModels: map[string]string{
 			"claude-code": "Qwen/Qwen2.5-Coder-1.5B",
 		},
+		Inference: InferenceConfig{LlamaUseModelMaxCtx: true},
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -274,6 +275,46 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 	if got := loaded.AIAppPreferredModels["claude-code"]; got != "Qwen/Qwen2.5-Coder-1.5B" {
 		t.Errorf("AIAppPreferredModels[claude-code] = %q, want coder model", got)
+	}
+	if !loaded.Inference.LlamaUseModelMaxCtx {
+		t.Error("Inference.LlamaUseModelMaxCtx = false, want true")
+	}
+}
+
+func TestInferenceConfigDefaultsForLegacyConfig(t *testing.T) {
+	var cfg Config
+	if err := json.Unmarshal([]byte(`{"server_url":"https://hub.opencsg.com"}`), &cfg); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+	if cfg.Inference.LlamaUseModelMaxCtx {
+		t.Fatal("legacy config enabled model-max context by default")
+	}
+}
+
+func TestInferenceConfigPersistsAcrossSaveAndLoad(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	clearCloudServiceEnv(t)
+	Reset()
+	t.Cleanup(Reset)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Inference.LlamaUseModelMaxCtx = true
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	Reset()
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Inference.LlamaUseModelMaxCtx {
+		t.Fatal("Inference.LlamaUseModelMaxCtx = false after reload, want true")
 	}
 }
 

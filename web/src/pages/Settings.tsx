@@ -148,12 +148,22 @@ function loadContextMode(): ContextLengthMode {
   }
 }
 
-function saveContextMode(mode: ContextLengthMode) {
+function setContextModeLocal(mode: ContextLengthMode) {
   contextMode.value = mode;
   try {
     localStorage.setItem(contextModeStorageKey, mode);
   } catch {
     /* ignore */
+  }
+}
+
+async function saveContextMode(mode: ContextLengthMode) {
+  const previous = contextMode.value;
+  setContextModeLocal(mode);
+  try {
+    applySettings(await saveSettings({ llama_use_model_max_ctx: mode === "model_max" }));
+  } catch {
+    setContextModeLocal(previous);
   }
 }
 
@@ -184,13 +194,18 @@ async function resetDefaults() {
   resetDefaultsError.value = "";
   contextIndex.value = 1;
   saveContextIndex(1);
-  saveContextMode("global");
+  setContextModeLocal("global");
   parallelIndex.value = 2;
   saveParallelIndex(2);
   serviceUrlsError.value = "";
   serviceUrlsMessage.value = "";
   try {
-    const data = await saveSettings({ server_url: "", ai_gateway_url: "", cloud_provider_name: "" });
+    const data = await saveSettings({
+      server_url: "",
+      ai_gateway_url: "",
+      cloud_provider_name: "",
+      llama_use_model_max_ctx: false,
+    });
     applySettings(data);
     notifyProvidersChanged();
     serviceUrlsMessage.value = t("settings.serviceUrlsResetSuccess");
@@ -207,6 +222,7 @@ async function resetDefaults() {
 }
 
 function applySettings(data: AppSettings) {
+  setContextModeLocal(data.llama_use_model_max_ctx ? "model_max" : "global");
   storageLocation.value = data.storage_dir || "";
   storageDirInput.value = data.storage_dir || "";
   modelDirectory.value = data.model_dir || "";
@@ -823,7 +839,7 @@ export function Settings() {
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => saveContextMode(mode)}
+                  onClick={() => void saveContextMode(mode)}
                   class={`rounded-xl border p-4 text-left transition ${
                     selected
                       ? "border-indigo-300 bg-indigo-50 ring-1 ring-indigo-200"

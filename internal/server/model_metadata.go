@@ -27,7 +27,7 @@ func (s *Server) localModelMetadata(storageID, modelDir, manifestPipelineTag str
 	metadata := modelmetadata.Metadata{
 		PipelineTag:   s.resolvedLocalPipelineTag(storageID, manifestPipelineTag),
 		HasMMProj:     model.FindMMProj(modelDir) != "",
-		ContextWindow: int64(inference.ResolveNumCtx(modelDir, 0)),
+		ContextWindow: int64(inference.ResolveNumCtxWithModelMax(modelDir, 0, s.cfg.Inference.LlamaUseModelMaxCtx)),
 	}
 	metadata.MaxModelLen, _ = model.MaxModelLen(modelDir, format)
 

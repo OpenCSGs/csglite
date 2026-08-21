@@ -58,6 +58,40 @@ func TestHandleSettingsReturnsStorageDir(t *testing.T) {
 	}
 }
 
+func TestHandleSettingsUpdatesLlamaUseModelMaxCtx(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX", "")
+	config.Reset()
+
+	s := newTestServer(t)
+	enabled := true
+	body, err := json.Marshal(api.SettingsUpdateRequest{LlamaUseModelMaxCtx: &enabled})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleSettingsUpdate(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if !s.cfg.Inference.LlamaUseModelMaxCtx {
+		t.Fatal("LlamaUseModelMaxCtx = false, want true")
+	}
+
+	var resp api.SettingsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.LlamaUseModelMaxCtx {
+		t.Fatal("response llama_use_model_max_ctx = false, want true")
+	}
+}
+
 func TestHandleSettingsUpdateStorageDirUpdatesModelAndDatasetDirs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

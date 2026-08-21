@@ -75,6 +75,7 @@ type Config struct {
 	AIAppModelBindings       map[string][]api.AIAppModelBinding `json:"ai_app_model_bindings,omitempty"`
 	WebSearch                WebSearchConfig                    `json:"web_search,omitempty"`
 	Observability            ObservabilityConfig                `json:"observability,omitempty"`
+	Inference                InferenceConfig                    `json:"inference,omitempty"`
 	DesktopMode              bool                               `json:"-"`
 	DesktopToken             string                             `json:"-"`
 	DesktopSessionToken      string                             `json:"-"`
@@ -124,6 +125,12 @@ type WebSearchConfig struct {
 	Providers      []string `json:"providers,omitempty"`
 	SafeSearch     int      `json:"safe_search,omitempty"`
 	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+}
+
+// InferenceConfig groups process-wide inference defaults that apply equally to
+// the Web UI and external API clients.
+type InferenceConfig struct {
+	LlamaUseModelMaxCtx bool `json:"llama_use_model_max_ctx,omitempty"`
 }
 
 const DefaultObservabilityRetentionDays = 30

@@ -953,7 +953,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	if err != nil {
 		return nil, fmt.Errorf("model %q not found locally; use 'csghub-lite pull %s' first", modelID, modelID)
 	}
-	effectiveNumCtx := inference.ResolveNumCtx(modelDir, numCtx)
+	effectiveNumCtx := inference.ResolveNumCtxWithModelMax(modelDir, numCtx, s.cfg.Inference.LlamaUseModelMaxCtx)
 	effectiveNumParallel := inference.ResolveNumParallel(numParallel)
 	effectiveNGPULayers := inference.ResolveNGPULayers(normalizedNGPULayers)
 	loadConfigKey := fmt.Sprintf(
