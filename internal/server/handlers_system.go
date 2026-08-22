@@ -189,7 +189,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.HuggingFaceEndpoint != nil {
 		endpoint := strings.TrimSpace(*req.HuggingFaceEndpoint)
 		if endpoint == "" {
-			endpoint = config.DefaultHuggingFaceEndpoint
+			endpoint = config.ResolveHuggingFaceEndpoint("")
 		}
 		registrySettingsUpdated = registrySettingsUpdated || endpoint != strings.TrimSpace(s.cfg.HuggingFaceEndpoint)
 		s.cfg.HuggingFaceEndpoint = endpoint
@@ -318,7 +318,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		DefaultCloudProviderName: config.DefaultCloudProviderName,
 		DefaultServerURL:         config.DefaultServerURL,
 		DefaultAIGatewayURL:      cloud.DefaultBaseURL,
-		HuggingFaceEndpoint:      firstNonEmptySetting(cfg.HuggingFaceEndpoint, config.DefaultHuggingFaceEndpoint),
+		HuggingFaceEndpoint:      config.ResolveHuggingFaceEndpoint(cfg.HuggingFaceEndpoint),
 		HuggingFaceTokenSet:      strings.TrimSpace(cfg.HuggingFaceToken) != "",
 		ModelScopeEndpoint:       firstNonEmptySetting(cfg.ModelScopeEndpoint, config.DefaultModelScopeEndpoint),
 		ModelScopeTokenSet:       strings.TrimSpace(cfg.ModelScopeToken) != "",

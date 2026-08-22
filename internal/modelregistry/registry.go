@@ -58,7 +58,7 @@ func New(cfg *config.Config, source Source) (Registry, error) {
 		return NewOpenCSG(cfg.ServerURL, cfg.Token), nil
 	case SourceHuggingFace:
 		return NewHuggingFace(
-			firstNonEmpty(firstEnvironmentValue(config.EnvHuggingFaceEndpoint), cfg.HuggingFaceEndpoint, config.DefaultHuggingFaceEndpoint),
+			config.ResolveHuggingFaceEndpoint(cfg.HuggingFaceEndpoint),
 			firstNonEmpty(firstEnvironmentValue(config.EnvHuggingFaceToken, config.EnvHuggingFaceHubToken), cfg.HuggingFaceToken),
 		), nil
 	case SourceModelScope:

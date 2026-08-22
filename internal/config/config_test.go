@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/opencsgs/csglite/internal/region"
 )
 
 func setupTestDir(t *testing.T) string {
@@ -44,6 +46,9 @@ func TestDefaultValues(t *testing.T) {
 	}
 	if cfg.AIAppPreferredModels == nil {
 		t.Fatal("AIAppPreferredModels = nil, want initialized map")
+	}
+	if cfg.HuggingFaceEndpoint != DefaultHuggingFaceEndpoint {
+		t.Fatalf("HuggingFaceEndpoint = %q, want official default in tests", cfg.HuggingFaceEndpoint)
 	}
 }
 
@@ -383,6 +388,83 @@ func TestMarketplaceDatasetSourcePersistsAndDefaults(t *testing.T) {
 	}
 	if loaded.MarketplaceDatasetSource != DefaultMarketplaceSource {
 		t.Fatalf("invalid dataset source normalized to %q", loaded.MarketplaceDatasetSource)
+	}
+}
+
+func TestResolveHuggingFaceEndpointUsesRegionAndOverrides(t *testing.T) {
+	t.Setenv(EnvHuggingFaceEndpoint, "")
+	t.Setenv(region.EnvName, "CN")
+	if got := ResolveHuggingFaceEndpoint(""); got != ChinaHuggingFaceEndpoint {
+		t.Fatalf("CN default = %q, want %q", got, ChinaHuggingFaceEndpoint)
+	}
+	t.Setenv(region.EnvName, "INTL")
+	if got := ResolveHuggingFaceEndpoint(DefaultHuggingFaceEndpoint); got != DefaultHuggingFaceEndpoint {
+		t.Fatalf("INTL default = %q, want %q", got, DefaultHuggingFaceEndpoint)
+	}
+	if got := ResolveHuggingFaceEndpoint("https://hf.example.test"); got != "https://hf.example.test" {
+		t.Fatalf("custom endpoint = %q", got)
+	}
+	t.Setenv(EnvHuggingFaceEndpoint, "https://hf-env.example.test")
+	if got := ResolveHuggingFaceEndpoint("https://hf.example.test"); got != "https://hf-env.example.test" {
+		t.Fatalf("env override = %q", got)
+	}
+}
+
+func TestLoadAppliesChinaHuggingFaceMirrorForAutoEndpoint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv(EnvHuggingFaceEndpoint, "")
+	t.Setenv(region.EnvName, "CN")
+	clearCloudServiceEnv(t)
+	appHome := filepath.Join(home, AppDir)
+	if err := os.MkdirAll(appHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appHome, ConfigFile),
+		[]byte(`{"huggingface_endpoint":"https://huggingface.co"}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	Reset()
+	t.Cleanup(Reset)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HuggingFaceEndpoint != ChinaHuggingFaceEndpoint {
+		t.Fatalf("HuggingFaceEndpoint = %q, want China mirror", cfg.HuggingFaceEndpoint)
+	}
+}
+
+func TestLoadKeepsCustomHuggingFaceEndpoint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv(EnvHuggingFaceEndpoint, "")
+	t.Setenv(region.EnvName, "CN")
+	clearCloudServiceEnv(t)
+	appHome := filepath.Join(home, AppDir)
+	if err := os.MkdirAll(appHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appHome, ConfigFile),
+		[]byte(`{"huggingface_endpoint":"https://hf.example.test"}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	Reset()
+	t.Cleanup(Reset)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HuggingFaceEndpoint != "https://hf.example.test" {
+		t.Fatalf("HuggingFaceEndpoint = %q, want custom URL", cfg.HuggingFaceEndpoint)
 	}
 }
 

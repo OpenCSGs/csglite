@@ -31,7 +31,7 @@ csghub-lite serve
 | `CSGHUB_LITE_HIDDEN_NAV_ITEMS` | 空 | 用逗号分隔要隐藏的 Web UI 导航项。可用节点 ID 与说明见 [配置指南：隐藏左侧导航节点](configuration.md#隐藏左侧导航节点)。只隐藏入口，不禁用 URL。 |
 | `CSGHUB_LITE_LOG_STDERR` | `1` | 设置为 `0` 时停止向标准错误输出日志。 |
 | `CSGHUB_LITE_DISABLE_FILE_LOGGING` | 空 | 设置为任意非空值时禁用 `~/.csghub-lite/logs/` 文件日志。 |
-| `CSGHUB_LITE_REGION` | 自动检测 | 区域提示。常用值为 `CN` 或 `intl`，影响安装下载源、升级源、转换依赖和 Python 包镜像。 |
+| `CSGHUB_LITE_REGION` | 自动检测 | 区域提示。常用值为 `CN` 或 `intl`，影响安装下载源、升级源、转换依赖、Python 包镜像，以及未自定义时的 Hugging Face Hub 地址（国内 `https://hf-mirror.com`，国外 `https://huggingface.co`）。 |
 
 ## llama.cpp 本地推理
 

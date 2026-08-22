@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/opencsgs/csglite/internal/region"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -19,6 +20,7 @@ const (
 	DefaultCloudProviderName   = "csghub"
 	DefaultMarketplaceSource   = "opencsg"
 	DefaultHuggingFaceEndpoint = "https://huggingface.co"
+	ChinaHuggingFaceEndpoint   = "https://hf-mirror.com"
 	DefaultModelScopeEndpoint  = "https://modelscope.cn"
 	EnvServerURL               = "CSGHUB_LITE_SERVER_URL"
 	EnvAIGatewayURL            = "CSGHUB_LITE_AI_GATEWAY_URL"
@@ -281,8 +283,8 @@ func Load() (*Config, error) {
 		if globalConfig.ServerURL == "" {
 			globalConfig.ServerURL = DefaultServerURL
 		}
-		if strings.TrimSpace(globalConfig.HuggingFaceEndpoint) == "" {
-			globalConfig.HuggingFaceEndpoint = DefaultHuggingFaceEndpoint
+		if isAutoHuggingFaceEndpoint(globalConfig.HuggingFaceEndpoint) {
+			globalConfig.HuggingFaceEndpoint = defaultHuggingFaceEndpointForRegion()
 		}
 		if strings.TrimSpace(globalConfig.ModelScopeEndpoint) == "" {
 			globalConfig.ModelScopeEndpoint = DefaultModelScopeEndpoint
@@ -344,6 +346,30 @@ func NormalizeMarketplaceDatasetSource(value string) string {
 
 func IsSupportedMarketplaceDatasetSource(value string) bool {
 	return IsSupportedMarketplaceModelSource(value)
+}
+
+func ResolveHuggingFaceEndpoint(configured string) string {
+	if env := strings.TrimSpace(os.Getenv(EnvHuggingFaceEndpoint)); env != "" {
+		return env
+	}
+	if configured = strings.TrimSpace(configured); configured != "" && !isAutoHuggingFaceEndpoint(configured) {
+		return configured
+	}
+	return defaultHuggingFaceEndpointForRegion()
+}
+
+func defaultHuggingFaceEndpointForRegion() string {
+	if region.Detect() == region.CN {
+		return ChinaHuggingFaceEndpoint
+	}
+	return DefaultHuggingFaceEndpoint
+}
+
+func isAutoHuggingFaceEndpoint(value string) bool {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	return value == "" ||
+		strings.EqualFold(value, DefaultHuggingFaceEndpoint) ||
+		strings.EqualFold(value, ChinaHuggingFaceEndpoint)
 }
 
 func ApplyEnvironmentDefaults(cfg *Config) {

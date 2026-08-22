@@ -285,6 +285,25 @@ func TestHandleSettingsUpdatesObservabilityRetention(t *testing.T) {
 	}
 }
 
+func TestHandleSettingsResolvesChinaHuggingFaceMirror(t *testing.T) {
+	t.Setenv(config.EnvHuggingFaceEndpoint, "")
+	t.Setenv("CSGHUB_LITE_REGION", "CN")
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	recorder := httptest.NewRecorder()
+	s.handleSettings(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response api.SettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.HuggingFaceEndpoint != config.ChinaHuggingFaceEndpoint {
+		t.Fatalf("huggingface_endpoint = %q, want %q", response.HuggingFaceEndpoint, config.ChinaHuggingFaceEndpoint)
+	}
+}
+
 func TestHandleSettingsUpdatesRegistryCredentialsWithoutReturningSecrets(t *testing.T) {
 	s := newTestServer(t)
 	body := []byte(`{

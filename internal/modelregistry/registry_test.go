@@ -42,6 +42,19 @@ func TestRegistryEnvironmentOverridesPersistedEndpoint(t *testing.T) {
 	}
 }
 
+func TestRegistryUsesChinaHuggingFaceMirrorForDomesticRegion(t *testing.T) {
+	t.Setenv(config.EnvHuggingFaceEndpoint, "")
+	t.Setenv("CSGHUB_LITE_REGION", "CN")
+	registry, err := New(&config.Config{}, SourceHuggingFace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hf := registry.(*huggingFaceRegistry)
+	if hf.http.baseURL != config.ChinaHuggingFaceEndpoint {
+		t.Fatalf("baseURL = %q, want %q", hf.http.baseURL, config.ChinaHuggingFaceEndpoint)
+	}
+}
+
 func TestOpenCSGRegistryRejectsCustomRevisionBeforeNetworkCall(t *testing.T) {
 	registry := NewOpenCSG("", "")
 	if _, err := registry.GetModel(context.Background(), "acme/demo", "main"); err == nil ||
