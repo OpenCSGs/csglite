@@ -79,13 +79,37 @@ func TestHandleMarketplaceModelsDispatchesHuggingFaceSource(t *testing.T) {
 		t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body.String())
 	}
 	var response struct {
-		Data []csghub.Model `json:"data"`
+		Data       []csghub.Model `json:"data"`
+		HasMore    bool           `json:"has_more"`
+		TotalExact bool           `json:"total_exact"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
 	if len(response.Data) != 1 || response.Data[0].ArtifactSource != "huggingface" {
 		t.Fatalf("models = %#v", response.Data)
+	}
+	if response.HasMore || response.TotalExact {
+		t.Fatalf("paging = has_more=%v total_exact=%v, want incomplete estimated page", response.HasMore, response.TotalExact)
+	}
+}
+
+func TestMarketplaceListPaging(t *testing.T) {
+	hasMore, exact := marketplaceListPaging("huggingface", 1, 16, 16, 17)
+	if !hasMore || exact {
+		t.Fatalf("hf full page = %v, %v, want has_more and estimated total", hasMore, exact)
+	}
+	hasMore, exact = marketplaceListPaging("huggingface", 2, 16, 3, 35)
+	if hasMore || exact {
+		t.Fatalf("hf short page = %v, %v, want last estimated page", hasMore, exact)
+	}
+	hasMore, exact = marketplaceListPaging("opencsg", 1, 16, 16, 48)
+	if !hasMore || !exact {
+		t.Fatalf("opencsg first page = %v, %v, want exact remaining pages", hasMore, exact)
+	}
+	hasMore, exact = marketplaceListPaging("modelscope", 3, 16, 16, 48)
+	if hasMore || !exact {
+		t.Fatalf("modelscope last page = %v, %v, want exact end", hasMore, exact)
 	}
 }
 

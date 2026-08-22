@@ -114,10 +114,7 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	writeMarketplaceListResponse(w, cacheKey, map[string]interface{}{
-		"data":  models,
-		"total": total,
-	})
+	writeMarketplaceListResponse(w, cacheKey, marketplaceListPayload(models, total, string(artifactSource), page, per, len(models)))
 }
 
 type marketplaceModelExtrasRequest struct {
@@ -401,10 +398,7 @@ func (s *Server) handleMarketplaceDatasets(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	writeMarketplaceListResponse(w, cacheKey, map[string]interface{}{
-		"data":  datasets,
-		"total": total,
-	})
+	writeMarketplaceListResponse(w, cacheKey, marketplaceListPayload(datasets, total, string(artifactSource), page, per, len(datasets)))
 }
 
 type marketplaceLocalDatasetStatus struct {
@@ -573,6 +567,29 @@ func clearMarketplaceCache() {
 	marketplaceListCache.Lock()
 	marketplaceListCache.entries = make(map[string]marketplaceListCacheEntry)
 	marketplaceListCache.Unlock()
+}
+
+func marketplaceListPayload(data interface{}, total int, source string, page, per, count int) map[string]interface{} {
+	hasMore, totalExact := marketplaceListPaging(source, page, per, count, total)
+	return map[string]interface{}{
+		"data":        data,
+		"total":       total,
+		"has_more":    hasMore,
+		"total_exact": totalExact,
+	}
+}
+
+func marketplaceListPaging(source string, page, per, count, total int) (hasMore, totalExact bool) {
+	if source == string(artifactregistry.SourceHuggingFace) {
+		return count > 0 && count == per, false
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if per <= 0 {
+		per = 16
+	}
+	return (page-1)*per+count < total, true
 }
 
 func writeMarketplaceListResponse(w http.ResponseWriter, cacheKey string, payload interface{}) {

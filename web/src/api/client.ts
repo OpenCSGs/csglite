@@ -2169,7 +2169,7 @@ export async function getMarketplaceModels(params: {
   page?: number;
   per?: number;
   artifactSource?: ArtifactSource;
-}): Promise<{ data: MarketplaceModel[]; total: number }> {
+}): Promise<{ data: MarketplaceModel[]; total: number; has_more?: boolean; total_exact?: boolean }> {
   const q = new URLSearchParams();
   if (params.search) q.set("search", params.search);
   q.set("sort", params.sort || "trending");
@@ -2180,7 +2180,7 @@ export async function getMarketplaceModels(params: {
   if (params.artifactSource) q.set("artifact_source", params.artifactSource);
   q.set("page", String(params.page || 1));
   q.set("per", String(params.per || 16));
-  const resp = await fetchJSON<{ data: MarketplaceModel[]; total: number }>(
+  const resp = await fetchJSON<{ data: MarketplaceModel[]; total: number; has_more?: boolean; total_exact?: boolean }>(
     `/api/marketplace/models?${q}`
   );
   return resp;
@@ -2215,7 +2215,7 @@ export async function getMarketplaceDatasets(params: {
   page?: number;
   per?: number;
   artifactSource?: ArtifactSource;
-}): Promise<{ data: MarketplaceDataset[]; total: number }> {
+}): Promise<{ data: MarketplaceDataset[]; total: number; has_more?: boolean; total_exact?: boolean }> {
   const q = new URLSearchParams();
   if (params.search) q.set("search", params.search);
   q.set("sort", params.sort || "trending");
@@ -2225,7 +2225,7 @@ export async function getMarketplaceDatasets(params: {
   if (params.artifactSource) q.set("artifact_source", params.artifactSource);
   q.set("page", String(params.page || 1));
   q.set("per", String(params.per || 16));
-  const resp = await fetchJSON<{ data: MarketplaceDataset[]; total: number }>(
+  const resp = await fetchJSON<{ data: MarketplaceDataset[]; total: number; has_more?: boolean; total_exact?: boolean }>(
     `/api/marketplace/datasets?${q}`
   );
   return resp;

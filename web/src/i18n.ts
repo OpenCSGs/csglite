@@ -263,6 +263,7 @@ const en: Record<string, string> = {
   "mp.prev": "Previous",
   "mp.next": "Next",
   "mp.page": "Page {0} of {1}",
+  "mp.pageCurrent": "Page {0}",
   "mp.done": "Done!",
   "mp.downloaded": "Downloaded",
   "mp.failed": "Failed",
@@ -354,6 +355,9 @@ const en: Record<string, string> = {
   "mp.localInferenceASR": "Supported (ASR runtime)",
   "mp.localInferenceEmbedding": "Supported (embedding runtime)",
   "mp.localInferenceNone": "Not supported yet",
+  "mp.gated": "Gated",
+  "mp.filesCount": "{0} files",
+  "mp.showMoreMetadata": "Show more metadata",
 
   // Downloads
   "downloads.model": "Model",
@@ -1701,6 +1705,7 @@ const zh: Record<string, string> = {
   "mp.prev": "上一页",
   "mp.next": "下一页",
   "mp.page": "第 {0} 页 / 共 {1} 页",
+  "mp.pageCurrent": "第 {0} 页",
   "mp.done": "完成！",
   "mp.downloaded": "已下载",
   "mp.failed": "失败",
@@ -1792,6 +1797,9 @@ const zh: Record<string, string> = {
   "mp.localInferenceASR": "支持（ASR 语音识别运行时）",
   "mp.localInferenceEmbedding": "支持（Embedding 运行时）",
   "mp.localInferenceNone": "暂不支持",
+  "mp.gated": "需授权",
+  "mp.filesCount": "{0} 个文件",
+  "mp.showMoreMetadata": "查看更多标签",
 
   // Downloads
   "downloads.model": "模型",

@@ -2037,7 +2037,7 @@
           "Marketplace"
         ],
         "summary": "List marketplace models",
-        "description": "Lists models from OpenCSG, Hugging Face, or ModelScope and normalizes the response to `{ data, total }`. Omitting `artifact_source` preserves the historical OpenCSG behavior.",
+        "description": "Lists models from OpenCSG, Hugging Face, or ModelScope and normalizes the response to `{ data, total, has_more, total_exact }`. Hugging Face does not expose a catalog total, so `total` is only a lower bound and `total_exact` is false. Omitting `artifact_source` preserves the historical OpenCSG behavior.",
         "operationId": "getMarketplaceModels",
         "parameters": [
           {
@@ -2273,7 +2273,7 @@
           "Marketplace"
         ],
         "summary": "List marketplace datasets",
-        "description": "Lists datasets from OpenCSG, Hugging Face, or ModelScope and normalizes the response to `{ data, total }`. Omitting `artifact_source` preserves the historical OpenCSG behavior.",
+        "description": "Lists datasets from OpenCSG, Hugging Face, or ModelScope and normalizes the response to `{ data, total, has_more, total_exact }`. Hugging Face does not expose a catalog total, so `total` is only a lower bound and `total_exact` is false. Omitting `artifact_source` preserves the historical OpenCSG behavior.",
         "operationId": "getMarketplaceDatasets",
         "parameters": [
           {
@@ -9835,6 +9835,14 @@
           },
           "total": {
             "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether another page is available after the current result set."
+          },
+          "total_exact": {
+            "type": "boolean",
+            "description": "Whether `total` is an exact catalog count. Hugging Face listings set this to false."
           }
         }
       },
@@ -9920,6 +9928,14 @@
           },
           "total": {
             "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether another page is available after the current result set."
+          },
+          "total_exact": {
+            "type": "boolean",
+            "description": "Whether `total` is an exact catalog count. Hugging Face listings set this to false."
           }
         }
       },
