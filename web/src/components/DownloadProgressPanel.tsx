@@ -2,7 +2,7 @@ import { locale, t } from "../i18n";
 import { clearDownloadTask, pauseDownload, startDownload } from "../downloads";
 import type { DownloadTask } from "../downloads";
 
-export function DownloadTableCell({ task, onComplete, showActions = true }: { task?: DownloadTask; onComplete?: () => void; showActions?: boolean }) {
+export function DownloadTableCell({ task, onComplete, showActions = true, compact = false }: { task?: DownloadTask; onComplete?: () => void; showActions?: boolean; compact?: boolean }) {
   void locale.value;
   if (!task) {
     return <span class="text-xs text-gray-300">{t("downloads.none")}</span>;
@@ -11,7 +11,7 @@ export function DownloadTableCell({ task, onComplete, showActions = true }: { ta
   const canResume = task.status === "paused" || task.status === "error";
   const isDownloading = task.status === "downloading";
   return (
-    <div class="w-full min-w-0 max-w-full">
+    <div class={compact ? "w-20 min-w-0 max-w-20" : "w-full min-w-0 max-w-full"}>
       <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
         <span class="ml-auto shrink-0 text-xs text-gray-400">{displayPercent(task)}%</span>
         {showActions && !isComplete && canResume && (

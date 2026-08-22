@@ -21,10 +21,11 @@ import { t, locale } from "../i18n";
 import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
 import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../components/Pagination";
 import type { PageSize } from "../components/Pagination";
-import { getDownloadTask, getDownloadTasks, hasActiveDownload, clearDownloadTask, downloadCompletionVersion } from "../downloads";
+import { getDownloadTask, getDownloadTasks, clearDownloadTask, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
 import { datasetArtifactSource, displayLocalDatasetID, localDatasetID } from "../datasetIds";
+import { formatTableDateTime } from "../utils/tableDateTime";
 
 type View = { kind: "list" } | { kind: "detail"; dataset: DatasetInfo; path: string };
 type DatasetTableRow = {
@@ -101,6 +102,7 @@ function datasetRows(datasets: DatasetInfo[]): DatasetTableRow[] {
         size: task.totalBytes || task.completedBytes,
         files: 0,
         modified_at: task.updatedAt,
+        origin: "marketplace",
         artifact_source: task.artifactSource,
         repository: task.name,
         requested_revision: task.revision,
@@ -179,7 +181,7 @@ function DatasetList() {
       allDatasets.value = allDatasets.value.filter((d) => localDatasetID(d) !== id);
       return;
     }
-    if (hasActiveDownload.value) return;
+    if (task?.status === "downloading" || task?.status === "queued") return;
     await deleteDataset(id);
     // 清除对应的下载任务记录
     const existingTask = getDownloadTask("dataset", displayID, {
@@ -191,7 +193,6 @@ function DatasetList() {
   };
 
   const handleDetails = (dataset: DatasetInfo) => {
-    if (hasActiveDownload.value) return;
     currentView.value = { kind: "detail", dataset, path: "" };
     loadFiles(localDatasetID(dataset), "");
   };
@@ -208,7 +209,6 @@ function DatasetList() {
 
   const rows = sortDatasetRows(datasetRows(allDatasets.value));
   const pagedRows = paginate(rows, currentPage.value, pageSize.value);
-  const downloading = hasActiveDownload.value;
 
   return (
     <div class="page-shell">
@@ -224,7 +224,6 @@ function DatasetList() {
           </svg>
           <input
             type="text"
-            disabled={downloading}
             value={searchQuery.value}
             onInput={(e) => (searchQuery.value = (e.currentTarget as HTMLInputElement).value)}
             placeholder={t("ds.search")}
@@ -240,14 +239,14 @@ function DatasetList() {
         <div class="overflow-x-auto">
           <table class="w-full min-w-[940px] table-fixed text-sm">
             <colgroup>
-              <col class="w-[22%]" />
-              <col class="w-[11%]" />
+              <col class="w-[24%]" />
+              <col class="w-[calc(13ch+2rem)]" />
               <col class="w-[12%]" />
               <col class="w-[12%]" />
-              <col class="w-[16%]" />
-              <col class="w-[14%]" />
               <col class="w-[10%]" />
-              <col class="w-[8%]" />
+              <col class="w-[12%]" />
+              <col class="w-[12%]" />
+              <col class="w-[7%]" />
             </colgroup>
             <thead>
               <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
@@ -274,7 +273,7 @@ function DatasetList() {
                   <td class="px-4 py-3 min-w-0">
                     <button
                       onClick={() => handleDetails(d)}
-                      disabled={downloading || downloadOnly}
+                      disabled={downloadOnly}
                       class="font-medium text-indigo-600 hover:text-indigo-800 hover:underline break-all text-left disabled:text-gray-400 disabled:hover:text-gray-400 disabled:cursor-not-allowed"
                     >
                       {displayLocalDatasetID(d)}
@@ -282,7 +281,7 @@ function DatasetList() {
                   </td>
                   <td class="px-4 py-3 text-gray-600 whitespace-nowrap">{sourceLabel(datasetArtifactSource(d))}</td>
                   <td class="px-4 py-3 text-gray-600 whitespace-nowrap">
-                    {downloadOnly ? "—" : datasetOriginLabel(d.origin)}
+                    {datasetOriginLabel(downloadOnly ? "marketplace" : d.origin)}
                   </td>
                   <td class="px-4 py-3">
                     <span class="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium">
@@ -290,17 +289,17 @@ function DatasetList() {
                     </span>
                   </td>
                   <td class="px-4 py-3 min-w-0">
-                    <DownloadTableCell task={task} onComplete={loadDatasets} showActions={false} />
+                    <DownloadTableCell task={task} onComplete={loadDatasets} showActions={false} compact />
                   </td>
                   <td class="px-4 py-3 min-w-0">
                     <DownloadStatusCell task={task} completeWhenMissing={!downloadOnly} />
                   </td>
-                  <td class="px-4 py-3 text-gray-500">
-                    {new Date(d.modified_at).toLocaleDateString(locale.value === "zh" ? "zh-CN" : "en-US", { day: "numeric", month: "long" })}
+                  <td class="px-4 py-3 text-gray-500 whitespace-nowrap" title={formatTableDateTime(d.modified_at)}>
+                    {formatTableDateTime(d.modified_at)}
                   </td>
                   <td class="px-4 py-3">
                     <div class="flex items-center justify-end gap-3">
-                      <button disabled={downloading && !downloadOnly} onClick={() => void handleDelete(d, task, downloadOnly)} class="text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                      <button disabled={!downloadOnly && (task?.status === "downloading" || task?.status === "queued")} onClick={() => void handleDelete(d, task, downloadOnly)} class="text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                         {t("ds.delete")}
                       </button>
                     </div>

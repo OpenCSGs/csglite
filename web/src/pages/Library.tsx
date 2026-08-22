@@ -11,7 +11,9 @@ import { isImageGenerationModel } from "../utils/imageModels";
 import { formatLoadStep } from "../utils/loadSteps";
 import { getDownloadTask, getDownloadTasks, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
+import { downloadRowOriginKey, modelOriginKey } from "../artifactOrigin";
 import { displayLocalModelID } from "../modelIds";
+import { formatTableDateTime } from "../utils/tableDateTime";
 
 type FormatFilter = "all" | "gguf" | "safetensors";
 type RunModelParams = {
@@ -351,16 +353,6 @@ function isCloudModel(model: Pick<ModelInfo, "source">): boolean {
   return model.source === "cloud";
 }
 
-function modelOriginLabel(origin?: string, artifactSource?: string): string {
-  if (origin === "upload") return t("lib.originUpload");
-  if (origin === "marketplace") {
-    if (artifactSource === "huggingface") return t("lib.originHuggingFace");
-    if (artifactSource === "modelscope") return t("lib.originModelScope");
-    return t("lib.originOpenCSG");
-  }
-  return t("lib.notAvailable");
-}
-
 function modelDetailHref(modelID: string): string {
   return `/library/detail/${encodeURIComponent(modelID)}`;
 }
@@ -409,6 +401,9 @@ function modelRows(models: ModelInfo[]): ModelTableRow[] {
         size: task.totalBytes || task.completedBytes,
         format: "",
         modified_at: task.updatedAt,
+        origin: "marketplace",
+        artifact_source: task.artifactSource || "opencsg",
+        repository: task.name,
       },
       task,
       downloadOnly: true,
@@ -826,14 +821,14 @@ export function Library() {
         <div class="overflow-x-auto">
           <table class="w-full min-w-[980px] table-fixed text-sm">
             <colgroup>
-              <col class="w-[22%]" />
-              <col class="w-[9%]" />
+              <col class="w-[25ch]" />
+              <col class="w-[10%]" />
+              <col class="w-[calc(13ch+2rem)]" />
+              <col class="w-[10%]" />
               <col class="w-[10%]" />
               <col class="w-[9%]" />
               <col class="w-[14%]" />
-              <col class="w-[8%]" />
-              <col class="w-[11%]" />
-              <col class="w-[18%]" />
+              <col class="w-[20%]" />
             </colgroup>
             <thead>
               <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50 whitespace-nowrap">
@@ -864,7 +859,11 @@ export function Library() {
               pagedRows.map(({ model: m, task, downloadOnly }) => (
                 <tr key={`${m.artifact_source || "opencsg"}:${m.name}`} class="border-b border-gray-50 hover:bg-gray-50/50">
                   <td class="px-4 py-3 min-w-0">
-                    <a href={downloadOnly ? undefined : modelDetailHref(m.model)} class={`font-medium break-all ${downloadOnly ? "text-gray-400 cursor-not-allowed" : "text-indigo-600 hover:text-indigo-800 hover:underline"}`}>
+                    <a
+                      href={downloadOnly ? undefined : modelDetailHref(m.model)}
+                      title={displayLocalModelID(m)}
+                      class={`block max-w-[25ch] truncate font-medium ${downloadOnly ? "text-gray-400 cursor-not-allowed" : "text-indigo-600 hover:text-indigo-800 hover:underline"}`}
+                    >
                       {displayLocalModelID(m)}
                     </a>
                   </td>
@@ -878,9 +877,9 @@ export function Library() {
                       {m.format?.toUpperCase() || (downloadOnly ? t("downloads.downloading") : "—")}
                     </span>
                   </td>
-                  <td class="px-4 py-3 min-w-0 text-gray-600">
-                    <span class="block truncate whitespace-nowrap" title={downloadOnly ? "—" : modelOriginLabel(m.origin, m.artifact_source)}>
-                      {downloadOnly ? "—" : modelOriginLabel(m.origin, m.artifact_source)}
+                  <td class="px-4 py-3 text-gray-600 whitespace-nowrap">
+                    <span class="block max-w-[13ch]" title={downloadOnly ? t(downloadRowOriginKey(task?.artifactSource)) : t(modelOriginKey(m.origin, m.artifact_source))}>
+                      {downloadOnly ? t(downloadRowOriginKey(task?.artifactSource)) : t(modelOriginKey(m.origin, m.artifact_source))}
                     </span>
                   </td>
                   <td class="px-4 py-3 whitespace-nowrap">
@@ -889,13 +888,13 @@ export function Library() {
                     </span>
                   </td>
                   <td class="px-4 py-3 min-w-0">
-                    <DownloadTableCell task={task} onComplete={() => void loadModels()} showActions={false} />
+                    <DownloadTableCell task={task} onComplete={() => void loadModels()} showActions={false} compact />
                   </td>
                   <td class="px-4 py-3 min-w-0">
                     <DownloadStatusCell task={task} completeWhenMissing={!downloadOnly} />
                   </td>
-                  <td class="px-4 py-3 text-gray-500 whitespace-nowrap">
-                    {new Date(m.modified_at).toLocaleDateString("en-US", { day: "numeric", month: "long" })}
+                  <td class="px-4 py-3 text-gray-500 whitespace-nowrap" title={formatTableDateTime(m.modified_at)}>
+                    {formatTableDateTime(m.modified_at)}
                   </td>
                   <td class="px-4 py-3 min-w-0">
                     <div class="flex min-w-0 max-w-full items-center justify-end gap-3 whitespace-nowrap">

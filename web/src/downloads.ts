@@ -355,8 +355,6 @@ export const downloadCompletionVersion = signal(0);
 export const downloadTaskList = computed(() =>
   Object.values(downloadTasks.value).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 );
-export const activeDownload = computed(() => downloadTaskList.value.find((task) => task.status === "downloading"));
-export const hasActiveDownload = computed(() => !!activeDownload.value);
 
 void syncDownloadsFromServer();
 
