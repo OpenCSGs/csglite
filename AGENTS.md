@@ -36,6 +36,9 @@ Copilot, and Aider.
   `internal/server/static`, then restart the single backend preview.
 - Store all runtime files, including temporary files and subprocess temp output,
   under the csghub-lite storage root, defaulting to `~/.csghub-lite`.
+- When asked to push or "commit and push", push `main` only to GitHub
+  (`origin`). GitHub Actions syncs GitLab `main` via the `gitlab-sync`
+  environment.
 - When asked to release, push the next or requested `v*` tag only to GitHub and
   let `.github/workflows/release.yml` publish and synchronize both releases.
 - Keep commit, PR, and release notes concise and focused on concrete user-facing

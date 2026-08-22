@@ -28,7 +28,8 @@
   creates the GitHub release.
 - After GitHub publication, the `sync-gitlab` job uses the `gitlab-sync`
   environment to push the tag and publish the same archives and notes to the
-  GitLab release.
+  GitLab release. Daily `main` commits sync separately through
+  `.github/workflows/sync-gitlab.yml`.
 - The workflow generates initial bullet notes from non-merge commits since the
   previous tag. Review them after publication and replace broad commit lists
   with 1-3 concrete user-facing bullets when needed.
