@@ -18,7 +18,8 @@ import type {
   DatasetPublishResponse,
 } from "../api/client";
 import { t, locale } from "../i18n";
-import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DownloadProgressCell } from "../components/DownloadProgressPanel";
 import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../components/Pagination";
 import type { PageSize } from "../components/Pagination";
 import { getDownloadTask, getDownloadTasks, clearDownloadTask, downloadCompletionVersion } from "../downloads";
@@ -44,6 +45,9 @@ const currentView = signal<View>({ kind: "list" });
 const fileEntries = signal<DatasetFileEntry[]>([]);
 const filesLoading = signal(false);
 const datasetsLoading = signal(false);
+type PendingDatasetDelete = { dataset: DatasetInfo; task?: DownloadTask; downloadOnly: boolean };
+const pendingDelete = signal<PendingDatasetDelete | null>(null);
+const deleteBusy = signal(false);
 
 function loadDatasets() {
   datasetsLoading.value = true;
@@ -168,28 +172,39 @@ export function Datasets() {
 }
 
 function DatasetList() {
+  void locale.value;
   useEffect(() => {
     if (downloadCompletionVersion.value > 0) loadDatasets();
   }, [downloadCompletionVersion.value]);
 
-  const handleDelete = async (dataset: DatasetInfo, task?: DownloadTask, downloadOnly = false) => {
-    const id = localDatasetID(dataset);
-    const displayID = displayLocalDatasetID(dataset);
-    if (!confirm(t("ds.deleteConfirm", displayID))) return;
-    if (downloadOnly && task) {
-      await clearDownloadTask(task);
+  const requestDelete = (dataset: DatasetInfo, task?: DownloadTask, downloadOnly = false) => {
+    pendingDelete.value = { dataset, task, downloadOnly };
+  };
+
+  const confirmDelete = async () => {
+    const pending = pendingDelete.value;
+    if (!pending || deleteBusy.value) return;
+    const id = localDatasetID(pending.dataset);
+    const displayID = displayLocalDatasetID(pending.dataset);
+    deleteBusy.value = true;
+    try {
+      if (pending.downloadOnly && pending.task) {
+        await clearDownloadTask(pending.task);
+        allDatasets.value = allDatasets.value.filter((d) => localDatasetID(d) !== id);
+        return;
+      }
+      if (pending.task?.status === "downloading" || pending.task?.status === "queued") return;
+      await deleteDataset(id);
+      const existingTask = getDownloadTask("dataset", displayID, {
+        artifactSource: datasetArtifactSource(pending.dataset),
+        revision: pending.dataset.requested_revision,
+      });
+      if (existingTask) await clearDownloadTask(existingTask);
       allDatasets.value = allDatasets.value.filter((d) => localDatasetID(d) !== id);
-      return;
+    } finally {
+      deleteBusy.value = false;
+      pendingDelete.value = null;
     }
-    if (task?.status === "downloading" || task?.status === "queued") return;
-    await deleteDataset(id);
-    // 清除对应的下载任务记录
-    const existingTask = getDownloadTask("dataset", displayID, {
-      artifactSource: datasetArtifactSource(dataset),
-      revision: dataset.requested_revision,
-    });
-    if (existingTask) await clearDownloadTask(existingTask);
-    allDatasets.value = allDatasets.value.filter((d) => localDatasetID(d) !== id);
   };
 
   const handleDetails = (dataset: DatasetInfo) => {
@@ -239,14 +254,13 @@ function DatasetList() {
         <div class="overflow-x-auto">
           <table class="w-full min-w-[940px] table-fixed text-sm">
             <colgroup>
-              <col class="w-[24%]" />
+              <col class="w-[26%]" />
               <col class="w-[calc(13ch+2rem)]" />
               <col class="w-[12%]" />
               <col class="w-[12%]" />
+              <col class="w-[12%]" />
+              <col class="w-[14%]" />
               <col class="w-[10%]" />
-              <col class="w-[12%]" />
-              <col class="w-[12%]" />
-              <col class="w-[7%]" />
             </colgroup>
             <thead>
               <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
@@ -255,7 +269,6 @@ function DatasetList() {
                 <th class="px-4 py-3 font-medium">{t("ds.origin")}</th>
                 <SortHeader label={t("ds.fileSize")} field="size" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
                 <th class="px-4 py-3 font-medium">{t("downloads.progress")}</th>
-                <th class="px-4 py-3 font-medium">{t("downloads.status")}</th>
                 <SortHeader label={t("ds.dateTime")} field="modified_at" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
                 <th class="px-4 py-3 font-medium text-right">{t("ds.operation")}</th>
               </tr>
@@ -263,7 +276,7 @@ function DatasetList() {
             <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={8} class="text-center py-12 text-gray-400">
+                <td colSpan={7} class="text-center py-12 text-gray-400">
                   {t("ds.noDatasets")}
                 </td>
               </tr>
@@ -289,17 +302,14 @@ function DatasetList() {
                     </span>
                   </td>
                   <td class="px-4 py-3 min-w-0">
-                    <DownloadTableCell task={task} onComplete={loadDatasets} showActions={false} compact />
-                  </td>
-                  <td class="px-4 py-3 min-w-0">
-                    <DownloadStatusCell task={task} completeWhenMissing={!downloadOnly} />
+                    <DownloadProgressCell task={task} completeWhenMissing={!downloadOnly} />
                   </td>
                   <td class="px-4 py-3 text-gray-500 whitespace-nowrap" title={formatTableDateTime(d.modified_at)}>
                     {formatTableDateTime(d.modified_at)}
                   </td>
                   <td class="px-4 py-3">
                     <div class="flex items-center justify-end gap-3">
-                      <button disabled={!downloadOnly && (task?.status === "downloading" || task?.status === "queued")} onClick={() => void handleDelete(d, task, downloadOnly)} class="text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                      <button disabled={!downloadOnly && (task?.status === "downloading" || task?.status === "queued")} onClick={() => requestDelete(d, task, downloadOnly)} class="text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                         {t("ds.delete")}
                       </button>
                     </div>
@@ -324,6 +334,17 @@ function DatasetList() {
           />
         )}
       </div>
+      <ConfirmDialog
+        open={!!pendingDelete.value}
+        title={pendingDelete.value?.downloadOnly ? t("ds.deleteDownloadTitle") : t("ds.deleteTitle")}
+        name={pendingDelete.value ? displayLocalDatasetID(pendingDelete.value.dataset) : undefined}
+        description={pendingDelete.value?.downloadOnly ? t("ds.deleteDownloadMessage") : t("ds.deleteMessage")}
+        busy={deleteBusy.value}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => {
+          if (!deleteBusy.value) pendingDelete.value = null;
+        }}
+      />
     </div>
   );
 }
