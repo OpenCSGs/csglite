@@ -197,8 +197,10 @@ Managed apps auto-configure to use CSGLite's OpenAI-compatible API endpoint with
 | `csghub-lite run <model>` | Pull, start server, and chat (all automatic) |
 | `csghub-lite chat <model>` | Chat with a locally downloaded model |
 | `csghub-lite ps` | List currently running models and their keep-alive |
-| `csghub-lite stop <model>` | Stop/unload a running model |
-| `csghub-lite serve` | Start the API server (auto-started by `run`) |
+| `csghub-lite start` | Start the API server in the background |
+| `csghub-lite stop` | Stop the background API server |
+| `csghub-lite stop model [MODEL]` | Stop/unload a running model |
+| `csghub-lite serve` | Start the API server in the foreground (auto-started by `run`) |
 | `csghub-lite restart` | Restart the background API server |
 | `csghub-lite pull <model>` | Download a model from CSGHub |
 | `csghub-lite list` / `ls` | List locally downloaded models |
@@ -226,7 +228,7 @@ csghub-lite run Qwen/Qwen3-0.6B-GGUF
 # Exit chat, model stays loaded — reconnect instantly
 csghub-lite run Qwen/Qwen3-0.6B-GGUF
 
-# Keep the model loaded until `csghub-lite stop`
+# Keep the model loaded until `csghub-lite stop model`
 csghub-lite run Qwen/Qwen3-0.6B-GGUF --keep-alive -1
 
 # Check which models are still loaded

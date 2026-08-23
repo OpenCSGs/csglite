@@ -14,13 +14,14 @@ CSGLite 是一个轻量级的本地大语言模型运行工具，基于 [CSGHub]
 - [命令总览](cli/overview.md) — 所有命令一览表
 - [run](cli/run.md) — 自动下载并交互对话
 - [chat](cli/chat.md) — 与本地模型交互对话
-- [serve](cli/serve.md) — 启动 REST API 服务
+- [serve](cli/serve.md) — 前台启动 REST API 服务
+- [start](cli/start.md) — 后台启动 API 服务
 - [restart](cli/restart.md) — 重启后台 API 服务
 - [pull](cli/pull.md) — 下载模型
 - [list](cli/list.md) — 列出本地模型
 - [show](cli/show.md) — 查看模型详情
 - [ps](cli/ps.md) — 查看运行中的模型
-- [stop](cli/stop.md) — 停止运行中的模型
+- [stop](cli/stop.md) — 停止后台服务或运行中的模型
 - [rm](cli/rm.md) — 删除本地模型
 - [search](cli/search.md) — 搜索 CSGHub 模型
 - [login](cli/login.md) — 设置访问令牌

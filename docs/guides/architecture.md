@@ -115,7 +115,8 @@ csglite/
 - `run` 和 `chat` 共享相同的交互对话逻辑
 - `run` 额外增加自动下载功能
 - `chat` 支持 `--system` 自定义系统提示词
-- `ps` 和 `stop` 通过 HTTP 请求与运行中的 `serve` 实例通信
+- `ps` 和 `stop model` 通过 HTTP 请求与运行中的 `serve` 实例通信
+- `start` 后台启动服务，`stop` 停止后台服务；`stop model` 只卸载运行中的模型
 
 ### REST Server (`internal/server/`)
 

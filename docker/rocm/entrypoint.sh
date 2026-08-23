@@ -115,7 +115,7 @@ install_csghub_lite() {
 
     # The public installer starts a background service for desktop installs.
     # Containers run the requested command in the foreground instead.
-    "${binary_name}" stop-service >/dev/null 2>&1 || true
+    "${binary_name}" stop >/dev/null 2>&1 || true
 }
 
 if needs_install; then
@@ -142,7 +142,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 case "$1" in
-    serve|run|chat|pull|list|show|ps|stop|stop-service|restart|restart-service|restart-server|reload|rm|login|search|config|upgrade|apps|launch|--help|--version|-*)
+    serve|start|start-service|start-server|up|run|chat|pull|list|show|ps|stop|stop-service|restart|restart-service|restart-server|reload|rm|login|search|config|upgrade|apps|launch|--help|--version|-*)
         exec "${binary_name}" "$@"
         ;;
     csghub-lite)
