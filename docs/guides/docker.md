@@ -25,7 +25,7 @@ persisted binaries on later starts.
 | Environment variable | Description |
 | --- | --- |
 | `CSGHUB_LITE_VERSION` | Pin the csghub-lite version, for example `v0.5.10`. |
-| `CSGHUB_LITE_LLAMA_CPP_TAG` | Pin the llama.cpp engine tag, for example `b10326`. |
+| `CSGHUB_LITE_LLAMA_CPP_TAG` | Pin the llama.cpp engine tag, for example `b10549`. |
 | `CSGHUB_LITE_INSTALL_POLICY` | `if-missing`, `if-version-mismatch`, or `always`. |
 | `CSGHUB_LITE_INSTALL_ALWAYS` | Backward-compatible shortcut for forcing reinstall on startup. |
 | `CSGHUB_LITE_INSTALL_URL` | Override the installer URL for private mirrors. |
@@ -50,7 +50,7 @@ Pin both runtime versions:
 docker run -d --name csghub-lite \
   -p 11435:11435 \
   -e CSGHUB_LITE_VERSION=v0.5.10 \
-  -e CSGHUB_LITE_LLAMA_CPP_TAG=b10326 \
+  -e CSGHUB_LITE_LLAMA_CPP_TAG=b10549 \
   -e CSGHUB_LITE_INSTALL_POLICY=if-version-mismatch \
   -v csghub-lite-data:/root/.csghub-lite \
   opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite:latest

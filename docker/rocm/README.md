@@ -23,7 +23,7 @@ ROCm 镜像主要用于 Linux AMD GPU 主机。宿主机必须提供兼容的 AM
 docker build \
   --platform linux/amd64 \
   --build-arg CSGHUB_LITE_VERSION=v0.9.4 \
-  --build-arg CSGHUB_LITE_LLAMA_CPP_TAG=b10326 \
+  --build-arg CSGHUB_LITE_LLAMA_CPP_TAG=b10549 \
   --build-arg CSGHUB_LITE_INSTALL_POLICY=if-version-mismatch \
   --build-arg CSGHUB_LITE_LLAMA_ROCM_VERSION=7.2 \
   -f docker/rocm/Dockerfile \

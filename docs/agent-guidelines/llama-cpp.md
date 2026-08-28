@@ -102,7 +102,7 @@ download them on Ubuntu 22.04 hosts.
 **Use the checked-in scripts:** [`scripts/llama-build/README.md`](../../scripts/llama-build/README.md)
 
 ```sh
-make llama-cuda-rebuild-all LLAMA_TAG=b10326   # or ./scripts/llama-build/rebuild-upload-all.sh
+make llama-cuda-rebuild-all LLAMA_TAG=b10549   # or ./scripts/llama-build/rebuild-upload-all.sh
 ```
 
 ### Why Ubuntu 22.04 in Docker
@@ -129,7 +129,7 @@ is already present.
 
 Workdirs (`scripts/llama-build/work/`) are gitignored; only scripts are committed.
 
-### GitLab packages (b10326 reference)
+### GitLab packages (b10549 reference)
 
 | Arch | Filename | Tar layout |
 |------|----------|------------|

@@ -113,7 +113,7 @@ csghub-lite run target/model \
 ```
 
 - `n-gram-*` 不要求专用模型，适合输入或输出中有重复模式的场景。
-- llama.cpp b10326 没有独立的 `suffix` 类型；其上下文后缀复用场景由
+- llama.cpp b10549 没有独立的 `suffix` 类型；其上下文后缀复用场景由
   `ngram-simple` 等 N-gram 方法覆盖，CSGLite 不会伪造一个运行时不支持的参数。
 - `draft-simple` 要求小模型与目标模型使用兼容 tokenizer。
 - `draft-eagle3`、`draft-dflash`、`draft-dspark` 要求对应方法训练得到的专用 draft 权重，不能用任意小模型替代。
