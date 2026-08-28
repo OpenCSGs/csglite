@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/x/xpty v0.1.3
 	github.com/gorilla/websocket v1.5.3
 	github.com/opencsgs/llama-cpp-assets v0.3.0
+	github.com/opencsgs/semantic-router v0.1.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/net v0.36.0
 	golang.org/x/sys v0.36.0
@@ -19,6 +20,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/creack/pty v1.1.24 // indirect
+	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -26,6 +28,7 @@ require (
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/tiktoken-go/tokenizer v0.7.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	modernc.org/libc v1.66.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

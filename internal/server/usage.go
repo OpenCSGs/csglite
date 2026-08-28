@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"strings"
 
@@ -10,6 +11,57 @@ import (
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
 )
+
+type requestCostSnapshot struct {
+	InputPerMillion  float64
+	OutputPerMillion float64
+	Currency         string
+	Known            bool
+}
+
+func pricingCacheKey(source, model string) string {
+	return strings.ToLower(strings.TrimSpace(source)) + "\x00" + strings.TrimSpace(model)
+}
+
+func (s *Server) rememberModelPricing(models []api.ModelInfo) {
+	if s == nil {
+		return
+	}
+	s.pricingMu.Lock()
+	defer s.pricingMu.Unlock()
+	if s.pricingCache == nil {
+		s.pricingCache = make(map[string]requestCostSnapshot)
+	}
+	for _, info := range models {
+		snapshot := requestCostSnapshot{}
+		if info.Pricing != nil && info.Pricing.InputTokenPrice != nil && info.Pricing.OutputTokenPrice != nil {
+			input, output := info.Pricing.InputTokenPrice, info.Pricing.OutputTokenPrice
+			if input.PricePerMillion >= 0 && output.PricePerMillion >= 0 &&
+				!math.IsNaN(input.PricePerMillion) && !math.IsNaN(output.PricePerMillion) &&
+				input.Currency != "" && input.Currency == output.Currency {
+				snapshot = requestCostSnapshot{
+					InputPerMillion: input.PricePerMillion, OutputPerMillion: output.PricePerMillion,
+					Currency: input.Currency, Known: true,
+				}
+			}
+		}
+		s.pricingCache[pricingCacheKey(info.Source, info.Model)] = snapshot
+	}
+}
+
+func (s *Server) requestPricingSnapshot(source, model string, inputTokens, outputTokens int64) (requestCostSnapshot, float64) {
+	if s == nil {
+		return requestCostSnapshot{}, 0
+	}
+	s.pricingMu.RLock()
+	snapshot, ok := s.pricingCache[pricingCacheKey(source, model)]
+	s.pricingMu.RUnlock()
+	if !ok || !snapshot.Known {
+		return requestCostSnapshot{}, 0
+	}
+	cost := (float64(inputTokens)*snapshot.InputPerMillion + float64(outputTokens)*snapshot.OutputPerMillion) / 1_000_000
+	return snapshot, cost
+}
 
 const (
 	apiUsageSourceLocal    = "local"
@@ -22,12 +74,29 @@ const (
 )
 
 type apiUsagePoolMetadata struct {
-	PoolID        string
-	PoolName      string
-	PoolModel     string
-	MemberModel   string
-	FallbackCount int64
-	LimitedCount  int64
+	PoolID                     string
+	PoolName                   string
+	PoolModel                  string
+	ActualMemberID             string
+	MemberModel                string
+	Policy                     string
+	RouterProfileID            string
+	RouterProfileVersion       int
+	RouterProfileSchemaVersion int
+	RouterAlgorithm            string
+	RoutingTextVersion         string
+	RouterConfidence           float64
+	RouterMargin               float64
+	RouterSimilarity           float64
+	SemanticRouted             bool
+	SemanticCluster            int
+	SemanticClusterID          string
+	SemanticDistance           float64
+	SemanticOOD                bool
+	SemanticFallback           bool
+	SemanticFallbackReason     string
+	FallbackCount              int64
+	LimitedCount               int64
 }
 
 func (s *Server) recordAPIUsage(r *http.Request, model, source string, inputTokens, outputTokens int) {
@@ -52,6 +121,13 @@ func (s *Server) recordAPIUsageWithPool(r *http.Request, model, source string, i
 		source = routeSource
 	}
 	resolvedSource, sourceType, sourceName := s.resolveAPIUsageSource(r.Context(), model, source)
+	pricingModel := model
+	if pool != nil && pool.MemberModel != "" {
+		pricingModel = pool.MemberModel
+	}
+	costSnapshot, estimatedCost := s.requestPricingSnapshot(
+		resolvedSource, pricingModel, int64(inputTokens), int64(outputTokens),
+	)
 	observationFromContext(r.Context()).setUsage(
 		model,
 		resolvedSource,
@@ -65,20 +141,24 @@ func (s *Server) recordAPIUsageWithPool(r *http.Request, model, source string, i
 		return
 	}
 	_ = s.apiUsage.Add(config.APIUsageEvent{
-		APIKeyID:      keyID,
-		APIKeyName:    keyName,
-		Model:         model,
-		Source:        resolvedSource,
-		SourceType:    sourceType,
-		SourceName:    sourceName,
-		PoolID:        poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.PoolID }),
-		PoolName:      poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.PoolName }),
-		PoolModel:     poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.PoolModel }),
-		MemberModel:   poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.MemberModel }),
-		FallbackCount: poolMetadataCount(pool, func(value *apiUsagePoolMetadata) int64 { return value.FallbackCount }),
-		LimitedCount:  poolMetadataCount(pool, func(value *apiUsagePoolMetadata) int64 { return value.LimitedCount }),
-		InputTokens:   int64(inputTokens),
-		OutputTokens:  int64(outputTokens),
+		APIKeyID:       keyID,
+		APIKeyName:     keyName,
+		Model:          model,
+		Source:         resolvedSource,
+		SourceType:     sourceType,
+		SourceName:     sourceName,
+		PoolID:         poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.PoolID }),
+		PoolName:       poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.PoolName }),
+		PoolModel:      poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.PoolModel }),
+		ActualMemberID: poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.ActualMemberID }),
+		MemberModel:    poolMetadataValue(pool, func(value *apiUsagePoolMetadata) string { return value.MemberModel }),
+		EstimatedCost:  estimatedCost,
+		CostCurrency:   costSnapshot.Currency,
+		CostKnown:      costSnapshot.Known,
+		FallbackCount:  poolMetadataCount(pool, func(value *apiUsagePoolMetadata) int64 { return value.FallbackCount }),
+		LimitedCount:   poolMetadataCount(pool, func(value *apiUsagePoolMetadata) int64 { return value.LimitedCount }),
+		InputTokens:    int64(inputTokens),
+		OutputTokens:   int64(outputTokens),
 	})
 }
 

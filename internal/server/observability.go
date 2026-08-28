@@ -1,16 +1,15 @@
 package server
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -21,6 +20,7 @@ import (
 	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/observability"
+	routerprofile "github.com/opencsgs/semantic-router"
 )
 
 const (
@@ -162,14 +162,6 @@ func (w *observationResponseWriter) Flush() {
 	}
 }
 
-func (w *observationResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hijacker, ok := w.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, fmt.Errorf("response writer does not support hijacking")
-	}
-	return hijacker.Hijack()
-}
-
 func (w *observationResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
@@ -248,7 +240,14 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			responseUsage.creationTokens = inferenceCacheUsage.CreationInputTokens
 			responseUsage.eligibleTokens = inferenceCacheUsage.EligibleInputTokens
 		}
-		snapshot.inputTokens = observationMax64(snapshot.inputTokens, responseUsage.eligibleTokens)
+		snapshot.inputTokens = max(snapshot.inputTokens, responseUsage.eligibleTokens)
+		pricingModel := snapshot.model
+		if snapshot.pool != nil && snapshot.pool.MemberModel != "" {
+			pricingModel = snapshot.pool.MemberModel
+		}
+		costSnapshot, estimatedCost := s.requestPricingSnapshot(
+			snapshot.source, pricingModel, snapshot.inputTokens, snapshot.outputTokens,
+		)
 		record := observability.RequestRecord{
 			ID:                    requestID,
 			RequestID:             values.RequestID,
@@ -271,6 +270,11 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			APIKeyName:            keyName,
 			InputTokens:           snapshot.inputTokens,
 			OutputTokens:          snapshot.outputTokens,
+			PriceInputPerMillion:  costSnapshot.InputPerMillion,
+			PriceOutputPerMillion: costSnapshot.OutputPerMillion,
+			EstimatedCost:         estimatedCost,
+			CostCurrency:          costSnapshot.Currency,
+			CostKnown:             costSnapshot.Known,
 			CacheReadInputTokens:  responseUsage.readTokens,
 			CacheCreationTokens:   responseUsage.creationTokens,
 			CacheEligibleTokens:   responseUsage.eligibleTokens,
@@ -287,7 +291,24 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			record.PoolID = snapshot.pool.PoolID
 			record.PoolName = snapshot.pool.PoolName
 			record.PoolModel = snapshot.pool.PoolModel
+			record.ActualMemberID = snapshot.pool.ActualMemberID
 			record.MemberModel = snapshot.pool.MemberModel
+			record.PoolPolicy = snapshot.pool.Policy
+			record.RouterProfileID = snapshot.pool.RouterProfileID
+			record.RouterProfileVersion = snapshot.pool.RouterProfileVersion
+			record.RouterProfileSchemaVersion = snapshot.pool.RouterProfileSchemaVersion
+			record.RouterAlgorithm = snapshot.pool.RouterAlgorithm
+			record.RoutingTextVersion = snapshot.pool.RoutingTextVersion
+			record.RouterConfidence = snapshot.pool.RouterConfidence
+			record.RouterMargin = snapshot.pool.RouterMargin
+			record.RouterSimilarity = snapshot.pool.RouterSimilarity
+			record.SemanticRouted = snapshot.pool.SemanticRouted
+			record.SemanticCluster = snapshot.pool.SemanticCluster
+			record.SemanticClusterID = snapshot.pool.SemanticClusterID
+			record.SemanticDistance = snapshot.pool.SemanticDistance
+			record.SemanticOOD = snapshot.pool.SemanticOOD
+			record.SemanticFallback = snapshot.pool.SemanticFallback
+			record.SemanticFallbackReason = snapshot.pool.SemanticFallbackReason
 			record.FallbackCount = snapshot.pool.FallbackCount
 			record.LimitedCount = snapshot.pool.LimitedCount
 		}
@@ -302,19 +323,26 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) addObservation(record observability.RequestRecord) error {
 	s.observabilityMu.RLock()
-	defer s.observabilityMu.RUnlock()
 	if s.observability == nil {
+		s.observabilityMu.RUnlock()
 		return nil
 	}
 	if err := s.observability.Add(context.Background(), record); err != nil {
+		s.observabilityMu.RUnlock()
 		return err
 	}
 	now := time.Now().Unix()
 	nextCleanup := s.observabilityCleanupAt.Load()
 	if now >= nextCleanup && s.observabilityCleanupAt.CompareAndSwap(nextCleanup, now+int64((6*time.Hour)/time.Second)) {
-		if _, err := s.observability.Cleanup(context.Background(), config.ObservabilityRetentionDays(s.cfg.Observability)); err != nil {
+		retentionDays := config.ObservabilityRetentionDays(s.cfg.Observability)
+		if _, err := s.observability.Cleanup(context.Background(), retentionDays); err != nil {
 			log.Printf("OBSERVABILITY: retention cleanup failed: %v", err)
 		}
+		s.cleanupRouterTraceData(retentionDays)
+	}
+	s.observabilityMu.RUnlock()
+	if record.Status == "completed" && record.PoolID != "" {
+		s.enqueueRouterCuration(record.PoolID)
 	}
 	return nil
 }
@@ -427,48 +455,46 @@ func updateObservationResponseUsage(value map[string]any, result *observationRes
 	outputTokens, hasOutputTokens := observationJSONInt(value, "output_tokens", "completion_tokens")
 	totalTokens, hasTotalTokens := observationJSONInt(value, "total_tokens")
 	if hasInputTokens {
-		result.inputTokens = observationMax64(result.inputTokens, inputTokens)
+		result.inputTokens = max(result.inputTokens, inputTokens)
 		result.hasInputTokens = true
 	}
 	if hasOutputTokens {
-		result.outputTokens = observationMax64(result.outputTokens, outputTokens)
+		result.outputTokens = max(result.outputTokens, outputTokens)
 		result.hasOutputTokens = true
 	}
 	if hasTotalTokens {
-		result.totalTokens = observationMax64(result.totalTokens, totalTokens)
+		result.totalTokens = max(result.totalTokens, totalTokens)
 		result.hasTotalTokens = true
 	}
 	readTokens, hasAnthropicRead := observationJSONInt(value, "cache_read_input_tokens", "cache_read_tokens")
 	topLevelRead, hasTopLevelRead := observationJSONInt(value, "cached_tokens")
-	readTokens = observationMax64(readTokens, topLevelRead)
+	readTokens = max(readTokens, topLevelRead)
 	creationTokens, hasCreation := observationJSONInt(value, "cache_creation_input_tokens", "cache_creation_tokens", "write_cached_tokens", "cache_write_tokens")
 	nestedRead, hasNestedRead := observationNestedJSONInt(value, "cached_tokens", "prompt_tokens_details", "input_tokens_details")
 	if hasNestedRead {
-		readTokens = observationMax64(readTokens, nestedRead)
+		readTokens = max(readTokens, nestedRead)
 	}
 	nestedCreation := maxObservationNestedJSONInt(value, []string{"write_cached_tokens", "cache_write_tokens"}, "prompt_tokens_details", "input_tokens_details")
 	if nestedCreation > 0 {
 		hasCreation = true
-		creationTokens = observationMax64(creationTokens, nestedCreation)
+		creationTokens = max(creationTokens, nestedCreation)
 	}
 	if hasAnthropicRead || hasTopLevelRead || hasNestedRead || hasCreation {
 		result.hasCacheUsage = true
 	}
-	result.readTokens = observationMax64(result.readTokens, readTokens)
-	result.creationTokens = observationMax64(result.creationTokens, creationTokens)
+	result.readTokens = max(result.readTokens, readTokens)
+	result.creationTokens = max(result.creationTokens, creationTokens)
 	switch {
 	case hasAnthropicRead:
-		result.eligibleTokens = observationMax64(result.eligibleTokens, inputTokens+readTokens+creationTokens)
-	case hasTopLevelRead:
-		switch {
-		case inputTokens < 0 && readTokens > 0:
-			inputTokens += 2 * readTokens
-		case inputTokens >= 0 && readTokens > 0 && inputTokens < readTokens:
-			inputTokens += readTokens
-		}
-		result.eligibleTokens = observationMax64(result.eligibleTokens, inputTokens)
+		result.eligibleTokens = max(result.eligibleTokens, inputTokens+readTokens+creationTokens)
+case hasTopLevelRead:
+			switch {
+			case readTokens > 0 && inputTokens < readTokens:
+				inputTokens += readTokens
+			}
+		result.eligibleTokens = max(result.eligibleTokens, inputTokens)
 	case hasNestedRead || hasCreation:
-		result.eligibleTokens = observationMax64(result.eligibleTokens, inputTokens)
+		result.eligibleTokens = max(result.eligibleTokens, inputTokens)
 	}
 }
 
@@ -480,24 +506,15 @@ func observationJSONInt(value map[string]any, keys ...string) (int64, bool) {
 		}
 		switch number := raw.(type) {
 		case float64:
-			return observationMax64(0, int64(number)), true
+			return max(0, int64(number)), true
 		case json.Number:
 			parsed, err := number.Int64()
-			return observationMax64(0, parsed), err == nil
+			return max(0, parsed), err == nil
 		}
 	}
 	return 0, false
 }
 
-func maxObservationJSONInt(value map[string]any, keys ...string) int64 {
-	var result int64
-	for _, key := range keys {
-		if number, ok := observationJSONInt(value, key); ok {
-			result = observationMax64(result, number)
-		}
-	}
-	return result
-}
 
 func observationNestedJSONInt(value map[string]any, target string, parents ...string) (int64, bool) {
 	for _, parent := range parents {
@@ -516,17 +533,10 @@ func maxObservationNestedJSONInt(value map[string]any, targets []string, parents
 	var result int64
 	for _, target := range targets {
 		if number, found := observationNestedJSONInt(value, target, parents...); found {
-			result = observationMax64(result, number)
+			result = max(result, number)
 		}
 	}
 	return result
-}
-
-func observationMax64(left, right int64) int64 {
-	if left > right {
-		return left
-	}
-	return right
 }
 
 func observationRequestStreams(body []byte) bool {
@@ -561,9 +571,24 @@ func sanitizeObservationBody(body []byte) []byte {
 }
 
 var observationSecretPattern = regexp.MustCompile(`(?i)("(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|client[_-]?secret|secret)"\s*:\s*)"[^"]*"`)
+var observationInlineSecretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?:gk_[A-Za-z0-9_-]{16,}|sk-(?:proj-)?[A-Za-z0-9_-]{16,})`),
+	regexp.MustCompile(`(?:gh[pousr]_[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[A-Z0-9]{16})`),
+	regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._-]{12,}`),
+	regexp.MustCompile(`(?i)(?:api[_ -]?key|access[_ -]?token|secret[_ -]?key)\s*[:=]\s*['"]?[A-Za-z0-9._/-]{12,}`),
+	regexp.MustCompile(`(?i)([?&](?:token|access_token|api_key)=)[^\s&#]+`),
+}
 
 func redactObservationText(body []byte) []byte {
-	return observationSecretPattern.ReplaceAll(body, []byte(`${1}"[REDACTED]"`))
+	value := observationSecretPattern.ReplaceAll(body, []byte(`${1}"[REDACTED]"`))
+	for _, pattern := range observationInlineSecretPatterns {
+		replacement := []byte("<redacted-secret>")
+		if pattern.NumSubexp() == 1 {
+			replacement = []byte(`${1}<redacted-secret>`)
+		}
+		value = pattern.ReplaceAll(value, replacement)
+	}
+	return value
 }
 
 func redactObservationValue(value any) {
@@ -574,10 +599,18 @@ func redactObservationValue(value any) {
 				typed[key] = "[REDACTED]"
 				continue
 			}
+			if text, ok := child.(string); ok {
+				typed[key] = string(redactObservationText([]byte(text)))
+				continue
+			}
 			redactObservationValue(child)
 		}
 	case []any:
-		for _, child := range typed {
+		for index, child := range typed {
+			if text, ok := child.(string); ok {
+				typed[index] = string(redactObservationText([]byte(text)))
+				continue
+			}
 			redactObservationValue(child)
 		}
 	}
@@ -637,8 +670,23 @@ func (s *Server) cleanupObservability() {
 	if s.observability == nil {
 		return
 	}
-	if _, err := s.observability.Cleanup(context.Background(), config.ObservabilityRetentionDays(s.cfg.Observability)); err != nil {
+	retentionDays := config.ObservabilityRetentionDays(s.cfg.Observability)
+	if _, err := s.observability.Cleanup(context.Background(), retentionDays); err != nil {
 		log.Printf("OBSERVABILITY: retention cleanup failed: %v", err)
+	}
+	s.cleanupRouterTraceData(retentionDays)
+}
+
+func (s *Server) cleanupRouterTraceData(retentionDays int) {
+	s.routerStoreMu.RLock()
+	defer s.routerStoreMu.RUnlock()
+	if s.routerProfiles == nil {
+		return
+	}
+	cutoff := time.Now().UTC().Add(-time.Duration(retentionDays) * 24 * time.Hour)
+	if _, err := s.routerProfiles.PurgeTraceDataBefore(context.Background(), cutoff); err != nil &&
+		!errors.Is(err, routerprofile.ErrConflict) {
+		log.Printf("SEMANTIC ROUTER: retention cleanup failed: %v", err)
 	}
 }
 

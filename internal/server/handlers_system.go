@@ -263,6 +263,10 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		if err := s.reopenModelMetadata(s.cfg.StorageDir()); err != nil {
 			log.Printf("MODEL METADATA: cache unavailable after storage update: %v", err)
 		}
+		if err := s.reopenRouterProfiles(s.cfg.StorageDir()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to open router profile storage: "+err.Error())
+			return
+		}
 	} else if observabilityUpdated {
 		s.cleanupObservability()
 	}

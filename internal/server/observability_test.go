@@ -9,7 +9,27 @@ import (
 
 	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/internal/observability"
+	"github.com/opencsgs/csglite/pkg/api"
 )
+
+func TestRequestPricingSnapshotKnownAndUnknown(t *testing.T) {
+	s := &Server{}
+	s.rememberModelPricing([]api.ModelInfo{{
+		Source: "cloud", Model: "priced",
+		Pricing: &api.ModelPricing{
+			InputTokenPrice:  &api.ModelTokenPrice{Currency: "USD", PricePerMillion: 2},
+			OutputTokenPrice: &api.ModelTokenPrice{Currency: "USD", PricePerMillion: 4},
+		},
+	}})
+	snapshot, cost := s.requestPricingSnapshot("cloud", "priced", 1000, 500)
+	if !snapshot.Known || snapshot.Currency != "USD" || cost != 0.004 {
+		t.Fatalf("known snapshot=%+v cost=%v", snapshot, cost)
+	}
+	snapshot, cost = s.requestPricingSnapshot("cloud", "unknown", 1000, 500)
+	if snapshot.Known || cost != 0 {
+		t.Fatalf("unknown snapshot=%+v cost=%v", snapshot, cost)
+	}
+}
 
 func TestObservabilityMiddlewareCapturesTextGenerationAndRedactsSecrets(t *testing.T) {
 	s := newTestServer(t)
@@ -19,7 +39,8 @@ func TestObservabilityMiddlewareCapturesTextGenerationAndRedactsSecrets(t *testi
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"result":"ok","access_token":"response-secret","usage":{"prompt_tokens":7,"prompt_tokens_details":{"cached_tokens":5}}}`))
 	}))
-	body := `{"model":"test/model","stream":true,"api_key":"request-secret","messages":[{"role":"user","content":"hello"}]}`
+	inlineSecret := "gk_" + strings.Repeat("x", 26)
+	body := `{"model":"test/model","stream":true,"api_key":"request-secret","messages":[{"role":"user","content":"hello ` + inlineSecret + `"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set(correlation.RequestIDHeader, "gateway-request")
 	req.Header.Set(correlation.B3TraceIDHeader, "463ac35c9f6413ad48485a3953bb6124")
@@ -63,7 +84,8 @@ func TestObservabilityMiddlewareCapturesTextGenerationAndRedactsSecrets(t *testi
 	if detail.CacheReadInputTokens != 5 || detail.CacheEligibleTokens != 7 {
 		t.Fatalf("unexpected cache usage metadata: %+v", detail)
 	}
-	if strings.Contains(detail.RequestBody, "request-secret") || strings.Contains(detail.ResponseBody, "response-secret") {
+	if strings.Contains(detail.RequestBody, "request-secret") || strings.Contains(detail.RequestBody, inlineSecret) ||
+		strings.Contains(detail.ResponseBody, "response-secret") {
 		t.Fatalf("sensitive values were persisted: request=%s response=%s", detail.RequestBody, detail.ResponseBody)
 	}
 	if !strings.Contains(detail.RequestBody, "[REDACTED]") || !strings.Contains(detail.ResponseBody, "[REDACTED]") {
@@ -158,6 +180,20 @@ func TestObservationResponseCacheUsage(t *testing.T) {
 					usage, test.input, test.output, test.read, test.creation, test.eligible)
 			}
 		})
+	}
+}
+
+func TestObservabilityResponseIncludesVersionedRouterDiagnostics(t *testing.T) {
+	response := observabilityRequestResponse(observability.RequestRecord{
+		RouterProfileID: "profile-v2", RouterProfileVersion: 4,
+		RouterProfileSchemaVersion: 2, RouterAlgorithm: "pairwise_router_v2",
+		RouterConfidence: .81, RouterMargin: .19, RouterSimilarity: .74,
+		SemanticFallback: true, SemanticFallbackReason: "low_confidence",
+	})
+	if response.RouterProfileSchemaVersion != 2 || response.RouterAlgorithm != "pairwise_router_v2" ||
+		response.RouterConfidence != .81 || response.RouterMargin != .19 ||
+		response.RouterSimilarity != .74 || response.SemanticFallbackReason != "low_confidence" {
+		t.Fatalf("router diagnostics response = %+v", response)
 	}
 }
 

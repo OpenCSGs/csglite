@@ -37,6 +37,7 @@ func (s *Server) refreshCloudModelsOnStartup(parent context.Context) {
 		log.Printf("startup cloud model refresh failed: %v", err)
 		return
 	}
+	s.rememberModelPricing(models)
 	log.Printf("startup cloud model refresh complete: %d models", len(models))
 }
 
@@ -135,6 +136,7 @@ func (s *Server) listAvailableModelsForProvider(ctx context.Context, provider st
 	}
 
 	sortModelsByPriority(out)
+	s.rememberModelPricing(out)
 	return out, nil
 }
 
@@ -171,7 +173,9 @@ func (s *Server) listCloudModels(ctx context.Context, refresh bool) ([]api.Model
 	if err != nil {
 		return models, err
 	}
-	return s.applyCloudProviderModelSelections(models), nil
+	models = s.applyCloudProviderModelSelections(models)
+	s.rememberModelPricing(models)
+	return models, nil
 }
 
 func (s *Server) refreshCloudChatModels(ctx context.Context) ([]api.ModelInfo, error) {

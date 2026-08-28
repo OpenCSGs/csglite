@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/pkg/api"
@@ -28,7 +29,9 @@ func TestProviderPoolCRUD(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-	if created.Model != "code-pool" || !created.Enabled || len(created.Members) != 1 || created.Members[0].Weight != 100 {
+	if created.Model != "code-pool" || !created.Enabled ||
+		created.Policy != config.ProviderPoolPolicyPriorityWeight ||
+		len(created.Members) != 1 || created.Members[0].Weight != 100 {
 		t.Fatalf("created pool = %#v", created)
 	}
 
@@ -60,7 +63,9 @@ func TestProviderPoolCRUD(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
 		t.Fatalf("decode update response: %v", err)
 	}
-	if updated.Name != "Updated Pool" || updated.Enabled || updated.Members[0].Source != "cloud" {
+	if updated.Name != "Updated Pool" || updated.Enabled ||
+		updated.Policy != config.ProviderPoolPolicyPriorityWeight ||
+		updated.Members[0].Source != "cloud" {
 		t.Fatalf("updated pool = %#v", updated)
 	}
 
@@ -73,6 +78,92 @@ func TestProviderPoolCRUD(t *testing.T) {
 	}
 	if pools := config.GetProviderPools(); len(pools) != 0 {
 		t.Fatalf("pools after delete = %#v", pools)
+	}
+}
+
+func TestProviderPoolRejectsInvalidPolicy(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/provider-pools", strings.NewReader(`{
+		"name":"Invalid","model":"invalid","policy":"random",
+		"members":[{"id":"member","source":"local","model":"model"}]
+	}`))
+	w := httptest.NewRecorder()
+	s.handleProviderPoolCreate(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestProviderPoolPolicyCapabilities(t *testing.T) {
+	assertSemantic := func(t *testing.T, capabilities []api.ProviderPoolPolicyCapability, available bool, reason string) {
+		t.Helper()
+		semantic := semanticPolicyCapability(capabilities)
+		if semantic.Available != available || semantic.Reason != reason || !semantic.Experimental {
+			t.Fatalf("semantic capability = %#v", semantic)
+		}
+	}
+	assertSemantic(t, providerPoolPolicyCapabilitiesFor(false, nil, nil), false, "opencsg_login_required")
+	assertSemantic(t, providerPoolPolicyCapabilitiesFor(true, nil, nil), false, "required_embedding_model_unavailable")
+	assertSemantic(t, providerPoolPolicyCapabilitiesFor(true, []api.ModelInfo{{
+		Model: semanticEmbeddingModel, PipelineTag: "feature-extraction",
+	}}, nil), true, "")
+}
+
+func TestProviderPoolSemanticAcceptsArbitraryMembersWithEmbeddingCapability(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("catalog path = %q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{{
+				"id": semanticEmbeddingModel, "task": "feature-extraction",
+			}},
+		})
+	}))
+	defer gateway.Close()
+	s := newTestServerWithConfig(t, &config.Config{
+		ServerURL: gateway.URL, AIGatewayURL: gateway.URL, OpenCSGAPIKey: "test-key",
+	})
+	s.cloud = cloud.NewService(gateway.URL)
+	req := httptest.NewRequest(http.MethodPost, "/api/provider-pools", strings.NewReader(`{
+		"name":"Arbitrary Semantic",
+		"model":"arbitrary-semantic",
+		"policy":"semantic",
+		"members":[{"id":"custom","source":"cloud","model":"organization/custom-model"}]
+	}`))
+	w := httptest.NewRecorder()
+	s.handleProviderPoolCreate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", w.Code, w.Body.String())
+	}
+	var pool api.ProviderPool
+	if err := json.NewDecoder(w.Body).Decode(&pool); err != nil {
+		t.Fatal(err)
+	}
+	if pool.Policy != config.ProviderPoolPolicySemantic || len(pool.Members) != 1 ||
+		pool.Members[0].Model != "organization/custom-model" {
+		t.Fatalf("created arbitrary semantic pool = %+v", pool)
+	}
+}
+
+func TestProviderPoolSemanticCredentialAcceptsLoginOrAPIKey(t *testing.T) {
+	tests := []struct {
+		name string
+		auth cloudAuthStatus
+		want bool
+	}{
+		{name: "missing"},
+		{name: "login", auth: cloudAuthStatus{Authenticated: true}, want: true},
+		{name: "api key", auth: cloudAuthStatus{HasAPIKey: true}, want: true},
+		{name: "both", auth: cloudAuthStatus{Authenticated: true, HasAPIKey: true}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := hasProviderPoolSemanticCredential(test.auth); got != test.want {
+				t.Fatalf("credential available = %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 

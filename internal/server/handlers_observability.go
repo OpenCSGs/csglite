@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/observability"
+	routerprofile "github.com/opencsgs/semantic-router"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -124,6 +125,19 @@ func (s *Server) handleObservabilityTrace(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleObservabilityClear(w http.ResponseWriter, r *http.Request) {
+	s.routerStoreMu.RLock()
+	if s.routerProfiles != nil {
+		if _, err := s.routerProfiles.PurgeTraceDataBefore(r.Context(), time.Now().UTC().Add(time.Millisecond)); err != nil {
+			s.routerStoreMu.RUnlock()
+			if errors.Is(err, routerprofile.ErrConflict) {
+				writeError(w, http.StatusConflict, err.Error())
+			} else {
+				writeError(w, http.StatusInternalServerError, "failed to clear router trace data")
+			}
+			return
+		}
+	}
+	s.routerStoreMu.RUnlock()
 	s.observabilityMu.RLock()
 	defer s.observabilityMu.RUnlock()
 	if s.observability == nil {
@@ -184,45 +198,67 @@ func optionalRFC3339(value string) (*time.Time, error) {
 
 func observabilityRequestResponse(record observability.RequestRecord) api.ObservabilityRequest {
 	return api.ObservabilityRequest{
-		ID:                    record.ID,
-		RequestID:             record.RequestID,
-		TraceID:               record.TraceID,
-		B3TraceID:             record.B3TraceID,
-		ThreadID:              record.ThreadID,
-		StartedAt:             record.StartedAt,
-		CompletedAt:           record.CompletedAt,
-		Method:                record.Method,
-		Path:                  record.Path,
-		Protocol:              record.Protocol,
-		Status:                record.Status,
-		StatusCode:            record.StatusCode,
-		Stream:                record.Stream,
-		Model:                 record.Model,
-		Source:                record.Source,
-		SourceType:            record.SourceType,
-		SourceName:            record.SourceName,
-		APIKeyID:              record.APIKeyID,
-		APIKeyName:            record.APIKeyName,
-		PoolID:                record.PoolID,
-		PoolName:              record.PoolName,
-		PoolModel:             record.PoolModel,
-		MemberModel:           record.MemberModel,
-		FallbackCount:         record.FallbackCount,
-		LimitedCount:          record.LimitedCount,
-		InputTokens:           record.InputTokens,
-		OutputTokens:          record.OutputTokens,
-		TotalTokens:           max(record.InputTokens, record.CacheEligibleTokens) + record.OutputTokens,
-		CacheReadInputTokens:  record.CacheReadInputTokens,
-		CacheCreationTokens:   record.CacheCreationTokens,
-		CacheEligibleTokens:   record.CacheEligibleTokens,
-		CacheHitRate:          observabilityCacheHitRate(record),
-		DurationMS:            record.DurationMS,
-		FirstTokenLatencyMS:   record.FirstTokenLatencyMS,
-		ErrorMessage:          record.ErrorMessage,
-		RequestBody:           record.RequestBody,
-		ResponseBody:          record.ResponseBody,
-		RequestBodyTruncated:  record.RequestBodyTruncated,
-		ResponseBodyTruncated: record.ResponseBodyTruncated,
+		ID:                         record.ID,
+		RequestID:                  record.RequestID,
+		TraceID:                    record.TraceID,
+		B3TraceID:                  record.B3TraceID,
+		ThreadID:                   record.ThreadID,
+		StartedAt:                  record.StartedAt,
+		CompletedAt:                record.CompletedAt,
+		Method:                     record.Method,
+		Path:                       record.Path,
+		Protocol:                   record.Protocol,
+		Status:                     record.Status,
+		StatusCode:                 record.StatusCode,
+		Stream:                     record.Stream,
+		Model:                      record.Model,
+		Source:                     record.Source,
+		SourceType:                 record.SourceType,
+		SourceName:                 record.SourceName,
+		APIKeyID:                   record.APIKeyID,
+		APIKeyName:                 record.APIKeyName,
+		PoolID:                     record.PoolID,
+		PoolName:                   record.PoolName,
+		PoolModel:                  record.PoolModel,
+		ActualMemberID:             record.ActualMemberID,
+		MemberModel:                record.MemberModel,
+		PoolPolicy:                 record.PoolPolicy,
+		RouterProfileID:            record.RouterProfileID,
+		RouterProfileVersion:       record.RouterProfileVersion,
+		RouterProfileSchemaVersion: record.RouterProfileSchemaVersion,
+		RouterAlgorithm:            record.RouterAlgorithm,
+		RoutingTextVersion:         record.RoutingTextVersion,
+		RouterConfidence:           record.RouterConfidence,
+		RouterMargin:               record.RouterMargin,
+		RouterSimilarity:           record.RouterSimilarity,
+		SemanticRouted:             record.SemanticRouted,
+		SemanticCluster:            record.SemanticCluster,
+		SemanticClusterID:          record.SemanticClusterID,
+		SemanticDistance:           record.SemanticDistance,
+		SemanticOOD:                record.SemanticOOD,
+		SemanticFallback:           record.SemanticFallback,
+		SemanticFallbackReason:     record.SemanticFallbackReason,
+		PriceInputPerMillion:       record.PriceInputPerMillion,
+		PriceOutputPerMillion:      record.PriceOutputPerMillion,
+		EstimatedCost:              record.EstimatedCost,
+		CostCurrency:               record.CostCurrency,
+		CostKnown:                  record.CostKnown,
+		FallbackCount:              record.FallbackCount,
+		LimitedCount:               record.LimitedCount,
+		InputTokens:                record.InputTokens,
+		OutputTokens:               record.OutputTokens,
+		TotalTokens:                max(record.InputTokens, record.CacheEligibleTokens) + record.OutputTokens,
+		CacheReadInputTokens:       record.CacheReadInputTokens,
+		CacheCreationTokens:        record.CacheCreationTokens,
+		CacheEligibleTokens:        record.CacheEligibleTokens,
+		CacheHitRate:               observabilityCacheHitRate(record),
+		DurationMS:                 record.DurationMS,
+		FirstTokenLatencyMS:        record.FirstTokenLatencyMS,
+		ErrorMessage:               record.ErrorMessage,
+		RequestBody:                record.RequestBody,
+		ResponseBody:               record.ResponseBody,
+		RequestBodyTruncated:       record.RequestBodyTruncated,
+		ResponseBodyTruncated:      record.ResponseBodyTruncated,
 	}
 }
 

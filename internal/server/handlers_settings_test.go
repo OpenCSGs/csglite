@@ -13,6 +13,7 @@ import (
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/modelmetadata"
+	routerprofile "github.com/opencsgs/semantic-router"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -134,6 +135,10 @@ func TestHandleSettingsUpdateStorageDirUpdatesModelAndDatasetDirs(t *testing.T) 
 	wantCachePath := filepath.Join(root, modelmetadata.DirName, modelmetadata.DatabaseFile)
 	if s.modelMetadata == nil || s.modelMetadata.Path() != wantCachePath {
 		t.Fatalf("model metadata cache path = %v, want %q", s.modelMetadata, wantCachePath)
+	}
+	wantRouterPath := filepath.Join(root, routerprofile.DirName, routerprofile.DatabaseFile)
+	if s.routerProfiles == nil || s.routerProfiles.Path() != wantRouterPath {
+		t.Fatalf("router profile store path = %v, want %q", s.routerProfiles, wantRouterPath)
 	}
 
 	if _, err := os.Stat(wantModelDir); err != nil {

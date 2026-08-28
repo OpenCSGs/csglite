@@ -3,10 +3,24 @@ import { useEffect } from "preact/hooks";
 import { t, locale } from "../i18n";
 import { formatNumber, formatDateTime, formatChartDate, chartXAxisLabels } from "../utils/format";
 import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
+import {
+  isValidatedCollapsedProfile,
+  previewResponseIsCurrent,
+  routerActivationReasonKey,
+  routerEvaluationModeKey,
+  routerJobCallCounts,
+  routerProfileKind,
+  routerUnknownPricingNeedsConsent,
+  snapshotRouterEvaluationRequest,
+} from "../utils/routerEvaluationPreview";
+import { routerOverviewCounts } from "../utils/routerStatus";
 import { ProviderModelModalityBadges, providerModelLabel, defaultProviderModelDisplayName } from "../components/ProviderModelBadges";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import {
+  activateProviderPoolRouterProfile,
+  cancelProviderPoolRouterEvaluation,
   clearCloudAPIKey,
+  createProviderPoolRouterEvaluation,
   createProvider,
   createProviderPool,
   createLocalAPIKey,
@@ -19,10 +33,15 @@ import {
   getLocalAPIKeys,
   getLocalAPIUsage,
   getProviderManageTags,
+  getProviderPoolPolicies,
+  getProviderPoolRouterProfile,
+  getProviderPoolRouterStatus,
   getProviderPools,
   getProviderSelectedTags,
   getProviders,
   replaceProviderManageTags,
+  previewProviderPoolRouterEvaluation,
+  rollbackProviderPoolRouterProfile,
   saveCloudAPIKey,
   updateProvider,
   updateProviderPool,
@@ -30,7 +49,7 @@ import {
   validateProvider,
   updateLocalAPIKeySettings,
 } from "../api/client";
-import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
+import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderPoolPolicy, ProviderPoolPolicyType, ProviderPoolRouterEvaluationJob, ProviderPoolRouterEvaluationPreview, ProviderPoolRouterEvaluationRequest, ProviderPoolRouterProfile, ProviderPoolRouterStatus, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
 
 type GatewayTab = "apiKeys" | "providers" | "pools" | "usage";
 type UsagePeriod = "week" | "month" | "year";
@@ -65,6 +84,7 @@ const editingProviderPool = signal<ProviderPool | null>(null);
 const providerPoolFormName = signal("");
 const providerPoolFormModel = signal("");
 const providerPoolFormEnabled = signal(true);
+const providerPoolFormPolicy = signal<ProviderPoolPolicyType | string>("priority_weight");
 const providerPoolFormMembers = signal<ProviderPoolMember[]>([]);
 const providerPoolFormError = signal("");
 const providerPoolFormSaving = signal(false);
@@ -73,6 +93,32 @@ const providerPoolSourceFilter = signal("local");
 const providerPoolModelSearch = signal("");
 const providerPoolMemberConfigIndex = signal<number | null>(null);
 const providerPoolMemberConfigDraft = signal<ProviderPoolMember | null>(null);
+const providerPoolPolicies = signal<ProviderPoolPolicy[]>([]);
+const providerPoolPoliciesLoading = signal(false);
+const providerPoolPoliciesError = signal("");
+const providerPoolRouterStatuses = signal<Record<string, ProviderPoolRouterStatus>>({});
+const providerPoolRouterStatusLoading = signal<Record<string, boolean>>({});
+const providerPoolRouterDialogPool = signal<ProviderPool | null>(null);
+const providerPoolRouterDialogStep = signal<"overview" | "configure" | "progress" | "profile">("overview");
+const providerPoolRouterPreview = signal<ProviderPoolRouterEvaluationPreview | null>(null);
+const providerPoolRouterPreviewConfig = signal<ProviderPoolRouterEvaluationRequest | null>(null);
+const providerPoolRouterMinHistory = 20;
+let providerPoolRouterPreviewGeneration = 0;
+const providerPoolRouterJob = signal<ProviderPoolRouterEvaluationJob | null>(null);
+const providerPoolRouterProfile = signal<ProviderPoolRouterProfile | null>(null);
+const providerPoolRouterError = signal("");
+const providerPoolRouterBusy = signal(false);
+const providerPoolRouterConfig = signal<ProviderPoolRouterEvaluationRequest>({
+  evaluation_mode: "listwise_v2",
+  judge_model: "",
+  max_queries: 25,
+  repeats: 1,
+  max_output_tokens: 1024,
+  request_timeout_seconds: 60,
+  budget_currency: "￥",
+  budget_amount: 10,
+  allow_unknown_pricing: false,
+});
 const gatewayAPIInfoTarget = signal<GatewayAPIInfoTarget | null>(null);
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudAPIKeyInput = signal("");
@@ -207,6 +253,7 @@ async function fetchProviderOptions() {
     providers.value = list;
     providerPools.value = pools;
     providerPoolModels.value = models;
+    fetchProviderPoolRouterStatuses(pools);
 		const managedProviders = [cloudProvider, ...list];
     const entries = await Promise.all(
 			managedProviders.map(async (provider) => {
@@ -222,6 +269,205 @@ async function fetchProviderOptions() {
     providersError.value = err?.message || t("settings.providersLoadFailed");
   } finally {
     providersLoading.value = false;
+  }
+}
+
+async function fetchProviderPoolPolicies() {
+  providerPoolPoliciesLoading.value = true;
+  providerPoolPoliciesError.value = "";
+  try {
+    providerPoolPolicies.value = await getProviderPoolPolicies();
+  } catch (err: any) {
+    providerPoolPoliciesError.value = err?.message || t("settings.providerPoolPoliciesLoadFailed");
+  } finally {
+    providerPoolPoliciesLoading.value = false;
+  }
+}
+
+async function fetchProviderPoolRouterStatus(poolID: string) {
+  providerPoolRouterStatusLoading.value = { ...providerPoolRouterStatusLoading.value, [poolID]: true };
+  try {
+    const status = await getProviderPoolRouterStatus(poolID);
+    providerPoolRouterStatuses.value = { ...providerPoolRouterStatuses.value, [poolID]: status };
+    if (providerPoolRouterDialogPool.value?.id === poolID) {
+      if (status.running_job || status.latest_job) {
+        providerPoolRouterJob.value = status.running_job || status.latest_job || null;
+      }
+      if (status.latest_candidate_profile && providerPoolRouterProfile.value?.id === status.latest_candidate_profile.id) {
+        providerPoolRouterProfile.value = status.latest_candidate_profile;
+      }
+    }
+  } catch (err: any) {
+    if (providerPoolRouterDialogPool.value?.id === poolID) {
+      providerPoolRouterError.value = err?.message || t("settings.routerStatusFailed");
+    }
+  } finally {
+    providerPoolRouterStatusLoading.value = { ...providerPoolRouterStatusLoading.value, [poolID]: false };
+  }
+}
+
+function fetchProviderPoolRouterStatuses(pools: ProviderPool[] = providerPools.value) {
+  for (const pool of pools) {
+    if (pool.policy === "semantic") void fetchProviderPoolRouterStatus(pool.id);
+  }
+}
+
+function providerPoolRouterJudgeModels(): ModelInfo[] {
+  return providerPoolModels.value.filter((model) =>
+    model.source === "cloud" && model.pipeline_tag === "text-generation"
+  );
+}
+
+async function openProviderPoolRouterDialog(pool: ProviderPool) {
+  providerPoolRouterDialogPool.value = pool;
+  providerPoolRouterDialogStep.value = "overview";
+  providerPoolRouterPreview.value = null;
+  providerPoolRouterProfile.value = null;
+  providerPoolRouterError.value = "";
+  const judges = providerPoolRouterJudgeModels();
+  if (!providerPoolRouterConfig.value.judge_model && judges[0]) {
+    providerPoolRouterConfig.value = { ...providerPoolRouterConfig.value, judge_model: judges[0].model };
+  }
+  await fetchProviderPoolRouterStatus(pool.id);
+  const status = providerPoolRouterStatuses.value[pool.id];
+  providerPoolRouterJob.value = status?.running_job || status?.latest_job || null;
+  if (status?.running_job) providerPoolRouterDialogStep.value = "progress";
+}
+
+function closeProviderPoolRouterDialog() {
+  providerPoolRouterDialogPool.value = null;
+  providerPoolRouterError.value = "";
+  providerPoolRouterBusy.value = false;
+}
+
+function updateProviderPoolRouterConfig<K extends keyof ProviderPoolRouterEvaluationRequest>(
+  key: K,
+  value: ProviderPoolRouterEvaluationRequest[K],
+) {
+  providerPoolRouterConfig.value = { ...providerPoolRouterConfig.value, [key]: value };
+  providerPoolRouterPreview.value = null;
+  providerPoolRouterPreviewConfig.value = null;
+  providerPoolRouterPreviewGeneration += 1;
+}
+
+function updateProviderPoolRouterUnknownPricingConsent(value: boolean) {
+  providerPoolRouterConfig.value = {
+    ...providerPoolRouterConfig.value,
+    allow_unknown_pricing: value,
+  };
+  if (providerPoolRouterPreviewConfig.value) {
+    providerPoolRouterPreviewConfig.value = {
+      ...providerPoolRouterPreviewConfig.value,
+      allow_unknown_pricing: value,
+    };
+  }
+}
+
+async function previewProviderPoolEvaluation() {
+  const pool = providerPoolRouterDialogPool.value;
+  if (!pool) return;
+  providerPoolRouterBusy.value = true;
+  providerPoolRouterError.value = "";
+  const generation = ++providerPoolRouterPreviewGeneration;
+  const snapshot = snapshotRouterEvaluationRequest(providerPoolRouterConfig.value);
+  try {
+    const result = await previewProviderPoolRouterEvaluation(pool.id, snapshot);
+    if (previewResponseIsCurrent(generation, providerPoolRouterPreviewGeneration)) {
+      providerPoolRouterPreview.value = result;
+      providerPoolRouterPreviewConfig.value = snapshot;
+    }
+  } catch (err: any) {
+    if (previewResponseIsCurrent(generation, providerPoolRouterPreviewGeneration)) {
+      providerPoolRouterError.value = err?.message || t("settings.routerPreviewFailed");
+    }
+  } finally {
+    if (previewResponseIsCurrent(generation, providerPoolRouterPreviewGeneration)) {
+      providerPoolRouterBusy.value = false;
+    }
+  }
+}
+
+async function startProviderPoolEvaluation() {
+  const pool = providerPoolRouterDialogPool.value;
+  if (!pool || !providerPoolRouterPreview.value) return;
+  providerPoolRouterBusy.value = true;
+  providerPoolRouterError.value = "";
+  try {
+    const previewed = providerPoolRouterPreviewConfig.value;
+    if (!previewed) return;
+    const job = await createProviderPoolRouterEvaluation(pool.id, previewed);
+    providerPoolRouterJob.value = job;
+    providerPoolRouterDialogStep.value = "progress";
+    await fetchProviderPoolRouterStatus(pool.id);
+  } catch (err: any) {
+    providerPoolRouterError.value = err?.message || t("settings.routerStartFailed");
+  } finally {
+    providerPoolRouterBusy.value = false;
+  }
+}
+
+async function cancelProviderPoolEvaluation() {
+  const pool = providerPoolRouterDialogPool.value;
+  const job = providerPoolRouterJob.value;
+  if (!pool || !job || !confirm(t("settings.routerCancelConfirm"))) return;
+  providerPoolRouterBusy.value = true;
+  try {
+    providerPoolRouterJob.value = await cancelProviderPoolRouterEvaluation(pool.id, job.id);
+    await fetchProviderPoolRouterStatus(pool.id);
+  } catch (err: any) {
+    providerPoolRouterError.value = err?.message || t("settings.routerCancelFailed");
+  } finally {
+    providerPoolRouterBusy.value = false;
+  }
+}
+
+async function reviewProviderPoolRouterProfile(profileID?: string) {
+  const pool = providerPoolRouterDialogPool.value;
+  const id = profileID || providerPoolRouterStatuses.value[pool?.id || ""]?.latest_candidate_profile?.id;
+  if (!pool || !id) return;
+  providerPoolRouterBusy.value = true;
+  providerPoolRouterError.value = "";
+  try {
+    providerPoolRouterProfile.value = await getProviderPoolRouterProfile(pool.id, id);
+    providerPoolRouterDialogStep.value = "profile";
+  } catch (err: any) {
+    providerPoolRouterError.value = err?.message || t("settings.routerProfileFailed");
+  } finally {
+    providerPoolRouterBusy.value = false;
+  }
+}
+
+async function activateProviderPoolRouterCandidate() {
+  const pool = providerPoolRouterDialogPool.value;
+  const profile = providerPoolRouterProfile.value;
+  if (!pool || !profile || !profile.activation_allowed || !confirm(t("settings.routerActivateConfirm", profile.version))) return;
+  providerPoolRouterBusy.value = true;
+  try {
+    await activateProviderPoolRouterProfile(pool.id, profile.id, t("settings.routerActivationReason"));
+    await fetchProviderPoolRouterStatus(pool.id);
+    providerPoolRouterProfile.value = await getProviderPoolRouterProfile(pool.id, profile.id);
+  } catch (err: any) {
+    providerPoolRouterError.value = err?.message || t("settings.routerActivateFailed");
+  } finally {
+    providerPoolRouterBusy.value = false;
+  }
+}
+
+async function rollbackProviderPoolRouter() {
+  const pool = providerPoolRouterDialogPool.value;
+  const status = providerPoolRouterStatuses.value[pool?.id || ""];
+  const target = status?.rollback_target_profile;
+  if (!pool || !status?.current_profile_id || !target ||
+      !confirm(t("settings.routerRollbackConfirm", target.version))) return;
+  providerPoolRouterBusy.value = true;
+  try {
+    await rollbackProviderPoolRouterProfile(pool.id, status.current_profile_id, t("settings.routerRollbackReason"));
+    await fetchProviderPoolRouterStatus(pool.id);
+    providerPoolRouterDialogStep.value = "overview";
+  } catch (err: any) {
+    providerPoolRouterError.value = err?.message || t("settings.routerRollbackFailed");
+  } finally {
+    providerPoolRouterBusy.value = false;
   }
 }
 
@@ -743,11 +989,49 @@ function newProviderPoolMember(index = providerPoolFormMembers.value.length): Pr
   };
 }
 
+function providerPoolPolicyLabel(policy: string): string {
+  const capabilityLabel = providerPoolPolicies.value.find((item) => item.type === policy)?.label?.trim();
+  if (capabilityLabel) return capabilityLabel;
+  if (policy === "priority_weight") return t("settings.providerPoolPolicyPriority");
+  if (policy === "semantic") return t("settings.providerPoolPolicySemantic");
+  return policy;
+}
+
+function providerPoolPolicyReason(reason?: string): string {
+  switch (reason) {
+    case "opencsg_login_required":
+      return t("settings.providerPoolPolicyLoginRequired");
+    case "required_embedding_model_unavailable":
+      return t("settings.providerPoolPolicyEmbeddingUnavailable");
+    case "gateway_catalog_unavailable":
+      return t("settings.providerPoolPolicyCatalogUnavailable");
+    default:
+      return reason || t("settings.providerPoolPolicyUnavailable");
+  }
+}
+
+function providerPoolPolicyHardUnavailable(policy?: ProviderPoolPolicy): boolean {
+  return policy?.available === false && policy.reason !== "opencsg_login_required";
+}
+
+function providerPoolFormPolicyUnavailable(): boolean {
+  const policy = providerPoolFormPolicy.value;
+  if (
+    editingProviderPool.value?.policy === policy
+    && editingProviderPool.value.policy_available === false
+    && editingProviderPool.value.policy_unavailable_reason !== "opencsg_login_required"
+  ) {
+    return true;
+  }
+  return providerPoolPolicyHardUnavailable(providerPoolPolicies.value.find((item) => item.type === policy));
+}
+
 function openProviderPoolDialog(pool?: ProviderPool) {
   editingProviderPool.value = pool || null;
   providerPoolFormName.value = pool?.name || "";
   providerPoolFormModel.value = pool?.model || "";
   providerPoolFormEnabled.value = pool?.enabled ?? true;
+  providerPoolFormPolicy.value = pool?.policy || "priority_weight";
   providerPoolFormMembers.value = sortProviderPoolMembers(pool?.members.map((member) => ({ ...member })) || []);
   providerPoolFormError.value = "";
   providerPoolDialogStep.value = "basics";
@@ -769,6 +1053,18 @@ function closeProviderPoolDialog() {
 function continueProviderPoolDialog() {
   if (!providerPoolFormName.value.trim() || !providerPoolFormModel.value.trim()) {
     providerPoolFormError.value = t("settings.providerPoolNameModelRequired");
+    return;
+  }
+  if (
+    providerPoolFormPolicy.value === "semantic"
+    && cloudAuth.value?.authenticated !== true
+    && cloudAuth.value?.has_api_key !== true
+  ) {
+    providerPoolFormError.value = t("settings.providerPoolPolicyLoginRequired");
+    return;
+  }
+  if (providerPoolFormPolicyUnavailable()) {
+    providerPoolFormError.value = t("settings.providerPoolPolicyUnavailable");
     return;
   }
   providerPoolFormError.value = "";
@@ -877,11 +1173,29 @@ async function saveProviderPoolForm() {
     providerPoolFormError.value = t("settings.providerPoolMemberRequired");
     return;
   }
+  if (
+    providerPoolFormPolicy.value === "semantic"
+    && cloudAuth.value?.authenticated !== true
+    && cloudAuth.value?.has_api_key !== true
+  ) {
+    providerPoolFormError.value = t("settings.providerPoolPolicyLoginRequired");
+    return;
+  }
+  if (providerPoolFormPolicyUnavailable()) {
+    providerPoolFormError.value = t("settings.providerPoolPolicyUnavailable");
+    return;
+  }
 
   providerPoolFormSaving.value = true;
   providerPoolFormError.value = "";
   try {
-    const payload = { name, model, enabled: providerPoolFormEnabled.value, members };
+    const payload = {
+      name,
+      model,
+      enabled: providerPoolFormEnabled.value,
+      policy: providerPoolFormPolicy.value,
+      members,
+    };
     if (editingProviderPool.value) {
       await updateProviderPool(editingProviderPool.value.id, payload);
     } else {
@@ -960,6 +1274,25 @@ export function AIGateway() {
     fetchCloudAuth();
     fetchCloudSettings();
     void fetchProviderOptions();
+    void fetchProviderPoolPolicies();
+    const poll = window.setInterval(() => {
+      const running = providerPools.value.filter((pool) => pool.policy === "semantic").map((pool) => pool.id);
+      const openPool = providerPoolRouterDialogPool.value;
+      const openJob = providerPoolRouterJob.value;
+      if (openPool && openJob && (openJob.status === "queued" || openJob.status === "running") && !running.includes(openPool.id)) {
+        running.push(openPool.id);
+      }
+      for (const poolID of running) {
+        void getProviderPoolRouterStatus(poolID).then(async (status) => {
+          providerPoolRouterStatuses.value = { ...providerPoolRouterStatuses.value, [poolID]: status };
+          if (providerPoolRouterDialogPool.value?.id === poolID) {
+            const nextJob = status.running_job || status.latest_job;
+            if (nextJob) providerPoolRouterJob.value = nextJob;
+          }
+        }).catch(() => undefined);
+      }
+    }, 2000);
+    return () => window.clearInterval(poll);
   }, []);
 
   return (
@@ -1059,17 +1392,23 @@ export function AIGateway() {
         step={providerPoolDialogStep.value}
         name={providerPoolFormName.value}
         model={providerPoolFormModel.value}
+        policy={providerPoolFormPolicy.value}
         enabled={providerPoolFormEnabled.value}
         members={providerPoolFormMembers.value}
         models={providerPoolModels.value}
         error={providerPoolFormError.value}
         saving={providerPoolFormSaving.value}
+        policies={providerPoolPolicies.value}
+        policiesLoading={providerPoolPoliciesLoading.value}
+        policiesError={providerPoolPoliciesError.value}
+        cloudCredentialAvailable={cloudAuth.value?.authenticated === true || cloudAuth.value?.has_api_key === true}
         onClose={closeProviderPoolDialog}
         onNext={continueProviderPoolDialog}
         onBack={backProviderPoolDialog}
         onSave={() => void saveProviderPoolForm()}
         onChangeName={(value) => (providerPoolFormName.value = value)}
         onChangeModel={(value) => (providerPoolFormModel.value = value)}
+        onChangePolicy={(value) => (providerPoolFormPolicy.value = value)}
         onChangeEnabled={(value) => (providerPoolFormEnabled.value = value)}
         onToggleSourceModel={toggleProviderPoolSourceModel}
       />
@@ -1081,6 +1420,7 @@ export function AIGateway() {
         onSave={saveProviderPoolMemberConfigDialog}
         onChange={updateProviderPoolMemberConfigDraft}
       />
+      <RouterProfileDialog />
       {gatewayAPIInfoTarget.value && (
         <ApiInfoDialog
           baseUrl={`${runtimeAPIOrigin.replace(/\/+$/, "")}/providers/${encodeURIComponent(gatewayAPIInfoTarget.value.targetID)}`}
@@ -1628,13 +1968,53 @@ function ProviderPoolsSection() {
                     <span class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${pool.enabled ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
                       {pool.enabled ? t("settings.providerEnabled") : t("settings.providerDisabled")}
                     </span>
+                    <span class="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+                      {providerPoolPolicyLabel(pool.policy || "priority_weight")}
+                    </span>
+                    {pool.policy === "semantic" && (
+                      <span class="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                        {t("settings.providerPoolPolicyExperimental")}
+                      </span>
+                    )}
                   </div>
                   <p class="mt-1 truncate font-mono text-xs text-gray-500">{pool.model}</p>
+                  {pool.policy_available === false && (
+                    <p class="mt-1 text-xs text-amber-700">
+                      {providerPoolPolicyReason(pool.policy_unavailable_reason)}
+                    </p>
+                  )}
+                  {pool.policy === "semantic" && providerPoolRouterStatusLoading.value[pool.id] && (
+                    <p class="mt-1 text-xs text-gray-400">{t("settings.routerStatusLoading")}</p>
+                  )}
                 </div>
                 <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
                   {t("settings.providerPoolMembers", pool.members.length)}
                 </span>
               </div>
+              {pool.policy === "semantic" && providerPoolRouterStatuses.value[pool.id] && (
+                <div class="mt-3 flex flex-wrap gap-2">
+                  {providerPoolRouterStatuses.value[pool.id].pending_suggestion && (
+                    <span class="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">
+                      {t("settings.routerSuggestionBadge", providerPoolRouterStatuses.value[pool.id].pending_suggestion!.new_query_count)}
+                    </span>
+                  )}
+                  {providerPoolRouterStatuses.value[pool.id].running_job && (
+                    <span class="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700">
+                      {t("settings.routerRunningBadge", providerPoolRouterStatuses.value[pool.id].running_job!.current, providerPoolRouterStatuses.value[pool.id].running_job!.total)}
+                    </span>
+                  )}
+                  {providerPoolRouterStatuses.value[pool.id].active_profile && (
+                    <span class="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">
+                      {t("settings.routerActiveBadge", providerPoolRouterStatuses.value[pool.id].active_profile!.version)}
+                    </span>
+                  )}
+                  {providerPoolRouterStatuses.value[pool.id].latest_candidate_profile?.schema_version === 1 && !providerPoolRouterStatuses.value[pool.id].semantic_differentiation && (
+                    <span class="rounded-full bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700">
+                      {t("settings.routerNoDifferentiationBadge")}
+                    </span>
+                  )}
+                </div>
+              )}
               <div class="mt-4 space-y-2">
                 {sortProviderPoolMembers(pool.members).map((member) => (
                   <div key={member.id} class="rounded-lg bg-white px-3 py-2 text-xs text-gray-600">
@@ -1654,6 +2034,11 @@ function ProviderPoolsSection() {
                 ))}
               </div>
               <div class="mt-4 flex justify-end gap-2">
+                {pool.policy === "semantic" && (
+                  <button type="button" onClick={() => void openProviderPoolRouterDialog(pool)} class="rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs text-violet-700 transition-colors hover:bg-violet-50">
+                    {t("settings.routerManage")}
+                  </button>
+                )}
                 <button type="button" onClick={() => openGatewayAPIInfo(pool.id, providerPoolModelInfo(pool))} class="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs text-indigo-700 transition-colors hover:bg-indigo-50">
                   {t("settings.providerCallMethod")}
                 </button>
@@ -2206,23 +2591,335 @@ function ProviderDialog({
   );
 }
 
+function RouterProfileDialog() {
+  const pool = providerPoolRouterDialogPool.value;
+  if (!pool) return null;
+  const status = providerPoolRouterStatuses.value[pool.id];
+  const overviewCounts = routerOverviewCounts(status);
+  const step = providerPoolRouterDialogStep.value;
+  const config = providerPoolRouterConfig.value;
+  const preview = providerPoolRouterPreview.value;
+  const job = providerPoolRouterJob.value;
+  const profile = providerPoolRouterProfile.value;
+  const judges = providerPoolRouterJudgeModels();
+  const progress = job?.total ? Math.min(100, Math.round((job.current / job.total) * 100)) : 0;
+  const terminal = job && ["succeeded", "failed", "cancelled"].includes(job.status);
+  const startBlockedReason = !preview
+    ? ""
+    : preview.eligible_snapshot_count < providerPoolRouterMinHistory
+      ? t("settings.routerStartBlockedNoQueries")
+      : routerUnknownPricingNeedsConsent(preview, config)
+        ? t("settings.routerStartBlockedUnknownPricing")
+        : "";
+
+  return (
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" role="dialog" aria-modal="true">
+      <div class="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <div class="flex items-start justify-between border-b border-gray-100 px-7 py-5">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.2em] text-violet-500">{t("settings.routerEyebrow")}</p>
+            <h2 class="mt-1 text-xl font-semibold text-gray-950">{t("settings.routerTitle", pool.name)}</h2>
+            <p class="mt-1 font-mono text-xs text-gray-500">{pool.model}</p>
+          </div>
+          <button type="button" onClick={closeProviderPoolRouterDialog} class="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700" aria-label={t("observability.close")}>✕</button>
+        </div>
+        <div class="flex flex-wrap gap-2 border-b border-gray-100 px-7 py-3 text-xs">
+          {(["overview", "configure", "progress", "profile"] as const).map((item) => (
+            <button
+              type="button"
+              disabled={(item === "progress" && !job) || (item === "profile" && !profile && !status?.latest_candidate_profile)}
+              onClick={() => item === "profile" && !profile ? void reviewProviderPoolRouterProfile() : (providerPoolRouterDialogStep.value = item)}
+              class={`rounded-full px-3 py-1.5 font-medium ${step === item ? "bg-violet-100 text-violet-800" : "bg-gray-50 text-gray-500 hover:bg-gray-100"} disabled:cursor-not-allowed disabled:opacity-40`}
+            >
+              {t(`settings.routerStep${item[0].toUpperCase()}${item.slice(1)}`)}
+            </button>
+          ))}
+        </div>
+        <div class="min-h-0 flex-1 overflow-y-auto p-7">
+          {step === "overview" && (
+            <div class="space-y-5">
+              <div class="grid gap-4 md:grid-cols-4">
+                <RouterSummaryCard label={t("settings.routerQualifiedTraces")} value={String(overviewCounts.qualifiedQueryCount)} />
+                <RouterSummaryCard label={t("settings.routerNewTraces")} value={String(overviewCounts.newQueryCount)} />
+                <RouterSummaryCard label={t("settings.routerActiveProfile")} value={status?.active_profile ? `v${status.active_profile.version}` : t("settings.routerNone")} />
+                <RouterSummaryCard label={t("settings.routerLatestJob")} value={status?.latest_job ? t(`settings.routerJob.${status.latest_job.status}`) : t("settings.routerNone")} />
+              </div>
+              {status?.pending_suggestion ? (
+                <div class="rounded-2xl border border-amber-100 bg-amber-50 p-5">
+                  <h3 class="font-semibold text-amber-900">{t("settings.routerSuggestionTitle")}</h3>
+                  <p class="mt-1 text-sm text-amber-800">{t(`settings.routerReason.${status.pending_suggestion.reason}`)}</p>
+                  {!status.pending_suggestion.member_compatible && <p class="mt-2 text-sm font-medium text-red-700">{t("settings.routerStaleMembers")}</p>}
+                </div>
+              ) : (
+                <p class="rounded-2xl bg-gray-50 p-5 text-sm text-gray-500">{t("settings.routerSuggestionEmpty")}</p>
+              )}
+              <div class="flex flex-wrap gap-3">
+                <button type="button" onClick={() => (providerPoolRouterDialogStep.value = "configure")} class="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-violet-700">
+                  {t("settings.routerConfigureEvaluation")}
+                </button>
+                {status?.latest_candidate_profile && (
+                  <button type="button" onClick={() => void reviewProviderPoolRouterProfile(status.latest_candidate_profile!.id)} class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">
+                    {t("settings.routerReviewCandidate")}
+                  </button>
+                )}
+                {status?.active_profile && (
+                  <button type="button" onClick={() => void rollbackProviderPoolRouter()} disabled={providerPoolRouterBusy.value} class="rounded-xl border border-amber-200 px-4 py-2.5 text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-50">
+                    {t("settings.routerRollback")}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          {step === "configure" && (
+            <div class="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
+              <div class="space-y-4">
+                <h3 class="text-base font-semibold text-gray-900">{t("settings.routerEvaluationConfig")}</h3>
+                <label class="block text-sm text-gray-700">
+                  <span class="mb-1 block font-medium">{t("settings.routerJudge")}</span>
+                  <select value={config.judge_model} onChange={(e) => updateProviderPoolRouterConfig("judge_model", e.currentTarget.value)} class="w-full rounded-xl border border-gray-200 px-3 py-2.5">
+                    <option value="">{t("settings.routerJudgeSelect")}</option>
+                    {judges.map((model) => <option key={model.model} value={model.model}>{providerModelLabel(model)}</option>)}
+                  </select>
+                </label>
+                <div class="grid gap-4 sm:grid-cols-2">
+                  <RouterNumberField label={t("settings.routerMaxQueries")} value={config.max_queries} min={1} max={100} onChange={(v) => updateProviderPoolRouterConfig("max_queries", v)} />
+                  <RouterNumberField label={t("settings.routerRepeats")} value={config.repeats} min={1} max={3} onChange={(v) => updateProviderPoolRouterConfig("repeats", v)} />
+                  <RouterNumberField label={t("settings.routerMaxOutputTokens")} value={config.max_output_tokens} min={1} max={4096} onChange={(v) => updateProviderPoolRouterConfig("max_output_tokens", v)} />
+                  <RouterNumberField label={t("settings.routerTimeout")} value={config.request_timeout_seconds} min={1} max={600} onChange={(v) => updateProviderPoolRouterConfig("request_timeout_seconds", v)} />
+                  <RouterNumberField label={t("settings.routerBudget")} value={config.budget_amount} min={0} step="0.01" onChange={(v) => updateProviderPoolRouterConfig("budget_amount", v)} />
+                  <label class="block text-sm text-gray-700">
+                    <span class="mb-1 block font-medium">{t("settings.routerCurrency")}</span>
+                    <select value={config.budget_currency} onChange={(e) => updateProviderPoolRouterConfig("budget_currency", e.currentTarget.value)} class="w-full rounded-xl border border-gray-200 px-3 py-2.5">
+                      <option value="￥">{t("settings.routerCurrencyCNY")}</option>
+                      <option value="USD">{t("settings.routerCurrencyUSD")}</option>
+                    </select>
+                  </label>
+                </div>
+                <button type="button" onClick={() => void previewProviderPoolEvaluation()} disabled={providerPoolRouterBusy.value || !config.judge_model} class="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50">
+                  {providerPoolRouterBusy.value ? t("settings.routerWorking") : t("settings.routerPreview")}
+                </button>
+              </div>
+              <div class="rounded-2xl border border-gray-100 bg-gray-50 p-5">
+                <h3 class="font-semibold text-gray-900">{t("settings.routerPreviewTitle")}</h3>
+                {preview ? (
+                  <div class="mt-4 space-y-3 text-sm text-gray-600">
+                    <p class="font-medium text-violet-700">{t("settings.routerEvaluationModeLabel")}: {t(routerEvaluationModeKey(preview.evaluation_mode))}</p>
+                    <p>{t("settings.routerPreviewQueries", preview.selected_snapshot_count, preview.eligible_snapshot_count)}</p>
+                    <p>{t("settings.routerPreviewCalls", preview.direct_candidate_calls, preview.judge_calls, preview.max_judge_calls, preview.max_total_calls)}</p>
+                    <p>{t("settings.routerPreviewJudgeTokens", formatNumber(preview.judge_prompt_tokens), formatNumber(preview.max_judge_token_exposure))}</p>
+                    <p>{t("settings.routerPreviewTokens", formatNumber(preview.max_token_exposure))}</p>
+                    <p>{t("settings.routerPreviewJudgeCost", preview.known_judge_estimated_cost.toFixed(6), preview.currency)}</p>
+                    <p>{t("settings.routerPreviewCost", preview.known_estimated_cost.toFixed(6), preview.currency)}</p>
+                    <p>{t("settings.routerBudgetBehavior", config.budget_amount.toFixed(2), config.budget_currency)}</p>
+                    {(!preview.judge_price_known || preview.unknown_price_members.length > 0) && (
+                      <>
+                        <p class="rounded-xl bg-amber-100 p-3 text-amber-800">{t("settings.routerUnknownPriceWarning")}</p>
+                        <label class="flex items-start gap-2 rounded-xl border border-amber-200 bg-white p-3 text-amber-900">
+                          <input type="checkbox" checked={config.allow_unknown_pricing} onChange={(e) => updateProviderPoolRouterUnknownPricingConsent(e.currentTarget.checked)} />
+                          <span>{t("settings.routerUnknownPriceConsent")}</span>
+                        </label>
+                      </>
+                    )}
+                    <button type="button" title={startBlockedReason} onClick={() => void startProviderPoolEvaluation()} disabled={providerPoolRouterBusy.value || !!startBlockedReason} class="mt-2 w-full rounded-xl bg-emerald-600 px-4 py-2.5 font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">
+                      {t("settings.routerStartExplicit")}
+                    </button>
+                    {startBlockedReason && <p class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{startBlockedReason}</p>}
+                  </div>
+                ) : <p class="mt-3 text-sm text-gray-400">{t("settings.routerPreviewEmpty")}</p>}
+              </div>
+            </div>
+          )}
+          {step === "progress" && job && (
+            <div class="mx-auto max-w-3xl space-y-5">
+              <div class="flex items-center justify-between"><h3 class="text-lg font-semibold text-gray-900">{t("settings.routerEvaluationProgress")}</h3><span class="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">{t(`settings.routerJob.${job.status}`)}</span></div>
+              {(() => {
+                const calls = routerJobCallCounts(job, pool.members.length);
+                return (
+                  <div class="grid gap-3 sm:grid-cols-2">
+                    <RouterSummaryCard label={t("settings.routerEvaluationModeLabel")} value={t(routerEvaluationModeKey(job.evaluation_mode))} />
+                    <RouterSummaryCard label={t("settings.routerJobCalls")} value={t("settings.routerJobCallsValue", calls.candidateCalls, calls.judgeCalls, calls.maxJudgeCalls)} />
+                    <RouterSummaryCard label={t("settings.routerJudgeTokenEstimate")} value={job.max_judge_token_exposure ? t("settings.routerJobJudgeTokensValue", formatNumber(job.judge_prompt_tokens || 0), formatNumber(job.max_judge_token_exposure)) : t("settings.routerEstimateUnavailable")} />
+                    <RouterSummaryCard label={t("settings.routerKnownEstimate")} value={job.known_estimated_cost !== undefined ? `${job.known_estimated_cost.toFixed(6)} ${job.estimate_currency || job.budget_currency}` : t("settings.routerEstimateUnavailable")} />
+                  </div>
+                );
+              })()}
+              <div class="h-3 overflow-hidden rounded-full bg-gray-100"><div class="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${progress}%` }} /></div>
+              <p class="text-sm text-gray-600">{t(`settings.routerPhase.${job.phase || job.status}`)} · {job.current}/{job.total} ({progress}%)</p>
+              <p class="text-sm text-gray-500">{t("settings.routerJobBudget", job.budget_amount.toFixed(2), job.budget_currency)} · {job.unknown_pricing || job.allow_unknown_pricing ? t("settings.routerJobUnknownPricingConsented") : t("settings.routerJobKnownPricing")}</p>
+              <p class="text-xs text-gray-400">{t("settings.routerPollingHint")}</p>
+              {job.error && <p class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{job.error}</p>}
+              <div class="flex gap-3">
+                {!terminal && <button type="button" onClick={() => void cancelProviderPoolEvaluation()} disabled={providerPoolRouterBusy.value || job.cancellation_requested} class="rounded-xl border border-red-200 px-4 py-2 text-sm text-red-700 disabled:opacity-50">{job.cancellation_requested ? t("settings.routerCancelling") : t("settings.routerCancel")}</button>}
+                {job.status === "succeeded" && status?.latest_candidate_profile && <button type="button" onClick={() => void reviewProviderPoolRouterProfile(status.latest_candidate_profile!.id)} class="rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white">{t("settings.routerReviewCandidate")}</button>}
+                {terminal && <button type="button" onClick={() => (providerPoolRouterDialogStep.value = "configure")} class="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-700">{t("settings.routerRunAnother")}</button>}
+              </div>
+            </div>
+          )}
+          {step === "profile" && profile && (
+            <div class="space-y-6">
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-900">{t("settings.routerProfileVersion", profile.version)}</h3>
+                  <p class="mt-1 text-sm text-gray-500">{formatDateTime(profile.generated_at)}</p>
+                  <p class="mt-1 text-xs text-violet-700">{t("settings.routerProfileSchemaAlgorithm", profile.schema_version, t(`settings.routerAlgorithm.${routerProfileKind(profile)}`))}</p>
+                </div>
+                <div class="flex gap-2">
+                  {profile.active && <span class="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">{t("settings.routerActive")}</span>}
+                  <button type="button" title={routerActivationReasonKey(profile) ? t(routerActivationReasonKey(profile)!) : undefined} disabled={!profile.activation_allowed || profile.active || providerPoolRouterBusy.value} onClick={() => void activateProviderPoolRouterCandidate()} class="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40">{t("settings.routerActivate")}</button>
+                </div>
+              </div>
+              {!profile.activation_allowed && <p class="rounded-xl bg-amber-50 p-4 text-sm text-amber-800">{t(routerActivationReasonKey(profile) || "settings.routerBlocked.unknown")}</p>}
+              {isValidatedCollapsedProfile(profile) && <p class="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">{t("settings.routerValidatedCollapse")}</p>}
+              {profile.schema_version === 2 && profile.v2 ? <RouterV2ProfileReview profile={profile} /> : <RouterV1ProfileReview profile={profile} />}
+            </div>
+          )}
+          {providerPoolRouterError.value && <p class="mt-5 rounded-xl bg-red-50 p-4 text-sm text-red-700">{providerPoolRouterError.value}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RouterV1ProfileReview({ profile }: { profile: ProviderPoolRouterProfile }) {
+  return (
+    <>
+      <div class="grid gap-4 md:grid-cols-3">
+        <RouterSummaryCard label={t("settings.routerTrainMetrics")} value={`${profile.metrics.train_utility.toFixed(3)} / ${profile.metrics.train_quality.toFixed(3)} / ${profile.metrics.train_cost_score.toFixed(3)}`} />
+        <RouterSummaryCard label={t("settings.routerHeldOutMetrics")} value={`${profile.metrics.held_out_utility.toFixed(3)} / ${profile.metrics.held_out_quality.toFixed(3)} / ${profile.metrics.held_out_cost_score.toFixed(3)}`} />
+        <RouterSummaryCard label={t("settings.routerSpend")} value={profile.metrics.monetary_spend_known ? `${profile.metrics.spend.toFixed(6)} ${profile.metrics.currency || ""}` : `${profile.metrics.spend.toFixed(6)} ${profile.metrics.cost_unit}`} />
+      </div>
+      {profile.metrics.all_clusters_one_member && <p class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{t("settings.routerCollapseWarning")}</p>}
+      <div>
+        <h4 class="mb-3 font-semibold text-gray-900">{t("settings.routerClusters")}</h4>
+        <div class="overflow-x-auto rounded-xl border border-gray-200">
+          <table class="w-full text-left text-sm"><thead class="bg-gray-50 text-xs text-gray-500"><tr><th class="px-4 py-3">{t("settings.routerCluster")}</th><th class="px-4 py-3">{t("settings.routerSamples")}</th><th class="px-4 py-3">{t("settings.routerTarget")}</th><th class="px-4 py-3">P50 / P90 / P95 / P99</th><th class="px-4 py-3">{t("settings.routerOOD")}</th></tr></thead>
+          <tbody class="divide-y divide-gray-100">{(profile.clusters || []).map((cluster) => <tr key={cluster.id}><td class="px-4 py-3 font-mono text-xs">{cluster.id}</td><td class="px-4 py-3">{cluster.sample_count}</td><td class="px-4 py-3">{cluster.target.model}</td><td class="px-4 py-3 tabular-nums">{cluster.distance_quantiles.p50.toFixed(3)} / {cluster.distance_quantiles.p90.toFixed(3)} / {cluster.distance_quantiles.p95.toFixed(3)} / {cluster.distance_quantiles.p99.toFixed(3)}</td><td class="px-4 py-3 tabular-nums">{cluster.ood_threshold.toFixed(3)}</td></tr>)}</tbody></table>
+        </div>
+      </div>
+      <div><h4 class="mb-3 font-semibold text-gray-900">{t("settings.routerDistribution")}</h4><div class="grid gap-3 md:grid-cols-2">{(profile.candidate_distribution || []).map((item) => <div key={item.member_id} class="rounded-xl bg-gray-50 p-4 text-sm"><p class="font-medium text-gray-900">{item.target.model}</p><p class="mt-1 text-gray-500">{t("settings.routerDistributionValue", item.cluster_count, item.sample_count)}</p></div>)}</div></div>
+    </>
+  );
+}
+
+function RouterV2ProfileReview({ profile }: { profile: ProviderPoolRouterProfile }) {
+  const summary = profile.v2!;
+  const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
+  const knownComparableCost = summary.savings_known
+    && summary.baseline_best_single_model.cost_known
+    && summary.routed.cost_known
+    && !!summary.baseline_best_single_model.currency
+    && summary.baseline_best_single_model.currency === summary.routed.currency;
+  const currency = summary.routed.currency || summary.baseline_best_single_model.currency || "";
+  return (
+    <>
+      <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <RouterSummaryCard label={t("settings.routerV2Evidence")} value={t("settings.routerV2EvidenceValue", summary.sample_count, summary.query_group_count, summary.round_count)} />
+        <RouterSummaryCard label={t("settings.routerV2QualityTarget")} value={`${percent(summary.target_quality_retention)} · ${percent(summary.confidence_level)} ${t("settings.routerConfidence")}`} />
+        <RouterSummaryCard label={t("settings.routerV2Retention")} value={`${percent(summary.point_retention)} · ${percent(summary.conservative_retention)} ${t("settings.routerLowerBoundShort")}`} />
+        <RouterSummaryCard label={t("settings.routerV2Feasibility")} value={profile.feasible ? t("settings.routerFeasible") : t("settings.routerInfeasible")} />
+      </div>
+      <div class="grid gap-4 md:grid-cols-3">
+        <RouterSummaryCard label={t("settings.routerBestSingleQuality")} value={percent(summary.baseline_best_single_model.quality)} />
+        <RouterSummaryCard label={t("settings.routerRoutedQuality")} value={percent(summary.routed.quality)} />
+        <RouterSummaryCard label={t("settings.routerQualityConstraintGap")} value={summary.retention_lower_bound.toFixed(4)} />
+      </div>
+      {knownComparableCost ? (
+        <div class="grid gap-4 md:grid-cols-3">
+          <RouterSummaryCard label={t("settings.routerBestSingleCost")} value={`${summary.baseline_best_single_model.cost!.toFixed(6)} ${currency}`} />
+          <RouterSummaryCard label={t("settings.routerRoutedCost")} value={`${summary.routed.cost!.toFixed(6)} ${currency}`} />
+          <RouterSummaryCard label={t("settings.routerEstimatedSavings")} value={`${summary.savings!.toFixed(6)} ${currency} (${percent(summary.savings_fraction || 0)})`} />
+        </div>
+      ) : (
+        <p class="rounded-xl bg-gray-50 p-4 text-sm text-gray-600">{t("settings.routerSavingsUnavailable")}</p>
+      )}
+      <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <RouterSummaryCard label={t("settings.routerCoverage")} value={percent(summary.coverage)} />
+        <RouterSummaryCard label={t("settings.routerFallbackRate")} value={percent(summary.fallback_rate)} />
+        <RouterSummaryCard label={t("settings.routerLowConfidenceRate")} value={percent(summary.low_confidence_rate)} />
+        <RouterSummaryCard label={t("settings.routerOODRate")} value={percent(summary.ood_rate)} />
+      </div>
+      <div>
+        <h4 class="mb-3 font-semibold text-gray-900">{t("settings.routerPairwiseCV", summary.cv_fold_count)}</h4>
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <RouterSummaryCard label={t("settings.routerAccuracy")} value={percent(summary.pairwise_metrics.top_class_accuracy)} />
+          <RouterSummaryCard label={t("settings.routerLogLoss")} value={summary.pairwise_metrics.log_loss.toFixed(4)} />
+          <RouterSummaryCard label={t("settings.routerBrier")} value={summary.pairwise_metrics.brier.toFixed(4)} />
+          <RouterSummaryCard label={t("settings.routerECE")} value={summary.pairwise_metrics.ece.toFixed(4)} />
+        </div>
+      </div>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div class="rounded-2xl border border-gray-100 bg-gray-50 p-5">
+          <h4 class="font-semibold text-gray-900">{t("settings.routerThresholds")}</h4>
+          <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div><dt class="text-gray-500">{t("settings.routerSimilarity")}</dt><dd class="font-medium tabular-nums">{summary.thresholds.minimum_similarity.toFixed(3)}</dd></div>
+            <div><dt class="text-gray-500">{t("settings.routerConfidence")}</dt><dd class="font-medium tabular-nums">{summary.thresholds.minimum_confidence.toFixed(3)}</dd></div>
+            <div><dt class="text-gray-500">{t("settings.routerMargin")}</dt><dd class="font-medium tabular-nums">{summary.thresholds.minimum_margin.toFixed(3)}</dd></div>
+            <div><dt class="text-gray-500">{t("settings.routerQualitySlack")}</dt><dd class="font-medium tabular-nums">{summary.thresholds.quality_slack.toFixed(3)}</dd></div>
+          </dl>
+        </div>
+        <div class="rounded-2xl border border-gray-100 bg-gray-50 p-5">
+          <h4 class="font-semibold text-gray-900">{t("settings.routerValidationEvidence")}</h4>
+          <p class="mt-2 text-sm text-gray-600">{t("settings.routerFallbackMember")}: <span class="font-mono">{profile.fallback_member_id}</span></p>
+          <p class="mt-1 text-sm text-gray-600">{summary.optimize_known_cost ? t("settings.routerKnownCostOptimized") : t("settings.routerQualityOnlyCalibration")}</p>
+          {summary.model_fallback_reason && <p class="mt-1 text-sm text-amber-700">{t("settings.routerSimilarityBTFallback")}</p>}
+          {profile.collapsed_single_member && <p class="mt-1 text-sm text-gray-600">{t("settings.routerCollapsedMember", summary.collapsed_member_id || profile.fallback_member_id)}</p>}
+        </div>
+      </div>
+      <div>
+        <h4 class="mb-3 font-semibold text-gray-900">{t("settings.routerDistribution")}</h4>
+        <div class="grid gap-3 md:grid-cols-2">{(profile.candidate_distribution || []).map((item) => <div key={item.member_id} class="rounded-xl bg-gray-50 p-4 text-sm"><p class="font-medium text-gray-900">{item.target.model}</p><p class="mt-1 text-gray-500">{t("settings.routerV2DistributionValue", item.sample_count, percent(item.fraction || 0))}</p></div>)}</div>
+      </div>
+      {(summary.warnings || []).length > 0 && (
+        <div class="rounded-xl border border-amber-100 bg-amber-50 p-4">
+          <h4 class="font-semibold text-amber-900">{t("settings.routerWarnings")}</h4>
+          <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800">{summary.warnings!.map((warning, index) => <li key={`${warning}-${index}`}>{t(routerWarningKey(warning))}</li>)}</ul>
+        </div>
+      )}
+    </>
+  );
+}
+
+function routerWarningKey(warning: string): string {
+  if (warning.includes("mixed currencies")) return "settings.routerWarning.mixed_currencies";
+  if (warning.includes("price") || warning.includes("pricing")) return "settings.routerWarning.unknown_pricing";
+  if (warning.includes("collapsed")) return "settings.routerWarning.collapsed";
+  if (warning.includes("baseline quality is zero")) return "settings.routerWarning.zero_baseline";
+  if (warning.includes("quality-retention")) return "settings.routerWarning.quality_constraint";
+  if (warning.includes("insufficient") || warning.includes("could not fit")) return "settings.routerWarning.insufficient_evidence";
+  return "settings.routerWarning.validation";
+}
+
+function RouterSummaryCard({ label, value }: { label: string; value: string }) {
+  return <div class="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm"><p class="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</p><p class="mt-2 text-lg font-semibold text-gray-900">{value}</p></div>;
+}
+
+function RouterNumberField({ label, value, min, max, step = "1", onChange }: { label: string; value: number; min: number; max?: number; step?: string; onChange: (value: number) => void }) {
+  return <label class="block text-sm text-gray-700"><span class="mb-1 block font-medium">{label}</span><input type="number" value={value} min={min} max={max} step={step} onInput={(e) => onChange(Number(e.currentTarget.value))} class="w-full rounded-xl border border-gray-200 px-3 py-2.5" /></label>;
+}
+
 function ProviderPoolDialog({
   open,
   editing,
   step,
   name,
   model,
+  policy,
   enabled,
   members,
   models,
   error,
   saving,
+  policies,
+  policiesLoading,
+  policiesError,
+  cloudCredentialAvailable,
   onClose,
   onNext,
   onBack,
   onSave,
   onChangeName,
   onChangeModel,
+  onChangePolicy,
   onChangeEnabled,
   onToggleSourceModel,
 }: {
@@ -2231,17 +2928,23 @@ function ProviderPoolDialog({
   step: "basics" | "members";
   name: string;
   model: string;
+  policy: string;
   enabled: boolean;
   members: ProviderPoolMember[];
   models: ModelInfo[];
   error: string;
   saving: boolean;
+  policies: ProviderPoolPolicy[];
+  policiesLoading: boolean;
+  policiesError: string;
+  cloudCredentialAvailable: boolean;
   onClose: () => void;
   onNext: () => void;
   onBack: () => void;
   onSave: () => void;
   onChangeName: (value: string) => void;
   onChangeModel: (value: string) => void;
+  onChangePolicy: (value: string) => void;
   onChangeEnabled: (value: boolean) => void;
   onToggleSourceModel: (source: string, model: string, checked: boolean) => void;
 }) {
@@ -2271,7 +2974,38 @@ function ProviderPoolDialog({
     }))
     .filter((item, index, items) => items.findIndex((candidate) => candidate.value === item.value) === index)
     .filter((item) => !search || item.value.toLocaleLowerCase().includes(search) || item.label.toLocaleLowerCase().includes(search));
-  const basicsValid = !!name.trim() && !!model.trim();
+  const fallbackPolicies: ProviderPoolPolicy[] = [
+    { type: "priority_weight", experimental: false, available: true },
+    {
+      type: "semantic",
+      experimental: true,
+      available: false,
+      reason: policiesLoading ? "gateway_catalog_unavailable" : "gateway_catalog_unavailable",
+    },
+  ];
+  const policyOptions = [...(policies.length > 0 ? policies : fallbackPolicies)];
+  if (!policyOptions.some((item) => item.type === policy)) {
+    policyOptions.push({
+      type: policy,
+      experimental: policy === "semantic",
+      available: editingProviderPool.value?.policy_available !== false,
+      reason: editingProviderPool.value?.policy_unavailable_reason,
+    });
+  }
+  const persistedPolicyUnavailable = editingProviderPool.value?.policy === policy
+    && editingProviderPool.value.policy_available === false;
+  const selectedPolicyCapability = policyOptions.find((item) => item.type === policy);
+  const selectedPolicyUnavailable = (
+    persistedPolicyUnavailable
+    && editingProviderPool.value?.policy_unavailable_reason !== "opencsg_login_required"
+  ) || providerPoolPolicyHardUnavailable(selectedPolicyCapability);
+  const selectedPolicyUnavailableReason = editingProviderPool.value?.policy_unavailable_reason
+    || selectedPolicyCapability?.reason
+    || t("settings.providerPoolPolicyUnavailable");
+  const basicsValid = !!name.trim()
+    && !!model.trim()
+    && !selectedPolicyUnavailable
+    && (policy !== "semantic" || cloudCredentialAvailable);
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 p-3 sm:p-6" onClick={onClose}>
       <div class="flex max-h-[calc(100vh-1.5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:max-h-[calc(100vh-3rem)]" onClick={(event) => event.stopPropagation()}>
@@ -2330,6 +3064,74 @@ function ProviderPoolDialog({
                   />
                   <p class="mt-1.5 text-xs text-gray-500">{t("settings.providerPoolModelHint")}</p>
                 </div>
+                <fieldset>
+                  <legend class="mb-1.5 text-sm font-medium text-gray-700">{t("settings.providerPoolPolicy")}</legend>
+                  <p class="mb-3 text-xs text-gray-500">{t("settings.providerPoolPolicyHint")}</p>
+                  <div class="grid gap-3 sm:grid-cols-2">
+                    {policyOptions.map((item) => {
+                      const unavailable = providerPoolPolicyHardUnavailable(item)
+                        || (
+                          editingProviderPool.value?.policy === item.type
+                          && editingProviderPool.value.policy_available === false
+                          && editingProviderPool.value.policy_unavailable_reason !== "opencsg_login_required"
+                        );
+                      return (
+                        <label key={item.type} class={`rounded-xl border p-4 transition-colors ${unavailable ? "cursor-not-allowed border-gray-100 bg-gray-50 opacity-70" : policy === item.type ? "cursor-pointer border-indigo-300 bg-indigo-50/70" : "cursor-pointer border-gray-200 hover:border-indigo-200"}`}>
+                          <span class="flex items-start gap-3">
+                            <input
+                              type="radio"
+                              name="provider-pool-policy"
+                              value={item.type}
+                              checked={policy === item.type}
+                              disabled={saving || unavailable}
+                              onChange={() => onChangePolicy(item.type)}
+                              class="mt-0.5 h-4 w-4 border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span class="min-w-0">
+                              <span class="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-900">
+                                {item.label?.trim() || providerPoolPolicyLabel(item.type)}
+                                {item.type === "semantic" && (
+                                  <span class="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
+                                    {t("settings.providerPoolPolicyExperimental")}
+                                  </span>
+                                )}
+                              </span>
+                              <span class="mt-1 block text-xs leading-5 text-gray-500">
+                                {item.type === "semantic"
+                                  ? t("settings.providerPoolPolicySemanticHint")
+                                  : item.type === "priority_weight"
+                                    ? t("settings.providerPoolPolicyPriorityHint")
+                                    : item.type}
+                              </span>
+                              {unavailable && (
+                                <span class="mt-1 block text-xs text-amber-700">
+                                  {editingProviderPool.value?.policy === item.type
+                                    ? providerPoolPolicyReason(editingProviderPool.value.policy_unavailable_reason || item.reason)
+                                    : providerPoolPolicyReason(item.reason)}
+                                </span>
+                              )}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {policiesLoading && <p class="mt-2 text-xs text-gray-500">{t("settings.providerPoolPoliciesLoading")}</p>}
+                  {policiesError && (
+                    <p class="mt-2 text-xs text-amber-700">
+                      {t("settings.providerPoolPoliciesLoadFailedFallback")}
+                      <button type="button" onClick={() => void fetchProviderPoolPolicies()} class="ml-2 font-medium underline" disabled={policiesLoading}>
+                        {t("settings.providerPoolPoliciesRetry")}
+                      </button>
+                    </p>
+                  )}
+                  {policy === "semantic" && !cloudCredentialAvailable && (
+                    <p class="mt-2 text-xs text-amber-700">{t("settings.providerPoolPolicyLoginRequired")}</p>
+                  )}
+                  {policy === "semantic" && selectedPolicyUnavailable && (
+                    <p class="mt-2 text-xs text-amber-700">{providerPoolPolicyReason(selectedPolicyUnavailableReason)}</p>
+                  )}
+                </fieldset>
                 <div class="flex items-center justify-between gap-4 rounded-xl border border-gray-200 px-4 py-3">
                   <div>
                     <p class="text-sm font-medium text-gray-800">{t("settings.providerPoolEnabledLabel")}</p>

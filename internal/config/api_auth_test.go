@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -186,5 +188,91 @@ func TestAPIUsagePoolMetadataAggregatesAndFiltersWithoutBreakingLegacyEvents(t *
 	}
 	if len(all.Records) != 2 {
 		t.Fatalf("records = %#v, want legacy and pool usage readable", all.Records)
+	}
+}
+
+func TestAPIUsageVaryingRequestMetadataCompactsByMemberDayAndCostSemantics(t *testing.T) {
+	dir := t.TempDir()
+	events := make([]map[string]any, 0, 3000)
+	createdAt := "2026-08-26T12:00:00Z"
+	for i := 0; i < 3000; i++ {
+		event := map[string]any{
+			"api_key_id": "key", "model": "public", "source": "cloud", "source_type": "cloud",
+			"pool_id": "pool", "pool_model": "public", "actual_member_id": "member",
+			"member_model": "actual", "requests": 1, "input_tokens": 1, "output_tokens": 1,
+			"total_tokens": 2, "created_at": createdAt,
+			// Legacy phase-5 request-level fields must be ignored and removed
+			// when the next write compacts api_usage.json.
+			"router_profile_id":        fmt.Sprintf("profile-%d", i),
+			"router_profile_version":   i,
+			"routing_text_version":     fmt.Sprintf("routing-%d", i),
+			"semantic_cluster_id":      fmt.Sprintf("cluster-%d", i),
+			"semantic_distance":        float64(i) / 3000,
+			"semantic_ood":             i%2 == 0,
+			"semantic_fallback":        i%5 == 0,
+			"semantic_fallback_reason": fmt.Sprintf("reason-%d", i),
+			"price_input_per_million":  float64(i),
+			"price_output_per_million": float64(i * 2),
+		}
+		switch i % 3 {
+		case 0:
+			event["cost_known"], event["cost_currency"], event["estimated_cost"] = true, "USD", 0.001
+		case 1:
+			event["cost_known"], event["cost_currency"], event["estimated_cost"] = true, "EUR", 0.002
+		default:
+			event["cost_known"], event["cost_currency"], event["estimated_cost"] = false, "USD", 99.0
+		}
+		events = append(events, event)
+	}
+	data, err := json.Marshal(map[string]any{"records": []any{}, "events": events})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, APIUsageFile), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewAPIUsageStore(dir)
+	if err := store.Add(APIUsageEvent{
+		APIKeyID: "key", Model: "public", Source: "cloud", SourceType: "cloud",
+		PoolID: "pool", PoolModel: "public", ActualMemberID: "member", MemberModel: "actual",
+		EstimatedCost: 0.001, CostCurrency: "USD", CostKnown: true,
+		CreatedAt: time.Date(2026, 8, 26, 18, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.List(APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Events) != 3 || len(state.Records) != 3 {
+		t.Fatalf("buckets = events %d records %d, want three cost-compatible buckets", len(state.Events), len(state.Records))
+	}
+	for _, record := range state.Records {
+		switch {
+		case record.CostKnown && record.CostCurrency == "USD":
+			if record.Requests != 1001 || record.EstimatedCost < 1.0009 || record.EstimatedCost > 1.0011 {
+				t.Fatalf("USD bucket = %+v", record)
+			}
+		case record.CostKnown && record.CostCurrency == "EUR":
+			if record.Requests != 1000 || record.EstimatedCost < 1.9999 || record.EstimatedCost > 2.0001 {
+				t.Fatalf("EUR bucket = %+v", record)
+			}
+		case !record.CostKnown:
+			if record.Requests != 1000 || record.CostCurrency != "" || record.EstimatedCost != 0 {
+				t.Fatalf("unknown-cost bucket = %+v", record)
+			}
+		default:
+			t.Fatalf("unexpected bucket = %+v", record)
+		}
+	}
+	persisted, err := os.ReadFile(filepath.Join(dir, APIUsageFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), "router_profile_id") ||
+		strings.Contains(string(persisted), "semantic_distance") ||
+		strings.Contains(string(persisted), "price_input_per_million") {
+		t.Fatal("request-level routing or exact price metadata remained in api_usage.json")
 	}
 }

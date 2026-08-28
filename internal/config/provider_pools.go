@@ -12,12 +12,18 @@ import (
 // credentials so existing providers.json remains backward compatible.
 const ProviderPoolsFile = "provider_pools.json"
 
+const (
+	ProviderPoolPolicyPriorityWeight = "priority_weight"
+	ProviderPoolPolicySemantic       = "semantic"
+)
+
 // ProviderPool exposes one public model ID and routes it to member models.
 type ProviderPool struct {
 	ID      string               `json:"id"`
 	Name    string               `json:"name"`
 	Model   string               `json:"model"`
 	Enabled bool                 `json:"enabled"`
+	Policy  string               `json:"policy,omitempty"`
 	Members []ProviderPoolMember `json:"members"`
 }
 
@@ -139,6 +145,7 @@ func normalizeProviderPools(pools []ProviderPool) []ProviderPool {
 		pool.ID = strings.TrimSpace(pool.ID)
 		pool.Name = strings.TrimSpace(pool.Name)
 		pool.Model = strings.TrimSpace(pool.Model)
+		pool.Policy = NormalizeProviderPoolPolicy(pool.Policy)
 		if pool.ID == "" || pool.Name == "" || pool.Model == "" {
 			continue
 		}
@@ -154,6 +161,15 @@ func normalizeProviderPools(pools []ProviderPool) []ProviderPool {
 		out = append(out, pool)
 	}
 	return out
+}
+
+func NormalizeProviderPoolPolicy(policy string) string {
+	switch strings.TrimSpace(strings.ToLower(policy)) {
+	case ProviderPoolPolicySemantic:
+		return ProviderPoolPolicySemantic
+	default:
+		return ProviderPoolPolicyPriorityWeight
+	}
 }
 
 func normalizeProviderPoolMembers(members []ProviderPoolMember) []ProviderPoolMember {
