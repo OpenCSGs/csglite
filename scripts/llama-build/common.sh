@@ -11,7 +11,7 @@ LLAMA_BUILD_GITLAB_PROJECT_ID="${LLAMA_BUILD_GITLAB_PROJECT_ID:-393}"
 LLAMA_BUILD_GITLAB_API="${LLAMA_BUILD_GITLAB_API:-https://git-devops.opencsg.com/api/v4}"
 
 llama_build_tag() {
-  printf '%s\n' "${LLAMA_TAG:-${1:-b10326}}"
+  printf '%s\n' "${LLAMA_TAG:-${1:-b10549}}"
 }
 
 llama_build_ensure_docker() {

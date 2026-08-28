@@ -27,8 +27,8 @@ github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWE
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/ncruces/go-strftime v0.1.9 h1:bY0MQC28UADQmHmaF5dgpLmImcShSi2kHU9XLdhx/f4=
 github.com/ncruces/go-strftime v0.1.9/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
-github.com/opencsgs/llama-cpp-assets v0.3.0 h1:9lRAmotloTASFsimBu0J/v1rTfcoXGOqrbxaDK7sZKs=
-github.com/opencsgs/llama-cpp-assets v0.3.0/go.mod h1:d1LuHSYf9SmFKd1wYOvapbKCkxsGYXe1QVg5ax2+oBo=
+github.com/opencsgs/llama-cpp-assets v0.4.0 h1:abWg/L/9Q4MkmXHwdeME1CVpfmHEpj2NG+BoDy7063g=
+github.com/opencsgs/llama-cpp-assets v0.4.0/go.mod h1:d1LuHSYf9SmFKd1wYOvapbKCkxsGYXe1QVg5ax2+oBo=
 github.com/opencsgs/semantic-router v0.1.0 h1:vhEO+faIT5NqX223Tm7G/fK3WD60NbKK01MmyAAmWa4=
 github.com/opencsgs/semantic-router v0.1.0/go.mod h1:UhkVgKWPma8p18ijmHhaGnUYtiU2WCFWVKg8WP8f/9I=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=

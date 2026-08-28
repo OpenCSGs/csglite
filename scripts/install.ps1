@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 $Repo = "OpenCSGs/csglite"
 $BinaryName = "csghub-lite.exe"
 $LlamaCppRepo = "ggml-org/llama.cpp"
-$LlamaCppDefaultTag = if ($env:CSGHUB_LITE_LLAMA_CPP_TAG) { $env:CSGHUB_LITE_LLAMA_CPP_TAG } else { "b10326" }
+$LlamaCppDefaultTag = if ($env:CSGHUB_LITE_LLAMA_CPP_TAG) { $env:CSGHUB_LITE_LLAMA_CPP_TAG } else { "b10549" }
 
 $GitHubApi = "https://api.github.com/repos"
 $GitLabHost = "https://git-devops.opencsg.com"
