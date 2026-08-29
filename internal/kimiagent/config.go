@@ -15,7 +15,7 @@ const (
 
 	// defaultMaxContextSize is used when the server does not report a
 	// context window for a model. kimi-code requires a positive value.
-	defaultMaxContextSize = 131072
+	defaultMaxContextSize = 262144
 )
 
 // SyncConfig writes Kimi Code CLI configuration to ~/.kimi-code/config.toml so
