@@ -73,6 +73,7 @@ func (s *Server) startAIAppRuntime(ctx context.Context, appID, modelID, modelSou
 	if err != nil {
 		return api.AIAppInfo{}, err
 	}
+	s.invalidateAIAppRuntimeCache(appID)
 	s.enrichAIApp(ctx, &info)
 	return info, nil
 }
@@ -119,6 +120,7 @@ func (s *Server) stopAIAppRuntime(ctx context.Context, appID string) (api.AIAppI
 	if err != nil {
 		return api.AIAppInfo{}, err
 	}
+	s.invalidateAIAppRuntimeCache(appID)
 	s.enrichAIApp(ctx, &info)
 	return info, nil
 }

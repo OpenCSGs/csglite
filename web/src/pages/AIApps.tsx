@@ -59,7 +59,6 @@ const drawerMode = signal<DrawerMode>("details");
 const drawerLogs = signal<string[]>([]);
 const drawerStreaming = signal(false);
 const appStates = signal<Record<string, AIAppRuntimeState>>(createAIAppStateSnapshot());
-const loadingApps = signal(true);
 const loadError = signal("");
 const actionError = signal("");
 const pendingInstallId = signal("");
@@ -130,6 +129,7 @@ export function AIApps() {
 
   useEffect(() => {
     let disposed = false;
+    let interval: number | undefined;
 
     const refresh = async () => {
       try {
@@ -140,18 +140,38 @@ export function AIApps() {
       } catch (error) {
         if (disposed) return;
         loadError.value = localizeAIAppErrorMessage((error as Error).message, t("aiApps.loadFailed"));
-      } finally {
-        if (!disposed) {
-          loadingApps.value = false;
-        }
+      }
+    };
+
+    const startPolling = () => {
+      if (interval !== undefined) return;
+      interval = window.setInterval(refresh, 5000);
+    };
+    const stopPolling = () => {
+      if (interval === undefined) return;
+      clearInterval(interval);
+      interval = undefined;
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        // Resume polling and pull immediately so returning to the page
+        // reflects external state changes (e.g. a docker container stopped
+        // elsewhere) without waiting for the next tick.
+        refresh();
+        startPolling();
+      } else {
+        stopPolling();
       }
     };
 
     refresh();
-    const interval = window.setInterval(refresh, 3000);
+    startPolling();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       disposed = true;
-      clearInterval(interval);
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
@@ -319,11 +339,7 @@ export function AIApps() {
         </div>
       </div>
 
-      {loadingApps.value ? (
-        <div class="border border-dashed border-gray-300 rounded-2xl bg-white px-6 py-12 text-center text-sm text-gray-400">
-          {t("aiApps.loading")}
-        </div>
-      ) : filteredApps.value.length === 0 ? (
+      {filteredApps.value.length === 0 ? (
         <div class="border border-dashed border-gray-300 rounded-2xl bg-white px-6 py-12 text-center text-sm text-gray-400">
           {t("aiApps.noResults")}
         </div>

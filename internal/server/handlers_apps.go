@@ -16,8 +16,18 @@ import (
 const (
 	aiAppRuntimeStatusRunning = "running"
 	aiAppRuntimeStatusStopped = "stopped"
-	aiAppRuntimeStatusTimeout = 2 * time.Second
+	aiAppRuntimeStatusTimeout  = 2 * time.Second
+
+	// aiAppRuntimeCacheTTL bounds how often the AI Apps poll re-probes runtime
+	// liveness (TCP dial for csgclaw/dsh, dashboard fetch for openclaw,
+	// `docker compose ps` for xiaozhi). Start/stop invalidate it eagerly.
+	aiAppRuntimeCacheTTL = 5 * time.Second
 )
+
+type aiAppRuntimeCacheEntry struct {
+	running   bool
+	expiresAt time.Time
+}
 
 func (s *Server) handleApps(w http.ResponseWriter, r *http.Request) {
 	apps, err := s.appManager.List(r.Context())
@@ -424,17 +434,51 @@ func (s *Server) enrichAIAppRuntime(ctx context.Context, info *api.AIAppInfo) {
 		return
 	}
 
-	statusCtx, cancel := context.WithTimeout(ctx, aiAppRuntimeStatusTimeout)
-	defer cancel()
-	running, err := s.aiAppRuntimeRunning(statusCtx, info.ID)
-	if err != nil {
-		log.Printf("AI APP %s: runtime status check failed: %v", info.ID, err)
-		return
+	running, ok := s.cachedAIAppRuntimeRunning(info.ID)
+	if !ok {
+		statusCtx, cancel := context.WithTimeout(ctx, aiAppRuntimeStatusTimeout)
+		probed, err := s.aiAppRuntimeRunning(statusCtx, info.ID)
+		cancel()
+		if err != nil {
+			log.Printf("AI APP %s: runtime status check failed: %v", info.ID, err)
+			return
+		}
+		running = s.setAIAppRuntimeCache(info.ID, probed)
 	}
 	info.RuntimeRunning = running
 	if running {
 		info.RuntimeStatus = aiAppRuntimeStatusRunning
 	}
+}
+
+// cachedAIAppRuntimeRunning returns the cached liveness result and true when
+// fresh; false means the caller should probe and call setAIAppRuntimeCache.
+func (s *Server) cachedAIAppRuntimeRunning(appID string) (bool, bool) {
+	s.aiAppRuntimeMu.Lock()
+	defer s.aiAppRuntimeMu.Unlock()
+	entry, ok := s.aiAppRuntimeCache[appID]
+	if !ok || !time.Now().Before(entry.expiresAt) {
+		return false, false
+	}
+	return entry.running, true
+}
+
+func (s *Server) setAIAppRuntimeCache(appID string, running bool) bool {
+	s.aiAppRuntimeMu.Lock()
+	defer s.aiAppRuntimeMu.Unlock()
+	s.aiAppRuntimeCache[appID] = aiAppRuntimeCacheEntry{
+		running:   running,
+		expiresAt: time.Now().Add(aiAppRuntimeCacheTTL),
+	}
+	return running
+}
+
+// invalidateAIAppRuntimeCache drops the cached liveness result for an app so
+// the next poll reflects a fresh start/stop.
+func (s *Server) invalidateAIAppRuntimeCache(appID string) {
+	s.aiAppRuntimeMu.Lock()
+	defer s.aiAppRuntimeMu.Unlock()
+	delete(s.aiAppRuntimeCache, appID)
 }
 
 func (s *Server) handleAppLogs(w http.ResponseWriter, r *http.Request) {

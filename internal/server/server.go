@@ -194,6 +194,12 @@ type Server struct {
 	cloudRefreshAt   time.Time
 	cloudRefreshWait chan struct{}
 
+	// aiAppRuntimeMu guards aiAppRuntimeCache, which memoizes the result of
+	// runtime liveness probes (openclaw/csgclaw/dsh/xiaozhi) so the AI Apps
+	// poll does not dial TCP or fork `docker compose ps` every few seconds.
+	aiAppRuntimeMu    sync.Mutex
+	aiAppRuntimeCache map[string]aiAppRuntimeCacheEntry
+
 	conversations             *chathistory.Store
 	apiKeys                   *config.APIKeyStore
 	apiUsage                  *config.APIUsageStore
@@ -269,6 +275,7 @@ func New(cfg *config.Config, version string) *Server {
 		poolAffinity:         make(map[string]providerPoolAffinityEntry),
 		routerProfileCache:   make(map[string]*routerprofile.Profile),
 		pricingCache:         make(map[string]requestCostSnapshot),
+		aiAppRuntimeCache:    make(map[string]aiAppRuntimeCacheEntry),
 		selfHeal:             make(map[string]selfHealBreakerState),
 		imageEngines:         make(map[string]*managedImageEngine),
 		imageLoading:         make(map[string]*imageEngineLoadState),
