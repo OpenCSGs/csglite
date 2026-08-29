@@ -36,6 +36,7 @@ var installDetectProfiles = map[string]installDetectProfile{
 	"codex-app":        {mode: installDetectDesktop},
 	"zcode":            {mode: installDetectDesktop},
 	"pi":               {mode: installDetectCLI, shareBinRel: "pi-coding-agent/bin"},
+	"kimi-code":        {mode: installDetectCLI, shareBinRel: "kimi-code/bin"},
 }
 
 // ResolveLaunchBinary returns a launchable binary path using the same lookup

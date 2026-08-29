@@ -483,6 +483,50 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     },
   },
   {
+    id: "kimi-code",
+    name: "Kimi Code",
+    siteLabel: "@kimi.com",
+    website: "https://www.kimi.com/code",
+    detailsUrl: "https://moonshotai.github.io/kimi-code/en/guides/getting-started",
+    icon: "/apps/kimi-code.svg",
+    category: "coding",
+    description: {
+      en: "An AI coding agent that runs in your terminal, with a polished TUI, subagents, lifecycle hooks, and support for OpenAI-compatible providers.",
+      zh: "终端 AI 编程 Agent，提供精致 TUI、子 Agent、生命周期钩子，并支持 OpenAI 兼容的模型服务。",
+    },
+    installMode: "script",
+    progressMode: "percent",
+    installHint: {
+      en: "Install Kimi Code via the official single-binary installer, then launch it with the csghub-lite provider and selected model.",
+      zh: "通过官方单二进制安装脚本安装 Kimi Code，然后使用 csghub-lite provider 和所选模型启动。",
+    },
+    cnInstallHint: {
+      en: "The installer downloads the native binary from code.kimi.com and places it under ~/.kimi-code/bin.",
+      zh: "安装脚本从 code.kimi.com 下载原生二进制并安装到 ~/.kimi-code/bin。",
+    },
+    commandPreview: "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+    liveLogsReady: true,
+    plannedSteps: [
+      {
+        en: "Detect platform and resolve the latest Kimi Code version.",
+        zh: "识别平台并解析最新 Kimi Code 版本。",
+      },
+      {
+        en: "Download the native binary and verify its checksum.",
+        zh: "下载原生二进制并校验文件完整性。",
+      },
+      {
+        en: "Write the csghub-lite provider into ~/.kimi-code/config.toml and launch the terminal agent.",
+        zh: "将 csghub-lite provider 写入 ~/.kimi-code/config.toml，并启动终端 Agent。",
+      },
+    ],
+    status: "idle",
+    statusText: {
+      en: "Ready to install",
+      zh: "可安装",
+    },
+  },
+  {
     id: "csgclaw",
     name: "CSGClaw",
     siteLabel: "@opencsg.com",

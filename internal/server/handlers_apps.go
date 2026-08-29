@@ -200,7 +200,7 @@ func (s *Server) syncAIAppSelectedModelConfig(ctx context.Context, appID, modelI
 	case "zcode":
 		_, err := s.ensureZCodeLaunchConfig(ctx, modelID, source)
 		return err
-	case "open-code", "open-code-review", "pi":
+	case "open-code", "open-code-review", "pi", "kimi-code":
 		target, err := resolveAIAppOpenTarget(appID)
 		if err != nil {
 			return err
@@ -387,7 +387,7 @@ func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 	)
 
 	switch info.ID {
-	case "claude-code", "open-code", "codex", "pi", "zcode":
+	case "claude-code", "open-code", "codex", "pi", "zcode", "kimi-code":
 		modelID, _, err = s.resolveAIAppShellLaunchModels(ctx, info.ID, "", "")
 	case "openclaw":
 		preferred := s.preferredAIAppModel(info.ID)

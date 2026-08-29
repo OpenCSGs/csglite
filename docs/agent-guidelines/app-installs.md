@@ -68,6 +68,7 @@ Current CLI apps:
 | `codex` | `codex` | `~/.local/share/codex/versions/*` |
 | `openclaw` | `openclaw` | PATH/common bins only |
 | `pi` | `pi` | `~/.local/share/pi-coding-agent/bin` |
+| `kimi-code` | `kimi` | `~/.kimi-code/bin` |
 
 ### Desktop Apps
 

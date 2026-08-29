@@ -409,6 +409,30 @@ func appSpecs() []appSpec {
 			},
 		},
 		{
+			id:           "kimi-code",
+			binaryName:   "kimi",
+			installMode:  "script",
+			progressMode: progressModePercent,
+			supported:    true,
+			versionArgs:  []string{"--version"},
+			latest: &latestVersionSource{
+				baseURL: "https://code.kimi.com/kimi-code",
+				envVar:  "CSGHUB_LITE_KIMI_CODE_DOWNLOAD_BASE",
+			},
+			unix: &scriptSource{
+				embeddedPath: "scripts/kimi-code-install.sh",
+			},
+			windows: &scriptSource{
+				embeddedPath: "scripts/kimi-code-install.ps1",
+			},
+			uninstallUnix: &scriptSource{
+				embeddedPath: "scripts/kimi-code-uninstall.sh",
+			},
+			uninstallWin: &scriptSource{
+				embeddedPath: "scripts/kimi-code-uninstall.ps1",
+			},
+		},
+		{
 			id:           "xiaozhi",
 			installMode:  "docker",
 			progressMode: progressModeIndeterminate,
@@ -1526,9 +1550,33 @@ func inferLegacyManagedInstall(spec appSpec, installPath string) bool {
 		return looksLikeCSGClawDesktopInstall(installPath)
 	case "openclaw":
 		return looksLikeLegacyOpenClawInstall(installPath)
+	case "kimi-code":
+		return looksLikeKimiCodeInstall(installPath)
 	default:
 		return false
 	}
+}
+
+func looksLikeKimiCodeInstall(installPath string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || installPath == "" {
+		return false
+	}
+
+	launcherPath := filepath.Join(home, ".local", "bin", launcherBinaryName("kimi"))
+	if !samePath(installPath, launcherPath) {
+		return false
+	}
+
+	runtimeBin := filepath.Join(home, ".kimi-code", "bin", "kimi")
+	if resolvedPath, err := filepath.EvalSymlinks(installPath); err == nil && pathWithinBase(resolvedPath, filepath.Join(home, ".kimi-code")) {
+		return true
+	}
+
+	if info, err := os.Stat(runtimeBin); err == nil && !info.IsDir() {
+		return true
+	}
+	return false
 }
 
 func looksLikeLegacyRuntimeInstall(installPath, binaryName, runtimeDir string) bool {

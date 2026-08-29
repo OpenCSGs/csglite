@@ -13,8 +13,8 @@ import { parseAIAppModelKey } from "../utils/aiAppLaunchPreview";
 
 type ConnectionState = "connecting" | "connected" | "disconnected" | "exited";
 const claudeCodeAppId = "claude-code";
-const shellAppsWithModelSwitch = new Set([claudeCodeAppId, "pi"]);
-const shellAppsWithWorkDirSwitch = new Set(["claude-code", "open-code", "open-code-review", "codex", "pi"]);
+const shellAppsWithModelSwitch = new Set([claudeCodeAppId, "pi", "kimi-code"]);
+const shellAppsWithWorkDirSwitch = new Set(["claude-code", "open-code", "open-code-review", "codex", "pi", "kimi-code"]);
 
 interface ShellControlMessage {
   type: string;

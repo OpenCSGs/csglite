@@ -1964,7 +1964,7 @@ function canOpenAIApp(app: AIAppCatalogEntry, state: AIAppRuntimeState): boolean
       !state.disabled &&
       (state.runtimeRunning || state.runtimeStatus === "running");
   }
-  return ["openclaw", "csgclaw", "claude-code", "open-code", "open-code-review", "codex", "pi"].includes(app.id) &&
+  return ["openclaw", "csgclaw", "claude-code", "open-code", "open-code-review", "codex", "pi", "kimi-code"].includes(app.id) &&
     state.status === "installed" &&
     !state.disabled;
 }
@@ -1996,7 +1996,7 @@ function runtimeStatusDotClass(state: AIAppRuntimeState): string {
 }
 
 function canSelectAIAppModel(app: AIAppCatalogEntry): boolean {
-  return ["claude-code", "open-code", "open-code-review", "codex", "codex-app", "zcode", "pi", "openclaw", "xiaozhi"].includes(app.id);
+  return ["claude-code", "open-code", "open-code-review", "codex", "codex-app", "zcode", "pi", "kimi-code", "openclaw", "xiaozhi"].includes(app.id);
 }
 
 function isDesktopAIApp(app: AIAppCatalogEntry): boolean {

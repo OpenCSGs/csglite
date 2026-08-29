@@ -64,6 +64,9 @@ func TestResolveLaunchTarget(t *testing.T) {
 		{input: "codex-app", want: "codex-app"},
 		{input: "zcode", want: "zcode"},
 		{input: "pi", want: "pi"},
+		{input: "kimi-code", want: "kimi-code"},
+		{input: "kimicode", want: "kimi-code"},
+		{input: "kimi", want: "kimi-code"},
 		{input: "openclaw", want: "openclaw"},
 		{input: "dify", want: "dify"},
 		{input: "anythingllm", want: "anythingllm"},
@@ -106,7 +109,7 @@ func TestLaunchCmdHelpListsSupportedAppsAndExamples(t *testing.T) {
 	output := buf.String()
 	for _, want := range []string{
 		"Supported apps:",
-		"claude-code, open-code, open-code-review/ocr, codex, codex-app, zcode, pi, openclaw, dify, anythingllm",
+		"claude-code, open-code, open-code-review/ocr, codex, codex-app, zcode, pi, kimi-code, openclaw, dify, anythingllm",
 		"csghub-lite launch zcode --model deepseek-v4-flash --provider <provider-id-or-name>",
 		"csghub-lite launch zcode --pool <pool-id-or-name>",
 		"csghub-lite launch ocr --model glm-5.1-1",
