@@ -200,7 +200,7 @@ func (s *Server) syncAIAppSelectedModelConfig(ctx context.Context, appID, modelI
 	case "zcode":
 		_, err := s.ensureZCodeLaunchConfig(ctx, modelID, source)
 		return err
-	case "open-code", "open-code-review", "pi", "kimi-code", "dsh":
+	case "open-code", "open-code-review", "pi", "kimi-code":
 		target, err := resolveAIAppOpenTarget(appID)
 		if err != nil {
 			return err
@@ -221,6 +221,8 @@ func (s *Server) syncAIAppSelectedModelConfig(ctx context.Context, appID, modelI
 			return fmt.Errorf("OpenClaw is installed, but its launch command was not found on PATH")
 		}
 		return s.ensureOpenClawProfile(ctx, binary, modelID, source)
+	case "dsh":
+		return s.syncDshConfig(ctx, modelID, source)
 	default:
 		return nil
 	}
@@ -387,9 +389,9 @@ func (s *Server) enrichAIApp(ctx context.Context, info *api.AIAppInfo) {
 	)
 
 	switch info.ID {
-	case "claude-code", "open-code", "codex", "pi", "zcode", "kimi-code", "dsh":
+	case "claude-code", "open-code", "codex", "pi", "zcode", "kimi-code":
 		modelID, _, err = s.resolveAIAppShellLaunchModels(ctx, info.ID, "", "")
-	case "openclaw":
+	case "openclaw", "dsh":
 		preferred := s.preferredAIAppModel(info.ID)
 		modelID, _, err = s.resolveAIAppLaunchModels(ctx, preferred, "")
 		if err != nil && preferred != "" {

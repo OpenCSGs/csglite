@@ -50,11 +50,16 @@ func SyncConfig(serverURL, apiKey, selectedModelID string, models []api.ModelInf
 
 	// Set the provider under llm-pi-ai.providers.<id>.
 	llmPiAI := ensureMap(existing, "llm-pi-ai")
+	// Remove stale default_model key — dsh-llm-pi-ai schema does not have
+	// this field; default model is controlled by agent-default-model.
+	delete(llmPiAI, "default_model")
 	providers := ensureMap(llmPiAI, "providers")
 	providers[ProviderID] = provider
 
-	// Set default model.
-	llmPiAI["default_model"] = selectedModelID
+	// Set default model via the agent-default-model plugin namespace.
+	agentDefaultModel := ensureMap(existing, "agent-default-model")
+	agentDefaultModel["provider"] = ProviderID
+	agentDefaultModel["model"] = selectedModelID
 
 	data, err := yaml.Marshal(existing)
 	if err != nil {
@@ -138,14 +143,28 @@ func writeCredentials(apiKey string) error {
 		return err
 	}
 
-	existing := make(map[string]interface{})
-	if data, err := os.ReadFile(credPath); err == nil && len(data) > 0 {
-		_ = yaml.Unmarshal(data, existing)
+	// dsh-credentials-local requires a top-level version key and stores
+	// environment-variable references under the "refs" key. Only "version",
+	// "refs", and "records" are valid top-level keys.
+	type credentialsDoc struct {
+		Version int               `yaml:"version"`
+		Refs    map[string]string `yaml:"refs,omitempty"`
+		Records interface{}      `yaml:"records,omitempty"`
 	}
 
-	existing[apiKeyEnv] = strings.TrimSpace(apiKey)
+	doc := credentialsDoc{}
+	if data, err := os.ReadFile(credPath); err == nil && len(data) > 0 {
+		_ = yaml.Unmarshal(data, &doc)
+	}
+	if doc.Refs == nil {
+		doc.Refs = make(map[string]string)
+	}
+	if doc.Version == 0 {
+		doc.Version = 1
+	}
+	doc.Refs[apiKeyEnv] = strings.TrimSpace(apiKey)
 
-	data, err := yaml.Marshal(existing)
+	data, err := yaml.Marshal(doc)
 	if err != nil {
 		return err
 	}

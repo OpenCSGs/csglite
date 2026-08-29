@@ -401,8 +401,10 @@ func prepareDshLaunch(target launchTarget, serverURL, modelID string, userArgs [
 		return preparedLaunch{}, err
 	}
 
+	// dsh launches as a Web UI via the "web" profile. --no-open prevents dsh
+	// from trying to open a browser itself; the caller manages that.
 	args := append([]string{}, userArgs...)
-	args = prependArgsIfMissing(args, []string{"--model", modelID}, "--model", "-m")
+	args = prependArgsIfMissing(args, []string{"--profile", "web", "--no-open"}, "--profile")
 	env := envWithOverrides(nil)
 	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
 }
