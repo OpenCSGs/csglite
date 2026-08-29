@@ -83,17 +83,28 @@ func detectInstalledCLI(ctx context.Context, spec appSpec, profile installDetect
 	if !ok {
 		return "", "", false
 	}
-	version := path
-	if len(spec.versionArgs) > 0 {
-		cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		out, err := exec.CommandContext(cmdCtx, path, spec.versionArgs...).CombinedOutput()
-		if err == nil {
-			version = strings.TrimSpace(string(out))
-		}
+	// Version probing is intentionally deferred: `--version` subprocesses
+	// (notably pi/kimi) take hundreds of milliseconds each, which would block
+	// the list response. detectAppVersion runs that asynchronously and
+	// writes the result back to state. Return the path only here so the
+	// "installed" determination stays fast.
+	return path, "", true
+}
+
+// detectAppVersion runs the app's `--version` (or equivalent) subprocess and
+// returns the display version. Callers should invoke this off the request
+// path; it is the slow part of install detection.
+func detectAppVersion(ctx context.Context, spec appSpec, path string) string {
+	if len(spec.versionArgs) == 0 {
+		return appDisplayVersion(spec, path)
 	}
-	version = appDisplayVersion(spec, version)
-	return path, version, true
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cmdCtx, path, spec.versionArgs...).CombinedOutput()
+	if err == nil {
+		return appDisplayVersion(spec, strings.TrimSpace(string(out)))
+	}
+	return ""
 }
 
 func detectCLIAppBinary(binaryName string, profile installDetectProfile) (string, bool) {

@@ -38,6 +38,13 @@ const (
 	latestVersionResponseLimit = 64 * 1024
 	installerPTYCols           = 120
 	installerPTYRows           = 36
+
+	// installDetectCacheTTL bounds how often RefreshAll re-runs install
+	// detection (PATH lookups + version subprocesses) per app. The AI Apps
+	// page polls /api/apps every 5s; this TTL is set well above the poll
+	// interval so most polls hit the cache and skip forking `--version` for
+	// each installed CLI app. Action completion invalidates it eagerly.
+	installDetectCacheTTL = 30 * time.Second
 )
 
 var (
@@ -82,6 +89,17 @@ type appState struct {
 	logBuf  *LogBuffer
 	cancel  context.CancelFunc
 	running bool
+
+	// detectExpires marks when the cached install-detection result for this
+	// app is stale. While valid, RefreshAll skips re-running detectInstalled
+	// (PATH lookups + `--version` subprocesses) on every poll. Action
+	// completion clears it so the next list reflects the new install state.
+	detectExpires time.Time
+
+	// versionProbing is true while a goroutine is running `--version` to fill
+	// info.Version asynchronously. Guards against spawning duplicate probes.
+	// Caller must hold m.mu when reading/writing.
+	versionProbing bool
 }
 
 type latestVersionCacheEntry struct {
@@ -148,6 +166,13 @@ func NewManager(cfg *config.Config) *Manager {
 	}
 
 	_ = m.RefreshAll(context.Background())
+	// The initial detection seeds state, but its results should not pin the
+	// cache: the first real poll (and any install that completes around
+	// startup) must be free to re-detect. Drop the cache so the next
+	// RefreshAll re-probes instead of serving the seed snapshot.
+	m.mu.Lock()
+	m.invalidateDetectCacheLocked()
+	m.mu.Unlock()
 	return m
 }
 
@@ -529,6 +554,18 @@ func (m *Manager) RefreshAll(ctx context.Context) error {
 	return nil
 }
 
+// invalidateDetectCacheLocked clears the per-app install-detection cache. The
+// caller must hold m.mu. Used after startup seeding and action completion so
+// the next RefreshAll re-probes instead of serving a stale snapshot.
+func (m *Manager) invalidateDetectCacheLocked() {
+	for _, st := range m.states {
+		if st == nil {
+			continue
+		}
+		st.detectExpires = time.Time{}
+	}
+}
+
 func (m *Manager) Install(appID string) (api.AIAppInfo, error) {
 	return m.startAction(appID, "install")
 }
@@ -552,7 +589,10 @@ func (m *Manager) startAction(appID, action string) (api.AIAppInfo, error) {
 		m.mu.Unlock()
 		return info, errors.New("app is disabled")
 	}
-	m.refreshStateLocked(context.Background(), spec, st)
+	// User-initiated action: bypass the detect cache so install/uninstall
+	// eligibility reflects the current filesystem state, not a stale snapshot.
+	m.refreshStateDetectedLocked(context.Background(), spec, st)
+	st.detectExpires = time.Now().Add(installDetectCacheTTL)
 	if st.running {
 		info := cloneInfo(st.info)
 		m.mu.Unlock()
@@ -1122,6 +1162,7 @@ func (m *Manager) completeInstall(spec appSpec, installPath, version string) {
 	}
 	st.running = false
 	st.cancel = nil
+	st.detectExpires = time.Time{}
 	_ = m.markManagedInstall(spec.id)
 	st.info.Status = "installed"
 	st.info.Phase = "installed"
@@ -1143,6 +1184,7 @@ func (m *Manager) completeUninstall(spec appSpec) {
 	}
 	st.running = false
 	st.cancel = nil
+	st.detectExpires = time.Time{}
 	_ = m.clearManagedInstallMarker(spec.id)
 	st.info.Status = "idle"
 	st.info.Phase = "ready"
@@ -1190,7 +1232,9 @@ func (m *Manager) failAction(spec appSpec, action, errMsg string) {
 		st.info.Installed = true
 		st.info.Managed = detected.managed
 		st.info.InstallPath = detected.installPath
-		st.info.Version = detected.version
+		if detected.version != "" {
+			st.info.Version = detected.version
+		}
 	} else {
 		st.info.Status = "failed"
 		st.info.Phase = "failed"
@@ -1502,11 +1546,74 @@ func uniqueNonEmptyPaths(items []string) []string {
 }
 
 func (m *Manager) refreshStateLocked(ctx context.Context, spec appSpec, st *appState) {
+	if !time.Now().Before(st.detectExpires) {
+		// Cache expired (or cleared by action completion): re-detect and
+		// refresh the cached snapshot.
+		m.refreshStateDetectedLocked(ctx, spec, st)
+		st.detectExpires = time.Now().Add(installDetectCacheTTL)
+	}
+	// Kick off async version probing for installed CLI apps whose version is
+	// not yet known. `--version` is forked off the request path so the list
+	// response returns immediately with install status; the version fills in
+	// on the next poll.
+	m.maybeRefreshVersionAsync(spec, st)
+}
+
+// maybeRefreshVersionAsync spawns a goroutine to run `--version` for an
+// installed app when its version is empty and no probe is in flight. The
+// caller must hold m.mu; it returns without blocking.
+func (m *Manager) maybeRefreshVersionAsync(spec appSpec, st *appState) {
+	if !st.info.Installed || st.info.Version != "" || st.versionProbing || len(spec.versionArgs) == 0 {
+		return
+	}
+	if st.info.InstallPath == "" {
+		return
+	}
+	st.versionProbing = true
+	installPath := st.info.InstallPath
+	go m.refreshVersionAsync(spec, installPath)
+}
+
+func (m *Manager) refreshVersionAsync(spec appSpec, installPath string) {
+	version := detectAppVersion(context.Background(), spec, installPath)
+	if version == "" {
+		m.mu.Lock()
+		// Probe failed: clear the flag so a future poll can retry, but leave
+		// Version empty rather than clobbering nothing.
+		if st := m.states[spec.id]; st != nil {
+			st.versionProbing = false
+		}
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.states[spec.id]
+	if st == nil {
+		return
+	}
+	st.versionProbing = false
+	// Only write if still empty or unchanged-path; avoid overwriting a newer
+	// value set by an action completion in the meantime.
+	if st.info.Version == "" {
+		st.info.Version = version
+		st.info.UpdatedAt = time.Now()
+	}
+}
+
+func (m *Manager) refreshStateDetectedLocked(ctx context.Context, spec appSpec, st *appState) {
 	detected := m.detectInstallState(ctx, spec)
 	st.info.Installed = detected.installed
 	st.info.Managed = detected.managed
 	st.info.InstallPath = detected.installPath
-	st.info.Version = detected.version
+	// Version is probed asynchronously (see refreshVersionAsync) because
+	// `--version` subprocesses are slow. Only overwrite when the synchronous
+	// detector returned one (desktop apps read it from files; CLI apps
+	// leave it empty here and rely on the async probe), so we never clobber
+	// a previously fetched version with an empty string.
+	if detected.version != "" {
+		st.info.Version = detected.version
+	}
 	st.info.ProgressMode = spec.progressMode
 	st.info.UpdatedAt = time.Now()
 
