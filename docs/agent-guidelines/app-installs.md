@@ -69,6 +69,7 @@ Current CLI apps:
 | `openclaw` | `openclaw` | PATH/common bins only |
 | `pi` | `pi` | `~/.local/share/pi-coding-agent/bin` |
 | `kimi-code` | `kimi` | `~/.kimi-code/bin` |
+| `dsh` | `dsh` | `~/.local/share/deepseek-harness/bin` |
 
 ### Desktop Apps
 

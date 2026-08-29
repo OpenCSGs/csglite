@@ -16,6 +16,8 @@ function cliLaunchAppName(appID: string): string {
       return "pi";
     case "kimi-code":
       return "kimi";
+    case "dsh":
+      return "dsh";
     case "openclaw":
       return "openclaw";
     default:

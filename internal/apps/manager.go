@@ -433,6 +433,26 @@ func appSpecs() []appSpec {
 			},
 		},
 		{
+			id:           "dsh",
+			binaryName:   "dsh",
+			installMode:  "script",
+			progressMode: progressModeIndeterminate,
+			supported:    true,
+			versionArgs:  []string{"--version"},
+			unix: &scriptSource{
+				embeddedPath: "scripts/dsh-install.sh",
+			},
+			windows: &scriptSource{
+				embeddedPath: "scripts/dsh-install.ps1",
+			},
+			uninstallUnix: &scriptSource{
+				embeddedPath: "scripts/dsh-uninstall.sh",
+			},
+			uninstallWin: &scriptSource{
+				embeddedPath: "scripts/dsh-uninstall.ps1",
+			},
+		},
+		{
 			id:           "xiaozhi",
 			installMode:  "docker",
 			progressMode: progressModeIndeterminate,
@@ -1552,6 +1572,8 @@ func inferLegacyManagedInstall(spec appSpec, installPath string) bool {
 		return looksLikeLegacyOpenClawInstall(installPath)
 	case "kimi-code":
 		return looksLikeKimiCodeInstall(installPath)
+	case "dsh":
+		return looksLikeDshInstall(installPath)
 	default:
 		return false
 	}
@@ -1570,6 +1592,28 @@ func looksLikeKimiCodeInstall(installPath string) bool {
 
 	runtimeBin := filepath.Join(home, ".kimi-code", "bin", "kimi")
 	if resolvedPath, err := filepath.EvalSymlinks(installPath); err == nil && pathWithinBase(resolvedPath, filepath.Join(home, ".kimi-code")) {
+		return true
+	}
+
+	if info, err := os.Stat(runtimeBin); err == nil && !info.IsDir() {
+		return true
+	}
+	return false
+}
+
+func looksLikeDshInstall(installPath string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || installPath == "" {
+		return false
+	}
+
+	launcherPath := filepath.Join(home, ".local", "bin", launcherBinaryName("dsh"))
+	if !samePath(installPath, launcherPath) {
+		return false
+	}
+
+	runtimeBin := filepath.Join(home, ".local", "share", "deepseek-harness", "bin", "dsh")
+	if resolvedPath, err := filepath.EvalSymlinks(installPath); err == nil && pathWithinBase(resolvedPath, filepath.Join(home, ".local", "share", "deepseek-harness")) {
 		return true
 	}
 

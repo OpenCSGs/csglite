@@ -17,6 +17,7 @@ import (
 	"github.com/opencsgs/csglite/internal/claudeagent"
 	"github.com/opencsgs/csglite/internal/codexagent"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/dshagent"
 	"github.com/opencsgs/csglite/internal/kimiagent"
 	"github.com/opencsgs/csglite/internal/ocreviewagent"
 	"github.com/opencsgs/csglite/internal/opencodeagent"
@@ -257,6 +258,8 @@ func prepareLaunchExecution(target launchTarget, serverURL, modelID string, user
 		return preparePiLaunch(target, serverURL, modelID, userArgs)
 	case "kimi-code":
 		return prepareKimiCodeLaunch(target, serverURL, modelID, userArgs)
+	case "dsh":
+		return prepareDshLaunch(target, serverURL, modelID, userArgs)
 	case "openclaw":
 		return prepareOpenClawLaunch(target, serverURL, modelID, userArgs)
 	default:
@@ -381,6 +384,25 @@ func prepareKimiCodeLaunch(target launchTarget, serverURL, modelID string, userA
 	modelAlias := kimiagent.ModelAlias(modelID)
 	args := append([]string{}, userArgs...)
 	args = prependArgsIfMissing(args, []string{"--model", modelAlias}, "--model", "-m")
+	env := envWithOverrides(nil)
+	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
+}
+
+func prepareDshLaunch(target launchTarget, serverURL, modelID string, userArgs []string) (preparedLaunch, error) {
+	binary, err := resolveLaunchBinary(target.AppID, target.Binaries)
+	if err != nil {
+		return preparedLaunch{}, fmt.Errorf("%s is installed, but the launch command was not found on PATH", target.DisplayName)
+	}
+	models, err := getLaunchModels(serverURL)
+	if err != nil {
+		return preparedLaunch{}, err
+	}
+	if err := dshagent.SyncConfig(serverURL, openClawProviderAPIKey(config.Get().Token), modelID, models); err != nil {
+		return preparedLaunch{}, err
+	}
+
+	args := append([]string{}, userArgs...)
+	args = prependArgsIfMissing(args, []string{"--model", modelID}, "--model", "-m")
 	env := envWithOverrides(nil)
 	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
 }

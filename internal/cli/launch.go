@@ -37,7 +37,7 @@ type launchOptions struct {
 	Gateway     string
 }
 
-const launchSupportedApps = "claude-code, open-code, open-code-review/ocr, codex, codex-app, zcode, pi, kimi-code, openclaw, dify, anythingllm"
+const launchSupportedApps = "claude-code, open-code, open-code-review/ocr, codex, codex-app, zcode, pi, kimi-code, dsh, openclaw, dify, anythingllm"
 const claudeDangerouslySkipPermissionsFlag = "dangerously-skip-permissions"
 
 func newLaunchCmd() *cobra.Command {
@@ -65,6 +65,7 @@ Use ` + "`--`" + ` to pass through arguments to the launched app binary.`,
   csghub-lite launch open-code-review -- review --format json
   csghub-lite launch pi
   csghub-lite launch kimi-code
+  csghub-lite launch dsh
   csghub-lite launch open-code -- --help
   csghub-lite launch anythingllm
   csghub-lite launch claude-code --gateway http://192.168.1.18:11435
@@ -394,6 +395,12 @@ func resolveLaunchTarget(name string) (launchTarget, error) {
 			AppID:       "kimi-code",
 			DisplayName: "Kimi Code",
 			Binaries:    []string{"kimi"},
+		}, nil
+	case "dsh", "deepseekharness", "deepseek":
+		return launchTarget{
+			AppID:       "dsh",
+			DisplayName: "DeepSeek Harness",
+			Binaries:    []string{"dsh"},
 		}, nil
 	case "openclaw":
 		return launchTarget{

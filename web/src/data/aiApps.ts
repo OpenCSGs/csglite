@@ -527,6 +527,50 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     },
   },
   {
+    id: "dsh",
+    name: "DeepSeek Harness",
+    siteLabel: "@deepseek.com",
+    website: "https://github.com/deepseek-ai/deepseek-harness",
+    detailsUrl: "https://deepseek-harness.github.io/deepseek-harness/",
+    icon: "/apps/dsh.svg",
+    category: "coding",
+    description: {
+      en: "An open-source agent harness built on an everything-is-a-plugin architecture, powered by Cordis, with Web UI and headless modes and support for OpenAI-compatible providers.",
+      zh: "开源 Agent 框架，基于一切皆插件架构和 Cordis 驱动，提供 Web UI 和无头模式，支持 OpenAI 兼容的模型服务。",
+    },
+    installMode: "script",
+    progressMode: "indeterminate",
+    installHint: {
+      en: "Install DeepSeek Harness from npm, then launch it with the csghub-lite provider and selected model.",
+      zh: "通过 npm 安装 DeepSeek Harness，然后使用 csghub-lite provider 和所选模型启动。",
+    },
+    cnInstallHint: {
+      en: "The installer uses the configured npm registry and defaults to npmmirror for faster domestic installs.",
+      zh: "安装脚本会使用配置的 npm registry，默认走 npmmirror 以改善国内安装速度。",
+    },
+    commandPreview: "npm install -g --prefix ~/.local/share/deepseek-harness @deepseek-ai/dsh",
+    liveLogsReady: true,
+    plannedSteps: [
+      {
+        en: "Ensure npm is available in the local environment.",
+        zh: "检查本地环境是否可用 npm。",
+      },
+      {
+        en: "Install the @deepseek-ai/dsh package into a user-owned prefix.",
+        zh: "将 @deepseek-ai/dsh 安装到当前用户拥有的 prefix。",
+      },
+      {
+        en: "Write the csghub-lite provider into ~/.dsh/settings.yaml and launch the agent.",
+        zh: "将 csghub-lite provider 写入 ~/.dsh/settings.yaml，并启动 Agent。",
+      },
+    ],
+    status: "idle",
+    statusText: {
+      en: "Ready to install",
+      zh: "可安装",
+    },
+  },
+  {
     id: "csgclaw",
     name: "CSGClaw",
     siteLabel: "@opencsg.com",

@@ -155,6 +155,7 @@ One-click configuration for popular coding agents. Models from local, OpenCSG, o
 | **ZCode** | `~/.zcode/v2/config.json` | Web UI → AI Apps → select model → Launch |
 | **Pi** | `~/.pi/agent/settings.json` | `csghub-lite launch pi --model <model>` |
 | **Kimi Code** | `~/.kimi-code/config.toml` | `csghub-lite launch kimi-code --model <model>` |
+| **DeepSeek Harness** | `~/.dsh/settings.yaml` | `csghub-lite launch dsh --model <model>` |
 | **OpenCode** | `~/.opencode.json` | `csghub-lite launch open-code --model <model>` |
 
 After the first launch via CSGLite, subsequent runs use the configured settings automatically — no manual API key or base URL setup needed.
@@ -172,6 +173,9 @@ csghub-lite launch pi --model "moonshot-v1-8k"
 
 # Configure Kimi Code with GLM model
 csghub-lite launch kimi-code --model "glm-4-flash"
+
+# Configure DeepSeek Harness with GLM model
+csghub-lite launch dsh --model "glm-4-flash"
 ```
 
 ### AI Applications
@@ -188,6 +192,7 @@ One-click setup for AI assistant applications:
 | **ZCode** | Z.ai cross-platform desktop coding app | Web UI → AI Apps |
 | **Pi** | Lightweight terminal coding agent | `csghub-lite launch pi` or Web UI → AI Apps |
 | **Kimi Code** | Terminal AI coding agent | `csghub-lite launch kimi-code` or Web UI → AI Apps |
+| **DeepSeek Harness** | Plugin-based agent harness | `csghub-lite launch dsh` or Web UI → AI Apps |
 | **OpenClaw** | Open-source AI assistant with web UI | `csghub-lite launch openclaw` or Web UI → AI Apps |
 | **CSGClaw** | macOS/Windows multi-agent desktop application | Web UI → AI Apps |
 | **Dify** | LLM app development platform | Web UI → AI Apps |

@@ -69,7 +69,7 @@ func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, modelSource, 
 			return "", fmt.Errorf("Xiaozhi is not running yet")
 		}
 		return rewriteLoopbackURLHost(apps.XiaozhiURL(), publicBaseURL), nil
-	case "claude-code", "open-code", "open-code-review", "codex", "pi", "kimi-code":
+	case "claude-code", "open-code", "open-code-review", "codex", "pi", "kimi-code", "dsh":
 		return s.openAIAppShellURL(ctx, appID, modelID, modelSource, workDir, publicBaseURL)
 	case "codex-app":
 		status, _, err := s.aiAppProviderStatus(appID)

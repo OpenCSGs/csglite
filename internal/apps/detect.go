@@ -37,6 +37,7 @@ var installDetectProfiles = map[string]installDetectProfile{
 	"zcode":            {mode: installDetectDesktop},
 	"pi":               {mode: installDetectCLI, shareBinRel: "pi-coding-agent/bin"},
 	"kimi-code":        {mode: installDetectCLI, shareBinRel: "kimi-code/bin"},
+	"dsh":              {mode: installDetectCLI, shareBinRel: "deepseek-harness/bin"},
 }
 
 // ResolveLaunchBinary returns a launchable binary path using the same lookup
