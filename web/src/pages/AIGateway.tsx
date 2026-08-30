@@ -2827,7 +2827,7 @@ function RouterV2ProfileReview({ profile }: { profile: ProviderPoolRouterProfile
         <div class="grid gap-4 md:grid-cols-3">
           <RouterSummaryCard label={t("settings.routerBestSingleCost")} value={`${summary.baseline_best_single_model.cost!.toFixed(6)} ${currency}`} />
           <RouterSummaryCard label={t("settings.routerRoutedCost")} value={`${summary.routed.cost!.toFixed(6)} ${currency}`} />
-          <RouterSummaryCard label={t("settings.routerEstimatedSavings")} value={`${summary.savings!.toFixed(6)} ${currency} (${percent(summary.savings_fraction || 0)})`} />
+          <RouterSummaryCard label={t("settings.routerEstimatedSavings")} value={`${(summary.savings ?? 0).toFixed(6)} ${currency} (${percent(summary.savings_fraction || 0)})`} />
         </div>
       ) : (
         <p class="rounded-xl bg-gray-50 p-4 text-sm text-gray-600">{t("settings.routerSavingsUnavailable")}</p>
