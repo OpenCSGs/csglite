@@ -1282,6 +1282,18 @@ type ProviderPoolRouterEvaluationJobsResponse struct {
 	Offset int                               `json:"offset"`
 }
 
+type ProviderPoolRouterBaselineResult struct {
+	Quality float64 `json:"quality"`
+	Cost    float64 `json:"cost"`
+}
+
+type ProviderPoolRouterBaselines struct {
+	BestSingleModel ProviderPoolRouterBaselineResult `json:"best_single_model"`
+	CheapestModel   ProviderPoolRouterBaselineResult `json:"cheapest_model"`
+	RandomModel     ProviderPoolRouterBaselineResult `json:"random_model"`
+	OracleModel     ProviderPoolRouterBaselineResult `json:"oracle_model"`
+}
+
 type ProviderPoolRouterMetrics struct {
 	QueryCount              int            `json:"query_count"`
 	CellCount               int            `json:"cell_count"`
@@ -1306,6 +1318,7 @@ type ProviderPoolRouterMetrics struct {
 	HeldOutCost             float64        `json:"held_out_cost_score"`
 	AllClustersOneMember    bool           `json:"all_clusters_one_member"`
 	SemanticDifferentiation bool           `json:"semantic_differentiation"`
+	Baselines               ProviderPoolRouterBaselines `json:"baselines"`
 }
 
 type ProviderPoolRouterDistanceQuantiles struct {

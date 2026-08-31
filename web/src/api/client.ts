@@ -2664,6 +2664,18 @@ export interface ProviderPoolRouterEvaluationJob {
   updated_at: string;
 }
 
+export interface ProviderPoolRouterBaselineResult {
+  quality: number;
+  cost: number;
+}
+
+export interface ProviderPoolRouterBaselines {
+  best_single_model: ProviderPoolRouterBaselineResult;
+  cheapest_model: ProviderPoolRouterBaselineResult;
+  random_model: ProviderPoolRouterBaselineResult;
+  oracle_model: ProviderPoolRouterBaselineResult;
+}
+
 export interface ProviderPoolRouterMetrics {
   query_count: number;
   cell_count: number;
@@ -2688,6 +2700,7 @@ export interface ProviderPoolRouterMetrics {
   held_out_cost_score: number;
   all_clusters_one_member: boolean;
   semantic_differentiation: boolean;
+  baselines: ProviderPoolRouterBaselines;
 }
 
 export interface ProviderPoolRouterProfile {

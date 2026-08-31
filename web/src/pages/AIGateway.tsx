@@ -2781,6 +2781,8 @@ function RouterProfileDialog() {
 }
 
 function RouterV1ProfileReview({ profile }: { profile: ProviderPoolRouterProfile }) {
+  const b = profile.metrics.baselines;
+  const hasBaselines = b && (b.best_single_model.quality > 0 || b.cheapest_model.quality > 0);
   return (
     <>
       <div class="grid gap-4 md:grid-cols-3">
@@ -2788,6 +2790,20 @@ function RouterV1ProfileReview({ profile }: { profile: ProviderPoolRouterProfile
         <RouterSummaryCard label={t("settings.routerHeldOutMetrics")} value={`${profile.metrics.held_out_utility.toFixed(3)} / ${profile.metrics.held_out_quality.toFixed(3)} / ${profile.metrics.held_out_cost_score.toFixed(3)}`} />
         <RouterSummaryCard label={t("settings.routerSpend")} value={profile.metrics.monetary_spend_known ? `${profile.metrics.spend.toFixed(6)} ${profile.metrics.currency || ""}` : `${profile.metrics.spend.toFixed(6)} ${profile.metrics.cost_unit}`} />
       </div>
+      {hasBaselines && (
+        <>
+          <h4 class="mb-3 font-semibold text-gray-900">{t("settings.routerBaselines")}</h4>
+          <div class="grid gap-4 md:grid-cols-3">
+            <RouterSummaryCard label={t("settings.routerBaselineRouted")} value={`Q ${(profile.metrics.held_out_quality * 100).toFixed(1)}%`} />
+            <RouterSummaryCard label={t("settings.routerBaselineBestSingle")} value={`Q ${(b.best_single_model.quality * 100).toFixed(1)}%`} />
+            <RouterSummaryCard label={t("settings.routerBaselineCheapest")} value={`Q ${(b.cheapest_model.quality * 100).toFixed(1)}%`} />
+          </div>
+          <div class="grid gap-4 md:grid-cols-3">
+            <RouterSummaryCard label={t("settings.routerBaselineRandom")} value={`Q ${(b.random_model.quality * 100).toFixed(1)}%`} />
+            <RouterSummaryCard label={t("settings.routerBaselineOracle")} value={`Q ${(b.oracle_model.quality * 100).toFixed(1)}%`} />
+          </div>
+        </>
+      )}
       {profile.metrics.all_clusters_one_member && <p class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{t("settings.routerCollapseWarning")}</p>}
       <div>
         <h4 class="mb-3 font-semibold text-gray-900">{t("settings.routerClusters")}</h4>

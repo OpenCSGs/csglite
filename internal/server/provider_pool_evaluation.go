@@ -221,7 +221,16 @@ func (s *Server) CreateProviderPoolEvaluationJob(ctx context.Context, request Pr
 	}
 	request = normalizeProviderPoolEvaluationRequest(request)
 	if preview.SelectedSnapshotCount == 0 {
-		return routerprofile.EvaluationJob{}, errors.New("provider pool has no eligible query snapshots")
+		if injectErr := s.injectBuiltinBenchmark(ctx, request.PoolID); injectErr != nil {
+			return routerprofile.EvaluationJob{}, fmt.Errorf("provider pool has no eligible query snapshots and builtin benchmark injection failed: %w", injectErr)
+		}
+		preview, err = s.PreviewProviderPoolEvaluation(ctx, request)
+		if err != nil {
+			return routerprofile.EvaluationJob{}, err
+		}
+		if preview.SelectedSnapshotCount == 0 {
+			return routerprofile.EvaluationJob{}, errors.New("provider pool has no eligible query snapshots even after builtin benchmark injection")
+		}
 	}
 	if preview.RequiresUnknownPricingConsent && !request.AllowUnknownPricing {
 		return routerprofile.EvaluationJob{}, errors.New("unknown candidate or judge pricing requires explicit consent")

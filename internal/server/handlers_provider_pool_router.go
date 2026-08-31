@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -95,6 +96,16 @@ func (s *Server) handleProviderPoolRouterEvaluationCreate(w http.ResponseWriter,
 	if err != nil {
 		writeProviderPoolRouterError(w, err)
 		return
+	}
+	if historyCount < providerPoolRouterMinimumHistoryRecords {
+		if injectErr := s.injectBuiltinBenchmark(r.Context(), pool.ID); injectErr != nil {
+			log.Printf("SEMANTIC ROUTER: builtin benchmark injection for pool %s failed: %v", pool.ID, injectErr)
+		}
+		historyCount, err = store.CountQuerySnapshots(r.Context(), pool.ID)
+		if err != nil {
+			writeProviderPoolRouterError(w, err)
+			return
+		}
 	}
 	if historyCount < providerPoolRouterMinimumHistoryRecords {
 		writeError(w, http.StatusBadRequest, "at least 20 historical records are required for evaluation")
@@ -606,6 +617,12 @@ func providerPoolRouterProfileAPI(value routerprofile.Profile, pool config.Provi
 			HeldOutUtility: evaluation.HeldOutUtility, HeldOutQuality: evaluation.HeldOutQuality,
 			HeldOutCost: evaluation.HeldOutCost, AllClustersOneMember: evaluation.AllClustersOneMember,
 			SemanticDifferentiation: evaluation.SemanticDifferentiation,
+			Baselines: api.ProviderPoolRouterBaselines{
+				BestSingleModel: api.ProviderPoolRouterBaselineResult{Quality: evaluation.Baselines.BestSingleModel.Quality, Cost: evaluation.Baselines.BestSingleModel.Cost},
+				CheapestModel:   api.ProviderPoolRouterBaselineResult{Quality: evaluation.Baselines.CheapestModel.Quality, Cost: evaluation.Baselines.CheapestModel.Cost},
+				RandomModel:     api.ProviderPoolRouterBaselineResult{Quality: evaluation.Baselines.RandomModel.Quality, Cost: evaluation.Baselines.RandomModel.Cost},
+				OracleModel:     api.ProviderPoolRouterBaselineResult{Quality: evaluation.Baselines.OracleModel.Quality, Cost: evaluation.Baselines.OracleModel.Cost},
+			},
 		},
 		ActivationAllowed: blocked == "", ActivationBlockedReason: blocked,
 		ValidationState: "valid", Feasible: blocked == "",
