@@ -102,7 +102,6 @@ const providerPoolRouterDialogPool = signal<ProviderPool | null>(null);
 const providerPoolRouterDialogStep = signal<"overview" | "configure" | "progress" | "profile">("overview");
 const providerPoolRouterPreview = signal<ProviderPoolRouterEvaluationPreview | null>(null);
 const providerPoolRouterPreviewConfig = signal<ProviderPoolRouterEvaluationRequest | null>(null);
-const providerPoolRouterMinHistory = 20;
 let providerPoolRouterPreviewGeneration = 0;
 const providerPoolRouterJob = signal<ProviderPoolRouterEvaluationJob | null>(null);
 const providerPoolRouterProfile = signal<ProviderPoolRouterProfile | null>(null);
@@ -2606,11 +2605,9 @@ function RouterProfileDialog() {
   const terminal = job && ["succeeded", "failed", "cancelled"].includes(job.status);
   const startBlockedReason = !preview
     ? ""
-    : preview.eligible_snapshot_count < providerPoolRouterMinHistory
-      ? t("settings.routerStartBlockedNoQueries")
-      : routerUnknownPricingNeedsConsent(preview, config)
-        ? t("settings.routerStartBlockedUnknownPricing")
-        : "";
+    : routerUnknownPricingNeedsConsent(preview, config)
+      ? t("settings.routerStartBlockedUnknownPricing")
+      : "";
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" role="dialog" aria-modal="true">
