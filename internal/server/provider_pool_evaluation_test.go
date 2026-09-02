@@ -14,8 +14,8 @@ import (
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
-	routerprofile "github.com/opencsgs/semantic-router"
 	"github.com/opencsgs/csglite/pkg/api"
+	routerprofile "github.com/opencsgs/semantic-router"
 )
 
 type evaluationFakeEngine struct {
@@ -294,6 +294,11 @@ func TestProviderPoolEvaluationJudgeRetriesStrictJSONAndAccountsBudget(t *testin
 			if format["type"] != "json_object" || body["max_tokens"] != providerPoolJudgeMaxTokens {
 				t.Fatalf("judge strict request = %#v", body)
 			}
+			// "judge" is not a reasoning model family, so the thinking field must
+			// be omitted: strict OpenAI-compatible endpoints reject it with 400.
+			if _, hasThinking := body["thinking"]; hasThinking {
+				t.Fatalf("judge request must not carry thinking for model %q: %#v", model, body["thinking"])
+			}
 			switch judgeCalls {
 			case 1:
 				return evaluationResponse("", 20, 0), nil
@@ -324,6 +329,51 @@ func TestProviderPoolEvaluationJudgeRetriesStrictJSONAndAccountsBudget(t *testin
 		cells[0].JudgeAttemptCount != 3 || cells[0].JudgeScore != .75 ||
 		cells[0].JudgeTotalTokens != 68 || cells[0].EstimatedCost > request.BudgetAmount+1e-12 {
 		t.Fatalf("retry result = %+v calls=%d/%d budget=%f", cells[0], candidateCalls, judgeCalls, request.BudgetAmount)
+	}
+}
+
+func TestProviderPoolEvaluationJudgeThinkingSuppressionByModelFamily(t *testing.T) {
+	cases := []struct {
+		model      string
+		suppressed bool
+	}{
+		{"glm-5.1", true},
+		{"deepseek-v4-pro", true},
+		{"kimi-k2-thinking", true},
+		{"moonshot-v1", true},
+		{"gpt-4.1-mini", false},
+		{"qwen3-235b", false}, // suppressed via engine enable_thinking=false, not the thinking field
+		{"judge", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			s := evaluationTestServer(t, []config.ProviderPoolMember{
+				{ID: "member", Source: "cloud", Model: "candidate"},
+			})
+			var captured map[string]interface{}
+			s.evaluationEngineFactory = func(_ context.Context, model, _ string) (inference.Engine, error) {
+				return &evaluationFakeEngine{model: model, call: func(_ context.Context, body map[string]interface{}) (*http.Response, error) {
+					captured = body
+					return evaluationResponse(`{"score":0.5,"reason":"ok"}`, 10, 5), nil
+				}}, nil
+			}
+			_, err := s.evaluationChatCompletion(t.Context(), tc.model, "cloud",
+				[]routerprofile.Message{{Role: "user", Content: "judge prompt"}}, providerPoolJudgeMaxTokens, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			thinking, hasThinking := captured["thinking"].(map[string]interface{})
+			if tc.suppressed {
+				if !hasThinking || thinking["type"] != "disabled" {
+					t.Fatalf("judge thinking suppression missing for %q: %#v", tc.model, captured["thinking"])
+				}
+			} else if hasThinking {
+				t.Fatalf("judge request must not carry thinking for %q: %#v", tc.model, captured["thinking"])
+			}
+			if format, _ := captured["response_format"].(map[string]interface{}); format["type"] != "json_object" {
+				t.Fatalf("judge response_format missing for %q: %#v", tc.model, captured["response_format"])
+			}
+		})
 	}
 }
 
