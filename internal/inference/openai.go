@@ -634,6 +634,15 @@ func openAIModelUsesThinkingTypeDisabled(modelName string) bool {
 		strings.HasPrefix(modelName, "mimo-")
 }
 
+// OpenAIModelUsesThinkingTypeDisabled reports whether the model family disables
+// reasoning via the "thinking": {"type": "disabled"} request field. Callers that
+// build requests directly (such as the evaluation judge) use it to send the field
+// only to models that accept it; strict OpenAI-compatible endpoints reject
+// unrecognized arguments like "thinking" with a 400.
+func OpenAIModelUsesThinkingTypeDisabled(modelName string) bool {
+	return openAIModelUsesThinkingTypeDisabled(modelName)
+}
+
 func openAIModelSupportsEnableThinkingFalse(modelName string) bool {
 	modelName = strings.TrimSpace(strings.ToLower(modelName))
 	return strings.HasPrefix(modelName, "qwen3") ||

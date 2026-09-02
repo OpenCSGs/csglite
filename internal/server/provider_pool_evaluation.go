@@ -17,8 +17,8 @@ import (
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
-	routerprofile "github.com/opencsgs/semantic-router"
 	"github.com/opencsgs/csglite/pkg/api"
+	routerprofile "github.com/opencsgs/semantic-router"
 )
 
 const (
@@ -1120,7 +1120,15 @@ func (s *Server) evaluationChatCompletion(ctx context.Context, model, source str
 	if judge {
 		request["temperature"] = 0
 		request["response_format"] = map[string]interface{}{"type": "json_object"}
-		request["thinking"] = map[string]interface{}{"type": "disabled"}
+		// Only reasoning model families accept the "thinking" field (GLM, Kimi,
+		// Moonshot, DeepSeek-V4, Mimo). Sending it unconditionally makes strict
+		// OpenAI-compatible endpoints such as GPT-4.1 mini reject the request
+		// with 400: Unrecognized request argument supplied: thinking. Qwen3/QwQ
+		// judges do not need the field here: the cloud engine already injects
+		// enable_thinking=false via sanitizeOpenAIRequestBody.
+		if inference.OpenAIModelUsesThinkingTypeDisabled(model) {
+			request["thinking"] = map[string]interface{}{"type": "disabled"}
+		}
 	}
 	response, err := proxy.ChatCompletion(ctx, request)
 	result := evaluationCallResult{latency: time.Since(started)}
