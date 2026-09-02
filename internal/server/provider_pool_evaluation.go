@@ -1120,7 +1120,6 @@ func (s *Server) evaluationChatCompletion(ctx context.Context, model, source str
 	if judge {
 		request["temperature"] = 0
 		request["response_format"] = map[string]interface{}{"type": "json_object"}
-		request["thinking"] = map[string]interface{}{"type": "disabled"}
 	}
 	response, err := proxy.ChatCompletion(ctx, request)
 	result := evaluationCallResult{latency: time.Since(started)}
