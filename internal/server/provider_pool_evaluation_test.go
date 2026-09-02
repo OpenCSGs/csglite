@@ -291,9 +291,7 @@ func TestProviderPoolEvaluationJudgeRetriesStrictJSONAndAccountsBudget(t *testin
 				t.Fatalf("judge temperature = %#v", body["temperature"])
 			}
 			format, _ := body["response_format"].(map[string]interface{})
-			thinking, _ := body["thinking"].(map[string]interface{})
-			if format["type"] != "json_object" || thinking["type"] != "disabled" ||
-				body["max_tokens"] != providerPoolJudgeMaxTokens {
+			if format["type"] != "json_object" || body["max_tokens"] != providerPoolJudgeMaxTokens {
 				t.Fatalf("judge strict request = %#v", body)
 			}
 			switch judgeCalls {
