@@ -158,10 +158,11 @@ type Server struct {
 	appManager     *apps.Manager
 	sourceSwitches *apps.SourceSwitchManager
 	appShells      *aiAppShellManager
-	cloud          *cloud.Service
-	http           *http.Server
-	externalHTTP   *http.Server
-	logBuf         *LogBuffer
+	cloud            *cloud.Service
+	http             *http.Server
+	externalHTTP     *http.Server
+	authCallbackHTTP *http.Server
+	logBuf           *LogBuffer
 
 	mu                sync.RWMutex
 	engines           map[string]*managedEngine
@@ -302,6 +303,16 @@ func New(cfg *config.Config, version string) *Server {
 	return s
 }
 
+// authCallbackAddr returns the loopback address dedicated to receiving the
+// "lite" SSO redirect, so the browser can hand the access token back to this
+// process on a stable port regardless of the main listener address.
+func (s *Server) authCallbackAddr() string {
+	if s != nil && strings.TrimSpace(s.cfg.AuthCallbackAddr) != "" {
+		return strings.TrimSpace(s.cfg.AuthCallbackAddr)
+	}
+	return config.DefaultAuthCallbackAddr
+}
+
 func resolveCloudURL(cfg *config.Config) string {
 	if u := strings.TrimSpace(cfg.AIGatewayURL); u != "" {
 		return u
@@ -338,10 +349,23 @@ func (s *Server) Run(ctx context.Context) error {
 		s.cfg.DesktopAPIBoundAddr = externalListener.Addr().String()
 	}
 
+	authCallbackListener, err := net.Listen("tcp", s.authCallbackAddr())
+	if err != nil {
+		log.Printf("cloud auth callback listener unavailable on %s: %v", s.authCallbackAddr(), err)
+	} else {
+		defer authCallbackListener.Close()
+		s.authCallbackHTTP = &http.Server{
+			Handler:           s.authCallbackRoutes(),
+			ReadHeaderTimeout: 30 * time.Second,
+			WriteTimeout:      0,
+			IdleTimeout:       120 * time.Second,
+		}
+	}
+
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	if s.cfg.DesktopMode {
 		baseURL := "http://" + boundAddr
 		ready := desktopReady{
@@ -376,6 +400,14 @@ func (s *Server) Run(ctx context.Context) error {
 		go func() {
 			log.Printf("  Desktop API: http://%s", s.cfg.DesktopAPIBoundAddr)
 			if err := s.externalHTTP.Serve(externalListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- err
+			}
+		}()
+	}
+	if s.authCallbackHTTP != nil {
+		go func() {
+			log.Printf("  Auth callback: http://%s", s.authCallbackAddr())
+			if err := s.authCallbackHTTP.Serve(authCallbackListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- err
 			}
 		}()
@@ -415,6 +447,11 @@ func (s *Server) shutdownHTTPServers(ctx context.Context) error {
 	var externalErr error
 	if s.externalHTTP != nil {
 		externalErr = s.externalHTTP.Shutdown(ctx)
+	}
+	if s.authCallbackHTTP != nil {
+		if err := s.authCallbackHTTP.Shutdown(ctx); err != nil && externalErr == nil {
+			externalErr = err
+		}
 	}
 	internalErr := s.http.Shutdown(ctx)
 	if internalErr != nil {

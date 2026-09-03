@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -59,16 +61,54 @@ func (s *Server) handleCloudAuthTokenSave(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	s.cfg.Token = token
-	if err := config.Save(s.cfg); err != nil {
+	if err := s.saveCloudAccessToken(token); err != nil {
 		writeError(w, http.StatusInternalServerError, "saving token: "+err.Error())
 		return
+	}
+
+	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))
+}
+
+func (s *Server) saveCloudAccessToken(token string) error {
+	token = strings.TrimSpace(token)
+	s.cfg.Token = token
+	if err := config.Save(s.cfg); err != nil {
+		return err
 	}
 	if s.cloud != nil {
 		s.cloud.SetAccessToken(token)
 	}
+	return nil
+}
 
-	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))
+// handleCloudAuthCallback is the browser redirect target for the "lite" SSO
+// flow. The user service redirects here after a successful web login with the
+// access token in the query string; we persist it and return a small page that
+// closes itself so the waiting web UI can pick up the new login state.
+func (s *Server) handleCloudAuthCallback(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if token == "" {
+		writeCloudAuthCallbackPage(w, false, "missing_token")
+		return
+	}
+	if err := s.saveCloudAccessToken(token); err != nil {
+		log.Printf("cloud auth callback: saving token: %v", err)
+		writeCloudAuthCallbackPage(w, false, "save_failed")
+		return
+	}
+	writeCloudAuthCallbackPage(w, true, "")
+}
+
+func writeCloudAuthCallbackPage(w http.ResponseWriter, success bool, errCode string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.WriteHeader(http.StatusOK)
+	if success {
+		_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>Login complete</title></head><body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0"><p>Login complete. You can close this window and return to csglite.</p></body></html>`)
+		return
+	}
+	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>Login failed</title></head><body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0"><p>Login failed (`+errCode+`). Please try again.</p></body></html>`)
 }
 
 func (s *Server) handleCloudAuthTokenDelete(w http.ResponseWriter, r *http.Request) {

@@ -16,6 +16,7 @@ const (
 	DefaultListenAddr          = ":11435"
 	DefaultDesktopAPIAddr      = "127.0.0.1:11436"
 	DefaultDesktopAPIBindAddr  = "0.0.0.0:11436"
+	DefaultAuthCallbackAddr    = "127.0.0.1:11437"
 	DefaultCloudProviderName   = "csghub"
 	DefaultMarketplaceSource   = "opencsg"
 	DefaultHuggingFaceEndpoint = "https://huggingface.co"
@@ -85,6 +86,7 @@ type Config struct {
 	DesktopAPIAddr           string                             `json:"-"`
 	DesktopAPIBindAddr       string                             `json:"-"`
 	DesktopAPIBoundAddr      string                             `json:"-"`
+	AuthCallbackAddr         string                             `json:"-"`
 }
 
 func (c *Config) EffectiveListenAddr() string {

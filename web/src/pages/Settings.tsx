@@ -297,6 +297,32 @@ function fetchCloudAuth() {
     });
 }
 
+function pollCloudAuthAfterLogin() {
+  const deadline = Date.now() + 5 * 60 * 1000;
+  let timer: number | undefined;
+
+  const poll = async () => {
+    try {
+      const status = await getCloudAuthStatus();
+      cloudAuth.value = status;
+      if (status.authenticated && status.user) {
+        cloudAuthError.value = "";
+        return;
+      }
+    } catch (err: any) {
+      cloudAuthError.value = err?.message || "";
+    }
+    if (Date.now() < deadline) {
+      timer = window.setTimeout(poll, 1500);
+    }
+  };
+
+  void poll();
+  return () => {
+    if (timer !== undefined) window.clearTimeout(timer);
+  };
+}
+
 async function fetchUpgradeInfo() {
   try {
     const upgrade = await checkUpgrade();
@@ -656,6 +682,7 @@ export function Settings() {
 
   const handleOpenCloudLogin = () => {
     openExternal(cloudAuth.value?.login_url);
+    pollCloudAuthAfterLogin();
   };
 
   const handleOpenCloudTokenPage = () => {

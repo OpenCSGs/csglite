@@ -204,6 +204,12 @@ func (s *Server) externalAPIRoutes() http.Handler {
 	))
 }
 
+func (s *Server) authCallbackRoutes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/cloud/auth/callback", s.handleCloudAuthCallback)
+	return mux
+}
+
 func desktopExternalAPIMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != "" {

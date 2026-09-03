@@ -3833,6 +3833,39 @@
         }
       }
     },
+    "/api/cloud/auth/callback": {
+      "get": {
+        "tags": [
+          "CloudAuth"
+        ],
+        "summary": "Complete the OpenCSG SSO login redirect",
+        "description": "Browser redirect target for the lite SSO flow. Persists the access token carried in the token query parameter and returns a confirmation page.",
+        "operationId": "completeCloudAuthCallback",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "description": "OpenCSG access token issued to the lite client.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTML confirmation showing whether the token was saved.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cloud/auth/token": {
       "post": {
         "tags": [
