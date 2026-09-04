@@ -13,7 +13,6 @@ import type {
 } from "../api/client";
 import { t, locale } from "../i18n";
 import { parseReasoningText } from "../reasoning";
-import { buildChatContextMessages } from "../chatContext";
 import { isImageGenerationModel, isImageToImageModel, stripDataURL } from "../utils/imageModels";
 import {
   formatModelOptionLabel as modelLabel,
@@ -193,21 +192,8 @@ function clearModelContextBoundary(conversationId: string) {
   saveModelContextBoundaries(boundaries);
 }
 
-function contextStartIndexForModel(conv: Conversation, currentModelKey: string): number {
-  if (!currentModelKey || conv.messages.length === 0) {
-    return 0;
-  }
-  if (conv.model && conv.model !== currentModelKey) {
-    return conv.messages.length;
-  }
-  const boundary = readModelContextBoundaries()[conv.id];
-  if (boundary?.model !== currentModelKey) {
-    return 0;
-  }
-  if (!Number.isFinite(boundary.start) || boundary.start <= 0 || boundary.start > conv.messages.length) {
-    return 0;
-  }
-  return boundary.start;
+function chatMessagesWithoutHistory(currentUserMessage: ChatMessage): ChatMessage[] {
+  return [currentUserMessage];
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -236,14 +222,6 @@ function readWebSearchEnabled(defaultValue: boolean): boolean {
     /* ignore storage failures */
   }
   return defaultValue;
-}
-
-function saveWebSearchEnabled(enabled: boolean) {
-  try {
-    localStorage.setItem(webSearchStorageKey, enabled ? "1" : "0");
-  } catch {
-    /* ignore storage failures */
-  }
 }
 
 function estimateTokens(text: string): number {
@@ -1287,9 +1265,6 @@ export function Chat() {
       currentUserMessage = { role: "user", content: text };
     }
     const currentModelKey = modelKey(currentModel);
-    const contextStartIndex = contextStartIndexForModel(conv, currentModelKey);
-    const apiHistory = contextStartIndex > 0 ? conv.messages.slice(contextStartIndex) : conv.messages;
-    const apiMessages = buildChatContextMessages(apiHistory, currentUserMessage);
 
     const userMessageIndex = conv.messages.length;
     conv.messages.push({ role: "user", content: userContent });
@@ -1305,9 +1280,6 @@ export function Chat() {
       conv.title = text.slice(0, 30) || (asrMode && audio ? audio.name.slice(0, 30) : "New Chat");
     }
     conv.model = currentModelKey;
-    if (contextStartIndex > 0) {
-      setModelContextBoundary(conv.id, currentModelKey, contextStartIndex);
-    }
     activeConversation.value = { ...conv };
     inputText.value = "";
     pendingImages.value = [];
@@ -1438,7 +1410,7 @@ export function Chat() {
       } else {
         await streamChat(
         currentModel.model || currentModel.name,
-        apiMessages,
+        chatMessagesWithoutHistory(currentUserMessage),
         {
           temperature: temperature.value,
           top_p: topP.value,
@@ -1451,9 +1423,7 @@ export function Chat() {
           trace_id: typeof crypto.randomUUID === "function"
             ? crypto.randomUUID()
             : `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          web_search: webSearchAvailable.value && webSearchEnabled.value
-            ? { enabled: true, query: text }
-            : { enabled: false },
+          web_search: { enabled: false },
         },
         (token, done) => {
           if (done) {
@@ -1871,10 +1841,6 @@ export function Chat() {
             ))}
             {isGenerating.value && (
               <AssistantProgress
-                query={searchingQuery.value}
-                planningQuery={searchPlanningQuery.value}
-                skippedReason={searchSkippedReason.value}
-                sources={streamingSources.value}
                 content={streamingContent.value}
               />
             )}
@@ -1993,25 +1959,6 @@ export function Chat() {
                       <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
                       </svg>
-                    </button>
-                  )}
-                  {webSearchAvailable.value && !asrMode && !imageMode && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = !webSearchEnabled.value;
-                        webSearchEnabled.value = next;
-                        saveWebSearchEnabled(next);
-                      }}
-                      class={`h-9 rounded-xl border px-3 text-xs font-medium transition-colors ${
-                        webSearchEnabled.value
-                          ? "border-blue-200 bg-blue-50 text-blue-700"
-                          : "border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:bg-gray-50"
-                      }`}
-                      title={t("chat.webSearchToggle")}
-                      aria-pressed={webSearchEnabled.value}
-                    >
-                      {t("chat.webSearch")}
                     </button>
                   )}
                   <select
@@ -2358,37 +2305,16 @@ function MessageBubble({ message, streaming, audioPreview }: { message: ChatMess
   );
 }
 
-function AssistantProgress({ query, planningQuery, skippedReason, sources, content }: { query: string; planningQuery: string; skippedReason: string; sources: WebSearchResult[]; content: string }) {
+function AssistantProgress({ content }: { content: string }) {
   const parsed = content ? parseReasoningText(content) : null;
   const hasAnswer = Boolean(parsed?.answer) || (content && !parsed?.hasThinking);
   const isThinking = Boolean(content && parsed?.hasThinking && !parsed.answer);
   const steps = [
     {
-      key: "planning",
-      label: planningQuery ? t("chat.progressDecidingSearch") : t("chat.progressSkippedSearch"),
-      done: Boolean(skippedReason || query || sources.length > 0 || content),
-      active: Boolean(planningQuery),
-      visible: Boolean(planningQuery || skippedReason),
-    },
-    {
-      key: "search",
-      label: query ? t("chat.progressSearching", query) : sources.length > 0 ? t("chat.progressSearched") : t("chat.progressPreparing"),
-      done: sources.length > 0 || Boolean(content),
-      active: Boolean(query),
-      visible: Boolean(query || sources.length > 0),
-    },
-    {
-      key: "sources",
-      label: sources.length > 0 ? t("chat.progressFoundSources", sources.length) : t("chat.progressFindingSources"),
-      done: sources.length > 0,
-      active: !query && sources.length === 0 && !content,
-      visible: Boolean(query || sources.length > 0),
-    },
-    {
       key: "thinking",
       label: isThinking ? t("chat.progressThinking") : hasAnswer ? t("chat.progressThought") : t("chat.progressThinking"),
       done: hasAnswer,
-      active: isThinking || (!query && sources.length > 0 && !hasAnswer),
+      active: isThinking || (!hasAnswer),
       visible: true,
     },
     {
@@ -2426,10 +2352,7 @@ function AssistantProgress({ query, planningQuery, skippedReason, sources, conte
             </div>
           ))}
         </div>
-        {skippedReason && !query && sources.length === 0 && !hasAnswer && (
-          <div class="mt-2 text-xs text-gray-400">{t("chat.progressSkippedReason", skippedReason)}</div>
-        )}
-      </div>
+        </div>
     </div>
   );
 }
