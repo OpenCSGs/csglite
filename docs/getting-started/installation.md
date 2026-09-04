@@ -111,7 +111,7 @@ make build-all
 
 ## 安装 llama-server（推理依赖）
 
-CSGLite 使用 llama.cpp 的 `llama-server` 进行模型推理。你需要单独安装它。
+CSGLite 使用 llama.cpp 的 `llama-server` 进行模型推理。支持自己单独安装它。
 
 ### macOS
 
