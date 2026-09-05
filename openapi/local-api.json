@@ -3078,6 +3078,29 @@
         }
       }
     },
+    "/api/observability/facets": {
+      "get": {
+        "tags": ["System"],
+        "summary": "List distinct models and routes from request history",
+        "operationId": "getObservabilityFacets",
+        "responses": {
+          "200": {
+            "description": "Distinct model names and route identifiers for dropdown filters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "models": {"type": "array", "items": {"$ref": "#/components/schemas/ObservabilityFacetValue"}},
+                    "routes": {"type": "array", "items": {"$ref": "#/components/schemas/ObservabilityFacetValue"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/observability/traces": {
       "get": {
         "tags": ["System"],
@@ -7750,6 +7773,15 @@
           "models": {"type": "array", "items": {"type": "string"}},
           "total_tokens": {"type": "integer", "format": "int64"},
           "duration_ms": {"type": "integer", "format": "int64"}
+        }
+      },
+      "ObservabilityFacetValue": {
+        "type": "object",
+        "required": ["value", "count"],
+        "properties": {
+          "value": {"type": "string", "description": "Filter value accepted by the model/source query parameters."},
+          "label": {"type": "string", "description": "Display name, e.g. pool or source name."},
+          "count": {"type": "integer", "format": "int64"}
         }
       },
       "DatasetExportRequest": {

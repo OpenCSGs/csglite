@@ -97,6 +97,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/api-usage", s.handleAPIUsage)
 	mux.HandleFunc("GET /api/observability/requests", s.handleObservabilityRequests)
 	mux.HandleFunc("GET /api/observability/requests/{id}", s.handleObservabilityRequest)
+	mux.HandleFunc("GET /api/observability/facets", s.handleObservabilityFacets)
 	mux.HandleFunc("GET /api/observability/traces", s.handleObservabilityTraces)
 	mux.HandleFunc("GET /api/observability/traces/{traceID}", s.handleObservabilityTrace)
 	mux.HandleFunc("POST /api/observability/dataset-exports/preview", s.handleDatasetExportPreview)

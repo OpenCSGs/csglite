@@ -224,6 +224,24 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 	if !strings.Contains(requests[0].RequestBody, "hello") || !strings.Contains(requests[0].ResponseBody, "choices") {
 		t.Fatalf("trace detail omitted input/output payloads: %+v", requests[0])
 	}
+
+	facets, err := store.Facets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facets.Models) != 2 || facets.Models[0].Value != "model-a" || facets.Models[0].Count != 1 {
+		t.Fatalf("model facets = %+v, want model-a and model-b", facets.Models)
+	}
+	if len(facets.Routes) != 3 {
+		t.Fatalf("route facets = %+v, want local, provider:test, and pool-a", facets.Routes)
+	}
+	routes := make(map[string]FacetValue)
+	for _, route := range facets.Routes {
+		routes[route.Value] = route
+	}
+	if routes["local"].Count != 1 || routes["provider:test"].Count != 1 || routes["pool-a"].Count != 1 {
+		t.Fatalf("unexpected route facet values: %+v", routes)
+	}
 }
 
 func TestStoreDoesNotUseCorrelationRequestIDAsPrimaryKey(t *testing.T) {

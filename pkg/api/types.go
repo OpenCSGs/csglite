@@ -591,6 +591,17 @@ type ObservabilityTraceDetailResponse struct {
 	Requests []ObservabilityRequest `json:"requests"`
 }
 
+type ObservabilityFacetValue struct {
+	Value string `json:"value"`
+	Label string `json:"label,omitempty"`
+	Count int64  `json:"count"`
+}
+
+type ObservabilityFacetsResponse struct {
+	Models []ObservabilityFacetValue `json:"models"`
+	Routes []ObservabilityFacetValue `json:"routes"`
+}
+
 type DatasetExportRequest struct {
 	TraceIDs        []string                  `json:"trace_ids,omitempty"`
 	Filter          *DatasetExportTraceFilter `json:"filter,omitempty"`

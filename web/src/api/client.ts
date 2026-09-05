@@ -1511,6 +1511,21 @@ export async function getObservabilityRequest(id: string): Promise<Observability
   return fetchJSON<ObservabilityRequest>(`/api/observability/requests/${encodeURIComponent(id)}`);
 }
 
+export interface ObservabilityFacetValue {
+  value: string;
+  label?: string;
+  count: number;
+}
+
+export interface ObservabilityFacets {
+  models: ObservabilityFacetValue[];
+  routes: ObservabilityFacetValue[];
+}
+
+export async function getObservabilityFacets(): Promise<ObservabilityFacets> {
+  return fetchJSON<ObservabilityFacets>("/api/observability/facets");
+}
+
 export async function getObservabilityTraces(query?: ObservabilityQuery): Promise<ObservabilityTraceListResponse> {
   return fetchJSON<ObservabilityTraceListResponse>(`/api/observability/traces${observabilityQueryString(query)}`);
 }
