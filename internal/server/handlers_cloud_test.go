@@ -224,6 +224,49 @@ func TestHandleCloudAuthTokenSaveAndDelete(t *testing.T) {
 	}
 }
 
+func TestHandleCloudAuthCallback(t *testing.T) {
+	config.Reset()
+	t.Cleanup(config.Reset)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	s := newTestServer(t)
+
+	saveReq := httptest.NewRequest(http.MethodGet, "/api/cloud/auth/callback?token=%20test-token%20", nil)
+	w := httptest.NewRecorder()
+	s.handleCloudAuthCallback(w, saveReq)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html", ct)
+	}
+	if !strings.Contains(w.Body.String(), "Login complete") {
+		t.Fatalf("body = %q, want success page", w.Body.String())
+	}
+	if s.cfg.Token != "test-token" {
+		t.Fatalf("saved token = %q, want %q", s.cfg.Token, "test-token")
+	}
+}
+
+func TestHandleCloudAuthCallbackMissingToken(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/cloud/auth/callback", nil)
+	w := httptest.NewRecorder()
+	s.handleCloudAuthCallback(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if !strings.Contains(w.Body.String(), "Login failed") || !strings.Contains(w.Body.String(), "missing_token") {
+		t.Fatalf("body = %q, want failure page with missing_token", w.Body.String())
+	}
+}
+
 func TestHandleCloudAPIKeySaveAndDelete(t *testing.T) {
 	config.Reset()
 	t.Cleanup(config.Reset)
