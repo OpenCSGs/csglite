@@ -151,6 +151,31 @@ func (s *Server) handleObservabilityClear(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
 }
 
+func (s *Server) handleObservabilityFacets(w http.ResponseWriter, r *http.Request) {
+	s.observabilityMu.RLock()
+	defer s.observabilityMu.RUnlock()
+	if s.observability == nil {
+		writeError(w, http.StatusServiceUnavailable, "observability store is unavailable")
+		return
+	}
+	facets, err := s.observability.Facets(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load observability facets")
+		return
+	}
+	resp := api.ObservabilityFacetsResponse{
+		Models: make([]api.ObservabilityFacetValue, 0, len(facets.Models)),
+		Routes: make([]api.ObservabilityFacetValue, 0, len(facets.Routes)),
+	}
+	for _, model := range facets.Models {
+		resp.Models = append(resp.Models, api.ObservabilityFacetValue{Value: model.Value, Label: model.Label, Count: model.Count})
+	}
+	for _, route := range facets.Routes {
+		resp.Routes = append(resp.Routes, api.ObservabilityFacetValue{Value: route.Value, Label: route.Label, Count: route.Count})
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func observabilityRequestFilter(r *http.Request) (observability.RequestFilter, error) {
 	query := r.URL.Query()
 	filter := observability.RequestFilter{

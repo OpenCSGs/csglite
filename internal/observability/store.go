@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -233,6 +234,8 @@ CREATE INDEX IF NOT EXISTS idx_requests_trace_id ON requests(trace_id, started_a
 CREATE INDEX IF NOT EXISTS idx_requests_thread_id ON requests(thread_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_requests_source ON requests(source, source_name);
+CREATE INDEX IF NOT EXISTS idx_requests_pool_id ON requests(pool_id, pool_name);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("initializing observability database: %w", err)
@@ -719,6 +722,92 @@ func (s *Store) Cleanup(ctx context.Context, retentionDays int) (int64, error) {
 		return 0, fmt.Errorf("cleaning observability requests: %w", err)
 	}
 	return result.RowsAffected()
+}
+
+const facetLimit = 200
+
+type FacetValue struct {
+	Value string
+	Label string
+	Count int64
+}
+
+type Facets struct {
+	Models []FacetValue
+	Routes []FacetValue
+}
+
+// Facets returns distinct model names and route identifiers from the request
+// history so the UI can offer dropdown filters. Values with an empty identifier
+// are skipped; routes carry the friendliest display label found for each value.
+func (s *Store) Facets(ctx context.Context) (Facets, error) {
+	var facets Facets
+	modelRows, err := s.db.QueryContext(ctx, `
+SELECT model, COUNT(*) FROM requests WHERE TRIM(model) != '' GROUP BY TRIM(model) ORDER BY COUNT(*) DESC, model LIMIT ?`, facetLimit)
+	if err != nil {
+		return facets, fmt.Errorf("loading observability model facets: %w", err)
+	}
+	defer modelRows.Close()
+	for modelRows.Next() {
+		var value string
+		var count int64
+		if err := modelRows.Scan(&value, &count); err != nil {
+			return facets, fmt.Errorf("scanning observability model facet: %w", err)
+		}
+		facets.Models = append(facets.Models, FacetValue{Value: strings.TrimSpace(value), Count: count})
+	}
+	if err := modelRows.Err(); err != nil {
+		return facets, fmt.Errorf("reading observability model facets: %w", err)
+	}
+
+	routes := make(map[string]FacetValue)
+	for _, query := range []string{
+		`SELECT source, source_name, COUNT(*) FROM requests WHERE TRIM(source) != '' GROUP BY source, source_name LIMIT ?`,
+		`SELECT pool_id, pool_name, COUNT(*) FROM requests WHERE TRIM(pool_id) != '' GROUP BY pool_id, pool_name LIMIT ?`,
+	} {
+		if err := collectRouteFacets(ctx, s.db, query, routes); err != nil {
+			return facets, err
+		}
+	}
+	facets.Routes = make([]FacetValue, 0, len(routes))
+	for _, route := range routes {
+		facets.Routes = append(facets.Routes, route)
+	}
+	sort.Slice(facets.Routes, func(i, j int) bool {
+		if facets.Routes[i].Count != facets.Routes[j].Count {
+			return facets.Routes[i].Count > facets.Routes[j].Count
+		}
+		return facets.Routes[i].Value < facets.Routes[j].Value
+	})
+	return facets, nil
+}
+
+func collectRouteFacets(ctx context.Context, db *sql.DB, query string, routes map[string]FacetValue) error {
+	rows, err := db.QueryContext(ctx, query, facetLimit)
+	if err != nil {
+		return fmt.Errorf("loading observability route facets: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var value, label string
+		var count int64
+		if err := rows.Scan(&value, &label, &count); err != nil {
+			return fmt.Errorf("scanning observability route facet: %w", err)
+		}
+		value = strings.TrimSpace(value)
+		label = strings.TrimSpace(label)
+		existing := routes[value]
+		existing.Value = value
+		if existing.Label == "" {
+			existing.Label = label
+		}
+		existing.Count += count
+		routes[value] = existing
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading observability route facets: %w", err)
+	}
+	return nil
 }
 
 func normalizeFilter(filter RequestFilter) RequestFilter {

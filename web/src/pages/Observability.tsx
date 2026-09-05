@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { useLocation, type RoutePropsForPath } from "preact-iso";
 import {
   createTraceDatasetExport,
+  getObservabilityFacets,
   getObservabilityRequest,
   getObservabilityRequests,
   getObservabilityTrace,
@@ -15,6 +16,8 @@ import type {
   DatasetExportPreview,
   DatasetExportTraceFilter,
   DatasetRedactionPolicy,
+  ObservabilityFacetValue,
+  ObservabilityFacets,
   ObservabilityQuery,
   ObservabilityRequest,
   ObservabilityRequestListResponse,
@@ -106,6 +109,14 @@ function routerFallbackReasonLabel(reason?: string): string {
     "low_confidence", "no_eligible_candidate", "target_member_missing",
   ]);
   return reason && known.has(reason) ? t(`observability.fallback.${reason}`) : reason ? t("observability.fallback.unknown") : "—";
+}
+
+function facetOptions(facets: ObservabilityFacetValue[] | undefined, current: string): ObservabilityFacetValue[] {
+  const values = facets || [];
+  if (current && !values.some((item) => item.value === current)) {
+    return [{ value: current, count: 0 }, ...values];
+  }
+  return values;
 }
 
 function formatRequestCost(request: ObservabilityRequest): string {
@@ -583,6 +594,19 @@ function DatasetExportWizard({ filter, matchingTotal, onClose }: {
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<DatasetExport | null>(null);
   const [error, setError] = useState("");
+  const [facets, setFacets] = useState<ObservabilityFacets | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getObservabilityFacets().then((data) => {
+      if (active) setFacets(data);
+    }).catch(() => {
+      if (active) setFacets({ models: [], routes: [] });
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const selection = useMemo(() => ({
     filter: {
@@ -688,6 +712,8 @@ function DatasetExportWizard({ filter, matchingTotal, onClose }: {
               model={exportModel}
               source={exportSource}
               query={exportQuery}
+              modelOptions={facetOptions(facets?.models, exportModel)}
+              routeOptions={facetOptions(facets?.routes, exportSource)}
               invalidRange={invalidRange}
               canContinue={canContinue}
               onFrom={setExportFrom}
@@ -775,6 +801,8 @@ function DatasetExportFilterStep({
   model,
   source,
   query,
+  modelOptions,
+  routeOptions,
   invalidRange,
   canContinue,
   onFrom,
@@ -793,6 +821,8 @@ function DatasetExportFilterStep({
   model: string;
   source: string;
   query: string;
+  modelOptions: ObservabilityFacetValue[];
+  routeOptions: ObservabilityFacetValue[];
   invalidRange: boolean;
   canContinue: boolean;
   onFrom: (value: string) => void;
@@ -835,11 +865,17 @@ function DatasetExportFilterStep({
             </label>
             <label class="space-y-1.5 text-sm">
               <span class="font-medium text-gray-700">{t("observability.columnModel")}</span>
-              <input value={model} onInput={(event) => onModel((event.currentTarget as HTMLInputElement).value)} placeholder={t("observability.filterModel")} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2" />
+              <select value={model} onInput={(event) => onModel((event.currentTarget as HTMLSelectElement).value)} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2">
+                <option value="">{t("observability.filterModelAll")}</option>
+                {modelOptions.map((item) => <option key={item.value} value={item.value}>{item.value}</option>)}
+              </select>
             </label>
             <label class="space-y-1.5 text-sm">
               <span class="font-medium text-gray-700">{t("observability.columnRoute")}</span>
-              <input value={source} onInput={(event) => onSource((event.currentTarget as HTMLInputElement).value)} placeholder={t("observability.filterSource")} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2" />
+              <select value={source} onInput={(event) => onSource((event.currentTarget as HTMLSelectElement).value)} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2">
+                <option value="">{t("observability.filterRouteAll")}</option>
+                {routeOptions.map((item) => <option key={item.value} value={item.value}>{item.label || item.value}</option>)}
+              </select>
             </label>
             <label class="space-y-1.5 text-sm">
               <span class="font-medium text-gray-700">{t("observability.filterKeyword")}</span>

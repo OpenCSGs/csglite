@@ -258,3 +258,50 @@ func TestObservabilityHandlersListAndClear(t *testing.T) {
 		t.Fatalf("clear status = %d body=%s", clearRecorder.Code, clearRecorder.Body.String())
 	}
 }
+
+func TestObservabilityFacetsHandler(t *testing.T) {
+	s := newTestServer(t)
+	requests := []struct {
+		model  string
+		source string
+	}{
+		{"test/model-a", "local"},
+		{"test/model-a", "local"},
+		{"test/model-b", "cloud"},
+	}
+	for _, item := range requests {
+		req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"model":"`+item.model+`"}`))
+		model, source := item.model, item.source
+		handler := s.observabilityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			observationFromContext(r.Context()).setUsage(model, source, source, "", 1, 1, nil)
+			_, _ = w.Write([]byte(`{"message":{"content":"ok"}}`))
+		}))
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	recorder := httptest.NewRecorder()
+	s.handleObservabilityFacets(recorder, httptest.NewRequest(http.MethodGet, "/api/observability/facets", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("facets status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Models []api.ObservabilityFacetValue `json:"models"`
+		Routes []api.ObservabilityFacetValue `json:"routes"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Models) != 2 {
+		t.Fatalf("model facets = %+v, want 2 distinct models", response.Models)
+	}
+	if len(response.Routes) != 2 {
+		t.Fatalf("route facets = %+v, want 2 distinct routes", response.Routes)
+	}
+	byValue := make(map[string]api.ObservabilityFacetValue)
+	for _, route := range response.Routes {
+		byValue[route.Value] = route
+	}
+	if byValue["local"].Count != 2 || byValue["cloud"].Count != 1 {
+		t.Fatalf("route counts = %+v, want local=2 cloud=1", response.Routes)
+	}
+}
