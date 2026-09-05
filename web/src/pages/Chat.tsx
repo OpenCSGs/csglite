@@ -2,7 +2,7 @@ import MarkdownIt from "markdown-it";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { signal, computed } from "@preact/signals";
 import {
-  getPs, streamChat, getCloudAuthStatus, saveCloudToken,
+  getPs, streamChat, getCloudAuthStatus,
   listConversations, searchConversations, getConversation, createConversation, updateConversation, deleteConversation,
   getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob, getASRRuntimeStatus, transcribeAudioStream,
 } from "../api/client";
@@ -34,9 +34,7 @@ const showSidebar = signal(true);
 const showCloudAuthDialog = signal(false);
 const openConversationMenuId = signal("");
 const cloudAuth = signal<CloudAuthStatus | null>(null);
-const cloudTokenInput = signal("");
 const cloudAuthError = signal("");
-const isSavingCloudToken = signal(false);
 const webSearchEnabled = signal(true);
 const webSearchAvailable = signal(false);
 const streamingSources = signal<WebSearchResult[]>([]);
@@ -50,6 +48,31 @@ function hasCloudAuth(status: CloudAuthStatus | null | undefined): boolean {
 function openExternalURL(url?: string) {
   if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function pollCloudAuthAfterLogin(applyStatus: (status: CloudAuthStatus) => void) {
+  const deadline = Date.now() + 5 * 60 * 1000;
+  let timer: number | undefined;
+
+  const poll = async () => {
+    try {
+      const status = await getCloudAuthStatus();
+      applyStatus(status);
+      if (status.authenticated && status.user) {
+        return;
+      }
+    } catch {
+      /* keep polling until the deadline */
+    }
+    if (Date.now() < deadline) {
+      timer = window.setTimeout(poll, 1500);
+    }
+  };
+
+  void poll();
+  return () => {
+    if (timer !== undefined) window.clearTimeout(timer);
+  };
 }
 
 const systemPrompt = signal("");
@@ -892,36 +915,6 @@ export function Chat() {
     }
     if (model?.source === "cloud" && !hasCloudAuth(cloudAuth.value)) {
       void openCloudAuthDialog(t("chat.cloudLoginRequired", model.provider || configuredCloudProviderName()));
-    }
-  };
-
-  const handleSaveCloudToken = async () => {
-    const token = cloudTokenInput.value.trim();
-    if (!token) {
-      cloudAuthError.value = t("chat.cloudTokenEmpty");
-      return;
-    }
-
-    isSavingCloudToken.value = true;
-    cloudAuthError.value = "";
-    try {
-      const status = await saveCloudToken(token);
-      cloudAuth.value = status;
-      if (!status.authenticated) {
-        cloudAuthError.value = t("chat.cloudLoginExpired", configuredCloudProviderName());
-        return;
-      }
-      try {
-        setAvailableModels(await loadModelOptions({ refresh: true }));
-      } catch {
-        /* ignore */
-      }
-      cloudTokenInput.value = "";
-      showCloudAuthDialog.value = false;
-    } catch (e: any) {
-      cloudAuthError.value = e?.message || t("chat.failedResp");
-    } finally {
-      isSavingCloudToken.value = false;
     }
   };
 
@@ -2182,31 +2175,22 @@ export function Chat() {
 
             <div class="mt-5 flex flex-wrap gap-2">
               <button
-                onClick={() => openExternalURL(cloudAuth.value?.login_url)}
+                onClick={() => {
+                  openExternalURL(cloudAuth.value?.login_url);
+                  const stop = pollCloudAuthAfterLogin((status) => {
+                    cloudAuth.value = status;
+                    if (status.authenticated && status.user) {
+                      cloudAuthError.value = "";
+                      showCloudAuthDialog.value = false;
+                      stop();
+                      void loadModelOptions({ refresh: true }).then(setAvailableModels).catch(() => {});
+                    }
+                  });
+                }}
                 class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
               >
                 {t("chat.cloudOpenLogin")}
               </button>
-              <button
-                onClick={() => openExternalURL(cloudAuth.value?.access_token_url)}
-                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-              >
-                {t("chat.cloudOpenTokenPage")}
-              </button>
-            </div>
-
-            <div class="mt-5">
-              <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudTokenLabel")}</label>
-              <input
-                type="password"
-                autoComplete="off"
-                spellcheck={false}
-                class="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder={t("chat.cloudTokenPlaceholder")}
-                value={cloudTokenInput.value}
-                onInput={(e) => (cloudTokenInput.value = (e.target as HTMLInputElement).value)}
-              />
-              <p class="mt-2 text-xs leading-5 text-gray-500">{t("chat.cloudTokenHint")}</p>
             </div>
 
             <div class="mt-5 flex justify-end gap-2">
@@ -2218,13 +2202,6 @@ export function Chat() {
                 class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
               >
                 {t("chat.cloudCancel")}
-              </button>
-              <button
-                onClick={handleSaveCloudToken}
-                disabled={isSavingCloudToken.value}
-                class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-              >
-                {isSavingCloudToken.value ? t("chat.cloudSavingToken") : t("chat.cloudSaveToken")}
               </button>
             </div>
           </div>

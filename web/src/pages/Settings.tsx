@@ -13,7 +13,6 @@ import {
   getTags,
   installImageRuntime,
   getSettings,
-  saveCloudToken,
   saveSettings,
   upgradeWithProgress,
 } from "../api/client";
@@ -41,10 +40,8 @@ const contextIndex = signal(1);
 const contextMode = signal<ContextLengthMode>("global");
 const parallelIndex = signal(2);
 const cloudAuth = signal<CloudAuthStatus | null>(null);
-const cloudTokenInput = signal("");
 const cloudAuthError = signal("");
 const isClearingCloudToken = signal(false);
-const isSavingCloudToken = signal(false);
 const isSavingStorageDir = signal(false);
 const storageDirInput = signal("");
 const storageDirError = signal("");
@@ -669,7 +666,6 @@ function RegistryCredentialFields({
 
 export function Settings() {
   void locale.value;
-  const showTokenInput = !(cloudAuth.value?.authenticated && cloudAuth.value?.user);
 
   useEffect(() => {
     fetchSettings();
@@ -685,10 +681,6 @@ export function Settings() {
     pollCloudAuthAfterLogin();
   };
 
-  const handleOpenCloudTokenPage = () => {
-    openExternal(cloudAuth.value?.access_token_url);
-  };
-
   const handleLogout = async () => {
     if (isClearingCloudToken.value) return;
     isClearingCloudToken.value = true;
@@ -699,30 +691,6 @@ export function Settings() {
       cloudAuthError.value = err?.message || t("chat.failedResp");
     } finally {
       isClearingCloudToken.value = false;
-    }
-  };
-
-  const handleSaveCloudToken = async () => {
-    const token = cloudTokenInput.value.trim();
-    if (!token) {
-      cloudAuthError.value = t("chat.cloudTokenEmpty");
-      return;
-    }
-
-    isSavingCloudToken.value = true;
-    cloudAuthError.value = "";
-    try {
-      const status = await saveCloudToken(token);
-      cloudAuth.value = status;
-      if (!status.authenticated) {
-        cloudAuthError.value = t("chat.cloudLoginExpired");
-        return;
-      }
-      cloudTokenInput.value = "";
-    } catch (err: any) {
-      cloudAuthError.value = err?.message || t("chat.failedResp");
-    } finally {
-      isSavingCloudToken.value = false;
     }
   };
 
@@ -1202,12 +1170,6 @@ export function Settings() {
               </div>
               <div class="flex gap-2">
                 <button
-                  onClick={handleOpenCloudTokenPage}
-                  class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  {t("settings.openTokenPage")}
-                </button>
-                <button
                   onClick={handleLogout}
                   disabled={isClearingCloudToken.value}
                   class="px-4 py-2 border border-red-200 rounded-lg text-sm text-red-600 hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
@@ -1250,38 +1212,6 @@ export function Settings() {
                   class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                 >
                   {t("settings.login")}
-                </button>
-                <button
-                  onClick={handleOpenCloudTokenPage}
-                  class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  {t("settings.openTokenPage")}
-                </button>
-              </div>
-            </div>
-          )}
-          {showTokenInput && (
-            <div class="mt-5 border-t border-gray-100 pt-5">
-              <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudTokenLabel")}</label>
-              <p class="mb-3 text-sm text-gray-500">{t("settings.tokenInputHint")}</p>
-              <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
-                <div class="flex-1">
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    spellcheck={false}
-                    class="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder={t("chat.cloudTokenPlaceholder")}
-                    value={cloudTokenInput.value}
-                    onInput={(e) => (cloudTokenInput.value = (e.target as HTMLInputElement).value)}
-                  />
-                </div>
-                <button
-                  onClick={handleSaveCloudToken}
-                  disabled={isSavingCloudToken.value}
-                  class="px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isSavingCloudToken.value ? t("chat.cloudSavingToken") : t("chat.cloudSaveToken")}
                 </button>
               </div>
             </div>

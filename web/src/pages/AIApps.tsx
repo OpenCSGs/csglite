@@ -8,7 +8,6 @@ import {
   installAIApp,
   openAIApp,
   saveAIAppModel,
-  saveCloudToken,
   setAIAppPath,
   startAIApp,
   stopAIApp,
@@ -630,8 +629,6 @@ function LiveLogsDrawer({
   const [cloudAuth, setCloudAuth] = useState<CloudAuthStatus | null>(null);
   const [showCloudAuthDialog, setShowCloudAuthDialog] = useState(false);
   const [cloudAuthError, setCloudAuthError] = useState("");
-  const [cloudTokenInput, setCloudTokenInput] = useState("");
-  const [isSavingCloudToken, setIsSavingCloudToken] = useState(false);
   const [manualPathInput, setManualPathInput] = useState("");
   const [isSavingManualPath, setIsSavingManualPath] = useState(false);
   const [manualPathNotice, setManualPathNotice] = useState<{ ok: boolean; text: string } | null>(null);
@@ -906,6 +903,34 @@ function LiveLogsDrawer({
     }
   };
 
+  const pollCloudAuthAfterLogin = () => {
+    const deadline = Date.now() + 5 * 60 * 1000;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      try {
+        const status = await getCloudAuthStatus();
+        setCloudAuth(status);
+        if (status.authenticated && status.user) {
+          setCloudAuthError("");
+          setShowCloudAuthDialog(false);
+          loadModelOptions({ refresh: true }).then(setModels).catch(() => {});
+          return;
+        }
+      } catch {
+        /* keep polling until the deadline */
+      }
+      if (Date.now() < deadline) {
+        timer = window.setTimeout(poll, 1500);
+      }
+    };
+
+    void poll();
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  };
+
   const ensureCloudAuthForModel = async (model: ModelInfo | undefined): Promise<boolean> => {
     if (model?.source !== "cloud") {
       return true;
@@ -1039,36 +1064,6 @@ function LiveLogsDrawer({
       return;
     }
     onOpenChat(currentModelID || undefined, currentModelInfo?.source);
-  };
-
-  const handleSaveCloudToken = async () => {
-    const token = cloudTokenInput.trim();
-    if (!token) {
-      setCloudAuthError(t("chat.cloudTokenEmpty"));
-      return;
-    }
-
-    setIsSavingCloudToken(true);
-    setCloudAuthError("");
-    try {
-      const status = await saveCloudToken(token);
-      setCloudAuth(status);
-      if (!status.authenticated) {
-        setCloudAuthError(t("chat.cloudLoginExpired"));
-        return;
-      }
-      try {
-        setModels(await loadModelOptions({ refresh: true }));
-      } catch {
-        /* ignore */
-      }
-      setCloudTokenInput("");
-      setShowCloudAuthDialog(false);
-    } catch (error) {
-      setCloudAuthError((error as Error).message || t("chat.failedResp"));
-    } finally {
-      setIsSavingCloudToken(false);
-    }
   };
 
   return (
@@ -1662,31 +1657,14 @@ function LiveLogsDrawer({
 
             <div class="mt-5 flex flex-wrap gap-2">
               <button
-                onClick={() => openExternalURL(cloudAuth?.login_url)}
+                onClick={() => {
+                  openExternalURL(cloudAuth?.login_url);
+                  pollCloudAuthAfterLogin();
+                }}
                 class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
               >
                 {t("chat.cloudOpenLogin")}
               </button>
-              <button
-                onClick={() => openExternalURL(cloudAuth?.access_token_url)}
-                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-              >
-                {t("chat.cloudOpenTokenPage")}
-              </button>
-            </div>
-
-            <div class="mt-5">
-              <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudTokenLabel")}</label>
-              <input
-                type="password"
-                autoComplete="off"
-                spellcheck={false}
-                class="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder={t("chat.cloudTokenPlaceholder")}
-                value={cloudTokenInput}
-                onInput={(e) => setCloudTokenInput((e.currentTarget as HTMLInputElement).value)}
-              />
-              <p class="mt-2 text-xs leading-5 text-gray-500">{t("chat.cloudTokenHint")}</p>
             </div>
 
             <div class="mt-5 flex justify-end gap-2">
@@ -1698,13 +1676,6 @@ function LiveLogsDrawer({
                 class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
               >
                 {t("chat.cloudCancel")}
-              </button>
-              <button
-                onClick={() => void handleSaveCloudToken()}
-                disabled={isSavingCloudToken}
-                class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-              >
-                {isSavingCloudToken ? t("chat.cloudSavingToken") : t("chat.cloudSaveToken")}
               </button>
             </div>
           </div>

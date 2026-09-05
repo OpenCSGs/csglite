@@ -2,14 +2,12 @@ import { useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import {
   cancelImageGenerationJob,
-  clearCloudAPIKey,
   createImageGenerationJob,
   getImageGenerationJob,
   getImageRuntimeStatus,
   getCloudAuthStatus,
   installImageRuntime,
   listImageGenerationJobs,
-  saveCloudToken,
 } from "../api/client";
 import type { CloudAuthStatus, ImageGenerationJobResponse, ImageRuntimeStatus, ModelInfo } from "../api/client";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
@@ -65,8 +63,6 @@ const cloudAuthDialogOpen = signal(false);
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudAuthLoaded = signal(false);
 const cloudAuthError = signal("");
-const cloudTokenInput = signal("");
-const isSavingCloudToken = signal(false);
 const providersChangedEvent = "csghub:providers-changed";
 
 interface GenerationHistoryItem {
@@ -446,6 +442,35 @@ async function openCloudAuthDialog(message = "") {
   }
 }
 
+function pollCloudAuthAfterLogin() {
+  const deadline = Date.now() + 5 * 60 * 1000;
+  let timer: number | undefined;
+
+  const poll = async () => {
+    try {
+      const status = await getCloudAuthStatus();
+      cloudAuth.value = status;
+      if (status.authenticated && status.user) {
+        cloudAuthError.value = "";
+        cloudAuthDialogOpen.value = false;
+        error.value = "";
+        await refreshImageModels();
+        return;
+      }
+    } catch {
+      /* keep polling until the deadline */
+    }
+    if (Date.now() < deadline) {
+      timer = window.setTimeout(poll, 1500);
+    }
+  };
+
+  void poll();
+  return () => {
+    if (timer !== undefined) window.clearTimeout(timer);
+  };
+}
+
 export function ImageGeneration() {
   void locale.value;
 
@@ -612,36 +637,6 @@ export function ImageGeneration() {
     loading.value = false;
     jobStatus.value = "";
     generationStartedAt.value = 0;
-  };
-
-  const handleSaveCloudToken = async () => {
-    const token = cloudTokenInput.value.trim();
-    if (!token) {
-      cloudAuthError.value = t("chat.cloudTokenEmpty");
-      return;
-    }
-    isSavingCloudToken.value = true;
-    cloudAuthError.value = "";
-    try {
-      const status = await saveCloudToken(token);
-      cloudAuth.value = status;
-      if (!status.authenticated) {
-        cloudAuthError.value = t("chat.cloudLoginExpired", currentModel?.provider || t("chat.cloud"));
-        return;
-      }
-      // The image dialog saves account tokens; clear any stale manual API key
-      // that may have been saved by older builds so cloud calls use the
-      // account's built-in API key.
-      cloudAuth.value = await clearCloudAPIKey();
-      cloudTokenInput.value = "";
-      cloudAuthDialogOpen.value = false;
-      error.value = "";
-      await refreshImageModels();
-    } catch (err: any) {
-      cloudAuthError.value = err?.message || t("chat.failedResp");
-    } finally {
-      isSavingCloudToken.value = false;
-    }
   };
 
   const rt = runtime.value;
@@ -1110,32 +1105,14 @@ export function ImageGeneration() {
             <div class="mt-5 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => openExternalURL(cloudAuth.value?.login_url)}
+                onClick={() => {
+                  openExternalURL(cloudAuth.value?.login_url);
+                  pollCloudAuthAfterLogin();
+                }}
                 class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
               >
                 {t("chat.cloudOpenLogin")}
               </button>
-              <button
-                type="button"
-                onClick={() => openExternalURL(cloudAuth.value?.access_token_url)}
-                class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
-              >
-                {t("chat.cloudOpenTokenPage")}
-              </button>
-            </div>
-
-            <div class="mt-5">
-              <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudTokenLabel")}</label>
-              <input
-                type="password"
-                autoComplete="off"
-                spellcheck={false}
-                class="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder={t("chat.cloudTokenPlaceholder")}
-                value={cloudTokenInput.value}
-                onInput={(e) => (cloudTokenInput.value = (e.target as HTMLInputElement).value)}
-              />
-              <p class="mt-2 text-xs leading-5 text-gray-500">{t("chat.cloudTokenHint")}</p>
             </div>
 
             <div class="mt-5 flex justify-end gap-2">
@@ -1148,14 +1125,6 @@ export function ImageGeneration() {
                 class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
               >
                 {t("chat.cloudCancel")}
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveCloudToken}
-                disabled={isSavingCloudToken.value}
-                class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
-              >
-                {isSavingCloudToken.value ? t("chat.cloudSavingToken") : t("chat.cloudSaveToken")}
               </button>
             </div>
           </div>
