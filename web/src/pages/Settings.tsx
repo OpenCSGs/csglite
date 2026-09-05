@@ -17,7 +17,7 @@ import {
   saveSettings,
   upgradeWithProgress,
 } from "../api/client";
-import type { AppSettings, ArtifactSource, CloudAuthStatus, LocalDirectoryBrowseResponse, WebSearchSettings } from "../api/client";
+import type { AppSettings, ArtifactSource, CloudAuthStatus, LocalDirectoryBrowseResponse } from "../api/client";
 
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
@@ -61,13 +61,6 @@ const upgradeProgress = signal<UpgradeProgress>({
   message: "",
 });
 let upgradeReloadTimer: number | undefined;
-const webSearchEnabled = signal(false);
-const webSearchMaxResults = signal(5);
-const webSearchLanguage = signal("");
-const webSearchSafeSearch = signal(1);
-const webSearchTimeoutSeconds = signal(5);
-const webSearchError = signal("");
-const isSavingWebSearch = signal(false);
 const serverUrlInput = signal("");
 const aiGatewayUrlInput = signal("");
 const cloudProviderNameInput = signal("");
@@ -246,12 +239,6 @@ function applySettings(data: AppSettings) {
   };
   autostartEnabled.value = data.autostart ?? false;
   observabilityRetentionDays.value = normalizeObservabilityRetentionDays(data.observability?.retention_days);
-  const webSearch = data.web_search;
-  webSearchEnabled.value = webSearch?.enabled ?? false;
-  webSearchMaxResults.value = webSearch?.max_results || 5;
-  webSearchLanguage.value = webSearch?.language || "";
-  webSearchSafeSearch.value = webSearch?.safe_search ?? 1;
-  webSearchTimeoutSeconds.value = webSearch?.timeout_seconds || 5;
 }
 
 async function saveObservabilityRetention() {
@@ -457,27 +444,6 @@ async function saveStorageDir() {
     storageDirError.value = err?.message || t("settings.storageDirSaveFailed");
   } finally {
     isSavingStorageDir.value = false;
-  }
-}
-
-async function saveWebSearchSettings() {
-  const settings: WebSearchSettings = {
-    enabled: webSearchEnabled.value,
-    max_results: Math.max(1, Math.min(10, Number(webSearchMaxResults.value) || 5)),
-    language: webSearchLanguage.value.trim() || undefined,
-    safe_search: Math.max(0, Math.min(2, Number(webSearchSafeSearch.value) || 0)),
-    timeout_seconds: Math.max(1, Math.min(30, Number(webSearchTimeoutSeconds.value) || 5)),
-  };
-
-  isSavingWebSearch.value = true;
-  webSearchError.value = "";
-  try {
-    const data = await saveSettings({ web_search: settings });
-    applySettings(data);
-  } catch (err: any) {
-    webSearchError.value = err?.message || t("settings.webSearchSaveFailed");
-  } finally {
-    isSavingWebSearch.value = false;
   }
 }
 
@@ -1304,94 +1270,6 @@ export function Settings() {
                   </div>
                 </div>
               )}
-          </div>
-        </div>
-      </div>
-
-      {/* Web search */}
-      <div class="mb-10">
-        <div class="flex items-center gap-2 mb-1">
-          <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3a9 9 0 100 18 9 9 0 000-18z" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3.6 9h16.8M3.6 15h16.8M12 3c2 2.3 3 5.3 3 9s-1 6.7-3 9c-2-2.3-3-5.3-3-9s1-6.7 3-9z" />
-          </svg>
-          <span class="font-semibold text-gray-900">{t("settings.webSearch")}</span>
-        </div>
-        <p class="text-sm text-gray-500 mb-3 ml-7">{t("settings.webSearchDesc")}</p>
-        <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4">
-          <div class="mb-4 flex items-center gap-3">
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={webSearchEnabled.value}
-                disabled={isSavingWebSearch.value}
-                onChange={(e) => (webSearchEnabled.value = (e.target as HTMLInputElement).checked)}
-                class="sr-only peer"
-              />
-              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600 peer-disabled:opacity-60 peer-disabled:cursor-not-allowed"></div>
-            </label>
-            <span class="text-sm text-gray-700">
-              {webSearchEnabled.value ? t("settings.webSearchOn") : t("settings.webSearchOff")}
-            </span>
-          </div>
-          <div class="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-700">
-            {t("settings.webSearchEngines")}
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="text-sm font-medium text-gray-700">
-              {t("settings.webSearchMaxResults")}
-              <input
-                type="number"
-                min={1}
-                max={10}
-                class="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={webSearchMaxResults.value}
-                onInput={(e) => (webSearchMaxResults.value = Number((e.target as HTMLInputElement).value))}
-              />
-            </label>
-            <label class="text-sm font-medium text-gray-700">
-              {t("settings.webSearchTimeout")}
-              <input
-                type="number"
-                min={1}
-                max={30}
-                class="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={webSearchTimeoutSeconds.value}
-                onInput={(e) => (webSearchTimeoutSeconds.value = Number((e.target as HTMLInputElement).value))}
-              />
-            </label>
-            <label class="text-sm font-medium text-gray-700">
-              {t("settings.webSearchLanguage")}
-              <input
-                type="text"
-                class="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder="auto"
-                value={webSearchLanguage.value}
-                onInput={(e) => (webSearchLanguage.value = (e.target as HTMLInputElement).value)}
-              />
-            </label>
-            <label class="text-sm font-medium text-gray-700">
-              {t("settings.webSearchSafeSearch")}
-              <select
-                class="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={webSearchSafeSearch.value}
-                onChange={(e) => (webSearchSafeSearch.value = Number((e.target as HTMLSelectElement).value))}
-              >
-                <option value={0}>{t("settings.webSearchSafeOff")}</option>
-                <option value={1}>{t("settings.webSearchSafeModerate")}</option>
-                <option value={2}>{t("settings.webSearchSafeStrict")}</option>
-              </select>
-            </label>
-          </div>
-          {webSearchError.value && <p class="mt-3 text-sm text-red-600">{webSearchError.value}</p>}
-          <div class="mt-4 flex justify-end">
-            <button
-              onClick={() => void saveWebSearchSettings()}
-              disabled={isSavingWebSearch.value}
-              class="px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-            >
-              {isSavingWebSearch.value ? "..." : t("settings.save")}
-            </button>
           </div>
         </div>
       </div>
