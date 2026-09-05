@@ -32,6 +32,19 @@ func TestNewUsesEnvironmentCredentials(t *testing.T) {
 	}
 }
 
+func TestNewUsesChinaHuggingFaceMirrorForDomesticRegion(t *testing.T) {
+	t.Setenv(config.EnvHuggingFaceEndpoint, "")
+	t.Setenv("CSGHUB_LITE_REGION", "CN")
+	registry, err := New(&config.Config{}, SourceHuggingFace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hf := registry.(*huggingFaceRegistry)
+	if hf.http.BaseURL() != config.ChinaHuggingFaceEndpoint {
+		t.Fatalf("BaseURL = %q, want %q", hf.http.BaseURL(), config.ChinaHuggingFaceEndpoint)
+	}
+}
+
 func TestOpenCSGAdapterPreservesDefaultRevision(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

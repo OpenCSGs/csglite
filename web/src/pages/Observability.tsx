@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { useLocation, type RoutePropsForPath } from "preact-iso";
 import {
   createTraceDatasetExport,
+  getObservabilityFacets,
   getObservabilityRequest,
   getObservabilityRequests,
   getObservabilityTrace,
@@ -15,6 +16,8 @@ import type {
   DatasetExportPreview,
   DatasetExportTraceFilter,
   DatasetRedactionPolicy,
+  ObservabilityFacetValue,
+  ObservabilityFacets,
   ObservabilityQuery,
   ObservabilityRequest,
   ObservabilityRequestListResponse,
@@ -77,6 +80,59 @@ function sourceLabel(record: Pick<ObservabilityRequest, "source" | "source_name"
     return record.member_model ? `${record.pool_name} → ${record.member_model}` : record.pool_name;
   }
   return record.source_name || record.source || "—";
+}
+
+function providerPoolPolicyLabel(policy?: string): string {
+  switch (policy) {
+    case "semantic":
+      return t("settings.providerPoolPolicySemantic");
+    case "priority_weight":
+      return t("settings.providerPoolPolicyPriority");
+    default:
+      return policy || "—";
+  }
+}
+
+function routerAlgorithmLabel(request: ObservabilityRequest): string {
+  if (request.router_profile_schema_version === 2) {
+    return request.router_algorithm === "pairwise_router_v2"
+      ? t("observability.routerAlgorithmPairwiseV2")
+      : t("observability.routerAlgorithmV2");
+  }
+  return request.router_profile_id ? t("observability.routerAlgorithmSemanticV1") : "—";
+}
+
+function routerFallbackReasonLabel(reason?: string): string {
+  const known = new Set([
+    "routing_text_empty", "profile_invalid", "legacy_profile_incompatible", "member_drift",
+    "embedding_error", "embedding_dimension_mismatch", "out_of_distribution",
+    "low_confidence", "no_eligible_candidate", "target_member_missing",
+  ]);
+  return reason && known.has(reason) ? t(`observability.fallback.${reason}`) : reason ? t("observability.fallback.unknown") : "—";
+}
+
+function facetOptions(facets: ObservabilityFacetValue[] | undefined, current: string): ObservabilityFacetValue[] {
+  const values = facets || [];
+  if (current && !values.some((item) => item.value === current)) {
+    return [{ value: current, count: 0 }, ...values];
+  }
+  return values;
+}
+
+function formatRequestCost(request: ObservabilityRequest): string {
+  if (!request.cost_known) return "—";
+  const cost = request.estimated_cost || 0;
+  const currency = request.cost_currency || "USD";
+  try {
+    return new Intl.NumberFormat(locale.value === "zh" ? "zh-CN" : "en-US", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: cost < 0.01 ? 6 : 2,
+      maximumFractionDigits: cost < 0.01 ? 6 : 4,
+    }).format(cost);
+  } catch {
+    return `${currency} ${cost.toFixed(cost < 0.01 ? 6 : 4)}`;
+  }
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -398,7 +454,7 @@ function RequestTable({ data, loading, onOpen, onOpenTrace }: {
             <th class="px-4 py-3">{t("observability.columnStatus")}</th>
             <th class="px-4 py-3">{t("observability.columnRoute")}</th>
             <th class="px-4 py-3">{t("observability.columnLatency")}</th>
-            <th class="px-4 py-3">{t("observability.columnCacheRead")}</th>
+            <th class="px-4 py-3">{t("observability.columnCost")}</th>
             <th class="px-4 py-3">{t("observability.columnTokens")}</th>
             <th class="px-4 py-3">{t("observability.columnCacheHitRate")}</th>
             <th class="px-4 py-3">{t("observability.columnTrace")}</th>
@@ -410,12 +466,23 @@ function RequestTable({ data, loading, onOpen, onOpenTrace }: {
               <td class="max-w-[190px] truncate px-4 py-3 font-medium text-gray-900" title={row.model}>{formatObservabilityModel(row.model)}</td>
               <td class="whitespace-nowrap px-4 py-3 text-xs text-gray-500">{formatObservabilityDateTime(row.started_at)}</td>
               <td class="px-4 py-3"><StatusBadge status={row.status} /></td>
-              <td class="max-w-[190px] truncate px-4 py-3 text-gray-600" title={sourceLabel(row)}>{sourceLabel(row)}</td>
+              <td class="max-w-[220px] px-4 py-3 text-gray-600" title={sourceLabel(row)}>
+                <span class="block truncate">{sourceLabel(row)}</span>
+                {row.router_profile_id && (
+                  <span class="mt-0.5 block truncate text-[11px] text-gray-400">
+                    {t("observability.routerHistory", row.router_profile_schema_version || 1, routerAlgorithmLabel(row))}
+                    {row.router_profile_schema_version === 2 && row.router_confidence !== undefined
+                      ? ` · ${t("observability.confidenceShort")} ${row.router_confidence.toFixed(2)} · ${t("observability.marginShort")} ${(row.router_margin || 0).toFixed(2)}`
+                      : row.semantic_cluster_id ? ` · ${row.semantic_cluster_id}` : ""}
+                    {row.semantic_fallback ? ` · ${routerFallbackReasonLabel(row.semantic_fallback_reason)}` : ""}
+                  </span>
+                )}
+              </td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">
                 {formatObservabilityDuration(row.duration_ms)}
                 {row.stream && <span class="block text-[11px] text-gray-400">TTFT {formatObservabilityDuration(row.first_token_latency_ms)}</span>}
               </td>
-              <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatCacheTokens(row, row.cache_read_input_tokens)}</td>
+              <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatRequestCost(row)}</td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.total_tokens)}</td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600" title={
                 row.cache_eligible_input_tokens > 0
@@ -527,6 +594,19 @@ function DatasetExportWizard({ filter, matchingTotal, onClose }: {
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<DatasetExport | null>(null);
   const [error, setError] = useState("");
+  const [facets, setFacets] = useState<ObservabilityFacets | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getObservabilityFacets().then((data) => {
+      if (active) setFacets(data);
+    }).catch(() => {
+      if (active) setFacets({ models: [], routes: [] });
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const selection = useMemo(() => ({
     filter: {
@@ -632,6 +712,8 @@ function DatasetExportWizard({ filter, matchingTotal, onClose }: {
               model={exportModel}
               source={exportSource}
               query={exportQuery}
+              modelOptions={facetOptions(facets?.models, exportModel)}
+              routeOptions={facetOptions(facets?.routes, exportSource)}
               invalidRange={invalidRange}
               canContinue={canContinue}
               onFrom={setExportFrom}
@@ -719,6 +801,8 @@ function DatasetExportFilterStep({
   model,
   source,
   query,
+  modelOptions,
+  routeOptions,
   invalidRange,
   canContinue,
   onFrom,
@@ -737,6 +821,8 @@ function DatasetExportFilterStep({
   model: string;
   source: string;
   query: string;
+  modelOptions: ObservabilityFacetValue[];
+  routeOptions: ObservabilityFacetValue[];
   invalidRange: boolean;
   canContinue: boolean;
   onFrom: (value: string) => void;
@@ -779,11 +865,17 @@ function DatasetExportFilterStep({
             </label>
             <label class="space-y-1.5 text-sm">
               <span class="font-medium text-gray-700">{t("observability.columnModel")}</span>
-              <input value={model} onInput={(event) => onModel((event.currentTarget as HTMLInputElement).value)} placeholder={t("observability.filterModel")} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2" />
+              <select value={model} onInput={(event) => onModel((event.currentTarget as HTMLSelectElement).value)} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2">
+                <option value="">{t("observability.filterModelAll")}</option>
+                {modelOptions.map((item) => <option key={item.value} value={item.value}>{item.value}</option>)}
+              </select>
             </label>
             <label class="space-y-1.5 text-sm">
               <span class="font-medium text-gray-700">{t("observability.columnRoute")}</span>
-              <input value={source} onInput={(event) => onSource((event.currentTarget as HTMLInputElement).value)} placeholder={t("observability.filterSource")} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2" />
+              <select value={source} onInput={(event) => onSource((event.currentTarget as HTMLSelectElement).value)} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2">
+                <option value="">{t("observability.filterRouteAll")}</option>
+                {routeOptions.map((item) => <option key={item.value} value={item.value}>{item.label || item.value}</option>)}
+              </select>
             </label>
             <label class="space-y-1.5 text-sm">
               <span class="font-medium text-gray-700">{t("observability.filterKeyword")}</span>
@@ -841,6 +933,19 @@ function RequestDetail({ request, onOpenTrace }: { request: ObservabilityRequest
     [t("observability.columnStatus"), <StatusBadge status={request.status} />],
     [t("observability.columnModel"), request.model || "—"],
     [t("observability.columnRoute"), sourceLabel(request)],
+    [t("observability.columnPolicy"), providerPoolPolicyLabel(request.pool_policy)],
+    ...(request.router_profile_id ? [
+      [t("observability.routerProfile"), t("observability.routerProfileValue", request.router_profile_version || 0, request.router_profile_schema_version || 1)],
+      [t("observability.routerAlgorithm"), routerAlgorithmLabel(request)],
+      ...(request.router_profile_schema_version === 2 ? [
+        [t("observability.routerConfidenceMargin"), `${(request.router_confidence || 0).toFixed(3)} / ${(request.router_margin || 0).toFixed(3)}`],
+        [t("observability.routerSimilarity"), request.router_similarity?.toFixed(3) || "—"],
+      ] : [
+        [t("observability.semanticCluster"), request.semantic_cluster_id || String(request.semantic_cluster ?? "—")],
+        [t("observability.semanticDistance"), request.semantic_distance?.toFixed(3) || "—"],
+      ]),
+      ...(request.semantic_fallback ? [[t("observability.fallbackReason"), routerFallbackReasonLabel(request.semantic_fallback_reason)]] : []),
+    ] : []),
     [t("observability.columnEndpoint"), `${request.method} ${request.path}`],
     [t("observability.columnLatency"), formatObservabilityDuration(request.duration_ms)],
     ["TTFT", formatObservabilityDuration(request.first_token_latency_ms)],
@@ -1140,6 +1245,21 @@ function TraceDetail({ trace }: { trace: ObservabilityTraceDetailResponse }) {
                 <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <TraceDetailField label={t("observability.columnModel")} value={selectedRequest.model || "—"} />
                   <TraceDetailField label={t("observability.columnRoute")} value={sourceLabel(selectedRequest)} />
+                  <TraceDetailField label={t("observability.columnPolicy")} value={providerPoolPolicyLabel(selectedRequest.pool_policy)} />
+                  {selectedRequest.router_profile_id && <TraceDetailField label={t("observability.routerProfile")} value={t("observability.routerProfileValue", selectedRequest.router_profile_version || 0, selectedRequest.router_profile_schema_version || 1)} />}
+                  {selectedRequest.router_profile_id && <TraceDetailField label={t("observability.routerAlgorithm")} value={routerAlgorithmLabel(selectedRequest)} />}
+                  {selectedRequest.router_profile_schema_version === 2 ? (
+                    <>
+                      <TraceDetailField label={t("observability.routerConfidenceMargin")} value={`${(selectedRequest.router_confidence || 0).toFixed(3)} / ${(selectedRequest.router_margin || 0).toFixed(3)}`} />
+                      <TraceDetailField label={t("observability.routerSimilarity")} value={selectedRequest.router_similarity?.toFixed(3) || "—"} />
+                    </>
+                  ) : selectedRequest.router_profile_id ? (
+                    <>
+                      <TraceDetailField label={t("observability.semanticCluster")} value={selectedRequest.semantic_cluster_id || String(selectedRequest.semantic_cluster ?? "—")} />
+                      <TraceDetailField label={t("observability.semanticDistance")} value={selectedRequest.semantic_distance?.toFixed(3) || "—"} />
+                    </>
+                  ) : null}
+                  {selectedRequest.semantic_fallback && <TraceDetailField label={t("observability.fallbackReason")} value={routerFallbackReasonLabel(selectedRequest.semantic_fallback_reason)} />}
                   <TraceDetailField label={t("observability.columnEndpoint")} value={`${selectedRequest.method} ${selectedRequest.path}`} mono />
                   <TraceDetailField label={t("observability.caller")} value={selectedRequest.api_key_name || "—"} />
                   <TraceDetailField label={t("observability.columnTime")} value={formatObservabilityDateTime(selectedRequest.started_at)} />

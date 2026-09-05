@@ -8,20 +8,18 @@ import (
 	"os"
 	"time"
 
-	"github.com/opencsgs/csglite/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func newStopServiceCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:     "stop-service",
-		Aliases: []string{"stop-server", "down"},
-		Short:   "Stop the background csghub-lite service",
-		Long:    "Stop the background csghub-lite API service started by 'serve' or auto-started by client commands.",
-		Args:    cobra.NoArgs,
-		RunE:    runStopService,
+	return &cobra.Command{
+		Use:        "stop-service",
+		Short:      "Stop the background csghub-lite service",
+		Long:       "Stop the background csghub-lite API service started by 'serve' or auto-started by client commands.\n\nDeprecated: use 'csghub-lite stop' instead.",
+		Deprecated: "use \"csghub-lite stop\" instead",
+		Args:       cobra.NoArgs,
+		RunE:       runStopService,
 	}
-	return cmd
 }
 
 func runStopService(cmd *cobra.Command, args []string) error {
@@ -110,12 +108,15 @@ func stopBackgroundService(ignoreIfStopped bool) error {
 	return fmt.Errorf("service pid %d did not stop within 5s", pid)
 }
 
+// currentServerBaseURL returns the configured server URL when config can be
+// loaded. Service stop treats a missing URL as optional so it can still fall
+// back to the PID file.
 func currentServerBaseURL() (string, bool) {
-	cfg, err := config.Load()
+	baseURL, err := currentServerURL()
 	if err != nil {
 		return "", false
 	}
-	return serverBaseURL(cfg), true
+	return baseURL, true
 }
 
 func requestServerShutdown(baseURL string) error {

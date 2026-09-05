@@ -42,6 +42,10 @@ csghub-lite config set server_url https://my-csghub.example.com
 csghub-lite config set ai_gateway_url https://my-gateway.example.com
 ```
 
+### huggingface_endpoint
+
+Hugging Face Hub 地址。未设置或仍是官方/国内镜像这两个自动地址时，启动时按区域选择：国内 IP 使用 `https://hf-mirror.com`，国外使用 `https://huggingface.co`。`HF_ENDPOINT` 或自定义 Hub 地址优先。
+
 ### token
 
 CSGHub 平台的访问令牌（Access Token）。

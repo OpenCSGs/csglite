@@ -13,13 +13,19 @@ internal sites.
 
 ## Git Push Workflow
 
-This repo has two remotes: `gitlab` (internal) and `origin` (GitHub). When the
-user asks to push or says "commit and push", push to **both** remotes:
+This repo has two remotes: `gitlab` (internal) and `origin` (GitHub). GitHub
+`main` is the source of truth. Pushing `main` to GitHub triggers
+`.github/workflows/sync-gitlab.yml`, which uses the `gitlab-sync` environment
+to update GitLab `main`. Release tags continue to sync through
+`.github/workflows/release.yml`.
 
-1. Push to GitLab first, no proxy needed: `git push gitlab main`.
-2. Push to GitHub second, with proxy: `source ~/.myshrc && git push origin main`.
+When the user asks to push or says "commit and push":
 
-Do not push to only one remote unless the user explicitly requests it.
+1. Push to GitHub only, with proxy: `source ~/.myshrc && git push origin main`.
+2. Do not push to the `gitlab` remote unless the user explicitly requests it or
+   the GitHub sync workflow cannot be used.
+
+Do not push `v*` release tags to GitLab; the Release workflow handles that.
 
 ## Download And Upload Workflow
 
@@ -42,10 +48,10 @@ Do not push to only one remote unless the user explicitly requests it.
 - Keep `local/secrets.env` local-only; it is gitignored.
 - `scripts/push.sh` auto-sources `local/secrets.env` when `GITLAB_TOKEN` is
   unset.
-- Automated tag releases load `GITLAB_TOKEN` from the GitHub Actions
-  `gitlab-sync` environment. Configure it as an environment secret with GitLab
-  `api` and `write_repository` access; never add the token to repository files
-  or workflow literals.
+- Automated GitLab sync for `main` and tag releases loads `GITLAB_TOKEN` from
+  the GitHub Actions `gitlab-sync` environment. Configure it as an environment
+  secret with GitLab `api` and `write_repository` access; never add the token
+  to repository files or workflow literals.
 
 ```sh
 if [ -z "${GITLAB_TOKEN:-}" ] && [ -f "./local/secrets.env" ]; then

@@ -9,7 +9,27 @@ import (
 
 	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/internal/observability"
+	"github.com/opencsgs/csglite/pkg/api"
 )
+
+func TestRequestPricingSnapshotKnownAndUnknown(t *testing.T) {
+	s := &Server{}
+	s.rememberModelPricing([]api.ModelInfo{{
+		Source: "cloud", Model: "priced",
+		Pricing: &api.ModelPricing{
+			InputTokenPrice:  &api.ModelTokenPrice{Currency: "USD", PricePerMillion: 2},
+			OutputTokenPrice: &api.ModelTokenPrice{Currency: "USD", PricePerMillion: 4},
+		},
+	}})
+	snapshot, cost := s.requestPricingSnapshot("cloud", "priced", 1000, 500)
+	if !snapshot.Known || snapshot.Currency != "USD" || cost != 0.004 {
+		t.Fatalf("known snapshot=%+v cost=%v", snapshot, cost)
+	}
+	snapshot, cost = s.requestPricingSnapshot("cloud", "unknown", 1000, 500)
+	if snapshot.Known || cost != 0 {
+		t.Fatalf("unknown snapshot=%+v cost=%v", snapshot, cost)
+	}
+}
 
 func TestObservabilityMiddlewareCapturesTextGenerationAndRedactsSecrets(t *testing.T) {
 	s := newTestServer(t)
@@ -19,7 +39,8 @@ func TestObservabilityMiddlewareCapturesTextGenerationAndRedactsSecrets(t *testi
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"result":"ok","access_token":"response-secret","usage":{"prompt_tokens":7,"prompt_tokens_details":{"cached_tokens":5}}}`))
 	}))
-	body := `{"model":"test/model","stream":true,"api_key":"request-secret","messages":[{"role":"user","content":"hello"}]}`
+	inlineSecret := "gk_" + strings.Repeat("x", 26)
+	body := `{"model":"test/model","stream":true,"api_key":"request-secret","messages":[{"role":"user","content":"hello ` + inlineSecret + `"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set(correlation.RequestIDHeader, "gateway-request")
 	req.Header.Set(correlation.B3TraceIDHeader, "463ac35c9f6413ad48485a3953bb6124")
@@ -63,7 +84,8 @@ func TestObservabilityMiddlewareCapturesTextGenerationAndRedactsSecrets(t *testi
 	if detail.CacheReadInputTokens != 5 || detail.CacheEligibleTokens != 7 {
 		t.Fatalf("unexpected cache usage metadata: %+v", detail)
 	}
-	if strings.Contains(detail.RequestBody, "request-secret") || strings.Contains(detail.ResponseBody, "response-secret") {
+	if strings.Contains(detail.RequestBody, "request-secret") || strings.Contains(detail.RequestBody, inlineSecret) ||
+		strings.Contains(detail.ResponseBody, "response-secret") {
 		t.Fatalf("sensitive values were persisted: request=%s response=%s", detail.RequestBody, detail.ResponseBody)
 	}
 	if !strings.Contains(detail.RequestBody, "[REDACTED]") || !strings.Contains(detail.ResponseBody, "[REDACTED]") {
@@ -161,6 +183,20 @@ func TestObservationResponseCacheUsage(t *testing.T) {
 	}
 }
 
+func TestObservabilityResponseIncludesVersionedRouterDiagnostics(t *testing.T) {
+	response := observabilityRequestResponse(observability.RequestRecord{
+		RouterProfileID: "profile-v2", RouterProfileVersion: 4,
+		RouterProfileSchemaVersion: 2, RouterAlgorithm: "pairwise_router_v2",
+		RouterConfidence: .81, RouterMargin: .19, RouterSimilarity: .74,
+		SemanticFallback: true, SemanticFallbackReason: "low_confidence",
+	})
+	if response.RouterProfileSchemaVersion != 2 || response.RouterAlgorithm != "pairwise_router_v2" ||
+		response.RouterConfidence != .81 || response.RouterMargin != .19 ||
+		response.RouterSimilarity != .74 || response.SemanticFallbackReason != "low_confidence" {
+		t.Fatalf("router diagnostics response = %+v", response)
+	}
+}
+
 func TestObservationResponseUsageReadsFinalUsageFromTruncatedTail(t *testing.T) {
 	var writer observationResponseWriter
 	writer.capture([]byte("data: " + strings.Repeat("x", observabilityBodyLimit) + "\n"))
@@ -220,5 +256,52 @@ func TestObservabilityHandlersListAndClear(t *testing.T) {
 	s.handleObservabilityClear(clearRecorder, httptest.NewRequest(http.MethodDelete, "/api/observability", nil))
 	if clearRecorder.Code != http.StatusOK {
 		t.Fatalf("clear status = %d body=%s", clearRecorder.Code, clearRecorder.Body.String())
+	}
+}
+
+func TestObservabilityFacetsHandler(t *testing.T) {
+	s := newTestServer(t)
+	requests := []struct {
+		model  string
+		source string
+	}{
+		{"test/model-a", "local"},
+		{"test/model-a", "local"},
+		{"test/model-b", "cloud"},
+	}
+	for _, item := range requests {
+		req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"model":"`+item.model+`"}`))
+		model, source := item.model, item.source
+		handler := s.observabilityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			observationFromContext(r.Context()).setUsage(model, source, source, "", 1, 1, nil)
+			_, _ = w.Write([]byte(`{"message":{"content":"ok"}}`))
+		}))
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	recorder := httptest.NewRecorder()
+	s.handleObservabilityFacets(recorder, httptest.NewRequest(http.MethodGet, "/api/observability/facets", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("facets status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Models []api.ObservabilityFacetValue `json:"models"`
+		Routes []api.ObservabilityFacetValue `json:"routes"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Models) != 2 {
+		t.Fatalf("model facets = %+v, want 2 distinct models", response.Models)
+	}
+	if len(response.Routes) != 2 {
+		t.Fatalf("route facets = %+v, want 2 distinct routes", response.Routes)
+	}
+	byValue := make(map[string]api.ObservabilityFacetValue)
+	for _, route := range response.Routes {
+		byValue[route.Value] = route
+	}
+	if byValue["local"].Count != 2 || byValue["cloud"].Count != 1 {
+		t.Fatalf("route counts = %+v, want local=2 cloud=1", response.Routes)
 	}
 }

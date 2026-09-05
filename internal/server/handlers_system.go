@@ -20,6 +20,7 @@ import (
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/hardware"
+	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -155,6 +156,10 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		observabilityUpdated = true
 		configUpdated = true
 	}
+	if req.LlamaUseModelMaxCtx != nil {
+		s.cfg.Inference.LlamaUseModelMaxCtx = *req.LlamaUseModelMaxCtx
+		configUpdated = true
+	}
 	if req.ServerURL != nil {
 		serverURL := strings.TrimSpace(*req.ServerURL)
 		if serverURL == "" {
@@ -184,7 +189,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.HuggingFaceEndpoint != nil {
 		endpoint := strings.TrimSpace(*req.HuggingFaceEndpoint)
 		if endpoint == "" {
-			endpoint = config.DefaultHuggingFaceEndpoint
+			endpoint = config.ResolveHuggingFaceEndpoint("")
 		}
 		registrySettingsUpdated = registrySettingsUpdated || endpoint != strings.TrimSpace(s.cfg.HuggingFaceEndpoint)
 		s.cfg.HuggingFaceEndpoint = endpoint
@@ -258,6 +263,10 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		if err := s.reopenModelMetadata(s.cfg.StorageDir()); err != nil {
 			log.Printf("MODEL METADATA: cache unavailable after storage update: %v", err)
 		}
+		if err := s.reopenRouterProfiles(s.cfg.StorageDir()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to open router profile storage: "+err.Error())
+			return
+		}
 	} else if observabilityUpdated {
 		s.cleanupObservability()
 	}
@@ -313,7 +322,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		DefaultCloudProviderName: config.DefaultCloudProviderName,
 		DefaultServerURL:         config.DefaultServerURL,
 		DefaultAIGatewayURL:      cloud.DefaultBaseURL,
-		HuggingFaceEndpoint:      firstNonEmptySetting(cfg.HuggingFaceEndpoint, config.DefaultHuggingFaceEndpoint),
+		HuggingFaceEndpoint:      config.ResolveHuggingFaceEndpoint(cfg.HuggingFaceEndpoint),
 		HuggingFaceTokenSet:      strings.TrimSpace(cfg.HuggingFaceToken) != "",
 		ModelScopeEndpoint:       firstNonEmptySetting(cfg.ModelScopeEndpoint, config.DefaultModelScopeEndpoint),
 		ModelScopeTokenSet:       strings.TrimSpace(cfg.ModelScopeToken) != "",
@@ -326,7 +335,8 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		Observability: api.ObservabilitySettings{
 			RetentionDays: config.ObservabilityRetentionDays(cfg.Observability),
 		},
-		HiddenNavItems: append([]string{}, cfg.HiddenNavItems...),
+		LlamaUseModelMaxCtx: inference.UseModelMaxCtxByDefault(cfg.Inference.LlamaUseModelMaxCtx),
+		HiddenNavItems:      append([]string{}, cfg.HiddenNavItems...),
 	}
 }
 

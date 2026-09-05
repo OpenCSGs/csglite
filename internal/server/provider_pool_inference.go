@@ -17,6 +17,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
+	routerprofile "github.com/opencsgs/semantic-router"
 )
 
 const providerPoolSourcePrefix = "pool:"
@@ -63,6 +64,7 @@ type providerPoolEngine struct {
 	poolID      string
 	poolName    string
 	modelID     string
+	policy      string
 	members     []providerPoolEngineMember
 	mu          *sync.Mutex
 	current     map[string]int
@@ -71,6 +73,8 @@ type providerPoolEngine struct {
 	affinityKey string
 	now         func() time.Time
 	usage       *providerPoolUsageCapture
+semantic    func(context.Context, providerPoolSemanticInput) routerprofile.Decision
+		route       routerprofile.Decision
 }
 
 type providerPoolEngineMember struct {
@@ -257,7 +261,7 @@ func (e *providerPoolEngine) Close() error { return nil }
 func (e *providerPoolEngine) Generate(ctx context.Context, prompt string, opts inference.Options, onToken inference.TokenCallback) (string, error) {
 	inputTokens := estimateProviderPoolTextTokens(prompt)
 	estimated := inputTokens + positiveTokenLimit(opts.MaxTokens)
-	return e.runChat(ctx, inputTokens, estimated, onToken, func(eng inference.Engine, callback inference.TokenCallback) (string, error) {
+	return e.runChat(ctx, semanticInputFromPrompt(prompt), inputTokens, estimated, onToken, func(eng inference.Engine, callback inference.TokenCallback) (string, error) {
 		return eng.Generate(ctx, prompt, opts, callback)
 	})
 }
@@ -265,14 +269,14 @@ func (e *providerPoolEngine) Generate(ctx context.Context, prompt string, opts i
 func (e *providerPoolEngine) Chat(ctx context.Context, messages []inference.Message, opts inference.Options, onToken inference.TokenCallback) (string, error) {
 	inputTokens := estimateProviderPoolMessagesTokens(messages)
 	estimated := inputTokens + positiveTokenLimit(opts.MaxTokens)
-	return e.runChat(ctx, inputTokens, estimated, onToken, func(eng inference.Engine, callback inference.TokenCallback) (string, error) {
+	return e.runChat(ctx, semanticInputFromInference(messages), inputTokens, estimated, onToken, func(eng inference.Engine, callback inference.TokenCallback) (string, error) {
 		return eng.Chat(ctx, messages, opts, callback)
 	})
 }
 
 func (e *providerPoolEngine) ChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
 	stream, _ := reqBody["stream"].(bool)
-	return e.runProxy(ctx, estimateProviderPoolRequestTokens(reqBody), !stream, func(eng inference.Engine) (*http.Response, error) {
+	return e.runProxy(ctx, semanticInputFromRequest(reqBody), estimateProviderPoolRequestTokens(reqBody), !stream, func(eng inference.Engine) (*http.Response, error) {
 		proxy, ok := eng.(inference.ChatCompletionProxier)
 		if !ok {
 			return nil, fmt.Errorf("pool member does not support chat completions")
@@ -282,7 +286,7 @@ func (e *providerPoolEngine) ChatCompletion(ctx context.Context, reqBody map[str
 }
 
 func (e *providerPoolEngine) Embeddings(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
-	return e.runProxy(ctx, estimateProviderPoolRequestTokens(reqBody), true, func(eng inference.Engine) (*http.Response, error) {
+	return e.runProxy(ctx, providerPoolSemanticInput{}, estimateProviderPoolRequestTokens(reqBody), true, func(eng inference.Engine) (*http.Response, error) {
 		proxy, ok := eng.(inference.EmbeddingsProxier)
 		if !ok {
 			return nil, fmt.Errorf("pool member does not support embeddings")
@@ -291,11 +295,11 @@ func (e *providerPoolEngine) Embeddings(ctx context.Context, reqBody map[string]
 	})
 }
 
-func (e *providerPoolEngine) runChat(ctx context.Context, inputTokens, estimatedTokens int, onToken inference.TokenCallback, call func(inference.Engine, inference.TokenCallback) (string, error)) (string, error) {
+func (e *providerPoolEngine) runChat(ctx context.Context, input providerPoolSemanticInput, inputTokens, estimatedTokens int, onToken inference.TokenCallback, call func(inference.Engine, inference.TokenCallback) (string, error)) (string, error) {
 	var lastErr error
 	fallbackCount := int64(0)
 	limitedCount := int64(0)
-	for _, member := range e.orderedMembers() {
+	for _, member := range e.orderedMembers(ctx, input) {
 		admission, ok := e.admit(member.member, estimatedTokens)
 		if !ok {
 			fallbackCount++
@@ -352,11 +356,11 @@ func (e *providerPoolEngine) runChat(ctx context.Context, inputTokens, estimated
 	return "", lastErr
 }
 
-func (e *providerPoolEngine) runProxy(ctx context.Context, estimatedTokens int, collectActual bool, call func(inference.Engine) (*http.Response, error)) (*http.Response, error) {
+func (e *providerPoolEngine) runProxy(ctx context.Context, input providerPoolSemanticInput, estimatedTokens int, collectActual bool, call func(inference.Engine) (*http.Response, error)) (*http.Response, error) {
 	var lastErr error
 	fallbackCount := 0
 	limitedCount := 0
-	for _, member := range e.orderedMembers() {
+	for _, member := range e.orderedMembers(ctx, input) {
 		admission, ok := e.admit(member.member, estimatedTokens)
 		if !ok {
 			fallbackCount++
@@ -419,13 +423,38 @@ func (e *providerPoolEngine) runProxy(ctx context.Context, estimatedTokens int, 
 
 func (e *providerPoolEngine) captureUsage(member config.ProviderPoolMember, fallbackCount, limitedCount int64) {
 	e.rememberAffinity(member.ID)
+	semanticFallback := e.route.Fallback
+	fallbackReason := e.route.FallbackReason
+	if e.route.Applied && member.ID != e.route.MemberID {
+		semanticFallback = true
+		if fallbackReason == "" {
+			fallbackReason = "routed_member_retry"
+		}
+	}
 	e.usage.set(member.Source, apiUsagePoolMetadata{
-		PoolID:        e.poolID,
-		PoolName:      e.poolName,
-		PoolModel:     e.modelID,
-		MemberModel:   member.Model,
-		FallbackCount: fallbackCount,
-		LimitedCount:  limitedCount,
+		PoolID:                     e.poolID,
+		PoolName:                   e.poolName,
+		PoolModel:                  e.modelID,
+		ActualMemberID:             member.ID,
+		MemberModel:                member.Model,
+		Policy:                     e.policy,
+		RouterProfileID:            e.route.ProfileID,
+		RouterProfileVersion:       e.route.ProfileVersion,
+		RouterProfileSchemaVersion: e.route.ProfileSchemaVersion,
+		RouterAlgorithm:            e.route.RouterAlgorithm,
+		RoutingTextVersion:         e.route.RoutingTextVersion,
+		RouterConfidence:           e.route.Confidence,
+		RouterMargin:               e.route.Margin,
+		RouterSimilarity:           e.route.Similarity,
+		SemanticRouted:             e.route.Applied,
+		SemanticCluster:            e.route.Cluster,
+		SemanticClusterID:          e.route.ClusterID,
+		SemanticDistance:           e.route.Distance,
+		SemanticOOD:                e.route.OOD,
+		SemanticFallback:           semanticFallback,
+		SemanticFallbackReason:     fallbackReason,
+		FallbackCount:              fallbackCount,
+		LimitedCount:               limitedCount,
 	})
 }
 
@@ -519,6 +548,7 @@ func requestPoolUsageMetadata(model, requested string, response *http.Response) 
 		PoolName:      pool.Name,
 		PoolModel:     pool.Model,
 		MemberModel:   strings.TrimSpace(response.Header.Get(providerPoolMemberModelHeader)),
+		Policy:        config.NormalizeProviderPoolPolicy(pool.Policy),
 		FallbackCount: fallbackCount,
 		LimitedCount:  limitedCount,
 	}
@@ -742,26 +772,36 @@ func providerPoolActualTokens(body []byte, fallback int) int {
 	return fallback
 }
 
-func (e *providerPoolEngine) orderedMembers() []providerPoolEngineMember {
+func (e *providerPoolEngine) orderedMembers(ctx context.Context, input providerPoolSemanticInput) []providerPoolEngineMember {
 	members := append([]providerPoolEngineMember{}, e.members...)
 	sort.SliceStable(members, func(i, j int) bool {
 		return members[i].member.Priority < members[j].member.Priority
 	})
+	preferred := ""
+	e.route = routerprofile.Decision{}
+	if e.semantic != nil {
+		e.route = e.semantic(ctx, input)
+		preferred = e.route.MemberID
+	}
 	if len(members) < 2 {
 		return members
+	}
+	if affinityMember := e.preferredMemberID(); affinityMember != "" {
+		for i := range members {
+			if members[i].member.ID == affinityMember {
+				members[0], members[i] = members[i], members[0]
+				if e.route.Applied && e.route.MemberID != affinityMember {
+					e.route.Fallback = true
+					e.route.FallbackReason = "affinity_override"
+				}
+				return members
+			}
+		}
 	}
 	firstPriority := members[0].member.Priority
 	end := 0
 	for end < len(members) && members[end].member.Priority == firstPriority {
 		end++
-	}
-	if preferred := e.preferredMemberID(); preferred != "" {
-		for i := 0; i < end; i++ {
-			if members[i].member.ID == preferred {
-				members[0], members[i] = members[i], members[0]
-				return members
-			}
-		}
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -784,6 +824,14 @@ func (e *providerPoolEngine) orderedMembers() []providerPoolEngineMember {
 	}
 	e.current[e.runtimeKey(members[best].member.ID)] -= total
 	members[0], members[best] = members[best], members[0]
+	if preferred != "" {
+		for i := range members {
+			if members[i].member.ID == preferred {
+				members[0], members[i] = members[i], members[0]
+				break
+			}
+		}
+	}
 	return members
 }
 
@@ -801,10 +849,12 @@ func (s *Server) newProviderPoolChatEngine(ctx context.Context, pool config.Prov
 		})
 	}
 	return &providerPoolEngine{
-		poolID: pool.ID, poolName: pool.Name, modelID: pool.Model, members: members,
+		poolID: pool.ID, poolName: pool.Name, modelID: pool.Model,
+		policy: config.NormalizeProviderPoolPolicy(pool.Policy), members: members,
 		mu: &s.poolMu, current: s.poolCurrent, runtime: s.poolRuntime,
 		affinity: s.poolAffinity, affinityKey: affinityKey,
-		usage: providerPoolUsageCaptureFromContext(ctx),
+		usage:    providerPoolUsageCaptureFromContext(ctx),
+		semantic: s.providerPoolSemanticRouter(pool),
 	}, nil
 }
 
@@ -821,7 +871,8 @@ func (s *Server) newProviderPoolEmbeddingEngine(ctx context.Context, pool config
 		})
 	}
 	return &providerPoolEngine{
-		poolID: pool.ID, poolName: pool.Name, modelID: pool.Model, members: members,
+		poolID: pool.ID, poolName: pool.Name, modelID: pool.Model,
+		policy: config.NormalizeProviderPoolPolicy(pool.Policy), members: members,
 		mu: &s.poolMu, current: s.poolCurrent, runtime: s.poolRuntime,
 		affinity: s.poolAffinity,
 		usage:    providerPoolUsageCaptureFromContext(ctx),

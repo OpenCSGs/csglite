@@ -154,6 +154,8 @@ One-click configuration for popular coding agents. Models from local, OpenCSG, o
 | **Codex** | `~/.codex/config.toml` | `csghub-lite launch codex --model <model>` |
 | **ZCode** | `~/.zcode/v2/config.json` | Web UI → AI Apps → select model → Launch |
 | **Pi** | `~/.pi/agent/settings.json` | `csghub-lite launch pi --model <model>` |
+| **Kimi Code** | `~/.kimi-code/config.toml` | `csghub-lite launch kimi-code --model <model>` |
+| **DeepSeek Harness** | `~/.dsh/settings.yaml` | `csghub-lite launch dsh --model <model>` |
 | **OpenCode** | `~/.opencode.json` | `csghub-lite launch open-code --model <model>` |
 
 After the first launch via CSGLite, subsequent runs use the configured settings automatically — no manual API key or base URL setup needed.
@@ -168,6 +170,12 @@ csghub-lite launch codex --model "Qwen/Qwen2.5-Coder-7B"
 
 # Configure Pi with Kimi model
 csghub-lite launch pi --model "moonshot-v1-8k"
+
+# Configure Kimi Code with GLM model
+csghub-lite launch kimi-code --model "glm-4-flash"
+
+# Configure DeepSeek Harness with GLM model
+csghub-lite launch dsh --model "glm-4-flash"
 ```
 
 ### AI Applications
@@ -183,6 +191,8 @@ One-click setup for AI assistant applications:
 | **Codex App** | OpenAI desktop coding app | Web UI → AI Apps |
 | **ZCode** | Z.ai cross-platform desktop coding app | Web UI → AI Apps |
 | **Pi** | Lightweight terminal coding agent | `csghub-lite launch pi` or Web UI → AI Apps |
+| **Kimi Code** | Terminal AI coding agent | `csghub-lite launch kimi-code` or Web UI → AI Apps |
+| **DeepSeek Harness** | Plugin-based agent harness | `csghub-lite launch dsh` or Web UI → AI Apps |
 | **OpenClaw** | Open-source AI assistant with web UI | `csghub-lite launch openclaw` or Web UI → AI Apps |
 | **CSGClaw** | macOS/Windows multi-agent desktop application | Web UI → AI Apps |
 | **Dify** | LLM app development platform | Web UI → AI Apps |
@@ -197,8 +207,10 @@ Managed apps auto-configure to use CSGLite's OpenAI-compatible API endpoint with
 | `csghub-lite run <model>` | Pull, start server, and chat (all automatic) |
 | `csghub-lite chat <model>` | Chat with a locally downloaded model |
 | `csghub-lite ps` | List currently running models and their keep-alive |
-| `csghub-lite stop <model>` | Stop/unload a running model |
-| `csghub-lite serve` | Start the API server (auto-started by `run`) |
+| `csghub-lite start` | Start the API server in the background |
+| `csghub-lite stop` | Stop the background API server |
+| `csghub-lite stop model [MODEL]` | Stop/unload a running model |
+| `csghub-lite serve` | Start the API server in the foreground (auto-started by `run`) |
 | `csghub-lite restart` | Restart the background API server |
 | `csghub-lite pull <model>` | Download a model from CSGHub |
 | `csghub-lite list` / `ls` | List locally downloaded models |
@@ -226,7 +238,7 @@ csghub-lite run Qwen/Qwen3-0.6B-GGUF
 # Exit chat, model stays loaded — reconnect instantly
 csghub-lite run Qwen/Qwen3-0.6B-GGUF
 
-# Keep the model loaded until `csghub-lite stop`
+# Keep the model loaded until `csghub-lite stop model`
 csghub-lite run Qwen/Qwen3-0.6B-GGUF --keep-alive -1
 
 # Check which models are still loaded

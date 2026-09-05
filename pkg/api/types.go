@@ -459,6 +459,7 @@ type SettingsResponse struct {
 	LocalAPIURL              string                `json:"local_api_url,omitempty"`
 	WebSearch                WebSearchSettings     `json:"web_search"`
 	Observability            ObservabilitySettings `json:"observability"`
+	LlamaUseModelMaxCtx      bool                  `json:"llama_use_model_max_ctx"`
 	HiddenNavItems           []string              `json:"hidden_nav_items"`
 }
 
@@ -478,6 +479,7 @@ type SettingsUpdateRequest struct {
 	Autostart                *bool                  `json:"autostart,omitempty"`
 	WebSearch                *WebSearchSettings     `json:"web_search,omitempty"`
 	Observability            *ObservabilitySettings `json:"observability,omitempty"`
+	LlamaUseModelMaxCtx      *bool                  `json:"llama_use_model_max_ctx,omitempty"`
 }
 
 type ObservabilitySettings struct {
@@ -486,45 +488,67 @@ type ObservabilitySettings struct {
 }
 
 type ObservabilityRequest struct {
-	ID                    string    `json:"id"`
-	RequestID             string    `json:"request_id,omitempty"`
-	TraceID               string    `json:"trace_id"`
-	B3TraceID             string    `json:"b3_trace_id,omitempty"`
-	ThreadID              string    `json:"thread_id,omitempty"`
-	StartedAt             time.Time `json:"started_at"`
-	CompletedAt           time.Time `json:"completed_at"`
-	Method                string    `json:"method"`
-	Path                  string    `json:"path"`
-	Protocol              string    `json:"protocol"`
-	Status                string    `json:"status"`
-	StatusCode            int       `json:"status_code"`
-	Stream                bool      `json:"stream"`
-	Model                 string    `json:"model"`
-	Source                string    `json:"source,omitempty"`
-	SourceType            string    `json:"source_type,omitempty"`
-	SourceName            string    `json:"source_name,omitempty"`
-	APIKeyID              string    `json:"api_key_id,omitempty"`
-	APIKeyName            string    `json:"api_key_name,omitempty"`
-	PoolID                string    `json:"pool_id,omitempty"`
-	PoolName              string    `json:"pool_name,omitempty"`
-	PoolModel             string    `json:"pool_model,omitempty"`
-	MemberModel           string    `json:"member_model,omitempty"`
-	FallbackCount         int64     `json:"fallback_count"`
-	LimitedCount          int64     `json:"limited_count"`
-	InputTokens           int64     `json:"input_tokens"`
-	OutputTokens          int64     `json:"output_tokens"`
-	TotalTokens           int64     `json:"total_tokens"`
-	CacheReadInputTokens  int64     `json:"cache_read_input_tokens"`
-	CacheCreationTokens   int64     `json:"cache_creation_input_tokens"`
-	CacheEligibleTokens   int64     `json:"cache_eligible_input_tokens"`
-	CacheHitRate          float64   `json:"cache_hit_rate"`
-	DurationMS            int64     `json:"duration_ms"`
-	FirstTokenLatencyMS   int64     `json:"first_token_latency_ms"`
-	ErrorMessage          string    `json:"error_message,omitempty"`
-	RequestBody           string    `json:"request_body,omitempty"`
-	ResponseBody          string    `json:"response_body,omitempty"`
-	RequestBodyTruncated  bool      `json:"request_body_truncated"`
-	ResponseBodyTruncated bool      `json:"response_body_truncated"`
+	ID                         string    `json:"id"`
+	RequestID                  string    `json:"request_id,omitempty"`
+	TraceID                    string    `json:"trace_id"`
+	B3TraceID                  string    `json:"b3_trace_id,omitempty"`
+	ThreadID                   string    `json:"thread_id,omitempty"`
+	StartedAt                  time.Time `json:"started_at"`
+	CompletedAt                time.Time `json:"completed_at"`
+	Method                     string    `json:"method"`
+	Path                       string    `json:"path"`
+	Protocol                   string    `json:"protocol"`
+	Status                     string    `json:"status"`
+	StatusCode                 int       `json:"status_code"`
+	Stream                     bool      `json:"stream"`
+	Model                      string    `json:"model"`
+	Source                     string    `json:"source,omitempty"`
+	SourceType                 string    `json:"source_type,omitempty"`
+	SourceName                 string    `json:"source_name,omitempty"`
+	APIKeyID                   string    `json:"api_key_id,omitempty"`
+	APIKeyName                 string    `json:"api_key_name,omitempty"`
+	PoolID                     string    `json:"pool_id,omitempty"`
+	PoolName                   string    `json:"pool_name,omitempty"`
+	PoolModel                  string    `json:"pool_model,omitempty"`
+	ActualMemberID             string    `json:"actual_member_id,omitempty"`
+	MemberModel                string    `json:"member_model,omitempty"`
+	PoolPolicy                 string    `json:"pool_policy,omitempty"`
+	RouterProfileID            string    `json:"router_profile_id,omitempty"`
+	RouterProfileVersion       int       `json:"router_profile_version,omitempty"`
+	RouterProfileSchemaVersion int       `json:"router_profile_schema_version,omitempty"`
+	RouterAlgorithm            string    `json:"router_algorithm,omitempty"`
+	RoutingTextVersion         string    `json:"routing_text_version,omitempty"`
+	RouterConfidence           float64   `json:"router_confidence,omitempty"`
+	RouterMargin               float64   `json:"router_margin,omitempty"`
+	RouterSimilarity           float64   `json:"router_similarity,omitempty"`
+	SemanticRouted             bool      `json:"semantic_routed,omitempty"`
+	SemanticCluster            int       `json:"semantic_cluster"`
+	SemanticClusterID          string    `json:"semantic_cluster_id,omitempty"`
+	SemanticDistance           float64   `json:"semantic_distance,omitempty"`
+	SemanticOOD                bool      `json:"semantic_ood,omitempty"`
+	SemanticFallback           bool      `json:"semantic_fallback,omitempty"`
+	SemanticFallbackReason     string    `json:"semantic_fallback_reason,omitempty"`
+	PriceInputPerMillion       float64   `json:"price_input_per_million"`
+	PriceOutputPerMillion      float64   `json:"price_output_per_million"`
+	EstimatedCost              float64   `json:"estimated_cost"`
+	CostCurrency               string    `json:"cost_currency,omitempty"`
+	CostKnown                  bool      `json:"cost_known"`
+	FallbackCount              int64     `json:"fallback_count"`
+	LimitedCount               int64     `json:"limited_count"`
+	InputTokens                int64     `json:"input_tokens"`
+	OutputTokens               int64     `json:"output_tokens"`
+	TotalTokens                int64     `json:"total_tokens"`
+	CacheReadInputTokens       int64     `json:"cache_read_input_tokens"`
+	CacheCreationTokens        int64     `json:"cache_creation_input_tokens"`
+	CacheEligibleTokens        int64     `json:"cache_eligible_input_tokens"`
+	CacheHitRate               float64   `json:"cache_hit_rate"`
+	DurationMS                 int64     `json:"duration_ms"`
+	FirstTokenLatencyMS        int64     `json:"first_token_latency_ms"`
+	ErrorMessage               string    `json:"error_message,omitempty"`
+	RequestBody                string    `json:"request_body,omitempty"`
+	ResponseBody               string    `json:"response_body,omitempty"`
+	RequestBodyTruncated       bool      `json:"request_body_truncated"`
+	ResponseBodyTruncated      bool      `json:"response_body_truncated"`
 }
 
 type ObservabilityRequestSummary struct {
@@ -565,6 +589,17 @@ type ObservabilityTraceListResponse struct {
 type ObservabilityTraceDetailResponse struct {
 	Trace    ObservabilityTrace     `json:"trace"`
 	Requests []ObservabilityRequest `json:"requests"`
+}
+
+type ObservabilityFacetValue struct {
+	Value string `json:"value"`
+	Label string `json:"label,omitempty"`
+	Count int64  `json:"count"`
+}
+
+type ObservabilityFacetsResponse struct {
+	Models []ObservabilityFacetValue `json:"models"`
+	Routes []ObservabilityFacetValue `json:"routes"`
 }
 
 type DatasetExportRequest struct {
@@ -685,23 +720,27 @@ type APIUsageTotals struct {
 }
 
 type APIUsageRow struct {
-	APIKeyID      string    `json:"api_key_id"`
-	APIKeyName    string    `json:"api_key_name"`
-	Model         string    `json:"model"`
-	Source        string    `json:"source"`
-	SourceType    string    `json:"source_type"`
-	SourceName    string    `json:"source_name,omitempty"`
-	PoolID        string    `json:"pool_id,omitempty"`
-	PoolName      string    `json:"pool_name,omitempty"`
-	PoolModel     string    `json:"pool_model,omitempty"`
-	MemberModel   string    `json:"member_model,omitempty"`
-	FallbackCount int64     `json:"fallback_count,omitempty"`
-	LimitedCount  int64     `json:"limited_count,omitempty"`
-	Requests      int64     `json:"requests"`
-	InputTokens   int64     `json:"input_tokens"`
-	OutputTokens  int64     `json:"output_tokens"`
-	TotalTokens   int64     `json:"total_tokens"`
-	LastUsedAt    time.Time `json:"last_used_at"`
+	APIKeyID       string    `json:"api_key_id"`
+	APIKeyName     string    `json:"api_key_name"`
+	Model          string    `json:"model"`
+	Source         string    `json:"source"`
+	SourceType     string    `json:"source_type"`
+	SourceName     string    `json:"source_name,omitempty"`
+	PoolID         string    `json:"pool_id,omitempty"`
+	PoolName       string    `json:"pool_name,omitempty"`
+	PoolModel      string    `json:"pool_model,omitempty"`
+	ActualMemberID string    `json:"actual_member_id,omitempty"`
+	MemberModel    string    `json:"member_model,omitempty"`
+	EstimatedCost  float64   `json:"estimated_cost,omitempty"`
+	CostCurrency   string    `json:"cost_currency,omitempty"`
+	CostKnown      bool      `json:"cost_known"`
+	FallbackCount  int64     `json:"fallback_count,omitempty"`
+	LimitedCount   int64     `json:"limited_count,omitempty"`
+	Requests       int64     `json:"requests"`
+	InputTokens    int64     `json:"input_tokens"`
+	OutputTokens   int64     `json:"output_tokens"`
+	TotalTokens    int64     `json:"total_tokens"`
+	LastUsedAt     time.Time `json:"last_used_at"`
 }
 
 type APIUsageSourceTotal struct {
@@ -1105,11 +1144,14 @@ type ThirdPartyProviderUpdateRequest struct {
 
 // ProviderPool exposes one public model ID and selects one of its members.
 type ProviderPool struct {
-	ID      string               `json:"id"`
-	Name    string               `json:"name"`
-	Model   string               `json:"model"`
-	Enabled bool                 `json:"enabled"`
-	Members []ProviderPoolMember `json:"members"`
+	ID                      string               `json:"id"`
+	Name                    string               `json:"name"`
+	Model                   string               `json:"model"`
+	Enabled                 bool                 `json:"enabled"`
+	Policy                  string               `json:"policy"`
+	PolicyAvailable         bool                 `json:"policy_available"`
+	PolicyUnavailableReason string               `json:"policy_unavailable_reason,omitempty"`
+	Members                 []ProviderPoolMember `json:"members"`
 }
 
 type ProviderPoolMember struct {
@@ -1131,6 +1173,7 @@ type ProviderPoolCreateRequest struct {
 	Name    string               `json:"name"`
 	Model   string               `json:"model"`
 	Enabled *bool                `json:"enabled,omitempty"`
+	Policy  string               `json:"policy,omitempty"`
 	Members []ProviderPoolMember `json:"members"`
 }
 
@@ -1138,7 +1181,298 @@ type ProviderPoolUpdateRequest struct {
 	Name    *string               `json:"name,omitempty"`
 	Model   *string               `json:"model,omitempty"`
 	Enabled *bool                 `json:"enabled,omitempty"`
+	Policy  *string               `json:"policy,omitempty"`
 	Members *[]ProviderPoolMember `json:"members,omitempty"`
+}
+
+type ProviderPoolPolicyCapability struct {
+	Type         string `json:"type"`
+	Experimental bool   `json:"experimental"`
+	Available    bool   `json:"available"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+type ProviderPoolPolicyCapabilitiesResponse struct {
+	Policies []ProviderPoolPolicyCapability `json:"policies"`
+}
+
+type ProviderPoolRouterSuggestion struct {
+	ID                  string    `json:"id"`
+	Reason              string    `json:"reason"`
+	QualifiedQueryCount int       `json:"qualified_query_count"`
+	NewQueryCount       int       `json:"new_query_count"`
+	MemberCompatible    bool      `json:"member_compatible"`
+	Status              string    `json:"status"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+type ProviderPoolRouterEvaluationRequest struct {
+	EvaluationMode        string  `json:"evaluation_mode,omitempty"`
+	BaseProfileID         string  `json:"base_profile_id,omitempty"`
+	JudgeModel            string  `json:"judge_model"`
+	MaxQueries            int     `json:"max_queries"`
+	Repeats               int     `json:"repeats"`
+	MaxOutputTokens       int     `json:"max_output_tokens"`
+	RequestTimeoutSeconds int     `json:"request_timeout_seconds"`
+	BudgetCurrency        string  `json:"budget_currency"`
+	BudgetAmount          float64 `json:"budget_amount"`
+	AllowUnknownPricing   bool    `json:"allow_unknown_pricing"`
+}
+
+type ProviderPoolRouterEvaluationLimits struct {
+	MaxQueries               int `json:"max_queries"`
+	MaxRepeats               int `json:"max_repeats"`
+	MaxOutputTokens          int `json:"max_output_tokens"`
+	MaxRequestTimeoutSeconds int `json:"max_request_timeout_seconds"`
+}
+
+type ProviderPoolRouterTarget struct {
+	Source string `json:"source"`
+	Model  string `json:"model"`
+}
+
+type ProviderPoolRouterEvaluationPreview struct {
+	EvaluationMode                string                             `json:"evaluation_mode"`
+	EligibleSnapshotCount         int                                `json:"eligible_snapshot_count"`
+	SelectedSnapshotCount         int                                `json:"selected_snapshot_count"`
+	DirectCandidateCalls          int                                `json:"direct_candidate_calls"`
+	JudgeCalls                    int                                `json:"judge_calls"`
+	MaxJudgeCalls                 int                                `json:"max_judge_calls"`
+	MaxTotalCalls                 int                                `json:"max_total_calls"`
+	JudgePromptTokens             int64                              `json:"judge_prompt_tokens"`
+	MaxJudgeTokenExposure         int64                              `json:"max_judge_token_exposure"`
+	MaxTokenExposure              int64                              `json:"max_token_exposure"`
+	KnownJudgeEstimatedCost       float64                            `json:"known_judge_estimated_cost"`
+	KnownEstimatedCost            float64                            `json:"known_estimated_cost"`
+	Currency                      string                             `json:"currency"`
+	UnknownPriceMembers           []ProviderPoolRouterTarget         `json:"unknown_price_members"`
+	JudgePriceKnown               bool                               `json:"judge_price_known"`
+	RequiresUnknownPricingConsent bool                               `json:"requires_unknown_pricing_consent"`
+	Limits                        ProviderPoolRouterEvaluationLimits `json:"limits"`
+}
+
+type ProviderPoolRouterEvaluationJob struct {
+	ID                      string     `json:"id"`
+	EvaluationMode          string     `json:"evaluation_mode"`
+	BaseProfileID           string     `json:"base_profile_id,omitempty"`
+	MemberCompatible        bool       `json:"member_compatible"`
+	JudgeModel              string     `json:"judge_model"`
+	MaxQueries              int        `json:"max_queries"`
+	Repeats                 int        `json:"repeats"`
+	MaxOutputTokens         int        `json:"max_output_tokens"`
+	RequestTimeoutSeconds   int        `json:"request_timeout_seconds"`
+	BudgetCurrency          string     `json:"budget_currency"`
+	BudgetAmount            float64    `json:"budget_amount"`
+	AllowUnknownPricing     bool       `json:"allow_unknown_pricing"`
+	DirectCandidateCalls    int        `json:"direct_candidate_calls,omitempty"`
+	JudgeCalls              int        `json:"judge_calls,omitempty"`
+	MaxJudgeCalls           int        `json:"max_judge_calls,omitempty"`
+	JudgePromptTokens       int64      `json:"judge_prompt_tokens,omitempty"`
+	MaxJudgeTokenExposure   int64      `json:"max_judge_token_exposure,omitempty"`
+	MaxTokenExposure        int64      `json:"max_token_exposure,omitempty"`
+	KnownJudgeEstimatedCost float64    `json:"known_judge_estimated_cost,omitempty"`
+	KnownEstimatedCost      float64    `json:"known_estimated_cost,omitempty"`
+	EstimateCurrency        string     `json:"estimate_currency,omitempty"`
+	UnknownPricing          bool       `json:"unknown_pricing,omitempty"`
+	Current                 int        `json:"current"`
+	Total                   int        `json:"total"`
+	Phase                   string     `json:"phase,omitempty"`
+	CancellationRequested   bool       `json:"cancellation_requested"`
+	Status                  string     `json:"status"`
+	Error                   string     `json:"error,omitempty"`
+	CreatedAt               time.Time  `json:"created_at"`
+	StartedAt               *time.Time `json:"started_at,omitempty"`
+	CompletedAt             *time.Time `json:"completed_at,omitempty"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+}
+
+type ProviderPoolRouterEvaluationJobsResponse struct {
+	Items  []ProviderPoolRouterEvaluationJob `json:"items"`
+	Limit  int                               `json:"limit"`
+	Offset int                               `json:"offset"`
+}
+
+type ProviderPoolRouterBaselineResult struct {
+	Quality float64 `json:"quality"`
+	Cost    float64 `json:"cost"`
+}
+
+type ProviderPoolRouterBaselines struct {
+	BestSingleModel ProviderPoolRouterBaselineResult `json:"best_single_model"`
+	CheapestModel   ProviderPoolRouterBaselineResult `json:"cheapest_model"`
+	RandomModel     ProviderPoolRouterBaselineResult `json:"random_model"`
+	OracleModel     ProviderPoolRouterBaselineResult `json:"oracle_model"`
+}
+
+type ProviderPoolRouterMetrics struct {
+	QueryCount              int            `json:"query_count"`
+	CellCount               int            `json:"cell_count"`
+	TrialCount              int            `json:"trial_count"`
+	Repeats                 int            `json:"repeats"`
+	ResponseOutcomes        map[string]int `json:"response_outcomes"`
+	WinRate                 float64        `json:"win_rate"`
+	Spend                   float64        `json:"spend"`
+	TotalCost               float64        `json:"total_cost"`
+	Currency                string         `json:"currency,omitempty"`
+	CostUnit                string         `json:"cost_unit"`
+	MonetarySpendKnown      bool           `json:"monetary_spend_known"`
+	UnknownMonetarySpend    bool           `json:"unknown_monetary_spend"`
+	TrainQueryCount         int            `json:"train_query_count"`
+	HeldOutQueryCount       int            `json:"held_out_query_count"`
+	CVFoldCount             int            `json:"cv_fold_count"`
+	TrainUtility            float64        `json:"train_utility"`
+	TrainQuality            float64        `json:"train_quality"`
+	TrainCost               float64        `json:"train_cost_score"`
+	HeldOutUtility          float64        `json:"held_out_utility"`
+	HeldOutQuality          float64        `json:"held_out_quality"`
+	HeldOutCost             float64        `json:"held_out_cost_score"`
+	AllClustersOneMember    bool           `json:"all_clusters_one_member"`
+	SemanticDifferentiation bool           `json:"semantic_differentiation"`
+	Baselines               ProviderPoolRouterBaselines `json:"baselines"`
+}
+
+type ProviderPoolRouterDistanceQuantiles struct {
+	P50 float64 `json:"p50"`
+	P90 float64 `json:"p90"`
+	P95 float64 `json:"p95"`
+	P99 float64 `json:"p99"`
+}
+
+type ProviderPoolRouterCluster struct {
+	ID               string                              `json:"id"`
+	TargetMemberID   string                              `json:"target_member_id"`
+	Target           ProviderPoolRouterTarget            `json:"target"`
+	SampleCount      int                                 `json:"sample_count"`
+	DistanceQuantile ProviderPoolRouterDistanceQuantiles `json:"distance_quantiles"`
+	OODThreshold     float64                             `json:"ood_threshold"`
+}
+
+type ProviderPoolRouterCandidateDistribution struct {
+	MemberID     string                   `json:"member_id"`
+	Target       ProviderPoolRouterTarget `json:"target"`
+	ClusterCount int                      `json:"cluster_count"`
+	SampleCount  int                      `json:"sample_count"`
+	Fraction     float64                  `json:"fraction,omitempty"`
+}
+
+type ProviderPoolRouterPairwiseMetrics struct {
+	Count            int     `json:"count"`
+	LogLoss          float64 `json:"log_loss"`
+	Brier            float64 `json:"brier"`
+	TopClassAccuracy float64 `json:"top_class_accuracy"`
+	ECE              float64 `json:"ece"`
+}
+
+type ProviderPoolRouterQualityCost struct {
+	Quality   float64 `json:"quality"`
+	Cost      float64 `json:"cost,omitempty"`
+	CostKnown bool    `json:"cost_known"`
+	Currency  string  `json:"currency,omitempty"`
+}
+
+type ProviderPoolRouterThresholds struct {
+	MinimumConfidence float64 `json:"minimum_confidence"`
+	MinimumMargin     float64 `json:"minimum_margin"`
+	MinimumSimilarity float64 `json:"minimum_similarity"`
+	QualitySlack      float64 `json:"quality_slack"`
+}
+
+// ProviderPoolRouterV2Summary intentionally exposes only bounded diagnostics.
+// Learner samples, embeddings, forest nodes, prompts, and responses stay private.
+type ProviderPoolRouterV2Summary struct {
+	ProfileAlgorithm       string                            `json:"profile_algorithm"`
+	ModelType              string                            `json:"model_type"`
+	ModelFallbackReason    string                            `json:"model_fallback_reason,omitempty"`
+	SampleCount            int                               `json:"sample_count"`
+	QueryGroupCount        int                               `json:"query_group_count"`
+	RoundCount             int                               `json:"round_count"`
+	CVFoldCount            int                               `json:"cv_fold_count"`
+	TargetQualityRetention float64                           `json:"target_quality_retention"`
+	ConfidenceLevel        float64                           `json:"confidence_level"`
+	Baseline               ProviderPoolRouterQualityCost     `json:"baseline_best_single_model"`
+	Routed                 ProviderPoolRouterQualityCost     `json:"routed"`
+	PointRetention         float64                           `json:"point_retention"`
+	ConservativeRetention  float64                           `json:"conservative_retention"`
+	RetentionLowerBound    float64                           `json:"retention_lower_bound"`
+	Savings                float64                           `json:"savings,omitempty"`
+	SavingsFraction        float64                           `json:"savings_fraction,omitempty"`
+	SavingsKnown           bool                              `json:"savings_known"`
+	Coverage               float64                           `json:"coverage"`
+	FallbackRate           float64                           `json:"fallback_rate"`
+	LowConfidenceRate      float64                           `json:"low_confidence_rate"`
+	OODRate                float64                           `json:"ood_rate"`
+	PairwiseMetrics        ProviderPoolRouterPairwiseMetrics `json:"pairwise_metrics"`
+	Thresholds             ProviderPoolRouterThresholds      `json:"thresholds"`
+	OptimizeKnownCost      bool                              `json:"optimize_known_cost"`
+	QualityFeasible        bool                              `json:"quality_feasible"`
+	KnownCostFeasible      bool                              `json:"known_cost_feasible"`
+	InsufficientEvidence   bool                              `json:"insufficient_evidence"`
+	CollapsedMemberID      string                            `json:"collapsed_member_id,omitempty"`
+	Warnings               []string                          `json:"warnings,omitempty"`
+}
+
+type ProviderPoolRouterProfile struct {
+	ID                      string                                    `json:"id"`
+	Version                 int                                       `json:"version"`
+	SchemaVersion           int                                       `json:"schema_version"`
+	RouterAlgorithm         string                                    `json:"router_algorithm,omitempty"`
+	MemberCompatible        bool                                      `json:"member_compatible"`
+	MemberFingerprintDrift  bool                                      `json:"member_fingerprint_drift"`
+	Active                  bool                                      `json:"active"`
+	CreatedAt               time.Time                                 `json:"created_at"`
+	CreatedBy               string                                    `json:"created_by,omitempty"`
+	SourceJobID             string                                    `json:"source_job_id,omitempty"`
+	Description             string                                    `json:"description,omitempty"`
+	GeneratedAt             time.Time                                 `json:"generated_at"`
+	Distance                string                                    `json:"distance"`
+	CostUnit                string                                    `json:"cost_unit"`
+	FallbackMemberID        string                                    `json:"fallback_member_id"`
+	Metrics                 ProviderPoolRouterMetrics                 `json:"metrics"`
+	Clusters                []ProviderPoolRouterCluster               `json:"clusters,omitempty"`
+	CandidateDistribution   []ProviderPoolRouterCandidateDistribution `json:"candidate_distribution,omitempty"`
+	ActivationAllowed       bool                                      `json:"activation_allowed"`
+	ActivationBlockedReason string                                    `json:"activation_blocked_reason,omitempty"`
+	ValidationState         string                                    `json:"validation_state,omitempty"`
+	Feasible                bool                                      `json:"feasible"`
+	CollapsedSingleMember   bool                                      `json:"collapsed_single_member"`
+	CollapsedQualityPassed  bool                                      `json:"collapsed_quality_passed"`
+	V2                      *ProviderPoolRouterV2Summary              `json:"v2,omitempty"`
+}
+
+type ProviderPoolRouterProfilesResponse struct {
+	Items  []ProviderPoolRouterProfile `json:"items"`
+	Limit  int                         `json:"limit"`
+	Offset int                         `json:"offset"`
+}
+
+type ProviderPoolRouterActivationRequest struct {
+	Actor                    string `json:"actor"`
+	Reason                   string `json:"reason"`
+	ExpectedCurrentProfileID string `json:"expected_current_profile_id,omitempty"`
+}
+
+type ProviderPoolRouterActivation struct {
+	ID            int64     `json:"id"`
+	FromProfileID string    `json:"from_profile_id,omitempty"`
+	ToProfileID   string    `json:"to_profile_id"`
+	Action        string    `json:"action"`
+	Reason        string    `json:"reason"`
+	Actor         string    `json:"actor"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type ProviderPoolRouterStatus struct {
+	QualifiedQueryCount     int                              `json:"qualified_query_count"`
+	NewQueryCount           int                              `json:"new_query_count"`
+	PendingSuggestion       *ProviderPoolRouterSuggestion    `json:"pending_suggestion,omitempty"`
+	RunningJob              *ProviderPoolRouterEvaluationJob `json:"running_job,omitempty"`
+	LatestJob               *ProviderPoolRouterEvaluationJob `json:"latest_job,omitempty"`
+	ActiveProfile           *ProviderPoolRouterProfile       `json:"active_profile,omitempty"`
+	LatestCandidateProfile  *ProviderPoolRouterProfile       `json:"latest_candidate_profile,omitempty"`
+	RollbackTargetProfile   *ProviderPoolRouterProfile       `json:"rollback_target_profile,omitempty"`
+	CurrentProfileID        string                           `json:"current_profile_id,omitempty"`
+	SemanticDifferentiation bool                             `json:"semantic_differentiation"`
 }
 
 type ProviderTagModelRequest struct {

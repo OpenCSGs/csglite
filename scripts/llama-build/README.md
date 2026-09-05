@@ -29,15 +29,15 @@ you intend to re-pull images.
 ## Quick start
 
 ```sh
-# From repo root; default tag b10326
+# From repo root; default tag b10549
 make llama-cuda-rebuild-all
 
 # Or explicitly:
-./scripts/llama-build/rebuild-upload-all.sh b10326
+./scripts/llama-build/rebuild-upload-all.sh b10549
 
 # One architecture only:
-./scripts/llama-build/rebuild-upload-x64.sh b10326
-./scripts/llama-build/rebuild-upload-arm64.sh b10326
+./scripts/llama-build/rebuild-upload-x64.sh b10549
+./scripts/llama-build/rebuild-upload-arm64.sh b10549
 ```
 
 Artifacts: `scripts/llama-build/work/out/*.tar.gz` (gitignored).
@@ -45,8 +45,8 @@ Artifacts: `scripts/llama-build/work/out/*.tar.gz` (gitignored).
 Compare with GitLab before/after upload:
 
 ```sh
-./scripts/llama-build/compare-with-gitlab.sh x64 b10326
-./scripts/llama-build/compare-with-gitlab.sh arm64 b10326
+./scripts/llama-build/compare-with-gitlab.sh x64 b10549
+./scripts/llama-build/compare-with-gitlab.sh arm64 b10549
 ```
 
 ## Pinned Docker image
@@ -57,7 +57,7 @@ Compare with GitLab before/after upload:
 
 Scripts reuse local images (`docker image inspect` / `--pull=never`).
 
-## Package layout (b10326 reference)
+## Package layout (b10549 reference)
 
 | Arch | Tarball | Root layout |
 |------|---------|-------------|

@@ -36,6 +36,21 @@ func TestModelInfoFromRemote_TextModel(t *testing.T) {
 	}
 }
 
+func TestModelInfoFromRemote_EmbeddingModel(t *testing.T) {
+	info, ok := modelInfoFromRemote(remoteModel{
+		ID:   "text-embedding-3-small",
+		Task: "feature-extraction",
+	})
+	if !ok {
+		t.Fatal("expected embedding model to be included")
+	}
+	if info.PipelineTag != "feature-extraction" ||
+		!slices.Equal(info.InputModalities, []string{"text"}) ||
+		!slices.Equal(info.OutputModalities, []string{"embedding"}) {
+		t.Fatalf("embedding model info = %#v", info)
+	}
+}
+
 func TestModelInfoFromRemote_LabelFallsBackToID(t *testing.T) {
 	info, ok := modelInfoFromRemote(remoteModel{
 		ID:   "deepseek-v3.2",

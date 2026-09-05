@@ -4,11 +4,20 @@ import "testing"
 
 func TestIsSupportedHFArchitecture(t *testing.T) {
 	cases := map[string]string{
-		"Qwen2ForCausalLM":                 "qwen2",
-		"QwenForCausalLM":                  "qwen2",
-		"ModernBertModel":                  "modernbert",
-		"Idefics3ForConditionalGeneration": "mmp",
-		"Gemma4ForConditionalGeneration":   "gemma4",
+		"Qwen2ForCausalLM":                   "qwen2",
+		"QwenForCausalLM":                    "qwen2",
+		"ModernBertModel":                    "modernbert",
+		"Idefics3ForConditionalGeneration":   "mmp",
+		"Gemma4ForConditionalGeneration":     "gemma4",
+		"BailingMoeV3ForCausalLM":            "bailingmoe3",
+		"KimiK3ForConditionalGeneration":      "kimi-k3",
+		"MuseGlimmerForConditionalGeneration": "muse-glimmer",
+		"PocketTTSModel":                     "pockettts",
+		"MiniMaxText01ForCausalLM":           "minimax-01",
+		"MiniMaxM1ForCausalLM":               "minimax-01",
+		"GraniteSWAForCausalLM":              "granite_swa",
+		"GraniteMoeSWAForCausalLM":           "granite_swa",
+		"GraniteSwitchForCausalLM":           "graniteswitch",
 	}
 	for arch, wantRuntimeArch := range cases {
 		t.Run(arch, func(t *testing.T) {

@@ -31,7 +31,7 @@ csghub-lite serve
 | `CSGHUB_LITE_HIDDEN_NAV_ITEMS` | 空 | 用逗号分隔要隐藏的 Web UI 导航项。可用节点 ID 与说明见 [配置指南：隐藏左侧导航节点](configuration.md#隐藏左侧导航节点)。只隐藏入口，不禁用 URL。 |
 | `CSGHUB_LITE_LOG_STDERR` | `1` | 设置为 `0` 时停止向标准错误输出日志。 |
 | `CSGHUB_LITE_DISABLE_FILE_LOGGING` | 空 | 设置为任意非空值时禁用 `~/.csghub-lite/logs/` 文件日志。 |
-| `CSGHUB_LITE_REGION` | 自动检测 | 区域提示。常用值为 `CN` 或 `intl`，影响安装下载源、升级源、转换依赖和 Python 包镜像。 |
+| `CSGHUB_LITE_REGION` | 自动检测 | 区域提示。常用值为 `CN` 或 `intl`，影响安装下载源、升级源、转换依赖、Python 包镜像，以及未自定义时的 Hugging Face Hub 地址（国内 `https://hf-mirror.com`，国外 `https://huggingface.co`）。 |
 
 ## llama.cpp 本地推理
 
@@ -48,6 +48,12 @@ csghub-lite serve
 | `CSGHUB_LITE_ROCM_SINGLE_ENGINE` | ROCm 主机为开启 | ROCm 主机默认只保留一个 llama 文本/Embedding 引擎。设置为 `0` 可允许多个模型同时加载，但会增加显存压力和 ROCm 崩溃风险。 |
 | `CSGHUB_LITE_ROCM_UNIFIED_MEMORY` | AMD APU 自动开启 | 控制 `GGML_CUDA_ENABLE_UNIFIED_MEMORY`。仅 APU 默认开启；ROCm 独显默认关闭。 |
 | `CSGHUB_LITE_CONVERTER_URL` | 内置转换器 | 覆盖 `convert_hf_to_gguf.py` 下载地址。通常只用于镜像测试或版本调试。 |
+
+设置页面的“按模型最大上下文”持久化为
+`config.json` 中的 `inference.llama_use_model_max_ctx`。该默认值同时作用于
+Web UI 和未显式传入 `num_ctx` 的外部 API 请求；环境变量
+`CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX` 显式设置时优先。此前配置中没有本地推理
+默认值分组，因此该选项使用独立的 `inference` 配置段，而不复用浏览器状态。
 
 未显式设置 GPU 层数时，CSGLite 不向当前 `llama-server` 传递 `-ngl`，
 由 llama.cpp 根据空闲设备内存自动 fit。GPU 层数目前通过 API/CLI 运行参数设置，

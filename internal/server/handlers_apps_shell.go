@@ -23,6 +23,7 @@ import (
 	"github.com/opencsgs/csglite/internal/apps"
 	"github.com/opencsgs/csglite/internal/codexagent"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/kimiagent"
 	"github.com/opencsgs/csglite/internal/ocreviewagent"
 	"github.com/opencsgs/csglite/internal/opencodeagent"
 	"github.com/opencsgs/csglite/internal/piagent"
@@ -677,6 +678,14 @@ func resolveAIAppOpenTarget(appID string) (aiAppOpenTarget, error) {
 			DisplayName: "Pi",
 			Binaries:    []string{"pi"},
 		}, nil
+	case "kimi-code":
+		return aiAppOpenTarget{
+			AppID:       "kimi-code",
+			DisplayName: "Kimi Code",
+			Binaries:    []string{"kimi"},
+		}, nil
+	case "dsh":
+		return aiAppOpenTarget{}, fmt.Errorf("dsh does not provide a web shell entry yet")
 	default:
 		return aiAppOpenTarget{}, fmt.Errorf("%s does not provide a web shell entry yet", appID)
 	}
@@ -1087,6 +1096,22 @@ func (s *Server) prepareAIAppShellLaunch(target aiAppOpenTarget, modelID, modelS
 			Env:    envWithOverridesAndUnset(aiAppShellEnvOverrides(nil), "NO_COLOR"),
 			Dir:    workingDir,
 		}, nil
+	case "kimi-code":
+		models := make([]api.ModelInfo, 0, len(modelIDs))
+		for _, modelID := range modelIDs {
+			models = append(models, api.ModelInfo{Model: modelID})
+		}
+		if err := kimiagent.SyncConfig(serverURL, openClawProviderAPIKey(config.Get().Token), modelID, models); err != nil {
+			return aiAppPreparedLaunch{}, err
+		}
+		return aiAppPreparedLaunch{
+			Binary: binary,
+			Args:   []string{"--model", kimiagent.ModelAlias(modelID)},
+			Env:    envWithOverridesAndUnset(aiAppShellEnvOverrides(nil), "NO_COLOR"),
+			Dir:    workingDir,
+		}, nil
+	case "dsh":
+		return aiAppPreparedLaunch{}, fmt.Errorf("dsh does not support web shell launch yet")
 	default:
 		return aiAppPreparedLaunch{}, fmt.Errorf("%s does not support web shell launch yet", target.DisplayName)
 	}

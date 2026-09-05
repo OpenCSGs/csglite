@@ -21,6 +21,9 @@ Copilot, and Aider.
 
 - Keep local HTTP API changes in sync with `openapi/local-api.json`; run
   `go test ./internal/server` after API doc changes.
+- Keep `config.json` schema consolidated: audit and reuse existing persisted
+  structures before adding keys, and never keep overlapping writable sources of
+  truth for the same setting.
 - csghub-lite must work on macOS, Linux, and Windows. Use platform-aware path,
   binary, library, process, and environment handling.
 - Do not commit or paste secrets. Load local GitLab and OSS credentials only
@@ -33,6 +36,9 @@ Copilot, and Aider.
   `internal/server/static`, then restart the single backend preview.
 - Store all runtime files, including temporary files and subprocess temp output,
   under the csghub-lite storage root, defaulting to `~/.csghub-lite`.
+- When asked to push or "commit and push", push `main` only to GitHub
+  (`origin`). GitHub Actions syncs GitLab `main` via the `gitlab-sync`
+  environment.
 - When asked to release, push the next or requested `v*` tag only to GitHub and
   let `.github/workflows/release.yml` publish and synchronize both releases.
 - Keep commit, PR, and release notes concise and focused on concrete user-facing
@@ -46,6 +52,7 @@ Copilot, and Aider.
 - `docs/agent-guidelines/api-swagger-sync.md`
 - `docs/agent-guidelines/app-installs.md`
 - `docs/agent-guidelines/ai-app-oss-mirror.md`
+- `docs/agent-guidelines/config-schema.md`
 - `docs/agent-guidelines/cross-platform.md`
 - `docs/agent-guidelines/frontend-i18n.md`
 - `docs/agent-guidelines/go-conventions.md`

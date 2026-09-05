@@ -2,9 +2,14 @@
   "remote_default_context_window": 200000,
   "models": [
     {
+      "id": "glm-5.2",
+      "context_window": 1000000,
+      "aliases": ["ZhipuAI/GLM-5.2", "zai-org/glm-5.2", "zai/glm-5.2"]
+    },
+    {
       "id": "glm-5.1",
       "context_window": 200000,
-      "aliases": ["ZhipuAI/GLM-5.1", "zai-org/glm-5.1"]
+      "aliases": ["ZhipuAI/GLM-5.1", "zai-org/glm-5.1", "zai/glm-5.1"]
     },
     {
       "id": "glm-5",
@@ -17,55 +22,74 @@
     },
     {
       "id": "deepseek-v4-pro",
-      "context_window": 1000000
+      "context_window": 1000000,
+      "aliases": ["deepseek/deepseek-v4-pro"]
     },
     {
       "id": "deepseek-v4-flash",
-      "context_window": 1000000
+      "context_window": 1000000,
+      "aliases": ["deepseek/deepseek-v4-flash"]
+    },
+    {
+      "id": "deepseek-v4-flash-0731",
+      "context_window": 1048576,
+      "aliases": ["deepseek/deepseek-v4-flash-0731"]
     },
     {
       "id": "deepseek-v3.2",
       "context_window": 128000,
-      "aliases": ["deepseek-chat", "deepseek-v3", "deepseek-r1", "deepseek-reasoner"]
-    },
-    {
-      "id": "kimi-k2.6",
-      "context_window": 131072
+      "aliases": ["deepseek-chat", "deepseek-v3", "deepseek-r1", "deepseek-reasoner", "deepseek/deepseek-r1"]
     },
     {
       "id": "kimi-k2.5",
-      "context_window": 131072,
+      "context_window": 262144,
       "aliases": ["moonshotai/kimi-k2.5"]
     },
     {
+      "id": "kimi-k2.6",
+      "context_window": 262144,
+      "aliases": ["moonshotai/kimi-k2.6"]
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "context_window": 262144,
+      "aliases": ["moonshotai/kimi-k2.7-code"]
+    },
+    {
+      "id": "kimi-k3",
+      "context_window": 1048576,
+      "aliases": ["moonshotai/kimi-k3"]
+    },
+    {
       "id": "kimi-for-coding",
-      "context_window": 131072
+      "context_window": 262144
+    },
+    {
+      "id": "kimi-for-coding-highspeed",
+      "context_window": 262144
+    },
+    {
+      "id": "k3",
+      "context_window": 1048576
+    },
+    {
+      "id": "k3-256k",
+      "context_window": 262144
     },
     {
       "id": "MiniMax-M2.7",
-      "context_window": 200000,
-      "aliases": ["minimax-m2.7", "Pro/MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M2.7"]
+      "context_window": 204800,
+      "aliases": ["minimax-m2.7", "minimax/minimax-m2.7", "Pro/MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M2.7"]
     },
     {
       "id": "MiniMax-M2.5",
-      "context_window": 200000,
-      "aliases": ["minimax-m2.5", "minimax-m2"]
+      "context_window": 196608,
+      "aliases": ["minimax-m2.5", "minimax-m2", "Pro/MiniMaxAI/MiniMax-M2.5"]
     },
     {
-      "id": "step-3.5-flash-2603",
-      "context_window": 262144
-    },
-    {
-      "id": "step-3.5-flash",
-      "context_window": 262144
-    },
-    {
-      "id": "ark-code-latest",
-      "context_window": 256000
-    },
-    {
-      "id": "doubao-seed-2-0-code-preview-latest",
-      "context_window": 128000
+      "id": "MiniMax-M3",
+      "context_window": 1000000,
+      "aliases": ["minimax/minimax-m3", "MiniMaxAI/MiniMax-M3"]
     },
     {
       "id": "qwen3.5-plus",
@@ -73,7 +97,8 @@
     },
     {
       "id": "qwen3.6-plus",
-      "context_window": 200000
+      "context_window": 1000000,
+      "aliases": ["qwen/qwen3.6-plus"]
     },
     {
       "id": "qwen3-coder-480b",
@@ -81,24 +106,100 @@
       "aliases": ["qwen/qwen3-coder-480b", "Qwen/Qwen3-Coder-480B"]
     },
     {
+      "id": "qwen3-coder-plus",
+      "context_window": 1000000,
+      "aliases": ["qwen/qwen3-coder-plus"]
+    },
+    {
+      "id": "qwen3.7-max",
+      "context_window": 1000000,
+      "aliases": ["qwen/qwen3.7-max"]
+    },
+    {
+      "id": "qwen3.8-max-preview",
+      "context_window": 1000000,
+      "aliases": ["qwen/qwen3.8-max-preview"]
+    },
+    {
+      "id": "step-3.5-flash",
+      "context_window": 262144,
+      "aliases": ["stepfun/step-3.5-flash"]
+    },
+    {
+      "id": "step-3.5-flash-2603",
+      "context_window": 262144
+    },
+    {
+      "id": "step-3.7-flash",
+      "context_window": 262144
+    },
+    {
+      "id": "ark-code-latest",
+      "context_window": 256000,
+      "aliases": ["volcengine/ark-code-latest"]
+    },
+    {
+      "id": "doubao-seed-2-0-code-preview-latest",
+      "context_window": 262144
+    },
+    {
+      "id": "doubao-seed-2-1-pro-260628",
+      "context_window": 262144
+    },
+    {
+      "id": "doubao-seed-2.1-pro",
+      "context_window": 128000,
+      "aliases": ["volcengine/doubao-seed-2.1-pro"]
+    },
+    {
       "id": "KAT-Coder-Pro",
-      "context_window": 128000
+      "context_window": 256000,
+      "aliases": ["streamlake/kat-coder-pro"]
     },
     {
       "id": "LongCat-Flash-Chat",
-      "context_window": 128000
+      "context_window": 1048576
+    },
+    {
+      "id": "LongCat-2.0",
+      "context_window": 1048576,
+      "aliases": ["longcat/longcat-2.0"]
     },
     {
       "id": "Ling-2.5-1T",
-      "context_window": 128000
+      "context_window": 1000000,
+      "aliases": ["inclusionai/ling-2.5-1t"]
+    },
+    {
+      "id": "Ling-2.6-1T",
+      "context_window": 262144
     },
     {
       "id": "mimo-v2.5-pro",
-      "context_window": 1048576
+      "context_window": 1048576,
+      "aliases": ["xiaomi/mimo-v2.5-pro"]
     },
     {
       "id": "mimo-v2.5",
-      "context_window": 1048576
+      "context_window": 1048576,
+      "aliases": ["xiaomi/mimo-v2.5"]
+    },
+    {
+      "id": "qianfan-code-latest",
+      "context_window": 131072
+    },
+    {
+      "id": "hy3",
+      "context_window": 256000
+    },
+    {
+      "id": "hy3-preview",
+      "context_window": 256000
+    },
+    {
+      "id": "claude-fable-5",
+      "context_window": 1000000,
+      "aliases": ["anthropic/claude-fable-5"]
     },
     {
       "id": "claude-opus-4-8",
@@ -106,14 +207,34 @@
       "aliases": ["anthropic/claude-opus-4.8", "anthropic/claude-opus-4-8", "global.anthropic.claude-opus-4-8"]
     },
     {
+      "id": "claude-opus-4-7",
+      "context_window": 1000000,
+      "aliases": ["anthropic/claude-opus-4.7", "anthropic/claude-opus-4-7"]
+    },
+    {
+      "id": "claude-opus-4-6",
+      "context_window": 1000000,
+      "aliases": ["anthropic/claude-opus-4.6", "anthropic/claude-opus-4-6"]
+    },
+    {
+      "id": "claude-opus-5",
+      "context_window": 1000000,
+      "aliases": ["anthropic/claude-opus-5"]
+    },
+    {
       "id": "claude-sonnet-4-6",
       "context_window": 1000000,
       "aliases": ["anthropic/claude-sonnet-4.6", "anthropic/claude-sonnet-4-6", "global.anthropic.claude-sonnet-4-6"]
     },
     {
+      "id": "claude-sonnet-5",
+      "context_window": 1000000,
+      "aliases": ["anthropic/claude-sonnet-5"]
+    },
+    {
       "id": "claude-haiku-4-5",
       "context_window": 200000,
-      "aliases": ["claude-haiku-4-5-20251001", "global.anthropic.claude-haiku-4-5-20251001-v1:0"]
+      "aliases": ["anthropic/claude-haiku-4.5", "anthropic/claude-haiku-4.5-20251001", "claude-haiku-4-5-20251001", "global.anthropic.claude-haiku-4-5-20251001-v1:0"]
     },
     {
       "id": "claude-sonnet-4-5",
@@ -126,13 +247,19 @@
       "aliases": ["claude-opus-4-5-20251101"]
     },
     {
-      "id": "gpt-5.5",
-      "context_window": 400000
+      "id": "gpt-5",
+      "context_window": 400000,
+      "aliases": ["openai/gpt-5"]
     },
     {
-      "id": "gpt-5.3-codex",
+      "id": "gpt-5-mini",
       "context_window": 400000,
-      "aliases": ["openai/gpt-5.3-codex"]
+      "aliases": ["openai/gpt-5-mini"]
+    },
+    {
+      "id": "gpt-5.1",
+      "context_window": 400000,
+      "aliases": ["openai/gpt-5.1"]
     },
     {
       "id": "gpt-5.2",
@@ -140,21 +267,108 @@
       "aliases": ["openai/gpt-5.2"]
     },
     {
-      "id": "gemini-3.5-flash",
-      "context_window": 1000000,
-      "aliases": ["google/gemini-3.5-flash"]
+      "id": "gpt-5.2-codex",
+      "context_window": 400000,
+      "aliases": ["openai/gpt-5.2-codex"]
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "context_window": 400000,
+      "aliases": ["openai/gpt-5.3-codex"]
+    },
+    {
+      "id": "gpt-5.3-codex-spark",
+      "context_window": 128000,
+      "aliases": ["openai/gpt-5.3-codex-spark"]
+    },
+    {
+      "id": "gpt-5.4",
+      "context_window": 272000,
+      "aliases": ["openai/gpt-5.4"]
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "context_window": 400000,
+      "aliases": ["openai/gpt-5.4-mini"]
+    },
+    {
+      "id": "gpt-5.5",
+      "context_window": 272000,
+      "aliases": ["openai/gpt-5.5"]
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "context_window": 272000,
+      "aliases": ["openai/gpt-5.6-luna"]
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "context_window": 272000,
+      "aliases": ["openai/gpt-5.6-sol"]
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "context_window": 272000,
+      "aliases": ["openai/gpt-5.6-terra"]
+    },
+    {
+      "id": "o3",
+      "context_window": 200000,
+      "aliases": ["openai/o3"]
+    },
+    {
+      "id": "o4-mini",
+      "context_window": 200000,
+      "aliases": ["openai/o4-mini"]
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "context_window": 1048576,
+      "aliases": ["google/gemini-2.5-flash"]
+    },
+    {
+      "id": "gemini-2.5-pro",
+      "context_window": 1048576,
+      "aliases": ["google/gemini-2.5-pro"]
     },
     {
       "id": "gemini-2.5-flash-lite",
       "context_window": 1048576
     },
     {
+      "id": "gemini-3.1-pro-preview",
+      "context_window": 1048576,
+      "aliases": ["google/gemini-3.1-pro-preview"]
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "context_window": 1048576,
+      "aliases": ["google/gemini-3.5-flash"]
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "context_window": 1048576,
+      "aliases": ["google/gemini-3.6-flash"]
+    },
+    {
+      "id": "grok-4.3",
+      "context_window": 1000000,
+      "aliases": ["xai/grok-4.3"]
+    },
+    {
+      "id": "grok-4.5",
+      "context_window": 500000,
+      "aliases": ["xai/grok-4.5"]
+    },
+    {
       "id": "us.amazon.nova-pro-v1:0",
-      "context_window": 300000
+      "context_window": 300000,
+      "aliases": ["amazon/nova-pro"]
     },
     {
       "id": "us.meta.llama4-maverick-17b-instruct-v1:0",
-      "context_window": 131072
+      "context_window": 1000000,
+      "aliases": ["meta/llama-4-maverick"]
     },
     {
       "id": "us.deepseek.r1-v1:0",

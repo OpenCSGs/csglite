@@ -8,7 +8,7 @@ CSGLite 提供以下命令：
 |------|------|
 | [`run <model>`](run.md) | 自动下载（如需）并启动交互对话 |
 | [`chat <model>`](chat.md) | 与已下载的本地模型交互对话 |
-| [`serve`](serve.md) | 启动 REST API 服务 |
+| [`serve`](serve.md) | 前台启动 REST API 服务 |
 
 ## 模型管理
 
@@ -25,7 +25,9 @@ CSGLite 提供以下命令：
 | 命令 | 说明 |
 |------|------|
 | [`ps`](ps.md) | 列出服务器上运行中的模型 |
-| [`stop <model>`](stop.md) | 停止/卸载服务器上运行中的模型 |
+| [`start`](start.md) | 后台启动 API 服务 |
+| [`stop`](stop.md) | 停止后台 API 服务 |
+| [`stop model [MODEL]`](stop.md) | 停止/卸载服务器上运行中的模型 |
 | [`restart`](restart.md) | 重启后台 API 服务 |
 
 ## 配置与认证

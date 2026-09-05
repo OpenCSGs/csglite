@@ -2,7 +2,7 @@ import { locale, t } from "../i18n";
 import { clearDownloadTask, pauseDownload, startDownload } from "../downloads";
 import type { DownloadTask } from "../downloads";
 
-export function DownloadTableCell({ task, onComplete, showActions = true }: { task?: DownloadTask; onComplete?: () => void; showActions?: boolean }) {
+export function DownloadTableCell({ task, onComplete, showActions = true, compact = false }: { task?: DownloadTask; onComplete?: () => void; showActions?: boolean; compact?: boolean }) {
   void locale.value;
   if (!task) {
     return <span class="text-xs text-gray-300">{t("downloads.none")}</span>;
@@ -11,7 +11,7 @@ export function DownloadTableCell({ task, onComplete, showActions = true }: { ta
   const canResume = task.status === "paused" || task.status === "error";
   const isDownloading = task.status === "downloading";
   return (
-    <div class="w-full min-w-0 max-w-full">
+    <div class={compact ? "w-20 min-w-0 max-w-20" : "w-full min-w-0 max-w-full"}>
       <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
         <span class="ml-auto shrink-0 text-xs text-gray-400">{displayPercent(task)}%</span>
         {showActions && !isComplete && canResume && (
@@ -49,6 +49,37 @@ export function DownloadTableCell({ task, onComplete, showActions = true }: { ta
       <ProgressBar task={task} />
     </div>
   );
+}
+
+export function DownloadProgressCell({
+  task,
+  completeWhenMissing = false,
+}: {
+  task?: DownloadTask;
+  completeWhenMissing?: boolean;
+}) {
+  void locale.value;
+  if (!task) {
+    if (completeWhenMissing) {
+      return <span class="text-xs font-medium text-emerald-600">{t("downloads.done")}</span>;
+    }
+    return <span class="text-xs text-gray-300">{t("downloads.none")}</span>;
+  }
+  if (isDownloadComplete(task)) {
+    return <span class="text-xs font-medium text-emerald-600">{t("downloads.done")}</span>;
+  }
+  if (task.status === "paused") {
+    return <span class="block max-w-full truncate text-xs font-medium text-amber-600">{t("downloads.interrupted")}</span>;
+  }
+  if (task.status === "downloading" || task.status === "queued") {
+    return (
+      <div class="w-20 min-w-0 max-w-20" title={t("downloads.downloadingPercent", displayPercent(task))}>
+        <div class="mb-1 text-right text-xs text-gray-400">{displayPercent(task)}%</div>
+        <ProgressBar task={task} />
+      </div>
+    );
+  }
+  return <DownloadStatusCell task={task} completeWhenMissing={completeWhenMissing} />;
 }
 
 export function DownloadStatusCell({ task, completeWhenMissing = false }: { task?: DownloadTask; completeWhenMissing?: boolean }) {

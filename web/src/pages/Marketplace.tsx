@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { signal, computed } from "@preact/signals";
 import {
   getMarketplaceModels,
@@ -15,6 +16,11 @@ import { t, locale } from "../i18n";
 import { startDownload, getDownloadTask } from "../downloads";
 import { normalizeMarketplaceModelSource } from "../modelSources";
 import { datasetMarketplaceMetadata } from "../datasetMetadata";
+import {
+  isProviderMarketplaceSource,
+  providerDatasetCardInfo,
+  providerModelCardInfo,
+} from "../marketplaceCardInfo";
 import { ArtifactOwnerAvatar } from "../components/ArtifactOwnerAvatar";
 import { MarketplaceDatasetDetailDialog } from "../components/MarketplaceDatasetDetailDialog";
 import {
@@ -103,6 +109,8 @@ const perPage = 16;
 const models = signal<MarketplaceModel[]>([]);
 const datasets = signal<MarketplaceDataset[]>([]);
 const total = signal(0);
+const hasMore = signal(false);
+const totalExact = signal(true);
 const loading = signal(false);
 
 const localModelNames = signal<Set<string>>(new Set());
@@ -161,6 +169,8 @@ async function loadData() {
       if (requestID !== loadDataRequestID) return;
       models.value = res.data || [];
       total.value = res.total;
+      hasMore.value = res.has_more ?? false;
+      totalExact.value = res.total_exact ?? true;
       const repoIDs = models.value
         .map((model) => model.repository_id || 0)
         .filter((id) => id > 0);
@@ -188,6 +198,8 @@ async function loadData() {
       if (requestID !== loadDataRequestID) return;
       datasets.value = res.data || [];
       total.value = res.total;
+      hasMore.value = res.has_more ?? false;
+      totalExact.value = res.total_exact ?? true;
     }
   } catch {
     /* ignore */
@@ -362,7 +374,7 @@ export function Marketplace() {
                   onClick={() => selectArtifactSource(source)}
                   class={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
                     (activeTab.value === "models" ? artifactSource.value : datasetArtifactSource.value) === source
-                      ? "bg-indigo-600 text-white shadow-sm"
+                      ? marketplaceSourceActiveClass(source)
                       : "text-gray-500 hover:bg-white hover:text-gray-800"
                   }`}
                 >
@@ -524,7 +536,7 @@ export function Marketplace() {
             {models.value.length === 0 && <p class="col-span-2 text-center py-16 text-gray-400">{t("mp.noModels")}</p>}
           </div>
         ) : (
-          <div class="space-y-0 divide-y divide-gray-100">
+          <div class={isProviderMarketplaceSource(artifactSource.value) ? "space-y-3" : "space-y-0 divide-y divide-gray-100"}>
             {models.value.map((m) => (
               <ModelCard
                 key={m.path}
@@ -553,7 +565,7 @@ export function Marketplace() {
           {datasets.value.length === 0 && <p class="col-span-2 text-center py-16 text-gray-400">{t("mp.noDatasets")}</p>}
         </div>
       ) : (
-        <div class="space-y-0 divide-y divide-gray-100">
+        <div class={isProviderMarketplaceSource(datasetArtifactSource.value) ? "space-y-3" : "space-y-0 divide-y divide-gray-100"}>
           {datasets.value.map((d) => (
             <DatasetCard
               key={`${datasetArtifactSource.value}:${d.path}`}
@@ -569,7 +581,7 @@ export function Marketplace() {
       )}
 
       {/* Pagination */}
-      {totalPages.value > 1 && (
+      {(totalExact.value ? totalPages.value > 1 : page.value > 1 || hasMore.value) && (
         <div class="flex items-center justify-center gap-2 mt-8">
           <button
             disabled={page.value <= 1}
@@ -579,10 +591,10 @@ export function Marketplace() {
             {t("mp.prev")}
           </button>
           <span class="text-sm text-gray-500">
-            {t("mp.page", page.value, totalPages.value)}
+            {totalExact.value ? t("mp.page", page.value, totalPages.value) : t("mp.pageCurrent", page.value)}
           </span>
           <button
-            disabled={page.value >= totalPages.value}
+            disabled={totalExact.value ? page.value >= totalPages.value : !hasMore.value}
             onClick={() => { page.value++; loadData(); }}
             class="px-3 py-1.5 text-sm border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-gray-50"
           >
@@ -1003,6 +1015,12 @@ function formatModelParamsMax(value: number): string {
   return Number.isInteger(value) ? `${value}.99999` : String(value);
 }
 
+function marketplaceSourceActiveClass(source: ArtifactSource): string {
+  if (source === "huggingface") return "bg-[#FFD21E] text-gray-900 shadow-sm";
+  if (source === "opencsg") return "bg-[#169F95] text-white shadow-sm";
+  return "bg-[#624AFF] text-white shadow-sm";
+}
+
 function ModelCard({
   model,
   pulling,
@@ -1017,6 +1035,17 @@ function ModelCard({
   onOpenDetail: (path: string) => void;
 }) {
   void locale.value;
+  if (isProviderMarketplaceSource(model.artifact_source)) {
+    return (
+      <ProviderModelGridCard
+        model={model}
+        pulling={pulling}
+        isLocal={isLocal}
+        onDownload={onDownload}
+        onOpenDetail={onOpenDetail}
+      />
+    );
+  }
   const presentation = modelSourcePresentation(model);
   const tags = providerCardTags(model, 3);
 
@@ -1037,7 +1066,6 @@ function ModelCard({
             <span class="px-1.5 py-0.5 text-xs bg-indigo-50 text-indigo-600 rounded font-medium">{t("mp.downloaded")}</span>
           )}
         </div>
-        {presentation.subtitle && <div class="mt-0.5 text-xs text-gray-400">{presentation.subtitle}</div>}
         {model.description && (
           <p class="text-sm text-gray-500 mt-1 line-clamp-1">{model.description}</p>
         )}
@@ -1062,53 +1090,13 @@ function ModelCard({
         </div>
       </div>
       <div class="ml-4 flex-shrink-0 w-28 flex items-center justify-end">
-        {(isLocal || pulling?.status === "success") && !pulling?.status?.startsWith("downloading") ? (
-          <span class="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm text-indigo-600 font-medium">
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-            {t("mp.downloaded")}
-          </span>
-        ) : pulling ? (
-          <div>
-            {pulling.status === "success" ? (
-              <div class="flex items-center justify-end gap-1.5 text-indigo-600">
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-                <span class="text-sm font-medium">{t("mp.done")}</span>
-              </div>
-            ) : pulling.status.startsWith("error") ? (
-              <div class="flex items-center justify-end gap-1.5 text-red-500" title={pulling.status}>
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                <span class="text-sm font-medium">{t("mp.failed")}</span>
-              </div>
-            ) : (
-              <div>
-                <div class="flex items-center justify-between mb-1">
-                  <span class="text-xs text-indigo-600 font-medium">
-                    {pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}
-                  </span>
-                </div>
-                <div class="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                  <div
-                    class="h-full bg-indigo-500 rounded-full transition-all duration-300"
-                    style={{ width: `${Math.max(pulling.percent, 3)}%` }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <button
-            onClick={() => onDownload(model.path)}
-            class="flex items-center justify-center gap-1.5 w-full px-4 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-700 transition-colors"
-          >
-            <DownloadIcon /> {t("mp.download")}
-          </button>
-        )}
+        <ArtifactDownloadAction
+          pulling={pulling}
+          isLocal={isLocal}
+          tone="indigo"
+          compact={false}
+          onDownload={() => onDownload(model.path)}
+        />
       </div>
     </div>
   );
@@ -1128,6 +1116,17 @@ function ModelGridCard({
   onOpenDetail: (path: string) => void;
 }) {
   void locale.value;
+  if (isProviderMarketplaceSource(model.artifact_source)) {
+    return (
+      <ProviderModelGridCard
+        model={model}
+        pulling={pulling}
+        isLocal={isLocal}
+        onDownload={onDownload}
+        onOpenDetail={onOpenDetail}
+      />
+    );
+  }
   const presentation = modelSourcePresentation(model);
   const tags = providerCardTags(model, 2);
 
@@ -1145,7 +1144,6 @@ function ModelGridCard({
           </button>
           <ModelFormatBadges model={model} />
         </div>
-        {presentation.subtitle && <div class="mb-2 truncate text-xs text-gray-400">{presentation.subtitle}</div>}
         <p class="text-sm text-gray-500 line-clamp-2 mb-3 min-h-[2.5rem]">
           {model.description || ""}
         </p>
@@ -1168,38 +1166,16 @@ function ModelGridCard({
       </div>
       <div class="flex items-center justify-between mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400">
         <span class="flex items-center gap-1">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
+          <ClockIcon />
           {t("mp.updatedAt", new Date(model.updated_at).toLocaleDateString())}
         </span>
-        <div class="flex-shrink-0">
-          {(isLocal || pulling?.status === "success") && !pulling?.status?.startsWith("downloading") ? (
-            <span class="inline-flex items-center gap-1 text-indigo-600 font-medium">
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              {t("mp.downloaded")}
-            </span>
-          ) : pulling ? (
-            pulling.status === "success" ? (
-              <span class="text-indigo-600 font-medium">{t("mp.done")}</span>
-            ) : pulling.status.startsWith("error") ? (
-              <span class="text-red-500 font-medium">{t("mp.failed")}</span>
-            ) : (
-              <span class="text-indigo-600 font-medium">
-                {pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}
-              </span>
-            )
-          ) : (
-            <button
-              onClick={() => onDownload(model.path)}
-              class="flex items-center gap-1 text-indigo-600 hover:text-indigo-700 font-medium"
-            >
-              <DownloadIcon /> {t("mp.download")}
-            </button>
-          )}
-        </div>
+        <ArtifactDownloadAction
+          pulling={pulling}
+          isLocal={isLocal}
+          tone="indigo"
+          compact
+          onDownload={() => onDownload(model.path)}
+        />
       </div>
     </div>
   );
@@ -1208,39 +1184,13 @@ function ModelGridCard({
 function modelSourcePresentation(model: MarketplaceModel): {
   source: ArtifactSource;
   title: string;
-  subtitle: string;
   border: string;
   hoverText: string;
   tagTone: string;
 } {
-  const source = model.artifact_source || "opencsg";
-  if (source === "huggingface") {
-    const metadata = model.provider?.huggingface;
-    const subtitle = [metadata?.pipeline_tag, metadata?.library_name].filter(Boolean).join(" · ");
-    return {
-      source,
-      title: model.path,
-      subtitle,
-      border: "border-gray-200 hover:border-gray-300",
-      hoverText: "hover:text-indigo-600",
-      tagTone: "bg-gray-100 text-gray-600",
-    };
-  }
-  if (source === "modelscope") {
-    const title = model.provider?.modelscope?.display_name?.trim() || model.nickname?.trim() || model.name || model.path;
-    return {
-      source,
-      title,
-      subtitle: title === model.path ? "" : model.path,
-      border: "border-gray-200 hover:border-gray-300",
-      hoverText: "hover:text-indigo-600",
-      tagTone: "bg-gray-100 text-gray-600",
-    };
-  }
   return {
-    source,
+    source: model.artifact_source || "opencsg",
     title: model.path,
-    subtitle: "",
     border: "border-gray-200 hover:border-gray-300",
     hoverText: "hover:text-indigo-600",
     tagTone: "bg-gray-100 text-gray-600",
@@ -1248,14 +1198,8 @@ function modelSourcePresentation(model: MarketplaceModel): {
 }
 
 function providerCardTags(model: MarketplaceModel, limit: number): MarketplaceTag[] {
-  const source = model.artifact_source || "opencsg";
-  const categories = source === "huggingface"
-    ? ["task", "runtime_framework", "license"]
-    : source === "modelscope"
-      ? ["task", "runtime_framework", "license"]
-      : ["task", "license"];
   const ordered: MarketplaceTag[] = [];
-  for (const category of categories) {
+  for (const category of ["task", "license"]) {
     for (const tag of model.tags || []) {
       if (tag.category === category) ordered.push(tag);
     }
@@ -1265,6 +1209,64 @@ function providerCardTags(model: MarketplaceModel, limit: number): MarketplaceTa
 
 function ModelSourceMark({ source, modelPath }: { source: ArtifactSource; modelPath: string }) {
   return <ArtifactOwnerAvatar source={source} path={modelPath} />;
+}
+
+function ProviderModelGridCard({
+  model,
+  pulling,
+  isLocal,
+  onDownload,
+  onOpenDetail,
+}: {
+  model: MarketplaceModel;
+  pulling?: { status: string; percent: number; error?: string };
+  isLocal?: boolean;
+  onDownload: (path: string) => void;
+  onOpenDetail: (path: string) => void;
+}) {
+  void locale.value;
+  const info = providerModelCardInfo(model);
+  const displayTitle = info.source === "huggingface" ? info.path : info.title;
+  const metadata = [
+    ...getMarketplaceModelFormats(model).map(formatModelFormatLabel),
+    info.task,
+    info.params,
+    info.library,
+    info.license,
+    info.architecture || info.modelType,
+  ].filter(Boolean);
+  return (
+    <article class="flex min-h-[116px] flex-col justify-between rounded-xl border border-gray-200 bg-white p-4 transition-all hover:border-gray-300 hover:shadow-sm">
+      <div>
+        <ProviderOfficialHeader
+          title={displayTitle}
+          subtitle={info.source === "modelscope" && displayTitle !== info.path ? info.path : ""}
+          gated={info.gated}
+          privateArtifact={info.private}
+          onOpen={() => onOpenDetail(model.path)}
+          action={
+            <ArtifactDownloadAction
+              pulling={pulling}
+              isLocal={isLocal}
+              tone={info.source === "huggingface" ? "yellow" : "violet"}
+              compact
+              onDownload={() => onDownload(model.path)}
+            />
+          }
+        />
+        <div class="mt-2 flex min-h-5 items-center gap-2">
+          <ProviderOfficialMetadata values={metadata} />
+        </div>
+      </div>
+      <ProviderOfficialFooter
+        owner={info.author}
+        downloads={model.downloads}
+        likes={model.likes}
+        size={model.repo_size}
+        updatedAt={model.updated_at}
+      />
+    </article>
+  );
 }
 
 function DatasetGridCard({
@@ -1281,6 +1283,17 @@ function DatasetGridCard({
   onOpenDetail: () => void;
 }) {
   void locale.value;
+  if (isProviderMarketplaceSource(dataset.artifact_source)) {
+    return (
+      <ProviderDatasetGridCard
+        dataset={dataset}
+        pulling={pulling}
+        isLocal={isLocal}
+        onDownload={onDownload}
+        onOpenDetail={onOpenDetail}
+      />
+    );
+  }
   const metadata = datasetMarketplaceMetadata(dataset);
   const primaryTags = [
     ...metadata.tasks.slice(0, 1),
@@ -1331,38 +1344,16 @@ function DatasetGridCard({
       </div>
       <div class="mt-3 flex items-center justify-between border-t border-gray-100 pt-3 text-xs text-gray-400">
         <span class="flex items-center gap-1">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
+          <ClockIcon />
           {t("mp.updatedAt", new Date(dataset.updated_at).toLocaleDateString())}
         </span>
-        <div class="flex-shrink-0">
-          {(isLocal || pulling?.status === "success") && !pulling?.status?.startsWith("downloading") ? (
-            <span class="inline-flex items-center gap-1 text-purple-600 font-medium">
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              {t("mp.downloaded")}
-            </span>
-          ) : pulling ? (
-            pulling.status === "success" ? (
-              <span class="text-purple-600 font-medium">{t("mp.done")}</span>
-            ) : pulling.status.startsWith("error") ? (
-              <span class="text-red-500 font-medium">{t("mp.failed")}</span>
-            ) : (
-              <span class="text-purple-600 font-medium">
-                {pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}
-              </span>
-            )
-          ) : (
-            <button
-              onClick={() => onDownload(dataset)}
-              class="flex items-center gap-1 text-indigo-600 hover:text-indigo-700 font-medium"
-            >
-              <DownloadIcon /> {t("mp.download")}
-            </button>
-          )}
-        </div>
+        <ArtifactDownloadAction
+          pulling={pulling}
+          isLocal={isLocal}
+          tone="purple"
+          compact
+          onDownload={() => onDownload(dataset)}
+        />
       </div>
     </div>
   );
@@ -1382,6 +1373,17 @@ function DatasetCard({
   onOpenDetail: () => void;
 }) {
   void locale.value;
+  if (isProviderMarketplaceSource(dataset.artifact_source)) {
+    return (
+      <ProviderDatasetGridCard
+        dataset={dataset}
+        pulling={pulling}
+        isLocal={isLocal}
+        onDownload={onDownload}
+        onOpenDetail={onOpenDetail}
+      />
+    );
+  }
   const metadata = datasetMarketplaceMetadata(dataset);
   const badges = [
     ...(metadata.type ? [metadata.type] : []),
@@ -1421,55 +1423,292 @@ function DatasetCard({
         </div>
       </div>
       <div class="ml-4 flex-shrink-0 w-28 flex items-center justify-end">
-        {(isLocal || pulling?.status === "success") && !pulling?.status?.startsWith("downloading") ? (
-          <span class="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm text-purple-600 font-medium">
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-            {t("mp.downloaded")}
-          </span>
-        ) : pulling ? (
-          <div>
-            {pulling.status === "success" ? (
-              <div class="flex items-center justify-end gap-1.5 text-purple-600">
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-                <span class="text-sm font-medium">{t("mp.done")}</span>
-              </div>
-            ) : pulling.status.startsWith("error") ? (
-              <div class="flex items-center justify-end gap-1.5 text-red-500" title={pulling.status}>
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                <span class="text-sm font-medium">{t("mp.failed")}</span>
-              </div>
-            ) : (
-              <div>
-                <div class="flex items-center justify-between mb-1">
-                  <span class="text-xs text-purple-600 font-medium">
-                    {pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}
-                  </span>
-                </div>
-                <div class="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                  <div
-                    class="h-full bg-purple-500 rounded-full transition-all duration-300"
-                    style={{ width: `${Math.max(pulling.percent, 3)}%` }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <button
-            onClick={() => onDownload(dataset)}
-            class="flex items-center justify-center gap-1.5 w-full px-4 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-700 transition-colors"
-          >
-            <DownloadIcon /> {t("mp.download")}
-          </button>
-        )}
+        <ArtifactDownloadAction
+          pulling={pulling}
+          isLocal={isLocal}
+          tone="purple"
+          compact={false}
+          onDownload={() => onDownload(dataset)}
+        />
       </div>
     </div>
+  );
+}
+
+function ProviderDatasetGridCard({
+  dataset,
+  pulling,
+  isLocal,
+  onDownload,
+  onOpenDetail,
+}: {
+  dataset: MarketplaceDataset;
+  pulling?: { status: string; percent: number; error?: string };
+  isLocal?: boolean;
+  onDownload: (dataset: MarketplaceDataset) => void;
+  onOpenDetail: () => void;
+}) {
+  void locale.value;
+  const info = providerDatasetCardInfo(dataset);
+  const displayTitle = info.source === "huggingface" ? info.path : info.title;
+  const metadata = [
+    info.type,
+    ...info.tasks,
+    ...info.formats.map((value) => value.toUpperCase()),
+    info.sizeCategory,
+    info.license,
+  ].filter(Boolean);
+  return (
+    <article class="flex min-h-[116px] flex-col justify-between rounded-xl border border-gray-200 bg-white p-4 transition-all hover:border-gray-300 hover:shadow-sm">
+      <div>
+        <ProviderOfficialHeader
+          title={displayTitle}
+          subtitle={info.source === "modelscope" && displayTitle !== info.path ? info.path : ""}
+          gated={info.gated}
+          privateArtifact={info.private}
+          onOpen={onOpenDetail}
+          action={
+            <ArtifactDownloadAction
+              pulling={pulling}
+              isLocal={isLocal}
+              tone={info.source === "huggingface" ? "yellow" : "violet"}
+              compact
+              onDownload={() => onDownload(dataset)}
+            />
+          }
+        />
+        <div class="mt-2 flex min-h-5 items-center gap-2">
+          <ProviderOfficialMetadata values={metadata} />
+        </div>
+      </div>
+      <ProviderOfficialFooter
+        owner={info.author}
+        downloads={dataset.downloads}
+        likes={dataset.likes}
+        size={dataset.repo_size}
+        files={dataset.file_count}
+        updatedAt={dataset.updated_at}
+      />
+    </article>
+  );
+}
+
+function ProviderOfficialHeader({
+  title,
+  subtitle,
+  gated,
+  privateArtifact,
+  onOpen,
+  action,
+}: {
+  title: string;
+  subtitle?: string;
+  gated: boolean;
+  privateArtifact: boolean;
+  onOpen: () => void;
+  action: ComponentChildren;
+}) {
+  return (
+    <div class="flex min-w-0 items-start justify-between gap-3">
+      <div class="flex min-w-0 items-center gap-2">
+        <button
+          onClick={onOpen}
+          class="truncate text-left text-sm font-semibold text-gray-800 transition-colors hover:text-violet-600"
+          title={title}
+        >
+          {title}
+        </button>
+        {subtitle && <span class="hidden max-w-36 truncate text-xs text-gray-400 xl:inline" title={subtitle}>{subtitle}</span>}
+        {gated && <ProviderOfficialBadge label={t("mp.gated")} />}
+        {privateArtifact && <ProviderOfficialBadge label={t("mp.privateAccess")} />}
+      </div>
+      <div class="flex-shrink-0">{action}</div>
+    </div>
+  );
+}
+
+function ProviderOfficialBadge({ label }: { label: string }) {
+  return <span class="flex-shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{label}</span>;
+}
+
+function ProviderOfficialMetadata({ values }: { values: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const uniqueValues = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+  const visibleValues = uniqueValues.slice(0, 3);
+  const hiddenValues = uniqueValues.slice(3);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setExpanded(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [expanded]);
+
+  return (
+    <div ref={menuRef} class="relative flex min-w-0 items-center gap-2">
+      {visibleValues.map((value, index) => (
+        <span key={`${value}:${index}`} class="flex max-w-32 flex-shrink-0 items-center gap-1 truncate text-[11px] text-gray-500" title={value}>
+          <span class={`h-2 w-2 flex-shrink-0 rounded-sm ${index % 2 === 0 ? "bg-violet-400" : "bg-orange-300"}`} />
+          <span class="truncate">{value}</span>
+        </span>
+      ))}
+      {hiddenValues.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          class="flex h-5 w-6 flex-shrink-0 items-center justify-center rounded bg-gray-100 text-xs font-semibold text-gray-500 hover:bg-gray-200"
+          title={t("mp.showMoreMetadata")}
+          aria-label={t("mp.showMoreMetadata")}
+          aria-expanded={expanded}
+        >
+          &hellip;
+        </button>
+      )}
+      {expanded && hiddenValues.length > 0 && (
+        <div class="absolute left-0 top-7 z-30 flex w-max max-w-80 flex-wrap gap-x-3 gap-y-2 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
+          {hiddenValues.map((value, index) => (
+            <span key={`${value}:more:${index}`} class="flex max-w-44 items-center gap-1.5 text-xs text-gray-600" title={value}>
+              <span class={`h-2 w-2 flex-shrink-0 rounded-sm ${index % 2 === 0 ? "bg-violet-400" : "bg-orange-300"}`} />
+              <span class="truncate">{value}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProviderOfficialFooter({
+  owner,
+  downloads,
+  likes,
+  size,
+  files,
+  updatedAt,
+}: {
+  owner: string;
+  downloads: number;
+  likes: number;
+  size?: number;
+  files?: number;
+  updatedAt: string;
+}) {
+  return (
+    <div class="mt-3 flex min-w-0 items-center gap-3 overflow-hidden text-[11px] text-gray-400">
+      {owner && (
+        <span class="flex min-w-0 items-center gap-1.5">
+          <span class="h-3.5 w-3.5 flex-shrink-0 rounded-full bg-violet-100" />
+          <span class="max-w-28 truncate">{owner}</span>
+        </span>
+      )}
+      <span class="flex flex-shrink-0 items-center gap-1"><ClockIcon />{new Date(updatedAt).toLocaleDateString()}</span>
+      {typeof size === "number" && size > 0 && <span class="flex-shrink-0">{formatRepoSize(size)}</span>}
+      {typeof files === "number" && files > 0 && <span class="flex-shrink-0">{t("mp.filesCount", files)}</span>}
+      <span class="flex flex-shrink-0 items-center gap-1"><DownloadIcon />{formatDownloadCount(downloads)}</span>
+      <span class="flex flex-shrink-0 items-center gap-1"><StarIcon />{likes}</span>
+    </div>
+  );
+}
+
+function ArtifactDownloadAction({
+  pulling,
+  isLocal,
+  tone,
+  compact,
+  onDownload,
+}: {
+  pulling?: { status: string; percent: number; error?: string };
+  isLocal?: boolean;
+  tone: ArtifactActionTone;
+  compact: boolean;
+  onDownload: () => void;
+}) {
+  const color = {
+    yellow: "text-[#D4A400]",
+    violet: "text-violet-600",
+    purple: "text-purple-600",
+    indigo: "text-indigo-600",
+  }[tone];
+  const hoverColor = {
+    yellow: "hover:text-[#B88A00]",
+    violet: "hover:text-violet-700",
+    purple: "hover:text-purple-700",
+    indigo: "hover:text-indigo-700",
+  }[tone];
+  const bar = {
+    yellow: "bg-[#FFD21E]",
+    violet: "bg-violet-500",
+    purple: "bg-purple-500",
+    indigo: "bg-indigo-500",
+  }[tone];
+  if ((isLocal || pulling?.status === "success") && !pulling?.status?.startsWith("downloading")) {
+    return (
+      <span class={`inline-flex items-center gap-1 font-medium ${color} ${compact ? "text-xs" : "px-4 py-1.5 text-sm"}`}>
+        <CheckIcon />
+        {t("mp.downloaded")}
+      </span>
+    );
+  }
+  if (pulling) {
+    if (pulling.status === "success") {
+      return <span class={`font-medium ${color}`}>{t("mp.done")}</span>;
+    }
+    if (pulling.status.startsWith("error")) {
+      return <span class="font-medium text-red-500" title={pulling.status}>{t("mp.failed")}</span>;
+    }
+    if (compact) {
+      return (
+        <span class={`font-medium ${color}`}>
+          {pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}
+        </span>
+      );
+    }
+    return (
+      <div>
+        <div class={`mb-1 text-right text-xs font-medium ${color}`}>
+          {pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}
+        </div>
+        <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+          <div class={`h-full rounded-full transition-all duration-300 ${bar}`} style={{ width: `${Math.max(pulling.percent, 3)}%` }} />
+        </div>
+      </div>
+    );
+  }
+  if (compact) {
+    return (
+      <button onClick={onDownload} class={`flex items-center gap-1 font-medium transition-colors ${color} ${hoverColor}`}>
+        <DownloadIcon /> {t("mp.download")}
+      </button>
+    );
+  }
+  return (
+    <button
+      onClick={onDownload}
+      class="flex w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-4 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+    >
+      <DownloadIcon /> {t("mp.download")}
+    </button>
+  );
+}
+
+type ArtifactActionTone = "yellow" | "violet" | "indigo" | "purple";
+
+function ClockIcon() {
+  return (
+    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+    </svg>
   );
 }
 
@@ -1547,8 +1786,7 @@ function ModelFormatBadges({ model }: { model: MarketplaceModel }) {
     <>
       {formatTags.map((formatTag) => {
         const formatName = formatTag.name.trim().toLowerCase();
-        const label = formatTag.show_name?.trim()
-          || (formatName === "safetensors" ? "SafeTensors" : formatName === "gguf" ? "GGUF" : formatTag.name);
+        const label = formatModelFormatLabel(formatTag);
         const tone = formatName === "gguf"
           ? "bg-blue-50 text-blue-700"
           : formatName === "safetensors"
@@ -1563,6 +1801,12 @@ function ModelFormatBadges({ model }: { model: MarketplaceModel }) {
       })}
     </>
   );
+}
+
+function formatModelFormatLabel(formatTag: MarketplaceTag): string {
+  const formatName = formatTag.name.trim().toLowerCase();
+  return formatTag.show_name?.trim()
+    || (formatName === "safetensors" ? "SafeTensors" : formatName === "gguf" ? "GGUF" : formatTag.name);
 }
 
 function formatRepoSize(bytes: number): string {

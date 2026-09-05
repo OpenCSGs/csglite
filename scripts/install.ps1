@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 $Repo = "OpenCSGs/csglite"
 $BinaryName = "csghub-lite.exe"
 $LlamaCppRepo = "ggml-org/llama.cpp"
-$LlamaCppDefaultTag = if ($env:CSGHUB_LITE_LLAMA_CPP_TAG) { $env:CSGHUB_LITE_LLAMA_CPP_TAG } else { "b10326" }
+$LlamaCppDefaultTag = if ($env:CSGHUB_LITE_LLAMA_CPP_TAG) { $env:CSGHUB_LITE_LLAMA_CPP_TAG } else { "b10549" }
 
 $GitHubApi = "https://api.github.com/repos"
 $GitLabHost = "https://git-devops.opencsg.com"
@@ -558,9 +558,9 @@ Write-Host "Quick start:" -ForegroundColor White
 if ($script:ServerStartStatus -eq "started" -or $script:ServerStartStatus -eq "running") {
     Write-Host "  csghub-lite run Qwen/Qwen3-0.6B-GGUF    # Run a model"
     Write-Host "  csghub-lite ps                          # List running models"
-    Write-Host "  csghub-lite stop-service                # Stop background server"
+    Write-Host "  csghub-lite stop                        # Stop background server"
 } else {
-    Write-Host "  csghub-lite serve                       # Start server with Web UI"
+    Write-Host "  csghub-lite start                       # Start background server"
     Write-Host "  csghub-lite run Qwen/Qwen3-0.6B-GGUF    # Run a model"
     Write-Host "  csghub-lite ps                          # List running models"
 }

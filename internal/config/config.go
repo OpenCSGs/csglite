@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/opencsgs/csglite/internal/region"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -20,6 +21,7 @@ const (
 	DefaultCloudProviderName   = "csghub"
 	DefaultMarketplaceSource   = "opencsg"
 	DefaultHuggingFaceEndpoint = "https://huggingface.co"
+	ChinaHuggingFaceEndpoint   = "https://hf-mirror.com"
 	DefaultModelScopeEndpoint  = "https://modelscope.cn"
 	EnvServerURL               = "CSGHUB_LITE_SERVER_URL"
 	EnvAIGatewayURL            = "CSGHUB_LITE_AI_GATEWAY_URL"
@@ -76,6 +78,7 @@ type Config struct {
 	AIAppModelBindings       map[string][]api.AIAppModelBinding `json:"ai_app_model_bindings,omitempty"`
 	WebSearch                WebSearchConfig                    `json:"web_search,omitempty"`
 	Observability            ObservabilityConfig                `json:"observability,omitempty"`
+	Inference                InferenceConfig                    `json:"inference,omitempty"`
 	DesktopMode              bool                               `json:"-"`
 	DesktopToken             string                             `json:"-"`
 	DesktopSessionToken      string                             `json:"-"`
@@ -126,6 +129,12 @@ type WebSearchConfig struct {
 	Providers      []string `json:"providers,omitempty"`
 	SafeSearch     int      `json:"safe_search,omitempty"`
 	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+}
+
+// InferenceConfig groups process-wide inference defaults that apply equally to
+// the Web UI and external API clients.
+type InferenceConfig struct {
+	LlamaUseModelMaxCtx bool `json:"llama_use_model_max_ctx,omitempty"`
 }
 
 const DefaultObservabilityRetentionDays = 30
@@ -276,8 +285,8 @@ func Load() (*Config, error) {
 		if globalConfig.ServerURL == "" {
 			globalConfig.ServerURL = DefaultServerURL
 		}
-		if strings.TrimSpace(globalConfig.HuggingFaceEndpoint) == "" {
-			globalConfig.HuggingFaceEndpoint = DefaultHuggingFaceEndpoint
+		if isAutoHuggingFaceEndpoint(globalConfig.HuggingFaceEndpoint) {
+			globalConfig.HuggingFaceEndpoint = defaultHuggingFaceEndpointForRegion()
 		}
 		if strings.TrimSpace(globalConfig.ModelScopeEndpoint) == "" {
 			globalConfig.ModelScopeEndpoint = DefaultModelScopeEndpoint
@@ -339,6 +348,30 @@ func NormalizeMarketplaceDatasetSource(value string) string {
 
 func IsSupportedMarketplaceDatasetSource(value string) bool {
 	return IsSupportedMarketplaceModelSource(value)
+}
+
+func ResolveHuggingFaceEndpoint(configured string) string {
+	if env := strings.TrimSpace(os.Getenv(EnvHuggingFaceEndpoint)); env != "" {
+		return env
+	}
+	if configured = strings.TrimSpace(configured); configured != "" && !isAutoHuggingFaceEndpoint(configured) {
+		return configured
+	}
+	return defaultHuggingFaceEndpointForRegion()
+}
+
+func defaultHuggingFaceEndpointForRegion() string {
+	if region.Detect() == region.CN {
+		return ChinaHuggingFaceEndpoint
+	}
+	return DefaultHuggingFaceEndpoint
+}
+
+func isAutoHuggingFaceEndpoint(value string) bool {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	return value == "" ||
+		strings.EqualFold(value, DefaultHuggingFaceEndpoint) ||
+		strings.EqualFold(value, ChinaHuggingFaceEndpoint)
 }
 
 func ApplyEnvironmentDefaults(cfg *Config) {

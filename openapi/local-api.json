@@ -2037,7 +2037,7 @@
           "Marketplace"
         ],
         "summary": "List marketplace models",
-        "description": "Lists models from OpenCSG, Hugging Face, or ModelScope and normalizes the response to `{ data, total }`. Omitting `artifact_source` preserves the historical OpenCSG behavior.",
+        "description": "Lists models from OpenCSG, Hugging Face, or ModelScope and normalizes the response to `{ data, total, has_more, total_exact }`. Hugging Face does not expose a catalog total, so `total` is only a lower bound and `total_exact` is false. Omitting `artifact_source` preserves the historical OpenCSG behavior.",
         "operationId": "getMarketplaceModels",
         "parameters": [
           {
@@ -2273,7 +2273,7 @@
           "Marketplace"
         ],
         "summary": "List marketplace datasets",
-        "description": "Lists datasets from OpenCSG, Hugging Face, or ModelScope and normalizes the response to `{ data, total }`. Omitting `artifact_source` preserves the historical OpenCSG behavior.",
+        "description": "Lists datasets from OpenCSG, Hugging Face, or ModelScope and normalizes the response to `{ data, total, has_more, total_exact }`. Hugging Face does not expose a catalog total, so `total` is only a lower bound and `total_exact` is false. Omitting `artifact_source` preserves the historical OpenCSG behavior.",
         "operationId": "getMarketplaceDatasets",
         "parameters": [
           {
@@ -3078,6 +3078,29 @@
         }
       }
     },
+    "/api/observability/facets": {
+      "get": {
+        "tags": ["System"],
+        "summary": "List distinct models and routes from request history",
+        "operationId": "getObservabilityFacets",
+        "responses": {
+          "200": {
+            "description": "Distinct model names and route identifiers for dropdown filters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "models": {"type": "array", "items": {"$ref": "#/components/schemas/ObservabilityFacetValue"}},
+                    "routes": {"type": "array", "items": {"$ref": "#/components/schemas/ObservabilityFacetValue"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/observability/traces": {
       "get": {
         "tags": ["System"],
@@ -3490,6 +3513,37 @@
         }
       }
     },
+    "/api/provider-pool-policies": {
+      "get": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "List provider pool policy capabilities",
+        "operationId": "listProviderPoolPolicies",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provider pool routing policies and current availability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderPoolPolicyCapabilitiesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/provider-pools/{id}": {
       "put": {
         "tags": [
@@ -3566,6 +3620,146 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           }
+        }
+      }
+    },
+    "/api/provider-pools/{id}/router/status": {
+      "get": {
+        "tags": ["Providers"],
+        "summary": "Get provider pool router status",
+        "operationId": "getProviderPoolRouterStatus",
+        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}],
+        "responses": {
+          "200": {"description": "Closed-loop router status.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterStatus"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/api/provider-pools/{id}/router/suggestion": {
+      "get": {
+        "tags": ["Providers"],
+        "summary": "Get pending provider pool router suggestion",
+        "operationId": "getProviderPoolRouterSuggestion",
+        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}],
+        "responses": {
+          "200": {"description": "Pending evaluation suggestion.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterSuggestion"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/api/provider-pools/{id}/router/evaluations/preview": {
+      "post": {
+        "tags": ["Providers"],
+        "summary": "Preview a provider pool router evaluation",
+        "operationId": "previewProviderPoolRouterEvaluation",
+        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationRequest"}}}},
+        "responses": {
+          "200": {"description": "Evaluation call, token, and known-cost preview.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationPreview"}}}},
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/api/provider-pools/{id}/router/evaluations": {
+      "get": {
+        "tags": ["Providers"],
+        "summary": "List provider pool router evaluation jobs",
+        "operationId": "listProviderPoolRouterEvaluations",
+        "parameters": [
+          {"$ref": "#/components/parameters/ProviderPoolID"},
+          {"name": "status", "in": "query", "schema": {"type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"]}},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
+          {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}}
+        ],
+        "responses": {"200": {"description": "Lightweight evaluation jobs without candidate responses.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJobsResponse"}}}}}
+      },
+      "post": {
+        "tags": ["Providers"],
+        "summary": "Create a provider pool router evaluation job",
+        "operationId": "createProviderPoolRouterEvaluation",
+        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationRequest"}}}},
+        "responses": {
+          "202": {"description": "Evaluation job accepted.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"}}}},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "409": {"$ref": "#/components/responses/Conflict"}
+        }
+      }
+    },
+    "/api/provider-pools/{id}/router/evaluations/{jobID}": {
+      "get": {
+        "tags": ["Providers"],
+        "summary": "Get a provider pool router evaluation job",
+        "operationId": "getProviderPoolRouterEvaluation",
+        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}, {"$ref": "#/components/parameters/RouterJobID"}],
+        "responses": {
+          "200": {"description": "Lightweight evaluation job without candidate responses.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "tags": ["Providers"],
+        "summary": "Cancel a provider pool router evaluation job",
+        "operationId": "cancelProviderPoolRouterEvaluation",
+        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}, {"$ref": "#/components/parameters/RouterJobID"}],
+        "responses": {
+          "200": {"description": "Cancellation requested or queued job cancelled.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"}
+        }
+      }
+    },
+    "/api/provider-pools/{id}/router/profiles": {
+      "get": {
+        "tags": ["Providers"],
+        "summary": "List provider pool router profiles",
+        "operationId": "listProviderPoolRouterProfiles",
+        "parameters": [
+          {"$ref": "#/components/parameters/ProviderPoolID"},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
+          {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}}
+        ],
+        "responses": {"200": {"description": "Lightweight profiles without embedding vectors.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterProfilesResponse"}}}}}
+      }
+    },
+    "/api/provider-pools/{id}/router/profiles/{profileID}": {
+      "get": {
+        "tags": ["Providers"],
+        "summary": "Get provider pool router profile detail",
+        "operationId": "getProviderPoolRouterProfile",
+        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}, {"$ref": "#/components/parameters/RouterProfileID"}],
+        "responses": {
+          "200": {"description": "Profile metrics and bounded structured diagnostics without learner nodes, prompts, or responses.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterProfile"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    },
+    "/api/provider-pools/{id}/router/profiles/{profileID}/activate": {
+      "post": {
+        "tags": ["Providers"],
+        "summary": "Manually activate a compatible provider pool router profile",
+        "operationId": "activateProviderPoolRouterProfile",
+        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}, {"$ref": "#/components/parameters/RouterProfileID"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterActivationRequest"}}}},
+        "responses": {
+          "200": {"description": "Audited profile activation.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterActivation"}}}},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "409": {"$ref": "#/components/responses/Conflict"}
+        }
+      }
+    },
+    "/api/provider-pools/{id}/router/rollback": {
+      "post": {
+        "tags": ["Providers"],
+        "summary": "Rollback a provider pool router profile",
+        "operationId": "rollbackProviderPoolRouterProfile",
+        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterActivationRequest"}}}},
+        "responses": {
+          "200": {"description": "Audited rollback activation.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterActivation"}}}},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"}
         }
       }
     },
@@ -5897,6 +6091,24 @@
           "type": "string",
           "format": "password"
         }
+      },
+      "ProviderPoolID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {"type": "string"}
+      },
+      "RouterJobID": {
+        "name": "jobID",
+        "in": "path",
+        "required": true,
+        "schema": {"type": "string"}
+      },
+      "RouterProfileID": {
+        "name": "profileID",
+        "in": "path",
+        "required": true,
+        "schema": {"type": "string"}
       }
     },
     "responses": {
@@ -6420,6 +6632,8 @@
           "name",
           "model",
           "enabled",
+          "policy",
+          "policy_available",
           "members"
         ],
         "properties": {
@@ -6435,6 +6649,21 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "policy": {
+            "type": "string",
+            "enum": [
+              "priority_weight",
+              "semantic"
+            ],
+            "default": "priority_weight",
+            "description": "Pool routing policy. semantic is experimental."
+          },
+          "policy_available": {
+            "type": "boolean"
+          },
+          "policy_unavailable_reason": {
+            "type": "string"
           },
           "members": {
             "type": "array",
@@ -6477,6 +6706,15 @@
           "enabled": {
             "type": "boolean"
           },
+          "policy": {
+            "type": "string",
+            "enum": [
+              "priority_weight",
+              "semantic"
+            ],
+            "default": "priority_weight",
+            "description": "Pool routing policy. semantic is experimental."
+          },
           "members": {
             "type": "array",
             "minItems": 1,
@@ -6499,6 +6737,15 @@
           "enabled": {
             "type": "boolean"
           },
+          "policy": {
+            "type": "string",
+            "enum": [
+              "priority_weight",
+              "semantic"
+            ],
+            "default": "priority_weight",
+            "description": "Pool routing policy. semantic is experimental."
+          },
           "members": {
             "type": "array",
             "minItems": 1,
@@ -6506,6 +6753,279 @@
               "$ref": "#/components/schemas/ProviderPoolMember"
             }
           }
+        }
+      },
+      "ProviderPoolPolicyCapability": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "experimental",
+          "available"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "priority_weight",
+              "semantic"
+            ]
+          },
+          "experimental": {
+            "type": "boolean"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "ProviderPoolPolicyCapabilitiesResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "policies"
+        ],
+        "properties": {
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderPoolPolicyCapability"
+            }
+          }
+        }
+      },
+      "ProviderPoolRouterTarget": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "model"],
+        "properties": {"source": {"type": "string"}, "model": {"type": "string"}}
+      },
+      "ProviderPoolRouterSuggestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "reason", "qualified_query_count", "new_query_count", "member_compatible", "status", "created_at", "updated_at"],
+        "properties": {
+          "id": {"type": "string"}, "reason": {"type": "string"},
+          "qualified_query_count": {"type": "integer"}, "new_query_count": {"type": "integer"},
+          "member_compatible": {"type": "boolean"}, "status": {"type": "string", "enum": ["pending", "evaluating", "accepted", "rejected"]},
+          "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ProviderPoolRouterEvaluationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["judge_model", "max_queries", "repeats", "max_output_tokens", "request_timeout_seconds", "budget_currency", "budget_amount", "allow_unknown_pricing"],
+        "properties": {
+          "evaluation_mode": {"type": "string", "enum": ["absolute_v1", "listwise_v2"], "default": "listwise_v2"},
+          "base_profile_id": {"type": "string"}, "judge_model": {"type": "string"},
+          "max_queries": {"type": "integer", "minimum": 1, "maximum": 100},
+          "repeats": {"type": "integer", "minimum": 1, "maximum": 3},
+          "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 4096},
+          "request_timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
+          "budget_currency": {"type": "string", "enum": ["￥", "USD"], "default": "￥"}, "budget_amount": {"type": "number", "minimum": 0},
+          "allow_unknown_pricing": {"type": "boolean"}
+        }
+      },
+      "ProviderPoolRouterEvaluationPreview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evaluation_mode", "eligible_snapshot_count", "selected_snapshot_count", "direct_candidate_calls", "judge_calls", "max_judge_calls", "max_total_calls", "judge_prompt_tokens", "max_judge_token_exposure", "max_token_exposure", "known_judge_estimated_cost", "known_estimated_cost", "currency", "unknown_price_members", "judge_price_known", "requires_unknown_pricing_consent", "limits"],
+        "properties": {
+          "evaluation_mode": {"type": "string", "enum": ["absolute_v1", "listwise_v2"]},
+          "eligible_snapshot_count": {"type": "integer"}, "selected_snapshot_count": {"type": "integer"},
+          "direct_candidate_calls": {"type": "integer"}, "judge_calls": {"type": "integer"},
+          "max_judge_calls": {"type": "integer"}, "max_total_calls": {"type": "integer"},
+          "judge_prompt_tokens": {"type": "integer", "format": "int64"},
+          "max_judge_token_exposure": {"type": "integer", "format": "int64"},
+          "known_judge_estimated_cost": {"type": "number"},
+          "max_token_exposure": {"type": "integer", "format": "int64"}, "known_estimated_cost": {"type": "number"},
+          "currency": {"type": "string"}, "unknown_price_members": {"type": "array", "items": {"$ref": "#/components/schemas/ProviderPoolRouterTarget"}},
+          "judge_price_known": {"type": "boolean"},
+          "requires_unknown_pricing_consent": {"type": "boolean"},
+          "limits": {
+            "type": "object", "additionalProperties": false,
+            "required": ["max_queries", "max_repeats", "max_output_tokens", "max_request_timeout_seconds"],
+            "properties": {
+              "max_queries": {"type": "integer"}, "max_repeats": {"type": "integer"},
+              "max_output_tokens": {"type": "integer"}, "max_request_timeout_seconds": {"type": "integer"}
+            }
+          }
+        }
+      },
+      "ProviderPoolRouterEvaluationJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "evaluation_mode", "member_compatible", "judge_model", "max_queries", "repeats", "max_output_tokens", "request_timeout_seconds", "budget_currency", "budget_amount", "allow_unknown_pricing", "current", "total", "cancellation_requested", "status", "created_at", "updated_at"],
+        "properties": {
+          "id": {"type": "string"}, "evaluation_mode": {"type": "string", "enum": ["absolute_v1", "listwise_v2"]}, "base_profile_id": {"type": "string"}, "member_compatible": {"type": "boolean"},
+          "judge_model": {"type": "string"}, "max_queries": {"type": "integer"}, "repeats": {"type": "integer"},
+          "max_output_tokens": {"type": "integer"}, "request_timeout_seconds": {"type": "integer"},
+          "budget_currency": {"type": "string"}, "budget_amount": {"type": "number"}, "allow_unknown_pricing": {"type": "boolean"},
+          "direct_candidate_calls": {"type": "integer"}, "judge_calls": {"type": "integer"}, "max_judge_calls": {"type": "integer"},
+          "judge_prompt_tokens": {"type": "integer", "format": "int64"}, "max_judge_token_exposure": {"type": "integer", "format": "int64"},
+          "max_token_exposure": {"type": "integer", "format": "int64"},
+          "known_judge_estimated_cost": {"type": "number"}, "known_estimated_cost": {"type": "number"},
+          "estimate_currency": {"type": "string"}, "unknown_pricing": {"type": "boolean"},
+          "current": {"type": "integer"}, "total": {"type": "integer"}, "phase": {"type": "string"},
+          "cancellation_requested": {"type": "boolean"},
+          "status": {"type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"]},
+          "error": {"type": "string"}, "created_at": {"type": "string", "format": "date-time"},
+          "started_at": {"type": "string", "format": "date-time"}, "completed_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ProviderPoolRouterEvaluationJobsResponse": {
+        "type": "object", "additionalProperties": false, "required": ["items", "limit", "offset"],
+        "properties": {
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"}},
+          "limit": {"type": "integer"}, "offset": {"type": "integer"}
+        }
+      },
+      "ProviderPoolRouterMetrics": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["query_count", "cell_count", "trial_count", "repeats", "response_outcomes", "win_rate", "spend", "total_cost", "cost_unit", "monetary_spend_known", "unknown_monetary_spend", "train_query_count", "held_out_query_count", "cv_fold_count", "train_utility", "train_quality", "train_cost_score", "held_out_utility", "held_out_quality", "held_out_cost_score", "all_clusters_one_member", "semantic_differentiation"],
+        "properties": {
+          "query_count": {"type": "integer"}, "cell_count": {"type": "integer"}, "trial_count": {"type": "integer"},
+          "repeats": {"type": "integer"}, "response_outcomes": {"type": "object", "additionalProperties": {"type": "integer"}},
+          "win_rate": {"type": "number"}, "spend": {"type": "number"}, "total_cost": {"type": "number"},
+          "currency": {"type": "string"}, "cost_unit": {"type": "string"}, "monetary_spend_known": {"type": "boolean"},
+          "unknown_monetary_spend": {"type": "boolean"}, "train_query_count": {"type": "integer"},
+          "held_out_query_count": {"type": "integer"}, "cv_fold_count": {"type": "integer"},
+          "train_utility": {"type": "number"}, "train_quality": {"type": "number"}, "train_cost_score": {"type": "number"},
+          "held_out_utility": {"type": "number"}, "held_out_quality": {"type": "number"}, "held_out_cost_score": {"type": "number"},
+          "all_clusters_one_member": {"type": "boolean"}, "semantic_differentiation": {"type": "boolean"}
+        }
+      },
+      "ProviderPoolRouterPairwiseMetrics": {
+        "type": "object", "additionalProperties": false,
+        "required": ["count", "log_loss", "brier", "top_class_accuracy", "ece"],
+        "properties": {
+          "count": {"type": "integer"}, "log_loss": {"type": "number"}, "brier": {"type": "number"},
+          "top_class_accuracy": {"type": "number"}, "ece": {"type": "number"}
+        }
+      },
+      "ProviderPoolRouterQualityCost": {
+        "type": "object", "additionalProperties": false, "required": ["quality", "cost_known"],
+        "properties": {
+          "quality": {"type": "number"}, "cost": {"type": "number"},
+          "cost_known": {"type": "boolean"}, "currency": {"type": "string"}
+        }
+      },
+      "ProviderPoolRouterV2Summary": {
+        "type": "object",
+        "description": "Bounded V2 diagnostics. Learner samples, embeddings, forest nodes, prompts, and responses are intentionally omitted.",
+        "additionalProperties": false,
+        "required": ["profile_algorithm", "model_type", "sample_count", "query_group_count", "round_count", "cv_fold_count", "target_quality_retention", "confidence_level", "baseline_best_single_model", "routed", "point_retention", "conservative_retention", "retention_lower_bound", "savings_known", "coverage", "fallback_rate", "low_confidence_rate", "ood_rate", "pairwise_metrics", "thresholds", "optimize_known_cost", "quality_feasible", "known_cost_feasible", "insufficient_evidence"],
+        "properties": {
+          "profile_algorithm": {"type": "string"}, "model_type": {"type": "string", "enum": ["similarity_weighted_bt_v1", "pairwise_forest_v1"]},
+          "model_fallback_reason": {"type": "string"},
+          "sample_count": {"type": "integer"}, "query_group_count": {"type": "integer"}, "round_count": {"type": "integer"}, "cv_fold_count": {"type": "integer"},
+          "target_quality_retention": {"type": "number"}, "confidence_level": {"type": "number"},
+          "baseline_best_single_model": {"$ref": "#/components/schemas/ProviderPoolRouterQualityCost"},
+          "routed": {"$ref": "#/components/schemas/ProviderPoolRouterQualityCost"},
+          "point_retention": {"type": "number"}, "conservative_retention": {"type": "number"}, "retention_lower_bound": {"type": "number"},
+          "savings": {"type": "number"}, "savings_fraction": {"type": "number"}, "savings_known": {"type": "boolean"},
+          "coverage": {"type": "number"}, "fallback_rate": {"type": "number"}, "low_confidence_rate": {"type": "number"}, "ood_rate": {"type": "number"},
+          "pairwise_metrics": {"$ref": "#/components/schemas/ProviderPoolRouterPairwiseMetrics"},
+          "thresholds": {
+            "type": "object", "additionalProperties": false,
+            "required": ["minimum_confidence", "minimum_margin", "minimum_similarity", "quality_slack"],
+            "properties": {
+              "minimum_confidence": {"type": "number"}, "minimum_margin": {"type": "number"},
+              "minimum_similarity": {"type": "number"}, "quality_slack": {"type": "number"}
+            }
+          },
+          "optimize_known_cost": {"type": "boolean"}, "quality_feasible": {"type": "boolean"},
+          "known_cost_feasible": {"type": "boolean"}, "insufficient_evidence": {"type": "boolean"},
+          "collapsed_member_id": {"type": "string"}, "warnings": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "ProviderPoolRouterProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "version", "schema_version", "member_compatible", "member_fingerprint_drift", "active", "created_at", "generated_at", "distance", "cost_unit", "fallback_member_id", "metrics", "activation_allowed", "feasible", "collapsed_single_member", "collapsed_quality_passed"],
+        "properties": {
+          "id": {"type": "string"}, "version": {"type": "integer"}, "schema_version": {"type": "integer", "enum": [1, 2]},
+          "router_algorithm": {"type": "string"}, "member_compatible": {"type": "boolean"},
+          "member_fingerprint_drift": {"type": "boolean"},
+          "active": {"type": "boolean"}, "created_at": {"type": "string", "format": "date-time"},
+          "created_by": {"type": "string"}, "source_job_id": {"type": "string"}, "description": {"type": "string"},
+          "generated_at": {"type": "string", "format": "date-time"}, "distance": {"type": "string"},
+          "cost_unit": {"type": "string"}, "fallback_member_id": {"type": "string"},
+          "metrics": {"$ref": "#/components/schemas/ProviderPoolRouterMetrics"},
+          "clusters": {
+            "type": "array", "description": "Cluster detail with embedding center vectors intentionally omitted.",
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["id", "target_member_id", "target", "sample_count", "distance_quantiles", "ood_threshold"],
+              "properties": {
+                "id": {"type": "string"}, "target_member_id": {"type": "string"},
+                "target": {"$ref": "#/components/schemas/ProviderPoolRouterTarget"}, "sample_count": {"type": "integer"},
+                "distance_quantiles": {
+                  "type": "object", "additionalProperties": false, "required": ["p50", "p90", "p95", "p99"],
+                  "properties": {"p50": {"type": "number"}, "p90": {"type": "number"}, "p95": {"type": "number"}, "p99": {"type": "number"}}
+                },
+                "ood_threshold": {"type": "number"}
+              }
+            }
+          },
+          "candidate_distribution": {
+            "type": "array",
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["member_id", "target", "cluster_count", "sample_count"],
+              "properties": {
+                "member_id": {"type": "string"}, "target": {"$ref": "#/components/schemas/ProviderPoolRouterTarget"},
+                "cluster_count": {"type": "integer"}, "sample_count": {"type": "integer"}, "fraction": {"type": "number"}
+              }
+            }
+          },
+          "activation_allowed": {"type": "boolean"},
+          "activation_blocked_reason": {"type": "string", "enum": ["candidate_members_incompatible", "missing_safe_fallback", "member_fingerprint_changed", "no_held_out_queries", "collapsed", "collapsed_quality_not_passed", "no_semantic_differentiation", "infeasible"]},
+          "validation_state": {"type": "string"},
+          "feasible": {"type": "boolean"},
+          "collapsed_single_member": {"type": "boolean"},
+          "collapsed_quality_passed": {"type": "boolean"},
+          "v2": {"$ref": "#/components/schemas/ProviderPoolRouterV2Summary"}
+        }
+      },
+      "ProviderPoolRouterProfilesResponse": {
+        "type": "object", "additionalProperties": false, "required": ["items", "limit", "offset"],
+        "properties": {
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/ProviderPoolRouterProfile"}},
+          "limit": {"type": "integer"}, "offset": {"type": "integer"}
+        }
+      },
+      "ProviderPoolRouterActivationRequest": {
+        "type": "object", "additionalProperties": false, "required": ["actor", "reason"],
+        "properties": {"actor": {"type": "string"}, "reason": {"type": "string"}, "expected_current_profile_id": {"type": "string"}}
+      },
+      "ProviderPoolRouterActivation": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "to_profile_id", "action", "reason", "actor", "created_at"],
+        "properties": {
+          "id": {"type": "integer", "format": "int64"}, "from_profile_id": {"type": "string"},
+          "to_profile_id": {"type": "string"}, "action": {"type": "string", "enum": ["activate", "rollback"]},
+          "reason": {"type": "string"}, "actor": {"type": "string"}, "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ProviderPoolRouterStatus": {
+        "type": "object", "additionalProperties": false, "required": ["qualified_query_count", "new_query_count", "semantic_differentiation"],
+        "properties": {
+          "qualified_query_count": {"type": "integer"},
+          "new_query_count": {"type": "integer"},
+          "pending_suggestion": {"$ref": "#/components/schemas/ProviderPoolRouterSuggestion"},
+          "running_job": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"},
+          "latest_job": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"},
+          "active_profile": {"$ref": "#/components/schemas/ProviderPoolRouterProfile"},
+          "latest_candidate_profile": {"$ref": "#/components/schemas/ProviderPoolRouterProfile"},
+          "rollback_target_profile": {"$ref": "#/components/schemas/ProviderPoolRouterProfile"},
+          "current_profile_id": {"type": "string"},
+          "semantic_differentiation": {"type": "boolean"}
         }
       },
       "ProviderTagModelRequest": {
@@ -6648,6 +7168,7 @@
           "marketplace_dataset_source",
           "autostart",
           "desktop_mode",
+          "llama_use_model_max_ctx",
           "web_search",
           "observability",
           "hidden_nav_items"
@@ -6715,6 +7236,10 @@
           },
           "desktop_mode": {
             "type": "boolean"
+          },
+          "llama_use_model_max_ctx": {
+            "type": "boolean",
+            "description": "Whether local models use their native maximum context when a request does not explicitly set num_ctx. CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX takes precedence when set."
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"
@@ -6786,6 +7311,10 @@
           },
           "autostart": {
             "type": "boolean"
+          },
+          "llama_use_model_max_ctx": {
+            "type": "boolean",
+            "description": "Use each local model's native maximum context when requests omit num_ctx."
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"
@@ -7189,7 +7718,7 @@
       },
       "ObservabilityRequest": {
         "type": "object",
-        "required": ["id", "trace_id", "started_at", "completed_at", "method", "path", "protocol", "status", "status_code", "stream", "model", "input_tokens", "output_tokens", "total_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "cache_eligible_input_tokens", "cache_hit_rate", "duration_ms", "first_token_latency_ms"],
+        "required": ["id", "trace_id", "started_at", "completed_at", "method", "path", "protocol", "status", "status_code", "stream", "model", "semantic_cluster", "price_input_per_million", "price_output_per_million", "estimated_cost", "cost_known", "fallback_count", "limited_count", "input_tokens", "output_tokens", "total_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "cache_eligible_input_tokens", "cache_hit_rate", "duration_ms", "first_token_latency_ms", "request_body_truncated", "response_body_truncated"],
         "properties": {
           "id": {"type": "string"},
           "request_id": {"type": "string", "description": "Effective X-Request-ID used for end-to-end request correlation."},
@@ -7213,7 +7742,29 @@
           "pool_id": {"type": "string"},
           "pool_name": {"type": "string"},
           "pool_model": {"type": "string"},
+          "actual_member_id": {"type": "string"},
           "member_model": {"type": "string"},
+          "pool_policy": {"type": "string"},
+          "router_profile_id": {"type": "string"},
+          "router_profile_version": {"type": "integer"},
+          "router_profile_schema_version": {"type": "integer"},
+          "router_algorithm": {"type": "string"},
+          "routing_text_version": {"type": "string"},
+          "router_confidence": {"type": "number", "format": "double"},
+          "router_margin": {"type": "number", "format": "double"},
+          "router_similarity": {"type": "number", "format": "double"},
+          "semantic_routed": {"type": "boolean"},
+          "semantic_cluster": {"type": "integer"},
+          "semantic_cluster_id": {"type": "string"},
+          "semantic_distance": {"type": "number", "format": "double"},
+          "semantic_ood": {"type": "boolean"},
+          "semantic_fallback": {"type": "boolean"},
+          "semantic_fallback_reason": {"type": "string"},
+          "price_input_per_million": {"type": "number", "format": "double"},
+          "price_output_per_million": {"type": "number", "format": "double"},
+          "estimated_cost": {"type": "number", "format": "double"},
+          "cost_currency": {"type": "string"},
+          "cost_known": {"type": "boolean"},
           "fallback_count": {"type": "integer", "format": "int64"},
           "limited_count": {"type": "integer", "format": "int64"},
           "input_tokens": {"type": "integer", "format": "int64"},
@@ -7255,6 +7806,15 @@
           "models": {"type": "array", "items": {"type": "string"}},
           "total_tokens": {"type": "integer", "format": "int64"},
           "duration_ms": {"type": "integer", "format": "int64"}
+        }
+      },
+      "ObservabilityFacetValue": {
+        "type": "object",
+        "required": ["value", "count"],
+        "properties": {
+          "value": {"type": "string", "description": "Filter value accepted by the model/source query parameters."},
+          "label": {"type": "string", "description": "Display name, e.g. pool or source name."},
+          "count": {"type": "integer", "format": "int64"}
         }
       },
       "DatasetExportRequest": {
@@ -9859,6 +10419,14 @@
           },
           "total": {
             "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether another page is available after the current result set."
+          },
+          "total_exact": {
+            "type": "boolean",
+            "description": "Whether `total` is an exact catalog count. Hugging Face listings set this to false."
           }
         }
       },
@@ -9944,6 +10512,14 @@
           },
           "total": {
             "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether another page is available after the current result set."
+          },
+          "total_exact": {
+            "type": "boolean",
+            "description": "Whether `total` is an exact catalog count. Hugging Face listings set this to false."
           }
         }
       },

@@ -9,7 +9,7 @@ INSTALL_DIR_DEFAULT="/usr/local/bin"
 BINARY_NAME="${BINARY_NAME:-csghub-lite}"
 EE="${EE:-}"
 LLAMA_CPP_REPO="ggml-org/llama.cpp"
-LLAMA_CPP_DEFAULT_TAG="${CSGHUB_LITE_LLAMA_CPP_TAG:-b10326}"
+LLAMA_CPP_DEFAULT_TAG="${CSGHUB_LITE_LLAMA_CPP_TAG:-b10549}"
 INSTALL_PATH_PROFILE=""
 INSTALL_PATH_DIR=""
 
@@ -974,18 +974,18 @@ restart_running_csghub_lite_server() {
     fi
 
     info "Existing csghub-lite service detected. Restarting it to load the new version..."
-    if "$_server_bin" stop-service >/dev/null 2>&1; then
+    if "$_server_bin" stop >/dev/null 2>&1; then
         sleep 1
         if ! "$_server_bin" ps >/dev/null 2>&1 && ! has_running_named_processes "$BINARY_NAME"; then
             return 0
         fi
     fi
 
-    warn "Graceful stop-service did not complete; forcing running ${BINARY_NAME} processes to exit..."
+    warn "Graceful stop did not complete; forcing running ${BINARY_NAME} processes to exit..."
     force_stop_named_processes "$BINARY_NAME" || true
     if "$_server_bin" ps >/dev/null 2>&1 || has_running_named_processes "$BINARY_NAME"; then
         warn "Could not stop the existing csghub-lite service automatically."
-        warn "Restart it manually to use the new binary: ${_server_bin} stop-service && ${_server_bin} serve"
+        warn "Restart it manually to use the new binary: ${_server_bin} stop && ${_server_bin} start"
         SERVER_START_STATUS="stale"
         return 1
     fi
@@ -1018,9 +1018,9 @@ start_csghub_lite_server() {
         fi
     else
         if [ "$_restarted" = true ]; then
-            warn "Could not verify background server restart. Try: ${_server_bin} serve"
+            warn "Could not verify background server restart. Try: ${_server_bin} start"
         else
-            warn "Could not verify background server startup. Try: ${_server_bin} serve"
+            warn "Could not verify background server startup. Try: ${_server_bin} start"
         fi
         SERVER_START_STATUS="failed"
     fi
@@ -1134,9 +1134,9 @@ main() {
     if [ "$SERVER_START_STATUS" = "started" ] || [ "$SERVER_START_STATUS" = "restarted" ] || [ "$SERVER_START_STATUS" = "running" ]; then
         printf "  %s run Qwen/Qwen3-0.6B-GGUF    # Run a model\n" "$QUICKSTART_BIN"
         printf "  %s ps                          # List running models\n" "$QUICKSTART_BIN"
-        printf "  %s stop-service                # Stop background server\n" "$QUICKSTART_BIN"
+        printf "  %s stop                        # Stop background server\n" "$QUICKSTART_BIN"
     else
-        printf "  %s serve                       # Start server with Web UI\n" "$QUICKSTART_BIN"
+        printf "  %s start                       # Start background server\n" "$QUICKSTART_BIN"
         printf "  %s run Qwen/Qwen3-0.6B-GGUF    # Run a model\n" "$QUICKSTART_BIN"
         printf "  %s ps                          # List running models\n" "$QUICKSTART_BIN"
     fi
@@ -1145,7 +1145,7 @@ main() {
     printf "\n"
     printf "${BOLD}Web UI:${NC}\n"
     if [ "$SERVER_START_STATUS" = "stale" ]; then
-        printf "  Existing server could not be restarted automatically. Run ${CYAN}%s stop-service && %s serve${NC}.\n" "$QUICKSTART_BIN" "$QUICKSTART_BIN"
+        printf "  Existing server could not be restarted automatically. Run ${CYAN}%s stop && %s start${NC}.\n" "$QUICKSTART_BIN" "$QUICKSTART_BIN"
     elif [ "$SERVER_START_STATUS" = "started" ] || [ "$SERVER_START_STATUS" = "restarted" ] || [ "$SERVER_START_STATUS" = "running" ]; then
         printf "  Server is already running. Open ${CYAN}http://localhost:11435${NC} in your browser.\n"
     else

@@ -17,6 +17,8 @@ import (
 	"github.com/opencsgs/csglite/internal/claudeagent"
 	"github.com/opencsgs/csglite/internal/codexagent"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/dshagent"
+	"github.com/opencsgs/csglite/internal/kimiagent"
 	"github.com/opencsgs/csglite/internal/ocreviewagent"
 	"github.com/opencsgs/csglite/internal/opencodeagent"
 	"github.com/opencsgs/csglite/internal/piagent"
@@ -254,6 +256,10 @@ func prepareLaunchExecution(target launchTarget, serverURL, modelID string, user
 		return prepareCodexLaunch(target, serverURL, modelID, userArgs)
 	case "pi":
 		return preparePiLaunch(target, serverURL, modelID, userArgs)
+	case "kimi-code":
+		return prepareKimiCodeLaunch(target, serverURL, modelID, userArgs)
+	case "dsh":
+		return prepareDshLaunch(target, serverURL, modelID, userArgs)
 	case "openclaw":
 		return prepareOpenClawLaunch(target, serverURL, modelID, userArgs)
 	default:
@@ -358,6 +364,47 @@ func preparePiLaunch(target launchTarget, serverURL, modelID string, userArgs []
 	args := append([]string{}, userArgs...)
 	args = prependArgsIfMissing(args, []string{"--provider", piagent.ProviderID}, "--provider")
 	args = prependArgsIfMissing(args, []string{"--model", modelID}, "--model", "-m")
+	env := envWithOverrides(nil)
+	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
+}
+
+func prepareKimiCodeLaunch(target launchTarget, serverURL, modelID string, userArgs []string) (preparedLaunch, error) {
+	binary, err := resolveLaunchBinary(target.AppID, target.Binaries)
+	if err != nil {
+		return preparedLaunch{}, fmt.Errorf("%s is installed, but the launch command was not found on PATH", target.DisplayName)
+	}
+	models, err := getLaunchModels(serverURL)
+	if err != nil {
+		return preparedLaunch{}, err
+	}
+	if err := kimiagent.SyncConfig(serverURL, openClawProviderAPIKey(config.Get().Token), modelID, models); err != nil {
+		return preparedLaunch{}, err
+	}
+
+	modelAlias := kimiagent.ModelAlias(modelID)
+	args := append([]string{}, userArgs...)
+	args = prependArgsIfMissing(args, []string{"--model", modelAlias}, "--model", "-m")
+	env := envWithOverrides(nil)
+	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
+}
+
+func prepareDshLaunch(target launchTarget, serverURL, modelID string, userArgs []string) (preparedLaunch, error) {
+	binary, err := resolveLaunchBinary(target.AppID, target.Binaries)
+	if err != nil {
+		return preparedLaunch{}, fmt.Errorf("%s is installed, but the launch command was not found on PATH", target.DisplayName)
+	}
+	models, err := getLaunchModels(serverURL)
+	if err != nil {
+		return preparedLaunch{}, err
+	}
+	if err := dshagent.SyncConfig(serverURL, openClawProviderAPIKey(config.Get().Token), modelID, models); err != nil {
+		return preparedLaunch{}, err
+	}
+
+	// dsh launches as a Web UI via the "web" profile. --no-open prevents dsh
+	// from trying to open a browser itself; the caller manages that.
+	args := append([]string{}, userArgs...)
+	args = prependArgsIfMissing(args, []string{"--profile", "web", "--no-open"}, "--profile")
 	env := envWithOverrides(nil)
 	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
 }

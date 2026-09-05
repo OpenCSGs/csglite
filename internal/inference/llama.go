@@ -239,6 +239,13 @@ func llamaReadyTimeout(modelPath string) time.Duration {
 // Explicit requests win, then CSGHUB_LITE_LLAMA_NUM_CTX, then the optional
 // model maximum, then a conservative model-aware fallback.
 func ResolveNumCtx(modelDir string, requested int) int {
+	return ResolveNumCtxWithModelMax(modelDir, requested, false)
+}
+
+// ResolveNumCtxWithModelMax resolves the context window using the persisted
+// model-maximum default. CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX overrides that
+// default when the environment variable is explicitly set.
+func ResolveNumCtxWithModelMax(modelDir string, requested int, configured bool) int {
 	if requested >= 1024 {
 		return requested
 	}
@@ -249,7 +256,7 @@ func ResolveNumCtx(modelDir string, requested int) int {
 	}
 
 	maxPos := ModelMaxPositionEmbeddings(modelDir)
-	if useModelMaxCtxByDefault() && maxPos >= 1024 {
+	if UseModelMaxCtxByDefault(configured) && maxPos >= 1024 {
 		return maxPos
 	}
 	if maxPos >= autoExpandedLlamaCtxSize {
@@ -259,13 +266,18 @@ func ResolveNumCtx(modelDir string, requested int) int {
 	return defaultLlamaCtxSize
 }
 
-func useModelMaxCtxByDefault() bool {
+// UseModelMaxCtxByDefault returns the effective model-maximum default.
+// An explicitly set environment variable has precedence over persisted config.
+func UseModelMaxCtxByDefault(configured bool) bool {
 	v := strings.TrimSpace(os.Getenv(useModelMaxCtxEnv))
 	if v == "" {
-		return false
+		return configured
 	}
 	enabled, err := strconv.ParseBool(v)
-	return err == nil && enabled
+	if err != nil {
+		return configured
+	}
+	return enabled
 }
 
 // ResolveNumParallel returns the effective number of parallel slots for llama-server.

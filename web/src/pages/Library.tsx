@@ -3,7 +3,8 @@ import { signal } from "@preact/signals";
 import { deleteModel, getModelManifest, getPs, loadModel, searchLocalModels, stopModel, uploadLocalModel } from "../api/client";
 import type { ArtifactSource, LoadModelOptions, LocalModelUploadFile, ModelFileEntry, ModelInfo, RunningModel } from "../api/client";
 import { locale, t } from "../i18n";
-import { DownloadStatusCell, DownloadTableCell } from "../components/DownloadProgressPanel";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DownloadProgressCell } from "../components/DownloadProgressPanel";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../components/Pagination";
 import type { PageSize } from "../components/Pagination";
@@ -11,7 +12,9 @@ import { isImageGenerationModel } from "../utils/imageModels";
 import { formatLoadStep } from "../utils/loadSteps";
 import { getDownloadTask, getDownloadTasks, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
+import { downloadRowOriginKey, modelOriginKey } from "../artifactOrigin";
 import { displayLocalModelID } from "../modelIds";
+import { formatTableDateTime } from "../utils/tableDateTime";
 
 type FormatFilter = "all" | "gguf" | "safetensors";
 type RunModelParams = {
@@ -91,6 +94,9 @@ const stoppingModel = signal<string>("");
 type LoadStepProgress = { step?: string; status?: string; current?: number; total?: number };
 const loadProgress = signal<LoadStepProgress | null>(null);
 const libraryError = signal<string>("");
+type PendingDelete = { name: string; displayName: string; task?: DownloadTask; downloadOnly: boolean };
+const pendingDelete = signal<PendingDelete | null>(null);
+const deleteBusy = signal(false);
 const runDialogModel = signal<ModelInfo | null>(null);
 const apiDialogModel = signal<ModelInfo | null>(null);
 const runDialogError = signal<string>("");
@@ -351,16 +357,6 @@ function isCloudModel(model: Pick<ModelInfo, "source">): boolean {
   return model.source === "cloud";
 }
 
-function modelOriginLabel(origin?: string, artifactSource?: string): string {
-  if (origin === "upload") return t("lib.originUpload");
-  if (origin === "marketplace") {
-    if (artifactSource === "huggingface") return t("lib.originHuggingFace");
-    if (artifactSource === "modelscope") return t("lib.originModelScope");
-    return t("lib.originOpenCSG");
-  }
-  return t("lib.notAvailable");
-}
-
 function modelDetailHref(modelID: string): string {
   return `/library/detail/${encodeURIComponent(modelID)}`;
 }
@@ -409,6 +405,9 @@ function modelRows(models: ModelInfo[]): ModelTableRow[] {
         size: task.totalBytes || task.completedBytes,
         format: "",
         modified_at: task.updatedAt,
+        origin: "marketplace",
+        artifact_source: task.artifactSource || "opencsg",
+        repository: task.name,
       },
       task,
       downloadOnly: true,
@@ -589,24 +588,35 @@ export function Library() {
     return () => window.clearTimeout(timeout);
   }, [searchQuery.value, formatFilter.value]);
 
-  const handleDelete = async (name: string, task?: DownloadTask, downloadOnly = false) => {
-    if (!confirm(t("lib.deleteConfirm", name))) return;
-    if (downloadOnly && task) {
-      await clearDownloadTask(task);
-      await loadModels();
-      return;
-    }
-    await deleteModel(name);
-    for (const task of getDownloadTasks("model")) {
-      const sourceQualifiedTaskName = task.artifactSource && task.artifactSource !== "opencsg"
-        ? `${task.artifactSource}/${task.name}`
-        : task.name;
-      if (task.name === name || sourceQualifiedTaskName === name) {
-        await clearDownloadTask(task);
+  const requestDelete = (name: string, displayName: string, task?: DownloadTask, downloadOnly = false) => {
+    pendingDelete.value = { name, displayName, task, downloadOnly };
+  };
+
+  const confirmDelete = async () => {
+    const pending = pendingDelete.value;
+    if (!pending || deleteBusy.value) return;
+    deleteBusy.value = true;
+    try {
+      if (pending.downloadOnly && pending.task) {
+        await clearDownloadTask(pending.task);
+        await loadModels();
+        return;
       }
+      await deleteModel(pending.name);
+      for (const task of getDownloadTasks("model")) {
+        const sourceQualifiedTaskName = task.artifactSource && task.artifactSource !== "opencsg"
+          ? `${task.artifactSource}/${task.name}`
+          : task.name;
+        if (task.name === pending.name || sourceQualifiedTaskName === pending.name) {
+          await clearDownloadTask(task);
+        }
+      }
+      await loadModels();
+      loadRunningModels();
+    } finally {
+      deleteBusy.value = false;
+      pendingDelete.value = null;
     }
-    await loadModels();
-    loadRunningModels();
   };
 
   const handleRun = async (name: string, options: LoadModelOptions) => {
@@ -826,14 +836,13 @@ export function Library() {
         <div class="overflow-x-auto">
           <table class="w-full min-w-[980px] table-fixed text-sm">
             <colgroup>
-              <col class="w-[22%]" />
-              <col class="w-[9%]" />
+              <col class="w-[25ch]" />
               <col class="w-[10%]" />
-              <col class="w-[9%]" />
+              <col class="w-[calc(13ch+2rem)]" />
+              <col class="w-[10%]" />
+              <col class="w-[12%]" />
               <col class="w-[14%]" />
-              <col class="w-[8%]" />
-              <col class="w-[11%]" />
-              <col class="w-[18%]" />
+              <col class="w-[20%]" />
             </colgroup>
             <thead>
               <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50 whitespace-nowrap">
@@ -842,7 +851,6 @@ export function Library() {
                 <th class="px-4 py-3 font-medium">{t("lib.origin")}</th>
                 <SortHeader label={t("lib.fileSize")} field="size" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
                 <th class="px-4 py-3 font-medium">{t("downloads.progress")}</th>
-                <th class="px-4 py-3 font-medium">{t("downloads.status")}</th>
                 <SortHeader label={t("lib.dateTime")} field="modified_at" current={sortField.value} asc={sortAsc.value} onToggle={toggleSort} />
                 <th class="px-4 py-3 font-medium text-right">{t("lib.operation")}</th>
               </tr>
@@ -850,13 +858,13 @@ export function Library() {
             <tbody>
             {modelsLoading.value ? (
               <tr>
-                <td colSpan={8} class="text-center py-12 text-gray-400">
+                <td colSpan={7} class="text-center py-12 text-gray-400">
                   {t("lib.searching")}
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={8} class="text-center py-12 text-gray-400">
+                <td colSpan={7} class="text-center py-12 text-gray-400">
                   {hasActiveFilters ? t("lib.noSearchResults") : t("lib.noModels")}
                 </td>
               </tr>
@@ -864,7 +872,11 @@ export function Library() {
               pagedRows.map(({ model: m, task, downloadOnly }) => (
                 <tr key={`${m.artifact_source || "opencsg"}:${m.name}`} class="border-b border-gray-50 hover:bg-gray-50/50">
                   <td class="px-4 py-3 min-w-0">
-                    <a href={downloadOnly ? undefined : modelDetailHref(m.model)} class={`font-medium break-all ${downloadOnly ? "text-gray-400 cursor-not-allowed" : "text-indigo-600 hover:text-indigo-800 hover:underline"}`}>
+                    <a
+                      href={downloadOnly ? undefined : modelDetailHref(m.model)}
+                      title={displayLocalModelID(m)}
+                      class={`block max-w-[25ch] truncate font-medium ${downloadOnly ? "text-gray-400 cursor-not-allowed" : "text-indigo-600 hover:text-indigo-800 hover:underline"}`}
+                    >
                       {displayLocalModelID(m)}
                     </a>
                   </td>
@@ -878,9 +890,9 @@ export function Library() {
                       {m.format?.toUpperCase() || (downloadOnly ? t("downloads.downloading") : "—")}
                     </span>
                   </td>
-                  <td class="px-4 py-3 min-w-0 text-gray-600">
-                    <span class="block truncate whitespace-nowrap" title={downloadOnly ? "—" : modelOriginLabel(m.origin, m.artifact_source)}>
-                      {downloadOnly ? "—" : modelOriginLabel(m.origin, m.artifact_source)}
+                  <td class="px-4 py-3 text-gray-600 whitespace-nowrap">
+                    <span class="block max-w-[13ch]" title={downloadOnly ? t(downloadRowOriginKey(task?.artifactSource)) : t(modelOriginKey(m.origin, m.artifact_source))}>
+                      {downloadOnly ? t(downloadRowOriginKey(task?.artifactSource)) : t(modelOriginKey(m.origin, m.artifact_source))}
                     </span>
                   </td>
                   <td class="px-4 py-3 whitespace-nowrap">
@@ -889,25 +901,16 @@ export function Library() {
                     </span>
                   </td>
                   <td class="px-4 py-3 min-w-0">
-                    <DownloadTableCell task={task} onComplete={() => void loadModels()} showActions={false} />
+                    <DownloadProgressCell task={task} completeWhenMissing={!downloadOnly} />
                   </td>
-                  <td class="px-4 py-3 min-w-0">
-                    <DownloadStatusCell task={task} completeWhenMissing={!downloadOnly} />
-                  </td>
-                  <td class="px-4 py-3 text-gray-500 whitespace-nowrap">
-                    {new Date(m.modified_at).toLocaleDateString("en-US", { day: "numeric", month: "long" })}
+                  <td class="px-4 py-3 text-gray-500 whitespace-nowrap" title={formatTableDateTime(m.modified_at)}>
+                    {formatTableDateTime(m.modified_at)}
                   </td>
                   <td class="px-4 py-3 min-w-0">
                     <div class="flex min-w-0 max-w-full items-center justify-end gap-3 whitespace-nowrap">
                       <button
                         disabled={!downloadOnly && (task?.status === "downloading" || task?.status === "queued")}
-                        onClick={() => {
-                          if (downloadOnly) {
-                            void handleDelete(m.name, task, true);
-                            return;
-                          }
-                          void handleDelete(m.name);
-                        }}
+                        onClick={() => requestDelete(m.name, displayLocalModelID(m), task, downloadOnly)}
                         class="shrink-0 text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {t("lib.delete")}
@@ -996,6 +999,18 @@ export function Library() {
           />
         )}
       </div>
+      <ConfirmDialog
+        open={!!pendingDelete.value}
+        title={pendingDelete.value?.downloadOnly ? t("lib.deleteDownloadTitle") : t("lib.deleteTitle")}
+        name={pendingDelete.value?.displayName}
+        description={pendingDelete.value?.downloadOnly ? t("lib.deleteDownloadMessage") : t("lib.deleteMessage")}
+        confirmLabel={pendingDelete.value?.downloadOnly ? t("lib.delete") : t("confirm.delete")}
+        busy={deleteBusy.value}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => {
+          if (!deleteBusy.value) pendingDelete.value = null;
+        }}
+      />
       {runDialogModel.value && (
         <RunParamsDialog
           model={runDialogModel.value}

@@ -13,6 +13,7 @@ import (
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/modelmetadata"
+	routerprofile "github.com/opencsgs/semantic-router"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -58,6 +59,40 @@ func TestHandleSettingsReturnsStorageDir(t *testing.T) {
 	}
 }
 
+func TestHandleSettingsUpdatesLlamaUseModelMaxCtx(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX", "")
+	config.Reset()
+
+	s := newTestServer(t)
+	enabled := true
+	body, err := json.Marshal(api.SettingsUpdateRequest{LlamaUseModelMaxCtx: &enabled})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleSettingsUpdate(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if !s.cfg.Inference.LlamaUseModelMaxCtx {
+		t.Fatal("LlamaUseModelMaxCtx = false, want true")
+	}
+
+	var resp api.SettingsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.LlamaUseModelMaxCtx {
+		t.Fatal("response llama_use_model_max_ctx = false, want true")
+	}
+}
+
 func TestHandleSettingsUpdateStorageDirUpdatesModelAndDatasetDirs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -100,6 +135,10 @@ func TestHandleSettingsUpdateStorageDirUpdatesModelAndDatasetDirs(t *testing.T) 
 	wantCachePath := filepath.Join(root, modelmetadata.DirName, modelmetadata.DatabaseFile)
 	if s.modelMetadata == nil || s.modelMetadata.Path() != wantCachePath {
 		t.Fatalf("model metadata cache path = %v, want %q", s.modelMetadata, wantCachePath)
+	}
+	wantRouterPath := filepath.Join(root, routerprofile.DirName, routerprofile.DatabaseFile)
+	if s.routerProfiles == nil || s.routerProfiles.Path() != wantRouterPath {
+		t.Fatalf("router profile store path = %v, want %q", s.routerProfiles, wantRouterPath)
 	}
 
 	if _, err := os.Stat(wantModelDir); err != nil {
@@ -248,6 +287,25 @@ func TestHandleSettingsUpdatesObservabilityRetention(t *testing.T) {
 	}
 	if response.Observability.RetentionDays != 90 {
 		t.Fatalf("response retention days = %d, want 90", response.Observability.RetentionDays)
+	}
+}
+
+func TestHandleSettingsResolvesChinaHuggingFaceMirror(t *testing.T) {
+	t.Setenv(config.EnvHuggingFaceEndpoint, "")
+	t.Setenv("CSGHUB_LITE_REGION", "CN")
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	recorder := httptest.NewRecorder()
+	s.handleSettings(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response api.SettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.HuggingFaceEndpoint != config.ChinaHuggingFaceEndpoint {
+		t.Fatalf("huggingface_endpoint = %q, want %q", response.HuggingFaceEndpoint, config.ChinaHuggingFaceEndpoint)
 	}
 }
 

@@ -216,6 +216,10 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	defer resp.Body.Close()
 	usageSource := requestPoolUsageSource(req.Source, resp)
 	usagePool := requestPoolUsageMetadata(req.Model, req.Source, resp)
+	if capturedSource, capturedPool := providerPoolUsageCaptureFromContext(r.Context()).get(); capturedPool != nil {
+		usageSource = capturedSource
+		usagePool = capturedPool
+	}
 
 	if contentType := strings.TrimSpace(resp.Header.Get("Content-Type")); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
@@ -223,6 +227,16 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 		w.Header().Set("Content-Type", "text/event-stream")
 	} else {
 		w.Header().Set("Content-Type", "application/json")
+	}
+	for _, header := range []string{
+		providerPoolMemberSourceHeader,
+		providerPoolMemberModelHeader,
+		providerPoolFallbackCountHeader,
+		providerPoolLimitedCountHeader,
+	} {
+		if value := strings.TrimSpace(resp.Header.Get(header)); value != "" {
+			w.Header().Set(header, value)
+		}
 	}
 	if stream {
 		w.Header().Set("Cache-Control", "no-cache")

@@ -32,6 +32,8 @@ import (
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelmetadata"
 	"github.com/opencsgs/csglite/internal/observability"
+	routerprofile "github.com/opencsgs/semantic-router"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 const (
@@ -164,40 +166,67 @@ type Server struct {
 	authCallbackHTTP *http.Server
 	logBuf           *LogBuffer
 
-	mu                sync.RWMutex
-	engines           map[string]*managedEngine
-	loading           map[string]*engineLoadState
-	selfHeal          map[string]selfHealBreakerState
-	imageEngines      map[string]*managedImageEngine
-	imageLoading      map[string]*imageEngineLoadState
-	asrEngines        map[string]*managedASREngine
-	asrLoading        map[string]*asrEngineLoadState
-	imageJobs         *imageGenerationJobStore
-	pullJobs          *pullJobStore
-	datasetExportJobs *datasetExportJobStore
-	loadStepMu        sync.Mutex
-	loadSteps         map[string]loadStepState
-	prefsMu           sync.Mutex
-	openclawMu        sync.Mutex
-	csgclawMu         sync.Mutex
-	poolMu            sync.Mutex
-	poolCurrent       map[string]int
-	poolRuntime       map[string]*providerPoolMemberRuntime
-	poolAffinity      map[string]providerPoolAffinityEntry
+	mu                 sync.RWMutex
+	engines            map[string]*managedEngine
+	loading            map[string]*engineLoadState
+	selfHeal           map[string]selfHealBreakerState
+	imageEngines       map[string]*managedImageEngine
+	imageLoading       map[string]*imageEngineLoadState
+	asrEngines         map[string]*managedASREngine
+	asrLoading         map[string]*asrEngineLoadState
+	imageJobs          *imageGenerationJobStore
+	pullJobs           *pullJobStore
+	datasetExportJobs  *datasetExportJobStore
+	loadStepMu         sync.Mutex
+	loadSteps          map[string]loadStepState
+	prefsMu            sync.Mutex
+	openclawMu         sync.Mutex
+	csgclawMu          sync.Mutex
+	poolMu             sync.Mutex
+	poolCurrent        map[string]int
+	poolRuntime        map[string]*providerPoolMemberRuntime
+	poolAffinity       map[string]providerPoolAffinityEntry
+	routerProfileMu    sync.RWMutex
+	routerProfileCache map[string]*routerprofile.Profile
+	pricingMu          sync.RWMutex
+	pricingCache       map[string]requestCostSnapshot
 
 	cloudRefreshMu   sync.Mutex
 	cloudRefreshAt   time.Time
 	cloudRefreshWait chan struct{}
 
-	conversations          *chathistory.Store
-	apiKeys                *config.APIKeyStore
-	apiUsage               *config.APIUsageStore
-	observabilityMu        sync.RWMutex
-	observability          *observability.Store
-	observabilityCleanupAt atomic.Int64
-	modelMetadataMu        sync.RWMutex
-	modelMetadata          *modelmetadata.Store
-	desktopBootstrapped    atomic.Bool
+	// aiAppRuntimeMu guards aiAppRuntimeCache, which memoizes the result of
+	// runtime liveness probes (openclaw/csgclaw/dsh/xiaozhi) so the AI Apps
+	// poll does not dial TCP or fork `docker compose ps` every few seconds.
+	aiAppRuntimeMu    sync.Mutex
+	aiAppRuntimeCache map[string]aiAppRuntimeCacheEntry
+
+	conversations             *chathistory.Store
+	apiKeys                   *config.APIKeyStore
+	apiUsage                  *config.APIUsageStore
+	observabilityMu           sync.RWMutex
+	observability             *observability.Store
+	observabilityCleanupAt    atomic.Int64
+	modelMetadataMu           sync.RWMutex
+	modelMetadata             *modelmetadata.Store
+	routerProfiles            *routerprofile.Store
+	routerStoreMu             sync.RWMutex
+	retiredRouterProfiles     []*routerprofile.Store
+	routerCurationMu          sync.Mutex
+	routerCurationState       map[string]uint8
+	routerCurationQueue       chan string
+	routerCurationWG          sync.WaitGroup
+	routerCurationCancel      context.CancelFunc
+	routerEvaluationWG        sync.WaitGroup
+	routerEvaluationCancel    context.CancelFunc
+	routerEvaluationWake      chan struct{}
+	routerEvaluationMu        sync.Mutex
+	routerEvaluationPoolID    string
+	routerEvaluationJobID     string
+	routerEvaluationRunCancel context.CancelFunc
+	evaluationEngineFactory   func(context.Context, string, string) (inference.Engine, error)
+	evaluationCatalogLoader   func(context.Context) ([]api.ModelInfo, error)
+	desktopBootstrapped       atomic.Bool
 
 	// shutdownCancel stops the Run loop. It is set in Run and invoked by the
 	// /api/shutdown handler so an HTTP-initiated shutdown actually exits the
@@ -233,28 +262,34 @@ func New(cfg *config.Config, version string) *Server {
 	}
 
 	s := &Server{
-		cfg:               cfg,
-		version:           version,
-		manager:           mgr,
-		datasetManager:    dsMgr,
-		appManager:        apps.NewManager(cfg),
-		sourceSwitches:    apps.NewSourceSwitchManager(storageRoot),
-		cloud:             cloudSvc,
-		engines:           make(map[string]*managedEngine),
-		loading:           make(map[string]*engineLoadState),
-		poolCurrent:       make(map[string]int),
-		poolRuntime:       make(map[string]*providerPoolMemberRuntime),
-		poolAffinity:      make(map[string]providerPoolAffinityEntry),
-		selfHeal:          make(map[string]selfHealBreakerState),
-		imageEngines:      make(map[string]*managedImageEngine),
-		imageLoading:      make(map[string]*imageEngineLoadState),
-		asrEngines:        make(map[string]*managedASREngine),
-		asrLoading:        make(map[string]*asrEngineLoadState),
-		imageJobs:         newImageGenerationJobStore(cfg.StorageDir()),
-		pullJobs:          newPullJobStore(),
-		datasetExportJobs: newDatasetExportJobStore(),
-		loadSteps:         make(map[string]loadStepState),
-		logBuf:            logBuf,
+		cfg:                  cfg,
+		version:              version,
+		manager:              mgr,
+		datasetManager:       dsMgr,
+		appManager:           apps.NewManager(cfg),
+		sourceSwitches:       apps.NewSourceSwitchManager(storageRoot),
+		cloud:                cloudSvc,
+		engines:              make(map[string]*managedEngine),
+		loading:              make(map[string]*engineLoadState),
+		poolCurrent:          make(map[string]int),
+		poolRuntime:          make(map[string]*providerPoolMemberRuntime),
+		poolAffinity:         make(map[string]providerPoolAffinityEntry),
+		routerProfileCache:   make(map[string]*routerprofile.Profile),
+		pricingCache:         make(map[string]requestCostSnapshot),
+		aiAppRuntimeCache:    make(map[string]aiAppRuntimeCacheEntry),
+		selfHeal:             make(map[string]selfHealBreakerState),
+		imageEngines:         make(map[string]*managedImageEngine),
+		imageLoading:         make(map[string]*imageEngineLoadState),
+		asrEngines:           make(map[string]*managedASREngine),
+		asrLoading:           make(map[string]*asrEngineLoadState),
+		imageJobs:            newImageGenerationJobStore(cfg.StorageDir()),
+		pullJobs:             newPullJobStore(),
+		datasetExportJobs:    newDatasetExportJobStore(),
+		loadSteps:            make(map[string]loadStepState),
+		logBuf:               logBuf,
+		routerCurationState:  make(map[string]uint8),
+		routerCurationQueue:  make(chan string, 16),
+		routerEvaluationWake: make(chan struct{}, 1),
 	}
 	s.appShells = newAIAppShellManager()
 	if store, err := observability.Open(storageRoot); err != nil {
@@ -275,6 +310,19 @@ func New(cfg *config.Config, version string) *Server {
 		log.Printf("MODEL METADATA: cache unavailable: %v", err)
 	} else {
 		s.modelMetadata = store
+	}
+	if store, err := routerprofile.Open(storageRoot); err != nil {
+		log.Printf("SEMANTIC ROUTER: profile database unavailable: %v", err)
+	} else {
+		s.routerProfiles = store
+		cutoff := time.Now().UTC().Add(-time.Duration(config.ObservabilityRetentionDays(cfg.Observability)) * 24 * time.Hour)
+		if _, err := store.PurgeTraceDataBefore(context.Background(), cutoff); err != nil &&
+			!errors.Is(err, routerprofile.ErrConflict) {
+			log.Printf("SEMANTIC ROUTER: retention cleanup failed: %v", err)
+		}
+		if err := s.refreshAllRouterProfiles(context.Background()); err != nil {
+			log.Printf("SEMANTIC ROUTER: loading active profiles failed: %v", err)
+		}
 	}
 
 	if appHome, err := config.AppHome(); err == nil {
@@ -364,6 +412,22 @@ func (s *Server) Run(ctx context.Context) error {
 
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
+	curationCtx, cancelCuration := context.WithCancel(ctx)
+	s.routerCurationCancel = cancelCuration
+	s.routerCurationWG.Add(1)
+	go func() {
+		defer s.routerCurationWG.Done()
+		s.startRouterCuration(curationCtx)
+	}()
+	if s.routerProfiles != nil {
+		evaluationCtx, cancelEvaluation := context.WithCancel(ctx)
+		s.routerEvaluationCancel = cancelEvaluation
+		s.routerEvaluationWG.Add(1)
+		go func() {
+			defer s.routerEvaluationWG.Done()
+			s.startRouterEvaluationWorker(evaluationCtx)
+		}()
+	}
 
 	errCh := make(chan error, 3)
 	if s.cfg.DesktopMode {
@@ -489,6 +553,14 @@ func validateDesktopConfig(cfg *config.Config) error {
 }
 
 func (s *Server) shutdownRuntime() {
+	if s.routerCurationCancel != nil {
+		s.routerCurationCancel()
+	}
+	if s.routerEvaluationCancel != nil {
+		s.routerEvaluationCancel()
+	}
+	s.routerCurationWG.Wait()
+	s.routerEvaluationWG.Wait()
 	if s.appShells != nil {
 		s.appShells.CloseAll()
 	}
@@ -505,6 +577,19 @@ func (s *Server) shutdownRuntime() {
 		s.modelMetadata = nil
 	}
 	s.modelMetadataMu.Unlock()
+	s.routerStoreMu.Lock()
+	defer s.routerStoreMu.Unlock()
+	s.routerProfileMu.Lock()
+	if s.routerProfiles != nil {
+		_ = s.routerProfiles.Close()
+		s.routerProfiles = nil
+	}
+	for _, store := range s.retiredRouterProfiles {
+		_ = store.Close()
+	}
+	s.retiredRouterProfiles = nil
+	s.routerProfileCache = make(map[string]*routerprofile.Profile)
+	s.routerProfileMu.Unlock()
 }
 
 // startEvictor periodically closes engines that have exceeded their keep-alive.
@@ -990,7 +1075,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	if err != nil {
 		return nil, fmt.Errorf("model %q not found locally; use 'csghub-lite pull %s' first", modelID, modelID)
 	}
-	effectiveNumCtx := inference.ResolveNumCtx(modelDir, numCtx)
+	effectiveNumCtx := inference.ResolveNumCtxWithModelMax(modelDir, numCtx, s.cfg.Inference.LlamaUseModelMaxCtx)
 	effectiveNumParallel := inference.ResolveNumParallel(numParallel)
 	effectiveNGPULayers := inference.ResolveNGPULayers(normalizedNGPULayers)
 	loadConfigKey := fmt.Sprintf(

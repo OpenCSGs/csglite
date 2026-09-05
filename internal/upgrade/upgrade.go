@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/opencsgs/csglite/internal/region"
 )
 
 const (
@@ -109,26 +111,7 @@ func (u *Updater) WithRegion(region Region) *Updater {
 
 // detectRegion detects the region based on IP or environment variable
 func detectRegion() Region {
-	if region := os.Getenv("CSGHUB_LITE_REGION"); region != "" {
-		return Region(region)
-	}
-
-	// Try to detect region via IP
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("https://ipinfo.io/country")
-	if err != nil {
-		// Default to CN if detection fails
-		return RegionCN
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return RegionCN
-	}
-
-	country := strings.TrimSpace(string(body))
-	if country == "CN" {
+	if region.Detect() == region.CN {
 		return RegionCN
 	}
 	return RegionINTL

@@ -2,12 +2,116 @@ package observability
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestStoreMigratesRouterAndCostSnapshotColumns(t *testing.T) {
+	root := t.TempDir()
+	store, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, DirName, DatabaseFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{
+		"actual_member_id", "router_profile_id", "router_profile_version", "routing_text_version",
+		"semantic_cluster_id", "semantic_ood", "semantic_fallback_reason", "price_input_per_million",
+		"price_output_per_million", "estimated_cost", "cost_currency", "cost_known",
+	} {
+		if _, err := db.Exec("ALTER TABLE requests DROP COLUMN " + column); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().UTC()
+	if err := store.Add(t.Context(), RequestRecord{
+		ID: "migrated", TraceID: "trace", StartedAt: now, CompletedAt: now,
+		Method: "POST", Path: "/v1/chat/completions", Status: "completed", StatusCode: http.StatusOK,
+		RouterProfileID: "profile", SemanticClusterID: "cluster", CostKnown: true, CostCurrency: "USD",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetRequest(t.Context(), "migrated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.RouterProfileID != "profile" || record.SemanticClusterID != "cluster" || !record.CostKnown {
+		t.Fatalf("migrated record = %+v", record)
+	}
+}
+
+func TestStoreRetainsPerRequestRouterAndPriceSnapshots(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().UTC()
+	for i, snapshot := range []RequestRecord{
+		{
+			RouterProfileID: "profile-1", RouterProfileVersion: 1,
+			SemanticClusterID: "cluster-1", SemanticDistance: 0.01,
+			PriceInputPerMillion: 1, PriceOutputPerMillion: 2,
+			EstimatedCost: 0.001, CostCurrency: "USD", CostKnown: true,
+		},
+		{
+			RouterProfileID: "profile-2", RouterProfileVersion: 2,
+			RouterProfileSchemaVersion: 2, RouterAlgorithm: "pairwise_router_v2",
+			RouterConfidence: .82, RouterMargin: .21, RouterSimilarity: .73,
+			SemanticClusterID: "cluster-2", SemanticDistance: 0.987654,
+			SemanticFallback: true, SemanticFallbackReason: "low_confidence",
+			PriceInputPerMillion: 3, PriceOutputPerMillion: 5,
+			EstimatedCost: 0.004, CostCurrency: "EUR", CostKnown: true,
+		},
+	} {
+		snapshot.ID = fmt.Sprintf("snapshot-%d", i)
+		snapshot.TraceID = "trace-snapshots"
+		snapshot.StartedAt, snapshot.CompletedAt = now, now
+		snapshot.Method, snapshot.Path = "POST", "/v1/chat/completions"
+		snapshot.Status, snapshot.StatusCode = "completed", http.StatusOK
+		if err := store.Add(t.Context(), snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := store.GetRequest(t.Context(), "snapshot-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.GetRequest(t.Context(), "snapshot-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.RouterProfileID != "profile-1" || first.SemanticDistance != 0.01 ||
+		first.PriceInputPerMillion != 1 || first.CostCurrency != "USD" {
+		t.Fatalf("first snapshot = %+v", first)
+	}
+	if second.RouterProfileID != "profile-2" || second.SemanticDistance != 0.987654 ||
+		second.RouterProfileSchemaVersion != 2 || second.RouterAlgorithm != "pairwise_router_v2" ||
+		second.RouterConfidence != .82 || second.RouterMargin != .21 || second.RouterSimilarity != .73 ||
+		second.SemanticClusterID != "cluster-2" ||
+		second.SemanticFallbackReason != "low_confidence" ||
+		second.PriceInputPerMillion != 3 || second.CostCurrency != "EUR" {
+		t.Fatalf("second snapshot = %+v", second)
+	}
+}
 
 func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 	store, err := Open(t.TempDir())
@@ -25,6 +129,12 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 			CompletedAt: start.Add(1200 * time.Millisecond), Method: "POST", Path: "/v1/chat/completions",
 			Protocol: "openai", Status: "completed", StatusCode: 200, Stream: true, Model: "model-a",
 			Source: "local", SourceType: "local", APIKeyID: "key-a", APIKeyName: "Client",
+			PoolID: "pool-a", ActualMemberID: "member-a", MemberModel: "actual-a", PoolPolicy: "semantic",
+			RouterProfileID: "profile-a", RouterProfileVersion: 3, RoutingTextVersion: "routing-v1",
+			SemanticRouted: true, SemanticCluster: 2, SemanticClusterID: "cluster-code", SemanticDistance: 0.125,
+			SemanticOOD: true, SemanticFallback: true, SemanticFallbackReason: "out_of_distribution",
+			PriceInputPerMillion: 1.5, PriceOutputPerMillion: 2.5, EstimatedCost: 0.0000215,
+			CostCurrency: "USD", CostKnown: true,
 			InputTokens: 6, OutputTokens: 5, CacheReadInputTokens: 4, CacheCreationTokens: 2,
 			CacheEligibleTokens: 10, DurationMS: 1200, FirstTokenLatencyMS: 120,
 			RequestBody:  `{"model":"model-a","messages":[{"role":"user","content":"hello"}]}`,
@@ -78,6 +188,13 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 	if detail.RequestID != "gateway-request" || detail.B3TraceID != "463ac35c9f6413ad" {
 		t.Fatalf("correlation identifiers did not round trip: %+v", detail)
 	}
+	if detail.RouterProfileID != "profile-a" || detail.RouterProfileVersion != 3 ||
+		detail.RoutingTextVersion != "routing-v1" || detail.SemanticClusterID != "cluster-code" ||
+		!detail.SemanticOOD || detail.SemanticFallbackReason != "out_of_distribution" ||
+		detail.ActualMemberID != "member-a" || !detail.CostKnown || detail.CostCurrency != "USD" ||
+		detail.EstimatedCost != 0.0000215 {
+		t.Fatalf("router and cost snapshot did not round trip: %+v", detail)
+	}
 
 	traces, err := store.ListTraces(ctx, RequestFilter{Limit: 10})
 	if err != nil {
@@ -106,6 +223,24 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 	}
 	if !strings.Contains(requests[0].RequestBody, "hello") || !strings.Contains(requests[0].ResponseBody, "choices") {
 		t.Fatalf("trace detail omitted input/output payloads: %+v", requests[0])
+	}
+
+	facets, err := store.Facets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facets.Models) != 2 || facets.Models[0].Value != "model-a" || facets.Models[0].Count != 1 {
+		t.Fatalf("model facets = %+v, want model-a and model-b", facets.Models)
+	}
+	if len(facets.Routes) != 3 {
+		t.Fatalf("route facets = %+v, want local, provider:test, and pool-a", facets.Routes)
+	}
+	routes := make(map[string]FacetValue)
+	for _, route := range facets.Routes {
+		routes[route.Value] = route
+	}
+	if routes["local"].Count != 1 || routes["provider:test"].Count != 1 || routes["pool-a"].Count != 1 {
+		t.Fatalf("unexpected route facet values: %+v", routes)
 	}
 }
 
@@ -294,5 +429,31 @@ func TestStoreVisitTracesReadsSelectedBodiesInBatches(t *testing.T) {
 	}
 	if len(visited) != len(selected) {
 		t.Fatalf("visited %d traces, want %d", len(visited), len(selected))
+	}
+}
+
+func TestListCompletedPoolRequestsIsBoundedAndPoolIsolated(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().UTC()
+	for _, record := range []RequestRecord{
+		{ID: "a-complete", TraceID: "trace-a", PoolID: "pool-a", Status: "completed", CompletedAt: now, RequestBody: `{"messages":[{"role":"user","content":"pool a request"}]}`},
+		{ID: "a-failed", TraceID: "trace-a-failed", PoolID: "pool-a", Status: "failed", CompletedAt: now.Add(time.Second), RequestBody: `{}`},
+		{ID: "b-complete", TraceID: "trace-b", PoolID: "pool-b", Status: "completed", CompletedAt: now.Add(2 * time.Second), RequestBody: `{"messages":[{"role":"user","content":"pool b request"}]}`},
+	} {
+		if err := store.Add(t.Context(), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	records, err := store.ListCompletedPoolRequests(t.Context(), "pool-a", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].ID != "a-complete" ||
+		!strings.Contains(records[0].RequestBody, "pool a request") {
+		t.Fatalf("pool-a completed records = %+v", records)
 	}
 }

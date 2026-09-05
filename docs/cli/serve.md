@@ -44,5 +44,5 @@ csghub-lite serve --listen :8080
 csghub-lite serve --openai-stream-default
 
 # 后台运行
-csghub-lite serve &
+csghub-lite start
 ```

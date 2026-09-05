@@ -2,7 +2,13 @@ import type { ArtifactSource } from "../api/client";
 import { modelOwnerIdentity } from "../modelSources";
 import { t } from "../i18n";
 
-export function ArtifactOwnerAvatar({ source, path }: { source: ArtifactSource; path: string }) {
+export function ArtifactOwnerAvatar({
+  source,
+  path,
+}: {
+  source: ArtifactSource;
+  path: string;
+}) {
   const identity = modelOwnerIdentity(path);
   const palettes = [
     "bg-blue-100 text-blue-700",

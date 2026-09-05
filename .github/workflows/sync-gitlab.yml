@@ -1,0 +1,55 @@
+name: Sync GitLab
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitlab-sync-main
+  cancel-in-progress: false
+
+jobs:
+  sync-main:
+    if: github.event.repository.fork == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: gitlab-sync
+      url: https://git-devops.opencsg.com/opensource/csghub-lite/-/tree/main
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate GitLab credentials
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          if [ -z "${GITLAB_TOKEN}" ]; then
+            echo "::error::Configure GITLAB_TOKEN in the gitlab-sync environment."
+            exit 1
+          fi
+
+      - name: Push main to GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          askpass="${RUNNER_TEMP}/gitlab-askpass.sh"
+          cat > "${askpass}" <<'EOF'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' "oauth2" ;;
+            *Password*) printf '%s\n' "${GITLAB_TOKEN}" ;;
+          esac
+          EOF
+          chmod 700 "${askpass}"
+          GIT_ASKPASS="${askpass}" GIT_TERMINAL_PROMPT=0 \
+            git push https://git-devops.opencsg.com/opensource/csghub-lite.git \
+            "${GITHUB_SHA}:refs/heads/main"
+          rm -f "${askpass}"

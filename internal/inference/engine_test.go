@@ -7,10 +7,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/opencsgs/csglite/internal/convert"
 	"github.com/opencsgs/csglite/internal/model"
 )
 
 func TestLoadEngine_SafeTensorsAutoConvert(t *testing.T) {
+	if !convert.PythonConverterAvailable() {
+		t.Skip("Python conversion environment is not available")
+	}
 	dir := t.TempDir()
 	// SafeTensors without config.json should fail during conversion (missing config).
 	if err := os.WriteFile(filepath.Join(dir, "model.safetensors"), []byte("data"), 0o644); err != nil {

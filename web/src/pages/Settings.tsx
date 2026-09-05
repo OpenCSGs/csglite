@@ -16,7 +16,7 @@ import {
   saveSettings,
   upgradeWithProgress,
 } from "../api/client";
-import type { AppSettings, CloudAuthStatus, LocalDirectoryBrowseResponse, WebSearchSettings } from "../api/client";
+import type { AppSettings, ArtifactSource, CloudAuthStatus, LocalDirectoryBrowseResponse } from "../api/client";
 
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
@@ -58,13 +58,6 @@ const upgradeProgress = signal<UpgradeProgress>({
   message: "",
 });
 let upgradeReloadTimer: number | undefined;
-const webSearchEnabled = signal(false);
-const webSearchMaxResults = signal(5);
-const webSearchLanguage = signal("");
-const webSearchSafeSearch = signal(1);
-const webSearchTimeoutSeconds = signal(5);
-const webSearchError = signal("");
-const isSavingWebSearch = signal(false);
 const serverUrlInput = signal("");
 const aiGatewayUrlInput = signal("");
 const cloudProviderNameInput = signal("");
@@ -77,9 +70,10 @@ const huggingFaceTokenConfigured = signal(false);
 const modelScopeEndpointInput = signal("");
 const modelScopeTokenInput = signal("");
 const modelScopeTokenConfigured = signal(false);
-const serviceUrlsError = signal("");
-const serviceUrlsMessage = signal("");
-const isSavingServiceUrls = signal(false);
+const cloudServiceTab = signal<ArtifactSource>("opencsg");
+const cloudServiceError = signal("");
+const cloudServiceMessage = signal("");
+const savingCloudService = signal<ArtifactSource | "">("");
 const isRefreshingCloudModels = signal(false);
 const isResettingDefaults = signal(false);
 const resetDefaultsMessage = signal("");
@@ -145,12 +139,22 @@ function loadContextMode(): ContextLengthMode {
   }
 }
 
-function saveContextMode(mode: ContextLengthMode) {
+function setContextModeLocal(mode: ContextLengthMode) {
   contextMode.value = mode;
   try {
     localStorage.setItem(contextModeStorageKey, mode);
   } catch {
     /* ignore */
+  }
+}
+
+async function saveContextMode(mode: ContextLengthMode) {
+  const previous = contextMode.value;
+  setContextModeLocal(mode);
+  try {
+    applySettings(await saveSettings({ llama_use_model_max_ctx: mode === "model_max" }));
+  } catch {
+    setContextModeLocal(previous);
   }
 }
 
@@ -181,21 +185,25 @@ async function resetDefaults() {
   resetDefaultsError.value = "";
   contextIndex.value = 1;
   saveContextIndex(1);
-  saveContextMode("global");
+  setContextModeLocal("global");
   parallelIndex.value = 2;
   saveParallelIndex(2);
-  serviceUrlsError.value = "";
-  serviceUrlsMessage.value = "";
+  setCloudServiceFeedback("", "");
   try {
-    const data = await saveSettings({ server_url: "", ai_gateway_url: "", cloud_provider_name: "" });
+    const data = await saveSettings({
+      server_url: "",
+      ai_gateway_url: "",
+      cloud_provider_name: "",
+      llama_use_model_max_ctx: false,
+    });
     applySettings(data);
     notifyProvidersChanged();
-    serviceUrlsMessage.value = t("settings.serviceUrlsResetSuccess");
+    setCloudServiceFeedback("", t("settings.serviceUrlsResetSuccess"));
     resetDefaultsMessage.value = t("settings.resetDefaultsSuccess");
     fetchCloudAuth();
   } catch (err: any) {
     const message = err?.message || t("settings.resetDefaultsFailed");
-    serviceUrlsError.value = message;
+    setCloudServiceFeedback(message, "");
     resetDefaultsError.value = message;
     fetchSettings();
   } finally {
@@ -204,6 +212,7 @@ async function resetDefaults() {
 }
 
 function applySettings(data: AppSettings) {
+  setContextModeLocal(data.llama_use_model_max_ctx ? "model_max" : "global");
   storageLocation.value = data.storage_dir || "";
   storageDirInput.value = data.storage_dir || "";
   modelDirectory.value = data.model_dir || "";
@@ -227,12 +236,6 @@ function applySettings(data: AppSettings) {
   };
   autostartEnabled.value = data.autostart ?? false;
   observabilityRetentionDays.value = normalizeObservabilityRetentionDays(data.observability?.retention_days);
-  const webSearch = data.web_search;
-  webSearchEnabled.value = webSearch?.enabled ?? false;
-  webSearchMaxResults.value = webSearch?.max_results || 5;
-  webSearchLanguage.value = webSearch?.language || "";
-  webSearchSafeSearch.value = webSearch?.safe_search ?? 1;
-  webSearchTimeoutSeconds.value = webSearch?.timeout_seconds || 5;
 }
 
 async function saveObservabilityRetention() {
@@ -467,82 +470,131 @@ async function saveStorageDir() {
   }
 }
 
-async function saveWebSearchSettings() {
-  const settings: WebSearchSettings = {
-    enabled: webSearchEnabled.value,
-    max_results: Math.max(1, Math.min(10, Number(webSearchMaxResults.value) || 5)),
-    language: webSearchLanguage.value.trim() || undefined,
-    safe_search: Math.max(0, Math.min(2, Number(webSearchSafeSearch.value) || 0)),
-    timeout_seconds: Math.max(1, Math.min(30, Number(webSearchTimeoutSeconds.value) || 5)),
-  };
-
-  isSavingWebSearch.value = true;
-  webSearchError.value = "";
-  try {
-    const data = await saveSettings({ web_search: settings });
-    applySettings(data);
-  } catch (err: any) {
-    webSearchError.value = err?.message || t("settings.webSearchSaveFailed");
-  } finally {
-    isSavingWebSearch.value = false;
-  }
+function setCloudServiceFeedback(error: string, message: string) {
+  cloudServiceError.value = error;
+  cloudServiceMessage.value = message;
 }
 
-async function saveServiceURLs() {
-  isSavingServiceUrls.value = true;
-  serviceUrlsError.value = "";
-  serviceUrlsMessage.value = "";
+function selectCloudServiceTab(tab: ArtifactSource) {
+  if (cloudServiceTab.value === tab) return;
+  cloudServiceTab.value = tab;
+  setCloudServiceFeedback("", "");
+}
+
+function cloudServiceTabBorderClass(source: ArtifactSource): string {
+  if (source === "huggingface") return "border-[#FFD21E]";
+  if (source === "opencsg") return "border-[#169F95]";
+  return "border-[#624AFF]";
+}
+
+function cloudServiceIconClass(source: ArtifactSource): string {
+  if (source === "huggingface") return "bg-[#FFD21E] text-gray-900";
+  if (source === "opencsg") return "bg-[#169F95] text-white";
+  return "bg-[#624AFF] text-white";
+}
+
+function cloudServiceShortLabel(source: ArtifactSource): string {
+  if (source === "huggingface") return "HF";
+  if (source === "modelscope") return "MS";
+  return "OC";
+}
+
+function cloudServiceLabel(source: ArtifactSource): string {
+  if (source === "huggingface") return t("mp.sourceHuggingFace");
+  if (source === "modelscope") return t("mp.sourceModelScope");
+  return t("mp.sourceOpenCSG");
+}
+
+function cloudServiceHint(source: ArtifactSource): string {
+  if (source === "huggingface") return t("settings.huggingfaceServiceHint");
+  if (source === "modelscope") return t("settings.modelscopeServiceHint");
+  return t("settings.opencsgServiceHint");
+}
+
+function cloudServiceStatus(source: ArtifactSource): { text: string; ok: boolean } {
+  if (source === "opencsg") {
+    if (cloudAuth.value?.authenticated && cloudAuth.value.user) {
+      return { text: cloudUserLabel(cloudAuth.value) || t("settings.signedIn"), ok: true };
+    }
+    if (cloudAuth.value?.has_token) return { text: t("settings.tokenSaved"), ok: true };
+    return { text: t("settings.loggedOut"), ok: false };
+  }
+  const configured = source === "huggingface" ? huggingFaceTokenConfigured.value : modelScopeTokenConfigured.value;
+  return configured
+    ? { text: t("settings.registryTokenConfigured"), ok: true }
+    : { text: t("settings.registryTokenNotConfigured"), ok: false };
+}
+
+async function saveOpenCSGService() {
+  savingCloudService.value = "opencsg";
+  setCloudServiceFeedback("", "");
   try {
     const data = await saveSettings({
       server_url: serverUrlInput.value,
       ai_gateway_url: aiGatewayUrlInput.value,
       cloud_provider_name: cloudProviderNameInput.value,
-      huggingface_endpoint: huggingFaceEndpointInput.value,
-      modelscope_endpoint: modelScopeEndpointInput.value,
-      ...(huggingFaceTokenInput.value.trim() ? { huggingface_token: huggingFaceTokenInput.value.trim() } : {}),
-      ...(modelScopeTokenInput.value.trim() ? { modelscope_token: modelScopeTokenInput.value.trim() } : {}),
     });
-    huggingFaceTokenInput.value = "";
-    modelScopeTokenInput.value = "";
     applySettings(data);
     notifyProvidersChanged();
-    serviceUrlsMessage.value = t("settings.serviceUrlsSaveSuccess");
+    setCloudServiceFeedback("", t("settings.providerSaveSuccess", cloudServiceLabel("opencsg")));
     fetchCloudAuth();
   } catch (err: any) {
-    serviceUrlsError.value = err?.message || t("settings.serviceUrlsSaveFailed");
+    setCloudServiceFeedback(err?.message || t("settings.serviceUrlsSaveFailed"), "");
   } finally {
-    isSavingServiceUrls.value = false;
+    savingCloudService.value = "";
+  }
+}
+
+async function saveRegistryService(source: "huggingface" | "modelscope") {
+  savingCloudService.value = source;
+  setCloudServiceFeedback("", "");
+  try {
+    const data = await saveSettings(source === "huggingface"
+      ? {
+        huggingface_endpoint: huggingFaceEndpointInput.value,
+        ...(huggingFaceTokenInput.value.trim() ? { huggingface_token: huggingFaceTokenInput.value.trim() } : {}),
+      }
+      : {
+        modelscope_endpoint: modelScopeEndpointInput.value,
+        ...(modelScopeTokenInput.value.trim() ? { modelscope_token: modelScopeTokenInput.value.trim() } : {}),
+      });
+    if (source === "huggingface") huggingFaceTokenInput.value = "";
+    else modelScopeTokenInput.value = "";
+    applySettings(data);
+    setCloudServiceFeedback("", t("settings.providerSaveSuccess", cloudServiceLabel(source)));
+  } catch (err: any) {
+    setCloudServiceFeedback(err?.message || t("settings.serviceUrlsSaveFailed"), "");
+  } finally {
+    savingCloudService.value = "";
   }
 }
 
 async function clearRegistryToken(source: "huggingface" | "modelscope") {
-  isSavingServiceUrls.value = true;
-  serviceUrlsError.value = "";
-  serviceUrlsMessage.value = "";
+  savingCloudService.value = source;
+  setCloudServiceFeedback("", "");
   try {
     const data = await saveSettings(source === "huggingface"
       ? { huggingface_token: "" }
       : { modelscope_token: "" });
     applySettings(data);
-    serviceUrlsMessage.value = t("settings.registryTokenCleared");
+    setCloudServiceFeedback("", t("settings.registryTokenCleared"));
   } catch (err: any) {
-    serviceUrlsError.value = err?.message || t("settings.serviceUrlsSaveFailed");
+    setCloudServiceFeedback(err?.message || t("settings.serviceUrlsSaveFailed"), "");
   } finally {
-    isSavingServiceUrls.value = false;
+    savingCloudService.value = "";
   }
 }
 
 async function refreshCloudModels() {
   if (isRefreshingCloudModels.value) return;
   isRefreshingCloudModels.value = true;
-  serviceUrlsError.value = "";
-  serviceUrlsMessage.value = "";
+  setCloudServiceFeedback("", "");
   try {
     await getTags({ refresh: true });
     notifyProvidersChanged();
-    serviceUrlsMessage.value = t("settings.cloudModelsRefreshSuccess");
+    setCloudServiceFeedback("", t("settings.cloudModelsRefreshSuccess"));
   } catch (err: any) {
-    serviceUrlsError.value = err?.message || t("settings.cloudModelsRefreshFailed");
+    setCloudServiceFeedback(err?.message || t("settings.cloudModelsRefreshFailed"), "");
   } finally {
     isRefreshingCloudModels.value = false;
   }
@@ -602,7 +654,6 @@ function cloudUserInitial(status: CloudAuthStatus | null): string {
 }
 
 function RegistryCredentialFields({
-  name,
   endpoint,
   token,
   configured,
@@ -611,7 +662,6 @@ function RegistryCredentialFields({
   onTokenChange,
   onClear,
 }: {
-  name: string;
   endpoint: string;
   token: string;
   configured: boolean;
@@ -621,15 +671,9 @@ function RegistryCredentialFields({
   onClear: () => void;
 }) {
   return (
-    <div class="rounded-lg border border-gray-200 p-3">
-      <div class="mb-3 flex items-center justify-between gap-2">
-        <span class="text-sm font-semibold text-gray-800">{name}</span>
-        <span class={`text-xs ${configured ? "text-emerald-600" : "text-gray-400"}`}>
-          {configured ? t("settings.registryTokenConfigured") : t("settings.registryTokenNotConfigured")}
-        </span>
-      </div>
+    <div class="space-y-4">
       <label class="block">
-        <span class="text-xs font-medium text-gray-600">{t("settings.registryEndpoint")}</span>
+        <span class="text-sm font-medium text-gray-700">{t("settings.registryEndpoint")}</span>
         <input
           type="url"
           value={endpoint}
@@ -638,8 +682,13 @@ function RegistryCredentialFields({
           class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
         />
       </label>
-      <label class="mt-3 block">
-        <span class="text-xs font-medium text-gray-600">{t("settings.registryToken")}</span>
+      <label class="block">
+        <span class="flex items-center justify-between gap-2">
+          <span class="text-sm font-medium text-gray-700">{t("settings.registryToken")}</span>
+          <span class={`text-xs ${configured ? "text-emerald-600" : "text-gray-400"}`}>
+            {configured ? t("settings.registryTokenConfigured") : t("settings.registryTokenNotConfigured")}
+          </span>
+        </span>
         <input
           type="password"
           value={token}
@@ -655,11 +704,149 @@ function RegistryCredentialFields({
           type="button"
           disabled={disabled}
           onClick={onClear}
-          class="mt-2 text-xs text-red-600 hover:text-red-700 disabled:opacity-60"
+          class="text-xs text-red-600 hover:text-red-700 disabled:opacity-60"
         >
           {t("settings.registryTokenClear")}
         </button>
       )}
+    </div>
+  );
+}
+
+function openCloudLogin() {
+  openExternal(cloudAuth.value?.login_url);
+  pollCloudAuthAfterLogin();
+}
+
+async function logoutCloudAccount() {
+  if (isClearingCloudToken.value) return;
+  isClearingCloudToken.value = true;
+  cloudAuthError.value = "";
+  try {
+    cloudAuth.value = await clearCloudToken();
+  } catch (err: any) {
+    cloudAuthError.value = err?.message || t("chat.failedResp");
+  } finally {
+    isClearingCloudToken.value = false;
+  }
+}
+
+function OpenCSGAccountPanel() {
+  return (
+    <div class="rounded-xl border border-gray-100 bg-gray-50/60 p-4">
+      <div class="mb-3 flex items-center justify-between gap-2">
+        <p class="text-sm font-semibold text-gray-900">{t("settings.account")}</p>
+        {cloudAuth.value?.authenticated && cloudAuth.value.user && (
+          <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            {t("settings.signedIn")}
+          </span>
+        )}
+      </div>
+      {cloudAuth.value === null ? (
+        <p class="text-sm text-gray-500">...</p>
+      ) : cloudAuth.value.authenticated && cloudAuth.value.user ? (
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex min-w-0 items-center gap-3">
+            {cloudAuth.value.user.avatar ? (
+              <img
+                src={cloudAuth.value.user.avatar}
+                alt={cloudUserLabel(cloudAuth.value)}
+                class="h-11 w-11 rounded-full border border-gray-200 bg-white object-cover"
+              />
+            ) : (
+              <div class="flex h-11 w-11 items-center justify-center rounded-full bg-[#169F95] text-base font-semibold text-white">
+                {cloudUserInitial(cloudAuth.value)}
+              </div>
+            )}
+            <div class="min-w-0">
+              <p class="truncate text-sm font-semibold text-gray-900">{cloudUserLabel(cloudAuth.value)}</p>
+              <p class="truncate text-xs text-gray-500">
+                @{cloudAuth.value.user.username}
+                {cloudAuth.value.user.email ? ` · ${cloudAuth.value.user.email}` : ""}
+              </p>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void logoutCloudAccount()}
+              disabled={isClearingCloudToken.value}
+              class="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isClearingCloudToken.value ? t("settings.loggingOut") : t("settings.logout")}
+            </button>
+          </div>
+        </div>
+      ) : cloudAuth.value.has_token ? (
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p class="text-sm font-semibold text-gray-900">{t("settings.tokenSaved")}</p>
+            <p class="mt-0.5 text-xs text-gray-500">{t("settings.tokenSavedDesc")}</p>
+          </div>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              onClick={openCloudLogin}
+              class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-100"
+            >
+              {t("settings.login")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void logoutCloudAccount()}
+              disabled={isClearingCloudToken.value}
+              class="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isClearingCloudToken.value ? t("settings.loggingOut") : t("settings.logout")}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p class="text-sm font-semibold text-gray-900">{t("settings.loggedOut")}</p>
+            <p class="mt-0.5 text-xs text-gray-500">{t("settings.loggedOutDesc")}</p>
+          </div>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              onClick={openCloudLogin}
+              class="rounded-lg bg-[#169F95] px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#128a81]"
+            >
+              {t("settings.login")}
+            </button>
+          </div>
+        </div>
+      )}
+      {cloudAuthError.value && (
+        <p class="mt-3 text-sm text-red-600">{cloudAuthError.value}</p>
+      )}
+    </div>
+  );
+}
+
+function CloudServiceActions({
+  saving,
+  onSave,
+}: {
+  saving: boolean;
+  onSave: () => void;
+}) {
+  return (
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="text-sm">
+        {cloudServiceError.value && <span class="text-red-600">{cloudServiceError.value}</span>}
+        {cloudServiceMessage.value && <span class="text-green-600">{cloudServiceMessage.value}</span>}
+      </div>
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={saving}
+        class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
+      >
+        {saving ? "..." : t("settings.save")}
+      </button>
     </div>
   );
 }
@@ -675,24 +862,6 @@ export function Settings() {
     contextMode.value = loadContextMode();
     parallelIndex.value = loadParallelIndex();
   }, []);
-
-  const handleOpenCloudLogin = () => {
-    openExternal(cloudAuth.value?.login_url);
-    pollCloudAuthAfterLogin();
-  };
-
-  const handleLogout = async () => {
-    if (isClearingCloudToken.value) return;
-    isClearingCloudToken.value = true;
-    cloudAuthError.value = "";
-    try {
-      cloudAuth.value = await clearCloudToken();
-    } catch (err: any) {
-      cloudAuthError.value = err?.message || t("chat.failedResp");
-    } finally {
-      isClearingCloudToken.value = false;
-    }
-  };
 
   return (
     <div class="page-shell">
@@ -818,7 +987,7 @@ export function Settings() {
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => saveContextMode(mode)}
+                  onClick={() => void saveContextMode(mode)}
                   class={`rounded-xl border p-4 text-left transition ${
                     selected
                       ? "border-indigo-300 bg-indigo-50 ring-1 ring-indigo-200"
@@ -909,7 +1078,7 @@ export function Settings() {
         </div>
       </div>
 
-      {/* Service URLs */}
+      {/* Cloud services */}
       <div class="mb-10">
         <div class="flex items-center gap-2 mb-1">
           <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -918,179 +1087,144 @@ export function Settings() {
           <span class="font-semibold text-gray-900">{t("settings.serviceUrls")}</span>
         </div>
         <p class="text-sm text-gray-500 mb-3 ml-7">{t("settings.serviceUrlsDesc")}</p>
-        <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4 space-y-4">
-          <label class="block">
-            <span class="text-sm font-medium text-gray-700">{t("settings.serverUrl")}</span>
-            <input
-              type="url"
-              value={serverUrlInput.value}
-              onInput={(event) => {
-                serverUrlInput.value = (event.currentTarget as HTMLInputElement).value;
-              }}
-              placeholder={defaultServerUrl.value}
-              class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            />
-            <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultServerUrl.value || "-")}</span>
-          </label>
-          <label class="block">
-            <span class="text-sm font-medium text-gray-700">{t("settings.aiGatewayUrl")}</span>
-            <input
-              type="url"
-              value={aiGatewayUrlInput.value}
-              onInput={(event) => {
-                aiGatewayUrlInput.value = (event.currentTarget as HTMLInputElement).value;
-              }}
-              placeholder={defaultAiGatewayUrl.value}
-              class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            />
-            <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultAiGatewayUrl.value || "-")}</span>
-          </label>
-          <label class="block">
-            <span class="text-sm font-medium text-gray-700">{t("settings.cloudProviderName")}</span>
-            <input
-              type="text"
-              value={cloudProviderNameInput.value}
-              onInput={(event) => {
-                cloudProviderNameInput.value = (event.currentTarget as HTMLInputElement).value;
-              }}
-              placeholder={defaultCloudProviderName.value}
-              class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            />
-            <span class="mt-1 block text-xs text-gray-400">{t("settings.cloudProviderNameHint", defaultCloudProviderName.value || "csghub")}</span>
-          </label>
-          <div class="grid gap-4 border-t border-gray-100 pt-4 lg:grid-cols-2">
-            <RegistryCredentialFields
-              name={t("mp.sourceHuggingFace")}
-              endpoint={huggingFaceEndpointInput.value}
-              token={huggingFaceTokenInput.value}
-              configured={huggingFaceTokenConfigured.value}
-              disabled={isSavingServiceUrls.value}
-              onEndpointChange={(value) => (huggingFaceEndpointInput.value = value)}
-              onTokenChange={(value) => (huggingFaceTokenInput.value = value)}
-              onClear={() => void clearRegistryToken("huggingface")}
-            />
-            <RegistryCredentialFields
-              name={t("mp.sourceModelScope")}
-              endpoint={modelScopeEndpointInput.value}
-              token={modelScopeTokenInput.value}
-              configured={modelScopeTokenConfigured.value}
-              disabled={isSavingServiceUrls.value}
-              onEndpointChange={(value) => (modelScopeEndpointInput.value = value)}
-              onTokenChange={(value) => (modelScopeTokenInput.value = value)}
-              onClear={() => void clearRegistryToken("modelscope")}
-            />
+        <div class="ml-7 overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <div class="flex overflow-x-auto border-b border-gray-100 px-2" role="tablist" aria-label={t("settings.serviceUrls")}>
+            {(["opencsg", "huggingface", "modelscope"] as ArtifactSource[]).map((source) => {
+              const selected = cloudServiceTab.value === source;
+              const status = cloudServiceStatus(source);
+              return (
+                <button
+                  key={source}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  title={status.text}
+                  onClick={() => selectCloudServiceTab(source)}
+                  class={`-mb-px flex flex-none items-center gap-2 border-b-2 px-4 py-3 text-sm transition ${
+                    selected
+                      ? `${cloudServiceTabBorderClass(source)} font-semibold text-gray-900`
+                      : "border-transparent text-gray-500 hover:text-gray-800"
+                  }`}
+                >
+                  <span class={`flex h-6 w-6 flex-none items-center justify-center rounded-md text-[10px] font-bold ${cloudServiceIconClass(source)}`}>
+                    {cloudServiceShortLabel(source)}
+                  </span>
+                  {cloudServiceLabel(source)}
+                  <span class={`h-1.5 w-1.5 flex-none rounded-full ${status.ok ? "bg-emerald-500" : "bg-gray-300"}`} />
+                </button>
+              );
+            })}
           </div>
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="text-sm">
-              {serviceUrlsError.value && <span class="text-red-600">{serviceUrlsError.value}</span>}
-              {serviceUrlsMessage.value && <span class="text-green-600">{serviceUrlsMessage.value}</span>}
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void refreshCloudModels()}
-                disabled={isRefreshingCloudModels.value}
-                class="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-60 transition-colors"
-              >
-                {isRefreshingCloudModels.value ? t("settings.cloudModelsRefreshing") : t("settings.cloudModelsRefresh")}
-              </button>
-              <button
-                type="button"
-                onClick={() => void saveServiceURLs()}
-                disabled={isSavingServiceUrls.value}
-                class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-              >
-                {isSavingServiceUrls.value ? "..." : t("settings.save")}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Web search */}
-      <div class="mb-10">
-        <div class="flex items-center gap-2 mb-1">
-          <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3a9 9 0 100 18 9 9 0 000-18z" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3.6 9h16.8M3.6 15h16.8M12 3c2 2.3 3 5.3 3 9s-1 6.7-3 9c-2-2.3-3-5.3-3-9s1-6.7 3-9z" />
-          </svg>
-          <span class="font-semibold text-gray-900">{t("settings.webSearch")}</span>
-        </div>
-        <p class="text-sm text-gray-500 mb-3 ml-7">{t("settings.webSearchDesc")}</p>
-        <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4">
-          <div class="mb-4 flex items-center gap-3">
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={webSearchEnabled.value}
-                disabled={isSavingWebSearch.value}
-                onChange={(e) => (webSearchEnabled.value = (e.target as HTMLInputElement).checked)}
-                class="sr-only peer"
-              />
-              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600 peer-disabled:opacity-60 peer-disabled:cursor-not-allowed"></div>
-            </label>
-            <span class="text-sm text-gray-700">
-              {webSearchEnabled.value ? t("settings.webSearchOn") : t("settings.webSearchOff")}
-            </span>
-          </div>
-          <div class="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-700">
-            {t("settings.webSearchEngines")}
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="text-sm font-medium text-gray-700">
-              {t("settings.webSearchMaxResults")}
-              <input
-                type="number"
-                min={1}
-                max={10}
-                class="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={webSearchMaxResults.value}
-                onInput={(e) => (webSearchMaxResults.value = Number((e.target as HTMLInputElement).value))}
-              />
-            </label>
-            <label class="text-sm font-medium text-gray-700">
-              {t("settings.webSearchTimeout")}
-              <input
-                type="number"
-                min={1}
-                max={30}
-                class="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={webSearchTimeoutSeconds.value}
-                onInput={(e) => (webSearchTimeoutSeconds.value = Number((e.target as HTMLInputElement).value))}
-              />
-            </label>
-            <label class="text-sm font-medium text-gray-700">
-              {t("settings.webSearchLanguage")}
-              <input
-                type="text"
-                class="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder="auto"
-                value={webSearchLanguage.value}
-                onInput={(e) => (webSearchLanguage.value = (e.target as HTMLInputElement).value)}
-              />
-            </label>
-            <label class="text-sm font-medium text-gray-700">
-              {t("settings.webSearchSafeSearch")}
-              <select
-                class="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={webSearchSafeSearch.value}
-                onChange={(e) => (webSearchSafeSearch.value = Number((e.target as HTMLSelectElement).value))}
-              >
-                <option value={0}>{t("settings.webSearchSafeOff")}</option>
-                <option value={1}>{t("settings.webSearchSafeModerate")}</option>
-                <option value={2}>{t("settings.webSearchSafeStrict")}</option>
-              </select>
-            </label>
-          </div>
-          {webSearchError.value && <p class="mt-3 text-sm text-red-600">{webSearchError.value}</p>}
-          <div class="mt-4 flex justify-end">
-            <button
-              onClick={() => void saveWebSearchSettings()}
-              disabled={isSavingWebSearch.value}
-              class="px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-            >
-              {isSavingWebSearch.value ? "..." : t("settings.save")}
-            </button>
+          <div class="p-5">
+            <p class="mb-5 text-sm leading-5 text-gray-500">{cloudServiceHint(cloudServiceTab.value)}</p>
+              {cloudServiceTab.value === "opencsg" && (
+                <div class="space-y-5">
+                  <OpenCSGAccountPanel />
+                  <div class="space-y-4 border-t border-gray-100 pt-5">
+                    <label class="block">
+                      <span class="text-sm font-medium text-gray-700">{t("settings.serverUrl")}</span>
+                      <input
+                        type="url"
+                        value={serverUrlInput.value}
+                        onInput={(event) => {
+                          serverUrlInput.value = (event.currentTarget as HTMLInputElement).value;
+                        }}
+                        placeholder={defaultServerUrl.value}
+                        class="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                      />
+                      <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultServerUrl.value || "-")}</span>
+                    </label>
+                    <label class="block">
+                      <span class="text-sm font-medium text-gray-700">{t("settings.aiGatewayUrl")}</span>
+                      <input
+                        type="url"
+                        value={aiGatewayUrlInput.value}
+                        onInput={(event) => {
+                          aiGatewayUrlInput.value = (event.currentTarget as HTMLInputElement).value;
+                        }}
+                        placeholder={defaultAiGatewayUrl.value}
+                        class="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                      />
+                      <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultAiGatewayUrl.value || "-")}</span>
+                    </label>
+                    <label class="block">
+                      <span class="text-sm font-medium text-gray-700">{t("settings.cloudProviderName")}</span>
+                      <input
+                        type="text"
+                        value={cloudProviderNameInput.value}
+                        onInput={(event) => {
+                          cloudProviderNameInput.value = (event.currentTarget as HTMLInputElement).value;
+                        }}
+                        placeholder={defaultCloudProviderName.value}
+                        class="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                      />
+                      <span class="mt-1 block text-xs text-gray-400">{t("settings.cloudProviderNameHint", defaultCloudProviderName.value || "csghub")}</span>
+                    </label>
+                  </div>
+                  <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
+                    <div class="text-sm">
+                      {cloudServiceError.value && <span class="text-red-600">{cloudServiceError.value}</span>}
+                      {cloudServiceMessage.value && <span class="text-emerald-600">{cloudServiceMessage.value}</span>}
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void refreshCloudModels()}
+                        disabled={isRefreshingCloudModels.value}
+                        class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+                      >
+                        {isRefreshingCloudModels.value ? t("settings.cloudModelsRefreshing") : t("settings.cloudModelsRefresh")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void saveOpenCSGService()}
+                        disabled={savingCloudService.value === "opencsg"}
+                        class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
+                      >
+                        {savingCloudService.value === "opencsg" ? "..." : t("settings.save")}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {cloudServiceTab.value === "huggingface" && (
+                <div class="space-y-5">
+                  <RegistryCredentialFields
+                    endpoint={huggingFaceEndpointInput.value}
+                    token={huggingFaceTokenInput.value}
+                    configured={huggingFaceTokenConfigured.value}
+                    disabled={savingCloudService.value === "huggingface"}
+                    onEndpointChange={(value) => (huggingFaceEndpointInput.value = value)}
+                    onTokenChange={(value) => (huggingFaceTokenInput.value = value)}
+                    onClear={() => void clearRegistryToken("huggingface")}
+                  />
+                  <div class="border-t border-gray-100 pt-4">
+                    <CloudServiceActions
+                      saving={savingCloudService.value === "huggingface"}
+                      onSave={() => void saveRegistryService("huggingface")}
+                    />
+                  </div>
+                </div>
+              )}
+              {cloudServiceTab.value === "modelscope" && (
+                <div class="space-y-5">
+                  <RegistryCredentialFields
+                    endpoint={modelScopeEndpointInput.value}
+                    token={modelScopeTokenInput.value}
+                    configured={modelScopeTokenConfigured.value}
+                    disabled={savingCloudService.value === "modelscope"}
+                    onEndpointChange={(value) => (modelScopeEndpointInput.value = value)}
+                    onTokenChange={(value) => (modelScopeTokenInput.value = value)}
+                    onClear={() => void clearRegistryToken("modelscope")}
+                  />
+                  <div class="border-t border-gray-100 pt-4">
+                    <CloudServiceActions
+                      saving={savingCloudService.value === "modelscope"}
+                      onSave={() => void saveRegistryService("modelscope")}
+                    />
+                  </div>
+                </div>
+              )}
           </div>
         </div>
       </div>
@@ -1134,93 +1268,6 @@ export function Settings() {
         </div>
       )}
 
-      {/* Account */}
-      <div class="mb-10">
-        <div class="flex items-center gap-2 mb-1">
-          <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M5.121 17.804A9 9 0 1118.88 17.8M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-          <span class="font-semibold text-gray-900">{t("settings.account")}</span>
-        </div>
-        <p class="text-sm text-gray-500 mb-3 ml-7">{t("settings.accountDesc")}</p>
-        <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4">
-          {cloudAuth.value === null ? (
-            <p class="text-sm text-gray-500">...</p>
-          ) : cloudAuth.value.authenticated && cloudAuth.value.user ? (
-            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div class="flex items-center gap-4 min-w-0">
-                {cloudAuth.value.user.avatar ? (
-                  <img
-                    src={cloudAuth.value.user.avatar}
-                    alt={cloudUserLabel(cloudAuth.value)}
-                    class="w-12 h-12 rounded-full border border-gray-200 object-cover bg-gray-50"
-                  />
-                ) : (
-                  <div class="w-12 h-12 rounded-full bg-indigo-50 text-indigo-700 flex items-center justify-center text-lg font-semibold">
-                    {cloudUserInitial(cloudAuth.value)}
-                  </div>
-                )}
-                <div class="min-w-0">
-                  <p class="text-sm font-semibold text-gray-900 truncate">{cloudUserLabel(cloudAuth.value)}</p>
-                  <p class="text-sm text-gray-500 truncate">@{cloudAuth.value.user.username}</p>
-                  {cloudAuth.value.user.email && (
-                    <p class="text-sm text-gray-500 truncate">{cloudAuth.value.user.email}</p>
-                  )}
-                </div>
-              </div>
-              <div class="flex gap-2">
-                <button
-                  onClick={handleLogout}
-                  disabled={isClearingCloudToken.value}
-                  class="px-4 py-2 border border-red-200 rounded-lg text-sm text-red-600 hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isClearingCloudToken.value ? t("settings.loggingOut") : t("settings.logout")}
-                </button>
-              </div>
-            </div>
-          ) : cloudAuth.value.has_token ? (
-            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p class="text-sm font-semibold text-gray-900">{t("settings.tokenSaved")}</p>
-                <p class="text-sm text-gray-500">{t("settings.tokenSavedDesc")}</p>
-              </div>
-              <div class="flex gap-2">
-                <button
-                  onClick={handleOpenCloudLogin}
-                  class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  {t("settings.login")}
-                </button>
-                <button
-                  onClick={handleLogout}
-                  disabled={isClearingCloudToken.value}
-                  class="px-4 py-2 border border-red-200 rounded-lg text-sm text-red-600 hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isClearingCloudToken.value ? t("settings.loggingOut") : t("settings.logout")}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p class="text-sm font-semibold text-gray-900">{t("settings.loggedOut")}</p>
-                <p class="text-sm text-gray-500">{t("settings.loggedOutDesc")}</p>
-              </div>
-              <div class="flex gap-2">
-                <button
-                  onClick={handleOpenCloudLogin}
-                  class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-                >
-                  {t("settings.login")}
-                </button>
-              </div>
-            </div>
-          )}
-          {cloudAuthError.value && (
-            <p class="mt-3 text-sm text-red-600">{cloudAuthError.value}</p>
-          )}
-        </div>
-      </div>
       {/* API docs */}
       <div class="mb-10">
         <div class="flex items-center gap-2 mb-1">

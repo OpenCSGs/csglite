@@ -111,7 +111,7 @@ make build-all
 
 ## 安装 llama-server（推理依赖）
 
-CSGLite 使用 llama.cpp 的 `llama-server` 进行模型推理。你需要单独安装它。
+CSGLite 使用 llama.cpp 的 `llama-server` 进行模型推理。支持自己单独安装它。
 
 ### macOS
 
@@ -125,8 +125,8 @@ brew install llama.cpp
 
 ```bash
 # 示例：Linux x86_64
-wget https://github.com/ggml-org/llama.cpp/releases/download/b10326/llama-b10326-bin-ubuntu-x64.tar.gz
-tar xzf llama-b10326-bin-ubuntu-x64.tar.gz
+wget https://github.com/ggml-org/llama.cpp/releases/download/b10549/llama-b10549-bin-ubuntu-x64.tar.gz
+tar xzf llama-b10549-bin-ubuntu-x64.tar.gz
 sudo cp build/bin/llama-server /usr/local/bin/
 ```
 

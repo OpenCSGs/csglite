@@ -246,3 +246,31 @@ func captureCLIStdout(t *testing.T, fn func()) string {
 	}
 	return <-done
 }
+
+func captureCLIStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStderr := os.Stderr
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error: %v", err)
+	}
+	os.Stderr = writePipe
+
+	defer func() {
+		os.Stderr = oldStderr
+	}()
+
+	done := make(chan string, 1)
+	go func() {
+		data, _ := io.ReadAll(readPipe)
+		done <- string(data)
+	}()
+
+	fn()
+
+	if err := writePipe.Close(); err != nil {
+		t.Fatalf("writePipe.Close() error: %v", err)
+	}
+	return <-done
+}

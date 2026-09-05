@@ -110,6 +110,11 @@ var supportedCloudTasks = map[string]cloudTaskSpec{
 		InputModalities:  []string{"audio"},
 		OutputModalities: []string{"transcription"},
 	},
+	"feature-extraction": {
+		PipelineTag:      "feature-extraction",
+		InputModalities:  []string{"text"},
+		OutputModalities: []string{"embedding"},
+	},
 }
 
 var cloudTaskPriority = []string{
@@ -119,6 +124,7 @@ var cloudTaskPriority = []string{
 	"image-to-image",
 	"speech-to-text",
 	"automatic-speech-recognition",
+	"feature-extraction",
 }
 
 func NewService(baseURL string) *Service {

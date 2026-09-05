@@ -483,6 +483,94 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     },
   },
   {
+    id: "kimi-code",
+    name: "Kimi Code",
+    siteLabel: "@kimi.com",
+    website: "https://www.kimi.com/code",
+    detailsUrl: "https://moonshotai.github.io/kimi-code/en/guides/getting-started",
+    icon: "/apps/kimi-code.svg",
+    category: "coding",
+    description: {
+      en: "An AI coding agent that runs in your terminal, with a polished TUI, subagents, lifecycle hooks, and support for OpenAI-compatible providers.",
+      zh: "终端 AI 编程 Agent，提供精致 TUI、子 Agent、生命周期钩子，并支持 OpenAI 兼容的模型服务。",
+    },
+    installMode: "script",
+    progressMode: "percent",
+    installHint: {
+      en: "Install Kimi Code via the official single-binary installer, then launch it with the csghub-lite provider and selected model.",
+      zh: "通过官方单二进制安装脚本安装 Kimi Code，然后使用 csghub-lite provider 和所选模型启动。",
+    },
+    cnInstallHint: {
+      en: "The installer downloads the native binary from code.kimi.com and places it under ~/.kimi-code/bin.",
+      zh: "安装脚本从 code.kimi.com 下载原生二进制并安装到 ~/.kimi-code/bin。",
+    },
+    commandPreview: "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+    liveLogsReady: true,
+    plannedSteps: [
+      {
+        en: "Detect platform and resolve the latest Kimi Code version.",
+        zh: "识别平台并解析最新 Kimi Code 版本。",
+      },
+      {
+        en: "Download the native binary and verify its checksum.",
+        zh: "下载原生二进制并校验文件完整性。",
+      },
+      {
+        en: "Write the csghub-lite provider into ~/.kimi-code/config.toml and launch the terminal agent.",
+        zh: "将 csghub-lite provider 写入 ~/.kimi-code/config.toml，并启动终端 Agent。",
+      },
+    ],
+    status: "idle",
+    statusText: {
+      en: "Ready to install",
+      zh: "可安装",
+    },
+  },
+  {
+    id: "dsh",
+    name: "DeepSeek Harness",
+    siteLabel: "@deepseek.com",
+    website: "https://github.com/deepseek-ai/deepseek-harness",
+    detailsUrl: "https://deepseek-harness.github.io/deepseek-harness/",
+    icon: "/apps/dsh.svg",
+    category: "coding",
+    description: {
+      en: "An open-source agent harness built on an everything-is-a-plugin architecture, powered by Cordis, with Web UI and headless modes and support for OpenAI-compatible providers.",
+      zh: "开源 Agent 框架，基于一切皆插件架构和 Cordis 驱动，提供 Web UI 和无头模式，支持 OpenAI 兼容的模型服务。",
+    },
+    installMode: "script",
+    progressMode: "indeterminate",
+    installHint: {
+      en: "Install DeepSeek Harness from npm, then launch it with the csghub-lite provider and selected model.",
+      zh: "通过 npm 安装 DeepSeek Harness，然后使用 csghub-lite provider 和所选模型启动。",
+    },
+    cnInstallHint: {
+      en: "The installer uses the configured npm registry and defaults to npmmirror for faster domestic installs.",
+      zh: "安装脚本会使用配置的 npm registry，默认走 npmmirror 以改善国内安装速度。",
+    },
+    commandPreview: "npm install -g --prefix ~/.local/share/deepseek-harness @deepseek-ai/dsh",
+    liveLogsReady: true,
+    plannedSteps: [
+      {
+        en: "Ensure npm is available in the local environment.",
+        zh: "检查本地环境是否可用 npm。",
+      },
+      {
+        en: "Install the @deepseek-ai/dsh package into a user-owned prefix.",
+        zh: "将 @deepseek-ai/dsh 安装到当前用户拥有的 prefix。",
+      },
+      {
+        en: "Write the csghub-lite provider into ~/.dsh/settings.yaml and launch the agent.",
+        zh: "将 csghub-lite provider 写入 ~/.dsh/settings.yaml，并启动 Agent。",
+      },
+    ],
+    status: "idle",
+    statusText: {
+      en: "Ready to install",
+      zh: "可安装",
+    },
+  },
+  {
     id: "csgclaw",
     name: "CSGClaw",
     siteLabel: "@opencsg.com",
