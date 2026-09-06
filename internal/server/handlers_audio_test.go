@@ -72,11 +72,6 @@ func (e *failingStreamASREngine) ModelName() string {
 }
 
 func TestHandleOpenAIAudioTranscriptionsUsesLiteTempDir(t *testing.T) {
-	missingTempDir := filepath.Join(t.TempDir(), "missing-temp")
-	t.Setenv("TMPDIR", missingTempDir)
-	t.Setenv("TMP", missingTempDir)
-	t.Setenv("TEMP", missingTempDir)
-
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	if err := writer.WriteField("model", "missing-asr-model"); err != nil {
@@ -102,6 +97,13 @@ func TestHandleOpenAIAudioTranscriptionsUsesLiteTempDir(t *testing.T) {
 		DatasetDir: config.DatasetDirForStorage(storageDir),
 	}
 	s := newTestServerWithConfig(t, cfg)
+
+	// Set TMPDIR after server init so apps.NewManager does not recreate it.
+	missingTempDir := filepath.Join(t.TempDir(), "missing-temp")
+	t.Setenv("TMPDIR", missingTempDir)
+	t.Setenv("TMP", missingTempDir)
+	t.Setenv("TEMP", missingTempDir)
+
 	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	w := httptest.NewRecorder()

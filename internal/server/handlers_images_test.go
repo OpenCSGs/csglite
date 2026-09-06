@@ -215,11 +215,6 @@ func TestHandleOpenAIImagesEditsForwardsInputImage(t *testing.T) {
 }
 
 func TestHandleOpenAIImagesEditsAvoidsSystemTempDir(t *testing.T) {
-	missingTempDir := filepath.Join(t.TempDir(), "missing-temp")
-	t.Setenv("TMPDIR", missingTempDir)
-	t.Setenv("TMP", missingTempDir)
-	t.Setenv("TEMP", missingTempDir)
-
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("model", "Qwen/Qwen-Image-Edit-2511")
@@ -239,6 +234,13 @@ func TestHandleOpenAIImagesEditsAvoidsSystemTempDir(t *testing.T) {
 		DatasetDir: config.DatasetDirForStorage(storageDir),
 	}
 	s := newTestServerWithConfig(t, cfg)
+
+	// Set TMPDIR after server init so apps.NewManager does not recreate it.
+	missingTempDir := filepath.Join(t.TempDir(), "missing-temp")
+	t.Setenv("TMPDIR", missingTempDir)
+	t.Setenv("TMP", missingTempDir)
+	t.Setenv("TEMP", missingTempDir)
+
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	w := httptest.NewRecorder()
