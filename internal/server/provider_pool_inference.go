@@ -73,8 +73,8 @@ type providerPoolEngine struct {
 	affinityKey string
 	now         func() time.Time
 	usage       *providerPoolUsageCapture
-semantic    func(context.Context, providerPoolSemanticInput) routerprofile.Decision
-		route       routerprofile.Decision
+	semantic    func(context.Context, providerPoolSemanticInput) routerprofile.Decision
+	route       routerprofile.Decision
 }
 
 type providerPoolEngineMember struct {
@@ -797,6 +797,9 @@ func (e *providerPoolEngine) orderedMembers(ctx context.Context, input providerP
 				return members
 			}
 		}
+	}
+	if e.semantic != nil && preferred == "" {
+		return members
 	}
 	firstPriority := members[0].member.Priority
 	end := 0

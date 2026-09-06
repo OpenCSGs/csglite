@@ -207,6 +207,31 @@ func TestProviderPoolSemanticRouterFallsBackWhenLegacyProfileIsIncompatible(t *t
 	}
 }
 
+func TestProviderPoolSemanticFallbackKeepsStableMember(t *testing.T) {
+	engine := &providerPoolEngine{
+		poolID: "pool",
+		members: []providerPoolEngineMember{
+			{member: config.ProviderPoolMember{ID: "a", Priority: 0, Weight: 100}},
+			{member: config.ProviderPoolMember{ID: "b", Priority: 0, Weight: 100}},
+		},
+		mu:       &sync.Mutex{},
+		current:  map[string]int{},
+		runtime:  map[string]*providerPoolMemberRuntime{},
+		affinity: map[string]providerPoolAffinityEntry{},
+		semantic: func(context.Context, providerPoolSemanticInput) routerprofile.Decision {
+			return routerprofile.Decision{Fallback: true, FallbackReason: routerprofile.FallbackEmbedding}
+		},
+	}
+	first := engine.orderedMembers(t.Context(), semanticInputFromPrompt("route me"))
+	second := engine.orderedMembers(t.Context(), semanticInputFromPrompt("route me again"))
+	if first[0].member.ID != second[0].member.ID {
+		t.Fatalf("semantic fallback did not stay stable: first=%q second=%q", first[0].member.ID, second[0].member.ID)
+	}
+	if !engine.route.Fallback || engine.route.MemberID != "" {
+		t.Fatalf("route = %+v", engine.route)
+	}
+}
+
 func TestProviderPoolSemanticOrderingAndFailureFallback(t *testing.T) {
 	engine := &providerPoolEngine{
 		poolID: "pool",

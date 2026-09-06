@@ -370,8 +370,29 @@ func (s *Server) providerPoolSemanticRouter(pool config.ProviderPool) func(conte
 				Fallback:             true, FallbackReason: routerprofile.FallbackProfileInvalid,
 			}
 		}
+		if decision.Fallback && decision.MemberID == "" {
+			if memberID, ok := profileV1FallbackMember(pool, snapshot); ok {
+				decision.MemberID, decision.Applied = memberID, true
+			}
+		}
 		return decision
 	}
+}
+
+func profileV1FallbackMember(pool config.ProviderPool, profile routerprofile.Profile) (string, bool) {
+	if profile.ArtifactSchemaVersion() != routerprofile.SchemaVersionV1 {
+		return "", false
+	}
+	target := strings.TrimSpace(profile.Profile.FallbackMemberID)
+	if target == "" {
+		return "", false
+	}
+	for _, member := range pool.Members {
+		if member.ID == target {
+			return member.ID, true
+		}
+	}
+	return "", false
 }
 
 func profileFallback(pool config.ProviderPool, profile routerprofile.Profile, reason string) routerprofile.Decision {
@@ -393,6 +414,9 @@ func profileFallback(pool config.ProviderPool, profile routerprofile.Profile, re
 		route.ProfileSchemaVersion = routerprofile.SchemaVersionV1
 		route.RouterAlgorithm = routerprofile.RouterAlgorithmClusterV1
 		route.RoutingTextVersion = profile.Profile.RoutingText.Version
+		if memberID, ok := profileV1FallbackMember(pool, profile); ok {
+			route.MemberID, route.Applied = memberID, true
+		}
 	}
 	return route
 }

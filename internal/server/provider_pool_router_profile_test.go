@@ -67,7 +67,8 @@ route := s.providerPoolSemanticRouter(pool)(t.Context(), providerPoolSemanticInp
 
 		vector = []float64{5, 5}
 		route = s.providerPoolSemanticRouter(pool)(t.Context(), semanticInputFromPrompt("far away"))
-		if !route.OOD || !route.Fallback || route.FallbackReason != routerprofile.FallbackOutOfDistribution || route.MemberID != "" {
+		if !route.OOD || !route.Fallback || route.FallbackReason != routerprofile.FallbackOutOfDistribution ||
+			route.MemberID != "large" || !route.Applied {
 			t.Fatalf("OOD route = %+v", route)
 		}
 
@@ -267,6 +268,28 @@ func TestValidateRouterProfileV2ActivationSafety(t *testing.T) {
 	missingFallback.Members = append([]config.ProviderPoolMember(nil), pool.Members[:1]...)
 	if err := validateRouterProfileForPool(missingFallback, profile, true); err == nil {
 		t.Fatal("profile with missing safe fallback was activatable")
+	}
+}
+
+func TestProfileFallbackV1UsesFallbackMemberID(t *testing.T) {
+	pool := config.ProviderPool{
+		ID: "pool-v1-fallback",
+		Members: []config.ProviderPoolMember{
+			{ID: "small", Source: "cloud", Model: "small"},
+			{ID: "large", Source: "cloud", Model: "large"},
+		},
+	}
+	profile := testActiveRouterProfile(pool)
+	route := profileFallback(pool, profile, routerprofile.FallbackEmbedding)
+	if !route.Fallback || !route.Applied || route.MemberID != "large" {
+		t.Fatalf("V1 fallback = %+v", route)
+	}
+
+	missing := pool
+	missing.Members = missing.Members[:1]
+	route = profileFallback(missing, profile, routerprofile.FallbackEmbedding)
+	if !route.Fallback || route.Applied || route.MemberID != "" {
+		t.Fatalf("V1 fallback missing member = %+v", route)
 	}
 }
 
