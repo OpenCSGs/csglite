@@ -89,7 +89,7 @@ release-snapshot: build-web
 	goreleaser release --snapshot --clean
 
 # Ubuntu 22.04 CUDA llama.cpp mirrors for GitLab (see scripts/llama-build/README.md)
-LLAMA_TAG ?= b9158
+LLAMA_TAG ?= b10830
 
 llama-cuda-rebuild-all:
 	chmod +x scripts/llama-build/*.sh

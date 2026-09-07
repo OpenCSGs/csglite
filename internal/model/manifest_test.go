@@ -219,6 +219,22 @@ func TestDetectPipelineTagRegisteredVisionArchitecture(t *testing.T) {
 	}
 }
 
+func TestDetectPipelineTagNewVisionArchitectures(t *testing.T) {
+	for _, arch := range []string{
+		"Qwen4ExpForConditionalGeneration",
+		"Dots3NoteForConditionalGeneration",
+	} {
+		dir := t.TempDir()
+		cfg := []byte(`{"architectures":["` + arch + `"]}`)
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := DetectPipelineTag(dir); got != "image-text-to-text" {
+			t.Fatalf("DetectPipelineTag(%q) = %q, want image-text-to-text", arch, got)
+		}
+	}
+}
+
 func TestDetectPipelineTagMMProjWithoutConfig(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "mmproj-model-f16.gguf"), []byte("mmproj"), 0o644); err != nil {

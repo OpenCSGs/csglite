@@ -70,9 +70,9 @@ func TestQwen35ArchitecturesFallbackToPython(t *testing.T) {
 
 func TestDetectGGUFArch(t *testing.T) {
 	cases := []struct {
-		hfArch  string
-		want    string
-		wantOK  bool
+		hfArch string
+		want   string
+		wantOK bool
 	}{
 		{"Qwen3_5ForCausalLM", "qwen35", true},
 		{"Qwen3_5MoeForCausalLM", "qwen35moe", true},
@@ -101,6 +101,14 @@ func TestDetectGGUFArch(t *testing.T) {
 		{"T5ForConditionalGeneration", "t5", true},
 		{"BloomModel", "bloom", true},
 		{"DreamModel", "dream", true},
+		{"HYV4ForCausalLM", "hy_v4", true},
+		{"Spark2_5ForCausalLM", "spark2_5", true},
+		{"Qwen4ExpForCausalLM", "qwen4exp", true},
+		{"Qwen4ExpForConditionalGeneration", "qwen4exp", true},
+		{"NemotronHPuzzleForCausalLM", "nemotron_h_moe", true},
+		{"Dots3NoteForCausalLM", "dots3note", true},
+		{"Dots3NoteTextForCausalLM", "dots3note", true},
+		{"Dots3NoteForConditionalGeneration", "dots3note", true},
 		{"UnknownArch", "", false},
 	}
 	for _, tc := range cases {
