@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared helpers for Ubuntu 22.04 CUDA llama.cpp mirror builds.
+# Shared helpers for Ubuntu 22.04 CUDA and ROCm llama.cpp mirror builds.
 set -euo pipefail
 
 LLAMA_BUILD_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -7,6 +7,12 @@ LLAMA_BUILD_REPO_ROOT="$(cd "${LLAMA_BUILD_SCRIPT_DIR}/../.." && pwd)"
 LLAMA_BUILD_WORK_DIR="${LLAMA_BUILD_WORK_DIR:-${LLAMA_BUILD_SCRIPT_DIR}/work}"
 LLAMA_BUILD_OUT_DIR="${LLAMA_BUILD_OUT_DIR:-${LLAMA_BUILD_WORK_DIR}/out}"
 LLAMA_BUILD_CUDA_IMAGE="${LLAMA_BUILD_CUDA_IMAGE:-nvidia/cuda:12.9.1-devel-ubuntu22.04}"
+# Must stay on the same ROCm series and Ubuntu base as docker/rocm/Dockerfile's
+# runtime image, otherwise the package cannot load there.
+LLAMA_BUILD_ROCM_IMAGE="${LLAMA_BUILD_ROCM_IMAGE:-rocm/dev-ubuntu-22.04:7.2.2-complete}"
+LLAMA_BUILD_ROCM_SERIES="${LLAMA_BUILD_ROCM_SERIES:-7.2}"
+# Plain 22.04 userland, used to prove a package does not need GLIBC_2.38.
+LLAMA_BUILD_UBUNTU_IMAGE="${LLAMA_BUILD_UBUNTU_IMAGE:-ubuntu:22.04}"
 LLAMA_BUILD_GITLAB_PROJECT_ID="${LLAMA_BUILD_GITLAB_PROJECT_ID:-393}"
 LLAMA_BUILD_GITLAB_API="${LLAMA_BUILD_GITLAB_API:-https://git-devops.opencsg.com/api/v4}"
 
@@ -21,14 +27,34 @@ llama_build_ensure_docker() {
   fi
 }
 
-llama_build_ensure_cuda_image() {
-  local platform="$1"
-  if docker image inspect --platform "${platform}" "${LLAMA_BUILD_CUDA_IMAGE}" >/dev/null 2>&1; then
-    echo "Reusing local ${LLAMA_BUILD_CUDA_IMAGE} (${platform})"
+llama_build_ensure_image() {
+  local image="$1"
+  local platform="$2"
+  if docker image inspect --platform "${platform}" "${image}" >/dev/null 2>&1; then
+    echo "Reusing local ${image} (${platform})"
     return 0
   fi
-  echo "Pulling ${LLAMA_BUILD_CUDA_IMAGE} (${platform})..."
-  docker pull --platform "${platform}" "${LLAMA_BUILD_CUDA_IMAGE}"
+  echo "Pulling ${image} (${platform})..."
+  docker pull --platform "${platform}" "${image}"
+}
+
+llama_build_ensure_cuda_image() {
+  llama_build_ensure_image "${LLAMA_BUILD_CUDA_IMAGE}" "$1"
+}
+
+llama_build_ensure_rocm_image() {
+  llama_build_ensure_image "${LLAMA_BUILD_ROCM_IMAGE}" "$1"
+}
+
+# amd64 builds run under QEMU on Apple Silicon. A CUDA build is merely slow
+# there; a multi-target ROCm build is slow enough to be worth calling out.
+llama_build_warn_emulated_amd64() {
+  local platform="$1"
+  if [ "${platform}" = "linux/amd64" ] && [ "$(uname -m)" = "arm64" ]; then
+    echo "WARNING: building linux/amd64 on an arm64 host runs under QEMU emulation."
+    echo "         Expect a very long build. Prefer an x86_64 Linux builder,"
+    echo "         or narrow GPU_TARGETS to the gfx architectures you actually ship."
+  fi
 }
 
 llama_build_clone_source() {

@@ -6,9 +6,10 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
 source "${ROOT}/common.sh"
 
-ARCH="${1:?arch: x64 or arm64}"
+ARCH="${1:?arch: x64, arm64 or rocm-x64}"
 TAG="$(llama_build_tag "${2:-}")"
 OUT="${LLAMA_BUILD_OUT_DIR}"
+IMAGE="${LLAMA_BUILD_CUDA_IMAGE}"
 
 case "${ARCH}" in
   x64)
@@ -19,8 +20,13 @@ case "${ARCH}" in
     PLATFORM=linux/arm64
     TAR="llama-${TAG}-bin-ubuntu-cuda-arm64.tar.gz"
   ;;
+  rocm-x64)
+    PLATFORM=linux/amd64
+    TAR="llama-${TAG}-bin-ubuntu-rocm-${LLAMA_BUILD_ROCM_SERIES}-x64.tar.gz"
+    IMAGE="${LLAMA_BUILD_ROCM_IMAGE}"
+  ;;
   *)
-    echo "usage: $0 x64|arm64 [tag]" >&2
+    echo "usage: $0 x64|arm64|rocm-x64 [tag]" >&2
     exit 1
   ;;
 esac
@@ -50,12 +56,12 @@ diff -u \
   <(cd "${WORKDIR}/new" && find . \( -type f -o -type l \) | sed 's|^\./||' | LC_ALL=C sort) || true
 
 llama_build_ensure_docker
-llama_build_ensure_cuda_image "${PLATFORM}"
+llama_build_ensure_image "${IMAGE}" "${PLATFORM}"
 
 echo "=== ref version (Ubuntu 22.04) ==="
 docker run --platform "${PLATFORM}" --pull=never --rm \
   -v "${REF}:/pkg.tar.gz:ro" \
-  "${LLAMA_BUILD_CUDA_IMAGE}" bash -lc \
+  "${IMAGE}" bash -lc \
   'mkdir -p /tmp/p && tar -xzf /pkg.tar.gz -C /tmp/p
     server=$(find /tmp/p -type f -path "*/bin/llama-server" -print -quit)
     r=${server%/bin/llama-server}
@@ -64,7 +70,7 @@ docker run --platform "${PLATFORM}" --pull=never --rm \
 echo "=== new version (Ubuntu 22.04) ==="
 docker run --platform "${PLATFORM}" --pull=never --rm \
   -v "${NEW}:/pkg.tar.gz:ro" \
-  "${LLAMA_BUILD_CUDA_IMAGE}" bash -lc \
+  "${IMAGE}" bash -lc \
   'mkdir -p /tmp/p && tar -xzf /pkg.tar.gz -C /tmp/p
     server=$(find /tmp/p -type f -path "*/bin/llama-server" -print -quit)
     r=${server%/bin/llama-server}
