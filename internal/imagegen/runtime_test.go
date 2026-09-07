@@ -2,6 +2,7 @@ package imagegen
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -400,6 +401,365 @@ exit 0
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("missing torchaudio should be a no-op")
+	}
+}
+
+func TestCandidateHostPythonsOrderNewestFirst(t *testing.T) {
+	candidates := candidateHostPythons()
+	wantHead := []string{"python3.14", "python3.13", "python3.12", "python3.11", "python3.10"}
+	if len(candidates) < len(wantHead)+2 {
+		t.Fatalf("candidateHostPythons() too short: %#v", candidates)
+	}
+	for i, want := range wantHead {
+		if candidates[i] != want {
+			t.Fatalf("candidateHostPythons()[%d] = %q, want %q (full: %#v)", i, candidates[i], want, candidates)
+		}
+	}
+	if tail := candidates[len(candidates)-2:]; tail[0] != "python3" || tail[1] != "python" {
+		t.Fatalf("candidateHostPythons() should end with python3, python: %#v", candidates)
+	}
+}
+
+func TestParsePythonMinorAndSupport(t *testing.T) {
+	tests := []struct {
+		version   string
+		minor     int
+		ok        bool
+		supported bool
+	}{
+		{"3.9.6", 9, true, false},
+		{"3.10.0", 10, true, true},
+		{"3.11", 11, true, true},
+		{"3.13.7", 13, true, true},
+		{"3.14.7", 14, true, true},
+		{"3.15.0", 15, true, false},
+		{"2.7.18", 0, false, false},
+		{"garbage", 0, false, false},
+	}
+	for _, tt := range tests {
+		minor, ok := parsePythonMinor(tt.version)
+		if ok != tt.ok || (ok && minor != tt.minor) {
+			t.Fatalf("parsePythonMinor(%q) = (%d, %v), want (%d, %v)", tt.version, minor, ok, tt.minor, tt.ok)
+		}
+		if got := hostPythonSupported(tt.version); got != tt.supported {
+			t.Fatalf("hostPythonSupported(%q) = %v, want %v", tt.version, got, tt.supported)
+		}
+	}
+}
+
+// findHostPython must prefer the newest versioned interpreter on PATH even
+// when the unversioned python3/python names resolve to something older, and
+// must never pick an interpreter outside the supported range.
+func TestFindHostPythonPrefersVersionedInterpreters(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+
+	writeFakePythonAt(t, filepath.Join(dir, "python3.13"), probeScriptOutput("3.13.1"))
+	writeFakePythonAt(t, filepath.Join(dir, "python3.11"), probeScriptOutput("3.11.9"))
+	writeFakePythonAt(t, filepath.Join(dir, "python3"), probeScriptOutput("3.9.6"))
+	writeFakePythonAt(t, filepath.Join(dir, "python"), probeScriptOutput("3.9.6"))
+
+	path, err := findHostPythonFrom(context.Background(), candidateHostPythons(), nil)
+	if err != nil {
+		t.Fatalf("findHostPython error = %v", err)
+	}
+	if path != filepath.Join(dir, "python3.13") {
+		t.Fatalf("findHostPython = %q, want newest versioned interpreter %q", path, filepath.Join(dir, "python3.13"))
+	}
+}
+
+func TestFindHostPythonFallsBackToOlderVersionedInterpreter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+
+	writeFakePythonAt(t, filepath.Join(dir, "python3.11"), probeScriptOutput("3.11.9"))
+	writeFakePythonAt(t, filepath.Join(dir, "python3"), probeScriptOutput("3.9.6"))
+	writeFakePythonAt(t, filepath.Join(dir, "python"), probeScriptOutput("3.9.6"))
+
+	path, err := findHostPythonFrom(context.Background(), candidateHostPythons(), nil)
+	if err != nil {
+		t.Fatalf("findHostPython error = %v", err)
+	}
+	if path != filepath.Join(dir, "python3.11") {
+		t.Fatalf("findHostPython = %q, want %q", path, filepath.Join(dir, "python3.11"))
+	}
+}
+
+func TestFindHostPythonRejectsOnlyUnsupportedPythons(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	writeFakePythonAt(t, filepath.Join(dir, "python3"), probeScriptOutput("3.9.6"))
+	writeFakePythonAt(t, filepath.Join(dir, "python"), probeScriptOutput("3.9.6"))
+
+	if path, err := findHostPythonFrom(context.Background(), candidateHostPythons(), nil); err == nil {
+		t.Fatalf("findHostPython = %q with only 3.9 on PATH, want error", path)
+	}
+}
+
+// findHostPython must fall back to well-known absolute interpreter
+// locations when PATH is minimal (GUI apps get /usr/bin:/bin:... from
+// launchd and never see Homebrew or python.org installs). The lists are
+// injected so the test never touches real interpreter locations.
+func TestFindHostPythonFallsBackToWellKnownPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses absolute unix paths")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir) // minimal PATH without any python
+
+	wellKnown := filepath.Join(dir, "well-known", "python3.11")
+	writeFakePythonAt(t, wellKnown, probeScriptOutput("3.11.9"))
+
+	path, err := findHostPythonFrom(context.Background(), candidateHostPythons(), []string{wellKnown})
+	if err != nil {
+		t.Fatalf("findHostPython error = %v", err)
+	}
+	if path != wellKnown {
+		t.Fatalf("findHostPython = %q, want well-known path %q", path, wellKnown)
+	}
+
+	// A well-known path that fails the probe is skipped, not fatal.
+	writeFakePythonAt(t, wellKnown, "exit 1\n")
+	if path, err := findHostPythonFrom(context.Background(), candidateHostPythons(), []string{wellKnown, filepath.Join(dir, "well-known", "python3.12")}); err == nil {
+		t.Fatalf("findHostPython = %q with broken well-known python, want error", path)
+	}
+}
+
+func TestWellKnownHostPythonPathsSkipUnsupportedVersions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("generates unix absolute paths")
+	}
+	paths := wellKnownHostPythonPaths()
+	if len(paths) == 0 {
+		t.Fatalf("wellKnownHostPythonPaths() empty on %s", runtime.GOOS)
+	}
+	for _, p := range paths {
+		if strings.Contains(p, fmt.Sprintf("python3.%d", minimumHostPythonMinor-1)) {
+			t.Fatalf("well-known paths must stay within the supported range: %q", p)
+		}
+	}
+	// Newest first.
+	if !strings.Contains(paths[0], fmt.Sprintf("python3.%d", maxHostPythonMinor)) {
+		t.Fatalf("first well-known path = %q, want newest minor %d", paths[0], maxHostPythonMinor)
+	}
+}
+
+func TestFindHostPythonHonorsOverrideEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	python := filepath.Join(dir, "custom-python")
+	writeFakePythonAt(t, python, probeScriptOutput("3.12.4"))
+	t.Setenv(hostPythonEnv, python)
+
+	path, err := findHostPython()
+	if err != nil {
+		t.Fatalf("findHostPython error = %v", err)
+	}
+	if path != python {
+		t.Fatalf("findHostPython = %q, want override %q", path, python)
+	}
+
+	writeFakePythonAt(t, python, probeScriptOutput("3.9.6"))
+	if path, err := findHostPython(); err == nil {
+		t.Fatalf("findHostPython = %q with unsupported override version, want error", path)
+	}
+
+	t.Setenv(hostPythonEnv, filepath.Join(dir, "missing-python"))
+	if path, err := findHostPython(); err == nil {
+		t.Fatalf("findHostPython = %q with missing override path, want error", path)
+	}
+}
+
+// probeScriptOutput builds a fake python body mimicking the real probe in
+// probePython: it prints sys.executable and the interpreter version.
+func probeScriptOutput(version string) string {
+	return fmt.Sprintf("printf '%%s\\n%%s\\n' \"$0\" %q\n", version)
+}
+
+func TestCheckVenvPythonMissingVenvUsesNewestHost(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	writeFakePythonAt(t, filepath.Join(dir, "python3.11"), probeScriptOutput("3.11.9"))
+
+	m := NewRuntimeManagerAt(filepath.Join(dir, "asr-runtime"))
+	recreate, hostPython, err := m.checkVenvPython(context.Background())
+	if err != nil {
+		t.Fatalf("checkVenvPython error = %v", err)
+	}
+	if !recreate {
+		t.Fatal("missing venv should request recreation")
+	}
+	if hostPython != filepath.Join(dir, "python3.11") {
+		t.Fatalf("hostPython = %q, want %q", hostPython, filepath.Join(dir, "python3.11"))
+	}
+}
+
+func TestCheckVenvPythonKeepsFreshVenv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	writeFakePythonAt(t, filepath.Join(dir, "python3.11"), probeScriptOutput("3.11.9"))
+
+	m := NewRuntimeManagerAt(filepath.Join(dir, "asr-runtime"))
+	if err := os.MkdirAll(filepath.Dir(m.PythonPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakePythonAt(t, m.PythonPath(), probeScriptOutput("3.10.4"))
+
+	recreate, _, err := m.checkVenvPython(context.Background())
+	if err != nil {
+		t.Fatalf("checkVenvPython error = %v", err)
+	}
+	if recreate {
+		t.Fatal("healthy supported venv should not be recreated")
+	}
+}
+
+func TestCheckVenvPythonDetectsStaleVenv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	writeFakePythonAt(t, filepath.Join(dir, "python3.11"), probeScriptOutput("3.11.9"))
+
+	m := NewRuntimeManagerAt(filepath.Join(dir, "asr-runtime"))
+	if err := os.MkdirAll(filepath.Dir(m.PythonPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakePythonAt(t, m.PythonPath(), probeScriptOutput("3.9.6"))
+
+	recreate, hostPython, err := m.checkVenvPython(context.Background())
+	if err != nil {
+		t.Fatalf("checkVenvPython error = %v", err)
+	}
+	if !recreate {
+		t.Fatal("3.9 venv should be flagged for recreation")
+	}
+	if hostPython != filepath.Join(dir, "python3.11") {
+		t.Fatalf("hostPython = %q, want %q", hostPython, filepath.Join(dir, "python3.11"))
+	}
+}
+
+func TestEnsureVenvForInstallRecreatesStaleVenv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	hostPython := filepath.Join(dir, "python3.11")
+	writeFakePythonAt(t, hostPython, probeScriptOutput("3.11.9"))
+
+	// The stale venv python must fail the probe so the fresh-venv shortcut
+	// cannot apply; it mimics a 3.9 interpreter that cannot report versions
+	// correctly after its framework was removed.
+	m := NewRuntimeManagerAt(filepath.Join(dir, "asr-runtime"))
+	if err := os.MkdirAll(filepath.Dir(m.PythonPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakePythonAt(t, m.PythonPath(), "exit 1\n")
+
+	// The fake host answers the version probe normally, and treats
+	// `-m venv <target>` as creating the venv (touching the directory).
+	// Note: PATH points at the fake dir, so use builtin-safe commands only.
+	venvDir := m.VenvDir()
+	t.Setenv("TEST_VENV_TARGET", venvDir)
+	writeFakePythonAt(t, hostPython, `case "$*" in
+  *-m\ venv*)
+    /bin/rm -rf "$TEST_VENV_TARGET"
+    /bin/mkdir -p "$TEST_VENV_TARGET"
+    exit 0
+    ;;
+esac
+printf '%s\n%s\n' "$0" "3.11.9"
+`)
+
+	progress := func(string, int, int) {}
+	if err := m.ensureVenvForInstall(context.Background(), progress, 1, 1, false); err != nil {
+		t.Fatalf("ensureVenvForInstall error = %v", err)
+	}
+	if _, err := os.Stat(venvDir); err != nil {
+		t.Fatalf("venv directory was not recreated: %v", err)
+	}
+}
+
+func TestEnsureVenvForInstallKeepsHealthyVenvByDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	hostPython := filepath.Join(dir, "python3.13")
+	writeFakePythonAt(t, hostPython, probeScriptOutput("3.13.1"))
+
+	// Healthy 3.11 venv, newer 3.13 host on PATH: the default install
+	// (upgradePackages=false) must not delete the working venv.
+	m := NewRuntimeManagerAt(filepath.Join(dir, "asr-runtime"))
+	if err := os.MkdirAll(filepath.Dir(m.PythonPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakePythonAt(t, m.PythonPath(), probeScriptOutput("3.11.9"))
+
+	progress := func(string, int, int) {}
+	if err := m.ensureVenvForInstall(context.Background(), progress, 1, 1, false); err != nil {
+		t.Fatalf("ensureVenvForInstall error = %v", err)
+	}
+	if _, err := os.Stat(m.PythonPath()); err != nil {
+		t.Fatalf("healthy venv should be kept: %v", err)
+	}
+}
+
+func TestEnsureVenvForInstallUpgradesOnExplicitUpgrade(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	hostPython := filepath.Join(dir, "python3.13")
+	writeFakePythonAt(t, hostPython, probeScriptOutput("3.13.1"))
+
+	// Same layout as above, but upgradePackages=true must recreate the venv
+	// so it moves to the newer host interpreter.
+	m := NewRuntimeManagerAt(filepath.Join(dir, "asr-runtime"))
+	if err := os.MkdirAll(filepath.Dir(m.PythonPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakePythonAt(t, m.PythonPath(), probeScriptOutput("3.11.9"))
+
+	venvDir := m.VenvDir()
+	t.Setenv("TEST_VENV_TARGET", venvDir)
+	writeFakePythonAt(t, hostPython, `case "$*" in
+  *-m\ venv*)
+    /bin/rm -rf "$TEST_VENV_TARGET"
+    /bin/mkdir -p "$TEST_VENV_TARGET"
+    exit 0
+    ;;
+esac
+printf '%s\n%s\n' "$0" "3.13.1"
+`)
+
+	progress := func(string, int, int) {}
+	if err := m.ensureVenvForInstall(context.Background(), progress, 1, 1, true); err != nil {
+		t.Fatalf("ensureVenvForInstall error = %v", err)
+	}
+	if _, err := os.Stat(venvDir); err != nil {
+		t.Fatalf("venv directory was not recreated: %v", err)
 	}
 }
 
