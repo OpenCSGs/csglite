@@ -93,6 +93,34 @@ For each new tag, after version lockstep is updated:
 Use `hybridgroup/llama-cpp-builder` only as an optional **layout reference** (tar
 paths, CUDA naming), not as a binary to re-upload.
 
+### Ubuntu Linux ROCm — local Docker build only
+
+Upstream **does** publish `llama-<tag>-bin-ubuntu-rocm-<series>-x64.tar.gz` from
+b10830 onward, but its release workflow runs that job on `ubuntu-24.04`. Those
+tarballs require `GLIBC_2.38` / `GLIBCXX_3.4.32` and fail to start on the
+Ubuntu 22.04 ROCm runtime image in `docker/rocm/Dockerfile`. **Do not mirror
+them.** Treat ROCm exactly like CUDA: build it locally on 22.04.
+
+The ROCm series in the filename is not cosmetic. `scripts/install.sh` derives it
+from the host (`CSGHUB_LITE_LLAMA_ROCM_VERSION`, `/opt/rocm/.info/version`,
+`hipcc`) and asks for that exact series first. If the series-specific package is
+missing, the installer falls back to any published ROCm asset for the tag —
+which is how a 24.04 / ROCm 10.0 build reached a 22.04 / ROCm 7.2 host. Mirror
+the series that `docker/rocm/Dockerfile` actually runs (currently 7.2) for every
+tag, or that fallback fires again.
+
+For each new tag, after version lockstep is updated:
+
+1. Build with `scripts/llama-build/rebuild-upload-rocm-x64.sh` (Ubuntu 22.04,
+   pinned `rocm/dev-ubuntu-22.04:<series>-complete` image).
+2. Verify on 22.04 (see below).
+3. Upload `llama-<tag>-bin-ubuntu-rocm-<series>-x64.tar.gz` to GitLab.
+
+`GPU_TARGETS` defaults to the gfx coverage of the last mirrored ROCm package
+(b9158): `gfx908;gfx942;gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151;gfx1200;gfx1201`.
+Narrow it only when a build is for one known card; widening it costs build time
+and package size roughly linearly.
+
 ## Ubuntu CUDA Mirror
 
 Linux CUDA packages are **built locally**, then mirrored to GitLab generic
@@ -103,15 +131,17 @@ download them on Ubuntu 22.04 hosts.
 
 ```sh
 make llama-cuda-rebuild-all LLAMA_TAG=b10830   # or ./scripts/llama-build/rebuild-upload-all.sh
+make llama-rocm-rebuild-x64 LLAMA_TAG=b10830   # ROCm is a separate target
 ```
 
 ### Why Ubuntu 22.04 in Docker
 
-Packages built on Ubuntu **24.04** (or hybridgroup amd64 CI images) link against
-`GLIBC_2.38` / `GLIBCXX_3.4.32` and fail on 22.04 with errors like
-`version 'GLIBC_2.38' not found`. Always compile inside
-`nvidia/cuda:12.9.1-devel-ubuntu22.04` for GitLab mirrors intended for 22.04
-users.
+Packages built on Ubuntu **24.04** (upstream's ROCm job, or hybridgroup amd64 CI
+images) link against `GLIBC_2.38` / `GLIBCXX_3.4.32` and fail on 22.04 with
+errors like `version 'GLIBC_2.38' not found`. Always compile inside
+`nvidia/cuda:12.9.1-devel-ubuntu22.04` (CUDA) or
+`rocm/dev-ubuntu-22.04:<series>-complete` (ROCm) for GitLab mirrors intended for
+22.04 users.
 
 ### Local Docker images (reuse)
 
@@ -122,6 +152,7 @@ user explicitly asks to reclaim disk space.
 | Image | Platforms |
 |-------|-----------|
 | `nvidia/cuda:12.9.1-devel-ubuntu22.04` | `linux/amd64` (x64), `linux/arm64` |
+| `rocm/dev-ubuntu-22.04:7.2.2-complete` | `linux/amd64` (x64) |
 
 On Apple Silicon, pull **both** platforms (same tag, different manifests). Prefer
 `docker image inspect --platform …` and `docker run --pull=never` when the image
@@ -135,6 +166,7 @@ Workdirs (`scripts/llama-build/work/`) are gitignored; only scripts are committe
 |------|----------|------------|
 | x64 | `llama-<tag>-bin-ubuntu-cuda-x64.tar.gz` | `bin/llama-server` + `lib/` at tar root |
 | arm64 | `llama-<tag>-bin-ubuntu-cuda-arm64.tar.gz` | `llama-<tag>-bin-ubuntu-cuda-arm64/{bin,lib}/` |
+| rocm x64 | `llama-<tag>-bin-ubuntu-rocm-<series>-x64.tar.gz` | `bin/llama-server` + `lib/` at tar root |
 
 `scripts/install.sh` also tries legacy names such as
 `llama-<tag>-bin-ubuntu-cuda-12.4-<arch>.tar.gz`; new mirrors for b9158+ use the
@@ -171,14 +203,32 @@ Older layout references for comparison only:
 - Do **not** pass host `http_proxy` into the arm64 container (`apt` may fail via
   `host.docker.internal:7890`)
 
+**rocm x64**
+
+- Same packaging flags as CUDA x64, with `GGML_HIP=ON`, `HIP_PLATFORM=amd`, and
+  `GPU_TARGETS` instead of `CMAKE_CUDA_ARCHITECTURES`
+- `-DCMAKE_HIP_COMPILER="$(hipconfig -l)/clang"`; do not set `CXX=hipcc`, which
+  llama.cpp now warns about as legacy
+- Install **CMake 3.31.x**, not 4.x: the HIP language needs ≥ 3.21, but CMake 4
+  removed `cmake_minimum_required(<3.5)` compatibility that ROCm CMake config
+  packages still declare
+- Pack: `cp -a build/bin/lib*.so*` into `lib/` (preserve symlinks); check
+  `libggml-hip.so` is present
+
 ### Verify before upload
 
 1. Tar layout matches the reference package for that arch (see
    `compare-with-gitlab.sh`).
-2. `libggml-cuda.so` present; `file` reports correct architecture.
+2. `libggml-cuda.so` (CUDA) or `libggml-hip.so` (ROCm) present; `file` reports
+   correct architecture.
 3. In the **22.04 CUDA image** on the matching platform, with packaged `lib/` on
    `LD_LIBRARY_PATH`, `llama-server --version` succeeds (no `GLIBC_2.38` / missing
    `GLIBCXX_3.4.32` on ref or new build).
+4. ROCm packages additionally run `ldd` over every packaged object in a plain
+   `ubuntu:22.04` container: no `version 'GLIBC_*'` / `version 'GLIBCXX_*'`
+   errors. Missing `libamdhip64` / `librocblas` there is expected. `--version`
+   cannot fully validate a ROCm build without `/dev/kfd`, so final confirmation
+   belongs on an AMD GPU host.
 
 ### Linux NVIDIA runtime dependencies
 
@@ -227,6 +277,7 @@ and is much slower than native arm64.
 | Disk full / Docker engine dead | Free space without deleting pinned images; restart Docker Desktop |
 | Only one platform of CUDA image pulled | `docker pull --platform linux/amd64` and `linux/arm64` |
 | x64 linked to GLIBC 2.38 | Build in 22.04, not 24.04 |
+| ROCm host installs a 24.04 / wrong-series package | Mirror `rocm-<series>-x64` for the tag; the installer falls back to any ROCm asset when the series is missing |
 | arm64 `-march=armv9.2-a` compile error | GCC 14 |
 | arm64 `GLIBCXX_3.4.32 not found` at runtime | Bundle GCC 14 `libstdc++` in tarball |
 | Missing `libggml-base.so.0` at runtime | `cp -a build/bin/lib*.so*` (not `libggml-*.so` glob alone) |

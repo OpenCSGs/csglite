@@ -88,7 +88,7 @@ hooks:
 release-snapshot: build-web
 	goreleaser release --snapshot --clean
 
-# Ubuntu 22.04 CUDA llama.cpp mirrors for GitLab (see scripts/llama-build/README.md)
+# Ubuntu 22.04 CUDA/ROCm llama.cpp mirrors for GitLab (see scripts/llama-build/README.md)
 LLAMA_TAG ?= b10830
 
 llama-cuda-rebuild-all:
@@ -102,6 +102,10 @@ llama-cuda-rebuild-x64:
 llama-cuda-rebuild-arm64:
 	chmod +x scripts/llama-build/*.sh
 	./scripts/llama-build/rebuild-upload-arm64.sh $(LLAMA_TAG)
+
+llama-rocm-rebuild-x64:
+	chmod +x scripts/llama-build/*.sh
+	./scripts/llama-build/rebuild-upload-rocm-x64.sh $(LLAMA_TAG)
 
 clean:
 	rm -rf bin/ dist/ coverage.out coverage.html
