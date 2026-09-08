@@ -2,6 +2,10 @@ BINARY_NAME := csghub-lite
 RELEASE_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || true)
 VERSION := $(if $(RELEASE_TAG),$(patsubst v%,%,$(RELEASE_TAG)),$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev"))
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
+# Release binaries must stay statically linked: a cgo build picks up the
+# build host's glibc and then fails on older distributions such as Kylin V10
+# (glibc 2.28) with "GLIBC_2.34 not found". Nothing here needs cgo.
+GO_BUILD := CGO_ENABLED=0 go build
 
 GOLANGCI_LINT_VERSION ?= v1.64.8
 
@@ -13,25 +17,25 @@ build-web:
 	cp -r web/dist/* internal/server/static/
 
 build: build-web
-	go build $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION) ./cmd/csghub-lite
+	$(GO_BUILD) $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION) ./cmd/csghub-lite
 
 build-all: build-darwin-arm64 build-darwin-amd64 build-linux-amd64 build-linux-arm64 build-windows-amd64
 
 # Cross-platform binaries must embed the built web UI too.
 build-darwin-arm64: build-web
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION)-darwin-arm64 ./cmd/csghub-lite
+	GOOS=darwin GOARCH=arm64 $(GO_BUILD) $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION)-darwin-arm64 ./cmd/csghub-lite
 
 build-darwin-amd64: build-web
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION)-darwin-amd64 ./cmd/csghub-lite
+	GOOS=darwin GOARCH=amd64 $(GO_BUILD) $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION)-darwin-amd64 ./cmd/csghub-lite
 
 build-linux-amd64: build-web
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION)-linux-amd64 ./cmd/csghub-lite
+	GOOS=linux GOARCH=amd64 $(GO_BUILD) $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION)-linux-amd64 ./cmd/csghub-lite
 
 build-linux-arm64: build-web
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION)-linux-arm64 ./cmd/csghub-lite
+	GOOS=linux GOARCH=arm64 $(GO_BUILD) $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION)-linux-arm64 ./cmd/csghub-lite
 
 build-windows-amd64: build-web
-	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION)-windows-amd64.exe ./cmd/csghub-lite
+	GOOS=windows GOARCH=amd64 $(GO_BUILD) $(LDFLAGS) -o bin/$(BINARY_NAME)-$(VERSION)-windows-amd64.exe ./cmd/csghub-lite
 
 clean-dist:
 	@rm -rf dist
