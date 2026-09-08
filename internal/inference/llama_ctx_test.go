@@ -37,6 +37,50 @@ func TestResolveNumCtxUsesEnvOverrideBeforeModelMax(t *testing.T) {
 	}
 }
 
+func TestResolveNumCtxWithModelSettingPrefersRequest(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_CTX", "16384")
+
+	if got := ResolveNumCtxWithModelSetting(dir, 12288, 65536, false); got != 12288 {
+		t.Fatalf("ResolveNumCtxWithModelSetting returned %d, want %d", got, 12288)
+	}
+}
+
+func TestResolveNumCtxWithModelSettingBeatsGlobal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_CTX", "16384")
+
+	if got := ResolveNumCtxWithModelSetting(dir, 0, 65536, false); got != 65536 {
+		t.Fatalf("ResolveNumCtxWithModelSetting returned %d, want %d", got, 65536)
+	}
+}
+
+func TestResolveNumCtxWithModelSettingFallsBackToGlobal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_CTX", "16384")
+
+	if got := ResolveNumCtxWithModelSetting(dir, 0, 0, false); got != 16384 {
+		t.Fatalf("ResolveNumCtxWithModelSetting returned %d, want %d", got, 16384)
+	}
+}
+
+func TestResolveNumCtxWithModelSettingKeepsExistingLogicWhenUnset(t *testing.T) {
+	dir := t.TempDir()
+
+	if got := ResolveNumCtxWithModelSetting(dir, 0, 0, false); got != defaultLlamaCtxSize {
+		t.Fatalf("ResolveNumCtxWithModelSetting returned %d, want %d", got, defaultLlamaCtxSize)
+	}
+}
+
+func TestResolveNumCtxWithModelSettingIgnoresTooSmallSetting(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_CTX", "16384")
+
+	if got := ResolveNumCtxWithModelSetting(dir, 0, 512, false); got != 16384 {
+		t.Fatalf("ResolveNumCtxWithModelSetting returned %d, want %d", got, 16384)
+	}
+}
+
 func TestResolveNumCtxCapsEnvOverrideAtModelMax(t *testing.T) {
 	dir := t.TempDir()
 	// Qwen3-Embedding-0.6B tops out at 32768; a global 128K override must not

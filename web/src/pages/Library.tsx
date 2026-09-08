@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
-import { deleteModel, getModelManifest, getPs, loadModel, searchLocalModels, stopModel, uploadLocalModel } from "../api/client";
-import type { ArtifactSource, LoadModelOptions, LocalModelUploadFile, ModelFileEntry, ModelInfo, RunningModel } from "../api/client";
+import { deleteModel, getModelConfig, getModelManifest, getPs, loadModel, searchLocalModels, setModelConfig, stopModel, uploadLocalModel } from "../api/client";
+import type { ArtifactSource, LoadModelOptions, LocalModelUploadFile, ModelConfigResponse, ModelFileEntry, ModelInfo, RunningModel } from "../api/client";
 import { locale, t } from "../i18n";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DownloadProgressCell } from "../components/DownloadProgressPanel";
@@ -103,6 +103,11 @@ const runDialogError = signal<string>("");
 const runDialogGGUFQuants = signal<string[]>([]);
 const runDialogQuantsLoading = signal(false);
 const runParams = signal<RunModelParams>(loadSavedRunParams());
+const configDialogModel = signal<ModelInfo | null>(null);
+const configDialogInfo = signal<ModelConfigResponse | null>(null);
+const configDialogNumCtx = signal<string>("");
+const configDialogError = signal<string>("");
+const configDialogBusy = signal(false);
 const uploadDialogOpen = signal(false);
 const uploadModelID = signal("");
 const uploadMode = signal<UploadMode>("files");
@@ -697,6 +702,61 @@ export function Library() {
     }
   };
 
+  const openConfigDialog = (model: ModelInfo) => {
+    libraryError.value = "";
+    configDialogError.value = "";
+    configDialogInfo.value = null;
+    configDialogNumCtx.value = "";
+    configDialogModel.value = model;
+    getModelConfig(model.name)
+      .then((info) => {
+        if (configDialogModel.value?.name !== model.name) return;
+        configDialogInfo.value = info;
+        configDialogNumCtx.value = info.num_ctx > 0 ? String(info.num_ctx) : "";
+      })
+      .catch((e: any) => {
+        if (configDialogModel.value?.name !== model.name) return;
+        configDialogError.value = e?.message || String(e);
+      });
+  };
+
+  const closeConfigDialog = () => {
+    if (configDialogBusy.value) return;
+    configDialogModel.value = null;
+    configDialogInfo.value = null;
+    configDialogNumCtx.value = "";
+    configDialogError.value = "";
+  };
+
+  const submitConfigDialog = async () => {
+    const model = configDialogModel.value;
+    if (!model) return;
+    const raw = configDialogNumCtx.value.trim();
+    // Empty clears the per-model setting, which the API expresses as 0.
+    let numCtx = 0;
+    if (raw !== "") {
+      const parsed = Number(raw);
+      if (!Number.isInteger(parsed) || parsed < 1024) {
+        configDialogError.value = t("lib.configInvalid");
+        return;
+      }
+      numCtx = parsed;
+    }
+    configDialogBusy.value = true;
+    configDialogError.value = "";
+    try {
+      await setModelConfig(model.name, numCtx);
+      configDialogModel.value = null;
+      configDialogInfo.value = null;
+      configDialogNumCtx.value = "";
+      await loadModels();
+    } catch (e: any) {
+      configDialogError.value = e?.message || String(e);
+    } finally {
+      configDialogBusy.value = false;
+    }
+  };
+
   const openRunDialog = (model: ModelInfo) => {
     runParams.value = loadSavedRunParams();
     runDialogError.value = "";
@@ -915,6 +975,15 @@ export function Library() {
                       >
                         {t("lib.delete")}
                       </button>
+                      {!downloadOnly && (
+                        <button
+                          disabled={task?.status === "downloading" || task?.status === "queued"}
+                          onClick={() => openConfigDialog(m)}
+                          class="shrink-0 text-gray-500 hover:text-indigo-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {t("lib.configure")}
+                        </button>
+                      )}
                       {task?.status === "downloading" || task?.status === "queued" ? (
                         <button
                           onClick={() => pauseDownload(task.kind, task.name, { artifactSource: task.artifactSource, revision: task.revision })}
@@ -1031,6 +1100,21 @@ export function Library() {
           onChange={updateRunParam}
           onCancel={closeRunDialog}
           onSubmit={submitRunDialog}
+        />
+      )}
+      {configDialogModel.value && (
+        <ModelConfigDialog
+          model={configDialogModel.value}
+          info={configDialogInfo.value}
+          numCtx={configDialogNumCtx.value}
+          error={configDialogError.value}
+          busy={configDialogBusy.value}
+          onChange={(value) => {
+            configDialogNumCtx.value = value;
+            configDialogError.value = "";
+          }}
+          onCancel={closeConfigDialog}
+          onSubmit={() => void submitConfigDialog()}
         />
       )}
       {apiDialogModel.value && (
@@ -1215,6 +1299,101 @@ function UploadModelDialog({
           </button>
           <button type="submit" disabled={busy || files.length === 0 || !modelID.trim()} class="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">
             {busy ? t("lib.uploading") : t("lib.uploadSubmit")}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ModelConfigDialog({
+  model,
+  info,
+  numCtx,
+  error,
+  busy,
+  onChange,
+  onCancel,
+  onSubmit,
+}: {
+  model: ModelInfo;
+  info: ModelConfigResponse | null;
+  numCtx: string;
+  error: string;
+  busy: boolean;
+  onChange: (value: string) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  const modelMax = info?.model_max_num_ctx ?? 0;
+  const parsed = Number(numCtx.trim());
+  const aboveModelMax = modelMax > 0 && Number.isInteger(parsed) && parsed > modelMax;
+
+  return (
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
+      <form
+        class="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit();
+        }}
+      >
+        <div class="px-6 py-5 border-b border-gray-100">
+          <h2 class="text-lg font-semibold text-gray-900">{t("lib.configTitle")}</h2>
+          <p class="text-sm text-gray-500 mt-1">{t("lib.configDesc", displayLocalModelID(model))}</p>
+        </div>
+
+        <div class="flex flex-col gap-4 overflow-y-auto px-6 py-5">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.configNumCtx")}</label>
+            <input
+              type="number"
+              min={1024}
+              step={1}
+              value={numCtx}
+              disabled={busy}
+              placeholder={info && info.global_num_ctx > 0 ? String(info.global_num_ctx) : "8192"}
+              onInput={(e) => onChange((e.currentTarget as HTMLInputElement).value)}
+              class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none disabled:opacity-50"
+            />
+            <p class="text-xs text-gray-500 mt-1">{t("lib.configNumCtxHint")}</p>
+          </div>
+
+          {info && (
+            <dl class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 space-y-1">
+              <div>{modelMax > 0 ? t("lib.configModelMax", modelMax) : t("lib.configModelMaxUnknown")}</div>
+              <div>{t("lib.configGlobal", info.global_num_ctx)}</div>
+              <div>{t("lib.configEffective", info.effective_num_ctx)}</div>
+            </dl>
+          )}
+
+          <p class="text-xs text-gray-500">{t("lib.configPriority")}</p>
+          <p class="text-xs text-gray-500">{t("lib.configReloadHint")}</p>
+
+          {aboveModelMax && (
+            <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {t("lib.configAboveModelMax", modelMax)}
+            </div>
+          )}
+
+          {error && <div class="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
+        </div>
+
+        <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            class="px-4 py-2 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-white disabled:opacity-50"
+          >
+            {t("lib.configCancel")}
+          </button>
+          <button
+            type="submit"
+            disabled={busy}
+            class="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {busy ? t("lib.configSaving") : t("lib.configSave")}
           </button>
         </div>
       </form>

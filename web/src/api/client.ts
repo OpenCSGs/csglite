@@ -78,6 +78,18 @@ export interface ModelManifestResponse {
   local_inference: LocalInferenceSupport;
 }
 
+export interface ModelConfigResponse {
+  model: string;
+  // Per-model context window; 0 means the model follows the global setting.
+  num_ctx: number;
+  // Context length declared by the model itself; 0 when unknown.
+  model_max_num_ctx: number;
+  // What this model would use with no per-model setting.
+  global_num_ctx: number;
+  // What a load without a request-level context length would use right now.
+  effective_num_ctx: number;
+}
+
 export interface ModelUploadResponse {
   status: string;
   model: string;
@@ -1045,6 +1057,28 @@ export async function getModelManifest(model: string): Promise<ModelManifestResp
   }
   const { namespace, name } = splitModelID(trimmed);
   return fetchJSON<ModelManifestResponse>(`/api/models/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/manifest`);
+}
+
+function modelConfigPath(model: string): string {
+  const trimmed = model.trim();
+  if (!trimmed.includes("/")) {
+    return `/api/models/${encodeURIComponent(trimmed)}/config`;
+  }
+  const { namespace, name } = splitModelID(trimmed);
+  return `/api/models/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/config`;
+}
+
+export async function getModelConfig(model: string): Promise<ModelConfigResponse> {
+  return fetchJSON<ModelConfigResponse>(modelConfigPath(model));
+}
+
+// numCtx of 0 clears the per-model setting and returns the model to the global default.
+export async function setModelConfig(model: string, numCtx: number): Promise<ModelConfigResponse> {
+  return fetchJSON<ModelConfigResponse>(modelConfigPath(model), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ num_ctx: numCtx }),
+  });
 }
 
 export function uploadLocalModel(

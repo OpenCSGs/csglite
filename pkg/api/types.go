@@ -190,6 +190,30 @@ type ModelManifestResponse struct {
 	LocalInference LocalInferenceSupport `json:"local_inference"`
 }
 
+// ModelConfigResponse reports the per-model runtime settings alongside the
+// values they are resolved against, so a client can show what a load would
+// actually use and why.
+type ModelConfigResponse struct {
+	Model string `json:"model"`
+	// NumCtx is the per-model context window, or 0 when the model has none and
+	// follows the global setting.
+	NumCtx int `json:"num_ctx"`
+	// ModelMaxNumCtx is the context length the model itself declares, or 0 when
+	// it cannot be determined.
+	ModelMaxNumCtx int `json:"model_max_num_ctx"`
+	// GlobalNumCtx is what this model would use with no per-model setting.
+	GlobalNumCtx int `json:"global_num_ctx"`
+	// EffectiveNumCtx is what a load without a request-level context length
+	// would use right now.
+	EffectiveNumCtx int `json:"effective_num_ctx"`
+}
+
+// ModelConfigUpdateRequest sets the per-model context window. NumCtx is
+// required; 0 clears the setting and returns the model to the global default.
+type ModelConfigUpdateRequest struct {
+	NumCtx *int `json:"num_ctx"`
+}
+
 type ModelUploadResponse struct {
 	Status  string           `json:"status"`
 	Model   string           `json:"model"`

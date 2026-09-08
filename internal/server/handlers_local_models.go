@@ -230,7 +230,7 @@ func (s *Server) localModelContextWindowWithFallback(modelID string, fallback in
 }
 
 func (s *Server) localModelContextWindow(modelID, modelDir string) int64 {
-	resolved := inference.ResolveNumCtxWithModelMax(modelDir, 0, s.cfg.Inference.LlamaUseModelMaxCtx)
+	resolved := inference.ResolveNumCtxWithModelSetting(modelDir, 0, s.modelNumCtxSetting(modelID), s.cfg.Inference.LlamaUseModelMaxCtx)
 	return s.localModelContextWindowWithFallback(modelID, int64(resolved))
 }
 

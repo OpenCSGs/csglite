@@ -567,6 +567,184 @@
         }
       }
     },
+    "/api/models/{model}/config": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Get per-model runtime settings by public model ID",
+        "description": "Resolves a local model by its public inference ID and returns its per-model runtime settings.",
+        "operationId": "getModelConfigByPublicID",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-model runtime settings and the values they resolve against.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConfigResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Set per-model runtime settings by public model ID",
+        "description": "Sets the per-model context window. It overrides the global setting but loses to a context length sent with the request. Send num_ctx 0 to clear the setting and follow the global default.",
+        "operationId": "setModelConfigByPublicID",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelConfigUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-model runtime settings and the values they resolve against.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/models/{namespace}/{name}/config": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Get per-model runtime settings",
+        "description": "Returns the per-model context window alongside the model maximum, the global setting, and the value a load would currently use.",
+        "operationId": "getModelConfig",
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-model runtime settings and the values they resolve against.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConfigResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "Set per-model runtime settings",
+        "description": "Sets the per-model context window. It overrides the global setting but loses to a context length sent with the request. Send num_ctx 0 to clear the setting and follow the global default.",
+        "operationId": "setModelConfig",
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelConfigUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-model runtime settings and the values they resolve against.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/api/models/{namespace}/{name}/manifest": {
       "get": {
         "tags": [
@@ -9178,6 +9356,51 @@
           },
           "runtime_architecture": {
             "type": "string"
+          }
+        }
+      },
+      "ModelConfigResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model",
+          "num_ctx",
+          "model_max_num_ctx",
+          "global_num_ctx",
+          "effective_num_ctx"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "num_ctx": {
+            "type": "integer",
+            "description": "Per-model context window; 0 when the model follows the global setting."
+          },
+          "model_max_num_ctx": {
+            "type": "integer",
+            "description": "Context length declared by the model itself; 0 when unknown."
+          },
+          "global_num_ctx": {
+            "type": "integer",
+            "description": "Context window this model would use with no per-model setting."
+          },
+          "effective_num_ctx": {
+            "type": "integer",
+            "description": "Context window a load without a request-level value would use now."
+          }
+        }
+      },
+      "ModelConfigUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "num_ctx"
+        ],
+        "properties": {
+          "num_ctx": {
+            "type": "integer",
+            "description": "Context window for this model, at least 1024. Send 0 to clear the setting."
           }
         }
       },

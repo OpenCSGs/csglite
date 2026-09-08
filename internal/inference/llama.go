@@ -243,6 +243,20 @@ func ResolveNumCtx(modelDir string, requested int) int {
 	return ResolveNumCtxWithModelMax(modelDir, requested, false)
 }
 
+// ResolveNumCtxWithModelSetting resolves the context window with a per-model
+// setting slotted between the request and the global default. The order is
+// request > per-model setting > global setting, and a model without a setting
+// resolves exactly as it did before.
+func ResolveNumCtxWithModelSetting(modelDir string, requested, modelSetting int, configured bool) int {
+	if requested >= 1024 {
+		return requested
+	}
+	if modelSetting >= 1024 {
+		return modelSetting
+	}
+	return ResolveNumCtxWithModelMax(modelDir, 0, configured)
+}
+
 // ResolveNumCtxWithModelMax resolves the context window using the persisted
 // model-maximum default. CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX overrides that
 // default when the environment variable is explicitly set.
