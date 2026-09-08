@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -243,6 +244,116 @@ func (m *RuntimeManager) uvPath() string {
 	return filepath.Join(m.VenvDir(), "bin", "uv")
 }
 
+// checkVenvPython validates that the venv exists and that its interpreter is
+// still usable. It returns a description of what needs to happen:
+//   - recreate=true  the venv is missing, unusable, or pinned to a Python
+//     older than the runtime requires, so it must be (re)created from a host
+//     interpreter;
+//   - recreate=false and hostPython!="" the venv works but is older than the
+//     best host interpreter found; recreating it picks up the newer Python.
+func (m *RuntimeManager) checkVenvPython(ctx context.Context) (recreate bool, hostPython string, err error) {
+	python := m.PythonPath()
+	if _, statErr := os.Stat(python); statErr != nil {
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return false, "", fmt.Errorf("checking runtime venv python: %w", statErr)
+		}
+		host, hostErr := findHostPython()
+		if hostErr != nil {
+			return false, "", hostErr
+		}
+		return true, host, nil
+	}
+	venvVersion, probeErr := probePythonVersionAt(ctx, python)
+	if probeErr == nil && hostPythonSupported(venvVersion) {
+		host, hostErr := findHostPython()
+		if hostErr != nil {
+			// The existing venv is fine; keep using it even when no better
+			// host interpreter can be detected right now.
+			return false, "", nil
+		}
+		return false, host, nil
+	}
+	// Broken interpreter (e.g. venv pointing at a removed framework) or a
+	// Python older than the supported range: rebuild it on a fresh host.
+	// Include what is wrong with the venv so the error is actionable.
+	venvProblem := fmt.Sprintf("existing runtime venv %s", python)
+	switch {
+	case probeErr != nil:
+		venvProblem = fmt.Sprintf("existing runtime venv python %s is not runnable: %v", python, probeErr)
+	case venvVersion != "":
+		venvProblem = fmt.Sprintf("existing runtime venv %s uses Python %s", python, venvVersion)
+	}
+	host, hostErr := findHostPython()
+	if hostErr != nil {
+		return false, "", fmt.Errorf("%s; no suitable host Python was found: %w", venvProblem, hostErr)
+	}
+	return true, host, nil
+}
+
+// ensureVenvForInstall recreates the runtime venv when it is missing,
+// unusable, or pinned to a Python older than the runtime requires. A healthy
+// venv is kept as-is: an upgrade to a newer host Python only happens when the
+// caller explicitly asks for one (upgradePackages), because rebuilding it
+// forces a full torch/funasr reinstall and can regress a working install.
+func (m *RuntimeManager) ensureVenvForInstall(ctx context.Context, progress ProgressFunc, step, total int, upgradePackages bool) error {
+	recreate, hostPython, err := m.checkVenvPython(ctx)
+	if err != nil {
+		return err
+	}
+	if !recreate {
+		if upgradePackages && hostPython != "" && m.venvIsOlderThan(ctx, hostPython) {
+			progress("upgrade runtime venv to newer Python", step, total)
+			if err := m.recreateVenv(ctx, hostPython); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if m.venvExists() {
+		progress("remove outdated runtime venv", step, total)
+		if err := os.RemoveAll(m.VenvDir()); err != nil {
+			return fmt.Errorf("removing outdated runtime venv: %w", err)
+		}
+	}
+	progress("create Python venv", step, total)
+	if err := runCommand(ctx, hostPython, "-m", "venv", m.VenvDir()); err != nil {
+		return fmt.Errorf("creating Python venv: %w", err)
+	}
+	return nil
+}
+
+func (m *RuntimeManager) recreateVenv(ctx context.Context, hostPython string) error {
+	if err := os.RemoveAll(m.VenvDir()); err != nil {
+		return fmt.Errorf("removing outdated runtime venv: %w", err)
+	}
+	if err := runCommand(ctx, hostPython, "-m", "venv", m.VenvDir()); err != nil {
+		return fmt.Errorf("creating Python venv: %w", err)
+	}
+	return nil
+}
+
+func (m *RuntimeManager) venvExists() bool {
+	_, err := os.Stat(m.PythonPath())
+	return err == nil
+}
+
+func (m *RuntimeManager) venvIsOlderThan(ctx context.Context, hostPython string) bool {
+	if runtime.GOOS == "windows" {
+		return false
+	}
+	venvVersion, err := probePythonVersionAt(ctx, m.PythonPath())
+	if err != nil {
+		return false
+	}
+	hostVersion, err := probePythonVersionAt(ctx, hostPython)
+	if err != nil {
+		return false
+	}
+	venvMinor, venvOK := parsePythonMinor(venvVersion)
+	hostMinor, hostOK := parsePythonMinor(hostVersion)
+	return venvOK && hostOK && hostMinor > venvMinor
+}
+
 func (m *RuntimeManager) Status(ctx context.Context) RuntimeStatus {
 	hardware := DetectHardware()
 	indexes := ResolvePackageIndexes(hardware)
@@ -414,15 +525,8 @@ func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progres
 	if err := os.MkdirAll(m.rootDir, 0o755); err != nil {
 		return m.Status(ctx), fmt.Errorf("creating image runtime directory: %w", err)
 	}
-	if _, err := os.Stat(m.PythonPath()); err != nil {
-		hostPython, err := findHostPython()
-		if err != nil {
-			return m.Status(ctx), err
-		}
-		progress("create Python venv", 3, 6)
-		if err := runCommand(ctx, hostPython, "-m", "venv", m.VenvDir()); err != nil {
-			return m.Status(ctx), fmt.Errorf("creating Python venv: %w", err)
-		}
+	if err := m.ensureVenvForInstall(ctx, progress, 3, 6, upgradePackages); err != nil {
+		return m.Status(ctx), err
 	}
 
 	python := m.PythonPath()
@@ -492,19 +596,11 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 	if err := os.MkdirAll(m.rootDir, 0o755); err != nil {
 		return m.ASRStatus(ctx), fmt.Errorf("creating runtime directory: %w", err)
 	}
-
-	python := m.PythonPath()
-	if _, err := os.Stat(python); err != nil {
-		hostPython, err := findHostPython()
-		if err != nil {
-			return m.ASRStatus(ctx), err
-		}
-		progress("create Python venv", 3, 5)
-		if err := runCommand(ctx, hostPython, "-m", "venv", m.VenvDir()); err != nil {
-			return m.ASRStatus(ctx), fmt.Errorf("creating Python venv: %w", err)
-		}
+	if err := m.ensureVenvForInstall(ctx, progress, 3, 5, upgradePackages); err != nil {
+		return m.ASRStatus(ctx), err
 	}
 
+	python := m.PythonPath()
 	torchMissing, err := missingPackages(ctx, python, []string{"torch", "torchaudio"})
 	if err != nil {
 		return m.ASRStatus(ctx), err
@@ -593,19 +689,11 @@ func (m *RuntimeManager) InstallEmbeddingWithProgressOptions(ctx context.Context
 	if err := os.MkdirAll(m.rootDir, 0o755); err != nil {
 		return m.EmbeddingStatus(ctx), fmt.Errorf("creating runtime directory: %w", err)
 	}
-
-	python := m.PythonPath()
-	if _, err := os.Stat(python); err != nil {
-		hostPython, err := findHostPython()
-		if err != nil {
-			return m.EmbeddingStatus(ctx), err
-		}
-		progress("create Python venv", 3, 5)
-		if err := runCommand(ctx, hostPython, "-m", "venv", m.VenvDir()); err != nil {
-			return m.EmbeddingStatus(ctx), fmt.Errorf("creating Python venv: %w", err)
-		}
+	if err := m.ensureVenvForInstall(ctx, progress, 3, 5, upgradePackages); err != nil {
+		return m.EmbeddingStatus(ctx), err
 	}
 
+	python := m.PythonPath()
 	torchMissing, err := missingPackages(ctx, python, []string{"torch"})
 	if err != nil {
 		return m.EmbeddingStatus(ctx), err
@@ -924,18 +1012,174 @@ func isChinaLocale() bool {
 	return false
 }
 
+// minimumHostPythonMinor is the lowest minor version accepted for host
+// Python interpreters. qwen-asr pins accelerate versions that require
+// Python>=3.10, so anything older cannot run the full ASR stack.
+const minimumHostPythonMinor = 10
+
+// maxHostPythonMinor is the newest minor version accepted for host Python
+// interpreters. The ASR stack (torch, funasr, qwen-asr) is verified to
+// install and run on this range; pre-release Pythons stay out.
+const maxHostPythonMinor = 14
+
+// pythonVersionRangeHint mirrors the supported range in user-facing errors.
+const pythonVersionRangeHint = "Python 3.10-3.14"
+
+// hostPythonEnv lets users point the runtime at a specific interpreter,
+// which is also the escape hatch when automatic detection picks wrong.
+const hostPythonEnv = "CSGHUB_LITE_HOST_PYTHON"
+
+// candidateHostPythons lists interpreters from newest to oldest so a
+// machine with several Pythons gets the newest compatible one, falling
+// back to older Pythons (including the macOS system 3.9) only when no
+// newer interpreter exists.
+func candidateHostPythons() []string {
+	versioned := make([]string, 0, maxHostPythonMinor-minimumHostPythonMinor+1)
+	for minor := maxHostPythonMinor; minor >= minimumHostPythonMinor; minor-- {
+		versioned = append(versioned, fmt.Sprintf("python3.%d", minor))
+	}
+	return append(versioned, "python3", "python")
+}
+
+// wellKnownHostPythonPaths lists absolute interpreter locations that GUI
+// processes may not see on PATH. Desktop csghub-lite is launched by
+// Finder/launchd with a minimal PATH (/usr/bin:/bin:...), so Homebrew,
+// python.org, MacPorts, pyenv, and user-level installs are invisible to
+// exec.LookPath even though the user installed them. Like internal/convert,
+// probe these well-known locations as a fallback, newest to oldest.
+func wellKnownHostPythonPaths() []string {
+	userLocal := func(sub ...string) string {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return ""
+		}
+		return filepath.Join(append([]string{home, ".local", "bin"}, sub...)...)
+	}
+	pyenvShims := func(sub ...string) string {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return ""
+		}
+		return filepath.Join(append([]string{home, ".pyenv", "shims"}, sub...)...)
+	}
+
+	var paths []string
+	switch runtime.GOOS {
+	case "darwin":
+		for minor := maxHostPythonMinor; minor >= minimumHostPythonMinor; minor-- {
+			v := fmt.Sprintf("3.%d", minor)
+			paths = append(paths,
+				fmt.Sprintf("/opt/homebrew/bin/python%s", v),
+				fmt.Sprintf("/usr/local/bin/python%s", v),
+				fmt.Sprintf("/Library/Frameworks/Python.framework/Versions/%s/bin/python%s", v, v),
+				fmt.Sprintf("/opt/local/bin/python%s", v),
+			)
+		}
+		paths = append(paths, "/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/opt/local/bin/python3")
+	case "linux":
+		for minor := maxHostPythonMinor; minor >= minimumHostPythonMinor; minor-- {
+			v := fmt.Sprintf("3.%d", minor)
+			paths = append(paths,
+				fmt.Sprintf("/usr/local/bin/python%s", v),
+				fmt.Sprintf("/usr/bin/python%s", v),
+				fmt.Sprintf("/snap/bin/python%s", v),
+			)
+		}
+		paths = append(paths, "/usr/local/bin/python3", "/usr/bin/python3", "/snap/bin/python3")
+	}
+	for _, fancy := range []func(...string) string{userLocal, pyenvShims} {
+		for minor := maxHostPythonMinor; minor >= minimumHostPythonMinor; minor-- {
+			if p := fancy(fmt.Sprintf("python3.%d", minor)); p != "" {
+				paths = append(paths, p)
+			}
+		}
+		if p := fancy("python3"); p != "" {
+			paths = append(paths, p)
+		}
+		if p := fancy("python"); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+func hostPythonSupported(version string) bool {
+	minor, ok := parsePythonMinor(version)
+	return ok && minor >= minimumHostPythonMinor && minor <= maxHostPythonMinor
+}
+
+func parsePythonMinor(version string) (int, bool) {
+	parts := strings.SplitN(strings.TrimSpace(version), ".", 3)
+	if len(parts) < 2 || parts[0] != "3" {
+		return 0, false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, false
+	}
+	return minor, true
+}
+
 func findHostPython() (string, error) {
+	return findHostPythonWithContext(context.Background())
+}
+
+func findHostPythonWithContext(ctx context.Context) (string, error) {
+	if path := strings.TrimSpace(os.Getenv(hostPythonEnv)); path != "" {
+		version, err := probePythonVersionAt(ctx, path)
+		if err != nil {
+			return "", fmt.Errorf("%s=%s 不是可用的 Python 解释器", hostPythonEnv, path)
+		}
+		if !hostPythonSupported(version) {
+			return "", fmt.Errorf("%s=%s 是 Python %s，请使用 %s", hostPythonEnv, path, version, pythonVersionRangeHint)
+		}
+		log.Printf("PYTHON: selected host interpreter path=%s version=%s source=%s", path, version, hostPythonEnv)
+		return path, nil
+	}
 	if runtime.GOOS == "windows" {
 		return findWindowsHostPython()
 	}
-	candidates := []string{"python3", "python"}
-	for _, candidate := range candidates {
-		if path, err := exec.LookPath(candidate); err == nil {
-			log.Printf("PYTHON: selected host interpreter path=%s", path)
-			return path, nil
+	return findHostPythonFrom(ctx, candidateHostPythons(), wellKnownHostPythonPaths())
+}
+
+// findHostPythonFrom scans explicit candidate lists; split out so tests can
+// inject fake interpreter locations instead of depending on what the host
+// machine happens to have installed.
+func findHostPythonFrom(ctx context.Context, pathCandidates, wellKnownPaths []string) (string, error) {
+	var lastUnsupported string
+	var found string
+	scan := func(path string) bool {
+		if path == "" {
+			return false
+		}
+		version, err := probePythonVersionAt(ctx, path)
+		if err != nil {
+			return false
+		}
+		if hostPythonSupported(version) {
+			log.Printf("PYTHON: selected host interpreter path=%s version=%s", path, version)
+			found = path
+			return true
+		}
+		if lastUnsupported == "" {
+			lastUnsupported = fmt.Sprintf("%s (Python %s)", path, version)
+		}
+		return false
+	}
+	for _, candidate := range pathCandidates {
+		if path, err := exec.LookPath(candidate); err == nil && scan(path) {
+			return found, nil
 		}
 	}
-	return "", errors.New("Python 3.10, 3.11, or 3.12 is required to install the Diffusers runtime")
+	for _, path := range wellKnownPaths {
+		if _, err := os.Stat(path); err == nil && scan(path) {
+			return found, nil
+		}
+	}
+	if lastUnsupported != "" {
+		return "", fmt.Errorf("检测到 %s，AI 运行时需要 %s，请安装后重试", lastUnsupported, pythonVersionRangeHint)
+	}
+	return "", errors.New("未找到可用的 Python 解释器，AI 运行时需要 " + pythonVersionRangeHint)
 }
 
 func findWindowsHostPython() (string, error) {
@@ -943,6 +1187,8 @@ func findWindowsHostPython() (string, error) {
 		name string
 		args []string
 	}{
+		{name: "py", args: []string{"-3.14"}},
+		{name: "py", args: []string{"-3.13"}},
 		{name: "py", args: []string{"-3.12"}},
 		{name: "py", args: []string{"-3.11"}},
 		{name: "py", args: []string{"-3.10"}},
@@ -960,15 +1206,15 @@ func findWindowsHostPython() (string, error) {
 		if detectedVersion == "" {
 			detectedVersion = version
 		}
-		if windowsPythonVersionSupported(version) {
+		if hostPythonSupported(version) {
 			log.Printf("PYTHON: selected host interpreter path=%s version=%s", path, version)
 			return path, nil
 		}
 	}
 	if detectedVersion != "" {
-		return "", fmt.Errorf("检测到 Python %s，其 Windows wheel 生态尚不完整，请安装 Python 3.10-3.12", detectedVersion)
+		return "", fmt.Errorf("检测到 Python %s，其 Windows wheel 生态尚不完整，请安装 Python %s", detectedVersion, pythonVersionRangeHint)
 	}
-	return "", errors.New("Python 3.10, 3.11, or 3.12 is required to install the Diffusers runtime")
+	return "", errors.New(pythonVersionRangeHint + " is required to install the Diffusers runtime")
 }
 
 func probePython(name string, args ...string) (string, string, error) {
@@ -985,13 +1231,24 @@ func probePython(name string, args ...string) (string, string, error) {
 	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), nil
 }
 
-func windowsPythonVersionSupported(version string) bool {
-	switch version {
-	case "3.10", "3.11", "3.12":
-		return true
-	default:
-		return false
+// probePythonVersionAt reports the version of a specific interpreter path.
+func probePythonVersionAt(ctx context.Context, path string) (string, error) {
+	_, version, err := probePythonWithContext(ctx, path)
+	return version, err
+}
+
+func probePythonWithContext(ctx context.Context, name string, args ...string) (string, string, error) {
+	script := "import sys\nprint(sys.executable)\nprint(f'{sys.version_info[0]}.{sys.version_info[1]}')\n"
+	cmdArgs := append(append([]string{}, args...), "-c", script)
+	out, err := exec.CommandContext(ctx, name, cmdArgs...).Output()
+	if err != nil {
+		return "", "", err
 	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return "", "", fmt.Errorf("unexpected Python probe output: %q", strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), nil
 }
 
 func missingPackages(ctx context.Context, python string, packages []string) ([]string, error) {
