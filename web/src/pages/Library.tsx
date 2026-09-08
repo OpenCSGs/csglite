@@ -103,11 +103,7 @@ const runDialogError = signal<string>("");
 const runDialogGGUFQuants = signal<string[]>([]);
 const runDialogQuantsLoading = signal(false);
 const runParams = signal<RunModelParams>(loadSavedRunParams());
-const configDialogModel = signal<ModelInfo | null>(null);
-const configDialogInfo = signal<ModelConfigResponse | null>(null);
-const configDialogNumCtx = signal<string>("");
-const configDialogError = signal<string>("");
-const configDialogBusy = signal(false);
+const runDialogModelConfig = signal<ModelConfigResponse | null>(null);
 const uploadDialogOpen = signal(false);
 const uploadModelID = signal("");
 const uploadMode = signal<UploadMode>("files");
@@ -164,7 +160,10 @@ function loadSavedRunParams(): RunModelParams {
 
 function saveRunParams(params: RunModelParams) {
   try {
-    localStorage.setItem(RUN_PARAMS_STORAGE_KEY, JSON.stringify(params));
+    // numCtx is persisted per model through /api/models/{model}/config, so it
+    // must not also be remembered browser-wide for every other model.
+    const { numCtx: _perModel, ...shared } = params;
+    localStorage.setItem(RUN_PARAMS_STORAGE_KEY, JSON.stringify(shared));
   } catch {
     /* ignore localStorage failures */
   }
@@ -239,6 +238,12 @@ function isASRModel(model: Pick<ModelInfo, "pipeline_tag" | "input_modalities" |
   return tag === "automatic-speech-recognition" ||
     Boolean(model.input_modalities?.includes("audio")) ||
     Boolean(model.output_modalities?.includes("transcription"));
+}
+
+// Image generation and ASR runtimes ignore the context length, so the run
+// dialog neither prefills nor saves it for those models.
+function numCtxApplies(model: ModelInfo): boolean {
+  return !isImageGenerationModel(model) && !isASRModel(model);
 }
 
 function buildLoadOptionsForModel(model: ModelInfo, params: RunModelParams): LoadModelOptions {
@@ -702,68 +707,24 @@ export function Library() {
     }
   };
 
-  const openConfigDialog = (model: ModelInfo) => {
-    libraryError.value = "";
-    configDialogError.value = "";
-    configDialogInfo.value = null;
-    configDialogNumCtx.value = "";
-    configDialogModel.value = model;
-    getModelConfig(model.name)
-      .then((info) => {
-        if (configDialogModel.value?.name !== model.name) return;
-        configDialogInfo.value = info;
-        configDialogNumCtx.value = info.num_ctx > 0 ? String(info.num_ctx) : "";
-      })
-      .catch((e: any) => {
-        if (configDialogModel.value?.name !== model.name) return;
-        configDialogError.value = e?.message || String(e);
-      });
-  };
-
-  const closeConfigDialog = () => {
-    if (configDialogBusy.value) return;
-    configDialogModel.value = null;
-    configDialogInfo.value = null;
-    configDialogNumCtx.value = "";
-    configDialogError.value = "";
-  };
-
-  const submitConfigDialog = async () => {
-    const model = configDialogModel.value;
-    if (!model) return;
-    const raw = configDialogNumCtx.value.trim();
-    // Empty clears the per-model setting, which the API expresses as 0.
-    let numCtx = 0;
-    if (raw !== "") {
-      const parsed = Number(raw);
-      if (!Number.isInteger(parsed) || parsed < 1024) {
-        configDialogError.value = t("lib.configInvalid");
-        return;
-      }
-      numCtx = parsed;
-    }
-    configDialogBusy.value = true;
-    configDialogError.value = "";
-    try {
-      await setModelConfig(model.name, numCtx);
-      configDialogModel.value = null;
-      configDialogInfo.value = null;
-      configDialogNumCtx.value = "";
-      await loadModels();
-    } catch (e: any) {
-      configDialogError.value = e?.message || String(e);
-    } finally {
-      configDialogBusy.value = false;
-    }
-  };
-
   const openRunDialog = (model: ModelInfo) => {
-    runParams.value = loadSavedRunParams();
+    // numCtx comes from this model's saved setting, not from the shared params.
+    runParams.value = { ...loadSavedRunParams(), numCtx: "" };
     runDialogError.value = "";
     runDialogGGUFQuants.value = [];
     runDialogQuantsLoading.value = model.format === "gguf";
     libraryError.value = "";
+    runDialogModelConfig.value = null;
     runDialogModel.value = model;
+    if (numCtxApplies(model)) {
+      getModelConfig(model.name).then((info) => {
+        if (runDialogModel.value?.name !== model.name) return;
+        runDialogModelConfig.value = info;
+        runParams.value = { ...runParams.value, numCtx: info.num_ctx > 0 ? String(info.num_ctx) : "" };
+      }).catch(() => {
+        /* Leave the field empty so the load follows the global setting. */
+      });
+    }
     if (model.format === "gguf") {
       getModelManifest(model.name).then((manifest) => {
         if (runDialogModel.value?.name !== model.name) return;
@@ -792,6 +753,7 @@ export function Library() {
     runDialogError.value = "";
     runDialogGGUFQuants.value = [];
     runDialogQuantsLoading.value = false;
+    runDialogModelConfig.value = null;
   };
 
   const updateRunParam = (field: keyof RunModelParams, value: string) => {
@@ -810,8 +772,19 @@ export function Library() {
       return;
     }
     saveRunParams(runParams.value);
+    if (numCtxApplies(model)) {
+      // Persist it per model so every later load - from this dialog, the CLI or
+      // the API - uses the same context length without retyping it. 0 clears it.
+      try {
+        await setModelConfig(model.name, options.num_ctx ?? 0);
+      } catch (e: any) {
+        runDialogError.value = e?.message || String(e);
+        return;
+      }
+    }
     runDialogModel.value = null;
     runDialogError.value = "";
+    runDialogModelConfig.value = null;
     await handleRun(model.name, options);
   };
 
@@ -975,15 +948,6 @@ export function Library() {
                       >
                         {t("lib.delete")}
                       </button>
-                      {!downloadOnly && (
-                        <button
-                          disabled={task?.status === "downloading" || task?.status === "queued"}
-                          onClick={() => openConfigDialog(m)}
-                          class="shrink-0 text-gray-500 hover:text-indigo-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {t("lib.configure")}
-                        </button>
-                      )}
                       {task?.status === "downloading" || task?.status === "queued" ? (
                         <button
                           onClick={() => pauseDownload(task.kind, task.name, { artifactSource: task.artifactSource, revision: task.revision })}
@@ -1094,27 +1058,13 @@ export function Library() {
             .map((candidate) => candidate.name)
             .sort()}
           error={runDialogError.value}
+          modelConfig={runDialogModelConfig.value}
           ggufQuants={runDialogGGUFQuants.value}
           quantsLoading={runDialogQuantsLoading.value}
           disabled={!!loadingRun.value}
           onChange={updateRunParam}
           onCancel={closeRunDialog}
           onSubmit={submitRunDialog}
-        />
-      )}
-      {configDialogModel.value && (
-        <ModelConfigDialog
-          model={configDialogModel.value}
-          info={configDialogInfo.value}
-          numCtx={configDialogNumCtx.value}
-          error={configDialogError.value}
-          busy={configDialogBusy.value}
-          onChange={(value) => {
-            configDialogNumCtx.value = value;
-            configDialogError.value = "";
-          }}
-          onCancel={closeConfigDialog}
-          onSubmit={() => void submitConfigDialog()}
         />
       )}
       {apiDialogModel.value && (
@@ -1306,106 +1256,12 @@ function UploadModelDialog({
   );
 }
 
-function ModelConfigDialog({
-  model,
-  info,
-  numCtx,
-  error,
-  busy,
-  onChange,
-  onCancel,
-  onSubmit,
-}: {
-  model: ModelInfo;
-  info: ModelConfigResponse | null;
-  numCtx: string;
-  error: string;
-  busy: boolean;
-  onChange: (value: string) => void;
-  onCancel: () => void;
-  onSubmit: () => void;
-}) {
-  const modelMax = info?.model_max_num_ctx ?? 0;
-  const parsed = Number(numCtx.trim());
-  const aboveModelMax = modelMax > 0 && Number.isInteger(parsed) && parsed > modelMax;
-
-  return (
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
-      <form
-        class="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSubmit();
-        }}
-      >
-        <div class="px-6 py-5 border-b border-gray-100">
-          <h2 class="text-lg font-semibold text-gray-900">{t("lib.configTitle")}</h2>
-          <p class="text-sm text-gray-500 mt-1">{t("lib.configDesc", displayLocalModelID(model))}</p>
-        </div>
-
-        <div class="flex flex-col gap-4 overflow-y-auto px-6 py-5">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.configNumCtx")}</label>
-            <input
-              type="number"
-              min={1024}
-              step={1}
-              value={numCtx}
-              disabled={busy}
-              placeholder={info && info.global_num_ctx > 0 ? String(info.global_num_ctx) : "8192"}
-              onInput={(e) => onChange((e.currentTarget as HTMLInputElement).value)}
-              class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none disabled:opacity-50"
-            />
-            <p class="text-xs text-gray-500 mt-1">{t("lib.configNumCtxHint")}</p>
-          </div>
-
-          {info && (
-            <dl class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600 space-y-1">
-              <div>{modelMax > 0 ? t("lib.configModelMax", modelMax) : t("lib.configModelMaxUnknown")}</div>
-              <div>{t("lib.configGlobal", info.global_num_ctx)}</div>
-              <div>{t("lib.configEffective", info.effective_num_ctx)}</div>
-            </dl>
-          )}
-
-          <p class="text-xs text-gray-500">{t("lib.configPriority")}</p>
-          <p class="text-xs text-gray-500">{t("lib.configReloadHint")}</p>
-
-          {aboveModelMax && (
-            <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {t("lib.configAboveModelMax", modelMax)}
-            </div>
-          )}
-
-          {error && <div class="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
-        </div>
-
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={busy}
-            class="px-4 py-2 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-white disabled:opacity-50"
-          >
-            {t("lib.configCancel")}
-          </button>
-          <button
-            type="submit"
-            disabled={busy}
-            class="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {busy ? t("lib.configSaving") : t("lib.configSave")}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
 function RunParamsDialog({
   model,
   params,
   draftModels,
   error,
+  modelConfig,
   ggufQuants,
   quantsLoading,
   disabled,
@@ -1417,6 +1273,7 @@ function RunParamsDialog({
   params: RunModelParams;
   draftModels: string[];
   error: string;
+  modelConfig: ModelConfigResponse | null;
   ggufQuants: string[];
   quantsLoading: boolean;
   disabled: boolean;
@@ -1432,6 +1289,9 @@ function RunParamsDialog({
   // GGUF models list only the quantizations actually downloaded locally
   // (issue #75); SafeTensors models keep the converter dtype options.
   const dtypeOptions = ggufModel ? ggufQuants : DTYPE_OPTIONS;
+  const modelMaxNumCtx = modelConfig?.model_max_num_ctx ?? 0;
+  const typedNumCtx = Number(params.numCtx.trim());
+  const numCtxAboveModelMax = modelMaxNumCtx > 0 && Number.isInteger(typedNumCtx) && typedNumCtx > modelMaxNumCtx;
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
@@ -1462,14 +1322,28 @@ function RunParamsDialog({
             </div>
           ) : (
             <>
-              <RunNumberField
-                label={t("lib.runParamNumCtx")}
-                value={params.numCtx}
-                min={1024}
-                placeholder="131072"
-                hint={t("lib.runParamNumCtxHint")}
-                onInput={(value) => onChange("numCtx", value)}
-              />
+              <div>
+                <RunNumberField
+                  label={t("lib.runParamNumCtx")}
+                  value={params.numCtx}
+                  min={1024}
+                  placeholder="131072"
+                  hint={t("lib.runParamNumCtxHint")}
+                  onInput={(value) => onChange("numCtx", value)}
+                />
+                {modelConfig && (
+                  <p class="text-xs text-gray-400 mt-1">
+                    {modelMaxNumCtx > 0
+                      ? t("lib.runParamNumCtxModelMax", modelMaxNumCtx)
+                      : t("lib.runParamNumCtxModelMaxUnknown")}
+                    {" \u00b7 "}
+                    {t("lib.runParamNumCtxGlobal", modelConfig.global_num_ctx)}
+                  </p>
+                )}
+                {numCtxAboveModelMax && (
+                  <p class="text-xs text-amber-700 mt-1">{t("lib.runParamNumCtxAboveModelMax", modelMaxNumCtx)}</p>
+                )}
+              </div>
               {!embeddingModel && (
                 <RunNumberField
                   label={t("lib.runParamNumParallel")}
