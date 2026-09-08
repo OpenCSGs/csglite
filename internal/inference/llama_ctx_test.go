@@ -37,6 +37,42 @@ func TestResolveNumCtxUsesEnvOverrideBeforeModelMax(t *testing.T) {
 	}
 }
 
+func TestResolveNumCtxCapsEnvOverrideAtModelMax(t *testing.T) {
+	dir := t.TempDir()
+	// Qwen3-Embedding-0.6B tops out at 32768; a global 128K override must not
+	// make llama-server reserve a KV cache four times larger than the model
+	// can ever use.
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"max_position_embeddings":32768}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_CTX", "131072")
+
+	if got := ResolveNumCtx(dir, 0); got != 32768 {
+		t.Fatalf("ResolveNumCtx returned %d, want %d", got, 32768)
+	}
+}
+
+func TestResolveNumCtxCapsEnvOverrideAtGGUFModelMax(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeMinimalGGUFContextLength(filepath.Join(dir, "model.gguf"), 32768); err != nil {
+		t.Fatalf("write gguf: %v", err)
+	}
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_CTX", "131072")
+
+	if got := ResolveNumCtx(dir, 0); got != 32768 {
+		t.Fatalf("ResolveNumCtx returned %d, want %d", got, 32768)
+	}
+}
+
+func TestResolveNumCtxKeepsEnvOverrideWhenModelMaxUnknown(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_CTX", "131072")
+
+	if got := ResolveNumCtx(dir, 0); got != 131072 {
+		t.Fatalf("ResolveNumCtx returned %d, want %d", got, 131072)
+	}
+}
+
 func TestResolveNumCtxUsesModelMaxWhenEnabled(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
