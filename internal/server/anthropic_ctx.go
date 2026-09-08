@@ -13,7 +13,7 @@ func (s *Server) anthropicPreferredNumCtx(modelID string) int {
 	preferred := 0
 	if s.manager != nil {
 		if modelDir, err := s.manager.ModelPath(storageID); err == nil {
-			preferred = anthropicDefaultLocalNumCtxWithModelMax(modelDir, s.cfg.Inference.LlamaUseModelMaxCtx)
+			preferred = anthropicDefaultLocalNumCtxWithModelSetting(modelDir, s.modelNumCtxSetting(storageID), s.cfg.Inference.LlamaUseModelMaxCtx)
 		}
 	}
 
@@ -65,7 +65,11 @@ func anthropicDefaultLocalNumCtx(modelDir string) int {
 }
 
 func anthropicDefaultLocalNumCtxWithModelMax(modelDir string, configured bool) int {
-	resolved := inference.ResolveNumCtxWithModelMax(modelDir, 0, configured)
+	return anthropicDefaultLocalNumCtxWithModelSetting(modelDir, 0, configured)
+}
+
+func anthropicDefaultLocalNumCtxWithModelSetting(modelDir string, modelSetting int, configured bool) int {
+	resolved := inference.ResolveNumCtxWithModelSetting(modelDir, 0, modelSetting, configured)
 	if anthropicNumCtxExplicitlyConfigured() || resolved >= defaultAnthropicMaxInputTokens {
 		return resolved
 	}

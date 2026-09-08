@@ -135,6 +135,12 @@ type WebSearchConfig struct {
 // the Web UI and external API clients.
 type InferenceConfig struct {
 	LlamaUseModelMaxCtx bool `json:"llama_use_model_max_ctx,omitempty"`
+
+	// ModelNumCtx holds per-model context windows keyed by model ID. A model
+	// listed here overrides the global default but still loses to a context
+	// length sent with the request. It lives in the app config rather than in
+	// the model directory so that re-downloading a model keeps the setting.
+	ModelNumCtx map[string]int `json:"model_num_ctx,omitempty"`
 }
 
 const DefaultObservabilityRetentionDays = 30
