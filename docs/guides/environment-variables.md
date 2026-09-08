@@ -41,7 +41,7 @@ csghub-lite serve
 | --- | --- | --- |
 | `CSGHUB_LITE_LLAMA_SERVER` | 自动查找 | 指定 `llama-server` 可执行文件的绝对路径。 |
 | `CSGHUB_LITE_LLAMA_READY_TIMEOUT` | 按模型大小计算 | 等待 `llama-server` 就绪的超时。支持 Go duration（如 `45m`、`90s`）或秒数。自动值为 2 分钟加每 GiB 约 1 分钟，范围 2–45 分钟；无法读取文件时为 20 分钟。 |
-| `CSGHUB_LITE_LLAMA_NUM_CTX` | 模型感知，通常 `8192` 或 `16384` | 默认上下文长度，最小有效值为 `1024`。模型声明至少 16384 时默认最多扩展到 16384。 |
+| `CSGHUB_LITE_LLAMA_NUM_CTX` | 模型感知，通常 `8192` 或 `16384` | 默认上下文长度，最小有效值为 `1024`。模型声明至少 16384 时默认最多扩展到 16384。该值对所有模型生效（含 embedding 模型），并会被模型自身的最大上下文长度截断——llama-server 会一次性按上下文长度预分配 KV cache，超出模型上限只会白白占用内存。 |
 | `CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX` | `false` | 未显式设置 `num_ctx` 时，使用模型元数据声明的最大上下文。可能显著增加内存占用。 |
 | `CSGHUB_LITE_LLAMA_NUM_PARALLEL` | `1` | 单个 `llama-server` 的并行槽位数，不是同时加载的模型数量。实际 `--ctx-size` 为每槽上下文乘以该值。 |
 | `CSGHUB_LITE_LLAMA_EMBEDDING_POOLING` | 按模型族选择 | 强制 embedding pooling，例如 `last`、`cls` 或 `mean`。Qwen3 Embedding 默认 `last`。 |

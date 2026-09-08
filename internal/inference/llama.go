@@ -236,8 +236,9 @@ func llamaReadyTimeout(modelPath string) time.Duration {
 }
 
 // ResolveNumCtx returns the effective llama-server context window (--ctx-size / -c).
-// Explicit requests win, then CSGHUB_LITE_LLAMA_NUM_CTX, then the optional
-// model maximum, then a conservative model-aware fallback.
+// Explicit requests win, then CSGHUB_LITE_LLAMA_NUM_CTX capped at the model
+// maximum, then the optional model maximum, then a conservative model-aware
+// fallback.
 func ResolveNumCtx(modelDir string, requested int) int {
 	return ResolveNumCtxWithModelMax(modelDir, requested, false)
 }
@@ -251,7 +252,12 @@ func ResolveNumCtxWithModelMax(modelDir string, requested int, configured bool) 
 	}
 	if v := strings.TrimSpace(os.Getenv("CSGHUB_LITE_LLAMA_NUM_CTX")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 1024 {
-			return n
+			// CSGHUB_LITE_LLAMA_NUM_CTX is a global setting that applies to
+			// every model, embedding models included. llama-server allocates a
+			// KV cache for the whole context up front, so a value beyond what
+			// the model itself supports buys nothing and costs memory linearly:
+			// a 0.6B embedding model asked for 128K reserves tens of GB.
+			return capNumCtxToModelMax(modelDir, n)
 		}
 	}
 
@@ -264,6 +270,17 @@ func ResolveNumCtxWithModelMax(modelDir string, requested int, configured bool) 
 	}
 
 	return defaultLlamaCtxSize
+}
+
+// capNumCtxToModelMax limits numCtx to the model's own maximum context length.
+// The model maximum is unknown for some models (it reports 0), and in that case
+// numCtx is kept as requested rather than guessed down.
+func capNumCtxToModelMax(modelDir string, numCtx int) int {
+	maxPos := ModelMaxPositionEmbeddings(modelDir)
+	if maxPos >= 1024 && numCtx > maxPos {
+		return maxPos
+	}
+	return numCtx
 }
 
 // UseModelMaxCtxByDefault returns the effective model-maximum default.
