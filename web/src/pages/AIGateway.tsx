@@ -60,6 +60,8 @@ type GatewayAPIInfoTarget = {
 };
 
 const activeGatewayTab = signal<GatewayTab>("apiKeys");
+type ProtocolTab = "openai" | "anthropic" | "responses";
+const activeProtocolTab = signal<ProtocolTab>("openai");
 const localAPIKeys = signal<LocalAPIKeysResponse | null>(null);
 const localAPIKeysLoading = signal(false);
 const localAPIKeysError = signal("");
@@ -1442,7 +1444,7 @@ function GatewaySnapshot() {
     <div class="grid min-w-[18rem] grid-cols-3 gap-3 rounded-2xl border border-white/80 bg-white/80 p-3 shadow-sm backdrop-blur">
       <SnapshotItem label={t("gateway.snapshotAuth")} value={authEnabled ? t("settings.localAPIAuthOn") : t("settings.localAPIAuthOff")} />
       <SnapshotItem label={t("gateway.snapshotKeys")} value={formatNumber(keyCount)} />
-      <SnapshotItem label={t("gateway.snapshotProtocols")} value="2" />
+      <SnapshotItem label={t("gateway.snapshotProtocols")} value="3" />
     </div>
   );
 }
@@ -1462,6 +1464,23 @@ function GatewayTabButton({ tab, label }: { tab: GatewayTab; label: string }) {
     <button
       type="button"
       onClick={() => (activeGatewayTab.value = tab)}
+      class={`rounded-xl px-5 py-2 text-sm font-medium transition-colors ${
+        active
+          ? "bg-indigo-600 text-white shadow-sm"
+          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ProtocolTabButton({ tab, label }: { tab: ProtocolTab; label: string }) {
+  const active = activeProtocolTab.value === tab;
+  return (
+    <button
+      type="button"
+      onClick={() => (activeProtocolTab.value = tab)}
       class={`rounded-xl px-5 py-2 text-sm font-medium transition-colors ${
         active
           ? "bg-indigo-600 text-white shadow-sm"
@@ -1570,6 +1589,11 @@ function LocalAPIKeysSection() {
   -H "Content-Type: application/json" \\
   -H "x-api-key: <API_KEY>" \\
   -d '{"model":"<MODEL>","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'`;
+  const responsesBaseURL = `${origin}/v1`;
+  const responsesCurl = `curl ${responsesBaseURL}/responses \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer <API_KEY>" \\
+  -d '{"model":"<MODEL>","input":"Hello"}'`;
 
   return (
     <div class="space-y-6">
@@ -1654,9 +1678,15 @@ function LocalAPIKeysSection() {
           <h2 class="text-sm font-semibold text-gray-900">{t("settings.localAPIBaseURL")}</h2>
           <p class="text-sm text-gray-500">{t("settings.localAPIBaseURLDesc")}</p>
         </div>
-        <div class="mt-5 grid gap-4 lg:grid-cols-2">
-          <EndpointCard label={t("settings.localAPIBaseURLOpenAI")} value={openAIBaseURL} example={openAICurl} />
-          <EndpointCard label={t("settings.localAPIBaseURLAnthropic")} value={anthropicBaseURL} example={anthropicCurl} />
+        <div class="mt-5 inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+          <ProtocolTabButton tab="openai" label={t("settings.localAPIBaseURLOpenAI")} />
+          <ProtocolTabButton tab="anthropic" label={t("settings.localAPIBaseURLAnthropic")} />
+          <ProtocolTabButton tab="responses" label={t("settings.localAPIBaseURLResponses")} />
+        </div>
+        <div class="mt-4">
+          {activeProtocolTab.value === "openai" && <EndpointCard label={t("settings.localAPIBaseURLOpenAI")} value={openAIBaseURL} example={openAICurl} />}
+          {activeProtocolTab.value === "anthropic" && <EndpointCard label={t("settings.localAPIBaseURLAnthropic")} value={anthropicBaseURL} example={anthropicCurl} />}
+          {activeProtocolTab.value === "responses" && <EndpointCard label={t("settings.localAPIBaseURLResponses")} value={responsesBaseURL} example={responsesCurl} />}
         </div>
       </section>
     </div>
