@@ -174,6 +174,19 @@ func (s *Server) modelUsesASREngine(modelID string) bool {
 	return isASRPipelineTag(pipelineTag)
 }
 
+// modelUsesTTSEngine reports whether a local model is a text-to-speech model.
+// There is no local TTS engine yet, so the only caller uses this to refuse the
+// text-generation runtime instead of silently converting the model to GGUF.
+// See docs/guides/realtime-audio-api.md.
+func (s *Server) modelUsesTTSEngine(modelID string) bool {
+	lm, err := s.manager.ResolveLocalModel(modelID)
+	if err != nil || lm == nil {
+		return false
+	}
+	pipelineTag := s.resolvedLocalPipelineTag(lm.FullName(), strings.TrimSpace(lm.PipelineTag))
+	return isTTSPipelineTag(pipelineTag)
+}
+
 func (s *Server) resolvedLocalPipelineTag(modelID, manifestPipelineTag string) string {
 	detected := ""
 	if dir, err := s.manager.ModelPath(modelID); err == nil {
@@ -182,6 +195,7 @@ func (s *Server) resolvedLocalPipelineTag(modelID, manifestPipelineTag string) s
 	if isImageGenerationPipelineTag(detected) ||
 		isEmbeddingPipelineTag(detected) ||
 		isASRPipelineTag(detected) ||
+		isTTSPipelineTag(detected) ||
 		strings.EqualFold(detected, "image-text-to-text") {
 		return detected
 	}
@@ -212,6 +226,15 @@ func isImageGenerationPipelineTag(pipelineTag string) bool {
 func isASRPipelineTag(pipelineTag string) bool {
 	switch strings.ToLower(strings.TrimSpace(pipelineTag)) {
 	case "automatic-speech-recognition":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTTSPipelineTag(pipelineTag string) bool {
+	switch strings.ToLower(strings.TrimSpace(pipelineTag)) {
+	case "text-to-speech":
 		return true
 	default:
 		return false

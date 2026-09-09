@@ -1075,6 +1075,14 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	if err != nil {
 		return nil, fmt.Errorf("model %q not found locally; use 'csghub-lite pull %s' first", modelID, modelID)
 	}
+	// Refuse text-to-speech models here rather than at each entry point: every
+	// chat, generate and load path for the text-generation runtime funnels
+	// through this function, and without the guard a safetensors TTS model is
+	// converted to GGUF and served as a text model. See
+	// docs/guides/realtime-audio-api.md.
+	if s.modelUsesTTSEngine(modelID) {
+		return nil, fmt.Errorf("model %q is a text-to-speech model and cannot be served by the text-generation runtime; local text-to-speech is not supported yet", modelID)
+	}
 	effectiveNumCtx := inference.ResolveNumCtxWithModelSetting(modelDir, numCtx, s.modelNumCtxSetting(modelID), s.cfg.Inference.LlamaUseModelMaxCtx)
 	effectiveNumParallel := inference.ResolveNumParallel(numParallel)
 	effectiveNGPULayers := inference.ResolveNGPULayers(normalizedNGPULayers)

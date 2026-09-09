@@ -192,3 +192,54 @@ func TestDiffusersPipelineTagFromClassName(t *testing.T) {
 		t.Fatalf("tag = %q, want empty", got)
 	}
 }
+
+// A safetensors text-to-speech model whose language-model half is a supported
+// causal LM used to match the llama.cpp "convert" path, which turned it into
+// GGUF and served it as a text model with the vocoder dropped. It must report
+// unsupported until the local text-to-speech runtime exists.
+func TestTextToSpeechNeverUsesLlamaConvertPath(t *testing.T) {
+	t.Run("marketplace pipeline tag", func(t *testing.T) {
+		support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", "text-to-speech")
+		if support.Supported || support.Runtime == "llama" || support.Mode == "convert" {
+			t.Fatalf("support = %#v, want unsupported", support)
+		}
+	})
+
+	t.Run("marketplace model family without a pipeline tag", func(t *testing.T) {
+		support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", "")
+		if support.Supported || support.Runtime == "llama" || support.Mode == "convert" {
+			t.Fatalf("support = %#v, want unsupported", support)
+		}
+	})
+
+	t.Run("marketplace architecture", func(t *testing.T) {
+		support := FromMarketplace("safetensors", "SpeechT5ForTextToSpeech", "")
+		if support.Supported {
+			t.Fatalf("support = %#v, want unsupported", support)
+		}
+	})
+
+	t.Run("local model pipeline tag", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["Qwen3ForCausalLM"]}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		lm := &model.LocalModel{Format: model.FormatSafeTensors, PipelineTag: "text-to-speech"}
+		support := FromLocalModel(lm, dir)
+		if support.Supported || support.Runtime == "llama" || support.Mode == "convert" {
+			t.Fatalf("support = %#v, want unsupported", support)
+		}
+	})
+
+	t.Run("local model architecture without a pipeline tag", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["VitsModel"]}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		lm := &model.LocalModel{Format: model.FormatSafeTensors}
+		support := FromLocalModel(lm, dir)
+		if support.Supported {
+			t.Fatalf("support = %#v, want unsupported", support)
+		}
+	})
+}

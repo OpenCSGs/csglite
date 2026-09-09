@@ -583,3 +583,85 @@ func TestFindModelFile_NestedQuantFolders(t *testing.T) {
 		t.Errorf("path = %q, want %q", path, want)
 	}
 }
+
+func TestDetectPipelineTagTextToSpeechArchitecture(t *testing.T) {
+	for _, arch := range []string{
+		"VitsModel",
+		"BarkModel",
+		"SpeechT5ForTextToSpeech",
+		"ParlerTTSForConditionalGeneration",
+		"CsmForConditionalGeneration",
+	} {
+		t.Run(arch, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := []byte(`{"architectures":["` + arch + `"]}`)
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := DetectPipelineTag(dir); got != "text-to-speech" {
+				t.Fatalf("DetectPipelineTag() = %q, want text-to-speech", got)
+			}
+		})
+	}
+}
+
+func TestDetectPipelineTagTextToSpeechModelType(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"model_type":"cosyvoice2"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := DetectPipelineTag(dir); got != "text-to-speech" {
+		t.Fatalf("DetectPipelineTag() = %q, want text-to-speech", got)
+	}
+}
+
+// A text-to-speech model whose language-model half is a plain causal LM is the
+// case that used to be misrouted: the architecture alone matches the llama.cpp
+// convert path, so the family name in the model directory has to win.
+func TestDetectPipelineTagTextToSpeechFamilyBeatsCausalLMArchitecture(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "CosyVoice2-0.5B")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["Qwen3ForCausalLM"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := DetectPipelineTag(dir); got != "text-to-speech" {
+		t.Fatalf("DetectPipelineTag() = %q, want text-to-speech", got)
+	}
+}
+
+func TestDetectPipelineTagModelScopeTextToSpeechTask(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "configuration.json"), []byte(`{"task":"text-to-speech"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := DetectPipelineTag(dir); got != "text-to-speech" {
+		t.Fatalf("DetectPipelineTag() = %q, want text-to-speech", got)
+	}
+}
+
+func TestIsTTSModelFamilyDoesNotClaimASRModels(t *testing.T) {
+	for _, name := range []string{
+		"SenseVoiceSmall",
+		"Whisper-large-v3",
+		"Qwen3-ASR-0.6B",
+		"Qwen3-4B-Instruct",
+	} {
+		if IsTTSModelFamily(name) {
+			t.Errorf("IsTTSModelFamily(%q) = true, want false", name)
+		}
+	}
+	for _, name := range []string{
+		"FunAudioLLM/CosyVoice2-0.5B",
+		"SparkAudio/Spark-TTS-0.5B",
+		"hexgrad/Kokoro-82M",
+		"hexgrad/Kokoro-v1.0",
+		"IndexTeam/IndexTTS-1.5",
+	} {
+		if !IsTTSModelFamily(name) {
+			t.Errorf("IsTTSModelFamily(%q) = false, want true", name)
+		}
+	}
+}
