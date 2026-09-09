@@ -6110,6 +6110,146 @@
         }
       }
     },
+    "/v1/audio/speech": {
+      "post": {
+        "tags": [
+          "OpenAI Compatibility"
+        ],
+        "summary": "Create speech (not implemented)",
+        "description": "OpenAI-compatible speech synthesis. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
+        "operationId": "createSpeechUnsupported",
+        "responses": {
+          "501": {
+            "description": "Local text-to-speech is not supported yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "message": "local text-to-speech is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
+                    "type": "unsupported_error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/realtime/calls": {
+      "post": {
+        "tags": [
+          "OpenAI Compatibility"
+        ],
+        "summary": "Create realtime WebRTC call (not implemented)",
+        "description": "OpenAI Realtime WebRTC SDP exchange. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
+        "operationId": "createRealtimeCallUnsupported",
+        "responses": {
+          "501": {
+            "description": "Realtime audio is not supported yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
+                    "type": "unsupported_error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/realtime": {
+      "get": {
+        "tags": [
+          "OpenAI Compatibility"
+        ],
+        "summary": "Realtime WebSocket session (not implemented)",
+        "description": "OpenAI Realtime WebSocket transport. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
+        "operationId": "getRealtimeUnsupported",
+        "responses": {
+          "501": {
+            "description": "Realtime audio is not supported yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
+                    "type": "unsupported_error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/realtime/transcription": {
+      "get": {
+        "tags": [
+          "OpenAI Compatibility"
+        ],
+        "summary": "Realtime transcription WebSocket session (not implemented)",
+        "description": "Transcription-only Realtime WebSocket transport, equivalent to a session with `type: \"transcription\"`. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
+        "operationId": "getRealtimeTranscriptionUnsupported",
+        "responses": {
+          "501": {
+            "description": "Realtime audio is not supported yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
+                    "type": "unsupported_error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/audio/transcriptions/realtime": {
+      "get": {
+        "tags": [
+          "OpenAI Compatibility"
+        ],
+        "summary": "Realtime transcription WebSocket alias (not implemented)",
+        "description": "Compatibility alias for `/v1/realtime` with a transcription session. This path is not part of the OpenAI API; it is accepted because the clients in https://github.com/OpenCSGs/csglite/issues/147 request it. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
+        "operationId": "getAudioTranscriptionsRealtimeUnsupported",
+        "responses": {
+          "501": {
+            "description": "Realtime audio is not supported yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
+                    "type": "unsupported_error"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/asr-runtime": {
       "get": {
         "tags": [

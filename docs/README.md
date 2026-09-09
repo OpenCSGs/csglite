@@ -42,3 +42,4 @@ CSGLite 是一个轻量级的本地大语言模型运行工具，基于 [CSGHub]
 - [模型格式](guides/model-formats.md) — GGUF / SafeTensors 格式说明与转换
 - [打包与发布](guides/packaging.md) — GoReleaser、Homebrew（主要面向 macOS）、安装脚本
 - [架构设计](guides/architecture.md) — 项目结构与模块设计
+- [实时语音 API 设计](guides/realtime-audio-api.md) — ASR + TTS 全双工、兼容 OpenAI Realtime 的接口设计与分期计划（设计草案）

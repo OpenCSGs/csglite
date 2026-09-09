@@ -89,6 +89,40 @@ var asrModelFamilies = []string{
 	"Paraformer-zh-streaming",
 }
 
+// Text-to-speech models must never reach the llama.cpp convert path: their
+// language-model half often looks like a plain causal LM (CosyVoice2 and Orpheus
+// carry Qwen/Llama backbones), so converting to GGUF silently drops the vocoder
+// and the model emits text instead of audio. Detecting them keeps them off that
+// path. See docs/guides/realtime-audio-api.md.
+var ttsArchitectures = []string{
+	"VitsModel",
+	"BarkModel",
+	"SpeechT5ForTextToSpeech",
+	"FastSpeech2ConformerModel",
+	"FastSpeech2ConformerWithHifiGan",
+	"ParlerTTSForConditionalGeneration",
+	"CsmForConditionalGeneration",
+	"DiaForConditionalGeneration",
+}
+
+var ttsModelFamilies = []string{
+	"CosyVoice",
+	"Spark-TTS",
+	"IndexTTS",
+	"F5-TTS",
+	"Kokoro",
+	"ChatTTS",
+	"OuteTTS",
+	"Fish-Speech",
+	"GPT-SoVITS",
+	"MegaTTS",
+	"Orpheus-TTS",
+	"XTTS",
+	"Zonos",
+	"Higgs-Audio",
+	"SambertHifigan",
+}
+
 var embeddingArchitectures = map[string]bool{
 	"BertForMaskedLM":                     true,
 	"BertForSequenceClassification":       true,
@@ -162,20 +196,50 @@ func IsASRArchitecture(architecture string) bool {
 // IsASRModelFamily reports whether a model id/name belongs to a known ASR
 // family served by the Python ASR runtime.
 func IsASRModelFamily(name string) bool {
-	normalized := normalizeASRModelFamily(name)
+	normalized := normalizeModelFamilyName(name)
 	if normalized == "" {
 		return false
 	}
 	for _, supported := range asrModelFamilies {
-		if strings.Contains(normalized, normalizeASRModelFamily(supported)) {
+		if strings.Contains(normalized, normalizeModelFamilyName(supported)) {
 			return true
 		}
 	}
 	return false
 }
 
-func normalizeASRModelFamily(value string) string {
+func normalizeModelFamilyName(value string) string {
 	return strings.NewReplacer("-", "", "_", "", " ", "", ".", "").Replace(strings.ToLower(strings.TrimSpace(value)))
+}
+
+// IsTTSArchitecture reports whether the HuggingFace architecture is a
+// text-to-speech model.
+func IsTTSArchitecture(architecture string) bool {
+	architecture = strings.TrimSpace(architecture)
+	if architecture == "" {
+		return false
+	}
+	for _, supported := range ttsArchitectures {
+		if strings.Contains(architecture, supported) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsTTSModelFamily reports whether a model id/name belongs to a known
+// text-to-speech family.
+func IsTTSModelFamily(name string) bool {
+	normalized := normalizeModelFamilyName(name)
+	if normalized == "" {
+		return false
+	}
+	for _, supported := range ttsModelFamilies {
+		if strings.Contains(normalized, normalizeModelFamilyName(supported)) {
+			return true
+		}
+	}
+	return false
 }
 
 // DetectPipelineTag reads config.json in modelDir and returns a local pipeline
@@ -188,6 +252,9 @@ func DetectPipelineTag(modelDir string) string {
 	}
 	if IsASRModelFamily(modelDir) {
 		return "automatic-speech-recognition"
+	}
+	if IsTTSModelFamily(modelDir) {
+		return "text-to-speech"
 	}
 	if tag := detectDiffusersPipelineTag(modelDir); tag != "" {
 		return tag
@@ -220,9 +287,15 @@ func DetectPipelineTag(modelDir string) string {
 	if isASRModelType(cfg.ModelType) {
 		return "automatic-speech-recognition"
 	}
+	if isTTSModelType(cfg.ModelType) {
+		return "text-to-speech"
+	}
 	for _, name := range cfg.SupportedModels {
 		if IsASRModelFamily(name) {
 			return "automatic-speech-recognition"
+		}
+		if IsTTSModelFamily(name) {
+			return "text-to-speech"
 		}
 	}
 	for _, arch := range append(cfg.Architectures, cfg.SupportedArchs...) {
@@ -234,6 +307,9 @@ func DetectPipelineTag(modelDir string) string {
 		}
 		if IsASRArchitecture(arch) {
 			return "automatic-speech-recognition"
+		}
+		if IsTTSArchitecture(arch) {
+			return "text-to-speech"
 		}
 	}
 	if FindMMProj(modelDir) != "" {
@@ -268,11 +344,23 @@ func detectModelScopePipelineTag(modelDir string) string {
 		if IsASRModelFamily(name) {
 			return "automatic-speech-recognition"
 		}
+		if IsTTSModelFamily(name) {
+			return "text-to-speech"
+		}
 	}
 	for _, arch := range cfg.SupportedArchs {
 		if IsASRArchitecture(arch) {
 			return "automatic-speech-recognition"
 		}
+		if IsTTSArchitecture(arch) {
+			return "text-to-speech"
+		}
+	}
+	if task == "text-to-speech" ||
+		task == "text-to-speech-synthesis" ||
+		strings.Contains(task, "speech-synthesis") ||
+		strings.Contains(pipelineType, "text-to-speech") {
+		return "text-to-speech"
 	}
 	if task == "automatic-speech-recognition" ||
 		task == "auto-speech-recognition" ||
@@ -287,6 +375,15 @@ func detectModelScopePipelineTag(modelDir string) string {
 func isASRModelType(modelType string) bool {
 	switch strings.ToLower(strings.TrimSpace(modelType)) {
 	case "glm_asr", "glm-asr", "qwen3_asr", "qwen3-asr", "whisper", "wav2vec2", "hubert", "sew", "sew-d", "data2vec-audio", "unispeech", "unispeech-sat", "wavlm", "speech_to_text":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTTSModelType(modelType string) bool {
+	switch strings.ToLower(strings.TrimSpace(modelType)) {
+	case "vits", "bark", "speecht5", "fastspeech2_conformer", "parler_tts", "csm", "dia", "cosyvoice", "cosyvoice2":
 		return true
 	default:
 		return false
