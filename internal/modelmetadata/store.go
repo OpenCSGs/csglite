@@ -140,10 +140,21 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DerivationVersion invalidates cached derivations when the logic that computes
+// them changes rather than when the model files change. Fingerprint hashes file
+// identity only, so an untouched model directory would otherwise keep a
+// pipeline tag derived by an older build: a text-to-speech model cached as
+// "text-generation" before DetectPipelineTag learned to recognise codec-token
+// TTS models would stay misclassified after an upgrade. Bump this whenever
+// DetectPipelineTag or any other cached derivation changes.
+const DerivationVersion = 2
+
 // Fingerprint hashes file identity metadata without reading model contents.
-// Any add, remove, resize, or modification invalidates the cached derivations.
+// Any add, remove, resize, or modification invalidates the cached derivations,
+// as does a DerivationVersion bump.
 func Fingerprint(modelDir string) (string, error) {
 	hash := sha256.New()
+	_, _ = fmt.Fprintf(hash, "derivation-version\x00%d\n", DerivationVersion)
 	err := filepath.WalkDir(modelDir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
