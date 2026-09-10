@@ -84,7 +84,7 @@ func FromMarketplaceModel(format, architecture, className, modelName, pipelineTa
 	if model.IsASRModelFamily(modelName) {
 		return asrSupport(architecture)
 	}
-	if model.IsTTSModelFamily(modelName) {
+	if model.IsTTSModelFamily(modelName) || model.IsTTSModelName(modelName) {
 		return unsupported(architecture)
 	}
 	return FromMarketplace(format, architecture, className)

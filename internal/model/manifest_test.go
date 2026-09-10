@@ -665,3 +665,85 @@ func TestIsTTSModelFamilyDoesNotClaimASRModels(t *testing.T) {
 		}
 	}
 }
+
+// Vikhrmodels/Qwen3-0.6B-TTS is the case that defeats every config-based check:
+// architectures ["Qwen3ForCausalLM"], model_type "qwen3", no pipeline tag in the
+// model card, and a ModelScope task of "others". Only the tokenizer's matched
+// pair of audio span tokens and the "TTS" in its name give it away. Because
+// Qwen3ForCausalLM *is* convertible, missing it means the GGUF conversion
+// succeeds and the model is served as a text model producing garbage.
+func TestDetectPipelineTagCodecTokenTTSModelWithCausalLMConfig(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "Qwen3-0.6B")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("config.json", `{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3","vocab_size":160887}`)
+	write("configuration.json", `{"framework":"pytorch","task":"others","allow_remote":true}`)
+	write("added_tokens.json", `{"<|start_of_audio|>":151669,"<|end_of_audio|>":151670,"<|im_end|>":151645}`)
+
+	// The directory name here carries no "TTS" marker, so the tokenizer is the
+	// only remaining signal.
+	if !HasAudioOutputTokens(dir) {
+		t.Fatal("HasAudioOutputTokens() = false, want true")
+	}
+	if got := DetectPipelineTag(dir); got != "text-to-speech" {
+		t.Fatalf("DetectPipelineTag() = %q, want text-to-speech", got)
+	}
+}
+
+// A plain text model must keep its text-generation tag: an audio-input model may
+// declare a leading audio marker without being a speech generator, so both ends
+// of the span are required.
+func TestHasAudioOutputTokensRequiresBothSpanEnds(t *testing.T) {
+	cases := map[string]struct {
+		addedTokens string
+		want        bool
+	}{
+		"both ends":      {`{"<|start_of_audio|>":1,"<|end_of_audio|>":2}`, true},
+		"start only":     {`{"<|start_of_audio|>":1}`, false},
+		"end only":       {`{"<|end_of_audio|>":2}`, false},
+		"speech variant": {`{"<|start_of_speech|>":1,"<|end_of_speech|>":2}`, true},
+		"plain text":     {`{"<|im_end|>":151645,"<|endoftext|>":151643}`, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "added_tokens.json"), []byte(tc.addedTokens), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := HasAudioOutputTokens(dir); got != tc.want {
+				t.Fatalf("HasAudioOutputTokens() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsTTSModelName(t *testing.T) {
+	for _, name := range []string{
+		"modelscope/Vikhrmodels/Qwen3-0.6B-TTS",
+		"Qwen3-0.6B-TTS",
+		"some/tts-model",
+		"a/b_tts_v2",
+	} {
+		if !IsTTSModelName(name) {
+			t.Errorf("IsTTSModelName(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{
+		"",
+		"Qwen/Qwen3-0.6B",
+		"modelscope/Qwen/Qwen3-ASR-0.6B",
+		"iic/SenseVoiceSmall",
+		"some/nottsmodel",
+	} {
+		if IsTTSModelName(name) {
+			t.Errorf("IsTTSModelName(%q) = true, want false", name)
+		}
+	}
+}

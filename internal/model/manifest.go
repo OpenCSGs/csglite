@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -121,6 +122,32 @@ var ttsModelFamilies = []string{
 	"Zonos",
 	"Higgs-Audio",
 	"SambertHifigan",
+}
+
+// Codec-token text-to-speech models are indistinguishable from plain text
+// models by config alone: Vikhrmodels/Qwen3-0.6B-TTS declares
+// architectures: ["Qwen3ForCausalLM"] with model_type "qwen3", carries no
+// pipeline tag, and its ModelScope task is "others". What gives it away is the
+// tokenizer -- it has a matched pair of audio span tokens, because it generates
+// audio codec tokens rather than text. A plain text model never has those.
+var audioSpanStartTokens = []string{
+	"<|start_of_audio|>",
+	"<|begin_of_audio|>",
+	"<|start_of_speech|>",
+	"<|begin_of_speech|>",
+}
+
+var audioSpanEndTokens = []string{
+	"<|end_of_audio|>",
+	"<|end_of_speech|>",
+}
+
+// tokenizerFilesWithAddedTokens are small enough to read eagerly. tokenizer.json
+// is deliberately excluded: it routinely runs to tens of megabytes.
+var tokenizerFilesWithAddedTokens = []string{
+	"added_tokens.json",
+	"special_tokens_map.json",
+	"tokenizer_config.json",
 }
 
 var embeddingArchitectures = map[string]bool{
@@ -242,6 +269,51 @@ func IsTTSModelFamily(name string) bool {
 	return false
 }
 
+// HasAudioOutputTokens reports whether the tokenizer in modelDir defines a
+// matched pair of audio span tokens, which marks a model that generates audio
+// codec tokens. Both ends are required: a generator needs to open and close the
+// span, whereas an audio-input model may declare only a leading marker.
+func HasAudioOutputTokens(modelDir string) bool {
+	modelDir = strings.TrimSpace(modelDir)
+	if modelDir == "" {
+		return false
+	}
+	var start, end bool
+	for _, name := range tokenizerFilesWithAddedTokens {
+		data, err := os.ReadFile(filepath.Join(modelDir, name))
+		if err != nil {
+			continue
+		}
+		lowered := strings.ToLower(string(data))
+		for _, token := range audioSpanStartTokens {
+			if strings.Contains(lowered, token) {
+				start = true
+				break
+			}
+		}
+		for _, token := range audioSpanEndTokens {
+			if strings.Contains(lowered, token) {
+				end = true
+				break
+			}
+		}
+		if start && end {
+			return true
+		}
+	}
+	return false
+}
+
+var ttsNamePattern = regexp.MustCompile(`(^|[^a-z0-9])tts([^a-z0-9]|$)`)
+
+// IsTTSModelName reports whether a model id or name marks itself as
+// text-to-speech with a delimited "tts" token, such as Qwen3-0.6B-TTS. The
+// family list cannot cover the long tail of fine-tunes that only say so in
+// their name.
+func IsTTSModelName(name string) bool {
+	return ttsNamePattern.MatchString(strings.ToLower(strings.TrimSpace(name)))
+}
+
 // DetectPipelineTag reads config.json in modelDir and returns a local pipeline
 // tag for routing. Sentence-transformers repositories are treated as embedding
 // models even when the hub metadata was not persisted in older manifests.
@@ -253,7 +325,7 @@ func DetectPipelineTag(modelDir string) string {
 	if IsASRModelFamily(modelDir) {
 		return "automatic-speech-recognition"
 	}
-	if IsTTSModelFamily(modelDir) {
+	if IsTTSModelFamily(modelDir) || IsTTSModelName(modelDir) || HasAudioOutputTokens(modelDir) {
 		return "text-to-speech"
 	}
 	if tag := detectDiffusersPipelineTag(modelDir); tag != "" {
