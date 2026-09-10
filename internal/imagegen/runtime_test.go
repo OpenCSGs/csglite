@@ -657,6 +657,35 @@ func TestCheckVenvPythonDetectsStaleVenv(t *testing.T) {
 	}
 }
 
+func TestASRStatusDetectsStaleVenvVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	writeFakePythonAt(t, filepath.Join(dir, "python3.13"), probeScriptOutput("3.13.1"))
+
+	m := NewRuntimeManagerAt(filepath.Join(dir, "asr-runtime"))
+	if err := os.MkdirAll(filepath.Dir(m.PythonPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakePythonAt(t, m.PythonPath(), probeScriptOutput("3.9.6"))
+
+	status := m.ASRStatus(context.Background())
+	if status.Ready {
+		t.Fatal("stale 3.9.6 venv should not be ready")
+	}
+	if status.Error == "" {
+		t.Fatal("stale venv should produce an error message")
+	}
+	if !strings.Contains(status.Error, "3.9.6") {
+		t.Fatalf("status.Error = %q, want mention of 3.9.6", status.Error)
+	}
+	if !strings.Contains(status.Error, pythonVersionRangeHint) {
+		t.Fatalf("status.Error = %q, want mention of %s", status.Error, pythonVersionRangeHint)
+	}
+}
+
 func TestEnsureVenvForInstallRecreatesStaleVenv(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses sh fake pythons")

@@ -414,6 +414,17 @@ func (m *RuntimeManager) ASRStatus(ctx context.Context) RuntimeStatus {
 		status.MissingPackages = append([]string{"torch", "torchaudio"}, requiredASRPythonPackages...)
 		return status
 	}
+	venvVersion, probeErr := probePythonVersionAt(ctx, status.Python)
+	if probeErr != nil {
+		status.Error = fmt.Sprintf("runtime venv python %s is not runnable: %v", status.Python, probeErr)
+		status.MissingPackages = append([]string{"torch", "torchaudio"}, requiredASRPythonPackages...)
+		return status
+	}
+	if !hostPythonSupported(venvVersion) {
+		status.Error = fmt.Sprintf("runtime venv uses Python %s; %s is required", venvVersion, pythonVersionRangeHint)
+		status.MissingPackages = append([]string{"torch", "torchaudio"}, requiredASRPythonPackages...)
+		return status
+	}
 	missing, err := missingPackages(ctx, status.Python, append([]string{"torch", "torchaudio"}, requiredASRPythonPackages...))
 	if err != nil {
 		status.Error = err.Error()
@@ -788,6 +799,9 @@ func embeddingInstallPackagesForMissing(missing []string) []string {
 }
 
 func (m *RuntimeManager) EnsureQwenASRReady(ctx context.Context) error {
+	if venvVersion, err := probePythonVersionAt(ctx, m.PythonPath()); err == nil && !hostPythonSupported(venvVersion) {
+		return fmt.Errorf("runtime venv uses Python %s; %s is required, please reinstall the ASR runtime", venvVersion, pythonVersionRangeHint)
+	}
 	missing, err := missingPackages(ctx, m.PythonPath(), requiredQwenASRPythonPackages)
 	if err != nil {
 		return err
