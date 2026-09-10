@@ -789,6 +789,8 @@ func marketplaceInferredTaskTag(details *csghub.Model, architecture string, supp
 	switch {
 	case model.IsASRModelFamily(haystack):
 		return "automatic-speech-recognition"
+	case model.IsTTSModelFamily(haystack) || model.IsTTSModelName(haystack):
+		return "text-to-speech"
 	case strings.Contains(haystack, "whisper") ||
 		strings.Contains(haystack, "wav2vec") ||
 		strings.Contains(haystack, "speech-recognition") ||
@@ -812,6 +814,8 @@ func marketplaceTaskShowName(task string) string {
 		return "Sentence Similarity"
 	case "automatic-speech-recognition":
 		return "Automatic Speech Recognition"
+	case "text-to-speech":
+		return "Text to Speech"
 	default:
 		return task
 	}

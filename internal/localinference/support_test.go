@@ -243,3 +243,34 @@ func TestTextToSpeechNeverUsesLlamaConvertPath(t *testing.T) {
 		}
 	})
 }
+
+// The model named in issue #147. Its architecture is convertible, so a missed
+// detection means the GGUF conversion succeeds and the model is served as text.
+func TestCodecTokenTTSModelIsNotConvertible(t *testing.T) {
+	name := "modelscope/Vikhrmodels/Qwen3-0.6B-TTS"
+
+	support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", name, "")
+	if support.Supported || support.Mode == "convert" {
+		t.Fatalf("marketplace support = %#v, want unsupported", support)
+	}
+
+	dir := t.TempDir()
+	for file, body := range map[string]string{
+		"config.json":        `{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3","vocab_size":160887}`,
+		"configuration.json": `{"framework":"pytorch","task":"others"}`,
+		"added_tokens.json":  `{"<|start_of_audio|>":151669,"<|end_of_audio|>":151670}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lm := &model.LocalModel{Namespace: "Vikhrmodels", Name: "Qwen3-0.6B-TTS", Format: model.FormatSafeTensors}
+	if support := FromLocalModel(lm, dir); support.Supported || support.Mode == "convert" {
+		t.Fatalf("local support = %#v, want unsupported", support)
+	}
+
+	// Regression guard: a plain Qwen3 text model must stay convertible.
+	if support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "Qwen/Qwen3-0.6B", ""); !support.Supported || support.Mode != "convert" {
+		t.Fatalf("plain text model support = %#v, want llama convert", support)
+	}
+}
