@@ -27,7 +27,10 @@ const (
 	providerPoolJudgeMaxTokens             = 2048
 	providerPoolJudgeMaxAttempts           = 3
 	providerPoolJudgeContextBytes          = 32 << 10
+	providerPoolJudgeTimeoutMultiplier     = 2
 )
+
+var providerPoolJudgeRetryBackoff = 5 * time.Second
 
 type ProviderPoolEvaluationRequest struct {
 	PoolID                string
@@ -564,7 +567,11 @@ func (s *Server) runProviderPoolEvaluation(ctx context.Context, job routerprofil
 				fail(err)
 				return
 			}
-			callCtx, cancel := context.WithTimeout(ctx, time.Duration(job.RequestTimeoutSeconds)*time.Second)
+			timeoutSeconds := job.RequestTimeoutSeconds
+			if cell.JudgeAttemptCount > 1 {
+				timeoutSeconds *= providerPoolJudgeTimeoutMultiplier
+			}
+			callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 			judged, judgeErr := s.evaluationChatCompletion(callCtx, job.JudgeModel, "cloud",
 				[]routerprofile.Message{{Role: "user", Content: judgePrompt}}, providerPoolJudgeMaxTokens, true)
 			cancel()
@@ -618,6 +625,12 @@ func (s *Server) runProviderPoolEvaluation(ctx context.Context, job routerprofil
 			}
 			if !providerPoolJudgeRetryable(lastJudgeErr) {
 				break
+			}
+			select {
+			case <-ctx.Done():
+				fail(ctx.Err())
+				return
+			case <-time.After(providerPoolJudgeRetryBackoff):
 			}
 		}
 		if !judgeSucceeded {
@@ -843,7 +856,11 @@ func (s *Server) runProviderPoolListwiseEvaluation(ctx context.Context, job rout
 				fail(err)
 				return
 			}
-			callCtx, cancel := context.WithTimeout(ctx, time.Duration(job.RequestTimeoutSeconds)*time.Second)
+			timeoutSeconds := job.RequestTimeoutSeconds
+			if round.JudgeAttemptCount > 1 {
+				timeoutSeconds *= providerPoolJudgeTimeoutMultiplier
+			}
+			callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 			judged, judgeErr := s.evaluationChatCompletion(callCtx, job.JudgeModel, "cloud",
 				[]routerprofile.Message{{Role: "user", Content: judgePrompt}}, providerPoolJudgeMaxTokens, true)
 			cancel()
@@ -893,6 +910,12 @@ func (s *Server) runProviderPoolListwiseEvaluation(ctx context.Context, job rout
 			}
 			if !providerPoolJudgeRetryable(judgeErr) {
 				break
+			}
+			select {
+			case <-ctx.Done():
+				fail(ctx.Err())
+				return
+			case <-time.After(providerPoolJudgeRetryBackoff):
 			}
 		}
 		if lastJudgeErr != nil || round.Status != routerprofile.RoundSucceeded {
