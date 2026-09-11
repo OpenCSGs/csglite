@@ -297,6 +297,48 @@ func capNumCtxToModelMax(modelDir string, numCtx int) int {
 	return numCtx
 }
 
+// resolveNumCtxVRAMAware computes the context window. On ROCm hosts with
+// detectable free VRAM, it caps the context to what fits in available memory
+// (model weights + KV cache). On non-ROCm hosts or when detection fails, it
+// falls back to the existing ResolveNumCtx logic.
+func resolveNumCtxVRAMAware(modelPath, modelDir string, requested int) int {
+	if requested >= 1024 {
+		return requested
+	}
+	fallback := ResolveNumCtx(modelDir, requested)
+	if !IsROCMHost() {
+		return fallback
+	}
+	freeVRAM := ROCMFreeVRAM()
+	if freeVRAM == 0 {
+		return fallback
+	}
+	var modelSize int64
+	if fi, err := os.Stat(modelPath); err == nil {
+		modelSize = fi.Size()
+	}
+	availableForKV := int64(freeVRAM) - modelSize
+	if availableForKV <= 0 {
+		return defaultLlamaCtxSize
+	}
+	kvPerToken := ggufmeta.KVCacheBytesPerToken(modelPath, 2)
+	if kvPerToken <= 0 {
+		return fallback
+	}
+	maxCtx := int(availableForKV / kvPerToken)
+	if maxCtx < 2048 {
+		maxCtx = 2048
+	}
+	if maxCtx > 32768 {
+		maxCtx = 32768
+	}
+	maxCtx = min(maxCtx, capNumCtxToModelMax(modelDir, maxCtx))
+	if maxCtx < defaultLlamaCtxSize {
+		return defaultLlamaCtxSize
+	}
+	return maxCtx
+}
+
 // UseModelMaxCtxByDefault returns the effective model-maximum default.
 // An explicitly set environment variable has precedence over persisted config.
 func UseModelMaxCtxByDefault(configured bool) bool {
@@ -489,7 +531,7 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		modelName: modelName,
 		client:    &http.Client{Timeout: 0},
 	}
-	effectiveNumCtx := ResolveNumCtx(filepath.Dir(modelPath), numCtx)
+	effectiveNumCtx := resolveNumCtxVRAMAware(modelPath, filepath.Dir(modelPath), numCtx)
 	effectiveNumParallel := ResolveNumParallel(numParallel)
 	effectiveNGPULayers := ResolveNGPULayers(nGPULayers)
 	normalizedCacheTypeK, err := NormalizeCacheType(cacheTypeK)
@@ -591,6 +633,11 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	}
 	if IsROCMHost() {
 		env = appendEnvDefault(env, "GGML_CUDA_DISABLE_GRAPHS", "1")
+		if gfx := ROCMGfxArch(); gfx != "" {
+			if hsaVer := gfxToHSAOverride(gfx); hsaVer != "" {
+				env = appendEnvDefault(env, "HSA_OVERRIDE_GFX_VERSION", hsaVer)
+			}
+		}
 	}
 	if ROCMUnifiedMemoryMode() {
 		// ggml only checks for the variable's presence, so it must stay

@@ -2,6 +2,8 @@ package inference
 
 import (
 	"bufio"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,7 +87,7 @@ func isKFDAPUOnlyHost() bool {
 		if err != nil {
 			continue
 		}
-		simdCount, localMemSize := parseKFDNodeProperties(props)
+		simdCount, localMemSize, _ := parseKFDNodeProperties(props)
 		props.Close()
 		if simdCount <= 0 {
 			continue // CPU-only node
@@ -98,7 +100,7 @@ func isKFDAPUOnlyHost() bool {
 	return gpuNodes > 0
 }
 
-func parseKFDNodeProperties(r interface{ Read([]byte) (int, error) }) (simdCount, localMemSize int64) {
+func parseKFDNodeProperties(r interface{ Read([]byte) (int, error) }) (simdCount, localMemSize, gfxTargetVersion int64) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -114,7 +116,172 @@ func parseKFDNodeProperties(r interface{ Read([]byte) (int, error) }) (simdCount
 			simdCount = value
 		case "local_mem_size":
 			localMemSize = value
+		case "gfx_target_version":
+			gfxTargetVersion = value
 		}
 	}
-	return simdCount, localMemSize
+	return simdCount, localMemSize, gfxTargetVersion
+}
+
+// gfxTargetVersionToArch converts a KFD gfx_target_version (e.g. 110003)
+// to the canonical gfx ISA string (e.g. "gfx1100"). The packed decimal
+// format is major*10000 + minor*100 + stepping, where minor and stepping
+// are hex nibbles (e.g. 110501 -> gfx1151). Returns "" for zero/invalid input.
+func gfxTargetVersionToArch(version int64) string {
+	if version <= 0 {
+		return ""
+	}
+	major := version / 10000
+	minor := (version / 100) % 100
+	stepping := version % 100
+	if major == 0 {
+		return ""
+	}
+	return fmt.Sprintf("gfx%d%x%x", major, minor, stepping)
+}
+
+// detectROCMGfxArch reads KFD topology to find the gfx architecture of the
+// first GPU node with dedicated VRAM. Falls back to any GPU node (APU).
+// Returns "" if no GPU is found or KFD is unavailable.
+func detectROCMGfxArch() string {
+	nodes, err := os.ReadDir(kfdTopologyNodesDir)
+	if err != nil {
+		return ""
+	}
+	var apuGfx string
+	for _, node := range nodes {
+		props, err := os.Open(filepath.Join(kfdTopologyNodesDir, node.Name(), "properties"))
+		if err != nil {
+			continue
+		}
+		simdCount, localMemSize, gfxTargetVersion := parseKFDNodeProperties(props)
+		props.Close()
+		if simdCount <= 0 {
+			continue
+		}
+		arch := gfxTargetVersionToArch(gfxTargetVersion)
+		if localMemSize > 0 {
+			return arch
+		}
+		if apuGfx == "" {
+			apuGfx = arch
+		}
+	}
+	return apuGfx
+}
+
+// ROCMGfxArch returns the detected AMD GPU architecture (e.g. "gfx1151")
+// on ROCm hosts, or "" if detection fails or the host is not ROCm.
+func ROCMGfxArch() string {
+	if !IsROCMHost() {
+		return ""
+	}
+	return detectROCMGfxArch()
+}
+
+// gfxToHSAOverride converts a gfx ISA string like "gfx1151" to the
+// HSA_OVERRIDE_GFX_VERSION format "11.5.1".
+func gfxToHSAOverride(gfx string) string {
+	s := strings.TrimPrefix(gfx, "gfx")
+	if len(s) < 3 {
+		return ""
+	}
+	stepping := s[len(s)-1:]
+	minor := s[len(s)-2 : len(s)-1]
+	major := s[:len(s)-2]
+	return major + "." + minor + "." + stepping
+}
+
+// ROCMFreeVRAM returns the free VRAM in bytes on ROCm hosts. On discrete GPUs
+// this is free VRAM; on APUs it is system RAM available (via /proc/meminfo).
+// Returns 0 if the host is not ROCm or the value cannot be determined.
+func ROCMFreeVRAM() uint64 {
+	if !IsROCMHost() {
+		return 0
+	}
+	if v := rocmSMIFreeVRAM(); v > 0 {
+		return v
+	}
+	if isKFDAPUOnlyHost() {
+		return readProcMemAvailable()
+	}
+	return drmFreeVRAM()
+}
+
+func rocmSMIFreeVRAM() uint64 {
+	binary, err := exec.LookPath("rocm-smi")
+	if err != nil {
+		return 0
+	}
+	out, err := exec.Command(binary, "--showmeminfo", "vram", "--json").Output()
+	if err != nil {
+		return 0
+	}
+	var cards map[string]map[string]string
+	if err := jsonUnmarshal(out, &cards); err != nil {
+		return 0
+	}
+	var bestFree uint64
+	for _, card := range cards {
+		totalStr := strings.TrimSpace(card["VRAM Total Memory (B)"])
+		usedStr := strings.TrimSpace(card["VRAM Total Used Memory (B)"])
+		if totalStr == "" {
+			continue
+		}
+		total, _ := strconv.ParseUint(totalStr, 10, 64)
+		used, _ := strconv.ParseUint(usedStr, 10, 64)
+		if total > used && total-used > bestFree {
+			bestFree = total - used
+		}
+	}
+	return bestFree
+}
+
+func drmFreeVRAM() uint64 {
+	const drmDir = "/sys/class/drm"
+	entries, err := os.ReadDir(drmDir)
+	if err != nil {
+		return 0
+	}
+	var bestFree uint64
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "card") || strings.Contains(entry.Name(), "-") {
+			continue
+		}
+		totalData, err := os.ReadFile(filepath.Join(drmDir, entry.Name(), "device", "mem_info_vram_total"))
+		if err != nil {
+			continue
+		}
+		usedData, err := os.ReadFile(filepath.Join(drmDir, entry.Name(), "device", "mem_info_vram_used"))
+		if err != nil {
+			continue
+		}
+		total, _ := strconv.ParseUint(strings.TrimSpace(string(totalData)), 10, 64)
+		used, _ := strconv.ParseUint(strings.TrimSpace(string(usedData)), 10, 64)
+		if total > used && total-used > bestFree {
+			bestFree = total - used
+		}
+	}
+	return bestFree
+}
+
+func readProcMemAvailable() uint64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "MemAvailable:") {
+			fields := strings.Fields(line)
+			if len(fields) == 2 {
+				val, _ := strconv.ParseUint(fields[1], 10, 64)
+				return val * 1024
+			}
+		}
+	}
+	return 0
+}
+
+func jsonUnmarshal(data []byte, v interface{}) error {
+	return json.Unmarshal(data, v)
 }

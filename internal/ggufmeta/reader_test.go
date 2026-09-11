@@ -3,6 +3,7 @@ package ggufmeta
 import (
 	"bytes"
 	"encoding/binary"
+	"os"
 	"strings"
 	"testing"
 )
@@ -96,5 +97,64 @@ func writeTestValue(t *testing.T, data *bytes.Buffer, value any) {
 	t.Helper()
 	if err := binary.Write(data, binary.LittleEndian, value); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestKVCacheBytesPerToken(t *testing.T) {
+	data := buildTestGGUF(t, []testMetadata{
+		{key: "general.architecture", valueType: typeString, value: "llama"},
+		{key: "llama.block_count", valueType: typeUint32, value: uint32(32)},
+		{key: "llama.attention.head_count_kv", valueType: typeUint32, value: uint32(8)},
+		{key: "llama.attention.key_length", valueType: typeUint32, value: uint32(128)},
+		{key: "llama.attention.value_length", valueType: typeUint32, value: uint32(128)},
+	})
+
+	tmp := t.TempDir() + "/test.gguf"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 32 * 8 * (128 + 128) * 2 = 131072
+	got := KVCacheBytesPerToken(tmp, 2)
+	if got != 131072 {
+		t.Fatalf("KVCacheBytesPerToken = %d, want 131072", got)
+	}
+}
+
+func TestKVCacheBytesPerTokenFallsBackToEmbeddingLength(t *testing.T) {
+	data := buildTestGGUF(t, []testMetadata{
+		{key: "general.architecture", valueType: typeString, value: "llama"},
+		{key: "llama.block_count", valueType: typeUint32, value: uint32(32)},
+		{key: "llama.attention.head_count_kv", valueType: typeUint32, value: uint32(8)},
+		{key: "llama.attention.head_count", valueType: typeUint32, value: uint32(32)},
+		{key: "llama.embedding_length", valueType: typeUint32, value: uint32(4096)},
+	})
+
+	tmp := t.TempDir() + "/test.gguf"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// key_length = 4096 / 32 = 128, value_length defaults to key_length
+	// 32 * 8 * (128 + 128) * 2 = 131072
+	got := KVCacheBytesPerToken(tmp, 2)
+	if got != 131072 {
+		t.Fatalf("KVCacheBytesPerToken = %d, want 131072", got)
+	}
+}
+
+func TestKVCacheBytesPerTokenMissingFields(t *testing.T) {
+	data := buildTestGGUF(t, []testMetadata{
+		{key: "general.architecture", valueType: typeString, value: "llama"},
+		{key: "llama.block_count", valueType: typeUint32, value: uint32(32)},
+	})
+
+	tmp := t.TempDir() + "/test.gguf"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := KVCacheBytesPerToken(tmp, 2); got != 0 {
+		t.Fatalf("KVCacheBytesPerToken = %d, want 0 for missing fields", got)
 	}
 }

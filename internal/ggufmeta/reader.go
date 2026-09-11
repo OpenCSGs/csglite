@@ -242,6 +242,54 @@ func (m *Metadata) IsVisionProjector() bool {
 	return false
 }
 
+// KVCacheBytesPerToken estimates the KV cache bytes per token from GGUF
+// metadata. Returns 0 if the required fields are missing.
+// dtypeSize is the bytes per element of one KV entry (e.g. 2 for f16).
+func KVCacheBytesPerToken(path string, dtypeSize int) int64 {
+	meta, err := ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	arch, ok := meta.String("general.architecture")
+	if !ok || arch == "" {
+		return 0
+	}
+	blockCount, ok := meta.PositiveIntWithSuffix(".block_count")
+	if !ok || blockCount <= 0 {
+		return 0
+	}
+	headCountKV, ok := meta.PositiveIntWithSuffix(".attention.head_count_kv")
+	if !ok || headCountKV <= 0 {
+		return 0
+	}
+	keyLength, ok := meta.PositiveIntWithSuffix(".attention.key_length")
+	if !ok || keyLength <= 0 {
+		// Fall back to embedding_length / head_count (common for models
+		// that don't explicitly set key_length in GGUF metadata).
+		embeddingLength, ok := meta.PositiveIntWithSuffix(".embedding_length")
+		if !ok || embeddingLength <= 0 {
+			return 0
+		}
+		headCount, ok := meta.PositiveIntWithSuffix(".attention.head_count")
+		if !ok || headCount <= 0 {
+			return 0
+		}
+		keyLength = embeddingLength / headCount
+		if keyLength <= 0 {
+			return 0
+		}
+	}
+	// value_length defaults to key_length when not explicitly set.
+	valueLength, ok := meta.PositiveIntWithSuffix(".attention.value_length")
+	if !ok || valueLength <= 0 {
+		valueLength = keyLength
+	}
+	if dtypeSize <= 0 {
+		dtypeSize = 2
+	}
+	return int64(blockCount) * int64(headCountKV) * int64(keyLength+valueLength) * int64(dtypeSize)
+}
+
 func readValue(reader io.Reader, valueType uint32) (value, bool, error) {
 	var item value
 	item.kind = valueType

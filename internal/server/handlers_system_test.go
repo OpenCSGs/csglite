@@ -249,3 +249,71 @@ func TestMemoryFieldUnsupported(t *testing.T) {
 		}
 	}
 }
+
+func TestParseROCmSMIOutput(t *testing.T) {
+	out := []byte(`{
+  "card0": {
+    "Card model": "AMD Radeon RX 7800 XT",
+    "VRAM Total Memory (B)": "17163091968",
+    "VRAM Total Used Memory (B)": "2147483648"
+  }
+}`)
+	info, ok := parseROCmSMIOutput(out)
+	if !ok {
+		t.Fatal("parseROCmSMIOutput returned false, want true")
+	}
+	if info.Name != "AMD Radeon RX 7800 XT" {
+		t.Fatalf("unexpected GPU name: %q", info.Name)
+	}
+	if info.VRAMTotal != 17163091968 {
+		t.Fatalf("unexpected GPU total bytes: %d", info.VRAMTotal)
+	}
+	if info.VRAMUsed != 2147483648 {
+		t.Fatalf("unexpected GPU used bytes: %d", info.VRAMUsed)
+	}
+	if !info.UsageAvailable {
+		t.Fatal("UsageAvailable = false, want true")
+	}
+	if info.SharedMemory {
+		t.Fatal("SharedMemory = true, want false")
+	}
+}
+
+func TestParseROCmSMIOutputMultipleCardsPicksLargest(t *testing.T) {
+	out := []byte(`{
+  "card0": {
+    "Card model": "AMD Radeon RX 6600",
+    "VRAM Total Memory (B)": "8589934592",
+    "VRAM Total Used Memory (B)": "1073741824"
+  },
+  "card1": {
+    "Card model": "AMD Radeon RX 7800 XT",
+    "VRAM Total Memory (B)": "17163091968",
+    "VRAM Total Used Memory (B)": "2147483648"
+  }
+}`)
+	info, ok := parseROCmSMIOutput(out)
+	if !ok {
+		t.Fatal("parseROCmSMIOutput returned false, want true")
+	}
+	if info.Name != "AMD Radeon RX 7800 XT" {
+		t.Fatalf("unexpected GPU name: %q", info.Name)
+	}
+	if info.VRAMTotal != 17163091968 {
+		t.Fatalf("unexpected GPU total bytes: %d", info.VRAMTotal)
+	}
+}
+
+func TestParseROCmSMIOutputEmpty(t *testing.T) {
+	out := []byte(`{}`)
+	if _, ok := parseROCmSMIOutput(out); ok {
+		t.Fatal("parseROCmSMIOutput returned true for empty input, want false")
+	}
+}
+
+func TestParseROCmSMIOutputInvalidJSON(t *testing.T) {
+	out := []byte(`not json`)
+	if _, ok := parseROCmSMIOutput(out); ok {
+		t.Fatal("parseROCmSMIOutput returned true for invalid JSON, want false")
+	}
+}
