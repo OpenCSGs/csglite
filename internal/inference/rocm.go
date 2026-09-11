@@ -140,15 +140,15 @@ func gfxTargetVersionToArch(version int64) string {
 	return fmt.Sprintf("gfx%d%x%x", major, minor, stepping)
 }
 
-// detectROCMGfxArch reads KFD topology to find the gfx architecture of the
+// detectROCMGfxArch reads KFD topology to find the gfx_target_version of the
 // first GPU node with dedicated VRAM. Falls back to any GPU node (APU).
-// Returns "" if no GPU is found or KFD is unavailable.
-func detectROCMGfxArch() string {
+// Returns 0 if no GPU is found or KFD is unavailable.
+func detectROCMGfxTargetVersion() int64 {
 	nodes, err := os.ReadDir(kfdTopologyNodesDir)
 	if err != nil {
-		return ""
+		return 0
 	}
-	var apuGfx string
+	var apuVersion int64
 	for _, node := range nodes {
 		props, err := os.Open(filepath.Join(kfdTopologyNodesDir, node.Name(), "properties"))
 		if err != nil {
@@ -159,15 +159,14 @@ func detectROCMGfxArch() string {
 		if simdCount <= 0 {
 			continue
 		}
-		arch := gfxTargetVersionToArch(gfxTargetVersion)
 		if localMemSize > 0 {
-			return arch
+			return gfxTargetVersion
 		}
-		if apuGfx == "" {
-			apuGfx = arch
+		if apuVersion == 0 {
+			apuVersion = gfxTargetVersion
 		}
 	}
-	return apuGfx
+	return apuVersion
 }
 
 // ROCMGfxArch returns the detected AMD GPU architecture (e.g. "gfx1151")
@@ -176,20 +175,34 @@ func ROCMGfxArch() string {
 	if !IsROCMHost() {
 		return ""
 	}
-	return detectROCMGfxArch()
+	return gfxTargetVersionToArch(detectROCMGfxTargetVersion())
 }
 
-// gfxToHSAOverride converts a gfx ISA string like "gfx1151" to the
-// HSA_OVERRIDE_GFX_VERSION format "11.5.1".
-func gfxToHSAOverride(gfx string) string {
-	s := strings.TrimPrefix(gfx, "gfx")
-	if len(s) < 3 {
+// gfxTargetVersionToHSAOverride converts a KFD gfx_target_version (e.g. 110501)
+// directly to the HSA_OVERRIDE_GFX_VERSION format "11.5.1" using decimal
+// decomposition, avoiding the hex-nibble string round-trip that produces
+// invalid values for architectures like gfx90a.
+func gfxTargetVersionToHSAOverride(version int64) string {
+	if version <= 0 {
 		return ""
 	}
-	stepping := s[len(s)-1:]
-	minor := s[len(s)-2 : len(s)-1]
-	major := s[:len(s)-2]
-	return major + "." + minor + "." + stepping
+	major := version / 10000
+	minor := (version / 100) % 100
+	stepping := version % 100
+	if major == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d.%d", major, minor, stepping)
+}
+
+// ROCMHSAOverrideGFXVersion returns the HSA_OVERRIDE_GFX_VERSION value
+// (e.g. "11.5.1") on ROCm hosts, or "" if detection fails or the host
+// is not ROCm.
+func ROCMHSAOverrideGFXVersion() string {
+	if !IsROCMHost() {
+		return ""
+	}
+	return gfxTargetVersionToHSAOverride(detectROCMGfxTargetVersion())
 }
 
 // ROCMFreeVRAM returns the free VRAM in bytes on ROCm hosts. On discrete GPUs

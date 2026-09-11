@@ -319,24 +319,18 @@ func resolveNumCtxVRAMAware(modelPath, modelDir string, requested int) int {
 	}
 	availableForKV := int64(freeVRAM) - modelSize
 	if availableForKV <= 0 {
-		return defaultLlamaCtxSize
+		return min(fallback, defaultLlamaCtxSize)
 	}
 	kvPerToken := ggufmeta.KVCacheBytesPerToken(modelPath, 2)
 	if kvPerToken <= 0 {
 		return fallback
 	}
-	maxCtx := int(availableForKV / kvPerToken)
-	if maxCtx < 2048 {
-		maxCtx = 2048
+	vramCeiling := int(availableForKV / kvPerToken)
+	if vramCeiling > 32768 {
+		vramCeiling = 32768
 	}
-	if maxCtx > 32768 {
-		maxCtx = 32768
-	}
-	maxCtx = min(maxCtx, capNumCtxToModelMax(modelDir, maxCtx))
-	if maxCtx < defaultLlamaCtxSize {
-		return defaultLlamaCtxSize
-	}
-	return maxCtx
+	vramCeiling = min(vramCeiling, capNumCtxToModelMax(modelDir, vramCeiling))
+	return min(fallback, vramCeiling)
 }
 
 // UseModelMaxCtxByDefault returns the effective model-maximum default.
@@ -633,10 +627,8 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	}
 	if IsROCMHost() {
 		env = appendEnvDefault(env, "GGML_CUDA_DISABLE_GRAPHS", "1")
-		if gfx := ROCMGfxArch(); gfx != "" {
-			if hsaVer := gfxToHSAOverride(gfx); hsaVer != "" {
-				env = appendEnvDefault(env, "HSA_OVERRIDE_GFX_VERSION", hsaVer)
-			}
+		if hsaVer := ROCMHSAOverrideGFXVersion(); hsaVer != "" {
+			env = appendEnvDefault(env, "HSA_OVERRIDE_GFX_VERSION", hsaVer)
 		}
 	}
 	if ROCMUnifiedMemoryMode() {

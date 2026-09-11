@@ -1031,13 +1031,13 @@ func readKFDGPUInfo() (gpuInfo, bool) {
 	if err != nil {
 		return gpuInfo{}, false
 	}
+	var apuFound bool
 	var apu gpuInfo
 	for _, entry := range entries {
 		data, err := os.ReadFile(filepath.Join(kfdDir, entry.Name(), "properties"))
 		if err != nil {
 			continue
 		}
-		var name string
 		var simdCount, localMemSize int64
 		for _, line := range strings.Split(string(data), "\n") {
 			fields := strings.Fields(line)
@@ -1045,8 +1045,6 @@ func readKFDGPUInfo() (gpuInfo, bool) {
 				continue
 			}
 			switch fields[0] {
-			case "name":
-				name = fields[1]
 			case "simd_count":
 				simdCount, _ = strconv.ParseInt(fields[1], 10, 64)
 			case "local_mem_size":
@@ -1056,18 +1054,29 @@ func readKFDGPUInfo() (gpuInfo, bool) {
 		if simdCount <= 0 {
 			continue
 		}
+		name := readKFDNodeName(filepath.Join(kfdDir, entry.Name()))
 		gpu := gpuInfo{Name: name, VRAMTotal: uint64(localMemSize)}
 		if localMemSize > 0 {
 			return gpu, true
 		}
-		if apu.Name == "" {
+		if !apuFound {
 			apu = gpu
+			apuFound = true
 		}
 	}
-	if apu.Name != "" {
+	if apuFound {
 		return apu, true
 	}
 	return gpuInfo{}, false
+}
+
+// readKFDNodeName reads the GPU name from the KFD topology node's "name" file.
+func readKFDNodeName(nodeDir string) string {
+	data, err := os.ReadFile(filepath.Join(nodeDir, "name"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // readDRMVRAMUsed reads VRAM usage from the amdgpu DRM sysfs interface.
