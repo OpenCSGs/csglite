@@ -551,3 +551,87 @@ func TestStorageSubdirsForRoot(t *testing.T) {
 		t.Fatalf("DatasetDirForStorage(%q) = %q", root, got)
 	}
 }
+
+// A configuration written before the realtime section existed must keep working
+// and take the documented defaults.
+func TestRealtimeConfigDefaultsForLegacyConfig(t *testing.T) {
+	var cfg Config
+	if err := json.Unmarshal([]byte(`{"server_url":"https://hub.opencsg.com"}`), &cfg); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+	if got := cfg.RealtimeMaxSessions(); got != DefaultRealtimeMaxSessions {
+		t.Fatalf("RealtimeMaxSessions() = %d, want %d", got, DefaultRealtimeMaxSessions)
+	}
+	if _, _, ok := cfg.RealtimeICEPortRange(); ok {
+		t.Fatal("RealtimeICEPortRange() reported a range for a config that has none")
+	}
+	if cfg.Realtime.DefaultTTSModel != "" || cfg.Realtime.DefaultASRModel != "" {
+		t.Fatal("legacy config carried realtime model defaults")
+	}
+}
+
+func TestRealtimeConfigPersistsAcrossSaveAndLoad(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	clearCloudServiceEnv(t)
+	Reset()
+	t.Cleanup(Reset)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Realtime = RealtimeConfig{
+		DefaultASRModel: "iic/SenseVoiceSmall",
+		DefaultTTSModel: "hexgrad/Kokoro-82M",
+		MaxSessions:     2,
+		ICEUDPPortRange: []int{50000, 50100},
+		ICEExtraHostIPs: []string{"203.0.113.7"},
+		ICEServers:      []string{"stun:stun.example.com:3478"},
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	Reset()
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Realtime.DefaultTTSModel != "hexgrad/Kokoro-82M" {
+		t.Fatalf("DefaultTTSModel = %q after reload", loaded.Realtime.DefaultTTSModel)
+	}
+	if loaded.Realtime.DefaultASRModel != "iic/SenseVoiceSmall" {
+		t.Fatalf("DefaultASRModel = %q after reload", loaded.Realtime.DefaultASRModel)
+	}
+	if got := loaded.RealtimeMaxSessions(); got != 2 {
+		t.Fatalf("RealtimeMaxSessions() = %d, want 2", got)
+	}
+	low, high, ok := loaded.RealtimeICEPortRange()
+	if !ok || low != 50000 || high != 50100 {
+		t.Fatalf("RealtimeICEPortRange() = %d, %d, %v", low, high, ok)
+	}
+	if len(loaded.Realtime.ICEExtraHostIPs) != 1 || loaded.Realtime.ICEExtraHostIPs[0] != "203.0.113.7" {
+		t.Fatalf("ICEExtraHostIPs = %v after reload", loaded.Realtime.ICEExtraHostIPs)
+	}
+	if len(loaded.Realtime.ICEServers) != 1 {
+		t.Fatalf("ICEServers = %v after reload", loaded.Realtime.ICEServers)
+	}
+}
+
+// A negative cap means unlimited, which is how an operator turns the guard off;
+// a malformed port range must fall back to any ephemeral port rather than be
+// passed on to the ICE agent.
+func TestRealtimeConfigEdgeValues(t *testing.T) {
+	unlimited := Config{Realtime: RealtimeConfig{MaxSessions: -1}}
+	if got := unlimited.RealtimeMaxSessions(); got != 0 {
+		t.Fatalf("RealtimeMaxSessions() = %d for a negative cap, want 0 (unlimited)", got)
+	}
+	for _, bad := range [][]int{{}, {50000}, {0, 100}, {200, 100}, {50000, 70000}, {50000, 50100, 50200}} {
+		cfg := Config{Realtime: RealtimeConfig{ICEUDPPortRange: bad}}
+		if _, _, ok := cfg.RealtimeICEPortRange(); ok {
+			t.Errorf("RealtimeICEPortRange() accepted %v", bad)
+		}
+	}
+}

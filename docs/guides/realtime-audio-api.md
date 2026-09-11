@@ -1,6 +1,6 @@
 # 实时语音 API 设计（ASR + TTS 全双工，兼容 OpenAI Realtime）
 
-- 状态：设计草案（待评审），**P0 与 P1 已实现**，对应 issue [#147](https://github.com/OpenCSGs/csglite/issues/147)
+- 状态：**P0、P1、P2、P3 已实现**（P4 生产化未开始），对应 issue [#147](https://github.com/OpenCSGs/csglite/issues/147)
 - 范围：`/v1/audio/speech`、`/v1/realtime*`、本地 TTS 运行时、以及配套的 `/api/*` 管理面
 - 兼容目标：OpenAI Realtime API（WebRTC 与 WebSocket 两种传输）+ OpenAI `audio/speech`、`audio/transcriptions`
 
@@ -211,7 +211,7 @@ GET  /v1/audio/transcriptions/realtime
 | `response.created` | 全部 | 一次生成开始 |
 | `response.output_item.added` / `.done` | 全部 | 输出条目 |
 | `response.output_audio_transcript.delta` / `.done` | 全部 | TTS 文本对齐字幕 |
-| `response.output_audio.delta` / `.done` | **仅 WS** | base64 PCM16 音频块；WebRTC 下音频走媒体轨，不发这两个事件 |
+| `response.output_audio.delta` / `.done` | **仅 WS** | base64 PCM16 放在 `delta` 字段；WebRTC 下音频走媒体轨，不发这两个事件 |
 | `output_audio_buffer.started` | **仅 WebRTC** | 开始向下行轨推流 |
 | `output_audio_buffer.stopped` | **仅 WebRTC** | 音频播完（issue 第 8 条） |
 | `output_audio_buffer.cleared` | **仅 WebRTC** | 被 `output_audio_buffer.clear` 打断（issue 第 9 条） |
@@ -279,17 +279,17 @@ v=0 ... (SDP answer)
 媒体与数据通道约定：
 
 - 一条上行音频轨（客户端麦克风 → ASR）+ 一条下行音频轨（TTS → 客户端播放），`sendrecv`。
-- 编解码协商顺序：`opus/48000/2`（首选，`useinbandfec=1`、20ms ptime）→ `PCMU/8000` 回退（浏览器普遍支持，纯 Go 编码代价极低，音质降级但保证可用）。
+- 编解码：**上行 `opus/48000/2` 解码**（`pion/opus` 的已发布 API 只有解码器，正好够用）、**下行 `PCMU/8000` 编码**（纯 Go 实现，见 §8.4）。两个 codec 都注册进 MediaEngine，因此浏览器发 Opus、收 PCMU。
 - DataChannel 名称固定 `oai-events`，`ordered: true`，负载为 UTF-8 JSON，一帧一事件。
-- ICE：默认只收集本机 host candidate（本地部署无需 STUN/TURN），UDP 端口范围可配；同时启用 ICE-TCP 以应对禁 UDP 的环境。
-- `DELETE /v1/realtime/calls/{call_id}` 或 DataChannel 关闭 → 关闭 PeerConnection、释放 ASR/TTS 会话资源。
+- ICE：默认只收集本机 host candidate（本地部署无需 STUN/TURN）；answer 在 ICE gathering 完成后才返回（最多等 5s），因为这个流程没有回传 trickle candidate 的通道。
+- `DELETE /v1/realtime/calls/{call_id}` 或 PeerConnection 断开 → 关闭 PeerConnection、释放 ASR/TTS 会话资源。
 
 ### 4.5 WebSocket 传输
 
 `GET /v1/realtime?model=<id>` 升级为 WebSocket，事件与 §4.3 完全一致，差异只有：
 
 - 上行音频用 `input_audio_buffer.append`（base64 PCM16，建议 20–100ms 一帧）。
-- 下行音频用 `response.output_audio.delta`。
+- 下行音频用 `response.output_audio.delta`，载荷在 `delta` 字段。
 - 不产生 `output_audio_buffer.*` 事件；打断用 `response.cancel` + `input_audio_buffer.clear`。
 
 `GET /v1/realtime/transcription`（及别名 `/v1/audio/transcriptions/realtime`）等价于 `session.type=transcription`：只做流式 ASR，不接受 `response.create`。
@@ -379,7 +379,7 @@ GET /api/models/{model}/voices
 按 `docs/agent-guidelines/config-schema.md`，先复用已有结构，只补一个不重叠的新节：
 
 - **每模型默认值（音色、语速、采样率）** → 复用已有的**每模型配置**（`GET/PUT /api/models/{model}/config`，服务端持久化），并在既有 Run 对话框里展示，不新增配置入口。
-- **全局 realtime 设置** → `config.json` 新增 `realtime` 节（唯一可写来源）：
+- **全局 realtime 设置** → `config.json` 新增 `realtime` 节（唯一可写来源，已实现于 `internal/config/config.go` 的 `RealtimeConfig`）：
 
 ```json
 {
@@ -404,7 +404,7 @@ GET /api/models/{model}/voices
 | 2. multipart 含 `sdp` + `session` | §4.4 形态 A（同时支持裸 SDP 形态 B） |
 | 3. `Accept: application/sdp` | §4.4，响应 `Content-Type: application/sdp` |
 | 4. 返回 SDP Answer | §4.4，200 + `Location: /v1/realtime/calls/{id}` |
-| 5. 双向音频轨（上行 ASR / 下行 TTS） | §4.4，Opus 首选 / PCMU 回退 |
+| 5. 双向音频轨（上行 ASR / 下行 TTS） | §4.4，上行 Opus 解码 / 下行 PCMU 编码（§8.4） |
 | 6. DataChannel `oai-events` | §4.4 |
 | 7. ASR `...transcription.delta` / `.completed` | §4.3，能力边界见 §5.1 |
 | 8. `response.create` → 下行音频 + `response.done` + `output_audio_buffer.stopped` | §4.3；无 LLM 时 `instructions` 直读 |
@@ -440,7 +440,7 @@ issue 的清单**绝大部分是 OpenAI GA 的原样路径与事件名**，可�
 | **P0** | `support.go` 路由修正（TTS 不再走 GGUF 转换）+ 5 个 stub 返回 501 + OpenAPI 同步 | 消除"把 TTS 当文本模型跑"和"GET 拿到 HTML"两个错误行为，改动极小 |
 | **P1** | `internal/tts` + `tts_worker.py` + `/api/tts-runtime` + `POST /v1/audio/speech` + `/api/models/{model}/voices` | 端到端可用的本地 TTS，且不依赖 WebRTC |
 | **P2** | `internal/realtime` 事件/会话状态机 + `asr.StreamingEngine` + `server_vad` + WebSocket 传输（`/v1/realtime`、`/v1/realtime/transcription`） | 全双工能力落地，事件协议一次做对 |
-| **P3** | `pion/webrtc` 传输 + `POST /v1/realtime/calls` + `output_audio_buffer.*` + Opus 打包 | 满足 issue 首选协议 |
+| **P3** | `pion/webrtc` 传输 + `POST /v1/realtime/calls` + `output_audio_buffer.*` + 媒体轨打包 | 满足 issue 首选协议 |
 | **P4** | `POST /v1/realtime/client_secrets`、`/api/realtime/sessions` 观测、Web UI 语音对话入口、第三方 provider 的 realtime 透传 | 生产化 |
 
 ## 8.1 P0 实现记录（已完成）
@@ -560,9 +560,64 @@ venv 的 site-packages 之前。实测有效——私有 protobuf 3.19.6 生效�
 当前 `ttsOverlayPackages` 为空：四个已支持的后端都能共处一个 venv。机制保留，因为放任某个后端的
 pin 改写共享环境会弄坏其它后端。
 
-### 仍未完成
+### 流式合成的首包延迟
 
-issue #147 的第 2、3 项（实时 ASR WebSocket、WebRTC 全双工）仍返回 501，对应本文档的 P2 与 P3。
+`stream=true` 曾经只是 HTTP chunked：首字节几乎与总耗时同时到达（实测三个后端的差值都只有 7 毫秒），
+客户端看起来在流、实际上要等整段生成完。两个原因：
+
+1. **worker 把编码串行化了**。它先把全部 PCM 写进 ffmpeg、关掉 stdin，然后才开始读 stdout，于是编码
+   后的字节不可能比最后一段 PCM 更早出来。现在用一个线程喂 stdin、主协程用 `read1` 边读边发。
+2. **引擎大多一次性产出整段音频**。`qwen-tts` 的 docstring 明确写了它没有流式生成（`non_streaming_mode`
+   只模拟流式文本*输入*）；Kokoro 虽然按段 yield，但实测五句话的文本它只切出一段。
+
+所以流式路径改为**按句切分**：`_split_for_streaming` 在句末标点处切开，逐句合成、每句出来就发。下界取
+6 个字符，因为一句中文约 8 字，取大了会把几句并成一次调用。
+
+实测（五句中文，引擎已预热，CPU）：
+
+| 模型 | 修复前首字节 | 修复后首字节 | 总耗时 |
+| --- | --- | --- | --- |
+| Kokoro-82M | ≈ 总耗时 | **1.47s** | 3.47s |
+| Qwen3-TTS-0.6B-CustomVoice | ≈ 总耗时 | **5.84s** | 14.57s |
+
+切分只作用于流式路径。普通请求仍整段合成，因为逐句调用无法还原跨句韵律。
+
+## 8.3 P2 实现记录（已完成）
+
+WebSocket 传输、流式 ASR 与实时事件协议已落地。
+
+| 改动 | 位置 |
+| --- | --- |
+| 事件协议与会话对象 | `internal/realtime/events.go`、`session.go` |
+| 会话状态机（打断、取消、缓冲清空、序号） | `internal/realtime/session_runtime.go` |
+| 流式 ASR worker 端点 | `internal/asr/worker/asr_worker.py` 的 `LiveSession` + `WS /transcribe_live` |
+| 流式 ASR 客户端 | `internal/asr/live.go`：`StreamingEngine` / `LiveStream` |
+| WebSocket 端点 | `internal/server/handlers_realtime_ws.go`：`GET /v1/realtime`、`/v1/realtime/transcription`、`/v1/audio/transcriptions/realtime` |
+
+**会话层与传输解耦**是刻意的：WebRTC 与 WebSocket 只差「音频走媒体轨还是走 base64 事件」，
+`realtime.Sender` 把这点抽象掉，所以 P3 只需实现一个新的 Sender，会话逻辑一行不用改。
+
+**流式 ASR 的实现方式**：已加载的后端只能转写完整片段，所以切分放在 worker 里——用 fsmn-vad
+增量跑（`cache` + `is_final=False`）找出语音起止，每个结束的片段转写为 `completed`，并按间隔对
+当前累积音频重新转写产生 `delta`。因此 **`delta` 是「当前片段的最佳假设」而不是只增前缀**，客户端
+应以 `completed` 为准；这一点已写进 OpenAPI 描述。没有 VAD 时退化为由客户端 `commit` 切分。
+
+### 实测（Kokoro，CPU，引擎预热后）
+
+```
+流式：音频帧 5 个（一句一帧）、首帧 0.22s、总耗时 1.13s
+打断：收到首帧立即 response.cancel → output_audio_buffer.stopped → response.done status=cancelled
+事件顺序：session.created → response.created → output_audio_buffer.started
+          → response.output_audio.delta × N → response.output_audio.done
+          → output_audio_buffer.stopped → response.done
+```
+
+首帧 0.22s 落在反馈要求的 300–800ms 之内。
+
+### 一个连带修掉的不一致
+
+句子切分最初只加在压缩格式那条分支，而 realtime 用的是 `pcm`——于是整段音频作为一帧到达（首帧
+7.49s），取消也因为生成早已结束而报成 `completed`。两条分支现在共用同一份 `segments`。
 
 ### chat 界面尚未接入 TTS
 
@@ -587,9 +642,156 @@ ModelScope 无镜像，且是裸 checkpoint 需手工凑构造参数）；更重
 （训练集 librispeech + 俄语书 + common voice，作者自报 PESQ 1.11），**念不出中文**。需要中文的场景应使用
 官方 Qwen3-TTS。
 
+## 8.4 P3 实现记录（已完成）
+
+WebRTC 传输已落地，issue 里客户端首选的协议现在可用。
+
+| 改动 | 位置 |
+| --- | --- |
+| SDP 协商、媒体轨、DataChannel、通话注册表 | `internal/server/handlers_realtime_webrtc.go` |
+| G.711 mu-law 编解码与线性重采样 | `internal/realtime/g711.go` |
+| 路由 | `internal/server/routes.go`：`POST /v1/realtime/calls`、`DELETE /v1/realtime/calls/{call_id}` |
+
+会话层没有任何改动，这正是 P2 里那句「只需实现一个新的 Sender」的兑现：`webrtcSender` 把事件写
+DataChannel、把音频写媒体轨，`Session`、事件协议、打断逻辑一行未动。
+
+### 编解码：上行 Opus、下行 PCMU
+
+`pion/opus v0.1.0` **只导出解码器**（`NewDecoder`），编码器只存在于未发布的 `main` 分支。而发版是
+`CGO_ENABLED=0`（commit db332be），不能引入 libopus 绑定。因此选择：
+
+- **上行**：浏览器发 Opus → `pion/opus` 解码 → 48kHz 立体声下混单声道 → 重采样到 16kHz → 喂给流式 ASR。
+- **下行**：合成音频（多为 24kHz）→ 重采样到 8kHz → mu-law 编码 → 20ms 一帧写入 `TrackLocalStaticSample`。
+
+代价是下行为电话音质。升级到 Opus 只需换掉 `g711.go` 与注册的 codec，其余不动——这也是 §9 第 1 条
+早就写下的退路，现在落在了 Go 侧而不是 Python worker 侧（worker 里装 `PyAV` 会把三平台的 wheel
+可装性问题带进来）。
+
+### 两个容易漏掉的细节
+
+**帧边界与合成块边界无关**。合成按句子出块，20ms 一帧则是固定 160 个采样点；不保留上一块的尾巴，
+每个块边界都会丢掉不足一帧的音频。`webrtcSender.nextFrames` 把余量以 8kHz 存着（不是以源采样率，
+否则会被重采样两次），下一块接着用。
+
+**SDP 的最后一行必须有换行**。`multipart` 字段与 HTTP body 里的 offer 都要 trim 首尾空白，但
+trim 掉尾部 `\r\n` 会让 pion 报 `failed to unmarshal SDP: EOF`——`normalizeSDP` 因此在 trim 之后
+补回行尾。这个错误只在真实浏览器/pion offer 上出现，手写的短 SDP 测不出来。
+
+### `realtime` 配置节（§6）一并落地
+
+`config.json` 的 `realtime` 节现在是真的：`max_sessions`（默认 4，负值为不限）对 **WebRTC 与
+WebSocket 合并计数**——两种会话都可能同时占着一个 ASR 和一个 TTS 模型，分开计数就失去意义；
+`ice_udp_port_range` / `ice_extra_host_ips` / `ice_servers` 走 pion 的 `SettingEngine`，供需要放行
+防火墙端口或处在 1:1 NAT 后的部署使用；`default_asr_model` / `default_tts_model` 补齐客户端没指定
+的那一半流水线（反馈里的客户端只带 `?model=<asr model>`，否则合成侧无从配置）。
+
+### 真机实测发现的三个问题（都已修）
+
+写完一版之后用 pion 做的客户端跑真实通话，暴露了三个只有真机才看得见的问题：
+
+**1. 出方向没有节流**。合成比实时快得多，pion 的 `WriteSample` 又不排期，于是 6.12s 的音频在
+642ms 内全部写进轨道。接收端的 jitter buffer 装不下几秒音频，而且**打断变得没有意义**——要取消的
+时候整段早已发完。`webrtcSender` 现在按 20ms 排期（`waitForFrameSlot`），允许 60ms 的预缓冲；
+修完之后 6.12s 的音频占 6.04s 墙钟，打断也真的能切掉后面的部分。
+
+**2. Opus 解码用了整个缓冲区**。`pion/opus` 的 `Decode(in, out []byte)` 不返回解出的样本数，照着
+`out` 的长度用就等于每个 20ms 的包往识别里灌 120ms 的陈旧音频。改用
+`DecodeToInt16(in, out []int16) (int, error)`（返回每声道样本数），并直接让解码器输出单声道
+（`NewDecoderWithOutput(48000, 1)`），省掉一次下混。
+
+**3. 握手被冷模型阻塞**。识别引擎原本在建会话之前同步加载，于是 SDP answer 要等模型加载完——
+实测 6.6s，换个大模型就是几十秒，浏览器早就超时了。现在识别在后台加载
+（`internal/server/realtime_transcription.go` 的 `deferredTranscriber`），answer 7ms 就返回；
+加载期间到达的音频**缓冲最多 30s 后回放**，而不是丢掉——不然用户抢答的头几个字就没了。
+
+另外补了一条 WebRTC 特有的收尾逻辑：发送端可能用 DTX，在静音时**根本不发包**，服务端 VAD 因此
+永远等不到静音、这一轮永远不结束。现在轨道静默 800ms 即视为一轮结束（`inboundGapCommit`）。
+
+### 实测
+
+三个真实场景，都对着本地 server 跑：
+
+**握手与挂断**（pion 客户端，一条 `sendrecv` 音频轨 + `oai-events`）：
+
+```
+POST /v1/realtime/calls status=200 (7ms)  Location: /v1/realtime/calls/sess_...
+answer 含 m=audio 与 PCMU/8000，客户端 SetRemoteDescription 成功，19ms 内 ICE 连通
+DataChannel 首个事件 = session.created
+DELETE /v1/realtime/calls/{id} → 200；再次 DELETE → 404
+畸形 offer → 400（invalid_request_error），注册表中不残留通话
+```
+
+**下行 TTS**（`modelscope/hexgrad/Kokoro-82M`，af_heart）：
+
+```
+冷启动：首帧 4.55s（含引擎加载）  预热后：首帧 687ms
+6.06s 的音频用 303 个 RTP 包送达，占 5.98s 墙钟（节流生效）
+把收到的 mu-law 存成 wav 再送回 /v1/audio/transcriptions：
+  "the second call reuses the loaded engine how fast does the first audio frame arrive"
+  —— 与合成文本逐词一致，证明 8kHz mu-law 这条链路出来的是可懂语音
+打断：收到首帧后 1.2s 发 response.cancel + output_audio_buffer.clear
+  → output_audio_buffer.cleared / .stopped / response.done，只收到 1.28s 音频
+```
+
+**上行 ASR**（`modelscope/iic/SenseVoiceSmall`，真实 Opus 包：用 libsndfile 编成 ogg/opus 再拆出
+296 个 20ms 包，按 20ms 节奏发）：
+
+```
+session.created → delta ×6（逐步增长） → input_audio_buffer.committed
+→ conversation.item.input_audio_transcription.completed
+  "the second call reuses the loaded engine how fast does the first audio frame arrive"
+```
+
+对应单元测试：`internal/server/handlers_realtime_webrtc_test.go`、
+`internal/server/realtime_transcription_test.go`、`internal/realtime/g711_test.go`、
+`internal/config/config_test.go` 的 realtime 三个用例。需要真实 ICE 的两个用例在 Windows CI 上
+跳过，与该目录里既有的四个用例做法一致。
+
+## 8.5 跟着真机验证补掉的协议不一致
+
+WebRTC 跑通之后，用 `websockets` 写了个纯 Python 客户端按 SDK 的读法去解事件——
+**按字段名读、按 `response.status` 读**，而不是按 csglite 自己发的形状读。一读就暴露了三处
+只有标准客户端才会碰到的不一致，三处都会让官方 SDK 失败或拿不到数据：
+
+| 问题 | 后果 | 修法 |
+| --- | --- | --- |
+| 合成模型在建会话时绑定 | 用 `session.update` 配置 TTS 模型的客户端（**这正是 OpenAI 客户端的做法**）永远拿到 `no_speech_model` | `Synthesizer` 改为每次响应传入 model，由服务端解析「会话指定 → 配置默认」 |
+| `response.output_audio.delta` 把音频放在 `audio` 字段 | SDK 读 `delta`，读不到音频 | 放回 `delta`；`audio` 字段删掉 |
+| 音频事件由传输层自己拼，没有 `event_id` / `sequence` / `response_id` | 客户端无法给音频排序，也无法把它归到某次响应 | 音频帧改由会话统一编号（`Session.sendAudio`），传输层只负责编码 |
+| `response.created` / `.done` 只有顶层 `status` | SDK 读 `event.response.status`，看起来永远没有状态 | 两个事件都带上 `response` 对象（`id` / `object` / `status`），顶层字段保留作为 csglite 的便利字段 |
+
+教训是：**用自己的客户端验证，只能验证自己那套形状**。P2、P3 的实测都只统计了帧数与时延，
+形状是对着实现读的，所以这几处一直没被发现；换成按协议字段名读的客户端，第一次连就全露出来了。
+
+### 实测（每次只加载一个模型，验证完即 `POST /api/stop`）
+
+WebSocket 合成（`session.update` 配置模型，`modelscope/hexgrad/Kokoro-82M`）：
+
+```
+session.created → 首个音频 4.61s（含冷启动）→ response.done status=completed
+3.50s 的 24kHz 音频，全部从 delta 字段解出
+```
+
+WebSocket 识别（`modelscope/iic/SenseVoiceSmall`，把上一步的音频送回去）：
+
+```
+delta → conversation.item.input_audio_transcription.completed
+  "the web soet transport still works after the update"
+（合成文本为 "The websocket transport still works after the update."，
+  websocket 一词被念读后重新识别有偏差，链路本身正常）
+```
+
+WebRTC 复测（确认事件改动没有影响媒体轨）：
+
+```
+POST /v1/realtime/calls → 200 (6ms)
+response.done: {"id":"resp_...","object":"realtime.response","status":"completed"}
+4.52s 音频用 226 个 RTP 包送达，占 4.44s 墙钟
+```
+
 ## 9. 风险与待确认
 
-1. **Opus 编码归属**：把编码放进 Python worker 是为了守住 `CGO_ENABLED=0`。若 worker 侧 `PyAV`/`opuslib` 在 Windows 上装不上，退路是协商 `PCMU/8000`（音质降级）或在 Go 侧实现纯 Go Opus 编码器（成本高）。**P1 阶段就要在三平台验证 wheel 可装性。**
+1. ~~**Opus 编码归属**~~：已解决（§8.4）。没有把编码放进 Python worker，而是走了备选方案：下行协商 `PCMU/8000`、在 Go 侧用纯 Go 实现 mu-law 编码，因此 `CGO_ENABLED=0` 与三平台 wheel 问题都不存在。遗留项是下行音质为电话带宽，升级路径是换掉 `g711.go` 与注册的 codec。
 2. **端到端延迟预算**：目标首字音 < 800ms。VAD 尾静音 500ms + ASR 段解码 + LLM 首 token + TTS 首包，任一环节都可能吃掉预算；P2 需要按环节埋点（复用 `internal/observability`）。
 3. **非流式 ASR 的 `delta` 语义**是近似值（§5.1），需要在 OpenAPI 描述里写明，避免接入方按"严格追加"实现。
 4. **`audio.output.model` 是 csglite 扩展**，OpenAI SDK 的强类型 session 对象可能拒绝该字段；因此必须同时支持"由 `x_csglite` 或全局默认推断 TTS 模型"，保证只用标准字段的客户端也能跑通。

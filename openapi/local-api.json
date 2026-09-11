@@ -6180,22 +6180,160 @@
         "tags": [
           "OpenAI Compatibility"
         ],
-        "summary": "Create realtime WebRTC call (not implemented)",
-        "description": "OpenAI Realtime WebRTC SDP exchange. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
-        "operationId": "createRealtimeCallUnsupported",
+        "summary": "Create realtime WebRTC call",
+        "description": "Negotiates the WebRTC transport of the realtime API: the client posts an SDP offer and receives an SDP answer, then exchanges events on the `oai-events` DataChannel and audio on the negotiated media tracks. Two request shapes are accepted: `multipart/form-data` with an `sdp` field and an optional JSON `session` field, and a bare `application/sdp` body configured through the `model` and `session` query parameters. The session and event protocol are identical to the WebSocket transport at GET /v1/realtime. Inbound audio is decoded from Opus; outbound synthesised audio is sent as PCMU (G.711 mu-law, 8 kHz), which browsers implement and which keeps the build free of cgo. The `Location` response header names the call resource to DELETE in order to hang up.",
+        "operationId": "createRealtimeCall",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Model id used when the request body is a bare SDP offer. With no other hint it names the speech recognition model."
+          },
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "URL-encoded JSON session object, used when the request body is a bare SDP offer."
+          },
+          {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "transcription"
+              ]
+            },
+            "description": "Set to `transcription` for a recognition-only call."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "sdp"
+                ],
+                "properties": {
+                  "sdp": {
+                    "type": "string",
+                    "description": "The SDP offer."
+                  },
+                  "session": {
+                    "type": "string",
+                    "description": "JSON session object, the same shape as the WebSocket transport's `session.update`."
+                  }
+                }
+              }
+            },
+            "application/sdp": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
         "responses": {
-          "501": {
-            "description": "Realtime audio is not supported yet.",
+          "200": {
+            "description": "The SDP answer. The Location header names the call resource.",
+            "headers": {
+              "Location": {
+                "description": "Path of the created call, for DELETE /v1/realtime/calls/{call_id}.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/sdp": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The offer is missing or malformed, or the session object is not valid JSON.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAIErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
-                    "type": "unsupported_error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The call could not be set up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/realtime/calls/{call_id}": {
+      "delete": {
+        "tags": [
+          "OpenAI Compatibility"
+        ],
+        "summary": "Hang up a realtime WebRTC call",
+        "description": "Closes the peer connection and releases the recognition and synthesis resources the call held. Hanging up an unknown or already-ended call answers 404.",
+        "operationId": "deleteRealtimeCall",
+        "parameters": [
+          {
+            "name": "call_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Call id, as returned in the Location header of POST /v1/realtime/calls."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The call was ended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "type": "string",
+                      "example": "realtime.call"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "ended"
+                    }
                   }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
                 }
               }
             }
@@ -6208,22 +6346,39 @@
         "tags": [
           "OpenAI Compatibility"
         ],
-        "summary": "Realtime WebSocket session (not implemented)",
-        "description": "OpenAI Realtime WebSocket transport. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
-        "operationId": "getRealtimeUnsupported",
+        "summary": "Open a realtime session",
+        "description": "OpenAI-compatible realtime session over a WebSocket. Audio travels in as input_audio_buffer.append events carrying base64 PCM16 (raw binary frames are also accepted) and out as response.output_audio.delta events carrying the base64 PCM16 in their delta field. Recognition is streamed: no file is uploaded first, and partial transcripts arrive as conversation.item.input_audio_transcription.delta with the authoritative text in .completed. Synthesis streams sentence by sentence, so the first audio frame does not wait for the whole clip. Supports session.update, input_audio_buffer.commit and .clear, response.create and .cancel, and output_audio_buffer.clear. Every server event carries session_id, event_id, sequence, timestamp and model. Configure the session with a `session` query parameter holding the session JSON, or name a recognition model with `model`.",
+        "operationId": "openRealtimeSession",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Session JSON, URL-encoded."
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recognition model, when no session object is sent."
+          }
+        ],
         "responses": {
-          "501": {
-            "description": "Realtime audio is not supported yet.",
+          "101": {
+            "description": "Switching protocols; the realtime session runs over the WebSocket."
+          },
+          "400": {
+            "description": "Not a valid WebSocket upgrade, or the session JSON is malformed.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAIErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
-                    "type": "unsupported_error"
-                  }
                 }
               }
             }
@@ -6236,22 +6391,30 @@
         "tags": [
           "OpenAI Compatibility"
         ],
-        "summary": "Realtime transcription WebSocket session (not implemented)",
-        "description": "Transcription-only Realtime WebSocket transport, equivalent to a session with `type: \"transcription\"`. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
-        "operationId": "getRealtimeTranscriptionUnsupported",
+        "summary": "Open a realtime transcription session",
+        "description": "As GET /v1/realtime but fixed to a transcription session, so a client that only wants recognition need not send a session object. response.create is refused on this session.",
+        "operationId": "openRealtimeTranscriptionSession",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recognition model."
+          }
+        ],
         "responses": {
-          "501": {
-            "description": "Realtime audio is not supported yet.",
+          "101": {
+            "description": "Switching protocols; the realtime session runs over the WebSocket."
+          },
+          "400": {
+            "description": "Not a valid WebSocket upgrade, or the session JSON is malformed.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAIErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
-                    "type": "unsupported_error"
-                  }
                 }
               }
             }
@@ -6264,22 +6427,30 @@
         "tags": [
           "OpenAI Compatibility"
         ],
-        "summary": "Realtime transcription WebSocket alias (not implemented)",
-        "description": "Compatibility alias for `/v1/realtime` with a transcription session. This path is not part of the OpenAI API; it is accepted because the clients in https://github.com/OpenCSGs/csglite/issues/147 request it. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
-        "operationId": "getAudioTranscriptionsRealtimeUnsupported",
+        "summary": "Open a realtime transcription session (alias)",
+        "description": "Compatibility alias for GET /v1/realtime/transcription. This path is not part of the OpenAI API; it is accepted because the clients in https://github.com/OpenCSGs/csglite/issues/147 address it.",
+        "operationId": "openRealtimeTranscriptionAlias",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recognition model."
+          }
+        ],
         "responses": {
-          "501": {
-            "description": "Realtime audio is not supported yet.",
+          "101": {
+            "description": "Switching protocols; the realtime session runs over the WebSocket."
+          },
+          "400": {
+            "description": "Not a valid WebSocket upgrade, or the session JSON is malformed.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAIErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
-                    "type": "unsupported_error"
-                  }
                 }
               }
             }

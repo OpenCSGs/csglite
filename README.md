@@ -121,6 +121,7 @@ currently supported for local inference.
 | Image-to-image | Supported | Diffusers runtime | Qwen-Image-Edit, inpaint, img2img, editing pipelines |
 | Automatic speech recognition | Supported | Python ASR runtime | FunASR, Whisper, Wav2Vec2-family ASR models |
 | Text-to-speech | Supported | Python TTS runtime | VoxCPM, Qwen3-TTS, Kokoro, MMS-TTS and other transformers-native TTS models |
+| Realtime voice | Supported | Python ASR + TTS runtimes | Full-duplex over WebRTC or WebSocket, OpenAI Realtime-compatible |
 | Image-to-video | Coming soon | - | Stable Video Diffusion, SV3D |
 | Text-to-video | Coming soon | - | Video generation Diffusers models |
 
@@ -141,6 +142,25 @@ select a text-to-speech model in Chat and send text to hear it.
 `GET /api/tts-voices?model=<id>` lists what a given model can render, since
 voices differ per model rather than being a fixed set. The transformers-native
 path also covers SpeechT5, Bark, ParlerTTS, CSM, Dia and FastSpeech2 models.
+
+### Realtime voice
+
+Full-duplex speech, compatible with the OpenAI Realtime API and served by the
+same recognition and synthesis runtimes:
+
+| Transport | Endpoint | Audio |
+| --- | --- | --- |
+| WebRTC | `POST /v1/realtime/calls` (SDP offer in, SDP answer out) | Media tracks: Opus in, PCMU out; events on the `oai-events` DataChannel |
+| WebSocket | `GET /v1/realtime` | Base64 PCM16 in `input_audio_buffer.append` and `response.output_audio.delta` |
+
+`GET /v1/realtime/transcription` opens a recognition-only session. Recognition
+streams partial transcripts as you speak, synthesis starts playing before the
+sentence is finished, and `response.cancel` stops playback for barge-in. Set
+defaults and limits in the `realtime` section of `config.json`
+(`default_asr_model`, `default_tts_model`, `max_sessions`, and the ICE options
+for a deployment that has to pin its media ports). The protocol and the
+measured latencies are in
+[docs/guides/realtime-audio-api.md](docs/guides/realtime-audio-api.md).
 
 ## Integrations
 

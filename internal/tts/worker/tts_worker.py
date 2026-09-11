@@ -12,6 +12,7 @@ import io
 import json
 import os
 import subprocess
+import threading
 import wave
 
 from fastapi import FastAPI, Request
@@ -416,6 +417,44 @@ def load_engine(model_dir, model_name, hardware):
     raise RuntimeError("unsupported text-to-speech model: %s" % model_name)
 
 
+# Sentence enders for both scripts. Splitting on them lets a backend that
+# produces a whole clip per call still deliver audio early: each sentence is
+# synthesised in turn and streamed as it finishes, so the first packet costs one
+# sentence rather than the whole text.
+_SENTENCE_END = "。！？!?;；." + chr(10)
+# Six is tuned for Chinese, where a sentence runs about eight characters and a
+# larger floor merges several of them into one synthesis call. English sentences
+# are longer, so the floor rarely binds there.
+_STREAM_CHUNK_MIN = 6
+_STREAM_CHUNK_MAX = 120
+
+
+def _split_for_streaming(text, min_len=_STREAM_CHUNK_MIN, max_len=_STREAM_CHUNK_MAX):
+    """Split text at sentence boundaries into chunks of roughly min_len..max_len.
+
+    Chunks shorter than min_len are merged forward so a stray "好。" does not
+    become its own synthesis call, and a sentence longer than max_len is cut at
+    the last comma before the limit, or bluntly if it has none."""
+    chunks, current = [], ""
+    for char in text:
+        current += char
+        if char in _SENTENCE_END and len(current.strip()) >= min_len:
+            chunks.append(current.strip())
+            current = ""
+        elif len(current) >= max_len:
+            cut = max((current.rfind(c) for c in "，,、 "), default=-1)
+            if cut < min_len:
+                cut = len(current) - 1
+            chunks.append(current[: cut + 1].strip())
+            current = current[cut + 1 :]
+    if current.strip():
+        if chunks and len(current.strip()) < min_len:
+            chunks[-1] += current.strip()
+        else:
+            chunks.append(current.strip())
+    return [c for c in chunks if c]
+
+
 def _request_params(payload, engine):
     text = (payload.get("input") or "").strip()
     if not text:
@@ -483,35 +522,71 @@ async def speak_stream(request: Request):
         # Raw containers are emitted as they are produced. Compressed containers
         # are piped through one long-lived ffmpeg so the client receives a single
         # continuous stream rather than concatenated files.
+        # Every backend is fed sentence by sentence, including those that yield
+        # within a call: Kokoro reports streaming yet returned a single chunk for
+        # five sentences, and Qwen3-TTS has no streaming generation at all.
+        # Splitting makes the first packet cost one sentence rather than the
+        # whole text, and it is what lets a cancel arrive mid-generation.
+        #
+        # Only the streaming path does this. A plain request still synthesises
+        # the text whole, which keeps intonation across sentence boundaries.
+        segments = _split_for_streaming(text) or [text]
+
         try:
             if fmt in ("pcm", "wav"):
                 first = True
-                for pcm in ENGINE.iter_pcm(text, voice, speed, instruct):
-                    if fmt == "wav" and first:
-                        yield frame(_wav_bytes(pcm, rate))
-                        first = False
-                    else:
-                        yield frame(pcm)
+                for segment in segments:
+                    for pcm in ENGINE.iter_pcm(segment, voice, speed, instruct):
+                        if fmt == "wav" and first:
+                            # Only the first frame carries a header; the rest are
+                            # raw samples appended to that stream.
+                            yield frame(_wav_bytes(pcm, rate))
+                            first = False
+                        else:
+                            yield frame(pcm)
                 yield frame(done=True)
                 return
             proc = subprocess.Popen(
                 _ffmpeg_args(fmt, rate),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
+            # Feed ffmpeg from a thread so encoded bytes can be read out while
+            # synthesis is still running. Writing everything first and only then
+            # reading serialises the two, which made the first byte arrive no
+            # earlier than the last: the response was chunked but delivered
+            # nothing until the whole clip had been generated.
+            feed_error = []
+
+            def feed():
+                try:
+                    for segment in segments:
+                        for pcm in ENGINE.iter_pcm(segment, voice, speed, instruct):
+                            proc.stdin.write(pcm)
+                            proc.stdin.flush()
+                except Exception as exc:  # reported once the stream drains
+                    feed_error.append(str(exc))
+                finally:
+                    try:
+                        proc.stdin.close()
+                    except Exception:
+                        pass
+
+            writer = threading.Thread(target=feed, daemon=True)
+            writer.start()
             try:
-                for pcm in ENGINE.iter_pcm(text, voice, speed, instruct):
-                    proc.stdin.write(pcm)
-                    proc.stdin.flush()
-                proc.stdin.close()
                 while True:
-                    block = proc.stdout.read(8192)
+                    # read1 returns as soon as any data is available, where read
+                    # would block for the full request size.
+                    block = proc.stdout.read1(8192)
                     if not block:
                         break
                     yield frame(block)
             finally:
-                if proc.stdin and not proc.stdin.closed:
-                    proc.stdin.close()
+                writer.join()
                 proc.wait()
+            if feed_error:
+                yield frame(error=feed_error[0])
+                return
             if proc.returncode != 0:
                 yield frame(error="ffmpeg failed: %s" % proc.stderr.read().decode("utf-8", "replace")[:400])
                 return

@@ -1359,6 +1359,54 @@ export async function synthesizeSpeech(req: AudioSpeechRequest, signal?: AbortSi
   return { url: URL.createObjectURL(blob), mime: contentType.split(";")[0] || "audio/mpeg" };
 }
 
+export interface RealtimeSessionOptions {
+  // Recognition model; omit for a session that only speaks.
+  asrModel?: string;
+  // Synthesis model; omit for a session that only listens.
+  ttsModel?: string;
+  voice?: string;
+}
+
+export interface RealtimeCall {
+  answer: string;
+  callId: string;
+}
+
+// Opens a realtime WebRTC call: posts the SDP offer and returns the answer plus
+// the call id to hang up with. The session object travels in the same request,
+// which is the multipart form the OpenAI clients send.
+export async function startRealtimeCall(offer: string, options: RealtimeSessionOptions): Promise<RealtimeCall> {
+  const session: Record<string, unknown> = { type: "realtime" };
+  const audio: Record<string, unknown> = {};
+  if (options.asrModel) audio.input = { transcription: { model: options.asrModel } };
+  if (options.ttsModel) {
+    audio.output = options.voice
+      ? { model: options.ttsModel, voice: options.voice }
+      : { model: options.ttsModel };
+  }
+  if (Object.keys(audio).length > 0) session.audio = audio;
+
+  const form = new FormData();
+  form.append("sdp", offer);
+  form.append("session", JSON.stringify(session));
+  const resp = await fetch("/v1/realtime/calls", withLocaleHeader({
+    method: "POST",
+    headers: { Accept: "application/sdp" },
+    body: form,
+  }));
+  const contentType = resp.headers.get("content-type") || "";
+  const body = await resp.text();
+  if (!resp.ok) {
+    throw new Error(extractErrorMessage(body, contentType, resp.statusText || "realtime call failed"));
+  }
+  return { answer: body, callId: (resp.headers.get("Location") || "").split("/").pop() || "" };
+}
+
+export async function endRealtimeCall(callId: string): Promise<void> {
+  if (!callId) return;
+  await fetch(`/v1/realtime/calls/${encodeURIComponent(callId)}`, withLocaleHeader({ method: "DELETE" }));
+}
+
 export async function getEmbeddingRuntimeStatus(): Promise<EmbeddingRuntimeStatus> {
   return fetchJSON<EmbeddingRuntimeStatus>("/api/embedding-runtime");
 }

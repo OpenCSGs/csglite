@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,52 +13,30 @@ import (
 	"github.com/opencsgs/csglite/internal/model"
 )
 
-// The realtime and speech endpoints are not implemented yet. They must still be
-// routed explicitly: an unrouted GET matches the "GET /" static fallback and
-// returns the embedded web UI with status 200, which makes a client probing for
-// realtime support believe the feature exists.
-func TestRealtimeEndpointsReturnNotImplementedInsteadOfWebUI(t *testing.T) {
+// The realtime WebSocket endpoints must attempt an upgrade rather than fall
+// through to the static handler. A plain GET without upgrade headers gets
+// gorilla's 400, which proves the route is wired to the websocket handler.
+func TestRealtimeWebSocketEndpointsAreRouted(t *testing.T) {
 	s := newTestServerWithConfig(t, &config.Config{
 		ModelDir:   config.ModelDirForStorage(t.TempDir()),
 		DatasetDir: config.DatasetDirForStorage(t.TempDir()),
 	})
 	handler := s.routes()
-
-	cases := []struct {
-		method string
-		path   string
-	}{
-		{http.MethodPost, "/v1/realtime/calls"},
-		{http.MethodGet, "/v1/realtime"},
-		{http.MethodGet, "/v1/realtime/transcription"},
-		{http.MethodGet, "/v1/audio/transcriptions/realtime"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.path, nil)
+	for _, path := range []string{
+		"/v1/realtime",
+		"/v1/realtime/transcription",
+		"/v1/audio/transcriptions/realtime",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, req)
 
-			if w.Code != http.StatusNotImplemented {
-				t.Fatalf("status = %d, want %d (body=%s)", w.Code, http.StatusNotImplemented, truncateLogString(w.Body.String(), 200))
+			if w.Code == http.StatusOK && strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+				t.Fatal("request fell through to the static handler and returned the web UI")
 			}
-			if contentType := w.Header().Get("Content-Type"); !strings.Contains(contentType, "application/json") {
-				t.Fatalf("content type = %q, want application/json", contentType)
-			}
-			var body struct {
-				Error struct {
-					Message string `json:"message"`
-					Type    string `json:"type"`
-				} `json:"error"`
-			}
-			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-				t.Fatalf("decode error body %q: %v", w.Body.String(), err)
-			}
-			if body.Error.Type != "unsupported_error" {
-				t.Fatalf("error type = %q, want unsupported_error", body.Error.Type)
-			}
-			if !strings.Contains(body.Error.Message, "issues/147") {
-				t.Fatalf("error message = %q, want a pointer to the tracking issue", body.Error.Message)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 from the websocket upgrade check", w.Code)
 			}
 		})
 	}

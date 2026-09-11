@@ -179,16 +179,20 @@ type Server struct {
 	authCallbackHTTP *http.Server
 	logBuf           *LogBuffer
 
-	mu                 sync.RWMutex
-	engines            map[string]*managedEngine
-	loading            map[string]*engineLoadState
-	selfHeal           map[string]selfHealBreakerState
-	imageEngines       map[string]*managedImageEngine
-	imageLoading       map[string]*imageEngineLoadState
-	asrEngines         map[string]*managedASREngine
-	asrLoading         map[string]*asrEngineLoadState
-	ttsEngines         map[string]*managedTTSEngine
-	ttsLoading         map[string]*ttsEngineLoadState
+	mu            sync.RWMutex
+	engines       map[string]*managedEngine
+	loading       map[string]*engineLoadState
+	selfHeal      map[string]selfHealBreakerState
+	imageEngines  map[string]*managedImageEngine
+	imageLoading  map[string]*imageEngineLoadState
+	asrEngines    map[string]*managedASREngine
+	asrLoading    map[string]*asrEngineLoadState
+	ttsEngines    map[string]*managedTTSEngine
+	ttsLoading    map[string]*ttsEngineLoadState
+	realtimeCalls map[string]*realtimeCall
+	// realtimeSockets counts live WebSocket realtime sessions, which have no
+	// registry of their own but share the session cap with WebRTC calls.
+	realtimeSockets    int
 	imageJobs          *imageGenerationJobStore
 	pullJobs           *pullJobStore
 	datasetExportJobs  *datasetExportJobStore
@@ -299,6 +303,7 @@ func New(cfg *config.Config, version string) *Server {
 		asrLoading:           make(map[string]*asrEngineLoadState),
 		ttsEngines:           make(map[string]*managedTTSEngine),
 		ttsLoading:           make(map[string]*ttsEngineLoadState),
+		realtimeCalls:        make(map[string]*realtimeCall),
 		imageJobs:            newImageGenerationJobStore(cfg.StorageDir()),
 		pullJobs:             newPullJobStore(),
 		datasetExportJobs:    newDatasetExportJobStore(),
@@ -581,6 +586,7 @@ func (s *Server) shutdownRuntime() {
 	if s.appShells != nil {
 		s.appShells.CloseAll()
 	}
+	s.closeRealtimeCalls()
 	s.closeAllEngines()
 	s.observabilityMu.Lock()
 	if s.observability != nil {
@@ -1548,6 +1554,16 @@ var ensureASRRuntimeReady = func(ctx context.Context, runtimeManager *imagegen.R
 	}
 	_, err := runtimeManager.InstallASRWithProgressOptions(ctx, progress, upgradePackages)
 	return err
+}
+
+// addRealtimeSocket adjusts the live WebSocket realtime session count.
+func (s *Server) addRealtimeSocket(delta int) {
+	s.mu.Lock()
+	s.realtimeSockets += delta
+	if s.realtimeSockets < 0 {
+		s.realtimeSockets = 0
+	}
+	s.mu.Unlock()
 }
 
 func (s *Server) closeAllEngines() {

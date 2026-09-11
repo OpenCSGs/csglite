@@ -139,3 +139,34 @@ func TestWorkerBackendNamesMatchGoConstants(t *testing.T) {
 	}
 	t.Logf("checked %d worker backends", len(names))
 }
+
+// The streaming path splits the text at sentence boundaries so the first packet
+// costs one sentence rather than the whole clip. The embedded worker carries
+// that logic, so assert the pieces it depends on are present: losing either the
+// splitter or the concurrent feed silently restores the old behaviour, where the
+// first byte arrived no earlier than the last.
+func TestWorkerStreamsSentenceBySentence(t *testing.T) {
+	script := string(ttsWorkerScript)
+	for _, needle := range []string{
+		"_split_for_streaming",
+		// the feed thread is what lets encoded bytes leave while synthesis runs
+		"threading.Thread(target=feed",
+		// read1 returns on first available data where read would block
+		"proc.stdout.read1(",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Errorf("embedded worker no longer contains %q; streaming would serialise again", needle)
+		}
+	}
+	// The splitter must run on the streaming path only: a plain request keeps
+	// whole-text synthesis, which preserves intonation across sentences.
+	streamIdx := strings.Index(script, "async def speak_stream")
+	plainIdx := strings.Index(script, "async def speak(")
+	splitIdx := strings.LastIndex(script, "_split_for_streaming(text)")
+	if streamIdx < 0 || plainIdx < 0 || splitIdx < 0 {
+		t.Fatal("could not locate the speak handlers or the split call")
+	}
+	if splitIdx < streamIdx {
+		t.Error("_split_for_streaming is called outside speak_stream; a plain request must synthesise the text whole")
+	}
+}
