@@ -972,3 +972,27 @@ func TestImportNamesFor(t *testing.T) {
 		t.Fatalf("importNamesFor() = %v, missing %v", got, want)
 	}
 }
+
+// transformers must never be declared with an exact pin: the backends share one
+// venv, so a pin lets whichever was installed last decide the version for all of
+// them and the environment thrashes between installs.
+func TestTransformersIsNeverPinned(t *testing.T) {
+	lists := map[string][]string{
+		"tts":       ttsPythonPackages,
+		"asr":       asrPythonPackages,
+		"embedding": embeddingPythonPackages,
+	}
+	for name, specs := range lists {
+		for _, spec := range specs {
+			if !strings.HasPrefix(spec, "transformers") {
+				continue
+			}
+			if strings.Contains(spec, "==") {
+				t.Errorf("%s package list pins transformers (%q); declare a >= floor instead", name, spec)
+			}
+		}
+	}
+	if got := transformersConstraint(); !strings.HasPrefix(got, "transformers>=") {
+		t.Errorf("transformersConstraint() = %q, want a >= floor", got)
+	}
+}

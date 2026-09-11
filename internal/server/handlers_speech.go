@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -90,6 +91,9 @@ func (s *Server) handleOpenAIAudioSpeech(w http.ResponseWriter, r *http.Request)
 	audio, err := eng.Speak(r.Context(), req)
 	if err != nil {
 		log.Printf("MODEL %s: speech synthesis failed: %v", req.Model, err)
+		if writeSpeechRequestFault(w, err) {
+			return
+		}
 		s.closeTTSEngine(req.Model)
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
@@ -129,16 +133,34 @@ func (s *Server) streamAudioSpeech(w http.ResponseWriter, r *http.Request, eng t
 	})
 	if err != nil {
 		log.Printf("MODEL %s: speech synthesis stream failed: %v", req.Model, err)
-		s.closeTTSEngine(req.Model)
-		if !wrote {
-			writeOpenAIError(w, http.StatusInternalServerError, "server_error", err.Error())
+		if wrote {
+			// Headers are already committed; ending the response early is the
+			// only signal left.
+			return
 		}
+		if writeSpeechRequestFault(w, err) {
+			return
+		}
+		s.closeTTSEngine(req.Model)
+		writeOpenAIError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
 	s.touchTTSEngine(req.Model)
 	if !wrote {
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error", "text-to-speech produced no audio")
 	}
+}
+
+// writeSpeechRequestFault reports a fault the worker blamed on the request --
+// an unknown voice, for instance -- as a 400 rather than a server error, and
+// leaves the loaded engine alone because nothing is wrong with it.
+func writeSpeechRequestFault(w http.ResponseWriter, err error) bool {
+	var workerErr *tts.WorkerError
+	if !errors.As(err, &workerErr) || !workerErr.ClientFault() {
+		return false
+	}
+	writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", workerErr.Message)
+	return true
 }
 
 // writeSpeechEngineError reports a runtime that is not installed as a 503 with

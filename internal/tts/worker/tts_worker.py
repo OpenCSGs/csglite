@@ -68,6 +68,13 @@ def _transformers_tts_class(cfg):
     return None
 
 
+def _is_qwen3_tts_model(model_dir):
+    cfg = _load_config(model_dir)
+    if str(cfg.get("model_type", "")).lower() == "qwen3_tts":
+        return True
+    return any("Qwen3TTS" in a for a in _architectures(cfg))
+
+
 def _has_audio_span_tokens(model_dir):
     """A causal LM with a matched pair of audio span tokens emits audio codec
     tokens. Detecting it lets us explain why it cannot be synthesised rather
@@ -214,7 +221,7 @@ class KokoroEngine:
     def default_voice(self):
         return self.voices[0]["id"] if self.voices else "af_heart"
 
-    def iter_pcm(self, text, voice, speed):
+    def iter_pcm(self, text, voice, speed, instruct=None):
         voice = voice or self.default_voice()
         pipeline = self._pipeline(voice)
         voice_path = os.path.join(self.model_dir, "voices", voice + ".pt")
@@ -229,6 +236,83 @@ class KokoroEngine:
             if hasattr(audio, "detach"):
                 audio = audio.detach().cpu().numpy()
             yield _pcm16_bytes(audio)
+
+
+class QwenTTSEngine:
+    """Official Qwen3-TTS. The repository is self-contained: the codec that turns
+    generated tokens into a waveform ships inside it as speech_tokenizer/, so no
+    second download is needed.
+
+    Preset speakers come from config.talker_config.spk_id rather than a
+    hard-coded list, so every variant reports its own set."""
+
+    backend = "qwen3-tts"
+    # generate_* returns the whole waveform, so audio is produced in one piece.
+    streaming = False
+
+    def __init__(self, model_dir, model_name, hardware):
+        import torch
+        from qwen_tts import Qwen3TTSModel
+
+        cfg = _load_config(model_dir)
+        talker = cfg.get("talker_config") or {}
+        self.spk_ids = list((talker.get("spk_id") or {}).keys())
+        self.dialects = talker.get("spk_is_dialect") or {}
+        self.model_type = str(cfg.get("tts_model_type") or "").lower()
+        self.model_name = model_name
+        self.sample_rate = 24000
+
+        device = _device(hardware)
+        dtype = torch.float32 if device == "cpu" else torch.bfloat16
+        self.model = Qwen3TTSModel.from_pretrained(model_dir, device_map=device, dtype=dtype)
+        self.voices = [
+            {
+                "id": self._display(spk),
+                "language": self._language_of(spk),
+                "label": self._label_of(spk),
+            }
+            for spk in self.spk_ids
+        ]
+
+    @staticmethod
+    def _display(spk):
+        # config stores lower case ids; the model card presents them capitalised
+        # (Uncle_Fu, Ono_Anna), and the model accepts either.
+        return "_".join(part.capitalize() for part in spk.split("_"))
+
+    def _language_of(self, spk):
+        dialect = self.dialects.get(spk)
+        if isinstance(dialect, str) and dialect:
+            return "zh-" + dialect.replace("_dialect", "")
+        return ""
+
+    def _label_of(self, spk):
+        dialect = self.dialects.get(spk)
+        if isinstance(dialect, str) and dialect:
+            return dialect.replace("_", " ")
+        return ""
+
+    def default_voice(self):
+        return self._display(self.spk_ids[0]) if self.spk_ids else ""
+
+    def iter_pcm(self, text, voice, speed, instruct=None):
+        if self.model_type != "custom_voice" or not self.spk_ids:
+            raise ValueError(
+                "model %s is a Qwen3-TTS voice-cloning checkpoint, which needs reference "
+                "audio rather than a preset voice; use a CustomVoice checkpoint for "
+                "/v1/audio/speech" % self.model_name
+            )
+        voice = voice or self.default_voice()
+        if voice.lower() not in {spk.lower() for spk in self.spk_ids}:
+            raise ValueError(
+                "unknown voice: %s (available: %s)"
+                % (voice, ", ".join(self._display(s) for s in self.spk_ids))
+            )
+        kwargs = {"text": text, "speaker": voice}
+        if instruct:
+            kwargs["instruct"] = instruct
+        wavs, _ = self.model.generate_custom_voice(**kwargs)
+        yield _pcm16_bytes(wavs[0])
 
 
 class TransformersEngine:
@@ -256,7 +340,7 @@ class TransformersEngine:
     def default_voice(self):
         return ""
 
-    def iter_pcm(self, text, voice, speed):
+    def iter_pcm(self, text, voice, speed, instruct=None):
         import torch
 
         inputs = self.processor(text=text, return_tensors="pt").to(self.device)
@@ -270,6 +354,8 @@ class TransformersEngine:
 
 def load_engine(model_dir, model_name, hardware):
     cfg = _load_config(model_dir)
+    if _is_qwen3_tts_model(model_dir):
+        return QwenTTSEngine(model_dir, model_name, hardware)
     if _is_kokoro_model(model_dir, model_name):
         return KokoroEngine(model_dir, model_name, hardware)
     class_name = _transformers_tts_class(cfg)
@@ -296,7 +382,9 @@ def _request_params(payload, engine):
     if not 0.25 <= speed <= 4.0:
         raise ValueError("speed must be between 0.25 and 4.0")
     rate = int(payload.get("sample_rate") or 0) or engine.sample_rate
-    return text, payload.get("voice") or "", fmt, speed, rate
+    # instructions are style guidance; backends that cannot use them ignore it.
+    instruct = (payload.get("instructions") or "").strip() or None
+    return text, payload.get("voice") or "", fmt, speed, rate, instruct
 
 
 @app.get("/health")
@@ -315,8 +403,8 @@ async def health():
 async def speak(request: Request):
     payload = await request.json()
     try:
-        text, voice, fmt, speed, rate = _request_params(payload, ENGINE)
-        pcm = b"".join(ENGINE.iter_pcm(text, voice, speed))
+        text, voice, fmt, speed, rate, instruct = _request_params(payload, ENGINE)
+        pcm = b"".join(ENGINE.iter_pcm(text, voice, speed, instruct))
         data = _encode(pcm, rate, fmt)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -333,7 +421,7 @@ async def speak(request: Request):
 async def speak_stream(request: Request):
     payload = await request.json()
     try:
-        text, voice, fmt, speed, rate = _request_params(payload, ENGINE)
+        text, voice, fmt, speed, rate, instruct = _request_params(payload, ENGINE)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
 
@@ -352,7 +440,7 @@ async def speak_stream(request: Request):
         try:
             if fmt in ("pcm", "wav"):
                 first = True
-                for pcm in ENGINE.iter_pcm(text, voice, speed):
+                for pcm in ENGINE.iter_pcm(text, voice, speed, instruct):
                     if fmt == "wav" and first:
                         yield frame(_wav_bytes(pcm, rate))
                         first = False
@@ -365,7 +453,7 @@ async def speak_stream(request: Request):
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
             try:
-                for pcm in ENGINE.iter_pcm(text, voice, speed):
+                for pcm in ENGINE.iter_pcm(text, voice, speed, instruct):
                     proc.stdin.write(pcm)
                     proc.stdin.flush()
                 proc.stdin.close()

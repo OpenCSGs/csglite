@@ -27,6 +27,36 @@ import (
 //go:embed worker/tts_worker.py
 var ttsWorkerScript []byte
 
+// WorkerError carries the status the worker replied with, so a caller's mistake
+// -- an unknown voice, an unsupported format -- reaches the client as a 4xx
+// instead of being flattened into a server error.
+type WorkerError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *WorkerError) Error() string {
+	return e.Message
+}
+
+// ClientFault reports whether the worker blamed the request rather than itself.
+func (e *WorkerError) ClientFault() bool {
+	return e.StatusCode >= 400 && e.StatusCode < 500
+}
+
+// workerError unwraps the worker's JSON error body so the message is the reason
+// rather than a nested blob.
+func workerError(status int, body []byte) *WorkerError {
+	message := strings.TrimSpace(string(body))
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) == nil && strings.TrimSpace(payload.Error) != "" {
+		message = strings.TrimSpace(payload.Error)
+	}
+	return &WorkerError{StatusCode: status, Message: message}
+}
+
 // PythonEngine runs one text-to-speech model in a separate Python process that
 // serves HTTP on a loopback port, the same arrangement asr.PythonEngine uses.
 type PythonEngine struct {
@@ -163,7 +193,7 @@ func (e *PythonEngine) Speak(ctx context.Context, req api.OpenAIAudioSpeechReque
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("TTS worker error %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return nil, workerError(resp.StatusCode, respBody)
 	}
 	var out struct {
 		Audio      string `json:"audio"`
@@ -201,7 +231,7 @@ func (e *PythonEngine) SpeakStream(ctx context.Context, req api.OpenAIAudioSpeec
 		if readErr != nil {
 			return readErr
 		}
-		return fmt.Errorf("TTS worker error %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return workerError(resp.StatusCode, respBody)
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
@@ -254,7 +284,7 @@ func (e *PythonEngine) Info(ctx context.Context) (*api.SpeechVoicesResponse, err
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("TTS worker error %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return nil, workerError(resp.StatusCode, respBody)
 	}
 	var out api.SpeechVoicesResponse
 	if err := json.Unmarshal(respBody, &out); err != nil {

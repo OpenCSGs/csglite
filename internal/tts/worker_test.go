@@ -55,3 +55,29 @@ func TestTailBufferIsBounded(t *testing.T) {
 		t.Fatalf("buffer grew to %d bytes, want at most 64", size)
 	}
 }
+
+// A fault the worker blames on the request must stay a 4xx so the caller sees
+// its own mistake rather than a server error.
+func TestWorkerErrorClassifiesFaults(t *testing.T) {
+	cases := []struct {
+		status      int
+		body        string
+		wantMessage string
+		wantClient  bool
+	}{
+		{400, `{"error":"unknown voice: NoSuchVoice (available: Vivian, Ryan)"}`,
+			"unknown voice: NoSuchVoice (available: Vivian, Ryan)", true},
+		{400, `{"error":"input is required"}`, "input is required", true},
+		{500, `{"error":"ffmpeg failed"}`, "ffmpeg failed", false},
+		{503, `not json at all`, "not json at all", false},
+	}
+	for _, tc := range cases {
+		err := workerError(tc.status, []byte(tc.body))
+		if err.Message != tc.wantMessage {
+			t.Errorf("status %d: message = %q, want %q", tc.status, err.Message, tc.wantMessage)
+		}
+		if err.ClientFault() != tc.wantClient {
+			t.Errorf("status %d: ClientFault() = %v, want %v", tc.status, err.ClientFault(), tc.wantClient)
+		}
+	}
+}

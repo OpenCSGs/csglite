@@ -498,17 +498,60 @@ ASR 与 TTS **都走 Python 推理运行时，不经 llama.cpp**——把模型�
 
 其它容器同样实测通过：`wav`（audio/wav）、`pcm`（`audio/L16; rate=24000; channels=1`）、`opus`、`flac`。
 
+### 官方 Qwen3-TTS（已实测跑通）
+
+`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` 通过 csglite 的 modelscope 源拉取（2.3 GB），**codec 随仓库自带**
+（`speech_tokenizer/`，682293092 字节，与官方独立仓库 `Qwen3-TTS-Tokenizer-12Hz` 的同名文件字节数一致，
+即同一份产物发两处），所以一次 pull 就齐，不需要第二次下载。
+
+映射关系正好对上 OpenAI 接口：`voice` → `speaker`、`instructions` → `instruct`。预设音色不硬编码，
+从 `config.talker_config.spk_id` 读取，因此任何变体（含 1.7B）都会报告自己那一套；`spk_is_dialect`
+额外给出方言信息（Eric 四川话、Dylan 北京话）。
+
+实测（反馈者原始 payload，仅替换 model id）：`status=200`、`Content-Type: audio/mpeg`、
+`Transfer-Encoding: chunked`、2.38 秒、mean −21.9 dB。Vivian/Dylan/Ryan 与 Kokoro 回归均通过。
+
+Base 变体是声音克隆（需要参考音频），没有预设音色，因此 `/v1/audio/speech` 会返回一条说明并建议改用
+CustomVoice。
+
+### transformers 版本策略
+
+**只声明 `>=` 下界，不写 `==` 定版**，与 Diffusers 运行时既有的 `transformers>=4.48.0,<5.0` 同形。
+多个后端共用一个 venv，定版会让「最后装的那个」决定所有后端的版本，装一个就把另一个的 transformers
+拽走，来回震荡。
+
+TTS 运行时声明 `transformers>=4.57.3,<5.0`。上界是实测出来的而非猜的：`qwen-tts` 在 5.x 上 import 即失败
+（`TypeError: check_model_inputs() missing 1 required positional argument: 'func'`），而 Kokoro 与
+transformers 原生后端在 4.57.3–4.57.6 全区间正常。另外 `qwen-tts` 自身 `pyproject.toml` 硬钉
+`transformers==4.57.3`，所以 `EnsureModelTTSPackages` 装完按模型的额外依赖后会**重新声明一次约束**，
+保证版本只前进、不被第三方包拽回去。
+
 ### 仍未完成
 
 issue #147 的第 2、3 项（实时 ASR WebSocket、WebRTC 全双工）仍返回 501，对应本文档的 P2 与 P3。
 
+### chat 界面尚未接入 TTS
+
+`Chat.tsx` 已有语音**输入**（`MediaRecorder` + `/v1/audio/transcriptions`），但没有任何朗读/播放代码
+（`new Audio(` / `speechSynthesis` / `/v1/audio/speech` 均为 0 处引用）。本轮只落地了 API 层，加「朗读」
+按钮可照抄现有的 ASR 接线方式。
+
 ### `Vikhrmodels/Qwen3-0.6B-TTS` 仍然无法合成
 
 该仓库声明 `vocab_size: 160887`，而三个 tokenizer 文件已知的最大 id 只到 151670 ——
-**9216 个 embedding 行没有任何 tokenizer 条目**；仓库里也没有 codec 解码器权重，`chat_template.jinja`
-是 Qwen3 原版模板，README 是 ModelScope 占位页。那 9216 行是音频 codec token，但用的哪个 codec、
-码本如何排布、解码器在哪，仓库均无记载，因此无法还原波形。现在会返回一条说明这一点的 400，而不是
-静默产生无效音频。要支持它，需要模型作者提供 codec 信息。
+**9216 个 embedding 行没有任何 tokenizer 条目**，仓库里也没有 codec 解码器权重。
+
+codec 后来查明了：它属于 [VikhrModels/Salt](https://github.com/VikhrModels/Salt) 家族，用的是
+**BigCodec**（作者 model card 原话「BigCodec tokenizer」）。按 Salt 的 `get_start_tokens`（顺序
+wav→bigcodec→speech，且 `wav.n_new_tokens = 0`）可推出 BigCodec 占 **151671–159862**（8192 个）、
+SpeechTokenizer 占 159863–160886（1024 个），合计正是 9216；用同族的 `ksych/salt-bigcodec`
+（仅含 bigcodec，`vocab_size 159859`）反推基数可交叉验证。解码路径也对得上：PyPI 的 `bigcodec` 包里
+`BigCodec.decode()` 与 Salt 的 `decode_audio_bigcodec` 逐行一致，输出 16 kHz。
+
+仍未接入的原因有两条，都不是技术障碍：BigCodec 权重只在 HuggingFace（`Alethia/BigCodec/bigcodec.pt`，
+ModelScope 无镜像，且是裸 checkpoint 需手工凑构造参数）；更重要的是该模型语言为 **en / ru / uk**
+（训练集 librispeech + 俄语书 + common voice，作者自报 PESQ 1.11），**念不出中文**。需要中文的场景应使用
+官方 Qwen3-TTS。
 
 ## 9. 风险与待确认
 

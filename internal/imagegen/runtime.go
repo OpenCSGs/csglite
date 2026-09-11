@@ -88,7 +88,14 @@ var requiredTTSPythonPackages = []string{
 
 var ttsPythonPackages = []string{
 	"fastapi",
-	"transformers",
+	// A floor with an upper bound, never an exact pin -- the same shape the
+	// Diffusers runtime already uses. Several backends share this venv, so a pin
+	// lets whichever was installed last dictate the version for all of them and
+	// the environment thrashes between installs. The bound is measured, not
+	// guessed: qwen-tts fails on transformers 5.x with "check_model_inputs()
+	// missing 1 required positional argument", while Kokoro and the
+	// transformers-native backends work across the whole range.
+	"transformers>=4.57.3,<5.0",
 	"safetensors",
 	"soundfile",
 	"librosa",
@@ -103,7 +110,9 @@ var ttsPythonPackages = []string{
 // package only carries English, and Chinese input otherwise fails at synthesis
 // time with a missing-module error.
 var modelTTSPackages = map[string][]string{
-	"kokoro": {"kokoro", "misaki[zh]"},
+	"kokoro":    {"kokoro", "misaki[zh]"},
+	"qwen3-tts": {"qwen-tts"},
+	"qwen3_tts": {"qwen-tts"},
 }
 
 var requiredEmbeddingPythonPackages = []string{
@@ -574,7 +583,25 @@ func (m *RuntimeManager) EnsureModelTTSPackages(ctx context.Context, modelName, 
 	if err := m.uvPipInstall(ctx, m.PythonPath(), indexes, packages, false, false); err != nil {
 		return fmt.Errorf("installing %s dependencies: %w", strings.Join(packages, " "), err)
 	}
+	// A model's extra packages may hard-pin transformers -- qwen-tts pins
+	// transformers==4.57.3 -- which would drag the shared venv below the range
+	// the runtime declares and leave the version thrashing between installs.
+	// Re-assert the declared constraint afterwards so it only ever moves forward.
+	if err := m.uvPipInstall(ctx, m.PythonPath(), indexes, []string{transformersConstraint()}, true, false); err != nil {
+		return fmt.Errorf("restoring the transformers version after installing %s: %w", strings.Join(packages, " "), err)
+	}
 	return nil
+}
+
+// transformersConstraint returns the transformers requirement the text-to-speech
+// runtime declares, so the restore step cannot drift from the package list.
+func transformersConstraint() string {
+	for _, spec := range ttsPythonPackages {
+		if strings.HasPrefix(spec, "transformers") {
+			return spec
+		}
+	}
+	return "transformers"
 }
 
 func modelTTSPackagesFor(modelName, modelDir string) []string {
@@ -604,6 +631,10 @@ func importNamesFor(packages []string) []string {
 			name = name[:index]
 		}
 		name = strings.NewReplacer("-", "_", ".", "_").Replace(name)
+		if name == "qwen_tts" {
+			names = append(names, "qwen_tts")
+			continue
+		}
 		if name != "" {
 			names = append(names, name)
 		}
