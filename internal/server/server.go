@@ -839,6 +839,15 @@ func (s *Server) touchASREngine(modelID string) {
 	s.mu.Unlock()
 }
 
+func (s *Server) setTTSEngineKeepAlive(modelID string, keepAlive time.Duration) {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	s.mu.Lock()
+	if me, ok := s.ttsEngines[modelID]; ok {
+		me.keepAlive = keepAlive
+	}
+	s.mu.Unlock()
+}
+
 func (s *Server) touchTTSEngine(modelID string) {
 	modelID = s.resolveLocalModelStorageID(modelID)
 	s.mu.Lock()
