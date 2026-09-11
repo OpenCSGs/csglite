@@ -194,28 +194,28 @@ func TestDiffusersPipelineTagFromClassName(t *testing.T) {
 }
 
 // A safetensors text-to-speech model whose language-model half is a supported
-// causal LM used to match the llama.cpp "convert" path, which turned it into
-// GGUF and served it as a text model with the vocoder dropped. It must report
-// unsupported until the local text-to-speech runtime exists.
-func TestTextToSpeechNeverUsesLlamaConvertPath(t *testing.T) {
+// causal LM matches the llama.cpp "convert" path by architecture alone, which
+// would turn it into GGUF and serve it as a text model with the vocoder
+// dropped. It must route to the Python text-to-speech runtime instead.
+func TestTextToSpeechRoutesToPythonRuntimeNotLlama(t *testing.T) {
 	t.Run("marketplace pipeline tag", func(t *testing.T) {
 		support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", "text-to-speech")
-		if support.Supported || support.Runtime == "llama" || support.Mode == "convert" {
-			t.Fatalf("support = %#v, want unsupported", support)
+		if !support.Supported || support.Runtime != "python-tts" || support.Mode != "tts" {
+			t.Fatalf("support = %#v, want python-tts tts", support)
 		}
 	})
 
 	t.Run("marketplace model family without a pipeline tag", func(t *testing.T) {
 		support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", "")
-		if support.Supported || support.Runtime == "llama" || support.Mode == "convert" {
-			t.Fatalf("support = %#v, want unsupported", support)
+		if !support.Supported || support.Runtime != "python-tts" || support.Mode != "tts" {
+			t.Fatalf("support = %#v, want python-tts tts", support)
 		}
 	})
 
 	t.Run("marketplace architecture", func(t *testing.T) {
 		support := FromMarketplace("safetensors", "SpeechT5ForTextToSpeech", "")
-		if support.Supported {
-			t.Fatalf("support = %#v, want unsupported", support)
+		if !support.Supported || support.Runtime != "python-tts" {
+			t.Fatalf("support = %#v, want python-tts", support)
 		}
 	})
 
@@ -226,8 +226,8 @@ func TestTextToSpeechNeverUsesLlamaConvertPath(t *testing.T) {
 		}
 		lm := &model.LocalModel{Format: model.FormatSafeTensors, PipelineTag: "text-to-speech"}
 		support := FromLocalModel(lm, dir)
-		if support.Supported || support.Runtime == "llama" || support.Mode == "convert" {
-			t.Fatalf("support = %#v, want unsupported", support)
+		if !support.Supported || support.Runtime != "python-tts" || support.Mode != "tts" {
+			t.Fatalf("support = %#v, want python-tts tts", support)
 		}
 	})
 
@@ -238,20 +238,23 @@ func TestTextToSpeechNeverUsesLlamaConvertPath(t *testing.T) {
 		}
 		lm := &model.LocalModel{Format: model.FormatSafeTensors}
 		support := FromLocalModel(lm, dir)
-		if support.Supported {
-			t.Fatalf("support = %#v, want unsupported", support)
+		if !support.Supported || support.Runtime != "python-tts" {
+			t.Fatalf("support = %#v, want python-tts", support)
 		}
 	})
 }
 
 // The model named in issue #147. Its architecture is convertible, so a missed
 // detection means the GGUF conversion succeeds and the model is served as text.
-func TestCodecTokenTTSModelIsNotConvertible(t *testing.T) {
+func TestCodecTokenTTSModelUsesPythonRuntime(t *testing.T) {
 	name := "modelscope/Vikhrmodels/Qwen3-0.6B-TTS"
 
 	support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", name, "")
-	if support.Supported || support.Mode == "convert" {
-		t.Fatalf("marketplace support = %#v, want unsupported", support)
+	if support.Runtime == "llama" || support.Mode == "convert" {
+		t.Fatalf("marketplace support = %#v, want it off the llama convert path", support)
+	}
+	if !support.Supported || support.Runtime != "python-tts" {
+		t.Fatalf("marketplace support = %#v, want python-tts", support)
 	}
 
 	dir := t.TempDir()
@@ -265,8 +268,8 @@ func TestCodecTokenTTSModelIsNotConvertible(t *testing.T) {
 		}
 	}
 	lm := &model.LocalModel{Namespace: "Vikhrmodels", Name: "Qwen3-0.6B-TTS", Format: model.FormatSafeTensors}
-	if support := FromLocalModel(lm, dir); support.Supported || support.Mode == "convert" {
-		t.Fatalf("local support = %#v, want unsupported", support)
+	if support := FromLocalModel(lm, dir); support.Runtime != "python-tts" || support.Mode != "tts" {
+		t.Fatalf("local support = %#v, want python-tts tts", support)
 	}
 
 	// Regression guard: a plain Qwen3 text model must stay convertible.

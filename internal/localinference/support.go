@@ -32,6 +32,12 @@ func FromLocalModel(lm *model.LocalModel, modelDir string) api.LocalInferenceSup
 	if support := asrSupportFromPipelineTag(pipelineTag); support.Supported {
 		return support
 	}
+	if support := ttsSupportFromPipelineTag(pipelineTag); support.Supported {
+		return support
+	}
+	if support := ttsSupportFromPipelineTag(manifestPipelineTag); support.Supported {
+		return support
+	}
 	// The detected tag overrides the manifest tag above, but DetectPipelineTag
 	// falls back to "text-generation" whenever it finds nothing more specific.
 	// A manifest tag that has no local runtime therefore has to be honoured on
@@ -46,7 +52,7 @@ func FromLocalModel(lm *model.LocalModel, modelDir string) api.LocalInferenceSup
 		return asrSupport(architecture)
 	}
 	if model.IsTTSArchitecture(architecture) {
-		return unsupported(architecture)
+		return ttsSupport(architecture)
 	}
 	return llamaSupport(string(lm.Format), architecture)
 }
@@ -64,7 +70,7 @@ func FromMarketplace(format, architecture, className string) api.LocalInferenceS
 		return asrSupport(architecture)
 	}
 	if model.IsTTSArchitecture(architecture) {
-		return unsupported(architecture)
+		return ttsSupport(architecture)
 	}
 	return llamaSupport(format, architecture)
 }
@@ -77,7 +83,9 @@ func FromMarketplaceModel(format, architecture, className, modelName, pipelineTa
 		return diffusersSupportForImageTask(architecture, className)
 	case "automatic-speech-recognition":
 		return asrSupport(architecture)
-	case "text-to-speech", "image-to-video", "text-to-video", "video-text-to-text":
+	case "text-to-speech":
+		return ttsSupport(architecture)
+	case "image-to-video", "text-to-video", "video-text-to-text":
 		return unsupported(architecture)
 	}
 
@@ -85,7 +93,7 @@ func FromMarketplaceModel(format, architecture, className, modelName, pipelineTa
 		return asrSupport(architecture)
 	}
 	if model.IsTTSModelFamily(modelName) || model.IsTTSModelName(modelName) {
-		return unsupported(architecture)
+		return ttsSupport(architecture)
 	}
 	return FromMarketplace(format, architecture, className)
 }
@@ -181,6 +189,31 @@ func diffusersSupportForImageTask(architecture, className string) api.LocalInfer
 	}
 }
 
+// ttsSupportFromPipelineTag routes text-to-speech models to the Python runtime.
+// They must never reach llama.cpp: the vocoder or codec decoder that turns model
+// output into a waveform lives in the model's own inference stack.
+func ttsSupportFromPipelineTag(pipelineTag string) api.LocalInferenceSupport {
+	switch normalizePipelineTag(pipelineTag) {
+	case "text-to-speech":
+		return api.LocalInferenceSupport{
+			Supported: true,
+			Runtime:   "python-tts",
+			Mode:      "tts",
+		}
+	default:
+		return api.LocalInferenceSupport{Mode: "none"}
+	}
+}
+
+func ttsSupport(architecture string) api.LocalInferenceSupport {
+	return api.LocalInferenceSupport{
+		Supported:    true,
+		Runtime:      "python-tts",
+		Mode:         "tts",
+		Architecture: strings.TrimSpace(architecture),
+	}
+}
+
 func asrSupportFromPipelineTag(pipelineTag string) api.LocalInferenceSupport {
 	switch normalizePipelineTag(pipelineTag) {
 	case "automatic-speech-recognition":
@@ -231,15 +264,11 @@ func diffusersPipelineTagFromClassName(className string) string {
 }
 
 // unsupportedPipelineTag lists pipeline tags that have no local runtime. Without
-// an explicit entry a tag falls through to llamaSupport(), which is wrong for
-// text-to-speech: a safetensors TTS model whose language-model half is a plain
-// causal LM matches the "convert" path, gets turned into GGUF and is then served
-// by llama.cpp as a text model, dropping the vocoder entirely. The local
-// text-to-speech runtime is designed in docs/guides/realtime-audio-api.md; this
-// entry moves out of the list once that runtime lands.
+// an explicit entry a tag falls through to llamaSupport(), which would convert a
+// safetensors model to GGUF and serve it as text.
 func unsupportedPipelineTag(pipelineTag string) bool {
 	switch normalizePipelineTag(pipelineTag) {
-	case "text-to-speech", "image-to-video", "text-to-video", "video-text-to-text":
+	case "image-to-video", "text-to-video", "video-text-to-text":
 		return true
 	default:
 		return false

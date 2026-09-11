@@ -940,3 +940,35 @@ func TestRequiredPythonPackagesUseImportNames(t *testing.T) {
 		}
 	}
 }
+
+func TestModelTTSPackagesFor(t *testing.T) {
+	packages := modelTTSPackagesFor("modelscope/hexgrad/Kokoro-82M", "/models/Kokoro-82M")
+	if len(packages) == 0 {
+		t.Fatal("modelTTSPackagesFor() = none, want the kokoro packages")
+	}
+	// Chinese synthesis needs misaki's zh extra; without it the base package
+	// installs and then fails at synthesis time.
+	var hasChineseExtra bool
+	for _, pkg := range packages {
+		if pkg == "misaki[zh]" {
+			hasChineseExtra = true
+		}
+	}
+	if !hasChineseExtra {
+		t.Fatalf("packages = %v, want misaki[zh] for Chinese support", packages)
+	}
+	if got := modelTTSPackagesFor("Qwen/Qwen3-0.6B", "/models/Qwen3-0.6B"); got != nil {
+		t.Fatalf("modelTTSPackagesFor() = %v, want nil for a model needing no extras", got)
+	}
+}
+
+func TestImportNamesFor(t *testing.T) {
+	got := importNamesFor([]string{"kokoro", "misaki[zh]"})
+	want := map[string]bool{"kokoro": true, "misaki": true, "ordered_set": true}
+	for _, name := range got {
+		delete(want, name)
+	}
+	if len(want) > 0 {
+		t.Fatalf("importNamesFor() = %v, missing %v", got, want)
+	}
+}

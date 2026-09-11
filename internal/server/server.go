@@ -32,8 +32,9 @@ import (
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelmetadata"
 	"github.com/opencsgs/csglite/internal/observability"
-	routerprofile "github.com/opencsgs/semantic-router"
+	"github.com/opencsgs/csglite/internal/tts"
 	"github.com/opencsgs/csglite/pkg/api"
+	routerprofile "github.com/opencsgs/semantic-router"
 )
 
 const (
@@ -127,6 +128,18 @@ type asrEngineLoadState struct {
 	err    error
 }
 
+type managedTTSEngine struct {
+	engine    tts.Engine
+	lastUsed  time.Time
+	keepAlive time.Duration
+}
+
+type ttsEngineLoadState struct {
+	done   chan struct{}
+	engine tts.Engine
+	err    error
+}
+
 func (m *managedEngine) keepAliveForever() bool {
 	return m.keepAlive < 0
 }
@@ -153,13 +166,13 @@ func engineModelIDFromKey(key string) string {
 }
 
 type Server struct {
-	cfg            *config.Config
-	version        string
-	manager        *model.Manager
-	datasetManager *dataset.Manager
-	appManager     *apps.Manager
-	sourceSwitches *apps.SourceSwitchManager
-	appShells      *aiAppShellManager
+	cfg              *config.Config
+	version          string
+	manager          *model.Manager
+	datasetManager   *dataset.Manager
+	appManager       *apps.Manager
+	sourceSwitches   *apps.SourceSwitchManager
+	appShells        *aiAppShellManager
 	cloud            *cloud.Service
 	http             *http.Server
 	externalHTTP     *http.Server
@@ -174,6 +187,8 @@ type Server struct {
 	imageLoading       map[string]*imageEngineLoadState
 	asrEngines         map[string]*managedASREngine
 	asrLoading         map[string]*asrEngineLoadState
+	ttsEngines         map[string]*managedTTSEngine
+	ttsLoading         map[string]*ttsEngineLoadState
 	imageJobs          *imageGenerationJobStore
 	pullJobs           *pullJobStore
 	datasetExportJobs  *datasetExportJobStore
@@ -282,6 +297,8 @@ func New(cfg *config.Config, version string) *Server {
 		imageLoading:         make(map[string]*imageEngineLoadState),
 		asrEngines:           make(map[string]*managedASREngine),
 		asrLoading:           make(map[string]*asrEngineLoadState),
+		ttsEngines:           make(map[string]*managedTTSEngine),
+		ttsLoading:           make(map[string]*ttsEngineLoadState),
 		imageJobs:            newImageGenerationJobStore(cfg.StorageDir()),
 		pullJobs:             newPullJobStore(),
 		datasetExportJobs:    newDatasetExportJobStore(),
@@ -642,6 +659,16 @@ func (s *Server) evictExpired(now time.Time) {
 			delete(s.asrEngines, id)
 		}
 	}
+	for id, me := range s.ttsEngines {
+		if me.keepAlive < 0 {
+			continue
+		}
+		if now.After(me.lastUsed.Add(me.keepAlive)) {
+			log.Printf("evicting idle TTS model %s (unused for %s)", id, me.keepAlive)
+			me.engine.Close()
+			delete(s.ttsEngines, id)
+		}
+	}
 }
 
 // touchEngine updates lastUsed for the given model. Must be called after
@@ -807,6 +834,15 @@ func (s *Server) touchASREngine(modelID string) {
 	modelID = s.resolveLocalModelStorageID(modelID)
 	s.mu.Lock()
 	if me, ok := s.asrEngines[modelID]; ok {
+		me.lastUsed = time.Now()
+	}
+	s.mu.Unlock()
+}
+
+func (s *Server) touchTTSEngine(modelID string) {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	s.mu.Lock()
+	if me, ok := s.ttsEngines[modelID]; ok {
 		me.lastUsed = time.Now()
 	}
 	s.mu.Unlock()
@@ -1081,7 +1117,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	// converted to GGUF and served as a text model. See
 	// docs/guides/realtime-audio-api.md.
 	if s.modelUsesTTSEngine(modelID) {
-		return nil, fmt.Errorf("model %q is a text-to-speech model and cannot be served by the text-generation runtime; local text-to-speech is not supported yet", modelID)
+		return nil, fmt.Errorf("model %q is a text-to-speech model; use POST /v1/audio/speech, which serves it through the Python text-to-speech runtime", modelID)
 	}
 	effectiveNumCtx := inference.ResolveNumCtxWithModelSetting(modelDir, numCtx, s.modelNumCtxSetting(modelID), s.cfg.Inference.LlamaUseModelMaxCtx)
 	effectiveNumParallel := inference.ResolveNumParallel(numParallel)
@@ -1383,6 +1419,107 @@ func (s *Server) getOrLoadASREngine(ctx context.Context, modelID string) (asr.En
 	}
 }
 
+var newTTSEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (tts.Engine, error) {
+	return tts.NewPythonEngine(ctx, modelName, modelDir, runtimeManager)
+}
+
+func (s *Server) getOrLoadTTSEngine(ctx context.Context, modelID string) (tts.Engine, error) {
+	modelID = s.resolveLocalModelStorageID(modelID)
+
+	s.mu.RLock()
+	me, ok := s.ttsEngines[modelID]
+	s.mu.RUnlock()
+	if ok {
+		return me.engine, nil
+	}
+
+	modelDir, err := s.manager.ModelPath(modelID)
+	if err != nil {
+		return nil, fmt.Errorf("model %q not found locally; use 'csghub-lite pull %s' first", modelID, modelID)
+	}
+	lm, err := s.manager.Get(modelID)
+	if err != nil {
+		return nil, err
+	}
+	pipelineTag := s.resolvedLocalPipelineTag(modelID, strings.TrimSpace(lm.PipelineTag))
+	if !isTTSPipelineTag(pipelineTag) {
+		return nil, fmt.Errorf("model %q is not a text-to-speech model", modelID)
+	}
+
+	for {
+		s.mu.Lock()
+		if me, ok := s.ttsEngines[modelID]; ok {
+			eng := me.engine
+			s.mu.Unlock()
+			return eng, nil
+		}
+		if state, ok := s.ttsLoading[modelID]; ok {
+			s.mu.Unlock()
+			<-state.done
+			if state.err != nil {
+				return nil, state.err
+			}
+			if state.engine != nil {
+				return state.engine, nil
+			}
+			continue
+		}
+		state := &ttsEngineLoadState{done: make(chan struct{})}
+		s.ttsLoading[modelID] = state
+		s.mu.Unlock()
+
+		log.Printf("MODEL %s: TTS engine load started", modelID)
+		runtimeManager, err := imagegen.NewTTSRuntimeManager()
+		if err == nil {
+			err = ensureTTSRuntimeReady(ctx, runtimeManager, nil, false)
+			if err == nil {
+				state.engine, err = newTTSEngine(ctx, modelID, modelDir, runtimeManager)
+			}
+		}
+		state.err = err
+
+		s.mu.Lock()
+		delete(s.ttsLoading, modelID)
+		if state.err == nil {
+			s.ttsEngines[modelID] = &managedTTSEngine{
+				engine:    state.engine,
+				lastUsed:  time.Now(),
+				keepAlive: DefaultKeepAlive,
+			}
+		}
+		close(state.done)
+		s.mu.Unlock()
+
+		if state.err != nil {
+			log.Printf("MODEL %s: TTS engine load failed: %v", modelID, state.err)
+			return nil, state.err
+		}
+		log.Printf("MODEL %s: TTS engine load complete", modelID)
+		return state.engine, nil
+	}
+}
+
+func (s *Server) closeTTSEngine(modelID string) {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	s.mu.Lock()
+	me, ok := s.ttsEngines[modelID]
+	if ok {
+		delete(s.ttsEngines, modelID)
+	}
+	s.mu.Unlock()
+	if ok {
+		_ = me.engine.Close()
+	}
+}
+
+var ensureTTSRuntimeReady = func(ctx context.Context, runtimeManager *imagegen.RuntimeManager, progress imagegen.ProgressFunc, upgradePackages bool) error {
+	if status := runtimeManager.TTSStatus(ctx); status.Ready && !upgradePackages {
+		return nil
+	}
+	_, err := runtimeManager.InstallTTSWithProgressOptions(ctx, progress, upgradePackages)
+	return err
+}
+
 func (s *Server) closeASREngine(modelID string) {
 	modelID = s.resolveLocalModelStorageID(modelID)
 	s.mu.Lock()
@@ -1414,6 +1551,10 @@ func (s *Server) closeAllEngines() {
 	for id, me := range s.imageEngines {
 		me.engine.Close()
 		delete(s.imageEngines, id)
+	}
+	for id, me := range s.ttsEngines {
+		me.engine.Close()
+		delete(s.ttsEngines, id)
 	}
 	for id, me := range s.asrEngines {
 		me.engine.Close()

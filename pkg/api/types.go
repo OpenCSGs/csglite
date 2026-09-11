@@ -986,6 +986,47 @@ type OpenAIAudioTranscriptionRequest struct {
 	ITN            *bool    `json:"itn,omitempty"`
 }
 
+// OpenAIAudioSpeechRequest is the OpenAI-compatible speech synthesis request,
+// served by the local Python text-to-speech runtime.
+type OpenAIAudioSpeechRequest struct {
+	Model string `json:"model"`
+	Input string `json:"input"`
+	// Voice selects a speaker. Empty uses the model's default voice.
+	Voice string `json:"voice,omitempty"`
+	// ResponseFormat is one of mp3, wav, pcm, opus, flac or aac. Empty means mp3,
+	// matching OpenAI.
+	ResponseFormat string `json:"response_format,omitempty"`
+	// Speed is a playback rate between 0.25 and 4.0. Nil means 1.0.
+	Speed *float64 `json:"speed,omitempty"`
+	// Instructions carries style or emotion guidance; models that cannot use it
+	// ignore it.
+	Instructions string `json:"instructions,omitempty"`
+	// Stream sends the audio as it is synthesised instead of buffering it whole.
+	Stream bool `json:"stream,omitempty"`
+	// SampleRate overrides the model's native rate for pcm and wav output.
+	SampleRate int    `json:"sample_rate,omitempty"`
+	Source     string `json:"source,omitempty"`
+}
+
+// SpeechVoice describes one voice a local text-to-speech model can render.
+type SpeechVoice struct {
+	ID       string `json:"id"`
+	Label    string `json:"label,omitempty"`
+	Language string `json:"language,omitempty"`
+	Gender   string `json:"gender,omitempty"`
+}
+
+// SpeechVoicesResponse lists the voices and native output rate of a local
+// text-to-speech model. OpenAI has a fixed voice enum; local models do not, so
+// clients need a way to discover what a given model can render.
+type SpeechVoicesResponse struct {
+	Model      string        `json:"model"`
+	SampleRate int           `json:"sample_rate,omitempty"`
+	Streaming  bool          `json:"streaming"`
+	Backend    string        `json:"backend,omitempty"`
+	Voices     []SpeechVoice `json:"voices"`
+}
+
 type OpenAIChatResponse struct {
 	ID      string         `json:"id"`
 	Object  string         `json:"object"`

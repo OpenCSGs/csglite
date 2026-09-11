@@ -201,8 +201,8 @@ export interface MarketplaceLocalModelStatus {
 
 export interface LocalInferenceSupport {
   supported: boolean;
-  runtime?: "llama" | "diffusers" | "python-asr" | "python-embedding";
-  mode: "none" | "direct" | "convert" | "image" | "asr" | "embedding";
+  runtime?: "llama" | "diffusers" | "python-asr" | "python-tts" | "python-embedding";
+  mode: "none" | "direct" | "convert" | "image" | "asr" | "tts" | "embedding";
   architecture?: string;
   runtime_architecture?: string;
 }

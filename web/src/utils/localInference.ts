@@ -1,6 +1,6 @@
 import type { LocalInferenceSupport } from "../api/client";
 
-export type LocalInferenceMode = "direct" | "convert" | "image" | "asr" | "embedding" | "none";
+export type LocalInferenceMode = "direct" | "convert" | "image" | "asr" | "tts" | "embedding" | "none";
 
 export function localInferenceModeFromSupport(support?: LocalInferenceSupport | null): LocalInferenceMode {
   if (!support?.supported) {
@@ -15,6 +15,8 @@ export function localInferenceModeFromSupport(support?: LocalInferenceSupport | 
       return "image";
     case "asr":
       return "asr";
+    case "tts":
+      return "tts";
     case "embedding":
       return "embedding";
     default:
@@ -46,6 +48,8 @@ export function localInferenceValueKey(mode: LocalInferenceMode, prefix: "mp" | 
       return `${prefix}.localInferenceImage`;
     case "asr":
       return `${prefix}.localInferenceASR`;
+    case "tts":
+      return `${prefix}.localInferenceTTS`;
     case "embedding":
       return `${prefix}.localInferenceEmbedding`;
     default:

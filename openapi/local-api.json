@@ -6115,22 +6115,59 @@
         "tags": [
           "OpenAI Compatibility"
         ],
-        "summary": "Create speech (not implemented)",
-        "description": "OpenAI-compatible speech synthesis. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
-        "operationId": "createSpeechUnsupported",
+        "summary": "Create speech",
+        "description": "OpenAI-compatible speech synthesis served by the local Python text-to-speech runtime. Speech models never run through llama.cpp: the vocoder or codec decoder that turns model output into a waveform only exists in the model's own inference stack. Set stream to receive the audio as it is synthesised.",
+        "operationId": "createSpeech",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIAudioSpeechRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "501": {
-            "description": "Local text-to-speech is not supported yet.",
+          "200": {
+            "description": "Synthesised audio in the requested container. Content-Type follows response_format: audio/mpeg for mp3, audio/wav for wav, audio/L16 for pcm, audio/opus, audio/flac or audio/aac.",
+            "content": {
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "audio/wav": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "audio/L16": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, or the model is not a local text-to-speech model.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAIErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "message": "local text-to-speech is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
-                    "type": "unsupported_error"
-                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Python text-to-speech runtime is not installed. The response carries the runtime status so a client can offer to install it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
               }
             }
@@ -6300,6 +6337,113 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/api/tts-voices": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "List text-to-speech voices",
+        "description": "Lists the voices a local text-to-speech model can render, with its native sample rate and backend. OpenAI has a fixed voice enum; local models do not, so clients need a way to discover what a given model offers. The model id is a query parameter because a source-scoped id such as modelscope/hexgrad/Kokoro-82M has three slash-separated segments and cannot be expressed as a path parameter. Loads the model if it is not already resident.",
+        "operationId": "getTTSVoices",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Local text-to-speech model ID, including any source prefix."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Voices and output properties of the model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeechVoicesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing model, or the model is not a local text-to-speech model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Python text-to-speech runtime is not installed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tts-runtime": {
+      "get": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Get text-to-speech runtime status",
+        "operationId": "getTTSRuntimeStatus",
+        "responses": {
+          "200": {
+            "description": "Python text-to-speech runtime status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tts-runtime/install": {
+      "post": {
+        "tags": [
+          "Runtime"
+        ],
+        "summary": "Install text-to-speech runtime packages",
+        "operationId": "installTTSRuntime",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ASRRuntimeInstallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated text-to-speech runtime status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageRuntimeStatus"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
@@ -12277,6 +12421,104 @@
           "upgrade_packages": {
             "type": "boolean",
             "description": "Upgrade ASR Python packages while installing."
+          }
+        }
+      },
+      "OpenAIAudioSpeechRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "input"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Local text-to-speech model ID."
+          },
+          "input": {
+            "type": "string",
+            "description": "Text to synthesise."
+          },
+          "voice": {
+            "type": "string",
+            "description": "Voice to render. Empty uses the model's default; discover the options with GET /api/models/{model}/voices."
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "mp3",
+              "wav",
+              "pcm",
+              "opus",
+              "flac",
+              "aac"
+            ],
+            "default": "mp3"
+          },
+          "speed": {
+            "type": "number",
+            "minimum": 0.25,
+            "maximum": 4.0,
+            "default": 1.0
+          },
+          "instructions": {
+            "type": "string",
+            "description": "Style or emotion guidance. Models that cannot use it ignore it."
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "Send audio as it is synthesised instead of buffering the whole clip."
+          },
+          "sample_rate": {
+            "type": "integer",
+            "description": "Override the model's native rate for pcm and wav output."
+          },
+          "source": {
+            "type": "string",
+            "description": "Stable routing ID. Only local is supported; third-party providers return HTTP 501."
+          }
+        }
+      },
+      "SpeechVoice": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "gender": {
+            "type": "string"
+          }
+        }
+      },
+      "SpeechVoicesResponse": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "sample_rate": {
+            "type": "integer",
+            "description": "Native output sample rate of the model."
+          },
+          "streaming": {
+            "type": "boolean",
+            "description": "Whether the backend can emit audio incrementally."
+          },
+          "backend": {
+            "type": "string",
+            "description": "Inference backend serving the model, for example kokoro or transformers."
+          },
+          "voices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SpeechVoice"
+            }
           }
         }
       },

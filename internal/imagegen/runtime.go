@@ -23,6 +23,7 @@ import (
 const (
 	runtimeDirName          = "ai-runtime"
 	asrRuntimeDirName       = "asr-runtime"
+	ttsRuntimeDirName       = "tts-runtime"
 	embeddingRuntimeDirName = "embedding-runtime"
 	uvCacheDirName          = "uv-cache"
 	legacyRuntimeDirName    = "image-runtime"
@@ -69,6 +70,40 @@ var asrPythonPackages = []string{
 	"librosa",
 	"imageio-ffmpeg",
 	"uvicorn",
+}
+
+// Text-to-speech models run in their own venv for the same reason ASR does: the
+// vocoder or codec decoder that turns model output into a waveform lives in the
+// model's own inference stack, so llama.cpp cannot serve these models at all.
+var requiredTTSPythonPackages = []string{
+	"fastapi",
+	"transformers",
+	"safetensors",
+	"soundfile",
+	"librosa",
+	"numpy",
+	"imageio_ffmpeg",
+	"uvicorn",
+}
+
+var ttsPythonPackages = []string{
+	"fastapi",
+	"transformers",
+	"safetensors",
+	"soundfile",
+	"librosa",
+	"numpy",
+	"imageio-ffmpeg",
+	"uvicorn",
+}
+
+// modelTTSPackages maps a model family to the extra packages that provide its
+// inference code, installed on first use so the base runtime stays small.
+// Kokoro needs misaki's Chinese grapheme-to-phoneme extra as well: the base
+// package only carries English, and Chinese input otherwise fails at synthesis
+// time with a missing-module error.
+var modelTTSPackages = map[string][]string{
+	"kokoro": {"kokoro", "misaki[zh]"},
 }
 
 var requiredEmbeddingPythonPackages = []string{
@@ -185,6 +220,14 @@ func NewASRRuntimeManager() (*RuntimeManager, error) {
 		return nil, err
 	}
 	return NewRuntimeManagerAt(filepath.Join(home, asrRuntimeDirName)), nil
+}
+
+func NewTTSRuntimeManager() (*RuntimeManager, error) {
+	home, err := config.AppHome()
+	if err != nil {
+		return nil, err
+	}
+	return NewRuntimeManagerAt(filepath.Join(home, ttsRuntimeDirName)), nil
 }
 
 func NewEmbeddingRuntimeManager() (*RuntimeManager, error) {
@@ -447,6 +490,127 @@ func (m *RuntimeManager) EnsureASRReady(ctx context.Context) error {
 	return &RuntimeNotReadyError{Status: status}
 }
 
+// pythonRuntimeStatus reports whether a venv-backed Python runtime is usable.
+// label names the runtime in error messages; torchPkgs and requiredPkgs are the
+// import names probed inside the venv.
+func (m *RuntimeManager) pythonRuntimeStatus(ctx context.Context, label string, torchPkgs, requiredPkgs []string, installCommand []string) RuntimeStatus {
+	hardware := DetectHardware()
+	indexes := ResolvePackageIndexes(hardware)
+	status := RuntimeStatus{
+		RuntimeDir:     m.rootDir,
+		VenvDir:        m.VenvDir(),
+		Python:         m.PythonPath(),
+		Platform:       runtime.GOOS,
+		Arch:           runtime.GOARCH,
+		Hardware:       hardware,
+		TorchIndexURL:  torchSourceURL(indexes),
+		InstallCommand: installCommand,
+	}
+	all := append(append([]string{}, torchPkgs...), requiredPkgs...)
+
+	if _, err := os.Stat(status.Python); err != nil {
+		status.Error = label + " runtime is not installed"
+		status.MissingPackages = all
+		return status
+	}
+	venvVersion, probeErr := probePythonVersionAt(ctx, status.Python)
+	if probeErr != nil {
+		status.Error = fmt.Sprintf("runtime venv python %s is not runnable: %v", status.Python, probeErr)
+		status.MissingPackages = all
+		return status
+	}
+	if !hostPythonSupported(venvVersion) {
+		status.Error = fmt.Sprintf("runtime venv uses Python %s; %s is required", venvVersion, pythonVersionRangeHint)
+		status.MissingPackages = all
+		return status
+	}
+	missing, err := missingPackages(ctx, status.Python, all)
+	if err != nil {
+		status.Error = err.Error()
+		status.MissingPackages = all
+		return status
+	}
+	status.MissingPackages = missing
+	status.Ready = len(missing) == 0
+	if !status.Ready {
+		status.Error = label + " runtime is missing Python packages"
+	}
+	return status
+}
+
+func (m *RuntimeManager) TTSStatus(ctx context.Context) RuntimeStatus {
+	return m.pythonRuntimeStatus(ctx, "text-to-speech",
+		[]string{"torch", "torchaudio"}, requiredTTSPythonPackages,
+		m.TTSInstallCommand(DetectHardware()))
+}
+
+func (m *RuntimeManager) EnsureTTSReady(ctx context.Context) error {
+	status := m.TTSStatus(ctx)
+	if status.Ready {
+		return nil
+	}
+	return &RuntimeNotReadyError{Status: status}
+}
+
+// EnsureModelTTSPackages installs the inference package a specific model family
+// needs, mirroring EnsureQwenASRReady. Missing entries are not an error: a model
+// served by plain transformers needs nothing extra.
+func (m *RuntimeManager) EnsureModelTTSPackages(ctx context.Context, modelName, modelDir string) error {
+	packages := modelTTSPackagesFor(modelName, modelDir)
+	if len(packages) == 0 {
+		return nil
+	}
+	missing, err := missingPackages(ctx, m.PythonPath(), importNamesFor(packages))
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	indexes := ResolvePackageIndexes(DetectHardware())
+	if err := m.ensurePipAndUV(ctx, m.PythonPath(), indexes); err != nil {
+		return err
+	}
+	if err := m.uvPipInstall(ctx, m.PythonPath(), indexes, packages, false, false); err != nil {
+		return fmt.Errorf("installing %s dependencies: %w", strings.Join(packages, " "), err)
+	}
+	return nil
+}
+
+func modelTTSPackagesFor(modelName, modelDir string) []string {
+	haystack := strings.ToLower(modelName + " " + filepath.Base(filepath.Clean(modelDir)))
+	for family, packages := range modelTTSPackages {
+		if strings.Contains(haystack, family) {
+			return packages
+		}
+	}
+	return nil
+}
+
+// importNamesFor turns package specs into the module names to probe inside the
+// venv, dropping extras and normalising separators: "misaki[zh]" is imported as
+// "misaki", and an extra that is missing shows up as the base module missing
+// only when the base package itself is absent. ordered_set is probed directly
+// because it is what misaki's Chinese extra pulls in and what its absence
+// breaks.
+func importNamesFor(packages []string) []string {
+	names := make([]string, 0, len(packages)+1)
+	for _, spec := range packages {
+		name := spec
+		if index := strings.IndexByte(name, '['); index >= 0 {
+			if strings.Contains(spec, "[zh]") {
+				names = append(names, "ordered_set")
+			}
+			name = name[:index]
+		}
+		name = strings.NewReplacer("-", "_", ".", "_").Replace(name)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 func (m *RuntimeManager) EmbeddingStatus(ctx context.Context) RuntimeStatus {
 	hardware := DetectHardware()
 	indexes := ResolvePackageIndexes(hardware)
@@ -685,6 +849,74 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 	return m.ASRStatus(ctx), nil
 }
 
+func (m *RuntimeManager) InstallTTSWithProgressOptions(ctx context.Context, progress ProgressFunc, upgradePackages bool) (RuntimeStatus, error) {
+	if progress == nil {
+		progress = func(string, int, int) {}
+	}
+
+	hardware := DetectHardware()
+	indexes := ResolvePackageIndexes(hardware)
+	progress(fmt.Sprintf("detect system %s/%s %s mirror=%s", runtime.GOOS, runtime.GOARCH, hardware, indexes.Mirror), 1, 5)
+	progress("prepare text-to-speech runtime", 2, 5)
+	if err := os.MkdirAll(m.rootDir, 0o755); err != nil {
+		return m.TTSStatus(ctx), fmt.Errorf("creating runtime directory: %w", err)
+	}
+	if err := m.ensureVenvForInstall(ctx, progress, 3, 5, upgradePackages); err != nil {
+		return m.TTSStatus(ctx), err
+	}
+
+	python := m.PythonPath()
+	torchMissing, err := missingPackages(ctx, python, []string{"torch", "torchaudio"})
+	if err != nil {
+		return m.TTSStatus(ctx), err
+	}
+	if len(torchMissing) > 0 || upgradePackages {
+		if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
+			return m.TTSStatus(ctx), err
+		}
+		progress("install PyTorch", 4, 5)
+		if err := m.uvPipInstall(ctx, python, indexes, torchPackages, upgradePackages, true); err != nil {
+			return m.TTSStatus(ctx), fmt.Errorf("installing PyTorch: %w", err)
+		}
+	}
+
+	ttsMissing, err := missingPackages(ctx, python, requiredTTSPythonPackages)
+	if err != nil {
+		return m.TTSStatus(ctx), err
+	}
+	if len(ttsMissing) == 0 && !upgradePackages {
+		return m.TTSStatus(ctx), nil
+	}
+	installPackages := ttsPythonPackages
+	if !upgradePackages {
+		installPackages = ttsMissing
+	}
+	if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
+		return m.TTSStatus(ctx), err
+	}
+	progress("install text-to-speech dependencies", 5, 5)
+	if err := m.uvPipInstall(ctx, python, indexes, installPackages, upgradePackages, false); err != nil {
+		return m.TTSStatus(ctx), fmt.Errorf("installing text-to-speech dependencies: %w", err)
+	}
+
+	now := time.Now()
+	manifest := RuntimeManifest{
+		Python:      python,
+		Platform:    runtime.GOOS,
+		Arch:        runtime.GOARCH,
+		Hardware:    DetectHardware(),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		TorchIndex:  torchSourceURL(indexes),
+		PyPIIndex:   indexes.PyPIIndexURL,
+		PackageSpec: append(torchPackages, ttsPythonPackages...),
+	}
+	if err := writeManifest(filepath.Join(m.rootDir, manifestFileName), manifest); err != nil {
+		return m.TTSStatus(ctx), err
+	}
+	return m.TTSStatus(ctx), nil
+}
+
 func (m *RuntimeManager) InstallEmbeddingWithProgressOptions(ctx context.Context, progress ProgressFunc, upgradePackages bool) (RuntimeStatus, error) {
 	if progress == nil {
 		progress = func(string, int, int) {}
@@ -873,6 +1105,43 @@ func (m *RuntimeManager) ASRInstallCommand(hw HardwareKind) []string {
 	cmd = append(cmd, torchInstallIndexArgs(indexes)...)
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
 	cmd = append(cmd, asrPythonPackages...)
+	if indexes.PyPIIndexURL != "" {
+		cmd = append(cmd, "--index-url", indexes.PyPIIndexURL)
+	}
+	return cmd
+}
+
+func (m *RuntimeManager) TTSInstallCommand(hw HardwareKind) []string {
+	return m.venvInstallCommand(hw, torchPackages, ttsPythonPackages)
+}
+
+// venvInstallCommand renders the shell command a user can run by hand to build
+// one of the Python runtimes, matching what the installer does.
+func (m *RuntimeManager) venvInstallCommand(hw HardwareKind, torchPkgs, packages []string) []string {
+	python := "python3"
+	if runtime.GOOS == "windows" {
+		python = "py -3"
+	}
+	venv := m.VenvDir()
+	if strings.ContainsAny(venv, " \t") {
+		venv = fmt.Sprintf("%q", venv)
+	}
+	pythonPath := m.PythonPath()
+	uvPath := m.uvPath()
+	indexes := ResolvePackageIndexes(hw)
+	cmd := []string{python, "-m", "venv", venv, "&&", pythonPath, "-m", "ensurepip", "--upgrade", "&&", pythonPath, "-m", "pip", "install", "--upgrade", "pip"}
+	if indexes.PyPIIndexURL != "" {
+		cmd = append(cmd, "-i", indexes.PyPIIndexURL)
+	}
+	cmd = append(cmd, "&&", pythonPath, "-m", "pip", "install", "uv")
+	if indexes.PyPIIndexURL != "" {
+		cmd = append(cmd, "-i", indexes.PyPIIndexURL)
+	}
+	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
+	cmd = append(cmd, torchPkgs...)
+	cmd = append(cmd, torchInstallIndexArgs(indexes)...)
+	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
+	cmd = append(cmd, packages...)
 	if indexes.PyPIIndexURL != "" {
 		cmd = append(cmd, "--index-url", indexes.PyPIIndexURL)
 	}

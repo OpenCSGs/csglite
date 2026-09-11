@@ -1,6 +1,6 @@
 # 实时语音 API 设计（ASR + TTS 全双工，兼容 OpenAI Realtime）
 
-- 状态：设计草案（待评审），**P0 已实现**，对应 issue [#147](https://github.com/OpenCSGs/csglite/issues/147)
+- 状态：设计草案（待评审），**P0 与 P1 已实现**，对应 issue [#147](https://github.com/OpenCSGs/csglite/issues/147)
 - 范围：`/v1/audio/speech`、`/v1/realtime*`、本地 TTS 运行时、以及配套的 `/api/*` 管理面
 - 兼容目标：OpenAI Realtime API（WebRTC 与 WebSocket 两种传输）+ OpenAI `audio/speech`、`audio/transcriptions`
 
@@ -464,6 +464,51 @@ P0 过程中额外发现并修掉的一处问题：`localinference.FromLocalMode
 明确错误，不再静默转成 GGUF；语音端点返回带 `unsupported_error` 的 501。P1 落地时把
 `text-to-speech` 从 `unsupportedPipelineTag` 移出，改为 `{Runtime: "python-tts", Mode: "tts"}`，
 并给前端 `web/src/utils/localInference.ts` 的 mode 联合类型和 i18n 补上 `tts`。
+
+## 8.2 P1 实现记录（已完成）
+
+ASR 与 TTS **都走 Python 推理运行时，不经 llama.cpp**——把模型输出变成波形的声码器/codec 解码器只
+存在于模型自己的推理栈里。TTS 完整镜像了 ASR 既有的那套框架：
+
+| 改动 | 位置 |
+| --- | --- |
+| 独立 venv 的运行时管理 | `imagegen`：`NewTTSRuntimeManager` / `TTSStatus` / `EnsureTTSReady` / `InstallTTSWithProgressOptions` / `TTSInstallCommand`，落在 `~/.csghub-lite/tts-runtime` |
+| 按模型族的按需依赖 | `EnsureModelTTSPackages`（Kokoro 需要 `kokoro` 与 `misaki[zh]`，后者是中文 G2P，缺了会在合成时报缺模块）|
+| 引擎接口与进程管理 | `internal/tts`：`Engine` 接口、`PythonEngine`（空闲端口、健康探测、空闲回收）|
+| 内嵌 worker | `internal/tts/worker/tts_worker.py`：Kokoro 与 transformers 原生 TTS 两种后端；PCM 经 ffmpeg 转 mp3/opus/flac/aac，流式时用一个长驻 ffmpeg 保证客户端收到连续流而不是拼接文件 |
+| 服务端接线 | `getOrLoadTTSEngine`、`POST /v1/audio/speech`、`GET /api/tts-runtime`、`POST /api/tts-runtime/install`、`GET /api/tts-voices?model=` |
+| 路由修正 | `text-to-speech` 从 `unsupportedPipelineTag` 移出，改为 `{Runtime: "python-tts", Mode: "tts"}`；前端 mode 联合类型与 i18n 补 `tts` |
+
+**音色发现用查询参数而不是路径参数**：带源前缀的模型 id（如 `modelscope/hexgrad/Kokoro-82M`）有三段，
+`{model}` 和 `{namespace}/{name}` 都匹配不了，而未匹配的 GET 会落到静态兜底、返回 200 的 Web UI。
+
+**worker 启动失败的原因会透出到 API**：`tailBuffer` 保留 worker stderr 的尾部，取 traceback 最后一行
+作为错误原因，否则调用方只能看到 `exit status 1`。
+
+### 实测结果（Kokoro-82M，真实模型）
+
+| 反馈要求 | 结果 |
+| --- | --- |
+| `Content-Type: audio/mpeg` | ✅ |
+| MP3 流式 | ✅ `Transfer-Encoding: chunked` |
+| `voice` / `input` / `response_format` / `instructions` | ✅（`instructions` 被接受，Kokoro 自身忽略）|
+| 中文 | ✅ 8 个中文音色，`zf_xiaoxiao` 实测 3.79s、mean -21.1 dB |
+| Bearer Authorization | ✅ |
+| 出错返回 JSON 而非 HTML | ✅ |
+
+其它容器同样实测通过：`wav`（audio/wav）、`pcm`（`audio/L16; rate=24000; channels=1`）、`opus`、`flac`。
+
+### 仍未完成
+
+issue #147 的第 2、3 项（实时 ASR WebSocket、WebRTC 全双工）仍返回 501，对应本文档的 P2 与 P3。
+
+### `Vikhrmodels/Qwen3-0.6B-TTS` 仍然无法合成
+
+该仓库声明 `vocab_size: 160887`，而三个 tokenizer 文件已知的最大 id 只到 151670 ——
+**9216 个 embedding 行没有任何 tokenizer 条目**；仓库里也没有 codec 解码器权重，`chat_template.jinja`
+是 Qwen3 原版模板，README 是 ModelScope 占位页。那 9216 行是音频 codec token，但用的哪个 codec、
+码本如何排布、解码器在哪，仓库均无记载，因此无法还原波形。现在会返回一条说明这一点的 400，而不是
+静默产生无效音频。要支持它，需要模型作者提供 codec 信息。
 
 ## 9. 风险与待确认
 
