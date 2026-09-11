@@ -13,6 +13,7 @@ import type {
   ChatMessageMeta, WebSearchResult,
 } from "../api/client";
 import { t, locale } from "../i18n";
+import { RealtimeVoiceDialog } from "../components/RealtimeVoiceDialog";
 import { parseReasoningText } from "../reasoning";
 import { isImageGenerationModel, isImageToImageModel, stripDataURL } from "../utils/imageModels";
 import {
@@ -95,6 +96,9 @@ const isRecordingAudio = signal(false);
 // lazily because listing them loads the model.
 const ttsVoices = signal<{ id: string; label?: string; language?: string }[]>([]);
 const selectedVoice = signal("");
+// The realtime dialog runs a WebRTC call; it is opened from the speech modes,
+// where both halves of the pipeline are already in front of the user.
+const showRealtimeVoice = signal(false);
 const ttsVoicesModel = signal("");
 const contextStorageKey = "csghub.chat.num_ctx";
 const contextModeStorageKey = "csghub.chat.num_ctx_mode";
@@ -2052,6 +2056,18 @@ export function Chat() {
                       </option>
                     ))}
                   </select>
+                  {(ttsMode || asrMode) && (
+                    <button
+                      class="flex h-9 items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-3 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100"
+                      onClick={() => { showRealtimeVoice.value = true; }}
+                      title={t("realtime.subtitle")}
+                    >
+                      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                      </svg>
+                      {t("chat.realtimeVoice")}
+                    </button>
+                  )}
                   {ttsMode && ttsVoices.value.length > 0 && (
                     <select
                       class="max-w-[180px] truncate rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -2167,6 +2183,15 @@ export function Chat() {
             {t("chat.resetDefaults")}
           </button>
         </div>
+      )}
+      {showRealtimeVoice.value && (
+        <RealtimeVoiceDialog
+          asrModels={availableModels.value.filter(isASRModel).map((m) => ({ key: modelKey(m), label: modelLabel(m) }))}
+          ttsModels={availableModels.value.filter(isTTSModel).map((m) => ({ key: modelKey(m), label: modelLabel(m) }))}
+          initialASRModel={asrMode ? modelKey(selectedModelInfo.value!) : undefined}
+          initialTTSModel={ttsMode ? modelKey(selectedModelInfo.value!) : undefined}
+          onClose={() => { showRealtimeVoice.value = false; }}
+        />
       )}
       {showCloudAuthDialog.value && (
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
