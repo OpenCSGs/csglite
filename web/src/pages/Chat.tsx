@@ -1017,9 +1017,21 @@ export function Chat() {
   // Load the voices of the selected text-to-speech model. Listing them loads the
   // model in the runtime, so it runs only for a text-to-speech selection and
   // only once per model.
+  //
+  // ttsVoicesModel guards against repeating the request, and it has to be
+  // cleared on every path that leaves the list unpopulated. Leaving it set after
+  // a failure -- likely on a fresh page load, where the request races the
+  // runtime coming up -- made the effect early-return forever, so the voice
+  // picker stayed empty until the model was reselected.
   useEffect(() => {
     const model = selectedModelInfo.value;
-    if (!model || getChatModelMode(model) !== "tts") {
+    // The model list loads asynchronously, so "nothing selected yet" is not the
+    // same as "a non-speech model is selected"; clearing on the former would
+    // discard a list already loaded before navigating away.
+    if (!model) {
+      return;
+    }
+    if (getChatModelMode(model) !== "tts") {
       if (ttsVoices.value.length > 0) ttsVoices.value = [];
       ttsVoicesModel.value = "";
       selectedVoice.value = "";
@@ -1031,7 +1043,10 @@ export function Chat() {
     ttsVoicesModel.value = key;
     getTTSVoices(key)
       .then((resp) => {
-        if (cancelled) return;
+        if (cancelled) {
+          ttsVoicesModel.value = "";
+          return;
+        }
         const voices = resp.voices || [];
         ttsVoices.value = voices;
         if (!voices.some((v) => v.id === selectedVoice.value)) {
@@ -1039,9 +1054,11 @@ export function Chat() {
         }
       })
       .catch(() => {
+        // Allow a retry: a model whose voices cannot be listed still synthesises
+        // with its default voice, so this is not surfaced as an error, but the
+        // next run must be free to ask again.
+        ttsVoicesModel.value = "";
         if (cancelled) return;
-        // A model whose voices cannot be listed still synthesises with its
-        // default voice, so this is not surfaced as an error.
         ttsVoices.value = [];
         selectedVoice.value = "";
       });
