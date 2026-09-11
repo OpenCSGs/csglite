@@ -17,7 +17,7 @@ export function setLocale(l: Locale) {
 const saved = localStorage.getItem("csghub-locale");
 if (saved === "en" || saved === "zh") locale.value = saved;
 
-const en: Record<string, string> = {
+export const en: Record<string, string> = {
   // Nav
   "nav.dashboard": "Dashboard",
   "nav.marketplace": "Marketplace",
@@ -1453,6 +1453,12 @@ const en: Record<string, string> = {
   "chat.audioReadyHint": "Transcription starts automatically after upload or recording.",
   "chat.removeAudio": "Remove audio",
   "chat.transcribe": "Transcribe",
+  "chat.synthesizingSpeech": "Synthesizing speech",
+  "chat.preparingTTSRuntime": "Preparing the text-to-speech runtime",
+  "chat.speechSynthesized": "Speech synthesized",
+  "chat.askSpeak": "Enter the text to speak",
+  "chat.speak": "Synthesize",
+  "chat.voice": "Voice",
   "chat.startRecording": "Start recording",
   "chat.stopRecording": "Stop recording",
   "chat.recordingUnsupported": "Audio recording is not supported in this browser.",
@@ -1697,7 +1703,7 @@ const en: Record<string, string> = {
   "pricing.typeCloud": "Cloud",
 };
 
-const zh: Record<string, string> = {
+export const zh: Record<string, string> = {
   // Nav
   "nav.dashboard": "仪表盘",
   "nav.marketplace": "市场",
@@ -3131,6 +3137,12 @@ const zh: Record<string, string> = {
   "chat.audioReadyHint": "上传或录音结束后会自动开始转写。",
   "chat.removeAudio": "移除音频",
   "chat.transcribe": "转写",
+  "chat.synthesizingSpeech": "正在合成语音",
+  "chat.preparingTTSRuntime": "正在准备语音合成运行时",
+  "chat.speechSynthesized": "语音合成完成",
+  "chat.askSpeak": "输入要合成的文本",
+  "chat.speak": "合成语音",
+  "chat.voice": "音色",
   "chat.startRecording": "开始录音",
   "chat.stopRecording": "停止录音",
   "chat.recordingUnsupported": "当前浏览器不支持录音。",
@@ -3274,6 +3286,7 @@ const zh: Record<string, string> = {
   "chat.cloudAuthRequired": "需要登录云端服务。请登录 {0} 或保存 API Key。",
   "chat.cloudBuiltinAPIKeyFailed": "无法加载 {0} built-in API Key。请重新登录或保存 API Key。",
   "chat.conversations": "对话记录",
+  "chat.copyModel": "复制模型名称",
   "chat.conversationHistory": "对话记录",
   "chat.noConversations": "暂无对话记录",
   "chat.searchConversations": "搜索对话",
