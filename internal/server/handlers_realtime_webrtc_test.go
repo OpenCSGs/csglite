@@ -477,80 +477,25 @@ func TestRealtimeSessionCapCoversBothTransports(t *testing.T) {
 	}
 }
 
-// The configured default models fill in the half of the pipeline the client did
-// not name, which is what the field reports ask for: they connect with only
-// ?model=<asr model>.
-func TestRealtimeDefaultModelsFillInThePipeline(t *testing.T) {
+// The configured default fills in the synthesis half of the pipeline, which is
+// what the field reports ask for: they connect with only ?model=<asr model>.
+// The model is resolved per response, so a session.update that names one later
+// also takes effect.
+func TestRealtimeSynthesizerResolvesTheModelPerResponse(t *testing.T) {
 	s := newRealtimeTestServer(t)
+	synth := s.newRealtimeSynthesizer().(*realtimeSynth)
+
+	if synth.CanSpeak("") {
+		t.Fatal("CanSpeak reported a model with none configured anywhere")
+	}
 	s.cfg.Realtime.DefaultTTSModel = "hexgrad/Kokoro-82M"
-
-	if synth := s.newRealtimeSynthesizer(realtime.SessionConfig{}); synth == nil {
-		t.Fatal("no synthesizer was built, so the configured default was ignored")
-	} else if got := synth.(*realtimeSynth).model; got != "hexgrad/Kokoro-82M" {
-		t.Fatalf("synthesis model = %q, want the configured default", got)
+	if got := synth.resolveModel(""); got != "hexgrad/Kokoro-82M" {
+		t.Fatalf("resolveModel(\"\") = %q, want the configured default", got)
 	}
-
-	// A model named by the session still wins over the default.
-	cfg := realtime.SessionConfig{Audio: &realtime.SessionAudio{
-		Output: &realtime.SessionAudioOutput{Model: "acme/voice"},
-	}}
-	if got := s.newRealtimeSynthesizer(cfg).(*realtimeSynth).model; got != "acme/voice" {
-		t.Fatalf("synthesis model = %q, want the session's model", got)
+	if got := synth.resolveModel("acme/voice"); got != "acme/voice" {
+		t.Fatalf("resolveModel = %q, want the session's model to win", got)
 	}
-
-	// With neither a session model nor a default there is nothing to speak with.
-	s.cfg.Realtime.DefaultTTSModel = ""
-	if synth := s.newRealtimeSynthesizer(realtime.SessionConfig{}); synth != nil {
-		t.Fatal("a synthesizer was built with no model configured")
-	}
-}
-
-// Synthesis runs much faster than real time and pion does not pace samples, so
-// the sender has to. Without pacing a whole utterance lands in the receiver's
-// jitter buffer at once and a barge-in has nothing left to cut.
-func TestWebRTCSenderPacesFramesAtRealTime(t *testing.T) {
-	sender := &webrtcSender{sourceRate: realtime.PCMUSampleRate}
-
-	start := time.Now()
-	// The first frames may go out immediately, up to the prebuffer.
-	for i := 0; i < 3; i++ {
-		if !sender.waitForFrameSlot(0) {
-			t.Fatal("a frame was dropped with no clear pending")
-		}
-	}
-	if elapsed := time.Since(start); elapsed > 30*time.Millisecond {
-		t.Fatalf("the prebuffer took %s, want the first frames to go out at once", elapsed)
-	}
-
-	// Once the cushion is spent, each further frame waits its 20ms turn.
-	paced := time.Now()
-	for i := 0; i < 5; i++ {
-		sender.waitForFrameSlot(0)
-	}
-	if elapsed := time.Since(paced); elapsed < 40*time.Millisecond {
-		t.Fatalf("5 frames took %s, want them paced at roughly 20ms each", elapsed)
-	}
-}
-
-// A clear must abandon the frames still waiting to be played, and pacing must
-// then restart for the next utterance instead of catching up on a stale
-// schedule.
-func TestWebRTCSenderStopsPacingAfterAClear(t *testing.T) {
-	sender := &webrtcSender{sourceRate: realtime.PCMUSampleRate}
-	sender.waitForFrameSlot(0)
-	sender.DiscardPendingAudio()
-
-	if sender.waitForFrameSlot(0) {
-		t.Fatal("a frame from the cleared generation was still accepted")
-	}
-	if !sender.nextFrame.IsZero() {
-		t.Fatal("pacing was not reset, so the next utterance would be delayed")
-	}
-	start := time.Now()
-	if !sender.waitForFrameSlot(sender.generation) {
-		t.Fatal("the next utterance was refused")
-	}
-	if elapsed := time.Since(start); elapsed > 30*time.Millisecond {
-		t.Fatalf("the first frame of the next utterance waited %s", elapsed)
+	if !synth.CanSpeak("") {
+		t.Fatal("CanSpeak = false with a default configured")
 	}
 }

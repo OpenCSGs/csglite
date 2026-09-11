@@ -9,10 +9,11 @@ import (
 )
 
 type recorder struct {
-	mu       sync.Mutex
-	events   []ServerEvent
-	audio    int
-	discards int
+	mu          sync.Mutex
+	events      []ServerEvent
+	audio       int
+	audioEvents []ServerEvent
+	discards    int
 }
 
 func (r *recorder) Send(ev ServerEvent) error {
@@ -22,10 +23,11 @@ func (r *recorder) Send(ev ServerEvent) error {
 	return nil
 }
 
-func (r *recorder) SendAudio(pcm []byte, _ int) error {
+func (r *recorder) SendAudio(frame AudioFrame) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.audio += len(pcm)
+	r.audio += len(frame.PCM)
+	r.audioEvents = append(r.audioEvents, frame.Event)
 	return nil
 }
 
@@ -59,7 +61,9 @@ func (r *recorder) count(kind string) int {
 // model that is still generating when a cancel arrives.
 type blockingSynth struct{ started chan struct{} }
 
-func (b *blockingSynth) Speak(ctx context.Context, _, _ string, onAudio func([]byte) error) (int, error) {
+func (*blockingSynth) CanSpeak(string) bool { return true }
+
+func (b *blockingSynth) Speak(ctx context.Context, _, _, _ string, onAudio func([]byte) error) (int, error) {
 	if err := onAudio([]byte{1, 2, 3, 4}); err != nil {
 		return 0, err
 	}
@@ -73,8 +77,26 @@ func (b *blockingSynth) Speak(ctx context.Context, _, _ string, onAudio func([]b
 
 type instantSynth struct{}
 
-func (instantSynth) Speak(_ context.Context, _, _ string, onAudio func([]byte) error) (int, error) {
+func (instantSynth) CanSpeak(string) bool { return true }
+
+func (instantSynth) Speak(_ context.Context, _, _, _ string, onAudio func([]byte) error) (int, error) {
 	return 24000, onAudio([]byte{9, 9})
+}
+
+// modelSynth records the model each response asked for, so a session.update
+// that names a different one can be seen taking effect.
+type modelSynth struct {
+	mu     sync.Mutex
+	models []string
+}
+
+func (m *modelSynth) CanSpeak(model string) bool { return model != "" }
+
+func (m *modelSynth) Speak(_ context.Context, model, _, _ string, onAudio func([]byte) error) (int, error) {
+	m.mu.Lock()
+	m.models = append(m.models, model)
+	m.mu.Unlock()
+	return 24000, onAudio([]byte{1, 1})
 }
 
 func newTestSession(t *testing.T, cfg SessionConfig, synth Synthesizer) (*Session, *recorder) {
@@ -262,5 +284,124 @@ func TestSequenceIncreases(t *testing.T) {
 			t.Fatalf("sequence %d followed %d; must strictly increase", ev.Sequence, previous)
 		}
 		previous = ev.Sequence
+	}
+}
+
+// The speech model is normally configured with session.update after the
+// session exists -- that is how the OpenAI clients do it -- so the model has to
+// be read per response. Binding it when the session was created meant such a
+// client could never speak: it got no_speech_model however it configured the
+// session.
+func TestSpeechModelComesFromTheCurrentConfig(t *testing.T) {
+	synth := &modelSynth{}
+	s, rec := newTestSession(t, SessionConfig{}, synth)
+
+	// Nothing is configured yet, so a response has nowhere to go.
+	if err := s.Respond(context.Background(), "hello", ""); err != nil {
+		t.Fatal(err)
+	}
+	if rec.count(ServerError) != 1 {
+		t.Fatalf("events = %v, want an error before a model is configured", rec.types())
+	}
+
+	if err := s.UpdateConfig([]byte(`{"audio":{"output":{"model":"acme/voice"}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Respond(context.Background(), "hello", ""); err != nil {
+		t.Fatal(err)
+	}
+	synth.mu.Lock()
+	models := append([]string(nil), synth.models...)
+	synth.mu.Unlock()
+	if len(models) != 1 || models[0] != "acme/voice" {
+		t.Fatalf("models = %v, want the model set by session.update", models)
+	}
+
+	// A later update switches it again, without a new session.
+	if err := s.UpdateConfig([]byte(`{"audio":{"output":{"model":"acme/other"}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Respond(context.Background(), "hello", ""); err != nil {
+		t.Fatal(err)
+	}
+	synth.mu.Lock()
+	models = append([]string(nil), synth.models...)
+	synth.mu.Unlock()
+	if len(models) != 2 || models[1] != "acme/other" {
+		t.Fatalf("models = %v, want the second update to take effect", models)
+	}
+}
+
+// Audio deltas are ordinary events: a client orders them against transcripts
+// and lifecycle events by sequence, and acknowledges them by event id. Sending
+// them unstamped -- which is what happens when a transport builds the event
+// itself -- leaves the client unable to do either.
+func TestAudioDeltasCarryIdentifiersAndOrdering(t *testing.T) {
+	s, rec := newTestSession(t, SessionConfig{Audio: &SessionAudio{
+		Output: &SessionAudioOutput{Model: "acme/voice"},
+	}}, instantSynth{})
+	if err := s.Respond(context.Background(), "hello", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.audioEvents) == 0 {
+		t.Fatal("no audio was delivered")
+	}
+	for i, ev := range rec.audioEvents {
+		if ev.Type != ServerAudioDelta {
+			t.Fatalf("audio event %d has type %q", i, ev.Type)
+		}
+		if ev.EventID == "" || ev.SessionID != s.ID {
+			t.Fatalf("audio event %d = %+v, want an event id and the session id", i, ev)
+		}
+		if ev.Sequence == 0 {
+			t.Fatalf("audio event %d has no sequence number", i)
+		}
+		if ev.ResponseID == "" {
+			t.Fatalf("audio event %d does not name its response", i)
+		}
+	}
+	// The sequence has to be shared with the other events, or a client cannot
+	// tell whether audio came before or after a transcript.
+	last := rec.audioEvents[len(rec.audioEvents)-1].Sequence
+	for _, ev := range rec.events {
+		if ev.Type == ServerResponseDone && ev.Sequence < last {
+			t.Fatal("response.done was numbered before the audio it follows")
+		}
+	}
+}
+
+// A standard client reads the response id and status from the response object,
+// not from the top-level fields, so a lifecycle event without it reads as
+// statusless however the response actually ended.
+func TestResponseLifecycleEventsCarryTheResponseObject(t *testing.T) {
+	s, rec := newTestSession(t, SessionConfig{Audio: &SessionAudio{
+		Output: &SessionAudioOutput{Model: "acme/voice"},
+	}}, instantSynth{})
+	if err := s.Respond(context.Background(), "hello", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	seen := map[string]*ResponseInfo{}
+	for _, ev := range rec.events {
+		if ev.Type == ServerResponseCreated || ev.Type == ServerResponseDone {
+			if ev.Response == nil {
+				t.Fatalf("%s carries no response object", ev.Type)
+			}
+			if ev.Response.ID != ev.ResponseID || ev.Response.Object != "realtime.response" {
+				t.Fatalf("%s response = %+v, want it to name the response", ev.Type, ev.Response)
+			}
+			seen[ev.Type] = ev.Response
+		}
+	}
+	if got := seen[ServerResponseCreated]; got == nil || got.Status != "in_progress" {
+		t.Fatalf("response.created status = %v, want in_progress", got)
+	}
+	if got := seen[ServerResponseDone]; got == nil || got.Status != "completed" {
+		t.Fatalf("response.done status = %v, want completed", got)
 	}
 }

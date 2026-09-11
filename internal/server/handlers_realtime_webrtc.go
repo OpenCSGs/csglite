@@ -173,8 +173,8 @@ func (w *webrtcSender) waitForFrameSlot(generation uint64) bool {
 // SendAudio packetises synthesised PCM onto the media track. Audio arrives in
 // synthesis-sized chunks at the model's rate and has to leave as 20ms mu-law
 // frames at 8kHz, paced at real time.
-func (w *webrtcSender) SendAudio(pcm []byte, sampleRate int) error {
-	frames, generation := w.nextFrames(pcm, sampleRate)
+func (w *webrtcSender) SendAudio(audio realtime.AudioFrame) error {
+	frames, generation := w.nextFrames(audio.PCM, audio.SampleRate)
 	for _, frame := range frames {
 		if !w.waitForFrameSlot(generation) {
 			// output_audio_buffer.clear happened while this chunk was being
@@ -457,7 +457,7 @@ func (s *Server) startRealtimeCall(ctx context.Context, offerSDP string, cfg rea
 	sender := &webrtcSender{track: track, sourceRate: realtime.DefaultOutputSampleRate}
 	sessionCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 
-	synth := s.newRealtimeSynthesizer(cfg)
+	synth := s.newRealtimeSynthesizer()
 	// Recognition loads in the background so the SDP answer is not held up by a
 	// cold model; audio that arrives first is buffered and replayed.
 	transcriber, startTranscription := s.newRealtimePipeline(sessionCtx, cfg)

@@ -33,19 +33,40 @@ type TranscriptEvent struct {
 
 // Synthesizer turns text into PCM16 audio, delivering it in pieces so playback
 // can start before generation finishes.
+//
+// The model is passed per response rather than fixed when the session is
+// created, because session.update may name the speech model at any point --
+// which is how the OpenAI clients configure it -- and a synthesizer bound to
+// the initial configuration would never see that.
 type Synthesizer interface {
-	// Speak streams audio for text. It must return promptly when ctx is
-	// cancelled, which is how response.cancel stops generation.
-	Speak(ctx context.Context, text, voice string, onAudio func(pcm []byte) error) (sampleRate int, err error)
+	// Speak streams audio for text using model, which is empty when the
+	// session names none and the server's own default applies. It must return
+	// promptly when ctx is cancelled, which is how response.cancel stops
+	// generation.
+	Speak(ctx context.Context, model, text, voice string, onAudio func(pcm []byte) error) (sampleRate int, err error)
+	// CanSpeak reports whether the session could synthesise with this model,
+	// so a response that has nowhere to go fails before it starts.
+	CanSpeak(model string) bool
+}
+
+// AudioFrame is one piece of synthesised audio together with the event that
+// announces it. The event is stamped by the session, so a transport that sends
+// audio as an event carries the same identifiers and ordering as every other
+// event rather than inventing its own.
+type AudioFrame struct {
+	Event      ServerEvent
+	PCM        []byte
+	SampleRate int
 }
 
 // Sender delivers a server event on the transport.
 type Sender interface {
 	Send(ServerEvent) error
-	// SendAudio delivers synthesised audio. The WebSocket transport encodes it
-	// as a response.output_audio.delta event; WebRTC writes it to the media
-	// track instead, which is the only place the two transports differ.
-	SendAudio(pcm []byte, sampleRate int) error
+	// SendAudio delivers synthesised audio. The WebSocket transport sends the
+	// frame's event with the audio base64-encoded in it; WebRTC writes the PCM
+	// to the media track and ignores the event, which is the only place the two
+	// transports differ.
+	SendAudio(AudioFrame) error
 }
 
 // Session drives one realtime conversation.
@@ -104,6 +125,16 @@ func (s *Session) emit(ev ServerEvent) error {
 	ev.Timestamp = time.Now().UnixMilli()
 	if ev.Model == "" {
 		ev.Model = s.Config.Model
+	}
+	// The lifecycle events carry a response object, since that is where a
+	// client looks for the id and status.
+	if ev.Response == nil && ev.ResponseID != "" {
+		switch ev.Type {
+		case ServerResponseCreated:
+			ev.Response = &ResponseInfo{ID: ev.ResponseID, Object: "realtime.response", Status: "in_progress"}
+		case ServerResponseDone:
+			ev.Response = &ResponseInfo{ID: ev.ResponseID, Object: "realtime.response", Status: ev.Status}
+		}
 	}
 	return s.sender.Send(ev)
 }
@@ -203,7 +234,10 @@ func (s *Session) Respond(ctx context.Context, text, voice string) error {
 		s.EmitError("unsupported_operation", "a transcription session cannot generate audio", "")
 		return nil
 	}
-	if s.synth == nil {
+	s.mu.Lock()
+	model := s.Config.SpeechModel()
+	s.mu.Unlock()
+	if s.synth == nil || !s.synth.CanSpeak(model) {
 		s.EmitError("no_speech_model", "no text-to-speech model is configured for this session", "")
 		return nil
 	}
@@ -230,14 +264,14 @@ func (s *Session) Respond(ctx context.Context, text, voice string) error {
 	}
 
 	started := false
-	rate, err := s.synth.Speak(responseCtx, text, voice, func(pcm []byte) error {
+	rate, err := s.synth.Speak(responseCtx, model, text, voice, func(pcm []byte) error {
 		if !started {
 			started = true
 			if emitErr := s.emit(ServerEvent{Type: ServerOutputAudioStarted, ResponseID: responseID}); emitErr != nil {
 				return emitErr
 			}
 		}
-		return s.sender.SendAudio(pcm, 0)
+		return s.sendAudio(responseID, pcm)
 	})
 
 	cancelled := responseCtx.Err() != nil
@@ -270,6 +304,23 @@ func (s *Session) Respond(ctx context.Context, text, voice string) error {
 	}
 	s.finishAudio(responseID)
 	return s.emit(ServerEvent{Type: ServerResponseDone, ResponseID: responseID, Status: "completed"})
+}
+
+// sendAudio hands one piece of synthesised audio to the transport, stamped like
+// any other event so a client can order it against the rest of the stream.
+func (s *Session) sendAudio(responseID string, pcm []byte) error {
+	id, seq := s.nextEvent()
+	return s.sender.SendAudio(AudioFrame{
+		Event: ServerEvent{
+			Type:       ServerAudioDelta,
+			EventID:    id,
+			Sequence:   seq,
+			SessionID:  s.ID,
+			ResponseID: responseID,
+			Timestamp:  time.Now().UnixMilli(),
+		},
+		PCM: pcm,
+	})
 }
 
 // finishAudio emits output_audio_buffer.stopped once per response. Cancel and

@@ -68,16 +68,28 @@ type ServerEvent struct {
 	Delta      string `json:"delta,omitempty"`
 	Transcript string `json:"transcript,omitempty"`
 
-	// Audio output, base64 PCM16 on the WebSocket transport.
-	Audio      string `json:"audio,omitempty"`
-	SampleRate int    `json:"sample_rate,omitempty"`
+	// Audio output. On the WebSocket transport the PCM16 travels base64-encoded
+	// in Delta, which is where the protocol puts it.
+	SampleRate int `json:"sample_rate,omitempty"`
 
-	// Response lifecycle
-	ResponseID string `json:"response_id,omitempty"`
-	Status     string `json:"status,omitempty"`
+	// Response lifecycle. response_id and status are csglite conveniences; the
+	// SDKs read the same values out of the response object, which is why both
+	// are sent.
+	ResponseID string        `json:"response_id,omitempty"`
+	Status     string        `json:"status,omitempty"`
+	Response   *ResponseInfo `json:"response,omitempty"`
 
 	Session *SessionConfig `json:"session,omitempty"`
 	Error   *EventError    `json:"error,omitempty"`
+}
+
+// ResponseInfo is the response object carried by the response lifecycle events.
+// A client reads the status from here -- event.response.status -- so an event
+// that only sets the top-level field looks statusless to a standard SDK.
+type ResponseInfo struct {
+	ID     string `json:"id"`
+	Object string `json:"object"`
+	Status string `json:"status,omitempty"`
 }
 
 // EventError is the error shape shared with the OpenAI-compatible HTTP errors.

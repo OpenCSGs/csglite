@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/opencsgs/csglite/internal/asr"
@@ -24,6 +23,10 @@ import (
 var errRealtimeASRNotStreaming = errors.New("this speech recognition engine cannot accept a continuous stream")
 
 // errRealtimeTranscript wraps a transcript failure reported by the worker.
+// errRealtimeNoSpeechModel is returned when a response has no model to speak
+// with, which the session reports as no_speech_model.
+var errRealtimeNoSpeechModel = errors.New("no text-to-speech model is configured for this session")
+
 func errRealtimeTranscript(message string) error {
 	if strings.TrimSpace(message) == "" {
 		return errors.New("transcription failed")
@@ -58,20 +61,20 @@ func (w *wsSender) Send(ev realtime.ServerEvent) error {
 	return w.conn.WriteJSON(ev)
 }
 
-func (w *wsSender) SendAudio(pcm []byte, sampleRate int) error {
+func (w *wsSender) SendAudio(frame realtime.AudioFrame) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if sampleRate == 0 {
-		sampleRate = w.sampleRate
+	rate := frame.SampleRate
+	if rate == 0 {
+		rate = w.sampleRate
 	}
 	// On this transport audio travels as an event; WebRTC writes it to the media
-	// track instead.
-	return w.conn.WriteJSON(realtime.ServerEvent{
-		Type:       realtime.ServerAudioDelta,
-		Audio:      base64.StdEncoding.EncodeToString(pcm),
-		SampleRate: sampleRate,
-		Timestamp:  time.Now().UnixMilli(),
-	})
+	// track instead. The payload goes in "delta", which is where the protocol
+	// puts it and where the SDKs look for it.
+	ev := frame.Event
+	ev.Delta = base64.StdEncoding.EncodeToString(frame.PCM)
+	ev.SampleRate = rate
+	return w.conn.WriteJSON(ev)
 }
 
 // DiscardPendingAudio satisfies the optional interface the session uses for
@@ -109,7 +112,7 @@ func (s *Server) handleRealtimeWebSocket(w http.ResponseWriter, r *http.Request)
 	defer cancel()
 
 	sender := &wsSender{conn: conn, sampleRate: realtime.DefaultOutputSampleRate}
-	synth := s.newRealtimeSynthesizer(cfg)
+	synth := s.newRealtimeSynthesizer()
 	// Recognition loads in the background: a client waits for session.created
 	// before it speaks, so blocking on a cold model here would stall the whole
 	// session. Audio that arrives meanwhile is buffered.
@@ -342,25 +345,35 @@ func (s *Server) newRealtimeTranscriber(ctx context.Context, cfg realtime.Sessio
 }
 
 // newRealtimeSynthesizer adapts the text-to-speech engine to the session's
-// Synthesizer interface.
-func (s *Server) newRealtimeSynthesizer(cfg realtime.SessionConfig) realtime.Synthesizer {
-	model := cfg.SpeechModel()
-	if model == "" {
-		model = strings.TrimSpace(s.cfg.Realtime.DefaultTTSModel)
-	}
-	if model == "" {
-		return nil
-	}
-	return &realtimeSynth{server: s, model: model}
+// Synthesizer interface. It resolves the model per response so a session.update
+// that names one takes effect, falling back to the configured default.
+func (s *Server) newRealtimeSynthesizer() realtime.Synthesizer {
+	return &realtimeSynth{server: s}
 }
 
 type realtimeSynth struct {
 	server *Server
-	model  string
 }
 
-func (r *realtimeSynth) Speak(ctx context.Context, text, voice string, onAudio func([]byte) error) (int, error) {
-	engine, err := r.server.getOrLoadTTSEngine(ctx, r.model)
+// resolveModel picks the model for this response: the session's, else the
+// server-wide default.
+func (r *realtimeSynth) resolveModel(model string) string {
+	if trimmed := strings.TrimSpace(model); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(r.server.cfg.Realtime.DefaultTTSModel)
+}
+
+func (r *realtimeSynth) CanSpeak(model string) bool {
+	return r.resolveModel(model) != ""
+}
+
+func (r *realtimeSynth) Speak(ctx context.Context, model, text, voice string, onAudio func([]byte) error) (int, error) {
+	model = r.resolveModel(model)
+	if model == "" {
+		return 0, errRealtimeNoSpeechModel
+	}
+	engine, err := r.server.getOrLoadTTSEngine(ctx, model)
 	if err != nil {
 		return 0, err
 	}
@@ -369,7 +382,7 @@ func (r *realtimeSynth) Speak(ctx context.Context, text, voice string, onAudio f
 		rate = info.SampleRate
 	}
 	req := api.OpenAIAudioSpeechRequest{
-		Model: r.model,
+		Model: model,
 		Input: text,
 		Voice: voice,
 		// PCM keeps the transport free of container framing, which matters when
@@ -387,6 +400,6 @@ func (r *realtimeSynth) Speak(ctx context.Context, text, voice string, onAudio f
 		}
 		return onAudio(chunk.Data)
 	})
-	r.server.touchTTSEngine(r.model)
+	r.server.touchTTSEngine(model)
 	return rate, err
 }

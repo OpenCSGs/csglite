@@ -211,7 +211,7 @@ GET  /v1/audio/transcriptions/realtime
 | `response.created` | 全部 | 一次生成开始 |
 | `response.output_item.added` / `.done` | 全部 | 输出条目 |
 | `response.output_audio_transcript.delta` / `.done` | 全部 | TTS 文本对齐字幕 |
-| `response.output_audio.delta` / `.done` | **仅 WS** | base64 PCM16 音频块；WebRTC 下音频走媒体轨，不发这两个事件 |
+| `response.output_audio.delta` / `.done` | **仅 WS** | base64 PCM16 放在 `delta` 字段；WebRTC 下音频走媒体轨，不发这两个事件 |
 | `output_audio_buffer.started` | **仅 WebRTC** | 开始向下行轨推流 |
 | `output_audio_buffer.stopped` | **仅 WebRTC** | 音频播完（issue 第 8 条） |
 | `output_audio_buffer.cleared` | **仅 WebRTC** | 被 `output_audio_buffer.clear` 打断（issue 第 9 条） |
@@ -289,7 +289,7 @@ v=0 ... (SDP answer)
 `GET /v1/realtime?model=<id>` 升级为 WebSocket，事件与 §4.3 完全一致，差异只有：
 
 - 上行音频用 `input_audio_buffer.append`（base64 PCM16，建议 20–100ms 一帧）。
-- 下行音频用 `response.output_audio.delta`。
+- 下行音频用 `response.output_audio.delta`，载荷在 `delta` 字段。
 - 不产生 `output_audio_buffer.*` 事件；打断用 `response.cancel` + `input_audio_buffer.clear`。
 
 `GET /v1/realtime/transcription`（及别名 `/v1/audio/transcriptions/realtime`）等价于 `session.type=transcription`：只做流式 ASR，不接受 `response.create`。
@@ -746,6 +746,48 @@ session.created → delta ×6（逐步增长） → input_audio_buffer.committed
 `internal/server/realtime_transcription_test.go`、`internal/realtime/g711_test.go`、
 `internal/config/config_test.go` 的 realtime 三个用例。需要真实 ICE 的两个用例在 Windows CI 上
 跳过，与该目录里既有的四个用例做法一致。
+
+## 8.5 跟着真机验证补掉的协议不一致
+
+WebRTC 跑通之后，用 `websockets` 写了个纯 Python 客户端按 SDK 的读法去解事件——
+**按字段名读、按 `response.status` 读**，而不是按 csglite 自己发的形状读。一读就暴露了三处
+只有标准客户端才会碰到的不一致，三处都会让官方 SDK 失败或拿不到数据：
+
+| 问题 | 后果 | 修法 |
+| --- | --- | --- |
+| 合成模型在建会话时绑定 | 用 `session.update` 配置 TTS 模型的客户端（**这正是 OpenAI 客户端的做法**）永远拿到 `no_speech_model` | `Synthesizer` 改为每次响应传入 model，由服务端解析「会话指定 → 配置默认」 |
+| `response.output_audio.delta` 把音频放在 `audio` 字段 | SDK 读 `delta`，读不到音频 | 放回 `delta`；`audio` 字段删掉 |
+| 音频事件由传输层自己拼，没有 `event_id` / `sequence` / `response_id` | 客户端无法给音频排序，也无法把它归到某次响应 | 音频帧改由会话统一编号（`Session.sendAudio`），传输层只负责编码 |
+| `response.created` / `.done` 只有顶层 `status` | SDK 读 `event.response.status`，看起来永远没有状态 | 两个事件都带上 `response` 对象（`id` / `object` / `status`），顶层字段保留作为 csglite 的便利字段 |
+
+教训是：**用自己的客户端验证，只能验证自己那套形状**。P2、P3 的实测都只统计了帧数与时延，
+形状是对着实现读的，所以这几处一直没被发现；换成按协议字段名读的客户端，第一次连就全露出来了。
+
+### 实测（每次只加载一个模型，验证完即 `POST /api/stop`）
+
+WebSocket 合成（`session.update` 配置模型，`modelscope/hexgrad/Kokoro-82M`）：
+
+```
+session.created → 首个音频 4.61s（含冷启动）→ response.done status=completed
+3.50s 的 24kHz 音频，全部从 delta 字段解出
+```
+
+WebSocket 识别（`modelscope/iic/SenseVoiceSmall`，把上一步的音频送回去）：
+
+```
+delta → conversation.item.input_audio_transcription.completed
+  "the web soet transport still works after the update"
+（合成文本为 "The websocket transport still works after the update."，
+  websocket 一词被念读后重新识别有偏差，链路本身正常）
+```
+
+WebRTC 复测（确认事件改动没有影响媒体轨）：
+
+```
+POST /v1/realtime/calls → 200 (6ms)
+response.done: {"id":"resp_...","object":"realtime.response","status":"completed"}
+4.52s 音频用 226 个 RTP 包送达，占 4.44s 墙钟
+```
 
 ## 9. 风险与待确认
 
