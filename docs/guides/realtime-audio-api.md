@@ -526,6 +526,40 @@ transformers 原生后端在 4.57.3–4.57.6 全区间正常。另外 `qwen-tts`
 `transformers==4.57.3`，所以 `EnsureModelTTSPackages` 装完按模型的额外依赖后会**重新声明一次约束**，
 保证版本只前进、不被第三方包拽回去。
 
+### 已支持的后端（均实测出音频）
+
+| 模型 | 体积 | backend | 音色 | 备注 |
+| --- | --- | --- | --- | --- |
+| `hexgrad/Kokoro-82M` | 327 MB | `kokoro` | 54（8 中文） | 需 `misaki[zh]` 才能念中文 |
+| `facebook/mms-tts-eng` | 145 MB | `transformers` | 0（单说话人） | 同架构覆盖 MMS 上千语言 |
+| `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` | 2.3 GB | `qwen3-tts` | 9（5 中文，含京/川方言） | codec 随仓库自带 |
+| `openbmb/VoxCPM2` | 4.6 GB | `voxcpm` | 0（参考音频克隆） | 原生流式；`audiovae.pth` 随仓库自带 |
+
+`transformers` 后端还覆盖 SpeechT5、Bark、ParlerTTS、CSM、Dia、FastSpeech2；其中只有 VITS/MMS 一路
+经过实测，其余同属一个代码路径但未逐个验证。
+
+选后端的判据（这几轮踩出来的）：**上游必须用 `>=` 声明依赖**。VoxCPM 的 `voxcpm` 包声明
+`torch>=2.5.0` / `transformers>=4.36.2`，装进共享 venv 后 numpy / torch / torchaudio /
+transformers / protobuf **一个都没动**，所以不需要 overlay——这是「尽可能复用」的理想情况。
+
+### 没有纳入的后端与原因
+
+| 模型 | 卡点 |
+| --- | --- |
+| fish-speech / OpenAudio S1 | 推理栈的 `descript-audiotools`（最新 0.7.2）仍调用 `torchaudio.list_audio_backends`，该 API 在 torchaudio 2.x 已移除。全部 import 都能成功，运行时挂掉——**上游停更**，不是版本约束问题。相关代码已移除，等上游修复后再加。 |
+| fish-speech S2 / 2.0 | 只有 `fishaudio/s2-pro`（11 GB，HF，ModelScope 无镜像），且 PyPI 的 `fish-speech` 0.1.0 对应的是 S1 一代，没有 S2 的包。 |
+| CosyVoice 2 / 3 | 官方仓库没有 `setup.py`/`pyproject.toml`，只有 `requirements.txt` + `third_party/Matcha-TTS` 子模块，必须 vendoring；且 `requirements.txt` 31 行几乎全是 `==` 硬钉，其中 `numpy==1.26.4` 会把共享 numpy 从 2.x 拽回 1.x。numpy 是 torch/scipy/librosa 的二进制底座，无法像 protobuf 那样用 overlay 覆盖。最小 4.62 GB。 |
+| `Vikhrmodels/Qwen3-0.6B-TTS` | codec 是 BigCodec，权重只在 HF（`Alethia/BigCodec`），且该模型只支持 en/ru/uk，念不出中文。 |
+
+### 依赖隔离（overlay）
+
+为「某个后端的包与其它后端冲突」准备的机制：`--target` 装进私有目录，通过 `PYTHONPATH` 置于共享
+venv 的 site-packages 之前。实测有效——私有 protobuf 3.19.6 生效的同时，torch / numpy 仍来自共享，
+私有目录仅 780 KB 而不是复制一个 3 GB 的 venv。
+
+当前 `ttsOverlayPackages` 为空：四个已支持的后端都能共处一个 venv。机制保留，因为放任某个后端的
+pin 改写共享环境会弄坏其它后端。
+
 ### 仍未完成
 
 issue #147 的第 2、3 项（实时 ASR WebSocket、WebRTC 全双工）仍返回 501，对应本文档的 P2 与 P3。

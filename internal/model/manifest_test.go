@@ -747,3 +747,24 @@ func TestIsTTSModelName(t *testing.T) {
 		}
 	}
 }
+
+// VoxCPM writes a singular "architecture" field rather than the usual
+// architectures list, so neither the architecture table nor model_type sees it.
+func TestTTSBackendForVoxCPM(t *testing.T) {
+	cases := map[string]string{
+		`{"architecture":"voxcpm2","audio_vae_config":{}}`: TTSBackendVoxCPM,
+		`{"architecture":"voxcpm","dit_config":{}}`:        TTSBackendVoxCPM,
+		`{"architecture":"VoxCPM2"}`:                       TTSBackendVoxCPM,
+		// A plain text model must not be claimed.
+		`{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3"}`: "",
+	}
+	for body, want := range cases {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := TTSBackendFor(dir, "openbmb/VoxCPM2"); got != want {
+			t.Errorf("TTSBackendFor(%s) = %q, want %q", body, got, want)
+		}
+	}
+}

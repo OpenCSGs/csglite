@@ -45,6 +45,13 @@ def _architectures(cfg):
     return [str(a) for a in (cfg.get("architectures") or [])]
 
 
+def _is_voxcpm_model(model_dir):
+    """VoxCPM writes a singular "architecture" field rather than the usual
+    architectures list: VoxCPM2 reports "voxcpm2", VoxCPM-0.5B "voxcpm"."""
+    cfg = _load_config(model_dir)
+    return str(cfg.get("architecture", "")).lower().startswith("voxcpm")
+
+
 def _is_kokoro_model(model_dir, model_name):
     cfg = _load_config(model_dir)
     if "istftnet" in cfg or "plbert" in cfg:
@@ -159,6 +166,43 @@ def _encode(pcm, sample_rate, fmt):
     if proc.returncode != 0:
         raise RuntimeError("ffmpeg failed: %s" % proc.stderr.decode("utf-8", "replace")[:400])
     return proc.stdout
+
+
+class VoxCPMEngine:
+    """VoxCPM / VoxCPM2. The repository is self-contained: the audio VAE that
+    turns generated latents into a waveform ships as audiovae.pth beside the
+    language model.
+
+    There are no preset voices -- the model clones from reference audio, and
+    with none it produces a fresh speaker per call. The denoiser is left off
+    because enabling it downloads a separate speech-enhancement model, and it
+    only matters when cleaning a caller's reference audio."""
+
+    backend = "voxcpm"
+    streaming = True
+
+    def __init__(self, model_dir, model_name, hardware):
+        from voxcpm import VoxCPM
+
+        self.model_name = model_name
+        self.sample_rate = 16000
+        self.voices = []
+        self.model = VoxCPM(
+            voxcpm_model_path=model_dir,
+            enable_denoiser=False,
+            device=_device(hardware),
+        )
+
+    def default_voice(self):
+        return ""
+
+    def iter_pcm(self, text, voice, speed, instruct=None):
+        # normalize=True keeps numbers and punctuation stable, matching the
+        # reference implementation's recommendation for mixed-language text.
+        for chunk in self.model.generate_streaming(text=text, normalize=True):
+            if chunk is None:
+                continue
+            yield _pcm16_bytes(chunk)
 
 
 class KokoroEngine:
@@ -356,6 +400,8 @@ def load_engine(model_dir, model_name, hardware):
     cfg = _load_config(model_dir)
     if _is_qwen3_tts_model(model_dir):
         return QwenTTSEngine(model_dir, model_name, hardware)
+    if _is_voxcpm_model(model_dir):
+        return VoxCPMEngine(model_dir, model_name, hardware)
     if _is_kokoro_model(model_dir, model_name):
         return KokoroEngine(model_dir, model_name, hardware)
     class_name = _transformers_tts_class(cfg)

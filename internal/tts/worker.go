@@ -21,6 +21,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/imagegen"
+	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -128,6 +129,13 @@ func NewPythonEngine(ctx context.Context, modelName, modelDir string, runtimeMan
 	if err := runtimeManager.EnsureModelTTSPackages(ctx, modelName, modelDir); err != nil {
 		return nil, err
 	}
+	// A backend whose dependencies cannot coexist with the others gets a private
+	// overlay holding only the conflicting packages; everything else -- torch,
+	// numpy, transformers -- is still reused from the shared venv.
+	overlayDir, err := runtimeManager.EnsureTTSOverlay(ctx, model.TTSBackendFor(modelDir, modelName))
+	if err != nil {
+		return nil, err
+	}
 	if err := writeTTSWorkerScript(runtimeManager.RootDir()); err != nil {
 		return nil, err
 	}
@@ -144,7 +152,7 @@ func NewPythonEngine(ctx context.Context, modelName, modelDir string, runtimeMan
 	if err != nil {
 		return nil, err
 	}
-	cmd.Env = withTempDir(os.Environ(), tempDir)
+	cmd.Env = imagegen.WithPythonPath(withTempDir(os.Environ(), tempDir), overlayDir)
 	cmd.Stdout = os.Stdout
 	stderr := newTailBuffer(16 << 10)
 	cmd.Stderr = io.MultiWriter(os.Stderr, stderr)

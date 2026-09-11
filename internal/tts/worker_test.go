@@ -1,6 +1,12 @@
 package tts
 
-import "testing"
+import (
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/opencsgs/csglite/internal/model"
+)
 
 // A worker that dies during startup must report why: the reason it prints is
 // something the caller has to act on, such as a model that emits audio codec
@@ -80,4 +86,56 @@ func TestWorkerErrorClassifiesFaults(t *testing.T) {
 			t.Errorf("status %d: ClientFault() = %v, want %v", tc.status, err.ClientFault(), tc.wantClient)
 		}
 	}
+}
+
+// model.TTSBackendFor decides what the library advertises; load_engine in
+// tts_worker.py decides what actually runs. They must stay in step, so assert
+// every architecture the worker dispatches on is one the Go side recognises.
+func TestWorkerArchitecturesMatchGoDetection(t *testing.T) {
+	script := string(ttsWorkerScript)
+	start := strings.Index(script, "def _transformers_tts_class")
+	if start < 0 {
+		t.Fatal("_transformers_tts_class not found in the embedded worker")
+	}
+	end := strings.Index(script[start:], "\ndef ")
+	if end < 0 {
+		t.Fatal("could not find the end of _transformers_tts_class")
+	}
+	body := script[start : start+end]
+
+	markers := regexp.MustCompile(`\("([A-Za-z0-9]+)",\s*"[A-Za-z0-9]+"\)`).FindAllStringSubmatch(body, -1)
+	if len(markers) == 0 {
+		t.Fatal("no architecture markers parsed from the worker")
+	}
+	for _, m := range markers {
+		marker := m[1]
+		// The worker matches on a substring, so probe with the marker itself.
+		if !model.IsTTSArchitecture(marker) {
+			t.Errorf("worker dispatches on architecture %q but model.IsTTSArchitecture(%q) is false; the two lists have drifted", marker, marker)
+		}
+	}
+	t.Logf("checked %d architecture markers", len(markers))
+}
+
+// Every backend the worker dispatches on must be a backend name the Go side can
+// report, otherwise the library and the runtime disagree about what is
+// supported.
+func TestWorkerBackendNamesMatchGoConstants(t *testing.T) {
+	script := string(ttsWorkerScript)
+	names := regexp.MustCompile(`(?m)^\s+backend = "([a-z0-9-]+)"`).FindAllStringSubmatch(script, -1)
+	if len(names) == 0 {
+		t.Fatal("no backend names parsed from the embedded worker")
+	}
+	known := map[string]bool{
+		model.TTSBackendQwen3:        true,
+		model.TTSBackendKokoro:       true,
+		model.TTSBackendTransformers: true,
+		model.TTSBackendVoxCPM:       true,
+	}
+	for _, m := range names {
+		if !known[m[1]] {
+			t.Errorf("worker declares backend %q with no matching Go constant", m[1])
+		}
+	}
+	t.Logf("checked %d worker backends", len(names))
 }

@@ -1992,24 +1992,6 @@ export function Chat() {
               />
               <div class="mt-2 flex items-center justify-between gap-3">
                 <div class="flex min-w-0 items-center gap-2">
-                  {ttsMode && ttsVoices.value.length > 0 ? (
-                    <label class="flex min-w-0 items-center gap-2 text-xs text-gray-500">
-                      <span class="shrink-0">{t("chat.voice")}</span>
-                      <select
-                        class="min-w-0 max-w-[12rem] rounded-xl border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 focus:border-cyan-300 focus:outline-none"
-                        value={selectedVoice.value}
-                        disabled={isGenerating.value}
-                        onChange={(e) => { selectedVoice.value = (e.target as HTMLSelectElement).value; }}
-                        title={t("chat.voice")}
-                      >
-                        {ttsVoices.value.map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.language ? `${v.id} (${v.language})` : v.id}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
                   {asrMode ? (
                     <>
                       <label class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition-colors hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-600" title={t("chat.uploadAudio")}>
@@ -2070,6 +2052,22 @@ export function Chat() {
                       </option>
                     ))}
                   </select>
+                  {ttsMode && ttsVoices.value.length > 0 && (
+                    <select
+                      class="max-w-[180px] truncate rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={selectedVoice.value}
+                      disabled={isGenerating.value}
+                      onChange={(e) => { selectedVoice.value = (e.target as HTMLSelectElement).value; }}
+                      title={t("chat.voice")}
+                      aria-label={t("chat.voice")}
+                    >
+                      {ttsVoices.value.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.language ? `${v.id} (${v.language})` : v.id}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 {isGenerating.value ? (
                   <button
