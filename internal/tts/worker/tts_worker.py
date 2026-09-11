@@ -522,15 +522,28 @@ async def speak_stream(request: Request):
         # Raw containers are emitted as they are produced. Compressed containers
         # are piped through one long-lived ffmpeg so the client receives a single
         # continuous stream rather than concatenated files.
+        # Every backend is fed sentence by sentence, including those that yield
+        # within a call: Kokoro reports streaming yet returned a single chunk for
+        # five sentences, and Qwen3-TTS has no streaming generation at all.
+        # Splitting makes the first packet cost one sentence rather than the
+        # whole text, and it is what lets a cancel arrive mid-generation.
+        #
+        # Only the streaming path does this. A plain request still synthesises
+        # the text whole, which keeps intonation across sentence boundaries.
+        segments = _split_for_streaming(text) or [text]
+
         try:
             if fmt in ("pcm", "wav"):
                 first = True
-                for pcm in ENGINE.iter_pcm(text, voice, speed, instruct):
-                    if fmt == "wav" and first:
-                        yield frame(_wav_bytes(pcm, rate))
-                        first = False
-                    else:
-                        yield frame(pcm)
+                for segment in segments:
+                    for pcm in ENGINE.iter_pcm(segment, voice, speed, instruct):
+                        if fmt == "wav" and first:
+                            # Only the first frame carries a header; the rest are
+                            # raw samples appended to that stream.
+                            yield frame(_wav_bytes(pcm, rate))
+                            first = False
+                        else:
+                            yield frame(pcm)
                 yield frame(done=True)
                 return
             proc = subprocess.Popen(
@@ -543,16 +556,6 @@ async def speak_stream(request: Request):
             # earlier than the last: the response was chunked but delivered
             # nothing until the whole clip had been generated.
             feed_error = []
-            # Every backend is fed sentence by sentence here, including those
-            # that yield within a call: Kokoro reports streaming yet returned a
-            # single chunk for five sentences, and Qwen3-TTS has no streaming
-            # generation at all. Splitting makes the first packet cost one
-            # sentence rather than the whole text.
-            #
-            # Only the streaming path does this. A plain request still
-            # synthesises the text whole, which keeps intonation across sentence
-            # boundaries that per-sentence calls cannot reproduce.
-            segments = _split_for_streaming(text) or [text]
 
             def feed():
                 try:

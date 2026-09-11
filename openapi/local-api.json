@@ -6181,11 +6181,11 @@
           "OpenAI Compatibility"
         ],
         "summary": "Create realtime WebRTC call (not implemented)",
-        "description": "OpenAI Realtime WebRTC SDP exchange. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
+        "description": "The WebRTC transport is not implemented. The WebSocket transport at GET /v1/realtime serves the same session and event protocol; this endpoint answers 501 so a client probing for WebRTC receives a machine-readable answer rather than the web UI returned by the static fallback.",
         "operationId": "createRealtimeCallUnsupported",
         "responses": {
           "501": {
-            "description": "Realtime audio is not supported yet.",
+            "description": "The WebRTC transport is not implemented; use the WebSocket transport.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6193,7 +6193,7 @@
                 },
                 "example": {
                   "error": {
-                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
+                    "message": "the WebRTC transport is not implemented yet; use the WebSocket transport at GET /v1/realtime, which serves the same session and event protocol",
                     "type": "unsupported_error"
                   }
                 }
@@ -6208,22 +6208,39 @@
         "tags": [
           "OpenAI Compatibility"
         ],
-        "summary": "Realtime WebSocket session (not implemented)",
-        "description": "OpenAI Realtime WebSocket transport. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
-        "operationId": "getRealtimeUnsupported",
+        "summary": "Open a realtime session",
+        "description": "OpenAI-compatible realtime session over a WebSocket. Audio travels in as input_audio_buffer.append events carrying base64 PCM16 (raw binary frames are also accepted) and out as response.output_audio.delta events. Recognition is streamed: no file is uploaded first, and partial transcripts arrive as conversation.item.input_audio_transcription.delta with the authoritative text in .completed. Synthesis streams sentence by sentence, so the first audio frame does not wait for the whole clip. Supports session.update, input_audio_buffer.commit and .clear, response.create and .cancel, and output_audio_buffer.clear. Every server event carries session_id, event_id, sequence, timestamp and model. Configure the session with a `session` query parameter holding the session JSON, or name a recognition model with `model`.",
+        "operationId": "openRealtimeSession",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Session JSON, URL-encoded."
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recognition model, when no session object is sent."
+          }
+        ],
         "responses": {
-          "501": {
-            "description": "Realtime audio is not supported yet.",
+          "101": {
+            "description": "Switching protocols; the realtime session runs over the WebSocket."
+          },
+          "400": {
+            "description": "Not a valid WebSocket upgrade, or the session JSON is malformed.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAIErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
-                    "type": "unsupported_error"
-                  }
                 }
               }
             }
@@ -6236,22 +6253,30 @@
         "tags": [
           "OpenAI Compatibility"
         ],
-        "summary": "Realtime transcription WebSocket session (not implemented)",
-        "description": "Transcription-only Realtime WebSocket transport, equivalent to a session with `type: \"transcription\"`. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
-        "operationId": "getRealtimeTranscriptionUnsupported",
+        "summary": "Open a realtime transcription session",
+        "description": "As GET /v1/realtime but fixed to a transcription session, so a client that only wants recognition need not send a session object. response.create is refused on this session.",
+        "operationId": "openRealtimeTranscriptionSession",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recognition model."
+          }
+        ],
         "responses": {
-          "501": {
-            "description": "Realtime audio is not supported yet.",
+          "101": {
+            "description": "Switching protocols; the realtime session runs over the WebSocket."
+          },
+          "400": {
+            "description": "Not a valid WebSocket upgrade, or the session JSON is malformed.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAIErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
-                    "type": "unsupported_error"
-                  }
                 }
               }
             }
@@ -6264,22 +6289,30 @@
         "tags": [
           "OpenAI Compatibility"
         ],
-        "summary": "Realtime transcription WebSocket alias (not implemented)",
-        "description": "Compatibility alias for `/v1/realtime` with a transcription session. This path is not part of the OpenAI API; it is accepted because the clients in https://github.com/OpenCSGs/csglite/issues/147 request it. Planned endpoint, designed in docs/guides/realtime-audio-api.md and tracked by https://github.com/OpenCSGs/csglite/issues/147. It is registered ahead of its implementation so clients receive an explicit 501 instead of a 404, or -- for GET requests -- the embedded web UI returned by the static fallback.",
-        "operationId": "getAudioTranscriptionsRealtimeUnsupported",
+        "summary": "Open a realtime transcription session (alias)",
+        "description": "Compatibility alias for GET /v1/realtime/transcription. This path is not part of the OpenAI API; it is accepted because the clients in https://github.com/OpenCSGs/csglite/issues/147 address it.",
+        "operationId": "openRealtimeTranscriptionAlias",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recognition model."
+          }
+        ],
         "responses": {
-          "501": {
-            "description": "Realtime audio is not supported yet.",
+          "101": {
+            "description": "Switching protocols; the realtime session runs over the WebSocket."
+          },
+          "400": {
+            "description": "Not a valid WebSocket upgrade, or the session JSON is malformed.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAIErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "message": "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147",
-                    "type": "unsupported_error"
-                  }
                 }
               }
             }

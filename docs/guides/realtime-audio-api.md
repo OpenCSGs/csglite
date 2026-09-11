@@ -1,6 +1,6 @@
 # 实时语音 API 设计（ASR + TTS 全双工，兼容 OpenAI Realtime）
 
-- 状态：设计草案（待评审），**P0 与 P1 已实现**，对应 issue [#147](https://github.com/OpenCSGs/csglite/issues/147)
+- 状态：**P0、P1、P2 已实现**（P3 WebRTC 未实现），对应 issue [#147](https://github.com/OpenCSGs/csglite/issues/147)
 - 范围：`/v1/audio/speech`、`/v1/realtime*`、本地 TTS 运行时、以及配套的 `/api/*` 管理面
 - 兼容目标：OpenAI Realtime API（WebRTC 与 WebSocket 两种传输）+ OpenAI `audio/speech`、`audio/transcriptions`
 
@@ -582,9 +582,47 @@ pin 改写共享环境会弄坏其它后端。
 
 切分只作用于流式路径。普通请求仍整段合成，因为逐句调用无法还原跨句韵律。
 
+## 8.3 P2 实现记录（已完成）
+
+WebSocket 传输、流式 ASR 与实时事件协议已落地。
+
+| 改动 | 位置 |
+| --- | --- |
+| 事件协议与会话对象 | `internal/realtime/events.go`、`session.go` |
+| 会话状态机（打断、取消、缓冲清空、序号） | `internal/realtime/session_runtime.go` |
+| 流式 ASR worker 端点 | `internal/asr/worker/asr_worker.py` 的 `LiveSession` + `WS /transcribe_live` |
+| 流式 ASR 客户端 | `internal/asr/live.go`：`StreamingEngine` / `LiveStream` |
+| WebSocket 端点 | `internal/server/handlers_realtime_ws.go`：`GET /v1/realtime`、`/v1/realtime/transcription`、`/v1/audio/transcriptions/realtime` |
+
+**会话层与传输解耦**是刻意的：WebRTC 与 WebSocket 只差「音频走媒体轨还是走 base64 事件」，
+`realtime.Sender` 把这点抽象掉，所以 P3 只需实现一个新的 Sender，会话逻辑一行不用改。
+
+**流式 ASR 的实现方式**：已加载的后端只能转写完整片段，所以切分放在 worker 里——用 fsmn-vad
+增量跑（`cache` + `is_final=False`）找出语音起止，每个结束的片段转写为 `completed`，并按间隔对
+当前累积音频重新转写产生 `delta`。因此 **`delta` 是「当前片段的最佳假设」而不是只增前缀**，客户端
+应以 `completed` 为准；这一点已写进 OpenAPI 描述。没有 VAD 时退化为由客户端 `commit` 切分。
+
+### 实测（Kokoro，CPU，引擎预热后）
+
+```
+流式：音频帧 5 个（一句一帧）、首帧 0.22s、总耗时 1.13s
+打断：收到首帧立即 response.cancel → output_audio_buffer.stopped → response.done status=cancelled
+事件顺序：session.created → response.created → output_audio_buffer.started
+          → response.output_audio.delta × N → response.output_audio.done
+          → output_audio_buffer.stopped → response.done
+```
+
+首帧 0.22s 落在反馈要求的 300–800ms 之内。
+
+### 一个连带修掉的不一致
+
+句子切分最初只加在压缩格式那条分支，而 realtime 用的是 `pcm`——于是整段音频作为一帧到达（首帧
+7.49s），取消也因为生成早已结束而报成 `completed`。两条分支现在共用同一份 `segments`。
+
 ### 仍未完成
 
-issue #147 的第 2、3 项（实时 ASR WebSocket、WebRTC 全双工）仍返回 501，对应本文档的 P2 与 P3。
+WebRTC 传输（`POST /v1/realtime/calls`）仍返回 501，对应 P3。它需要 SDP 协商、ICE、Opus 编解码
+与媒体轨，而会话与事件层已经就绪、可直接复用。
 
 ### chat 界面尚未接入 TTS
 

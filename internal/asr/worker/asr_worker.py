@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 
 
@@ -541,6 +541,211 @@ async def transcribe_stream(request: Request):
         print(f"ASR worker transcription error: {exc}", file=sys.stderr)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+
+
+class LiveSession:
+    """Turns a continuous PCM stream into partial and final transcripts.
+
+    The loaded backends transcribe a finished clip rather than a running stream,
+    so segmentation is done here: fsmn-vad is run incrementally to find where
+    speech starts and stops, each completed segment is transcribed as a final
+    result, and the audio accumulated so far is re-transcribed periodically to
+    produce partials.
+
+    A partial is therefore the current best hypothesis for the segment in
+    progress, not an append-only prefix. Clients should treat `completed` as the
+    authoritative text.
+    """
+
+    def __init__(self, engine, sample_rate=24000, partial_interval=0.6):
+        self.engine = engine
+        self.sample_rate = int(sample_rate or 24000)
+        self.partial_interval = float(partial_interval)
+        self.buffer = bytearray()
+        self.vad_cache = {}
+        self.speaking = False
+        self.last_partial_at = 0.0
+        self.segment_index = 0
+
+    # -- audio helpers ----------------------------------------------------
+    def _float_samples(self, pcm=None):
+        import numpy as np
+
+        raw = self.buffer if pcm is None else pcm
+        if len(raw) < 2:
+            return np.zeros(0, dtype="float32")
+        array = np.frombuffer(bytes(raw[: len(raw) // 2 * 2]), dtype="<i2")
+        return (array.astype("float32") / 32768.0)
+
+    def _write_wav(self, samples):
+        import tempfile, wave
+
+        import numpy as np
+
+        handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        with wave.open(handle, "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(self.sample_rate)
+            out.writeframes((np.clip(samples, -1.0, 1.0) * 32767.0).astype("<i2").tobytes())
+        handle.close()
+        return handle.name
+
+    def _transcribe_samples(self, samples, req):
+        import os
+
+        if samples.size < self.sample_rate // 10:  # under 100ms carries no words
+            return ""
+        path = self._write_wav(samples)
+        try:
+            payload = dict(req or {})
+            payload["file_path"] = path
+            result = self.engine.transcribe(payload)
+            return _clean_text((result or {}).get("text", ""))
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    # -- VAD --------------------------------------------------------------
+    def _vad_events(self, pcm):
+        """Feed a chunk to the VAD and report ("start"|"end", offset_ms) pairs.
+
+        Returns an empty list when no VAD model is loaded, in which case
+        segmentation falls back to explicit commits from the caller."""
+        vad = getattr(self.engine, "vad_model", None)
+        if vad is None:
+            return []
+        samples = self._float_samples(pcm)
+        if samples.size == 0:
+            return []
+        try:
+            result = vad.generate(
+                input=samples,
+                cache=self.vad_cache,
+                is_final=False,
+                chunk_size=max(10, int(1000 * samples.size / self.sample_rate)),
+            )
+        except Exception:
+            # A VAD failure must not take the session down; fall back to commits.
+            return []
+        first = result[0] if result else {}
+        value = first.get("value", []) if isinstance(first, dict) else []
+        events = []
+        for item in value:
+            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                continue
+            begin, end = item[0], item[1]
+            if begin != -1 and end == -1:
+                events.append(("start", begin))
+            elif begin == -1 and end != -1:
+                events.append(("end", end))
+            elif begin != -1 and end != -1:
+                events.append(("start", begin))
+                events.append(("end", end))
+        return events
+
+    # -- stream API -------------------------------------------------------
+    def feed(self, pcm, req):
+        """Accept audio and yield transcript events for it."""
+        import time
+
+        self.buffer.extend(pcm)
+        for kind, _offset in self._vad_events(pcm):
+            if kind == "start" and not self.speaking:
+                self.speaking = True
+                yield {"kind": "speech_started"}
+            elif kind == "end" and self.speaking:
+                self.speaking = False
+                yield {"kind": "speech_stopped"}
+                yield from self._finalize(req)
+
+        if self.buffer and time.monotonic() - self.last_partial_at >= self.partial_interval:
+            self.last_partial_at = time.monotonic()
+            text = self._transcribe_samples(self._float_samples(), req)
+            if text:
+                yield {"kind": "delta", "text": text}
+
+    def _finalize(self, req):
+        text = self._transcribe_samples(self._float_samples(), req)
+        self.buffer = bytearray()
+        self.vad_cache = {}
+        self.segment_index += 1
+        if text:
+            yield {"kind": "completed", "text": text}
+
+    def commit(self, req):
+        """End the turn on the caller's instruction rather than on silence."""
+        if not self.buffer:
+            return
+        yield from self._finalize(req)
+
+    def reset(self):
+        self.buffer = bytearray()
+        self.vad_cache = {}
+        self.speaking = False
+
+
+@app.websocket("/transcribe_live")
+async def transcribe_live(websocket: WebSocket):
+    """Streaming recognition over a WebSocket.
+
+    Binary frames are mono PCM16 at the rate given in the opening JSON frame;
+    text frames are control messages ({"type": "commit"|"reset"|"close"}).
+    Responses are JSON transcript events.
+    """
+    await websocket.accept()
+    if ENGINE is None:
+        await websocket.send_json({"kind": "failed", "error": "engine not loaded"})
+        await websocket.close()
+        return
+
+    session = None
+    req = {}
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            if message.get("text") is not None:
+                control = json.loads(message["text"])
+                kind = control.get("type")
+                if kind == "start":
+                    req = control.get("request") or {}
+                    session = LiveSession(
+                        ENGINE,
+                        sample_rate=control.get("sample_rate") or 24000,
+                        partial_interval=control.get("partial_interval") or 0.6,
+                    )
+                    await websocket.send_json({"kind": "ready"})
+                elif kind == "commit" and session is not None:
+                    for event in session.commit(req):
+                        await websocket.send_json(event)
+                    await websocket.send_json({"kind": "committed"})
+                elif kind == "reset" and session is not None:
+                    session.reset()
+                    await websocket.send_json({"kind": "cleared"})
+                elif kind == "close":
+                    break
+                continue
+            data = message.get("bytes")
+            if not data or session is None:
+                continue
+            for event in session.feed(data, req):
+                await websocket.send_json(event)
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        try:
+            await websocket.send_json({"kind": "failed", "error": str(exc)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 def main():
     parser = argparse.ArgumentParser()
