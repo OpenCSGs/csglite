@@ -1002,22 +1002,20 @@ func TestTransformersIsNeverPinned(t *testing.T) {
 // that resolves would pick the older interpreter and constrain every wheel the
 // runtime installs, so the highest supported version has to win.
 func TestFindHostPythonPrefersTheHighestVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons; Windows goes through findWindowsHostPython")
+	}
 	dir := t.TempDir()
-	// Fake interpreters that report the version encoded in their name.
-	fake := func(name string, major, minor int) string {
+	fake := func(name, version string) string {
 		path := filepath.Join(dir, name)
-		script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"%s\"\nprintf '%d.%d\\n'\n", path, major, minor)
-		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writeFakePythonAt(t, path, probeScriptOutput(version))
 		return path
 	}
 
 	t.Run("a newer bare python3 beats an older versioned binary", func(t *testing.T) {
-		older := fake("python3.11-old", 3, 11)
-		newer := fake("python3-new", 3, 13)
-		// Candidate order is newest-first by name, so the older binary is seen
-		// first; the probed version must still decide.
+		older := fake("python3.11-old", "3.11.9")
+		newer := fake("python3-new", "3.13.1")
+		// The older binary is listed first, so only the probed version can decide.
 		got, err := findHostPythonFrom(context.Background(), nil, []string{older, newer})
 		if err != nil {
 			t.Fatalf("findHostPythonFrom: %v", err)
@@ -1028,8 +1026,8 @@ func TestFindHostPythonPrefersTheHighestVersion(t *testing.T) {
 	})
 
 	t.Run("an unsupported interpreter is skipped", func(t *testing.T) {
-		tooOld := fake("python3.9-sys", 3, 9)
-		ok := fake("python3.12-brew", 3, 12)
+		tooOld := fake("python3.9-sys", "3.9.6")
+		ok := fake("python3.12-brew", "3.12.4")
 		got, err := findHostPythonFrom(context.Background(), nil, []string{tooOld, ok})
 		if err != nil {
 			t.Fatalf("findHostPythonFrom: %v", err)
@@ -1040,7 +1038,7 @@ func TestFindHostPythonPrefersTheHighestVersion(t *testing.T) {
 	})
 
 	t.Run("only unsupported interpreters reports the version found", func(t *testing.T) {
-		tooOld := fake("python3.8-only", 3, 8)
+		tooOld := fake("python3.8-only", "3.8.10")
 		_, err := findHostPythonFrom(context.Background(), nil, []string{tooOld})
 		if err == nil {
 			t.Fatal("expected an error when no supported interpreter exists")
