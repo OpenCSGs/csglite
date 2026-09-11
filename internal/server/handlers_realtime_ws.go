@@ -91,6 +91,10 @@ func (s *Server) handleRealtimeWebSocket(w http.ResponseWriter, r *http.Request)
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
+	if err := s.admitRealtimeSession(); err != nil {
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", err.Error())
+		return
+	}
 	conn, err := realtimeUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		// Upgrade has already written a response.
@@ -98,18 +102,18 @@ func (s *Server) handleRealtimeWebSocket(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer conn.Close()
+	s.addRealtimeSocket(1)
+	defer s.addRealtimeSocket(-1)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	sender := &wsSender{conn: conn, sampleRate: realtime.DefaultOutputSampleRate}
 	synth := s.newRealtimeSynthesizer(cfg)
-	transcriber, transcripts, err := s.newRealtimeTranscriber(ctx, cfg)
-	if err != nil {
-		// Recognition is unavailable, but a session that only speaks is still
-		// useful, so report it and carry on rather than closing.
-		log.Printf("REALTIME: transcription unavailable: %v", err)
-	}
+	// Recognition loads in the background: a client waits for session.created
+	// before it speaks, so blocking on a cold model here would stall the whole
+	// session. Audio that arrives meanwhile is buffered.
+	transcriber, startTranscription := s.newRealtimePipeline(ctx, cfg)
 
 	session, err := realtime.NewSession(cfg, sender, transcriber, synth)
 	if err != nil {
@@ -117,18 +121,8 @@ func (s *Server) handleRealtimeWebSocket(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer session.Close()
-	if err != nil {
-		session.EmitError("transcription_unavailable", err.Error(), "")
-	}
-
-	if transcripts != nil {
-		go func() {
-			for ev := range transcripts {
-				if sendErr := session.HandleTranscript(ev); sendErr != nil {
-					return
-				}
-			}
-		}()
+	if startTranscription != nil {
+		startTranscription(session)
 	}
 
 	s.runRealtimeLoop(ctx, conn, session)
@@ -299,6 +293,11 @@ func realtimeSessionFromRequest(r *http.Request) (realtime.SessionConfig, error)
 func (s *Server) newRealtimeTranscriber(ctx context.Context, cfg realtime.SessionConfig) (realtime.Transcriber, <-chan realtime.TranscriptEvent, error) {
 	model := cfg.TranscriptionModel()
 	if model == "" {
+		// Clients commonly name only one half of the pipeline, so the
+		// configured default fills in the other.
+		model = strings.TrimSpace(s.cfg.Realtime.DefaultASRModel)
+	}
+	if model == "" {
 		return nil, nil, nil
 	}
 	engine, err := s.getOrLoadASREngine(ctx, model)
@@ -314,7 +313,7 @@ func (s *Server) newRealtimeTranscriber(ctx context.Context, cfg realtime.Sessio
 		rate = cfg.Audio.Input.Format.Rate
 	}
 	request := api.OpenAIAudioTranscriptionRequest{Model: model, ResponseFormat: "json"}
-	if t := cfg.Audio.Input.Transcription; t != nil {
+	if t := cfg.TranscriptionOptions(); t != nil {
 		request.Language = t.Language
 		request.Prompt = t.Prompt
 		request.Hotwords = t.Hotwords
@@ -346,6 +345,9 @@ func (s *Server) newRealtimeTranscriber(ctx context.Context, cfg realtime.Sessio
 // Synthesizer interface.
 func (s *Server) newRealtimeSynthesizer(cfg realtime.SessionConfig) realtime.Synthesizer {
 	model := cfg.SpeechModel()
+	if model == "" {
+		model = strings.TrimSpace(s.cfg.Realtime.DefaultTTSModel)
+	}
 	if model == "" {
 		return nil
 	}

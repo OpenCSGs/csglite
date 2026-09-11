@@ -139,6 +139,17 @@ func (c *SessionConfig) SpeechModel() string {
 	return strings.TrimSpace(c.Audio.Output.Model)
 }
 
+// TranscriptionOptions reports the recognition options, nil when the session
+// carries none. It exists so callers do not have to walk the three optional
+// levels of the audio object, which is easy to get wrong once a default model
+// makes the transcription object itself optional.
+func (c *SessionConfig) TranscriptionOptions() *Transcription {
+	if c.Audio == nil || c.Audio.Input == nil {
+		return nil
+	}
+	return c.Audio.Input.Transcription
+}
+
 // Voice reports the requested output voice, empty for the model's default.
 func (c *SessionConfig) Voice() string {
 	if c.Audio == nil || c.Audio.Output == nil {

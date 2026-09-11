@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,45 +12,6 @@ import (
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
 )
-
-// Only the WebRTC transport is still unimplemented. It must answer with a
-// machine-readable 501 rather than a 404, and above all not with the embedded
-// web UI: an unrouted GET matches the "GET /" static fallback and returns
-// index.html with status 200, which makes a client probing for support believe
-// the feature exists.
-func TestWebRTCTransportReturnsNotImplemented(t *testing.T) {
-	s := newTestServerWithConfig(t, &config.Config{
-		ModelDir:   config.ModelDirForStorage(t.TempDir()),
-		DatasetDir: config.DatasetDirForStorage(t.TempDir()),
-	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/realtime/calls", nil)
-	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501 (body=%s)", w.Code, truncateLogString(w.Body.String(), 200))
-	}
-	if contentType := w.Header().Get("Content-Type"); !strings.Contains(contentType, "application/json") {
-		t.Fatalf("content type = %q, want application/json", contentType)
-	}
-	var body struct {
-		Error struct {
-			Message string `json:"message"`
-			Type    string `json:"type"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode error body %q: %v", w.Body.String(), err)
-	}
-	if body.Error.Type != "unsupported_error" {
-		t.Fatalf("error type = %q, want unsupported_error", body.Error.Type)
-	}
-	// The message must point at the transport that does work, since the session
-	// and event protocol are the same on both.
-	if !strings.Contains(body.Error.Message, "/v1/realtime") {
-		t.Fatalf("message = %q, want it to point at the WebSocket transport", body.Error.Message)
-	}
-}
 
 // The realtime WebSocket endpoints must attempt an upgrade rather than fall
 // through to the static handler. A plain GET without upgrade headers gets

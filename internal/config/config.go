@@ -79,6 +79,7 @@ type Config struct {
 	WebSearch                WebSearchConfig                    `json:"web_search,omitempty"`
 	Observability            ObservabilityConfig                `json:"observability,omitempty"`
 	Inference                InferenceConfig                    `json:"inference,omitempty"`
+	Realtime                 RealtimeConfig                     `json:"realtime,omitempty"`
 	DesktopMode              bool                               `json:"-"`
 	DesktopToken             string                             `json:"-"`
 	DesktopSessionToken      string                             `json:"-"`
@@ -141,6 +142,64 @@ type InferenceConfig struct {
 	// length sent with the request. It lives in the app config rather than in
 	// the model directory so that re-downloading a model keeps the setting.
 	ModelNumCtx map[string]int `json:"model_num_ctx,omitempty"`
+}
+
+// DefaultRealtimeMaxSessions bounds how many realtime voice sessions may run at
+// once. Each one can hold a recognition and a synthesis model, so the cap is
+// about memory, not about request rate.
+const DefaultRealtimeMaxSessions = 4
+
+// RealtimeConfig groups the settings of the realtime voice API
+// (docs/guides/realtime-audio-api.md). Per-model defaults such as voice and
+// speed are not here: they live in the existing per-model configuration.
+type RealtimeConfig struct {
+	// DefaultASRModel and DefaultTTSModel fill in the halves of the pipeline a
+	// client did not name. Clients in the field commonly connect with only
+	// ?model=<asr model>, which leaves synthesis unconfigured otherwise.
+	DefaultASRModel string `json:"default_asr_model,omitempty"`
+	DefaultTTSModel string `json:"default_tts_model,omitempty"`
+
+	// MaxSessions is 0 for the default (DefaultRealtimeMaxSessions) and
+	// negative for unlimited.
+	MaxSessions int `json:"max_sessions,omitempty"`
+
+	// ICEUDPPortRange restricts WebRTC media to [min, max] so the range can be
+	// opened in a firewall. Empty means any ephemeral port.
+	ICEUDPPortRange []int `json:"ice_udp_port_range,omitempty"`
+
+	// ICEExtraHostIPs advertises additional host addresses, for a server behind
+	// 1:1 NAT whose public address it cannot discover locally.
+	ICEExtraHostIPs []string `json:"ice_extra_host_ips,omitempty"`
+
+	// ICEServers lists STUN/TURN URLs. A local deployment needs none, so the
+	// default is empty rather than a public STUN server.
+	ICEServers []string `json:"ice_servers,omitempty"`
+}
+
+// RealtimeMaxSessions resolves the configured cap, returning 0 for unlimited.
+func (c *Config) RealtimeMaxSessions() int {
+	switch {
+	case c.Realtime.MaxSessions < 0:
+		return 0
+	case c.Realtime.MaxSessions == 0:
+		return DefaultRealtimeMaxSessions
+	default:
+		return c.Realtime.MaxSessions
+	}
+}
+
+// RealtimeICEPortRange reports the configured media port range, and ok=false
+// when it is unset or malformed, in which case any ephemeral port is used.
+func (c *Config) RealtimeICEPortRange() (uint16, uint16, bool) {
+	r := c.Realtime.ICEUDPPortRange
+	if len(r) != 2 {
+		return 0, 0, false
+	}
+	low, high := r[0], r[1]
+	if low <= 0 || high <= 0 || low > high || high > 65535 {
+		return 0, 0, false
+	}
+	return uint16(low), uint16(high), true
 }
 
 const DefaultObservabilityRetentionDays = 30

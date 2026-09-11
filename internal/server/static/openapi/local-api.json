@@ -6180,22 +6180,160 @@
         "tags": [
           "OpenAI Compatibility"
         ],
-        "summary": "Create realtime WebRTC call (not implemented)",
-        "description": "The WebRTC transport is not implemented. The WebSocket transport at GET /v1/realtime serves the same session and event protocol; this endpoint answers 501 so a client probing for WebRTC receives a machine-readable answer rather than the web UI returned by the static fallback.",
-        "operationId": "createRealtimeCallUnsupported",
+        "summary": "Create realtime WebRTC call",
+        "description": "Negotiates the WebRTC transport of the realtime API: the client posts an SDP offer and receives an SDP answer, then exchanges events on the `oai-events` DataChannel and audio on the negotiated media tracks. Two request shapes are accepted: `multipart/form-data` with an `sdp` field and an optional JSON `session` field, and a bare `application/sdp` body configured through the `model` and `session` query parameters. The session and event protocol are identical to the WebSocket transport at GET /v1/realtime. Inbound audio is decoded from Opus; outbound synthesised audio is sent as PCMU (G.711 mu-law, 8 kHz), which browsers implement and which keeps the build free of cgo. The `Location` response header names the call resource to DELETE in order to hang up.",
+        "operationId": "createRealtimeCall",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Model id used when the request body is a bare SDP offer. With no other hint it names the speech recognition model."
+          },
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "URL-encoded JSON session object, used when the request body is a bare SDP offer."
+          },
+          {
+            "name": "intent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "transcription"
+              ]
+            },
+            "description": "Set to `transcription` for a recognition-only call."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "sdp"
+                ],
+                "properties": {
+                  "sdp": {
+                    "type": "string",
+                    "description": "The SDP offer."
+                  },
+                  "session": {
+                    "type": "string",
+                    "description": "JSON session object, the same shape as the WebSocket transport's `session.update`."
+                  }
+                }
+              }
+            },
+            "application/sdp": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
         "responses": {
-          "501": {
-            "description": "The WebRTC transport is not implemented; use the WebSocket transport.",
+          "200": {
+            "description": "The SDP answer. The Location header names the call resource.",
+            "headers": {
+              "Location": {
+                "description": "Path of the created call, for DELETE /v1/realtime/calls/{call_id}.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/sdp": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The offer is missing or malformed, or the session object is not valid JSON.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAIErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "message": "the WebRTC transport is not implemented yet; use the WebSocket transport at GET /v1/realtime, which serves the same session and event protocol",
-                    "type": "unsupported_error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The call could not be set up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/realtime/calls/{call_id}": {
+      "delete": {
+        "tags": [
+          "OpenAI Compatibility"
+        ],
+        "summary": "Hang up a realtime WebRTC call",
+        "description": "Closes the peer connection and releases the recognition and synthesis resources the call held. Hanging up an unknown or already-ended call answers 404.",
+        "operationId": "deleteRealtimeCall",
+        "parameters": [
+          {
+            "name": "call_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Call id, as returned in the Location header of POST /v1/realtime/calls."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The call was ended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "type": "string",
+                      "example": "realtime.call"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "ended"
+                    }
                   }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
                 }
               }
             }
