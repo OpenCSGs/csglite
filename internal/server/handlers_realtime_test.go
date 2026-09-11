@@ -29,7 +29,6 @@ func TestRealtimeEndpointsReturnNotImplementedInsteadOfWebUI(t *testing.T) {
 		method string
 		path   string
 	}{
-		{http.MethodPost, "/v1/audio/speech"},
 		{http.MethodPost, "/v1/realtime/calls"},
 		{http.MethodGet, "/v1/realtime"},
 		{http.MethodGet, "/v1/realtime/transcription"},
@@ -63,6 +62,61 @@ func TestRealtimeEndpointsReturnNotImplementedInsteadOfWebUI(t *testing.T) {
 				t.Fatalf("error message = %q, want a pointer to the tracking issue", body.Error.Message)
 			}
 		})
+	}
+}
+
+// /v1/audio/speech is implemented, so it must validate its request and answer
+// with a JSON error rather than the web UI the static fallback would serve.
+func TestAudioSpeechValidatesRequest(t *testing.T) {
+	s := newTestServerWithConfig(t, &config.Config{
+		ModelDir:   config.ModelDirForStorage(t.TempDir()),
+		DatasetDir: config.DatasetDirForStorage(t.TempDir()),
+	})
+	handler := s.routes()
+
+	cases := map[string]string{
+		"empty body":         "",
+		"missing model":      `{"input":"hello"}`,
+		"missing input":      `{"model":"acme/voice"}`,
+		"bad format":         `{"model":"acme/voice","input":"hi","response_format":"midi"}`,
+		"speed out of range": `{"model":"acme/voice","input":"hi","speed":9}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/audio/speech", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body=%s)", w.Code, truncateLogString(w.Body.String(), 200))
+			}
+			if contentType := w.Header().Get("Content-Type"); !strings.Contains(contentType, "application/json") {
+				t.Fatalf("content type = %q, want application/json", contentType)
+			}
+		})
+	}
+}
+
+func TestSpeechContentType(t *testing.T) {
+	cases := []struct {
+		format     string
+		sampleRate int
+		want       string
+	}{
+		{"mp3", 24000, "audio/mpeg"},
+		{"wav", 24000, "audio/wav"},
+		{"opus", 0, "audio/opus"},
+		{"flac", 0, "audio/flac"},
+		{"aac", 0, "audio/aac"},
+		{"pcm", 24000, "audio/L16; rate=24000; channels=1"},
+		{"pcm", 0, "audio/L16"},
+		{"unknown", 0, "application/octet-stream"},
+	}
+	for _, tc := range cases {
+		if got := speechContentType(tc.format, tc.sampleRate); got != tc.want {
+			t.Errorf("speechContentType(%q, %d) = %q, want %q", tc.format, tc.sampleRate, got, tc.want)
+		}
 	}
 }
 

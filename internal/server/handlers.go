@@ -250,7 +250,7 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	models := make([]api.RunningModel, 0, len(s.engines)+len(s.loading)+len(s.imageEngines)+len(s.imageLoading)+len(s.asrEngines)+len(s.asrLoading))
+	models := make([]api.RunningModel, 0, len(s.engines)+len(s.loading)+len(s.imageEngines)+len(s.imageLoading)+len(s.asrEngines)+len(s.asrLoading)+len(s.ttsEngines)+len(s.ttsLoading))
 	for id, me := range s.engines {
 		modelID := engineModelIDFromKey(id)
 		lm, err := s.manager.Get(modelID)
@@ -343,6 +343,40 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 			ExpiresAt: expiresAt,
 		})
 	}
+	for id, me := range s.ttsEngines {
+		lm, err := s.manager.Get(id)
+		if err != nil {
+			continue
+		}
+		expiresAt := time.Time{}
+		if me.keepAlive >= 0 {
+			expiresAt = me.lastUsed.Add(me.keepAlive)
+		}
+		models = append(models, api.RunningModel{
+			Name:      s.localInferenceModelID(lm.FullName()),
+			Model:     s.localInferenceModelID(lm.FullName()),
+			Size:      lm.Size,
+			Format:    string(lm.Format),
+			Status:    "running",
+			ExpiresAt: expiresAt,
+		})
+	}
+	for id := range s.ttsLoading {
+		if _, ok := s.ttsEngines[id]; ok {
+			continue
+		}
+		lm, err := s.manager.Get(id)
+		if err != nil {
+			continue
+		}
+		models = append(models, api.RunningModel{
+			Name:   s.localInferenceModelID(lm.FullName()),
+			Model:  s.localInferenceModelID(lm.FullName()),
+			Size:   lm.Size,
+			Format: string(lm.Format),
+			Status: "loading",
+		})
+	}
 	for id := range s.asrLoading {
 		if _, ok := s.asrEngines[id]; ok {
 			continue
@@ -395,6 +429,11 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	if me, ok := s.asrEngines[modelID]; ok {
 		me.engine.Close()
 		delete(s.asrEngines, modelID)
+		stopped = true
+	}
+	if me, ok := s.ttsEngines[modelID]; ok {
+		me.engine.Close()
+		delete(s.ttsEngines, modelID)
 		stopped = true
 	}
 	s.mu.Unlock()
@@ -557,12 +596,13 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	embeddingModel := s.modelUsesEmbeddingEngine(req.Model)
 	imageGenerationModel := s.modelUsesImageGenerationEngine(req.Model)
 	asrModel := s.modelUsesASREngine(req.Model)
+	ttsModel := s.modelUsesTTSEngine(req.Model)
 	speculative, err := s.resolveSpeculativeConfig(req.Model, req.Speculative)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if speculative.Enabled() && (embeddingModel || imageGenerationModel || asrModel) {
+	if speculative.Enabled() && (embeddingModel || imageGenerationModel || asrModel || ttsModel) {
 		writeError(w, http.StatusBadRequest, "speculative decoding is only supported for local text-generation models")
 		return
 	}
@@ -576,6 +616,8 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 			_, err = s.getOrLoadImageEngine(context.Background(), req.Model)
 		} else if asrModel {
 			_, err = s.getOrLoadASREngine(context.Background(), req.Model)
+		} else if ttsModel {
+			_, err = s.getOrLoadTTSEngine(context.Background(), req.Model)
 		} else if embeddingModel {
 			_, err = s.getOrLoadEmbeddingEngineWithOpts(r.Context(), req.Model, requestedNumCtx, requestedNGPULayers, requestedDType)
 		} else {
@@ -598,6 +640,8 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 			s.touchImageEngine(req.Model)
 		} else if asrModel {
 			s.touchASREngine(req.Model)
+		} else if ttsModel {
+			s.touchTTSEngine(req.Model)
 		} else if embeddingModel {
 			s.touchEngineKey(engineCacheKey(req.Model, engineModeEmbed))
 		} else {
@@ -608,6 +652,8 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 				s.setImageEngineKeepAlive(req.Model, requestedKeepAlive)
 			} else if asrModel {
 				s.setASREngineKeepAlive(req.Model, requestedKeepAlive)
+			} else if ttsModel {
+				s.setTTSEngineKeepAlive(req.Model, requestedKeepAlive)
 			} else {
 				s.setEngineKeepAlive(req.Model, requestedKeepAlive)
 			}
@@ -684,6 +730,26 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		} else if err = ensureASRRuntimeReady(context.Background(), runtimeManager, asrProgress, false); err == nil {
 			_, err = s.getOrLoadASREngine(context.Background(), req.Model)
 		}
+	} else if ttsModel {
+		ttsProgress := func(step string, current, total int) {
+			s.setLoadStep(stepModelID, step, current, total)
+			safeSSE(api.LoadResponse{
+				Status:  "installing tts runtime",
+				Step:    step,
+				Current: current,
+				Total:   total,
+			})
+			if time.Since(lastLoadProgressLog) >= 2*time.Second || current == total {
+				log.Printf("MODEL %s: TTS runtime progress step=%q current=%d total=%d", req.Model, step, current, total)
+				lastLoadProgressLog = time.Now()
+			}
+		}
+		runtimeManager, runtimeErr := imagegen.NewTTSRuntimeManager()
+		if runtimeErr != nil {
+			err = runtimeErr
+		} else if err = ensureTTSRuntimeReady(context.Background(), runtimeManager, ttsProgress, false); err == nil {
+			_, err = s.getOrLoadTTSEngine(context.Background(), req.Model)
+		}
 	} else if embeddingModel {
 		_, err = s.getOrLoadEmbeddingEngineWithProgress(context.Background(), req.Model, progress, requestedNumCtx, requestedNGPULayers, requestedDType)
 	} else {
@@ -702,6 +768,8 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		s.touchImageEngine(req.Model)
 	} else if asrModel {
 		s.touchASREngine(req.Model)
+	} else if ttsModel {
+		s.touchTTSEngine(req.Model)
 	} else if embeddingModel {
 		s.touchEngineKey(engineCacheKey(req.Model, engineModeEmbed))
 	} else {
@@ -712,6 +780,8 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 			s.setImageEngineKeepAlive(req.Model, requestedKeepAlive)
 		} else if asrModel {
 			s.setASREngineKeepAlive(req.Model, requestedKeepAlive)
+		} else if ttsModel {
+			s.setTTSEngineKeepAlive(req.Model, requestedKeepAlive)
 		} else {
 			s.setEngineKeepAlive(req.Model, requestedKeepAlive)
 		}

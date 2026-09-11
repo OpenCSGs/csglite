@@ -17,7 +17,7 @@ export function setLocale(l: Locale) {
 const saved = localStorage.getItem("csghub-locale");
 if (saved === "en" || saved === "zh") locale.value = saved;
 
-const en: Record<string, string> = {
+export const en: Record<string, string> = {
   // Nav
   "nav.dashboard": "Dashboard",
   "nav.marketplace": "Marketplace",
@@ -382,6 +382,7 @@ const en: Record<string, string> = {
   "mp.localInferenceConvert": "Supported (auto-converts on first run)",
   "mp.localInferenceImage": "Supported (text-to-image runtime)",
   "mp.localInferenceASR": "Supported (ASR runtime)",
+  "mp.localInferenceTTS": "Supported (text-to-speech runtime)",
   "mp.localInferenceEmbedding": "Supported (embedding runtime)",
   "mp.localInferenceNone": "Not supported yet",
   "mp.gated": "Gated",
@@ -1273,6 +1274,7 @@ const en: Record<string, string> = {
   "lib.runParamsTitle": "Run Parameters",
   "lib.runParamsDesc": "Choose runtime options for {0}. These match `csghub-lite run` flags and will be remembered for next time.",
   "lib.runParamsDescImage": "Choose image runtime options for {0}. Diffusers selects device and dtype automatically.",
+  "lib.runParamsDescTTS": "Set how {0} stays resident. Synthesis options such as voice and speed are sent with each request.",
   "lib.runParamsDescASR": "Choose ASR runtime options for {0}. The Python ASR runtime selects device and dtype automatically.",
   "lib.runParamsDescEmbedding": "Choose embedding runtime options for {0}. Chat-only cache and parallel settings are hidden.",
   "lib.runParamDefault": "Default",
@@ -1311,6 +1313,7 @@ const en: Record<string, string> = {
   "lib.runParamSpecDraftPMinHint": "`--spec-draft-p-min`; accepted range is 0 to 1.",
   "lib.runParamRange": "{0} must be between {1} and {2}.",
   "lib.runParamImageRuntimeHint": "This image model will prepare the required runtime automatically. In most cases, you only need to choose how long to keep it loaded.",
+  "lib.runParamTTSRuntimeHint": "This model runs in the Python text-to-speech runtime, which does not take the llama.cpp load options.",
   "lib.runParamASRRuntimeHint": "This ASR model will prepare the Python ASR runtime automatically. Context, cache, GPU layer, and dtype options do not apply.",
   "lib.runParamCancel": "Cancel",
   "lib.runParamSubmit": "Run",
@@ -1328,6 +1331,7 @@ const en: Record<string, string> = {
   "lib.localInferenceConvert": "Supported (auto-converts on first run)",
   "lib.localInferenceImage": "Supported (text-to-image runtime)",
   "lib.localInferenceASR": "Supported (ASR runtime)",
+  "lib.localInferenceTTS": "Supported (text-to-speech runtime)",
   "lib.localInferenceEmbedding": "Supported (embedding runtime)",
   "lib.localInferenceNone": "Not supported yet",
   "lib.downloadMethods": "Download Methods",
@@ -1451,6 +1455,12 @@ const en: Record<string, string> = {
   "chat.audioReadyHint": "Transcription starts automatically after upload or recording.",
   "chat.removeAudio": "Remove audio",
   "chat.transcribe": "Transcribe",
+  "chat.synthesizingSpeech": "Synthesizing speech",
+  "chat.preparingTTSRuntime": "Preparing the text-to-speech runtime",
+  "chat.speechSynthesized": "Speech synthesized",
+  "chat.askSpeak": "Enter the text to speak",
+  "chat.speak": "Synthesize",
+  "chat.voice": "Voice",
   "chat.startRecording": "Start recording",
   "chat.stopRecording": "Stop recording",
   "chat.recordingUnsupported": "Audio recording is not supported in this browser.",
@@ -1695,7 +1705,7 @@ const en: Record<string, string> = {
   "pricing.typeCloud": "Cloud",
 };
 
-const zh: Record<string, string> = {
+export const zh: Record<string, string> = {
   // Nav
   "nav.dashboard": "仪表盘",
   "nav.marketplace": "市场",
@@ -2060,6 +2070,7 @@ const zh: Record<string, string> = {
   "mp.localInferenceConvert": "支持（首次运行时会自动转换）",
   "mp.localInferenceImage": "支持（文生图运行时）",
   "mp.localInferenceASR": "支持（ASR 语音识别运行时）",
+  "mp.localInferenceTTS": "支持（TTS 语音合成运行时）",
   "mp.localInferenceEmbedding": "支持（Embedding 运行时）",
   "mp.localInferenceNone": "暂不支持",
   "mp.gated": "需授权",
@@ -2949,6 +2960,7 @@ const zh: Record<string, string> = {
   "lib.runParamsTitle": "运行参数",
   "lib.runParamsDesc": "为 {0} 选择运行选项。这些选项与 `csghub-lite run` 参数一致，并会记住供下次使用。",
   "lib.runParamsDescImage": "为 {0} 选择图像运行选项。Diffusers 会自动选择设备和 dtype。",
+  "lib.runParamsDescTTS": "设置 {0} 的常驻时长。音色、语速等合成参数随每次请求传入。",
   "lib.runParamsDescASR": "为 {0} 选择 ASR 运行选项。Python ASR runtime 会自动选择设备和 dtype。",
   "lib.runParamsDescEmbedding": "为 {0} 选择 embedding 运行选项。聊天专用的 cache 和并发参数已隐藏。",
   "lib.runParamDefault": "默认",
@@ -2987,6 +2999,7 @@ const zh: Record<string, string> = {
   "lib.runParamSpecDraftPMinHint": "`--spec-draft-p-min`；取值范围 0 到 1。",
   "lib.runParamRange": "{0} 必须在 {1} 到 {2} 之间。",
   "lib.runParamImageRuntimeHint": "图像模型会自动准备所需的运行环境。通常只需要设置模型加载后保留多久。",
+  "lib.runParamTTSRuntimeHint": "该模型运行在 Python 语音合成运行时，不接受 llama.cpp 的加载参数。",
   "lib.runParamASRRuntimeHint": "ASR 模型会自动准备 Python ASR 运行环境。上下文、cache、GPU 层数和 dtype 参数不适用。",
   "lib.runParamCancel": "取消",
   "lib.runParamSubmit": "运行",
@@ -3004,6 +3017,7 @@ const zh: Record<string, string> = {
   "lib.localInferenceConvert": "支持（首次运行时会自动转换）",
   "lib.localInferenceImage": "支持（文生图运行时）",
   "lib.localInferenceASR": "支持（ASR 语音识别运行时）",
+  "lib.localInferenceTTS": "支持（TTS 语音合成运行时）",
   "lib.localInferenceEmbedding": "支持（Embedding 运行时）",
   "lib.localInferenceNone": "暂不支持",
   "lib.downloadMethods": "下载方式",
@@ -3127,6 +3141,12 @@ const zh: Record<string, string> = {
   "chat.audioReadyHint": "上传或录音结束后会自动开始转写。",
   "chat.removeAudio": "移除音频",
   "chat.transcribe": "转写",
+  "chat.synthesizingSpeech": "正在合成语音",
+  "chat.preparingTTSRuntime": "正在准备语音合成运行时",
+  "chat.speechSynthesized": "语音合成完成",
+  "chat.askSpeak": "输入要合成的文本",
+  "chat.speak": "合成语音",
+  "chat.voice": "音色",
   "chat.startRecording": "开始录音",
   "chat.stopRecording": "停止录音",
   "chat.recordingUnsupported": "当前浏览器不支持录音。",
@@ -3270,6 +3290,7 @@ const zh: Record<string, string> = {
   "chat.cloudAuthRequired": "需要登录云端服务。请登录 {0} 或保存 API Key。",
   "chat.cloudBuiltinAPIKeyFailed": "无法加载 {0} built-in API Key。请重新登录或保存 API Key。",
   "chat.conversations": "对话记录",
+  "chat.copyModel": "复制模型名称",
   "chat.conversationHistory": "对话记录",
   "chat.noConversations": "暂无对话记录",
   "chat.searchConversations": "搜索对话",

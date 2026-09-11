@@ -940,3 +940,111 @@ func TestRequiredPythonPackagesUseImportNames(t *testing.T) {
 		}
 	}
 }
+
+func TestModelTTSPackagesFor(t *testing.T) {
+	packages := modelTTSPackagesFor("modelscope/hexgrad/Kokoro-82M", "/models/Kokoro-82M")
+	if len(packages) == 0 {
+		t.Fatal("modelTTSPackagesFor() = none, want the kokoro packages")
+	}
+	// Chinese synthesis needs misaki's zh extra; without it the base package
+	// installs and then fails at synthesis time.
+	var hasChineseExtra bool
+	for _, pkg := range packages {
+		if pkg == "misaki[zh]" {
+			hasChineseExtra = true
+		}
+	}
+	if !hasChineseExtra {
+		t.Fatalf("packages = %v, want misaki[zh] for Chinese support", packages)
+	}
+	if got := modelTTSPackagesFor("Qwen/Qwen3-0.6B", "/models/Qwen3-0.6B"); got != nil {
+		t.Fatalf("modelTTSPackagesFor() = %v, want nil for a model needing no extras", got)
+	}
+}
+
+func TestImportNamesFor(t *testing.T) {
+	got := importNamesFor([]string{"kokoro", "misaki[zh]"})
+	want := map[string]bool{"kokoro": true, "misaki": true, "ordered_set": true}
+	for _, name := range got {
+		delete(want, name)
+	}
+	if len(want) > 0 {
+		t.Fatalf("importNamesFor() = %v, missing %v", got, want)
+	}
+}
+
+// transformers must never be declared with an exact pin: the backends share one
+// venv, so a pin lets whichever was installed last decide the version for all of
+// them and the environment thrashes between installs.
+func TestTransformersIsNeverPinned(t *testing.T) {
+	lists := map[string][]string{
+		"tts":       ttsPythonPackages,
+		"asr":       asrPythonPackages,
+		"embedding": embeddingPythonPackages,
+	}
+	for name, specs := range lists {
+		for _, spec := range specs {
+			if !strings.HasPrefix(spec, "transformers") {
+				continue
+			}
+			if strings.Contains(spec, "==") {
+				t.Errorf("%s package list pins transformers (%q); declare a >= floor instead", name, spec)
+			}
+		}
+	}
+	if got := transformersConstraint(); !strings.HasPrefix(got, "transformers>=") {
+		t.Errorf("transformersConstraint() = %q, want a >= floor", got)
+	}
+}
+
+// A name says nothing about the version behind it: a machine can carry a
+// python3.11 binary while plain python3 is far newer. Selecting the first name
+// that resolves would pick the older interpreter and constrain every wheel the
+// runtime installs, so the highest supported version has to win.
+func TestFindHostPythonPrefersTheHighestVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons; Windows goes through findWindowsHostPython")
+	}
+	dir := t.TempDir()
+	fake := func(name, version string) string {
+		path := filepath.Join(dir, name)
+		writeFakePythonAt(t, path, probeScriptOutput(version))
+		return path
+	}
+
+	t.Run("a newer bare python3 beats an older versioned binary", func(t *testing.T) {
+		older := fake("python3.11-old", "3.11.9")
+		newer := fake("python3-new", "3.13.1")
+		// The older binary is listed first, so only the probed version can decide.
+		got, err := findHostPythonFrom(context.Background(), nil, []string{older, newer})
+		if err != nil {
+			t.Fatalf("findHostPythonFrom: %v", err)
+		}
+		if got != newer {
+			t.Fatalf("selected %q, want the newer interpreter %q", got, newer)
+		}
+	})
+
+	t.Run("an unsupported interpreter is skipped", func(t *testing.T) {
+		tooOld := fake("python3.9-sys", "3.9.6")
+		ok := fake("python3.12-brew", "3.12.4")
+		got, err := findHostPythonFrom(context.Background(), nil, []string{tooOld, ok})
+		if err != nil {
+			t.Fatalf("findHostPythonFrom: %v", err)
+		}
+		if got != ok {
+			t.Fatalf("selected %q, want %q", got, ok)
+		}
+	})
+
+	t.Run("only unsupported interpreters reports the version found", func(t *testing.T) {
+		tooOld := fake("python3.8-only", "3.8.10")
+		_, err := findHostPythonFrom(context.Background(), nil, []string{tooOld})
+		if err == nil {
+			t.Fatal("expected an error when no supported interpreter exists")
+		}
+		if !strings.Contains(err.Error(), "3.8") {
+			t.Fatalf("error = %v, want it to name the version that was found", err)
+		}
+	})
+}

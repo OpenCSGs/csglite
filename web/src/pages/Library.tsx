@@ -240,14 +240,21 @@ function isASRModel(model: Pick<ModelInfo, "pipeline_tag" | "input_modalities" |
     Boolean(model.output_modalities?.includes("transcription"));
 }
 
-// Image generation and ASR runtimes ignore the context length, so the run
-// dialog neither prefills nor saves it for those models.
+function isTTSModel(model: ModelInfo): boolean {
+  return (model.pipeline_tag || "").toLowerCase() === "text-to-speech" ||
+    Boolean(model.output_modalities?.includes("speech"));
+}
+
+// The image, ASR and text-to-speech runtimes ignore the context length, so the
+// run dialog neither prefills nor saves it for those models.
 function numCtxApplies(model: ModelInfo): boolean {
-  return !isImageGenerationModel(model) && !isASRModel(model);
+  return !isImageGenerationModel(model) && !isASRModel(model) && !isTTSModel(model);
 }
 
 function buildLoadOptionsForModel(model: ModelInfo, params: RunModelParams): LoadModelOptions {
-	if (isImageGenerationModel(model) || isASRModel(model)) {
+	// These run in their own Python runtime, which takes none of the llama.cpp
+	// load options; only how long to keep the model resident applies.
+	if (isImageGenerationModel(model) || isASRModel(model) || isTTSModel(model)) {
 		return {
 			keep_alive: optionalText(params.keepAlive),
 		};
@@ -1284,7 +1291,8 @@ function RunParamsDialog({
   const imageGenerationModel = isImageGenerationModel(model);
   const embeddingModel = isEmbeddingModel(model);
   const asrModel = isASRModel(model);
-  const runtimeManagedModel = imageGenerationModel || asrModel;
+  const ttsModel = isTTSModel(model);
+  const runtimeManagedModel = imageGenerationModel || asrModel || ttsModel;
   const ggufModel = model.format === "gguf";
   // GGUF models list only the quantizations actually downloaded locally
   // (issue #75); SafeTensors models keep the converter dtype options.
@@ -1309,6 +1317,8 @@ function RunParamsDialog({
               ? t("lib.runParamsDescImage", displayLocalModelID(model))
               : asrModel
                 ? t("lib.runParamsDescASR", displayLocalModelID(model))
+              : ttsModel
+                ? t("lib.runParamsDescTTS", displayLocalModelID(model))
               : embeddingModel
                 ? t("lib.runParamsDescEmbedding", displayLocalModelID(model))
                 : t("lib.runParamsDesc", displayLocalModelID(model))}
@@ -1318,7 +1328,11 @@ function RunParamsDialog({
         <div class="grid grid-cols-1 gap-4 overflow-y-auto px-6 py-5 md:grid-cols-2">
           {runtimeManagedModel ? (
             <div class="md:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
-              {imageGenerationModel ? t("lib.runParamImageRuntimeHint") : t("lib.runParamASRRuntimeHint")}
+              {imageGenerationModel
+                ? t("lib.runParamImageRuntimeHint")
+                : ttsModel
+                  ? t("lib.runParamTTSRuntimeHint")
+                  : t("lib.runParamASRRuntimeHint")}
             </div>
           ) : (
             <>

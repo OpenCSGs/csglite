@@ -120,9 +120,27 @@ currently supported for local inference.
 | Text-to-image | Supported | Diffusers runtime | Qwen-Image, FLUX, Stable Diffusion, PixArt, Sana, CogView, Z-Image |
 | Image-to-image | Supported | Diffusers runtime | Qwen-Image-Edit, inpaint, img2img, editing pipelines |
 | Automatic speech recognition | Supported | Python ASR runtime | FunASR, Whisper, Wav2Vec2-family ASR models |
+| Text-to-speech | Supported | Python TTS runtime | VoxCPM, Qwen3-TTS, Kokoro, MMS-TTS and other transformers-native TTS models |
 | Image-to-video | Coming soon | - | Stable Video Diffusion, SV3D |
 | Text-to-video | Coming soon | - | Video generation Diffusers models |
-| Text-to-speech | Coming soon | - | Speech synthesis models |
+
+### Text-to-speech models
+
+Speech synthesis runs in its own Python runtime, never through llama.cpp: the
+vocoder or codec decoder that turns model output into a waveform only exists in
+the model's own inference stack. Synthesize with `POST /v1/audio/speech`, or
+select a text-to-speech model in Chat and send text to hear it.
+
+| Model | Size | Voices | Notes |
+| --- | --- | --- | --- |
+| `openbmb/VoxCPM2` | 4.6 GB | Reference-audio cloning | Streams natively; the audio VAE ships with the model |
+| `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` | 2.3 GB | 9 presets, 5 Chinese incl. Beijing and Sichuan | Codec ships with the model |
+| `hexgrad/Kokoro-82M` | 327 MB | 54 presets, 8 Chinese | Smallest option |
+| `facebook/mms-tts-eng` | 145 MB | Single speaker | Same code path serves the MMS family across many languages |
+
+`GET /api/tts-voices?model=<id>` lists what a given model can render, since
+voices differ per model rather than being a fixed set. The transformers-native
+path also covers SpeechT5, Bark, ParlerTTS, CSM, Dia and FastSpeech2 models.
 
 ## Integrations
 

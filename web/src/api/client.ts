@@ -201,8 +201,8 @@ export interface MarketplaceLocalModelStatus {
 
 export interface LocalInferenceSupport {
   supported: boolean;
-  runtime?: "llama" | "diffusers" | "python-asr" | "python-embedding";
-  mode: "none" | "direct" | "convert" | "image" | "asr" | "embedding";
+  runtime?: "llama" | "diffusers" | "python-asr" | "python-tts" | "python-embedding";
+  mode: "none" | "direct" | "convert" | "image" | "asr" | "tts" | "embedding";
   architecture?: string;
   runtime_architecture?: string;
 }
@@ -343,6 +343,33 @@ export interface ImageRuntimeStatus {
 export type ASRRuntimeStatus = ImageRuntimeStatus;
 
 export type EmbeddingRuntimeStatus = ImageRuntimeStatus;
+
+export type TTSRuntimeStatus = ImageRuntimeStatus;
+
+export interface SpeechVoice {
+  id: string;
+  label?: string;
+  language?: string;
+  gender?: string;
+}
+
+export interface SpeechVoicesResponse {
+  model: string;
+  sample_rate?: number;
+  streaming: boolean;
+  backend?: string;
+  voices: SpeechVoice[];
+}
+
+export interface AudioSpeechRequest {
+  model: string;
+  input: string;
+  voice?: string;
+  response_format?: "mp3" | "wav" | "pcm" | "opus" | "flac" | "aac";
+  speed?: number;
+  instructions?: string;
+  source?: string;
+}
 
 export interface AudioTranscriptionRequest {
   model: string;
@@ -824,9 +851,10 @@ export interface CloudAuthUser {
 export type ChatContent = string | ContentPart[];
 
 export interface ContentPart {
-  type: "text" | "image_url";
+  type: "text" | "image_url" | "audio_url";
   text?: string;
   image_url?: { url: string };
+  audio_url?: { url: string; mime?: string };
 }
 
 export interface ChatMessage {
@@ -1295,6 +1323,40 @@ export async function installASRRuntime(options?: { upgrade_packages?: boolean }
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ upgrade_packages: options?.upgrade_packages || undefined }),
   });
+}
+
+export async function getTTSRuntimeStatus(): Promise<TTSRuntimeStatus> {
+  return fetchJSON<TTSRuntimeStatus>("/api/tts-runtime");
+}
+
+export async function installTTSRuntime(options?: { upgrade_packages?: boolean }): Promise<TTSRuntimeStatus> {
+  return fetchJSON<TTSRuntimeStatus>("/api/tts-runtime/install", {
+    method: "POST",
+    body: JSON.stringify({ upgrade_packages: options?.upgrade_packages === true }),
+  });
+}
+
+// The model id travels as a query parameter because a source-scoped id has
+// three slash-separated segments and cannot be a path parameter.
+export async function getTTSVoices(model: string): Promise<SpeechVoicesResponse> {
+  return fetchJSON<SpeechVoicesResponse>(`/api/tts-voices?model=${encodeURIComponent(model)}`);
+}
+
+// Returns an object URL for the synthesised audio; callers must revoke it.
+export async function synthesizeSpeech(req: AudioSpeechRequest, signal?: AbortSignal): Promise<{ url: string; mime: string }> {
+  const resp = await fetch("/v1/audio/speech", withLocaleHeader({
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  }));
+  const contentType = resp.headers.get("content-type") || "";
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(extractErrorMessage(body, contentType, resp.statusText || "speech synthesis failed"));
+  }
+  const blob = await resp.blob();
+  return { url: URL.createObjectURL(blob), mime: contentType.split(";")[0] || "audio/mpeg" };
 }
 
 export async function getEmbeddingRuntimeStatus(): Promise<EmbeddingRuntimeStatus> {

@@ -15,13 +15,6 @@ import "net/http"
 
 const realtimeUnsupportedMessage = "realtime audio is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147"
 
-const audioSpeechUnsupportedMessage = "local text-to-speech is not supported yet; see https://github.com/OpenCSGs/csglite/issues/147"
-
-// POST /v1/audio/speech -- OpenAI-compatible speech synthesis, not implemented yet.
-func (s *Server) handleOpenAIAudioSpeechUnsupported(w http.ResponseWriter, r *http.Request) {
-	writeOpenAIError(w, http.StatusNotImplemented, "unsupported_error", audioSpeechUnsupportedMessage)
-}
-
 // POST /v1/realtime/calls -- OpenAI Realtime WebRTC SDP exchange, not implemented yet.
 func (s *Server) handleRealtimeCallsUnsupported(w http.ResponseWriter, r *http.Request) {
 	writeOpenAIError(w, http.StatusNotImplemented, "unsupported_error", realtimeUnsupportedMessage)

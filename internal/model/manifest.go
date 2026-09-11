@@ -99,8 +99,10 @@ var ttsArchitectures = []string{
 	"VitsModel",
 	"BarkModel",
 	"SpeechT5ForTextToSpeech",
-	"FastSpeech2ConformerModel",
-	"FastSpeech2ConformerWithHifiGan",
+	// The prefix covers FastSpeech2ConformerModel and
+	// FastSpeech2ConformerWithHifiGan, and matches the substring the worker
+	// dispatches on.
+	"FastSpeech2Conformer",
 	"ParlerTTSForConditionalGeneration",
 	"CsmForConditionalGeneration",
 	"DiaForConditionalGeneration",
@@ -267,6 +269,109 @@ func IsTTSModelFamily(name string) bool {
 		}
 	}
 	return false
+}
+
+// TTS backend names reported by TTSBackendFor. They mirror the engines in
+// internal/tts/worker/tts_worker.py; a model that matches none of them is a
+// text-to-speech model the runtime cannot synthesise, and saying so is better
+// than reporting support and failing at synthesis time.
+const (
+	TTSBackendQwen3        = "qwen3-tts"
+	TTSBackendKokoro       = "kokoro"
+	TTSBackendTransformers = "transformers"
+	TTSBackendVoxCPM       = "voxcpm"
+)
+
+// TTSBackendFor reports which text-to-speech backend can serve the model in
+// modelDir, or "" when none can. The order matches load_engine() in
+// tts_worker.py, and the two must stay in step: this decides what the library
+// advertises, that decides what actually runs.
+func TTSBackendFor(modelDir, modelName string) string {
+	cfg := readModelConfig(modelDir)
+	// VoxCPM writes a singular "architecture" field rather than the usual
+	// architectures list, so neither the architecture table nor model_type sees
+	// it: VoxCPM2 reports "voxcpm2" and VoxCPM-0.5B reports "voxcpm".
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(cfg.Architecture)), "voxcpm") {
+		return TTSBackendVoxCPM
+	}
+	// StyleTTS2 keys stand in for a name match, mirroring _is_kokoro_model.
+	if cfg.HasKokoroKeys {
+		return TTSBackendKokoro
+	}
+	name := modelName
+	if modelDir != "" {
+		name += " " + filepath.Base(filepath.Clean(modelDir))
+	}
+	return ttsBackendFrom(cfg.ModelType, cfg.Architectures, name)
+}
+
+// TTSBackendForMetadata makes the same decision from hub metadata alone, for a
+// model that has not been downloaded and so has no config.json to read. It keeps
+// what the marketplace advertises in step with what the library reports once the
+// model is on disk.
+func TTSBackendForMetadata(architecture, modelName string) string {
+	architectures := []string{}
+	if strings.TrimSpace(architecture) != "" {
+		architectures = append(architectures, architecture)
+	}
+	return ttsBackendFrom("", architectures, modelName)
+}
+
+func ttsBackendFrom(modelType string, architectures []string, name string) string {
+	if strings.EqualFold(strings.TrimSpace(modelType), "qwen3_tts") {
+		return TTSBackendQwen3
+	}
+	for _, arch := range architectures {
+		if strings.Contains(arch, "Qwen3TTS") {
+			return TTSBackendQwen3
+		}
+	}
+	if strings.Contains(strings.ToLower(name), "kokoro") {
+		return TTSBackendKokoro
+	}
+	for _, arch := range architectures {
+		if IsTTSArchitecture(arch) {
+			return TTSBackendTransformers
+		}
+	}
+	return ""
+}
+
+type ttsModelConfig struct {
+	ModelType     string
+	Architecture  string
+	Architectures []string
+	HasKokoroKeys bool
+}
+
+// readModelConfig reads the few config.json fields the backend choice needs.
+func readModelConfig(modelDir string) ttsModelConfig {
+	var out ttsModelConfig
+	modelDir = strings.TrimSpace(modelDir)
+	if modelDir == "" {
+		return out
+	}
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
+	if err != nil {
+		return out
+	}
+	var cfg struct {
+		ModelType     string          `json:"model_type"`
+		Architecture  string          `json:"architecture"`
+		Architectures []string        `json:"architectures"`
+		ISTFTNet      json.RawMessage `json:"istftnet"`
+		PLBert        json.RawMessage `json:"plbert"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return out
+	}
+	out.ModelType = cfg.ModelType
+	out.Architecture = cfg.Architecture
+	out.Architectures = cfg.Architectures
+	// StyleTTS2 configs, which Kokoro uses, carry these instead of an
+	// architectures field.
+	out.HasKokoroKeys = len(cfg.ISTFTNet) > 0 || len(cfg.PLBert) > 0
+	return out
 }
 
 // HasAudioOutputTokens reports whether the tokenizer in modelDir defines a

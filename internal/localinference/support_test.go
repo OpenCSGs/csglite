@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func TestFromMarketplaceGGUF(t *testing.T) {
@@ -194,83 +195,117 @@ func TestDiffusersPipelineTagFromClassName(t *testing.T) {
 }
 
 // A safetensors text-to-speech model whose language-model half is a supported
-// causal LM used to match the llama.cpp "convert" path, which turned it into
-// GGUF and served it as a text model with the vocoder dropped. It must report
-// unsupported until the local text-to-speech runtime exists.
-func TestTextToSpeechNeverUsesLlamaConvertPath(t *testing.T) {
-	t.Run("marketplace pipeline tag", func(t *testing.T) {
-		support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", "text-to-speech")
-		if support.Supported || support.Runtime == "llama" || support.Mode == "convert" {
-			t.Fatalf("support = %#v, want unsupported", support)
-		}
-	})
+// causal LM matches the llama.cpp "convert" path by architecture alone, which
+// would turn it into GGUF and serve it as a text model with the vocoder
+// dropped. It must never take that path, whether or not a backend can
+// synthesise it.
+func TestTextToSpeechNeverTakesTheLlamaConvertPath(t *testing.T) {
+	cases := map[string]api.LocalInferenceSupport{
+		// CosyVoice has no backend yet, so it is off the llama path but not
+		// advertised as runnable.
+		"marketplace pipeline tag": FromMarketplaceModel(
+			"safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", "text-to-speech"),
+		"marketplace model family without a pipeline tag": FromMarketplaceModel(
+			"safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", ""),
+		"codec-token model named in #147": FromMarketplaceModel(
+			"safetensors", "Qwen3ForCausalLM", "", "modelscope/Vikhrmodels/Qwen3-0.6B-TTS", ""),
+	}
+	for name, support := range cases {
+		t.Run(name, func(t *testing.T) {
+			if support.Runtime == "llama" || support.Mode == "convert" {
+				t.Fatalf("support = %#v, want it off the llama convert path", support)
+			}
+			if support.Supported {
+				t.Fatalf("support = %#v, want unsupported: no backend can synthesise it", support)
+			}
+		})
+	}
 
-	t.Run("marketplace model family without a pipeline tag", func(t *testing.T) {
-		support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", "")
-		if support.Supported || support.Runtime == "llama" || support.Mode == "convert" {
-			t.Fatalf("support = %#v, want unsupported", support)
-		}
-	})
-
-	t.Run("marketplace architecture", func(t *testing.T) {
+	t.Run("a backend-backed architecture is advertised", func(t *testing.T) {
 		support := FromMarketplace("safetensors", "SpeechT5ForTextToSpeech", "")
-		if support.Supported {
-			t.Fatalf("support = %#v, want unsupported", support)
+		if !support.Supported || support.Runtime != "python-tts" {
+			t.Fatalf("support = %#v, want python-tts", support)
 		}
 	})
 
-	t.Run("local model pipeline tag", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["Qwen3ForCausalLM"]}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		lm := &model.LocalModel{Format: model.FormatSafeTensors, PipelineTag: "text-to-speech"}
-		support := FromLocalModel(lm, dir)
-		if support.Supported || support.Runtime == "llama" || support.Mode == "convert" {
-			t.Fatalf("support = %#v, want unsupported", support)
-		}
-	})
-
-	t.Run("local model architecture without a pipeline tag", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["VitsModel"]}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		lm := &model.LocalModel{Format: model.FormatSafeTensors}
-		support := FromLocalModel(lm, dir)
-		if support.Supported {
-			t.Fatalf("support = %#v, want unsupported", support)
+	t.Run("a plain text model stays convertible", func(t *testing.T) {
+		support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "Qwen/Qwen3-0.6B", "")
+		if !support.Supported || support.Mode != "convert" {
+			t.Fatalf("support = %#v, want llama convert", support)
 		}
 	})
 }
 
-// The model named in issue #147. Its architecture is convertible, so a missed
-// detection means the GGUF conversion succeeds and the model is served as text.
-func TestCodecTokenTTSModelIsNotConvertible(t *testing.T) {
-	name := "modelscope/Vikhrmodels/Qwen3-0.6B-TTS"
-
-	support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", name, "")
-	if support.Supported || support.Mode == "convert" {
-		t.Fatalf("marketplace support = %#v, want unsupported", support)
-	}
-
-	dir := t.TempDir()
-	for file, body := range map[string]string{
-		"config.json":        `{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3","vocab_size":160887}`,
-		"configuration.json": `{"framework":"pytorch","task":"others"}`,
-		"added_tokens.json":  `{"<|start_of_audio|>":151669,"<|end_of_audio|>":151670}`,
-	} {
-		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
+// Reporting support for a text-to-speech model the runtime cannot synthesise
+// repeats the complaint in #147 in a new form: the library says yes and
+// synthesis fails. Support must track what a backend can actually serve, while
+// the model still stays off the llama.cpp convert path either way.
+func TestTextToSpeechSupportTracksAvailableBackends(t *testing.T) {
+	write := func(t *testing.T, dir string, files map[string]string) {
+		t.Helper()
+		for name, body := range files {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
-	lm := &model.LocalModel{Namespace: "Vikhrmodels", Name: "Qwen3-0.6B-TTS", Format: model.FormatSafeTensors}
-	if support := FromLocalModel(lm, dir); support.Supported || support.Mode == "convert" {
-		t.Fatalf("local support = %#v, want unsupported", support)
-	}
 
-	// Regression guard: a plain Qwen3 text model must stay convertible.
-	if support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "Qwen/Qwen3-0.6B", ""); !support.Supported || support.Mode != "convert" {
-		t.Fatalf("plain text model support = %#v, want llama convert", support)
-	}
+	t.Run("codec-token model with no decoder is unsupported", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, "Qwen3-0.6B-TTS")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		write(t, dir, map[string]string{
+			"config.json":       `{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3","vocab_size":160887}`,
+			"added_tokens.json": `{"<|start_of_audio|>":151669,"<|end_of_audio|>":151670}`,
+		})
+		lm := &model.LocalModel{Namespace: "Vikhrmodels", Name: "Qwen3-0.6B-TTS", Format: model.FormatSafeTensors}
+		support := FromLocalModel(lm, dir)
+		if support.Supported {
+			t.Fatalf("support = %#v, want unsupported: no backend can synthesise it", support)
+		}
+		// Still must not fall back to the text-generation runtime.
+		if support.Runtime == "llama" || support.Mode == "convert" {
+			t.Fatalf("support = %#v, want it off the llama convert path", support)
+		}
+	})
+
+	t.Run("kokoro is supported", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, "Kokoro-82M")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// StyleTTS2 config: no architectures field at all.
+		write(t, dir, map[string]string{"config.json": `{"istftnet":{},"plbert":{},"dim_in":64}`})
+		lm := &model.LocalModel{Namespace: "hexgrad", Name: "Kokoro-82M", Format: model.FormatPyTorch}
+		if support := FromLocalModel(lm, dir); !support.Supported || support.Runtime != "python-tts" {
+			t.Fatalf("support = %#v, want python-tts", support)
+		}
+	})
+
+	t.Run("official qwen3-tts is supported", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, "Qwen3-TTS-12Hz-0.6B-CustomVoice")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		write(t, dir, map[string]string{
+			"config.json": `{"architectures":["Qwen3TTSForConditionalGeneration"],"model_type":"qwen3_tts"}`,
+		})
+		lm := &model.LocalModel{Namespace: "Qwen", Name: "Qwen3-TTS-12Hz-0.6B-CustomVoice", Format: model.FormatSafeTensors}
+		if support := FromLocalModel(lm, dir); !support.Supported || support.Runtime != "python-tts" {
+			t.Fatalf("support = %#v, want python-tts", support)
+		}
+	})
+
+	t.Run("transformers-native architecture is supported", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{"config.json": `{"architectures":["VitsModel"],"model_type":"vits"}`})
+		lm := &model.LocalModel{Namespace: "facebook", Name: "mms-tts-eng", Format: model.FormatSafeTensors}
+		if support := FromLocalModel(lm, dir); !support.Supported || support.Runtime != "python-tts" {
+			t.Fatalf("support = %#v, want python-tts", support)
+		}
+	})
 }

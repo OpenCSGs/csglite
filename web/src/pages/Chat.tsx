@@ -5,6 +5,7 @@ import {
   getPs, streamChat, getCloudAuthStatus,
   listConversations, searchConversations, getConversation, createConversation, updateConversation, deleteConversation,
   getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob, getASRRuntimeStatus, transcribeAudioStream,
+  getTTSRuntimeStatus, getTTSVoices, synthesizeSpeech,
 } from "../api/client";
 import type {
   ModelInfo, ChatMessage, ContentPart, CloudAuthStatus,
@@ -90,6 +91,11 @@ const pendingImages = signal<PendingImage[]>([]);
 const pendingAudio = signal<PendingAudio | null>(null);
 const audioPreviews = signal<Record<string, LocalAudioPreview>>({});
 const isRecordingAudio = signal(false);
+// Voices of the selected text-to-speech model, and the chosen one. Loaded
+// lazily because listing them loads the model.
+const ttsVoices = signal<{ id: string; label?: string; language?: string }[]>([]);
+const selectedVoice = signal("");
+const ttsVoicesModel = signal("");
 const contextStorageKey = "csghub.chat.num_ctx";
 const contextModeStorageKey = "csghub.chat.num_ctx_mode";
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
@@ -125,12 +131,19 @@ function isASRModel(model?: Pick<ModelInfo, "pipeline_tag" | "input_modalities" 
     Boolean(model?.output_modalities?.includes("transcription"));
 }
 
-type ChatModelMode = "chat" | "vision" | "image" | "asr";
+function isTTSModel(model?: Pick<ModelInfo, "pipeline_tag" | "output_modalities"> | null): boolean {
+  const pipelineTag = (model?.pipeline_tag || "").toLowerCase();
+  return pipelineTag === "text-to-speech" ||
+    Boolean(model?.output_modalities?.includes("speech"));
+}
+
+type ChatModelMode = "chat" | "vision" | "image" | "asr" | "tts";
 
 function getChatModelMode(model?: ModelInfo | null): ChatModelMode {
   if (!model) return "chat";
   if (isImageGenerationModel(model)) return "image";
   if (isASRModel(model)) return "asr";
+  if (isTTSModel(model)) return "tts";
   if (model.input_modalities?.includes("image")) return "vision";
   if (model.pipeline_tag === "image-text-to-text" && (model.source === "cloud" || model.has_mmproj === true)) {
     return "vision";
@@ -1001,6 +1014,40 @@ export function Chat() {
     scrollMessagesToBottom(true);
   }, [activeConversation.value?.id, activeConversation.value?.messages.length]);
 
+  // Load the voices of the selected text-to-speech model. Listing them loads the
+  // model in the runtime, so it runs only for a text-to-speech selection and
+  // only once per model.
+  useEffect(() => {
+    const model = selectedModelInfo.value;
+    if (!model || getChatModelMode(model) !== "tts") {
+      if (ttsVoices.value.length > 0) ttsVoices.value = [];
+      ttsVoicesModel.value = "";
+      selectedVoice.value = "";
+      return;
+    }
+    const key = model.model || model.name;
+    if (!key || ttsVoicesModel.value === key) return;
+    let cancelled = false;
+    ttsVoicesModel.value = key;
+    getTTSVoices(key)
+      .then((resp) => {
+        if (cancelled) return;
+        const voices = resp.voices || [];
+        ttsVoices.value = voices;
+        if (!voices.some((v) => v.id === selectedVoice.value)) {
+          selectedVoice.value = voices.length > 0 ? voices[0].id : "";
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // A model whose voices cannot be listed still synthesises with its
+        // default voice, so this is not surfaced as an error.
+        ttsVoices.value = [];
+        selectedVoice.value = "";
+      });
+    return () => { cancelled = true; };
+  }, [selectedModelInfo.value?.model, selectedModelInfo.value?.name, selectedModelInfo.value?.pipeline_tag]);
+
   useEffect(() => {
     scrollMessagesToBottom();
   }, [
@@ -1188,6 +1235,7 @@ export function Chat() {
     const imageMode = mode === "image";
     const imageEditMode = imageMode && isImageToImageModel(currentModel);
     const asrMode = mode === "asr";
+    const ttsMode = mode === "tts";
     const visionMode = mode === "vision";
     const audio = pendingAudio.value;
     if (!currentModel || isGenerating.value) return;
@@ -1346,6 +1394,44 @@ export function Chat() {
           }
         }
         streamingContent.value = "";
+      } else if (ttsMode) {
+        let ttsRuntimeReady = true;
+        try {
+          ttsRuntimeReady = (await getTTSRuntimeStatus()).ready;
+        } catch {
+          // If the probe fails, attempt synthesis anyway and surface its error.
+        }
+        const ttsStatusBase = ttsRuntimeReady ? t("chat.synthesizingSpeech") : t("chat.preparingTTSRuntime");
+        const updateTTSProgress = () => {
+          if (!ac.signal.aborted) {
+            streamingContent.value = `${ttsStatusBase} ${formatElapsedWait(Date.now() - responseStartedAt)}`;
+          }
+        };
+        updateTTSProgress();
+        const ttsProgressTimer = window.setInterval(updateTTSProgress, 1000);
+        let audioResult: Awaited<ReturnType<typeof synthesizeSpeech>>;
+        try {
+          audioResult = await synthesizeSpeech({
+            model: currentModel.model || currentModel.name,
+            input: text,
+            voice: selectedVoice.value || undefined,
+            response_format: "mp3",
+            source: currentModel.source,
+          }, ac.signal);
+        } finally {
+          window.clearInterval(ttsProgressTimer);
+          streamingContent.value = "";
+        }
+        conv.messages.push({
+          role: "assistant",
+          content: [
+            { type: "audio_url" as const, audio_url: { url: audioResult.url, mime: audioResult.mime } },
+            { type: "text" as const, text: t("chat.speechSynthesized") },
+          ],
+          meta: buildResponseMeta(t("chat.speechSynthesized"), responseStartedAt),
+        });
+        activeConversation.value = { ...conv };
+        saveCurrentConversation();
       } else if (asrMode && audio) {
         let asrRuntimeReady = true;
         try {
@@ -1473,7 +1559,7 @@ export function Chat() {
     } catch (e: any) {
       const errMessage = e?.message || t("chat.failedResp");
       const localizedErrorMessage = localizeChatErrorMessage(errMessage, currentModel.provider || configuredCloudProviderName());
-      if (streamingContent.value && !asrMode && (!ac.signal.aborted || !imageMode)) {
+      if (streamingContent.value && !asrMode && !ttsMode && (!ac.signal.aborted || !imageMode)) {
         const assistantContent = streamingContent.value;
         const sources = streamingSources.value;
         conv.messages.push({
@@ -1501,7 +1587,7 @@ export function Chat() {
     searchPlanningQuery.value = "";
     searchSkippedReason.value = "";
     streamingSources.value = [];
-    if (asrMode || (imageMode && ac.signal.aborted)) {
+    if (asrMode || ttsMode || (imageMode && ac.signal.aborted)) {
       streamingContent.value = "";
     }
     isGenerating.value = false;
@@ -1608,6 +1694,7 @@ export function Chat() {
   const imageMode = modelMode === "image";
   const imageEditMode = imageMode && isImageToImageModel(selectedModelInfo.value);
   const asrMode = modelMode === "asr";
+  const ttsMode = modelMode === "tts";
   const visionMode = modelMode === "vision";
   const canSend = asrMode
     ? Boolean(pendingAudio.value && !isRecordingAudio.value && selectedModelInfo.value)
@@ -1898,7 +1985,7 @@ export function Chat() {
               <textarea
                 class="min-h-[46px] w-full resize-none border-0 bg-transparent px-2 text-sm leading-6 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0"
                 rows={2}
-                placeholder={asrMode ? t("chat.askAudio") : imageEditMode ? t("chat.askImageEdit") : visionMode ? t("chat.askImage") : imageMode ? t("chat.askImageGenerate") : t("chat.askHelp")}
+                placeholder={asrMode ? t("chat.askAudio") : ttsMode ? t("chat.askSpeak") : imageEditMode ? t("chat.askImageEdit") : visionMode ? t("chat.askImage") : imageMode ? t("chat.askImageGenerate") : t("chat.askHelp")}
                 value={inputText.value}
                 onInput={(e) => (inputText.value = (e.target as HTMLTextAreaElement).value)}
                 onKeyDown={handleKeyDown}
@@ -1965,6 +2052,22 @@ export function Chat() {
                       </option>
                     ))}
                   </select>
+                  {ttsMode && ttsVoices.value.length > 0 && (
+                    <select
+                      class="max-w-[180px] truncate rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={selectedVoice.value}
+                      disabled={isGenerating.value}
+                      onChange={(e) => { selectedVoice.value = (e.target as HTMLSelectElement).value; }}
+                      title={t("chat.voice")}
+                      aria-label={t("chat.voice")}
+                    >
+                      {ttsVoices.value.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.language ? `${v.id} (${v.language})` : v.id}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 {isGenerating.value ? (
                   <button
@@ -1981,7 +2084,7 @@ export function Chat() {
                     onClick={handleSend}
                     disabled={!canSend}
                     class="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
-                    title={asrMode ? t("chat.transcribe") : t("chat.send")}
+                    title={asrMode ? t("chat.transcribe") : ttsMode ? t("chat.speak") : t("chat.send")}
                   >
                     <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
@@ -2217,6 +2320,17 @@ function MessageBubble({ message, streaming, audioPreview }: { message: ChatMess
           {(content as ContentPart[]).map((part, i) => {
             if (part.type === "image_url" && part.image_url) {
               return <img key={i} src={part.image_url.url} class="max-w-full rounded-lg mb-2 max-h-64" />;
+            }
+            if (part.type === "audio_url" && part.audio_url) {
+              return (
+                <audio
+                  key={i}
+                  controls
+                  preload="metadata"
+                  src={part.audio_url.url}
+                  class="mb-2 w-full max-w-sm"
+                />
+              );
             }
             if (part.type === "text" && part.text) {
               return <p key={i} class="break-words whitespace-pre-wrap">{part.text}</p>;

@@ -1,6 +1,6 @@
 # 实时语音 API 设计（ASR + TTS 全双工，兼容 OpenAI Realtime）
 
-- 状态：设计草案（待评审），**P0 已实现**，对应 issue [#147](https://github.com/OpenCSGs/csglite/issues/147)
+- 状态：设计草案（待评审），**P0 与 P1 已实现**，对应 issue [#147](https://github.com/OpenCSGs/csglite/issues/147)
 - 范围：`/v1/audio/speech`、`/v1/realtime*`、本地 TTS 运行时、以及配套的 `/api/*` 管理面
 - 兼容目标：OpenAI Realtime API（WebRTC 与 WebSocket 两种传输）+ OpenAI `audio/speech`、`audio/transcriptions`
 
@@ -464,6 +464,128 @@ P0 过程中额外发现并修掉的一处问题：`localinference.FromLocalMode
 明确错误，不再静默转成 GGUF；语音端点返回带 `unsupported_error` 的 501。P1 落地时把
 `text-to-speech` 从 `unsupportedPipelineTag` 移出，改为 `{Runtime: "python-tts", Mode: "tts"}`，
 并给前端 `web/src/utils/localInference.ts` 的 mode 联合类型和 i18n 补上 `tts`。
+
+## 8.2 P1 实现记录（已完成）
+
+ASR 与 TTS **都走 Python 推理运行时，不经 llama.cpp**——把模型输出变成波形的声码器/codec 解码器只
+存在于模型自己的推理栈里。TTS 完整镜像了 ASR 既有的那套框架：
+
+| 改动 | 位置 |
+| --- | --- |
+| 独立 venv 的运行时管理 | `imagegen`：`NewTTSRuntimeManager` / `TTSStatus` / `EnsureTTSReady` / `InstallTTSWithProgressOptions` / `TTSInstallCommand`，落在 `~/.csghub-lite/tts-runtime` |
+| 按模型族的按需依赖 | `EnsureModelTTSPackages`（Kokoro 需要 `kokoro` 与 `misaki[zh]`，后者是中文 G2P，缺了会在合成时报缺模块）|
+| 引擎接口与进程管理 | `internal/tts`：`Engine` 接口、`PythonEngine`（空闲端口、健康探测、空闲回收）|
+| 内嵌 worker | `internal/tts/worker/tts_worker.py`：Kokoro 与 transformers 原生 TTS 两种后端；PCM 经 ffmpeg 转 mp3/opus/flac/aac，流式时用一个长驻 ffmpeg 保证客户端收到连续流而不是拼接文件 |
+| 服务端接线 | `getOrLoadTTSEngine`、`POST /v1/audio/speech`、`GET /api/tts-runtime`、`POST /api/tts-runtime/install`、`GET /api/tts-voices?model=` |
+| 路由修正 | `text-to-speech` 从 `unsupportedPipelineTag` 移出，改为 `{Runtime: "python-tts", Mode: "tts"}`；前端 mode 联合类型与 i18n 补 `tts` |
+
+**音色发现用查询参数而不是路径参数**：带源前缀的模型 id（如 `modelscope/hexgrad/Kokoro-82M`）有三段，
+`{model}` 和 `{namespace}/{name}` 都匹配不了，而未匹配的 GET 会落到静态兜底、返回 200 的 Web UI。
+
+**worker 启动失败的原因会透出到 API**：`tailBuffer` 保留 worker stderr 的尾部，取 traceback 最后一行
+作为错误原因，否则调用方只能看到 `exit status 1`。
+
+### 实测结果（Kokoro-82M，真实模型）
+
+| 反馈要求 | 结果 |
+| --- | --- |
+| `Content-Type: audio/mpeg` | ✅ |
+| MP3 流式 | ✅ `Transfer-Encoding: chunked` |
+| `voice` / `input` / `response_format` / `instructions` | ✅（`instructions` 被接受，Kokoro 自身忽略）|
+| 中文 | ✅ 8 个中文音色，`zf_xiaoxiao` 实测 3.79s、mean -21.1 dB |
+| Bearer Authorization | ✅ |
+| 出错返回 JSON 而非 HTML | ✅ |
+
+其它容器同样实测通过：`wav`（audio/wav）、`pcm`（`audio/L16; rate=24000; channels=1`）、`opus`、`flac`。
+
+### 官方 Qwen3-TTS（已实测跑通）
+
+`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` 通过 csglite 的 modelscope 源拉取（2.3 GB），**codec 随仓库自带**
+（`speech_tokenizer/`，682293092 字节，与官方独立仓库 `Qwen3-TTS-Tokenizer-12Hz` 的同名文件字节数一致，
+即同一份产物发两处），所以一次 pull 就齐，不需要第二次下载。
+
+映射关系正好对上 OpenAI 接口：`voice` → `speaker`、`instructions` → `instruct`。预设音色不硬编码，
+从 `config.talker_config.spk_id` 读取，因此任何变体（含 1.7B）都会报告自己那一套；`spk_is_dialect`
+额外给出方言信息（Eric 四川话、Dylan 北京话）。
+
+实测（反馈者原始 payload，仅替换 model id）：`status=200`、`Content-Type: audio/mpeg`、
+`Transfer-Encoding: chunked`、2.38 秒、mean −21.9 dB。Vivian/Dylan/Ryan 与 Kokoro 回归均通过。
+
+Base 变体是声音克隆（需要参考音频），没有预设音色，因此 `/v1/audio/speech` 会返回一条说明并建议改用
+CustomVoice。
+
+### transformers 版本策略
+
+**只声明 `>=` 下界，不写 `==` 定版**，与 Diffusers 运行时既有的 `transformers>=4.48.0,<5.0` 同形。
+多个后端共用一个 venv，定版会让「最后装的那个」决定所有后端的版本，装一个就把另一个的 transformers
+拽走，来回震荡。
+
+TTS 运行时声明 `transformers>=4.57.3,<5.0`。上界是实测出来的而非猜的：`qwen-tts` 在 5.x 上 import 即失败
+（`TypeError: check_model_inputs() missing 1 required positional argument: 'func'`），而 Kokoro 与
+transformers 原生后端在 4.57.3–4.57.6 全区间正常。另外 `qwen-tts` 自身 `pyproject.toml` 硬钉
+`transformers==4.57.3`，所以 `EnsureModelTTSPackages` 装完按模型的额外依赖后会**重新声明一次约束**，
+保证版本只前进、不被第三方包拽回去。
+
+### 已支持的后端（均实测出音频）
+
+| 模型 | 体积 | backend | 音色 | 备注 |
+| --- | --- | --- | --- | --- |
+| `hexgrad/Kokoro-82M` | 327 MB | `kokoro` | 54（8 中文） | 需 `misaki[zh]` 才能念中文 |
+| `facebook/mms-tts-eng` | 145 MB | `transformers` | 0（单说话人） | 同架构覆盖 MMS 上千语言 |
+| `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` | 2.3 GB | `qwen3-tts` | 9（5 中文，含京/川方言） | codec 随仓库自带 |
+| `openbmb/VoxCPM2` | 4.6 GB | `voxcpm` | 0（参考音频克隆） | 原生流式；`audiovae.pth` 随仓库自带 |
+
+`transformers` 后端还覆盖 SpeechT5、Bark、ParlerTTS、CSM、Dia、FastSpeech2；其中只有 VITS/MMS 一路
+经过实测，其余同属一个代码路径但未逐个验证。
+
+选后端的判据（这几轮踩出来的）：**上游必须用 `>=` 声明依赖**。VoxCPM 的 `voxcpm` 包声明
+`torch>=2.5.0` / `transformers>=4.36.2`，装进共享 venv 后 numpy / torch / torchaudio /
+transformers / protobuf **一个都没动**，所以不需要 overlay——这是「尽可能复用」的理想情况。
+
+### 没有纳入的后端与原因
+
+| 模型 | 卡点 |
+| --- | --- |
+| fish-speech / OpenAudio S1 | 推理栈的 `descript-audiotools`（最新 0.7.2）仍调用 `torchaudio.list_audio_backends`，该 API 在 torchaudio 2.x 已移除。全部 import 都能成功，运行时挂掉——**上游停更**，不是版本约束问题。相关代码已移除，等上游修复后再加。 |
+| fish-speech S2 / 2.0 | 只有 `fishaudio/s2-pro`（11 GB，HF，ModelScope 无镜像），且 PyPI 的 `fish-speech` 0.1.0 对应的是 S1 一代，没有 S2 的包。 |
+| CosyVoice 2 / 3 | 官方仓库没有 `setup.py`/`pyproject.toml`，只有 `requirements.txt` + `third_party/Matcha-TTS` 子模块，必须 vendoring；且 `requirements.txt` 31 行几乎全是 `==` 硬钉，其中 `numpy==1.26.4` 会把共享 numpy 从 2.x 拽回 1.x。numpy 是 torch/scipy/librosa 的二进制底座，无法像 protobuf 那样用 overlay 覆盖。最小 4.62 GB。 |
+| `Vikhrmodels/Qwen3-0.6B-TTS` | codec 是 BigCodec，权重只在 HF（`Alethia/BigCodec`），且该模型只支持 en/ru/uk，念不出中文。 |
+
+### 依赖隔离（overlay）
+
+为「某个后端的包与其它后端冲突」准备的机制：`--target` 装进私有目录，通过 `PYTHONPATH` 置于共享
+venv 的 site-packages 之前。实测有效——私有 protobuf 3.19.6 生效的同时，torch / numpy 仍来自共享，
+私有目录仅 780 KB 而不是复制一个 3 GB 的 venv。
+
+当前 `ttsOverlayPackages` 为空：四个已支持的后端都能共处一个 venv。机制保留，因为放任某个后端的
+pin 改写共享环境会弄坏其它后端。
+
+### 仍未完成
+
+issue #147 的第 2、3 项（实时 ASR WebSocket、WebRTC 全双工）仍返回 501，对应本文档的 P2 与 P3。
+
+### chat 界面尚未接入 TTS
+
+`Chat.tsx` 已有语音**输入**（`MediaRecorder` + `/v1/audio/transcriptions`），但没有任何朗读/播放代码
+（`new Audio(` / `speechSynthesis` / `/v1/audio/speech` 均为 0 处引用）。本轮只落地了 API 层，加「朗读」
+按钮可照抄现有的 ASR 接线方式。
+
+### `Vikhrmodels/Qwen3-0.6B-TTS` 仍然无法合成
+
+该仓库声明 `vocab_size: 160887`，而三个 tokenizer 文件已知的最大 id 只到 151670 ——
+**9216 个 embedding 行没有任何 tokenizer 条目**，仓库里也没有 codec 解码器权重。
+
+codec 后来查明了：它属于 [VikhrModels/Salt](https://github.com/VikhrModels/Salt) 家族，用的是
+**BigCodec**（作者 model card 原话「BigCodec tokenizer」）。按 Salt 的 `get_start_tokens`（顺序
+wav→bigcodec→speech，且 `wav.n_new_tokens = 0`）可推出 BigCodec 占 **151671–159862**（8192 个）、
+SpeechTokenizer 占 159863–160886（1024 个），合计正是 9216；用同族的 `ksych/salt-bigcodec`
+（仅含 bigcodec，`vocab_size 159859`）反推基数可交叉验证。解码路径也对得上：PyPI 的 `bigcodec` 包里
+`BigCodec.decode()` 与 Salt 的 `decode_audio_bigcodec` 逐行一致，输出 16 kHz。
+
+仍未接入的原因有两条，都不是技术障碍：BigCodec 权重只在 HuggingFace（`Alethia/BigCodec/bigcodec.pt`，
+ModelScope 无镜像，且是裸 checkpoint 需手工凑构造参数）；更重要的是该模型语言为 **en / ru / uk**
+（训练集 librispeech + 俄语书 + common voice，作者自报 PESQ 1.11），**念不出中文**。需要中文的场景应使用
+官方 Qwen3-TTS。
 
 ## 9. 风险与待确认
 
