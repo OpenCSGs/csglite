@@ -5,6 +5,29 @@ export function modelOptionKey(model: { model?: string; name?: string; source?: 
   return `${model.source || "local"}:${model.model || model.name}`;
 }
 
+// modelOptionID is what the API calls the model. It is deliberately not
+// modelOptionKey: that one prefixes the source to keep the dropdown's options
+// unique, and sending it as a model id asks the server for a model that does
+// not exist ("local:Fun-ASR-Nano-2512").
+export function modelOptionID(model: { model?: string; name?: string }): string {
+  return (model.model || model.name || "").trim();
+}
+
+// realtimeVoiceOptions builds the dropdown entries for the realtime voice
+// dialog. Only local models are offered, because the call is served by the
+// local Python runtimes and a cloud or provider model would fail on connect.
+// Each entry carries both identifiers: the key keeps the option unique in the
+// dropdown, the id is what the server is asked for.
+export function realtimeVoiceOptions(
+  models: ModelInfo[],
+  matches: (model: ModelInfo) => boolean,
+  label: (model: ModelInfo) => string,
+): { key: string; id: string; label: string }[] {
+  return models
+    .filter((model) => matches(model) && (!model.source || model.source === "local") && modelOptionID(model) !== "")
+    .map((model) => ({ key: modelOptionKey(model), id: modelOptionID(model), label: label(model) }));
+}
+
 export function normalizeModelOptions(models: ModelInfo[]): ModelInfo[] {
   const seen = new Set<string>();
   const out: ModelInfo[] = [];
