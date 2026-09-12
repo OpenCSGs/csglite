@@ -1327,13 +1327,16 @@ function RunParamsDialog({
 
         <div class="grid grid-cols-1 gap-4 overflow-y-auto px-6 py-5 md:grid-cols-2">
           {runtimeManagedModel ? (
-            <div class="md:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
-              {imageGenerationModel
-                ? t("lib.runParamImageRuntimeHint")
-                : ttsModel
-                  ? t("lib.runParamTTSRuntimeHint")
+            // A text-to-speech model shows no hint: the dialog already says
+            // which runtime it uses, and the load options it excludes are not
+            // on screen to be explained.
+            ttsModel ? null : (
+              <div class="md:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
+                {imageGenerationModel
+                  ? t("lib.runParamImageRuntimeHint")
                   : t("lib.runParamASRRuntimeHint")}
-            </div>
+              </div>
+            )
           ) : (
             <>
               <div>
