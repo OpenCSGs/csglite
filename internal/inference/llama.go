@@ -57,6 +57,25 @@ var allowedLlamaCacheTypeSet = func() map[string]struct{} {
 	return allowed
 }()
 
+// cacheTypeDtypeSize returns the estimated bytes-per-element for a
+// llama-server cache dtype. Returns 2 (f16) for unknown or empty types.
+func cacheTypeDtypeSize(cacheType string) float64 {
+	switch cacheType {
+	case "f32":
+		return 4
+	case "f16", "bf16":
+		return 2
+	case "q8_0":
+		return 1
+	case "q4_0", "q4_1", "iq4_nl":
+		return 0.5
+	case "q5_0", "q5_1":
+		return 0.625
+	default:
+		return 2
+	}
+}
+
 // cappedWriter keeps only the last maxBytes of data written to it.
 // Safe for concurrent use.
 type cappedWriter struct {
@@ -301,7 +320,12 @@ func capNumCtxToModelMax(modelDir string, numCtx int) int {
 // detectable free VRAM, it caps the context to what fits in available memory
 // (model weights + KV cache). On non-ROCm hosts or when detection fails, it
 // falls back to the existing ResolveNumCtx logic.
-func resolveNumCtxVRAMAware(modelPath, modelDir string, requested int) int {
+//
+// Note: free VRAM is sampled at load time. When multiple engines are
+// resident, the first model sizes itself to all available VRAM, leaving
+// none for subsequent models. This is a known limitation; the fallback
+// default is no worse than the fixed default.
+func resolveNumCtxVRAMAware(modelPath, modelDir string, requested int, cacheTypeK, cacheTypeV string) int {
 	if requested >= 1024 {
 		return requested
 	}
@@ -321,7 +345,11 @@ func resolveNumCtxVRAMAware(modelPath, modelDir string, requested int) int {
 	if availableForKV <= 0 {
 		return min(fallback, defaultLlamaCtxSize)
 	}
-	kvPerToken := ggufmeta.KVCacheBytesPerToken(modelPath, 2)
+	dtypeSize := cacheTypeDtypeSize(cacheTypeK)
+	if v := cacheTypeDtypeSize(cacheTypeV); v > dtypeSize {
+		dtypeSize = v
+	}
+	kvPerToken := ggufmeta.KVCacheBytesPerToken(modelPath, dtypeSize)
 	if kvPerToken <= 0 {
 		return fallback
 	}
@@ -329,7 +357,11 @@ func resolveNumCtxVRAMAware(modelPath, modelDir string, requested int) int {
 	if vramCeiling > 32768 {
 		vramCeiling = 32768
 	}
-	vramCeiling = min(vramCeiling, capNumCtxToModelMax(modelDir, vramCeiling))
+	if vramCeiling < 2048 {
+		log.Printf("LLAMA: VRAM-aware context ceiling %d below 2048 floor; falling back to %d", vramCeiling, fallback)
+		return fallback
+	}
+	vramCeiling = capNumCtxToModelMax(modelDir, vramCeiling)
 	return min(fallback, vramCeiling)
 }
 
@@ -525,9 +557,6 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		modelName: modelName,
 		client:    &http.Client{Timeout: 0},
 	}
-	effectiveNumCtx := resolveNumCtxVRAMAware(modelPath, filepath.Dir(modelPath), numCtx)
-	effectiveNumParallel := ResolveNumParallel(numParallel)
-	effectiveNGPULayers := ResolveNGPULayers(nGPULayers)
 	normalizedCacheTypeK, err := NormalizeCacheType(cacheTypeK)
 	if err != nil {
 		return nil, err
@@ -536,6 +565,9 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	if err != nil {
 		return nil, err
 	}
+	effectiveNumCtx := resolveNumCtxVRAMAware(modelPath, filepath.Dir(modelPath), numCtx, normalizedCacheTypeK, normalizedCacheTypeV)
+	effectiveNumParallel := ResolveNumParallel(numParallel)
+	effectiveNGPULayers := ResolveNGPULayers(nGPULayers)
 	speculative, err = NormalizeSpeculativeConfig(speculative)
 	if err != nil {
 		return nil, err
@@ -627,9 +659,6 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	}
 	if IsROCMHost() {
 		env = appendEnvDefault(env, "GGML_CUDA_DISABLE_GRAPHS", "1")
-		if hsaVer := ROCMHSAOverrideGFXVersion(); hsaVer != "" {
-			env = appendEnvDefault(env, "HSA_OVERRIDE_GFX_VERSION", hsaVer)
-		}
 	}
 	if ROCMUnifiedMemoryMode() {
 		// ggml only checks for the variable's presence, so it must stay

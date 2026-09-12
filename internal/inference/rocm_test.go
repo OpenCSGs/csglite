@@ -105,23 +105,4 @@ func TestGfxTargetVersionToArch(t *testing.T) {
 	}
 }
 
-func TestGfxTargetVersionToHSAOverride(t *testing.T) {
-	cases := []struct {
-		input int64
-		want  string
-	}{
-		{100300, "10.3.0"},
-		{110501, "11.5.1"},
-		{110003, "11.0.3"},
-		{90402, "9.4.2"},
-		{90010, "9.0.10"},
-		{0, ""},
-		{-1, ""},
-	}
-	for _, tc := range cases {
-		got := gfxTargetVersionToHSAOverride(tc.input)
-		if got != tc.want {
-			t.Errorf("gfxTargetVersionToHSAOverride(%d) = %q, want %q", tc.input, got, tc.want)
-		}
-	}
-}
+

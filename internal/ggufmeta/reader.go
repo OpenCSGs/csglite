@@ -245,7 +245,7 @@ func (m *Metadata) IsVisionProjector() bool {
 // KVCacheBytesPerToken estimates the KV cache bytes per token from GGUF
 // metadata. Returns 0 if the required fields are missing.
 // dtypeSize is the bytes per element of one KV entry (e.g. 2 for f16).
-func KVCacheBytesPerToken(path string, dtypeSize int) int64 {
+func KVCacheBytesPerToken(path string, dtypeSize float64) int64 {
 	meta, err := ReadFile(path)
 	if err != nil {
 		return 0
@@ -287,7 +287,7 @@ func KVCacheBytesPerToken(path string, dtypeSize int) int64 {
 	if dtypeSize <= 0 {
 		dtypeSize = 2
 	}
-	return int64(blockCount) * int64(headCountKV) * int64(keyLength+valueLength) * int64(dtypeSize)
+	return int64(float64(blockCount) * float64(headCountKV) * float64(keyLength+valueLength) * dtypeSize)
 }
 
 func readValue(reader io.Reader, valueType uint32) (value, bool, error) {

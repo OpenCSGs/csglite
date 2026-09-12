@@ -178,33 +178,6 @@ func ROCMGfxArch() string {
 	return gfxTargetVersionToArch(detectROCMGfxTargetVersion())
 }
 
-// gfxTargetVersionToHSAOverride converts a KFD gfx_target_version (e.g. 110501)
-// directly to the HSA_OVERRIDE_GFX_VERSION format "11.5.1" using decimal
-// decomposition, avoiding the hex-nibble string round-trip that produces
-// invalid values for architectures like gfx90a.
-func gfxTargetVersionToHSAOverride(version int64) string {
-	if version <= 0 {
-		return ""
-	}
-	major := version / 10000
-	minor := (version / 100) % 100
-	stepping := version % 100
-	if major == 0 {
-		return ""
-	}
-	return fmt.Sprintf("%d.%d.%d", major, minor, stepping)
-}
-
-// ROCMHSAOverrideGFXVersion returns the HSA_OVERRIDE_GFX_VERSION value
-// (e.g. "11.5.1") on ROCm hosts, or "" if detection fails or the host
-// is not ROCm.
-func ROCMHSAOverrideGFXVersion() string {
-	if !IsROCMHost() {
-		return ""
-	}
-	return gfxTargetVersionToHSAOverride(detectROCMGfxTargetVersion())
-}
-
 // ROCMFreeVRAM returns the free VRAM in bytes on ROCm hosts. On discrete GPUs
 // this is free VRAM; on APUs it is system RAM available (via /proc/meminfo).
 // Returns 0 if the host is not ROCm or the value cannot be determined.

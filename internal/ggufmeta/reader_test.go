@@ -115,7 +115,7 @@ func TestKVCacheBytesPerToken(t *testing.T) {
 	}
 
 	// 32 * 8 * (128 + 128) * 2 = 131072
-	got := KVCacheBytesPerToken(tmp, 2)
+	got := KVCacheBytesPerToken(tmp, 2.0)
 	if got != 131072 {
 		t.Fatalf("KVCacheBytesPerToken = %d, want 131072", got)
 	}
@@ -137,7 +137,7 @@ func TestKVCacheBytesPerTokenFallsBackToEmbeddingLength(t *testing.T) {
 
 	// key_length = 4096 / 32 = 128, value_length defaults to key_length
 	// 32 * 8 * (128 + 128) * 2 = 131072
-	got := KVCacheBytesPerToken(tmp, 2)
+	got := KVCacheBytesPerToken(tmp, 2.0)
 	if got != 131072 {
 		t.Fatalf("KVCacheBytesPerToken = %d, want 131072", got)
 	}
@@ -154,7 +154,7 @@ func TestKVCacheBytesPerTokenMissingFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := KVCacheBytesPerToken(tmp, 2); got != 0 {
+	if got := KVCacheBytesPerToken(tmp, 2.0); got != 0 {
 		t.Fatalf("KVCacheBytesPerToken = %d, want 0 for missing fields", got)
 	}
 }
