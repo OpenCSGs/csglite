@@ -88,6 +88,11 @@ export interface ModelConfigResponse {
   global_num_ctx: number;
   // What a load without a request-level context length would use right now.
   effective_num_ctx: number;
+  // Which runtime serves this model. The llama.cpp load options mean nothing
+  // for a model served by a Python runtime, and the pipeline tag cannot say
+  // which one it is: an embedding model runs on llama.cpp when its weights
+  // convert to GGUF and in the Python runtime when they do not.
+  runtime?: "llama" | "python-embedding" | "python-asr" | "python-tts" | "diffusers";
 }
 
 export interface ModelUploadResponse {

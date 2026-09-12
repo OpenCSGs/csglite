@@ -9822,7 +9822,8 @@
           "num_ctx",
           "model_max_num_ctx",
           "global_num_ctx",
-          "effective_num_ctx"
+          "effective_num_ctx",
+          "runtime"
         ],
         "properties": {
           "model": {
@@ -9843,6 +9844,11 @@
           "effective_num_ctx": {
             "type": "integer",
             "description": "Context window a load without a request-level value would use now."
+          },
+          "runtime": {
+            "type": "string",
+            "enum": ["llama", "python-embedding", "python-asr", "python-tts", "diffusers"],
+            "description": "Runtime that serves this model. The llama.cpp load options apply only to \"llama\"; the pipeline tag does not determine this, since an embedding model runs on llama.cpp when its weights convert to GGUF and in the Python embedding runtime when they do not."
           }
         }
       },

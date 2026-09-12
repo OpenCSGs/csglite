@@ -145,3 +145,83 @@ func TestModelConfigRequiresNumCtxField(t *testing.T) {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 }
+
+// The Run dialog decides which load options to show from the runtime, because
+// the pipeline tag cannot tell it: an embedding model runs on llama.cpp when
+// its weights convert to GGUF and in the Python runtime when they do not, and
+// the two accept completely different options.
+func TestModelConfigReportsTheServingRuntime(t *testing.T) {
+	cases := []struct {
+		name        string
+		pipelineTag string
+		format      model.Format
+		config      string
+		files       []string
+		want        string
+	}{
+		{
+			name:        "gguf-embedding",
+			pipelineTag: "feature-extraction",
+			format:      model.FormatGGUF,
+			want:        api.ModelRuntimeLlama,
+		},
+		{
+			name:        "python-embedding",
+			pipelineTag: "feature-extraction",
+			format:      model.FormatSafeTensors,
+			// An architecture the GGUF converter does not handle: those that it
+			// does still prefer llama.cpp.
+			config:      `{"architectures":["JinaEmbeddingsV5OmniModel"]}`,
+			files:       []string{"model.safetensors"},
+			want:        api.ModelRuntimePythonEmbedding,
+		},
+		{
+			name:        "text-to-speech",
+			pipelineTag: "text-to-speech",
+			format:      model.FormatSafeTensors,
+			config:      `{"architectures":["Qwen3ForCausalLM"]}`,
+			want:        api.ModelRuntimePythonTTS,
+		},
+		{
+			name:        "text-generation",
+			pipelineTag: "text-generation",
+			format:      model.FormatGGUF,
+			want:        api.ModelRuntimeLlama,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestServer(t)
+			lm := &model.LocalModel{
+				Namespace:   "Acme",
+				Name:        tc.name,
+				Format:      tc.format,
+				PipelineTag: tc.pipelineTag,
+				Files:       tc.files,
+			}
+			modelDir := model.ModelDir(s.cfg.ModelDir, lm.Namespace, lm.Name)
+			if err := os.MkdirAll(modelDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.config != "" {
+				if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(tc.config), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, name := range tc.files {
+				if err := os.WriteFile(filepath.Join(modelDir, name), []byte("weights"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := model.SaveManifestInDir(modelDir, lm); err != nil {
+				t.Fatal(err)
+			}
+
+			_, resp := modelConfigRequest(t, s, http.MethodGet, lm.Namespace+"/"+lm.Name, "")
+			if resp.Runtime != tc.want {
+				t.Fatalf("runtime = %q, want %q", resp.Runtime, tc.want)
+			}
+		})
+	}
+}

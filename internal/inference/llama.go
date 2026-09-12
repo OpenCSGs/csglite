@@ -32,7 +32,11 @@ const (
 	defaultLlamaCtxSize      = 8192
 	autoExpandedLlamaCtxSize = 16384
 	defaultLlamaParallel     = 1
-	unsetNGPULayers          = -1
+	// minEmbeddingModelMaxCtx is the smallest declared limit trusted when
+	// capping an embedding model's context; below it the metadata is more
+	// likely wrong than the model that tiny.
+	minEmbeddingModelMaxCtx = 128
+	unsetNGPULayers         = -1
 )
 
 const useModelMaxCtxEnv = "CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX"
@@ -297,6 +301,23 @@ func capNumCtxToModelMax(modelDir string, numCtx int) int {
 	return numCtx
 }
 
+// CapNumCtxToEmbeddingModelMax caps the context to what an embedding model can
+// actually consume. It differs from the chat cap in honouring limits below
+// 1024: 512-token embedding models are the norm (bge, gte, and most sentence
+// encoders), and llama-server allocates the context per slot, so a 512-token
+// model given the 8192 default reserves sixteen times the KV cache it can ever
+// use -- multiplied again by the slot count.
+//
+// A suspiciously small limit is ignored rather than trusted, since it would
+// leave the model unable to embed anything useful.
+func CapNumCtxToEmbeddingModelMax(modelDir string, numCtx int) int {
+	maxPos := ModelMaxPositionEmbeddings(modelDir)
+	if maxPos >= minEmbeddingModelMaxCtx && numCtx > maxPos {
+		return maxPos
+	}
+	return numCtx
+}
+
 // UseModelMaxCtxByDefault returns the effective model-maximum default.
 // An explicitly set environment variable has precedence over persisted config.
 func UseModelMaxCtxByDefault(configured bool) bool {
@@ -490,6 +511,12 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		client:    &http.Client{Timeout: 0},
 	}
 	effectiveNumCtx := ResolveNumCtx(filepath.Dir(modelPath), numCtx)
+	if embedding {
+		// Capping here rather than in the caller is deliberate: a limit below
+		// 1024 -- which most sentence encoders have -- looks like "unspecified"
+		// to ResolveNumCtx and would be replaced by the global default again.
+		effectiveNumCtx = CapNumCtxToEmbeddingModelMax(filepath.Dir(modelPath), effectiveNumCtx)
+	}
 	effectiveNumParallel := ResolveNumParallel(numParallel)
 	effectiveNGPULayers := ResolveNGPULayers(nGPULayers)
 	normalizedCacheTypeK, err := NormalizeCacheType(cacheTypeK)
