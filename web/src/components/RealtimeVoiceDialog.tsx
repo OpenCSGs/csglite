@@ -3,8 +3,17 @@ import { endRealtimeCall, getTTSVoices, startRealtimeCall, type SpeechVoice } fr
 import { t } from "../i18n";
 
 export interface RealtimeVoiceModel {
+  // key identifies the option in the dropdown; it is unique across sources.
   key: string;
+  // id is what the server knows the model as, which is not the same string.
+  id: string;
   label: string;
+}
+
+// realtimeModelID resolves a selected option back to the id the API expects.
+export function realtimeModelID(models: RealtimeVoiceModel[], key: string): string {
+  if (!key) return "";
+  return models.find((m) => m.key === key)?.id || "";
 }
 
 type CallState = "idle" | "connecting" | "live" | "ended";
@@ -49,6 +58,8 @@ export function RealtimeVoiceDialog({
 }) {
   const [asrModel, setASRModel] = useState(initialASRModel || asrModels[0]?.key || "");
   const [ttsModel, setTTSModel] = useState(initialTTSModel || ttsModels[0]?.key || "");
+  const asrModelID = realtimeModelID(asrModels, asrModel);
+  const ttsModelID = realtimeModelID(ttsModels, ttsModel);
   const [voices, setVoices] = useState<SpeechVoice[]>([]);
   const [voice, setVoice] = useState("");
   const [state, setState] = useState<CallState>("idle");
@@ -67,13 +78,13 @@ export function RealtimeVoiceDialog({
   // Voices are listed per model, and listing them loads the model, so this runs
   // only when a synthesis model is actually selected.
   useEffect(() => {
-    if (!ttsModel) {
+    if (!ttsModelID) {
       setVoices([]);
       setVoice("");
       return;
     }
     let cancelled = false;
-    getTTSVoices(ttsModel)
+    getTTSVoices(ttsModelID)
       .then((resp) => {
         if (cancelled) return;
         const list = resp.voices || [];
@@ -87,7 +98,7 @@ export function RealtimeVoiceDialog({
         setVoice("");
       });
     return () => { cancelled = true; };
-  }, [ttsModel]);
+  }, [ttsModelID]);
 
   const appendLine = (text: string, final: boolean) => {
     setLines((prev) => {
@@ -205,8 +216,8 @@ export function RealtimeVoiceDialog({
       });
 
       const call = await startRealtimeCall(peer.localDescription?.sdp || offer.sdp || "", {
-        asrModel: asrModel || undefined,
-        ttsModel: ttsModel || undefined,
+        asrModel: asrModelID || undefined,
+        ttsModel: ttsModelID || undefined,
         voice: voice || undefined,
       });
       callIdRef.current = call.callId;

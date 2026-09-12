@@ -20,6 +20,7 @@ import {
   formatModelOptionLabel as modelLabel,
   loadModelOptions,
   modelOptionKey as modelKey,
+  realtimeVoiceOptions as buildRealtimeVoiceOptions,
 } from "../utils/modelOptions";
 
 const availableModels = signal<ModelInfo[]>([]);
@@ -1701,6 +1702,9 @@ export function Chat() {
     saveCurrentConversation();
   };
 
+  const realtimeVoiceOptions = (matches: (model: ModelInfo) => boolean) =>
+    buildRealtimeVoiceOptions(availableModels.value, matches, modelLabel);
+
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -2203,8 +2207,8 @@ export function Chat() {
       )}
       {showRealtimeVoice.value && (
         <RealtimeVoiceDialog
-          asrModels={availableModels.value.filter(isASRModel).map((m) => ({ key: modelKey(m), label: modelLabel(m) }))}
-          ttsModels={availableModels.value.filter(isTTSModel).map((m) => ({ key: modelKey(m), label: modelLabel(m) }))}
+          asrModels={realtimeVoiceOptions(isASRModel)}
+          ttsModels={realtimeVoiceOptions(isTTSModel)}
           initialASRModel={asrMode ? modelKey(selectedModelInfo.value!) : undefined}
           initialTTSModel={ttsMode ? modelKey(selectedModelInfo.value!) : undefined}
           onClose={() => { showRealtimeVoice.value = false; }}
