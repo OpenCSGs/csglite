@@ -90,9 +90,9 @@ environment:
   HIP_VISIBLE_DEVICES: "0"
 ```
 
-只有在 GPU 架构检测不正确时才设置 `HSA_OVERRIDE_GFX_VERSION`。错误的值
-可能导致 ROCm 初始化失败。多 GPU 主机可通过 `HIP_VISIBLE_DEVICES` 选择
-设备。
+只有在 GPU 架构检测不正确时才设置 `HSA_OVERRIDE_GFX_VERSION`。错误的
+值可能导致 ROCm 初始化失败。多 GPU 主机可通过 `HIP_VISIBLE_DEVICES`
+选择设备。
 
 ## 固定版本注意事项
 
