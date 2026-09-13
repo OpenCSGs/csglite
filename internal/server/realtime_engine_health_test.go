@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/opencsgs/csglite/internal/asr"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/imagegen"
+	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -243,17 +245,45 @@ func (r *recordingTranscriber) Commit() error          { r.commits++; return nil
 func (r *recordingTranscriber) Reset() error           { return nil }
 func (r *recordingTranscriber) Close() error           { return nil }
 
+// writeLocalASRModel puts a model on disk so the engine lookup gets past
+// "not found" and reaches the loading path this test is about.
+func writeLocalASRModel(t *testing.T, s *Server, namespace, name string) string {
+	t.Helper()
+	dir := model.RegistryModelDir(s.cfg.ModelDir, "modelscope", namespace, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	lm := &model.LocalModel{
+		Namespace:      namespace,
+		Name:           name,
+		ArtifactSource: "modelscope",
+		PipelineTag:    "automatic-speech-recognition",
+	}
+	if err := model.SaveManifestInDir(dir, lm); err != nil {
+		t.Fatalf("SaveManifestInDir: %v", err)
+	}
+	return "modelscope/" + namespace + "/" + name
+}
+
 // A caller that disconnects mid-load must not take the load down with it. A
 // cold speech model takes minutes to install on a fresh machine, and a client
 // that gave up waiting used to leave the next request with nothing to reuse.
 func TestEngineLoadOutlivesTheCallerThatStartedIt(t *testing.T) {
 	s := newSpeechTestServer(t)
-	modelID := "local-asr"
+	modelID := writeLocalASRModel(t, s, "acme", "asr-small")
 
 	started := make(chan struct{})
 	release := make(chan struct{})
 	engine := &probeASREngine{}
-	previous := newASREngine
+	// Both halves of the load are stubbed. Leaving the runtime check real made
+	// this test build a venv and download torch, which is neither what it is
+	// asserting nor something a unit test may do.
+	previousRuntime := ensureASRRuntimeReady
+	ensureASRRuntimeReady = func(context.Context, *imagegen.RuntimeManager, imagegen.ProgressFunc, bool) error {
+		return nil
+	}
+	t.Cleanup(func() { ensureASRRuntimeReady = previousRuntime })
+	previousEngine := newASREngine
 	newASREngine = func(ctx context.Context, _, _ string, _ *imagegen.RuntimeManager) (asr.Engine, error) {
 		close(started)
 		<-release
@@ -262,16 +292,17 @@ func TestEngineLoadOutlivesTheCallerThatStartedIt(t *testing.T) {
 		}
 		return engine, nil
 	}
-	t.Cleanup(func() { newASREngine = previous })
+	t.Cleanup(func() { newASREngine = previousEngine })
 
-	state := &asrEngineLoadState{done: make(chan struct{})}
-	s.mu.Lock()
-	s.asrLoading[modelID] = state
-	s.mu.Unlock()
-	go s.loadASREngine(modelID, t.TempDir(), state)
-
+	// One caller starts the load and is still waiting on it.
+	waiting := make(chan error, 1)
+	go func() {
+		_, err := s.getOrLoadASREngine(context.Background(), modelID)
+		waiting <- err
+	}()
 	<-started
-	// The caller walks away while the load is still running.
+
+	// A second caller gives up while the load is still running.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := s.getOrLoadASREngine(ctx, modelID); !errors.Is(err, context.Canceled) {
@@ -279,9 +310,8 @@ func TestEngineLoadOutlivesTheCallerThatStartedIt(t *testing.T) {
 	}
 
 	close(release)
-	<-state.done
-	if state.err != nil {
-		t.Fatalf("the load was cancelled along with its caller: %v", state.err)
+	if err := <-waiting; err != nil {
+		t.Fatalf("the load did not finish: %v", err)
 	}
 	s.mu.RLock()
 	_, cached := s.asrEngines[modelID]
@@ -289,4 +319,45 @@ func TestEngineLoadOutlivesTheCallerThatStartedIt(t *testing.T) {
 	if !cached {
 		t.Fatal("the finished engine was not published for the next caller")
 	}
+}
+
+// The load must survive even when every caller has walked away, so the work
+// already paid for is there for whoever asks next.
+func TestEngineLoadCompletesWithNobodyWaiting(t *testing.T) {
+	s := newSpeechTestServer(t)
+	modelID := writeLocalASRModel(t, s, "acme", "asr-orphan")
+
+	engine := &probeASREngine{}
+	previousRuntime := ensureASRRuntimeReady
+	ensureASRRuntimeReady = func(context.Context, *imagegen.RuntimeManager, imagegen.ProgressFunc, bool) error {
+		return nil
+	}
+	t.Cleanup(func() { ensureASRRuntimeReady = previousRuntime })
+	previousEngine := newASREngine
+	newASREngine = func(ctx context.Context, _, _ string, _ *imagegen.RuntimeManager) (asr.Engine, error) {
+		// A caller's context would be cancelled by now; the load's must not be.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return engine, nil
+	}
+	t.Cleanup(func() { newASREngine = previousEngine })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.getOrLoadASREngine(ctx, modelID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled caller got %v, want context.Canceled", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.RLock()
+		_, cached := s.asrEngines[modelID]
+		s.mu.RUnlock()
+		if cached {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the load was abandoned along with the caller that started it")
 }
