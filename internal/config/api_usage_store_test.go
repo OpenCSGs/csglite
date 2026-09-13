@@ -133,6 +133,64 @@ func TestAPIUsageImportsLegacyJSONOnceAndRemovesIt(t *testing.T) {
 	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
 		t.Fatalf("restored file was left behind: %v", err)
 	}
+	if err := reopened.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	// Usage written by an older build the user downgraded to is different from
+	// what was imported, so it must be folded in rather than dropped.
+	downgraded, err := json.Marshal(APIUsageState{
+		Events: []APIUsageEventRecord{
+			{
+				APIKeyID: "key-1", APIKeyName: "client", Model: "test/model",
+				Source: "provider:a", SourceType: "provider", SourceName: "Provider A",
+				Requests: 2, InputTokens: 4, OutputTokens: 4, TotalTokens: 8,
+				CreatedAt: time.Date(2026, 5, 16, 9, 0, 0, 0, time.UTC),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, downgraded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	upgraded := NewAPIUsageStore(dir)
+	t.Cleanup(func() { _ = upgraded.Close() })
+	state, err = upgraded.List(APIUsageListOptions{})
+	if err != nil {
+		t.Fatalf("list usage after upgrade: %v", err)
+	}
+	if len(state.Records) != 1 || state.Records[0].Requests != 6 || state.Records[0].TotalTokens != 24 {
+		t.Fatalf("records after upgrade = %#v, want usage from the older build merged in", state.Records)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("file from the older build was left behind: %v", err)
+	}
+}
+
+func TestAPIUsageImportsRecordOnlyLegacyFileFromSkippedVersions(t *testing.T) {
+	dir := t.TempDir()
+	// Builds before the event log only persisted aggregated records.
+	legacy := []byte(`{"records":[{"api_key_id":"key-1","api_key_name":"client",` +
+		`"model":"test/model","requests":7,"input_tokens":20,"output_tokens":15,` +
+		`"total_tokens":35,"last_used_at":"2026-04-01T10:00:00Z"}]}`)
+	if err := os.WriteFile(filepath.Join(dir, APIUsageFile), legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewAPIUsageStore(dir)
+	t.Cleanup(func() { _ = store.Close() })
+	state, err := store.List(APIUsageListOptions{})
+	if err != nil {
+		t.Fatalf("list usage: %v", err)
+	}
+	if len(state.Records) != 1 || state.Records[0].Requests != 7 || state.Records[0].TotalTokens != 35 {
+		t.Fatalf("records = %#v, want the record-only file imported", state.Records)
+	}
+	if buckets := readPersistedAPIUsageBuckets(t, dir); len(buckets) != 1 || buckets[0].day != "2026-04-01" {
+		t.Fatalf("persisted buckets = %#v, want the record date preserved", buckets)
+	}
 }
 
 func TestAPIUsageConcurrentAddsAccumulateWithoutLoss(t *testing.T) {

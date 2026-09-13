@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,10 @@ import (
 // APIUsageDatabaseFile holds per-day usage buckets. It replaces the previous
 // api_usage.json, which had to be rewritten in full on every metered request.
 const APIUsageDatabaseFile = "api_usage.db"
+
+// apiUsageLegacyDigestKey records the digest of the api_usage.json already
+// imported, so the same file is never counted twice.
+const apiUsageLegacyDigestKey = "legacy_json_digest"
 
 const apiUsageSchema = `
 PRAGMA journal_mode=WAL;
@@ -190,9 +195,11 @@ func (s *APIUsageStore) openLocked() (*sql.DB, error) {
 	return db, nil
 }
 
-// importLegacyLocked loads api_usage.json once and deletes it afterwards, so no
-// stale copy is left behind. The import is also recorded in the database, so a
-// file restored from elsewhere is not counted twice.
+// importLegacyLocked loads api_usage.json and deletes it afterwards, so no stale
+// copy is left behind. The digest of what was imported is kept in the database:
+// the same file appearing again is dropped instead of counted twice, while a
+// different file — usage written by an older build the user downgraded to — is
+// folded in.
 func (s *APIUsageStore) importLegacyLocked(db *sql.DB) error {
 	if s.legacyPath == "" {
 		return nil
@@ -204,24 +211,27 @@ func (s *APIUsageStore) importLegacyLocked(db *sql.DB) error {
 		}
 		return err
 	}
-	imported, err := apiUsageMetaValue(db, "legacy_json_imported")
+	digest := fmt.Sprintf("%x", sha256.Sum256(data))
+	imported, err := apiUsageMetaValue(db, apiUsageLegacyDigestKey)
 	if err != nil {
 		return err
 	}
-	if imported == "" {
+	if imported != digest {
 		var state APIUsageState
 		if err := json.Unmarshal(data, &state); err != nil {
 			return fmt.Errorf("parsing legacy API usage: %w", err)
 		}
+		// Builds older than the event log only wrote aggregated records, so an
+		// upgrade that skips versions still lands here with usable data.
 		migrateLegacyAPIUsageEvents(&state, time.Now().UTC())
 		events := compactAPIUsageEvents(state.Events)
 		if err := apiUsageInsertBatch(db, events); err != nil {
 			return err
 		}
-		if err := apiUsageSetMeta(db, "legacy_json_imported", time.Now().UTC().Format(time.RFC3339)); err != nil {
+		if err := apiUsageSetMeta(db, apiUsageLegacyDigestKey, digest); err != nil {
 			return err
 		}
-		log.Printf("API USAGE: imported %d legacy usage buckets into %s", len(events), s.path)
+		log.Printf("API USAGE: imported %d usage buckets from %s", len(events), s.legacyPath)
 	}
 	if err := os.Remove(s.legacyPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing imported API usage file: %w", err)
