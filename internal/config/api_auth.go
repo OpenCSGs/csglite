@@ -271,113 +271,12 @@ type APIUsageListOptions struct {
 	Pool     string
 }
 
-type APIUsageStore struct {
-	path string
-	mu   sync.Mutex
-}
-
-func NewAPIUsageStore(appHome string) *APIUsageStore {
-	return &APIUsageStore{path: filepath.Join(appHome, APIUsageFile)}
-}
-
-func (s *APIUsageStore) Add(event APIUsageEvent) error {
-	if strings.TrimSpace(event.APIKeyID) == "" || strings.TrimSpace(event.Model) == "" {
-		return nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	state, err := s.loadLocked()
-	if err != nil {
-		return err
-	}
-	migrateLegacyAPIUsageEvents(&state, time.Now().UTC())
-	state.Events = compactAPIUsageEvents(state.Events)
-	now := event.CreatedAt
-	if now.IsZero() {
-		now = time.Now().UTC()
-	} else {
-		now = now.UTC()
-	}
-	costKnown, costCurrency, estimatedCost := normalizeAPIUsageCost(
-		event.CostKnown, event.CostCurrency, event.EstimatedCost,
-	)
-	record := APIUsageEventRecord{
-		APIKeyID:       event.APIKeyID,
-		APIKeyName:     event.APIKeyName,
-		Model:          event.Model,
-		Source:         strings.TrimSpace(event.Source),
-		SourceType:     strings.TrimSpace(event.SourceType),
-		SourceName:     strings.TrimSpace(event.SourceName),
-		PoolID:         strings.TrimSpace(event.PoolID),
-		PoolName:       strings.TrimSpace(event.PoolName),
-		PoolModel:      strings.TrimSpace(event.PoolModel),
-		ActualMemberID: strings.TrimSpace(event.ActualMemberID),
-		MemberModel:    strings.TrimSpace(event.MemberModel),
-		EstimatedCost:  estimatedCost,
-		CostCurrency:   costCurrency,
-		CostKnown:      costKnown,
-		FallbackCount:  event.FallbackCount,
-		LimitedCount:   event.LimitedCount,
-		Requests:       1,
-		InputTokens:    event.InputTokens,
-		OutputTokens:   event.OutputTokens,
-		TotalTokens:    event.InputTokens + event.OutputTokens,
-		CreatedAt:      now,
-	}
-	upsertAPIUsageEventBucket(&state.Events, record)
-	state.Records = aggregateAPIUsageEvents(state.Events, APIUsageListOptions{})
-	sortAPIUsageRecords(state.Records)
-	return s.saveLocked(state)
-}
-
 func normalizeAPIUsageCost(known bool, currency string, cost float64) (bool, string, float64) {
 	currency = strings.TrimSpace(currency)
 	if !known || currency == "" || cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {
 		return false, "", 0
 	}
 	return true, currency, cost
-}
-
-func (s *APIUsageStore) List(options APIUsageListOptions) (APIUsageState, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	state, err := s.loadLocked()
-	if err != nil {
-		return APIUsageState{}, err
-	}
-	migrateLegacyAPIUsageEvents(&state, time.Now().UTC())
-	if len(state.Events) > 0 {
-		state.Events = compactAPIUsageEvents(state.Events)
-		state.Records = aggregateAPIUsageEvents(state.Events, options)
-	} else {
-		state.Records = filterAPIUsageRecords(state.Records, options)
-	}
-	sortAPIUsageRecords(state.Records)
-	return APIUsageState{Records: state.Records, Events: filterAPIUsageEvents(state.Events, options)}, nil
-}
-
-func (s *APIUsageStore) loadLocked() (APIUsageState, error) {
-	var state APIUsageState
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return APIUsageState{Records: []APIUsageRecord{}}, nil
-		}
-		return APIUsageState{}, err
-	}
-	if err := json.Unmarshal(data, &state); err != nil {
-		return APIUsageState{}, err
-	}
-	if state.Records == nil {
-		state.Records = []APIUsageRecord{}
-	}
-	if state.Events == nil {
-		state.Events = []APIUsageEventRecord{}
-	}
-	return state, nil
 }
 
 func migrateLegacyAPIUsageEvents(state *APIUsageState, fallback time.Time) {
@@ -466,35 +365,6 @@ func compactAPIUsageEvents(events []APIUsageEventRecord) []APIUsageEventRecord {
 	}
 	sortAPIUsageEvents(out)
 	return out
-}
-
-func upsertAPIUsageEventBucket(events *[]APIUsageEventRecord, event APIUsageEventRecord) {
-	compacted := compactAPIUsageEvents([]APIUsageEventRecord{event})
-	if len(compacted) == 0 {
-		return
-	}
-	event = compacted[0]
-	key := apiUsageEventBucketKey(event)
-	for i := range *events {
-		if apiUsageEventBucketKey((*events)[i]) == key {
-			(*events)[i].APIKeyName = latestNonEmpty((*events)[i].APIKeyName, event.APIKeyName)
-			(*events)[i].SourceName = latestNonEmpty((*events)[i].SourceName, event.SourceName)
-			(*events)[i].PoolName = latestNonEmpty((*events)[i].PoolName, event.PoolName)
-			(*events)[i].Requests += apiUsageEventRequests(event)
-			(*events)[i].FallbackCount += event.FallbackCount
-			(*events)[i].LimitedCount += event.LimitedCount
-			(*events)[i].EstimatedCost += event.EstimatedCost
-			(*events)[i].InputTokens += event.InputTokens
-			(*events)[i].OutputTokens += event.OutputTokens
-			(*events)[i].TotalTokens += apiUsageEventTotalTokens(event)
-			if event.CreatedAt.After((*events)[i].CreatedAt) {
-				(*events)[i].CreatedAt = event.CreatedAt
-			}
-			return
-		}
-	}
-	*events = append(*events, event)
-	sortAPIUsageEvents(*events)
 }
 
 func upsertAPIUsageRecord(state *APIUsageState, event APIUsageEventRecord) {
@@ -608,16 +478,6 @@ func latestNonEmpty(current, next string) string {
 	return strings.TrimSpace(current)
 }
 
-func filterAPIUsageRecords(records []APIUsageRecord, options APIUsageListOptions) []APIUsageRecord {
-	out := make([]APIUsageRecord, 0, len(records))
-	for _, record := range records {
-		if apiUsageTimeInRange(record.LastUsedAt, options) && apiUsageMatches(record.Source, record.SourceName, record.PoolID, record.PoolName, record.PoolModel, options) {
-			out = append(out, record)
-		}
-	}
-	return out
-}
-
 func filterAPIUsageEvents(events []APIUsageEventRecord, options APIUsageListOptions) []APIUsageEventRecord {
 	out := make([]APIUsageEventRecord, 0, len(events))
 	for _, event := range events {
@@ -715,21 +575,6 @@ func sortAPIUsageEvents(events []APIUsageEventRecord) {
 		}
 		return events[i].Model < events[j].Model
 	})
-}
-
-func (s *APIUsageStore) saveLocked(state APIUsageState) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
 }
 
 func generateAPIKeySecret() (string, error) {

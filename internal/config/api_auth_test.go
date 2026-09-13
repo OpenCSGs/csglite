@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -96,19 +95,13 @@ func TestAPIUsageCompactsEventsByDayAndSource(t *testing.T) {
 		}
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, APIUsageFile))
-	if err != nil {
-		t.Fatalf("read usage file: %v", err)
+	persisted := readPersistedAPIUsageBuckets(t, dir)
+	if len(persisted) != 2 {
+		t.Fatalf("persisted buckets = %#v, want two daily buckets", persisted)
 	}
-	var persisted APIUsageState
-	if err := json.Unmarshal(data, &persisted); err != nil {
-		t.Fatalf("decode persisted usage: %v", err)
-	}
-	if len(persisted.Events) != 2 {
-		t.Fatalf("events = %#v, want two daily buckets", persisted.Events)
-	}
-	if persisted.Events[0].Requests != 2 || persisted.Events[0].InputTokens != 4 || persisted.Events[0].OutputTokens != 6 {
-		t.Fatalf("first bucket = %#v, want same-day usage compacted", persisted.Events[0])
+	if persisted[0].day != "2026-05-15" || persisted[0].requests != 2 ||
+		persisted[0].inputTokens != 4 || persisted[0].outputTokens != 6 {
+		t.Fatalf("first bucket = %#v, want same-day usage compacted", persisted[0])
 	}
 
 	state, err := store.List(APIUsageListOptions{})
@@ -266,13 +259,21 @@ func TestAPIUsageVaryingRequestMetadataCompactsByMemberDayAndCostSemantics(t *te
 			t.Fatalf("unexpected bucket = %+v", record)
 		}
 	}
-	persisted, err := os.ReadFile(filepath.Join(dir, APIUsageFile))
-	if err != nil {
-		t.Fatal(err)
+	if buckets := readPersistedAPIUsageBuckets(t, dir); len(buckets) != 3 {
+		t.Fatalf("persisted buckets = %d, want three cost-compatible buckets", len(buckets))
 	}
-	if strings.Contains(string(persisted), "router_profile_id") ||
-		strings.Contains(string(persisted), "semantic_distance") ||
-		strings.Contains(string(persisted), "price_input_per_million") {
-		t.Fatal("request-level routing or exact price metadata remained in api_usage.json")
+	for _, column := range persistedAPIUsageColumns(t, dir) {
+		switch column {
+		case "router_profile_id", "routing_text_version", "semantic_cluster_id", "semantic_distance",
+			"semantic_ood", "semantic_fallback", "semantic_fallback_reason",
+			"price_input_per_million", "price_output_per_million":
+			t.Fatalf("request-level routing or exact price metadata is stored per bucket: %s", column)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, APIUsageFile)); !os.IsNotExist(err) {
+		t.Fatalf("legacy api_usage.json still present after import: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, APIUsageFile+apiUsageLegacyImportedSuffix)); err != nil {
+		t.Fatalf("legacy api_usage.json was not archived: %v", err)
 	}
 }
