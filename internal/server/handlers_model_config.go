@@ -116,5 +116,25 @@ func (s *Server) modelConfigResponse(modelID, modelDir string) api.ModelConfigRe
 		ModelMaxNumCtx:  inference.ModelMaxPositionEmbeddings(modelDir),
 		GlobalNumCtx:    inference.ResolveNumCtxWithModelMax(modelDir, 0, s.cfg.Inference.LlamaUseModelMaxCtx),
 		EffectiveNumCtx: inference.ResolveNumCtxWithModelSetting(modelDir, 0, setting, s.cfg.Inference.LlamaUseModelMaxCtx),
+		Runtime:         s.modelRuntimeKind(modelID),
+	}
+}
+
+// modelRuntimeKind reports which runtime serves a model. A caller cannot work
+// this out from the pipeline tag alone: an embedding model runs on llama.cpp
+// when its weights convert to GGUF and in the Python embedding runtime when
+// they do not, and the two accept completely different load options.
+func (s *Server) modelRuntimeKind(modelID string) string {
+	switch {
+	case s.modelUsesTTSEngine(modelID):
+		return api.ModelRuntimePythonTTS
+	case s.modelUsesASREngine(modelID):
+		return api.ModelRuntimePythonASR
+	case s.modelUsesImageGenerationEngine(modelID):
+		return api.ModelRuntimeDiffusers
+	case s.shouldUsePythonEmbeddingRuntime(modelID):
+		return api.ModelRuntimePythonEmbedding
+	default:
+		return api.ModelRuntimeLlama
 	}
 }

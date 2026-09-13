@@ -206,7 +206,22 @@ type ModelConfigResponse struct {
 	// EffectiveNumCtx is what a load without a request-level context length
 	// would use right now.
 	EffectiveNumCtx int `json:"effective_num_ctx"`
+	// Runtime names the runtime that serves this model: "llama",
+	// "python-embedding", "python-asr", "python-tts" or "diffusers". Clients
+	// use it to decide which load options mean anything -- the llama.cpp
+	// options do not reach a model served by a Python runtime.
+	Runtime string `json:"runtime"`
 }
+
+// Runtimes a local model can be served by, as reported in
+// ModelConfigResponse.Runtime.
+const (
+	ModelRuntimeLlama           = "llama"
+	ModelRuntimePythonEmbedding = "python-embedding"
+	ModelRuntimePythonASR       = "python-asr"
+	ModelRuntimePythonTTS       = "python-tts"
+	ModelRuntimeDiffusers       = "diffusers"
+)
 
 // ModelConfigUpdateRequest sets the per-model context window. NumCtx is
 // required; 0 clears the setting and returns the model to the global default.

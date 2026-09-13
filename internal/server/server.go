@@ -950,15 +950,22 @@ func (s *Server) getOrLoadEngineFullSpeculative(modelID string, progress inferen
 	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, engineModeChat, speculative, true)
 }
 
-func (s *Server) getOrLoadEmbeddingEngineWithOpts(ctx context.Context, modelID string, numCtx, nGPULayers int, dtype string) (inference.Engine, error) {
-	return s.getOrLoadEmbeddingEngineWithProgress(ctx, modelID, nil, numCtx, nGPULayers, dtype)
+func (s *Server) getOrLoadEmbeddingEngineWithOpts(ctx context.Context, modelID string, numCtx, numParallel, nGPULayers int, dtype string) (inference.Engine, error) {
+	return s.getOrLoadEmbeddingEngineWithProgress(ctx, modelID, nil, numCtx, numParallel, nGPULayers, dtype)
 }
 
-func (s *Server) getOrLoadEmbeddingEngineWithProgress(ctx context.Context, modelID string, progress inference.ConvertProgressFunc, numCtx, nGPULayers int, dtype string) (inference.Engine, error) {
+// getOrLoadEmbeddingEngineWithProgress loads the embedding engine. numParallel
+// is honoured here as it is for chat: llama-server serves that many requests at
+// once, which is what an embedding workload batching many documents needs. It
+// was previously pinned to the default, so the slot count could not be raised
+// however the model was loaded.
+func (s *Server) getOrLoadEmbeddingEngineWithProgress(ctx context.Context, modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, dtype string) (inference.Engine, error) {
 	if s.shouldUsePythonEmbeddingRuntime(modelID) {
+		// The Python embedding runtime batches inside the worker and takes none
+		// of the llama.cpp load options.
 		return s.getOrLoadPythonEmbeddingEngine(ctx, modelID)
 	}
-	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, 0, nGPULayers, "", "", dtype, engineModeEmbed, inference.SpeculativeConfig{}, false)
+	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, numParallel, nGPULayers, "", "", dtype, engineModeEmbed, inference.SpeculativeConfig{}, false)
 }
 
 func (s *Server) shouldUsePythonEmbeddingRuntime(modelID string) bool {
@@ -1135,6 +1142,15 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		return nil, fmt.Errorf("model %q is a text-to-speech model; use POST /v1/audio/speech, which serves it through the Python text-to-speech runtime", modelID)
 	}
 	effectiveNumCtx := inference.ResolveNumCtxWithModelSetting(modelDir, numCtx, s.modelNumCtxSetting(modelID), s.cfg.Inference.LlamaUseModelMaxCtx)
+	if mode == engineModeEmbed {
+		// An embedding model cannot consume more than its own maximum sequence
+		// length, and the context is allocated per slot, so anything above it
+		// is reserved and never used.
+		if capped := inference.CapNumCtxToEmbeddingModelMax(modelDir, effectiveNumCtx); capped != effectiveNumCtx {
+			log.Printf("MODEL %s: capping embedding context %d to the model's maximum %d", modelID, effectiveNumCtx, capped)
+			effectiveNumCtx = capped
+		}
+	}
 	effectiveNumParallel := inference.ResolveNumParallel(numParallel)
 	effectiveNGPULayers := inference.ResolveNGPULayers(normalizedNGPULayers)
 	loadConfigKey := fmt.Sprintf(

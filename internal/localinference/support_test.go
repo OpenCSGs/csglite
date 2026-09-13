@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/opencsgs/csglite/internal/convert"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
 )
@@ -308,4 +309,44 @@ func TestTextToSpeechSupportTracksAvailableBackends(t *testing.T) {
 			t.Fatalf("support = %#v, want python-tts", support)
 		}
 	})
+}
+
+// llama.cpp is the embedding runtime; the Python worker exists only for the
+// architectures llama.cpp's converter cannot handle. Adding an architecture to
+// the Python list must therefore never take a model away from llama.cpp -- the
+// converter is checked first, and this pins that order so a future entry in the
+// list cannot quietly reroute a model that converts perfectly well.
+func TestConverterSupportedEmbeddingModelsStayOnLlama(t *testing.T) {
+	for _, arch := range []string{"BertModel", "XLMRobertaModel", "Qwen3Model", "JinaEmbeddingsV5Model"} {
+		t.Run(arch, func(t *testing.T) {
+			if !convert.IsSupportedHFArchitecture(arch) {
+				t.Skipf("%s is no longer converter-supported; this test covers the ones that are", arch)
+			}
+			dir := t.TempDir()
+			body := `{"architectures":["` + arch + `"]}`
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			support := FromLocalModel(&model.LocalModel{
+				Format:      model.FormatSafeTensors,
+				PipelineTag: "feature-extraction",
+			}, dir)
+			if support.Runtime != "llama" {
+				t.Fatalf("runtime = %q for %s, want llama: the converter handles it, so the Python worker must not take it", support.Runtime, arch)
+			}
+		})
+	}
+}
+
+// A GGUF embedding model always runs on llama.cpp directly, whatever its
+// architecture is called.
+func TestGGUFEmbeddingModelRunsOnLlama(t *testing.T) {
+	dir := t.TempDir()
+	support := FromLocalModel(&model.LocalModel{
+		Format:      model.FormatGGUF,
+		PipelineTag: "feature-extraction",
+	}, dir)
+	if support.Runtime != "llama" || support.Mode != "direct" {
+		t.Fatalf("support = %#v, want llama direct", support)
+	}
 }

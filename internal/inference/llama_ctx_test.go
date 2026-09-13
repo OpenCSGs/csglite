@@ -290,3 +290,36 @@ func writeMinimalGGUFContextLength(path string, contextLength uint32) error {
 	}
 	return os.WriteFile(path, buf.Bytes(), 0o644)
 }
+
+// llama-server allocates the context per slot, so an embedding model given far
+// more context than it can consume reserves KV cache it will never use, and the
+// waste multiplies with the slot count. 512-token encoders are the norm, so the
+// cap has to honour limits below the 1024 floor the chat path uses.
+func TestCapNumCtxToEmbeddingModelMax(t *testing.T) {
+	cases := []struct {
+		name   string
+		maxPos string
+		numCtx int
+		want   int
+	}{
+		{name: "caps to a 512-token encoder", maxPos: "512", numCtx: 8192, want: 512},
+		{name: "leaves a context inside the limit alone", maxPos: "512", numCtx: 256, want: 256},
+		{name: "caps a long-context embedding model too", maxPos: "8192", numCtx: 32768, want: 8192},
+		{name: "ignores an implausibly small limit", maxPos: "8", numCtx: 8192, want: 8192},
+		{name: "keeps the value when the limit is unknown", maxPos: "", numCtx: 8192, want: 8192},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.maxPos != "" {
+				body := `{"max_position_embeddings":` + tc.maxPos + `}`
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := CapNumCtxToEmbeddingModelMax(dir, tc.numCtx); got != tc.want {
+				t.Fatalf("CapNumCtxToEmbeddingModelMax(%d) = %d, want %d", tc.numCtx, got, tc.want)
+			}
+		})
+	}
+}

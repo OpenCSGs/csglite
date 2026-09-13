@@ -297,7 +297,9 @@ func (s *Server) getEmbeddingEngine(ctx context.Context, modelID, source string,
 		return s.newCloudEngine(ctx, modelID)
 	}
 
-	eng, err := s.getOrLoadEmbeddingEngineWithOpts(ctx, modelID, numCtx, nGPULayers, dtype)
+	// An embeddings request carries no slot count: the concurrency a loaded
+	// engine serves is set when it is loaded, so 0 keeps whatever is running.
+	eng, err := s.getOrLoadEmbeddingEngineWithOpts(ctx, modelID, numCtx, 0, nGPULayers, dtype)
 	if err == nil {
 		return eng, nil
 	}

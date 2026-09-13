@@ -955,7 +955,7 @@ func TestROCMSingleEngineModeClosesOtherTextEnginesBeforeLoad(t *testing.T) {
 	if _, err := s.getOrLoadEngineWithOpts("test/first", 0, 0, -1, "", "", ""); err != nil {
 		t.Fatalf("load first error = %v", err)
 	}
-	if _, err := s.getOrLoadEmbeddingEngineWithOpts(context.Background(), "test/second", 0, -1, ""); err != nil {
+	if _, err := s.getOrLoadEmbeddingEngineWithOpts(context.Background(), "test/second", 0, 0, -1, ""); err != nil {
 		t.Fatalf("load second embedding error = %v", err)
 	}
 
@@ -1522,5 +1522,54 @@ func TestRoutes(t *testing.T) {
 				t.Error("got status 0")
 			}
 		})
+	}
+}
+
+// An embedding engine serves as many requests at once as it was loaded with, so
+// the slot count has to reach llama-server. It used to be pinned to the default
+// in the embedding path, which left the Run dialog's concurrency setting with
+// nowhere to go.
+func TestEmbeddingEngineHonoursRequestedParallelism(t *testing.T) {
+	s := newTestServer(t)
+	lm := &model.LocalModel{
+		Namespace: "test",
+		Name:      "embed",
+		Format:    model.FormatGGUF,
+		Size:      123,
+		Files:     []string{"model.gguf"},
+	}
+	if err := model.SaveManifest(s.cfg.ModelDir, lm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(s.cfg.ModelDir, "test", "embed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := loadEmbeddingEngineWithProgress
+	defer func() { loadEmbeddingEngineWithProgress = orig }()
+	gotParallel := 0
+	engine := &scriptedChatEngine{}
+	loadEmbeddingEngineWithProgress = func(_ string, _ *model.LocalModel, _ inference.ConvertProgressFunc, _ bool, _ int, numParallel int, _ int, _ string, _ string, _ string) (inference.Engine, error) {
+		gotParallel = numParallel
+		return engine, nil
+	}
+
+	if _, err := s.getOrLoadEmbeddingEngineWithOpts(context.Background(), "test/embed", 0, 4, -1, ""); err != nil {
+		t.Fatalf("load embedding engine error = %v", err)
+	}
+	if gotParallel != 4 {
+		t.Fatalf("num_parallel reaching the loader = %d, want 4", gotParallel)
+	}
+	if got := s.engines[engineCacheKey("test/embed", engineModeEmbed)].numParallel; got != 4 {
+		t.Fatalf("cached num_parallel = %d, want 4", got)
+	}
+
+	// A later request that names no slot count reuses the loaded engine rather
+	// than reloading it at the default.
+	if _, err := s.getOrLoadEmbeddingEngineWithOpts(context.Background(), "test/embed", 0, 0, -1, ""); err != nil {
+		t.Fatalf("second load error = %v", err)
+	}
+	if got := s.engines[engineCacheKey("test/embed", engineModeEmbed)].numParallel; got != 4 {
+		t.Fatalf("cached num_parallel after a plain request = %d, want the loaded 4", got)
 	}
 }

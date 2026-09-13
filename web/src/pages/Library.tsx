@@ -1292,7 +1292,12 @@ function RunParamsDialog({
   const embeddingModel = isEmbeddingModel(model);
   const asrModel = isASRModel(model);
   const ttsModel = isTTSModel(model);
-  const runtimeManagedModel = imageGenerationModel || asrModel || ttsModel;
+  // A model served by the Python embedding runtime takes none of the llama.cpp
+  // load options either, so it belongs with the runtime-managed models. The
+  // server reports which runtime it uses, since the pipeline tag cannot say:
+  // an embedding model runs on llama.cpp when its weights convert to GGUF.
+  const pythonEmbeddingModel = modelConfig?.runtime === "python-embedding";
+  const runtimeManagedModel = imageGenerationModel || asrModel || ttsModel || pythonEmbeddingModel;
   const ggufModel = model.format === "gguf";
   // GGUF models list only the quantizations actually downloaded locally
   // (issue #75); SafeTensors models keep the converter dtype options.
@@ -1334,7 +1339,9 @@ function RunParamsDialog({
               <div class="md:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
                 {imageGenerationModel
                   ? t("lib.runParamImageRuntimeHint")
-                  : t("lib.runParamASRRuntimeHint")}
+                  : pythonEmbeddingModel
+                    ? t("lib.runParamEmbeddingRuntimeHint")
+                    : t("lib.runParamASRRuntimeHint")}
               </div>
             )
           ) : (
@@ -1361,16 +1368,14 @@ function RunParamsDialog({
                   <p class="text-xs text-amber-700 mt-1">{t("lib.runParamNumCtxAboveModelMax", modelMaxNumCtx)}</p>
                 )}
               </div>
-              {!embeddingModel && (
-                <RunNumberField
-                  label={t("lib.runParamNumParallel")}
-                  value={params.numParallel}
-                  min={1}
-                  placeholder="1"
-                  hint={t("lib.runParamNumParallelHint")}
-                  onInput={(value) => onChange("numParallel", value)}
-                />
-              )}
+              <RunNumberField
+                label={t("lib.runParamNumParallel")}
+                value={params.numParallel}
+                min={1}
+                placeholder="1"
+                hint={embeddingModel ? t("lib.runParamNumParallelEmbeddingHint") : t("lib.runParamNumParallelHint")}
+                onInput={(value) => onChange("numParallel", value)}
+              />
               <RunNumberField
                 label={t("lib.runParamNGPULayers")}
                 value={params.nGpuLayers}

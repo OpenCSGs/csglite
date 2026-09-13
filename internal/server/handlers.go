@@ -619,7 +619,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 		} else if ttsModel {
 			_, err = s.getOrLoadTTSEngine(context.Background(), req.Model)
 		} else if embeddingModel {
-			_, err = s.getOrLoadEmbeddingEngineWithOpts(r.Context(), req.Model, requestedNumCtx, requestedNGPULayers, requestedDType)
+			_, err = s.getOrLoadEmbeddingEngineWithOpts(r.Context(), req.Model, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedDType)
 		} else {
 			_, err = s.getOrLoadEngineFullSpeculative(req.Model, nil, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType, speculative)
 		}
@@ -751,7 +751,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 			_, err = s.getOrLoadTTSEngine(context.Background(), req.Model)
 		}
 	} else if embeddingModel {
-		_, err = s.getOrLoadEmbeddingEngineWithProgress(context.Background(), req.Model, progress, requestedNumCtx, requestedNGPULayers, requestedDType)
+		_, err = s.getOrLoadEmbeddingEngineWithProgress(context.Background(), req.Model, progress, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedDType)
 	} else {
 		_, err = s.getOrLoadEngineWithProgressAndSpeculativeOpts(req.Model, progress, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType, speculative)
 	}
