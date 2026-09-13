@@ -36,7 +36,7 @@ func TestAPIUsageMigratesLegacyRequestCounts(t *testing.T) {
 		t.Fatalf("write legacy usage: %v", err)
 	}
 
-	store := NewAPIUsageStore(dir)
+	store := newTestAPIUsageStore(t, dir)
 	state, err := store.List(APIUsageListOptions{})
 	if err != nil {
 		t.Fatalf("list usage: %v", err)
@@ -52,7 +52,7 @@ func TestAPIUsageMigratesLegacyRequestCounts(t *testing.T) {
 
 func TestAPIUsageCompactsEventsByDayAndSource(t *testing.T) {
 	dir := t.TempDir()
-	store := NewAPIUsageStore(dir)
+	store := newTestAPIUsageStore(t, dir)
 	first := time.Date(2026, 5, 15, 9, 0, 0, 0, time.UTC)
 	events := []APIUsageEvent{
 		{
@@ -140,7 +140,7 @@ func TestAPIUsagePoolMetadataAggregatesAndFiltersWithoutBreakingLegacyEvents(t *
 	if err := os.WriteFile(filepath.Join(dir, APIUsageFile), []byte(legacy), 0o600); err != nil {
 		t.Fatalf("write legacy usage: %v", err)
 	}
-	store := NewAPIUsageStore(dir)
+	store := newTestAPIUsageStore(t, dir)
 	for _, event := range []APIUsageEvent{
 		{
 			APIKeyID: "key", APIKeyName: "Client", Model: "public-model",
@@ -225,7 +225,7 @@ func TestAPIUsageVaryingRequestMetadataCompactsByMemberDayAndCostSemantics(t *te
 		t.Fatal(err)
 	}
 
-	store := NewAPIUsageStore(dir)
+	store := newTestAPIUsageStore(t, dir)
 	if err := store.Add(APIUsageEvent{
 		APIKeyID: "key", Model: "public", Source: "cloud", SourceType: "cloud",
 		PoolID: "pool", PoolModel: "public", ActualMemberID: "member", MemberModel: "actual",

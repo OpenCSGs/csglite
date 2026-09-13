@@ -11,6 +11,15 @@ import (
 	"time"
 )
 
+// newTestAPIUsageStore closes the database when the test ends: Windows refuses
+// to remove the temporary directory while the file is still open.
+func newTestAPIUsageStore(t *testing.T, dir string) *APIUsageStore {
+	t.Helper()
+	store := NewAPIUsageStore(dir)
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
+
 type persistedAPIUsageBucket struct {
 	day          string
 	apiKeyID     string
@@ -101,7 +110,7 @@ func TestAPIUsageImportsLegacyJSONOnceAndRemovesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := NewAPIUsageStore(dir)
+	store := newTestAPIUsageStore(t, dir)
 	state, err := store.List(APIUsageListOptions{})
 	if err != nil {
 		t.Fatalf("list usage: %v", err)
@@ -121,8 +130,7 @@ func TestAPIUsageImportsLegacyJSONOnceAndRemovesIt(t *testing.T) {
 	if err := os.WriteFile(legacyPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reopened := NewAPIUsageStore(dir)
-	t.Cleanup(func() { _ = reopened.Close() })
+	reopened := newTestAPIUsageStore(t, dir)
 	state, err = reopened.List(APIUsageListOptions{})
 	if err != nil {
 		t.Fatalf("list usage after reopen: %v", err)
@@ -155,8 +163,7 @@ func TestAPIUsageImportsLegacyJSONOnceAndRemovesIt(t *testing.T) {
 	if err := os.WriteFile(legacyPath, downgraded, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	upgraded := NewAPIUsageStore(dir)
-	t.Cleanup(func() { _ = upgraded.Close() })
+	upgraded := newTestAPIUsageStore(t, dir)
 	state, err = upgraded.List(APIUsageListOptions{})
 	if err != nil {
 		t.Fatalf("list usage after upgrade: %v", err)
@@ -179,8 +186,7 @@ func TestAPIUsageImportsRecordOnlyLegacyFileFromSkippedVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := NewAPIUsageStore(dir)
-	t.Cleanup(func() { _ = store.Close() })
+	store := newTestAPIUsageStore(t, dir)
 	state, err := store.List(APIUsageListOptions{})
 	if err != nil {
 		t.Fatalf("list usage: %v", err)
@@ -195,8 +201,7 @@ func TestAPIUsageImportsRecordOnlyLegacyFileFromSkippedVersions(t *testing.T) {
 
 func TestAPIUsageConcurrentAddsAccumulateWithoutLoss(t *testing.T) {
 	dir := t.TempDir()
-	store := NewAPIUsageStore(dir)
-	t.Cleanup(func() { _ = store.Close() })
+	store := newTestAPIUsageStore(t, dir)
 	day := time.Date(2026, 9, 13, 10, 0, 0, 0, time.UTC)
 
 	const workers, each = 16, 25
