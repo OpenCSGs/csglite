@@ -954,11 +954,16 @@ func TestAPIKeyIsIdentifiedForUsageWhenAuthIsNotEnforced(t *testing.T) {
 		t.Fatalf("unknown key on loopback status = %d, want the request to still pass", w.Code)
 	}
 
+	discovery := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	discovery.RemoteAddr = "127.0.0.1:5555"
+	discovery.Header.Set("Authorization", "Bearer "+plain)
+	handler.ServeHTTP(httptest.NewRecorder(), discovery)
+
 	anonymous := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	anonymous.RemoteAddr = "127.0.0.1:5555"
 	handler.ServeHTTP(httptest.NewRecorder(), anonymous)
 
-	want := []string{record.ID, record.ID, record.ID, apiUsageBuiltinKeyID, apiUsageBuiltinKeyID}
+	want := []string{record.ID, record.ID, record.ID, apiUsageBuiltinKeyID, apiUsageBuiltinKeyID, apiUsageBuiltinKeyID}
 	if len(seen) != len(want) {
 		t.Fatalf("identified keys = %#v, want %#v", seen, want)
 	}

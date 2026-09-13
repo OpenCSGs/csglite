@@ -207,17 +207,23 @@ func requestAPIKey(r *http.Request) string {
 }
 
 // identifiesAPIKeyForUsage reports whether a request targets an inference route
-// whose usage is metered per API key.
+// whose usage is metered per API key. Discovery, streaming session and
+// management routes are excluded so that recognizing a key stays off the hot
+// path of clients that poll them.
 func identifiesAPIKeyForUsage(r *http.Request) bool {
 	if r.Method == http.MethodOptions {
 		return false
 	}
 	path := providerRouteLegacyPath(r.URL.Path)
+	if path == "/v1/models" || strings.HasSuffix(path, "/realtime") ||
+		strings.HasPrefix(path, "/v1/realtime/") || strings.HasSuffix(path, "/count_tokens") {
+		return false
+	}
 	if strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/anthropic/") {
 		return true
 	}
 	switch path {
-	case "/api/chat", "/api/generate", "/api/load", "/api/stop":
+	case "/api/chat", "/api/generate":
 		return true
 	default:
 		return false
