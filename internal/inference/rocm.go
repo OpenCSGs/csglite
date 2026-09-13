@@ -85,7 +85,7 @@ func isKFDAPUOnlyHost() bool {
 		if err != nil {
 			continue
 		}
-		simdCount, localMemSize := parseKFDNodeProperties(props)
+		simdCount, localMemSize, _ := parseKFDNodeProperties(props)
 		props.Close()
 		if simdCount <= 0 {
 			continue // CPU-only node
@@ -98,7 +98,7 @@ func isKFDAPUOnlyHost() bool {
 	return gpuNodes > 0
 }
 
-func parseKFDNodeProperties(r interface{ Read([]byte) (int, error) }) (simdCount, localMemSize int64) {
+func parseKFDNodeProperties(r interface{ Read([]byte) (int, error) }) (simdCount, localMemSize, gfxTargetVersion int64) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -114,7 +114,9 @@ func parseKFDNodeProperties(r interface{ Read([]byte) (int, error) }) (simdCount
 			simdCount = value
 		case "local_mem_size":
 			localMemSize = value
+		case "gfx_target_version":
+			gfxTargetVersion = value
 		}
 	}
-	return simdCount, localMemSize
+	return simdCount, localMemSize, gfxTargetVersion
 }
