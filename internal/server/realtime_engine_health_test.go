@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opencsgs/csglite/internal/asr"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -240,3 +242,51 @@ func (r *recordingTranscriber) Write(pcm []byte) error { r.written += len(pcm); 
 func (r *recordingTranscriber) Commit() error          { r.commits++; return nil }
 func (r *recordingTranscriber) Reset() error           { return nil }
 func (r *recordingTranscriber) Close() error           { return nil }
+
+// A caller that disconnects mid-load must not take the load down with it. A
+// cold speech model takes minutes to install on a fresh machine, and a client
+// that gave up waiting used to leave the next request with nothing to reuse.
+func TestEngineLoadOutlivesTheCallerThatStartedIt(t *testing.T) {
+	s := newSpeechTestServer(t)
+	modelID := "local-asr"
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	engine := &probeASREngine{}
+	previous := newASREngine
+	newASREngine = func(ctx context.Context, _, _ string, _ *imagegen.RuntimeManager) (asr.Engine, error) {
+		close(started)
+		<-release
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return engine, nil
+	}
+	t.Cleanup(func() { newASREngine = previous })
+
+	state := &asrEngineLoadState{done: make(chan struct{})}
+	s.mu.Lock()
+	s.asrLoading[modelID] = state
+	s.mu.Unlock()
+	go s.loadASREngine(modelID, t.TempDir(), state)
+
+	<-started
+	// The caller walks away while the load is still running.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.getOrLoadASREngine(ctx, modelID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled caller got %v, want context.Canceled", err)
+	}
+
+	close(release)
+	<-state.done
+	if state.err != nil {
+		t.Fatalf("the load was cancelled along with its caller: %v", state.err)
+	}
+	s.mu.RLock()
+	_, cached := s.asrEngines[modelID]
+	s.mu.RUnlock()
+	if !cached {
+		t.Fatal("the finished engine was not published for the next caller")
+	}
+}

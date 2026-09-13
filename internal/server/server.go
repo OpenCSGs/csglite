@@ -207,7 +207,12 @@ type Server struct {
 	ttsLoading   map[string]*ttsEngineLoadState
 	// ttsVoices caches each model's voice list, which is fixed for the model
 	// and therefore outlives the worker that reported it.
-	ttsVoices     map[string]*api.SpeechVoicesResponse
+	ttsVoices map[string]*api.SpeechVoicesResponse
+	// loadCtx outlives any one request and is what model loads run on, so a
+	// caller that disconnects cannot cancel a load other callers are waiting
+	// for. Guarded by mu; nil before Run, which is how the tests get a plain
+	// background context.
+	loadCtx       context.Context
 	realtimeCalls map[string]*realtimeCall
 	// realtimeSockets counts live WebSocket realtime sessions, which have no
 	// registry of their own but share the session cap with WebRTC calls.
@@ -451,6 +456,10 @@ func (s *Server) Run(ctx context.Context) error {
 			IdleTimeout:       120 * time.Second,
 		}
 	}
+
+	s.mu.Lock()
+	s.loadCtx = ctx
+	s.mu.Unlock()
 
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
@@ -1442,50 +1451,76 @@ func (s *Server) getOrLoadASREngine(ctx context.Context, modelID string) (asr.En
 			s.mu.Unlock()
 			return eng, nil
 		}
-		if state, ok := s.asrLoading[modelID]; ok {
-			s.mu.Unlock()
-			<-state.done
-			if state.err != nil {
-				return nil, state.err
-			}
-			if state.engine != nil {
-				return state.engine, nil
-			}
-			continue
+		state, loading := s.asrLoading[modelID]
+		if !loading {
+			state = &asrEngineLoadState{done: make(chan struct{})}
+			s.asrLoading[modelID] = state
+			go s.loadASREngine(modelID, modelDir, state)
 		}
-		state := &asrEngineLoadState{done: make(chan struct{})}
-		s.asrLoading[modelID] = state
 		s.mu.Unlock()
 
-		log.Printf("MODEL %s: ASR engine load started", modelID)
-		runtimeManager, err := imagegen.NewASRRuntimeManager()
-		if err == nil {
-			err = ensureASRRuntimeReady(ctx, runtimeManager, nil, false)
-			if err == nil {
-				state.engine, err = newASREngine(ctx, modelID, modelDir, runtimeManager)
-			}
+		select {
+		case <-state.done:
+		case <-ctx.Done():
+			// This caller has given up, but the load has not: it keeps running
+			// so the next request finds a loaded model instead of starting the
+			// same multi-minute install over again.
+			return nil, ctx.Err()
 		}
-		state.err = err
-
-		s.mu.Lock()
-		delete(s.asrLoading, modelID)
-		if state.err == nil {
-			s.asrEngines[modelID] = &managedASREngine{
-				engine:    state.engine,
-				lastUsed:  time.Now(),
-				keepAlive: DefaultSpeechKeepAlive,
-			}
-		}
-		close(state.done)
-		s.mu.Unlock()
-
 		if state.err != nil {
-			log.Printf("MODEL %s: ASR engine load failed: %v", modelID, state.err)
 			return nil, state.err
 		}
-		log.Printf("MODEL %s: ASR engine load complete", modelID)
-		return state.engine, nil
+		if state.engine != nil {
+			return state.engine, nil
+		}
 	}
+}
+
+// loadASREngine brings up a worker and publishes it to the cache. It runs on
+// the server's own context rather than the requesting caller's: a client that
+// disconnects while a cold model is loading would otherwise cancel the load,
+// and the request that follows would start it again from nothing.
+func (s *Server) loadASREngine(modelID, modelDir string, state *asrEngineLoadState) {
+	ctx := s.engineLoadContext()
+	log.Printf("MODEL %s: ASR engine load started", modelID)
+	runtimeManager, err := imagegen.NewASRRuntimeManager()
+	if err == nil {
+		err = ensureASRRuntimeReady(ctx, runtimeManager, nil, false)
+		if err == nil {
+			state.engine, err = newASREngine(ctx, modelID, modelDir, runtimeManager)
+		}
+	}
+	state.err = err
+
+	s.mu.Lock()
+	delete(s.asrLoading, modelID)
+	if state.err == nil {
+		s.asrEngines[modelID] = &managedASREngine{
+			engine:    state.engine,
+			lastUsed:  time.Now(),
+			keepAlive: DefaultSpeechKeepAlive,
+		}
+	}
+	close(state.done)
+	s.mu.Unlock()
+
+	if state.err != nil {
+		log.Printf("MODEL %s: ASR engine load failed: %v", modelID, state.err)
+		return
+	}
+	log.Printf("MODEL %s: ASR engine load complete", modelID)
+}
+
+// engineLoadContext is the context a model load runs on: the server's own, so
+// it ends at shutdown and at nothing else.
+func (s *Server) engineLoadContext() context.Context {
+	s.mu.RLock()
+	ctx := s.loadCtx
+	s.mu.RUnlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 // healthChecker is implemented by engines whose worker can be asked whether it
@@ -1630,50 +1665,59 @@ func (s *Server) getOrLoadTTSEngine(ctx context.Context, modelID string) (tts.En
 			s.mu.Unlock()
 			return eng, nil
 		}
-		if state, ok := s.ttsLoading[modelID]; ok {
-			s.mu.Unlock()
-			<-state.done
-			if state.err != nil {
-				return nil, state.err
-			}
-			if state.engine != nil {
-				return state.engine, nil
-			}
-			continue
+		state, loading := s.ttsLoading[modelID]
+		if !loading {
+			state = &ttsEngineLoadState{done: make(chan struct{})}
+			s.ttsLoading[modelID] = state
+			go s.loadTTSEngine(modelID, modelDir, state)
 		}
-		state := &ttsEngineLoadState{done: make(chan struct{})}
-		s.ttsLoading[modelID] = state
 		s.mu.Unlock()
 
-		log.Printf("MODEL %s: TTS engine load started", modelID)
-		runtimeManager, err := imagegen.NewTTSRuntimeManager()
-		if err == nil {
-			err = ensureTTSRuntimeReady(ctx, runtimeManager, nil, false)
-			if err == nil {
-				state.engine, err = newTTSEngine(ctx, modelID, modelDir, runtimeManager)
-			}
+		select {
+		case <-state.done:
+		case <-ctx.Done():
+			// See loadASREngine: the caller gives up, the load does not.
+			return nil, ctx.Err()
 		}
-		state.err = err
-
-		s.mu.Lock()
-		delete(s.ttsLoading, modelID)
-		if state.err == nil {
-			s.ttsEngines[modelID] = &managedTTSEngine{
-				engine:    state.engine,
-				lastUsed:  time.Now(),
-				keepAlive: DefaultSpeechKeepAlive,
-			}
-		}
-		close(state.done)
-		s.mu.Unlock()
-
 		if state.err != nil {
-			log.Printf("MODEL %s: TTS engine load failed: %v", modelID, state.err)
 			return nil, state.err
 		}
-		log.Printf("MODEL %s: TTS engine load complete", modelID)
-		return state.engine, nil
+		if state.engine != nil {
+			return state.engine, nil
+		}
 	}
+}
+
+// loadTTSEngine is loadASREngine for the speech side.
+func (s *Server) loadTTSEngine(modelID, modelDir string, state *ttsEngineLoadState) {
+	ctx := s.engineLoadContext()
+	log.Printf("MODEL %s: TTS engine load started", modelID)
+	runtimeManager, err := imagegen.NewTTSRuntimeManager()
+	if err == nil {
+		err = ensureTTSRuntimeReady(ctx, runtimeManager, nil, false)
+		if err == nil {
+			state.engine, err = newTTSEngine(ctx, modelID, modelDir, runtimeManager)
+		}
+	}
+	state.err = err
+
+	s.mu.Lock()
+	delete(s.ttsLoading, modelID)
+	if state.err == nil {
+		s.ttsEngines[modelID] = &managedTTSEngine{
+			engine:    state.engine,
+			lastUsed:  time.Now(),
+			keepAlive: DefaultSpeechKeepAlive,
+		}
+	}
+	close(state.done)
+	s.mu.Unlock()
+
+	if state.err != nil {
+		log.Printf("MODEL %s: TTS engine load failed: %v", modelID, state.err)
+		return
+	}
+	log.Printf("MODEL %s: TTS engine load complete", modelID)
 }
 
 func (s *Server) closeTTSEngine(modelID string) {
