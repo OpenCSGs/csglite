@@ -170,3 +170,99 @@ func TestWorkerStreamsSentenceBySentence(t *testing.T) {
 		t.Error("_split_for_streaming is called outside speak_stream; a plain request must synthesise the text whole")
 	}
 }
+
+// pythonBlock returns the source of the def whose header line contains marker,
+// up to the next definition at the same indentation.
+func pythonBlock(t *testing.T, script, marker string) string {
+	t.Helper()
+	lines := strings.Split(script, "\n")
+	start := -1
+	indent := 0
+	for i, line := range lines {
+		if strings.Contains(line, marker) && strings.Contains(line, "def ") {
+			start = i
+			indent = len(line) - len(strings.TrimLeft(line, " "))
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("no definition containing %q in the embedded worker", marker)
+	}
+	for i := start + 1; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		lineIndent := len(line) - len(strings.TrimLeft(line, " "))
+		trimmed := strings.TrimSpace(line)
+		if lineIndent <= indent && (strings.Contains(line, "def ") || strings.HasPrefix(trimmed, "@") || strings.HasPrefix(trimmed, "class ")) {
+			return strings.Join(lines[start:i], "\n")
+		}
+	}
+	return strings.Join(lines[start:], "\n")
+}
+
+// Synthesis of a paragraph runs for seconds. Running it on the worker's single
+// event loop makes /health and any streaming response a realtime session
+// depends on unreachable for that whole time, which is how a Web UI test
+// request could stall the call happening alongside it.
+func TestSpeakRunsOffTheEventLoop(t *testing.T) {
+	body := pythonBlock(t, string(ttsWorkerScript), "async def speak(")
+	if !strings.Contains(body, "asyncio.to_thread(_synthesize_locked") {
+		t.Error("/speak generates audio on the event loop")
+	}
+	if strings.Contains(body, "ENGINE.iter_pcm(") {
+		t.Error("/speak calls the engine directly rather than through a worker thread")
+	}
+}
+
+// Time to first audio is the cost of synthesising the opening chunk, so that
+// chunk has its own ceiling: an opening sentence the caller hears as several
+// seconds of silence is the complaint the report is about.
+func TestStreamingShortensTheOpeningChunk(t *testing.T) {
+	script := string(ttsWorkerScript)
+	if !strings.Contains(script, "_STREAM_FIRST_CHUNK_MAX") {
+		t.Fatal("no ceiling on the opening chunk")
+	}
+	if !strings.Contains(pythonBlock(t, script, "def _split_for_streaming"), "_shorten_first_chunk(") {
+		t.Error("the splitter does not shorten the opening chunk")
+	}
+	// Cutting mid-phrase to save a second would be audible, so only clause
+	// boundaries may be used.
+	shorten := pythonBlock(t, script, "def _shorten_first_chunk")
+	if !strings.Contains(shorten, `"，,、;；"`) {
+		t.Error("the opening chunk is cut somewhere other than a clause boundary")
+	}
+	if !strings.Contains(shorten, "min_len") {
+		t.Error("the opening chunk may be cut into a fragment shorter than a phrase")
+	}
+}
+
+// Reporting ready before the first generation has run puts several seconds of
+// one-off cost into the first thing a caller hears.
+func TestTTSWorkerWarmsUpBeforeReportingReady(t *testing.T) {
+	main := pythonBlock(t, string(ttsWorkerScript), "def main()")
+	warm := strings.Index(main, "_warm_up(ENGINE)")
+	ready := strings.Index(main, "TTS worker ready")
+	if warm < 0 || ready < 0 || warm > ready {
+		t.Error("the worker reports ready before it has warmed up")
+	}
+	if !strings.Contains(main, "pid=") {
+		t.Error("the ready line does not name the worker's pid")
+	}
+}
+
+// Without the generated audio's duration next to the time it took, there is no
+// way to tell a slow model from a long piece of text -- which is exactly why
+// the report could not be quantified from the server log.
+func TestSynthesisIsLoggedWithEnoughToComputeRealTimeFactor(t *testing.T) {
+	body := pythonBlock(t, string(ttsWorkerScript), "def _log_synthesis")
+	for _, field := range []string{"chars=", "audio=", "generate=", "rtf="} {
+		if !strings.Contains(body, field) {
+			t.Errorf("synthesis log is missing %s", field)
+		}
+	}
+	if !strings.Contains(pythonBlock(t, string(ttsWorkerScript), "def _log_ttfb"), "ttfb=") {
+		t.Error("the streaming path does not report time to first audio")
+	}
+}

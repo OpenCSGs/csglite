@@ -7,12 +7,15 @@ FastAPI on a loopback port, JSON in and base64 audio out.
 """
 
 import argparse
+import asyncio
 import base64
 import io
 import json
 import os
 import subprocess
+import sys
 import threading
+import time
 import wave
 
 from fastapi import FastAPI, Request
@@ -20,6 +23,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 app = FastAPI()
 ENGINE = None
+# Generation is not safe to run twice at once and a second concurrent call
+# would only contend for the same cores. Every entry point runs the model off
+# the event loop but under this lock, so /health and /speak_stream stay
+# answerable while a long synthesis is in flight.
+ENGINE_LOCK = threading.Lock()
 
 DEFAULT_SAMPLE_RATE = 24000
 # Containers ffmpeg produces from raw PCM. wav and pcm are written directly.
@@ -427,6 +435,10 @@ _SENTENCE_END = "。！？!?;；." + chr(10)
 # are longer, so the floor rarely binds there.
 _STREAM_CHUNK_MIN = 6
 _STREAM_CHUNK_MAX = 120
+# Ceiling for the opening chunk only. The backends generate a whole chunk
+# before emitting anything, so time to first audio is the cost of this much
+# text; the rest of the sentence follows while it plays.
+_STREAM_FIRST_CHUNK_MAX = 24
 
 
 def _split_for_streaming(text, min_len=_STREAM_CHUNK_MIN, max_len=_STREAM_CHUNK_MAX):
@@ -452,7 +464,74 @@ def _split_for_streaming(text, min_len=_STREAM_CHUNK_MIN, max_len=_STREAM_CHUNK_
             chunks[-1] += current.strip()
         else:
             chunks.append(current.strip())
-    return [c for c in chunks if c]
+    return _shorten_first_chunk([c for c in chunks if c], min_len)
+
+
+def _shorten_first_chunk(chunks, min_len):
+    """Split the opening chunk at a comma so the first packet costs less.
+
+    Time to first audio is one synthesis call, so a long opening sentence is
+    heard as a long silence. Only a comma boundary is used and only when both
+    halves still carry a phrase: cutting mid-phrase to save a second would be
+    audible, whereas a clause boundary is where a speaker would pause anyway."""
+    if not chunks or len(chunks[0]) <= _STREAM_FIRST_CHUNK_MAX:
+        return chunks
+    head = chunks[0]
+    # The earliest usable comma, not the latest: the point is to start speaking
+    # sooner, and every extra character in the opening chunk is silence first.
+    for cut, char in enumerate(head[: _STREAM_FIRST_CHUNK_MAX + 1]):
+        if char not in "，,、;；" or cut + 1 < min_len:
+            continue
+        if len(head) - (cut + 1) < min_len:
+            break
+        return [head[: cut + 1].strip(), head[cut + 1 :].strip()] + chunks[1:]
+    return chunks
+
+
+def _env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _iter_segment_pcm(segments, voice, speed, instruct):
+    """Synthesise each segment in turn, holding the model lock per segment.
+
+    Releasing between segments lets /health and a second request interleave
+    rather than waiting out the whole text."""
+    for segment in segments:
+        chunks = ENGINE.iter_pcm(segment, voice, speed, instruct)
+        while True:
+            # The lock covers generating a chunk, not handing it on: holding it
+            # across the yield would let a slow reader keep the model, and
+            # /health with it, for as long as it took to drain the response.
+            with ENGINE_LOCK:
+                try:
+                    chunk = next(chunks)
+                except StopIteration:
+                    break
+            yield chunk
+
+
+def _log_ttfb(route, segments, started):
+    print(
+        f"TTS worker {route} ttfb={time.monotonic() - started:.2f}s "
+        f"first_chunk_chars={len(segments[0])} segments={len(segments)} "
+        f"chars={sum(len(s) for s in segments)}",
+        flush=True,
+    )
+
+
+def _log_synthesis(route, text, pcm, rate, started):
+    elapsed = time.monotonic() - started
+    audio_seconds = len(pcm) / 2.0 / float(rate or DEFAULT_SAMPLE_RATE)
+    rtf = elapsed / audio_seconds if audio_seconds > 0 else 0.0
+    print(
+        f"TTS worker {route} chars={len(text)} audio={audio_seconds:.2f}s "
+        f"generate={elapsed:.2f}s rtf={rtf:.2f}",
+        flush=True,
+    )
 
 
 def _request_params(payload, engine):
@@ -484,17 +563,30 @@ async def health():
     }
 
 
+def _synthesize_locked(text, voice, speed, instruct):
+    with ENGINE_LOCK:
+        return b"".join(ENGINE.iter_pcm(text, voice, speed, instruct))
+
+
 @app.post("/speak")
 async def speak(request: Request):
     payload = await request.json()
     try:
         text, voice, fmt, speed, rate, instruct = _request_params(payload, ENGINE)
-        pcm = b"".join(ENGINE.iter_pcm(text, voice, speed, instruct))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    started = time.monotonic()
+    try:
+        # Off the event loop: synthesis of a paragraph runs for seconds, and
+        # doing it here would stall /health and any streaming response that a
+        # realtime session is relying on.
+        pcm = await asyncio.to_thread(_synthesize_locked, text, voice, speed, instruct)
         data = _encode(pcm, rate, fmt)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     except Exception as exc:  # surfaced to the client as a 500 with the reason
         return JSONResponse({"error": str(exc)}, status_code=500)
+    _log_synthesis("speak", text, pcm, rate, started)
     return {
         "audio": base64.b64encode(data).decode("ascii"),
         "format": fmt,
@@ -531,19 +623,22 @@ async def speak_stream(request: Request):
         # Only the streaming path does this. A plain request still synthesises
         # the text whole, which keeps intonation across sentence boundaries.
         segments = _split_for_streaming(text) or [text]
+        started = time.monotonic()
 
         try:
             if fmt in ("pcm", "wav"):
                 first = True
-                for segment in segments:
-                    for pcm in ENGINE.iter_pcm(segment, voice, speed, instruct):
-                        if fmt == "wav" and first:
-                            # Only the first frame carries a header; the rest are
-                            # raw samples appended to that stream.
-                            yield frame(_wav_bytes(pcm, rate))
-                            first = False
-                        else:
-                            yield frame(pcm)
+                for pcm in _iter_segment_pcm(segments, voice, speed, instruct):
+                    if first:
+                        _log_ttfb("speak_stream", segments, started)
+                    if fmt == "wav" and first:
+                        # Only the first frame carries a header; the rest are
+                        # raw samples appended to that stream.
+                        yield frame(_wav_bytes(pcm, rate))
+                        first = False
+                    else:
+                        first = False
+                        yield frame(pcm)
                 yield frame(done=True)
                 return
             proc = subprocess.Popen(
@@ -559,10 +654,13 @@ async def speak_stream(request: Request):
 
             def feed():
                 try:
-                    for segment in segments:
-                        for pcm in ENGINE.iter_pcm(segment, voice, speed, instruct):
-                            proc.stdin.write(pcm)
-                            proc.stdin.flush()
+                    first = True
+                    for pcm in _iter_segment_pcm(segments, voice, speed, instruct):
+                        if first:
+                            _log_ttfb("speak_stream", segments, started)
+                            first = False
+                        proc.stdin.write(pcm)
+                        proc.stdin.flush()
                 except Exception as exc:  # reported once the stream drains
                     feed_error.append(str(exc))
                 finally:
@@ -597,6 +695,26 @@ async def speak_stream(request: Request):
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
+def _warm_up(engine):
+    """Synthesise one short throwaway phrase before reporting ready.
+
+    The first generation on a freshly loaded backend costs several times what
+    the ones after it do, because graph construction and kernel compilation all
+    land on it. Paying it here keeps it out of the first thing a caller hears."""
+    if not _env_bool("CSGHUB_TTS_WARMUP", True):
+        return 0.0
+    started = time.monotonic()
+    try:
+        voice = engine.default_voice() if hasattr(engine, "default_voice") else ""
+        for _ in engine.iter_pcm("你好。", voice, 1.0, None):
+            break
+    except Exception as exc:
+        # Warming up is an optimisation; a backend that refuses this phrase
+        # still serves real requests.
+        print(f"TTS worker warmup skipped: {exc}", file=sys.stderr)
+    return time.monotonic() - started
+
+
 def main():
     global ENGINE
     parser = argparse.ArgumentParser()
@@ -606,7 +724,16 @@ def main():
     parser.add_argument("--hardware", default="cpu")
     args = parser.parse_args()
 
+    started = time.monotonic()
     ENGINE = load_engine(args.model_dir, args.model_name, args.hardware)
+    loaded = time.monotonic()
+    warmed = _warm_up(ENGINE)
+    print(
+        f"TTS worker ready model={args.model_name} backend={ENGINE.backend} "
+        f"port={args.port} pid={os.getpid()} load={loaded - started:.2f}s "
+        f"warmup={warmed:.2f}s",
+        flush=True,
+    )
 
     import uvicorn
 

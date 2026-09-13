@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -7,6 +8,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -14,6 +17,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 
 ENGINE = None
+# The backends are not safe to call from two threads at once, and a second
+# concurrent inference would only contend for the same cores anyway. Every
+# entry point runs the model off the event loop but under this lock, so
+# recognition serialises while /health stays answerable throughout.
+ENGINE_LOCK = threading.Lock()
 app = FastAPI(title="csghub-lite ASR worker", version="1.0.0")
 
 
@@ -22,6 +30,13 @@ def _env_bool(name, default=False):
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name, default):
+    try:
+        return float(os.getenv(name, ""))
+    except ValueError:
+        return default
 
 
 def _clean_text(text):
@@ -485,6 +500,41 @@ def _decode_audio_to_wav_with_ffmpeg(path, start=0.0, duration=None):
         return ""
 
 
+def _warm_up(engine):
+    """Run one throwaway inference before reporting ready.
+
+    The first real inference on a freshly loaded backend costs several seconds
+    more than the ones after it -- graph construction, kernel compilation and
+    lazy imports all land on it. Paying that here means a caller never waits
+    for it, and in a live session it no longer blocks the first turn."""
+    if not _env_bool("CSGHUB_ASR_WARMUP", True):
+        return 0.0
+    started = time.monotonic()
+    path = ""
+    try:
+        import wave
+
+        fd, path = tempfile.mkstemp(prefix="csghub-asr-warmup-", suffix=".wav")
+        os.close(fd)
+        with wave.open(path, "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(16000)
+            out.writeframes(b"\x00\x00" * 16000)
+        engine.transcribe({"file_path": path, "response_format": "json"})
+    except Exception as exc:
+        # Warming up is an optimisation; a backend that refuses silence still
+        # serves real audio.
+        print(f"ASR worker warmup skipped: {exc}", file=sys.stderr)
+    finally:
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    return time.monotonic() - started
+
+
 def load_engine(model_dir, model_name, hardware):
     if _is_whisper_model(model_dir):
         return TransformersASREngine(model_dir, hardware)
@@ -505,6 +555,11 @@ async def health():
     return {"status": "ok" if ENGINE is not None else "loading", "backend": getattr(ENGINE, "backend", "")}
 
 
+def _transcribe_locked(req):
+    with ENGINE_LOCK:
+        return ENGINE.transcribe(req)
+
+
 @app.post("/transcribe")
 async def transcribe(request: Request):
     if ENGINE is None:
@@ -513,7 +568,15 @@ async def transcribe(request: Request):
         req = await request.json()
         if not req.get("file_path"):
             raise HTTPException(status_code=400, detail="file_path is required")
-        return JSONResponse(ENGINE.transcribe(req))
+        started = time.monotonic()
+        # Off the event loop: a clip takes seconds to transcribe, and running
+        # it here would stall /health and every live session on this worker.
+        result = await asyncio.to_thread(_transcribe_locked, req)
+        print(
+            f"ASR worker transcribe inference={time.monotonic() - started:.2f}s",
+            flush=True,
+        )
+        return JSONResponse(result)
     except HTTPException:
         raise
     except Exception as exc:
@@ -531,7 +594,18 @@ async def transcribe_stream(request: Request):
             raise HTTPException(status_code=400, detail="file_path is required")
 
         def generate():
-            for chunk in ENGINE.stream_transcribe(req):
+            # Starlette iterates a sync generator in its threadpool, so this
+            # yields without occupying the event loop. The lock covers
+            # producing a chunk, not writing it out: holding it across the
+            # yield would let a slow reader keep the model for the length of
+            # the download.
+            chunks = ENGINE.stream_transcribe(req)
+            while True:
+                with ENGINE_LOCK:
+                    try:
+                        chunk = next(chunks)
+                    except StopIteration:
+                        break
                 yield json.dumps(chunk, ensure_ascii=False) + "\n"
 
         return StreamingResponse(generate(), media_type="application/x-ndjson")
@@ -546,36 +620,92 @@ async def transcribe_stream(request: Request):
 class LiveSession:
     """Turns a continuous PCM stream into partial and final transcripts.
 
-    The loaded backends transcribe a finished clip rather than a running stream,
-    so segmentation is done here: fsmn-vad is run incrementally to find where
-    speech starts and stops, each completed segment is transcribed as a final
-    result, and the audio accumulated so far is re-transcribed periodically to
-    produce partials.
+    The loaded backends transcribe a finished clip rather than a running
+    stream, so segmentation happens here: audio is appended to a buffer as it
+    arrives, the tail of that buffer is periodically re-transcribed to produce
+    a partial, and the whole buffer is transcribed to finalise a turn. When
+    fsmn-vad is enabled a turn also finalises on silence.
 
-    A partial is therefore the current best hypothesis for the segment in
-    progress, not an append-only prefix. Clients should treat `completed` as the
-    authoritative text.
+    A partial is the current best hypothesis for the segment in progress, not
+    an append-only prefix. Clients should treat `completed` as authoritative.
+
+    Every method that runs a model blocks for as long as inference takes and is
+    called from a worker thread, never from the event loop: holding the loop
+    for seconds stalls /health and the WebSocket handshake of every other
+    session on this worker.
     """
 
     def __init__(self, engine, sample_rate=24000, partial_interval=0.6):
         self.engine = engine
         self.sample_rate = int(sample_rate or 24000)
         self.partial_interval = float(partial_interval)
+        # A partial only covers the tail of the buffer. Re-transcribing
+        # everything since the last commit makes each partial cost more than
+        # the one before it, so on a long turn the cost grows without bound.
+        self.partial_window_seconds = _env_float("CSGHUB_ASR_LIVE_PARTIAL_WINDOW_SECONDS", 15.0)
+        # A caller that streams continuously without ever committing must not
+        # grow the buffer forever; the oldest audio is dropped past this point.
+        self.max_buffer_seconds = _env_float("CSGHUB_ASR_LIVE_MAX_BUFFER_SECONDS", 60.0)
+        self.partials_enabled = _env_bool("CSGHUB_ASR_LIVE_PARTIALS", True)
+        # Audio arrives on the event loop while inference reads the buffer on a
+        # worker thread, so every mutation is guarded. The lock is never held
+        # across inference -- only across the append or the snapshot.
+        self.lock = threading.Lock()
         self.buffer = bytearray()
+        self.vad_pending = bytearray()
         self.vad_cache = {}
         self.speaking = False
-        self.last_partial_at = 0.0
-        self.segment_index = 0
+        self.dropped_bytes = 0
+        # Counts audio appended to the turn. A partial over audio that has not
+        # changed would only reproduce the last answer, and a session whose
+        # caller has gone away -- ICE dead but the socket still open -- would
+        # otherwise re-transcribe the same seconds for as long as it lasted.
+        self.appends = 0
+
+    # -- buffer -----------------------------------------------------------
+    def append(self, pcm):
+        """Accept audio. Runs on the event loop, so it only ever appends."""
+        cap = self._seconds_to_bytes(self.max_buffer_seconds)
+        with self.lock:
+            self.buffer.extend(pcm)
+            self.vad_pending.extend(pcm)
+            self.appends += 1
+            if cap and len(self.buffer) > cap:
+                drop = len(self.buffer) - cap
+                drop -= drop % 2
+                del self.buffer[:drop]
+                self.dropped_bytes += drop
+
+    def take_vad_chunk(self):
+        # With no VAD loaded the audio would only be copied to be thrown away,
+        # and that copy is the whole stream every time the pump comes round.
+        if getattr(self.engine, "vad_model", None) is None:
+            with self.lock:
+                self.vad_pending = bytearray()
+            return b""
+        with self.lock:
+            chunk = bytes(self.vad_pending)
+            self.vad_pending = bytearray()
+        return chunk
+
+    def audio_revision(self):
+        """Identifies the current audio, so unchanged audio is not re-run."""
+        with self.lock:
+            return self.appends if self.buffer else 0
+
+    def _seconds_to_bytes(self, seconds):
+        if not seconds or seconds <= 0:
+            return 0
+        return int(seconds * self.sample_rate) * 2
 
     # -- audio helpers ----------------------------------------------------
-    def _float_samples(self, pcm=None):
+    def _float_samples(self, pcm):
         import numpy as np
 
-        raw = self.buffer if pcm is None else pcm
-        if len(raw) < 2:
+        if len(pcm) < 2:
             return np.zeros(0, dtype="float32")
-        array = np.frombuffer(bytes(raw[: len(raw) // 2 * 2]), dtype="<i2")
-        return (array.astype("float32") / 32768.0)
+        array = np.frombuffer(bytes(pcm[: len(pcm) // 2 * 2]), dtype="<i2")
+        return array.astype("float32") / 32768.0
 
     def _write_wav(self, samples):
         import tempfile, wave
@@ -600,7 +730,8 @@ class LiveSession:
         try:
             payload = dict(req or {})
             payload["file_path"] = path
-            result = self.engine.transcribe(payload)
+            with ENGINE_LOCK:
+                result = self.engine.transcribe(payload)
             return _clean_text((result or {}).get("text", ""))
         finally:
             try:
@@ -609,7 +740,7 @@ class LiveSession:
                 pass
 
     # -- VAD --------------------------------------------------------------
-    def _vad_events(self, pcm):
+    def vad_events(self, pcm):
         """Feed a chunk to the VAD and report ("start"|"end", offset_ms) pairs.
 
         Returns an empty list when no VAD model is loaded, in which case
@@ -621,12 +752,13 @@ class LiveSession:
         if samples.size == 0:
             return []
         try:
-            result = vad.generate(
-                input=samples,
-                cache=self.vad_cache,
-                is_final=False,
-                chunk_size=max(10, int(1000 * samples.size / self.sample_rate)),
-            )
+            with ENGINE_LOCK:
+                result = vad.generate(
+                    input=samples,
+                    cache=self.vad_cache,
+                    is_final=False,
+                    chunk_size=max(10, int(1000 * samples.size / self.sample_rate)),
+                )
         except Exception:
             # A VAD failure must not take the session down; fall back to commits.
             return []
@@ -646,45 +778,30 @@ class LiveSession:
                 events.append(("end", end))
         return events
 
-    # -- stream API -------------------------------------------------------
-    def feed(self, pcm, req):
-        """Accept audio and yield transcript events for it."""
-        import time
+    # -- model work (blocking; call from a worker thread) -----------------
+    def partial(self, req):
+        """Best-effort hypothesis for the tail of the turn in progress."""
+        window = self._seconds_to_bytes(self.partial_window_seconds)
+        with self.lock:
+            raw = bytes(self.buffer[-window:] if window and len(self.buffer) > window else self.buffer)
+        return self._transcribe_samples(self._float_samples(raw), req)
 
-        self.buffer.extend(pcm)
-        for kind, _offset in self._vad_events(pcm):
-            if kind == "start" and not self.speaking:
-                self.speaking = True
-                yield {"kind": "speech_started"}
-            elif kind == "end" and self.speaking:
-                self.speaking = False
-                yield {"kind": "speech_stopped"}
-                yield from self._finalize(req)
-
-        if self.buffer and time.monotonic() - self.last_partial_at >= self.partial_interval:
-            self.last_partial_at = time.monotonic()
-            text = self._transcribe_samples(self._float_samples(), req)
-            if text:
-                yield {"kind": "delta", "text": text}
-
-    def _finalize(self, req):
-        text = self._transcribe_samples(self._float_samples(), req)
-        self.buffer = bytearray()
-        self.vad_cache = {}
-        self.segment_index += 1
-        if text:
-            yield {"kind": "completed", "text": text}
-
-    def commit(self, req):
-        """End the turn on the caller's instruction rather than on silence."""
-        if not self.buffer:
-            return
-        yield from self._finalize(req)
+    def finalize(self, req):
+        """Transcribe the turn and start a new one. Returns the final text."""
+        with self.lock:
+            raw = bytes(self.buffer)
+            self.buffer = bytearray()
+            self.vad_pending = bytearray()
+            self.vad_cache = {}
+            self.speaking = False
+        return self._transcribe_samples(self._float_samples(raw), req), len(raw)
 
     def reset(self):
-        self.buffer = bytearray()
-        self.vad_cache = {}
-        self.speaking = False
+        with self.lock:
+            self.buffer = bytearray()
+            self.vad_pending = bytearray()
+            self.vad_cache = {}
+            self.speaking = False
 
 
 @app.websocket("/transcribe_live")
@@ -694,6 +811,12 @@ async def transcribe_live(websocket: WebSocket):
     Binary frames are mono PCM16 at the rate given in the opening JSON frame;
     text frames are control messages ({"type": "commit"|"reset"|"close"}).
     Responses are JSON transcript events.
+
+    Receiving and recognising are deliberately separate: this coroutine only
+    buffers audio, and a pump task runs the model in a worker thread. That
+    keeps the event loop answering /health and new handshakes while inference
+    runs, and it means a model slower than real time drops partials instead of
+    building a backlog of audio frames it can never catch up with.
     """
     await websocket.accept()
     if ENGINE is None:
@@ -703,6 +826,95 @@ async def transcribe_live(websocket: WebSocket):
 
     session = None
     req = {}
+    pump = None
+    commits = asyncio.Queue()
+    stopping = asyncio.Event()
+    # The pump task and this coroutine both send, and two coroutines writing to
+    # one WebSocket can interleave their frames.
+    sending = asyncio.Lock()
+
+    async def send(event):
+        async with sending:
+            await websocket.send_json(event)
+
+    async def finalize_turn(committed):
+        """End a turn and report exactly one terminal event for it.
+
+        A commit always answers, empty transcript included: a client that only
+        ever sees `committed` cannot tell silence from a wedged worker and has
+        nothing to wait on but its own timeout."""
+        started = time.monotonic()
+        try:
+            text, audio_bytes = await asyncio.to_thread(session.finalize, req)
+        except Exception as exc:
+            print(f"ASR worker live transcription error: {exc}", file=sys.stderr)
+            await send({"kind": "failed", "error": str(exc)})
+        else:
+            elapsed = time.monotonic() - started
+            audio_seconds = audio_bytes / 2.0 / session.sample_rate
+            if text or committed:
+                await send({"kind": "completed", "text": text})
+            print(
+                f"ASR worker live turn audio={audio_seconds:.2f}s inference={elapsed:.2f}s "
+                f"chars={len(text)} committed={committed}",
+                flush=True,
+            )
+        if committed:
+            await send({"kind": "committed"})
+
+    async def pump_loop():
+        # Partials are paced from the end of the previous one. Pacing from the
+        # start lets a partial that overruns the interval make the next one due
+        # the moment it finishes, which on a slow model is a continuous busy
+        # loop that never lets the buffer settle.
+        last_partial_end = time.monotonic()
+        last_partial_revision = 0
+        while not stopping.is_set():
+            worked = False
+
+            chunk = session.take_vad_chunk()
+            if chunk:
+                for kind, _offset in await asyncio.to_thread(session.vad_events, chunk):
+                    if kind == "start" and not session.speaking:
+                        session.speaking = True
+                        await send({"kind": "speech_started"})
+                        worked = True
+                    elif kind == "end" and session.speaking:
+                        session.speaking = False
+                        await send({"kind": "speech_stopped"})
+                        await finalize_turn(committed=False)
+                        last_partial_end = time.monotonic()
+                        worked = True
+
+            if not commits.empty():
+                commits.get_nowait()
+                await finalize_turn(committed=True)
+                last_partial_end = time.monotonic()
+                continue
+
+            revision = session.audio_revision()
+            if (
+                session.partials_enabled
+                and revision
+                and revision != last_partial_revision
+                and time.monotonic() - last_partial_end >= session.partial_interval
+            ):
+                last_partial_revision = revision
+                try:
+                    text = await asyncio.to_thread(session.partial, req)
+                except Exception as exc:
+                    # A failed partial is not worth ending the turn over; the
+                    # commit that follows still gets its own attempt.
+                    print(f"ASR worker live partial error: {exc}", file=sys.stderr)
+                    text = ""
+                last_partial_end = time.monotonic()
+                if text:
+                    await send({"kind": "delta", "text": text})
+                worked = True
+
+            if not worked:
+                await asyncio.sleep(0.05)
+
     try:
         while True:
             message = await websocket.receive()
@@ -712,40 +924,53 @@ async def transcribe_live(websocket: WebSocket):
                 control = json.loads(message["text"])
                 kind = control.get("type")
                 if kind == "start":
+                    if pump is not None:
+                        pump.cancel()
                     req = control.get("request") or {}
                     session = LiveSession(
                         ENGINE,
                         sample_rate=control.get("sample_rate") or 24000,
                         partial_interval=control.get("partial_interval") or 0.6,
                     )
-                    await websocket.send_json({"kind": "ready"})
+                    pump = asyncio.create_task(pump_loop())
+                    await send({"kind": "ready"})
                 elif kind == "commit" and session is not None:
-                    for event in session.commit(req):
-                        await websocket.send_json(event)
-                    await websocket.send_json({"kind": "committed"})
+                    commits.put_nowait(True)
                 elif kind == "reset" and session is not None:
                     session.reset()
-                    await websocket.send_json({"kind": "cleared"})
+                    while not commits.empty():
+                        commits.get_nowait()
+                    await send({"kind": "cleared"})
                 elif kind == "close":
                     break
                 continue
             data = message.get("bytes")
             if not data or session is None:
                 continue
-            for event in session.feed(data, req):
-                await websocket.send_json(event)
+            session.append(data)
     except WebSocketDisconnect:
         pass
     except Exception as exc:
         try:
-            await websocket.send_json({"kind": "failed", "error": str(exc)})
+            await send({"kind": "failed", "error": str(exc)})
         except Exception:
             pass
     finally:
+        stopping.set()
+        if pump is not None:
+            # An inference already running in its thread cannot be interrupted,
+            # but nothing waits for it: the task is cancelled and its result
+            # discarded so the socket closes now rather than in a minute.
+            pump.cancel()
+            try:
+                await pump
+            except (asyncio.CancelledError, Exception):
+                pass
         try:
             await websocket.close()
         except Exception:
             pass
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -756,8 +981,16 @@ def main():
     args = parser.parse_args()
 
     global ENGINE
+    started = time.monotonic()
     ENGINE = load_engine(args.model_dir, args.model_name, args.hardware)
-    print(f"ASR worker ready model={args.model_name} backend={ENGINE.backend} port={args.port}", flush=True)
+    loaded = time.monotonic()
+    warmed = _warm_up(ENGINE)
+    print(
+        f"ASR worker ready model={args.model_name} backend={ENGINE.backend} "
+        f"port={args.port} pid={os.getpid()} load={loaded - started:.2f}s "
+        f"warmup={warmed:.2f}s",
+        flush=True,
+    )
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 
 

@@ -38,7 +38,15 @@ import (
 )
 
 const (
-	DefaultKeepAlive       = 5 * time.Minute
+	DefaultKeepAlive = 5 * time.Minute
+	// DefaultSpeechKeepAlive is the idle window for recognition and speech
+	// engines. Five minutes suits a text model answered on demand, but a voice
+	// conversation pauses for minutes at a time and then expects an immediate
+	// reply: at five minutes the model was evicted between almost every call,
+	// so the caller paid an eight-second cold load before hearing anything.
+	// These workers are also the ones whose load is most visible, since nothing
+	// can be streamed until they are up.
+	DefaultSpeechKeepAlive = 15 * time.Minute
 	DesktopAPIProtocol     = "2"
 	evictorInterval        = 30 * time.Second
 	engineModeChat         = "chat"
@@ -120,6 +128,11 @@ type managedASREngine struct {
 	engine    asr.Engine
 	lastUsed  time.Time
 	keepAlive time.Duration
+	// activeRequests counts callers currently holding this engine. A realtime
+	// session holds it for the length of a call, which can be far longer than
+	// the idle window, and evicting mid-call kills the worker under a live
+	// stream: recognition then stops silently for the rest of the call.
+	activeRequests int
 }
 
 type asrEngineLoadState struct {
@@ -132,6 +145,9 @@ type managedTTSEngine struct {
 	engine    tts.Engine
 	lastUsed  time.Time
 	keepAlive time.Duration
+	// activeRequests counts callers currently holding this engine; see
+	// managedASREngine.
+	activeRequests int
 }
 
 type ttsEngineLoadState struct {
@@ -179,16 +195,19 @@ type Server struct {
 	authCallbackHTTP *http.Server
 	logBuf           *LogBuffer
 
-	mu            sync.RWMutex
-	engines       map[string]*managedEngine
-	loading       map[string]*engineLoadState
-	selfHeal      map[string]selfHealBreakerState
-	imageEngines  map[string]*managedImageEngine
-	imageLoading  map[string]*imageEngineLoadState
-	asrEngines    map[string]*managedASREngine
-	asrLoading    map[string]*asrEngineLoadState
-	ttsEngines    map[string]*managedTTSEngine
-	ttsLoading    map[string]*ttsEngineLoadState
+	mu           sync.RWMutex
+	engines      map[string]*managedEngine
+	loading      map[string]*engineLoadState
+	selfHeal     map[string]selfHealBreakerState
+	imageEngines map[string]*managedImageEngine
+	imageLoading map[string]*imageEngineLoadState
+	asrEngines   map[string]*managedASREngine
+	asrLoading   map[string]*asrEngineLoadState
+	ttsEngines   map[string]*managedTTSEngine
+	ttsLoading   map[string]*ttsEngineLoadState
+	// ttsVoices caches each model's voice list, which is fixed for the model
+	// and therefore outlives the worker that reported it.
+	ttsVoices     map[string]*api.SpeechVoicesResponse
 	realtimeCalls map[string]*realtimeCall
 	// realtimeSockets counts live WebSocket realtime sessions, which have no
 	// registry of their own but share the session cap with WebRTC calls.
@@ -299,6 +318,7 @@ func New(cfg *config.Config, version string) *Server {
 		selfHeal:             make(map[string]selfHealBreakerState),
 		imageEngines:         make(map[string]*managedImageEngine),
 		imageLoading:         make(map[string]*imageEngineLoadState),
+		ttsVoices:            make(map[string]*api.SpeechVoicesResponse),
 		asrEngines:           make(map[string]*managedASREngine),
 		asrLoading:           make(map[string]*asrEngineLoadState),
 		ttsEngines:           make(map[string]*managedTTSEngine),
@@ -662,6 +682,9 @@ func (s *Server) evictExpired(now time.Time) {
 		if me.keepAlive < 0 {
 			continue
 		}
+		if me.activeRequests > 0 {
+			continue
+		}
 		if now.After(me.lastUsed.Add(me.keepAlive)) {
 			log.Printf("evicting idle ASR model %s (unused for %s)", id, me.keepAlive)
 			me.engine.Close()
@@ -670,6 +693,9 @@ func (s *Server) evictExpired(now time.Time) {
 	}
 	for id, me := range s.ttsEngines {
 		if me.keepAlive < 0 {
+			continue
+		}
+		if me.activeRequests > 0 {
 			continue
 		}
 		if now.After(me.lastUsed.Add(me.keepAlive)) {
@@ -1384,7 +1410,16 @@ func (s *Server) getOrLoadASREngine(ctx context.Context, modelID string) (asr.En
 	me, ok := s.asrEngines[modelID]
 	s.mu.RUnlock()
 	if ok {
-		return me.engine, nil
+		err := s.checkCachedEngine(ctx, me.engine)
+		if err == nil {
+			return me.engine, nil
+		}
+		// The worker is bound to its port but cannot serve a request. Left
+		// cached it is handed to every session that follows, which is how a
+		// single wedged worker took out recognition for hours; dropping it here
+		// means the next session loads a healthy one.
+		log.Printf("MODEL %s: replacing unresponsive ASR engine: %v", modelID, err)
+		s.dropASREngine(modelID, me)
 	}
 
 	modelDir, err := s.manager.ModelPath(modelID)
@@ -1438,7 +1473,7 @@ func (s *Server) getOrLoadASREngine(ctx context.Context, modelID string) (asr.En
 			s.asrEngines[modelID] = &managedASREngine{
 				engine:    state.engine,
 				lastUsed:  time.Now(),
-				keepAlive: DefaultKeepAlive,
+				keepAlive: DefaultSpeechKeepAlive,
 			}
 		}
 		close(state.done)
@@ -1453,6 +1488,106 @@ func (s *Server) getOrLoadASREngine(ctx context.Context, modelID string) (asr.En
 	}
 }
 
+// healthChecker is implemented by engines whose worker can be asked whether it
+// is still answering. Engines without it are assumed healthy, which is what
+// keeps the in-memory fakes the tests use working unchanged.
+type healthChecker interface {
+	Health(ctx context.Context) error
+}
+
+// checkCachedEngine probes an engine taken from the cache. It reports nil for
+// engines that cannot be probed, so an unprobeable engine is never discarded
+// for failing a check it never ran.
+func (s *Server) checkCachedEngine(ctx context.Context, engine interface{}) error {
+	checker, ok := engine.(healthChecker)
+	if !ok {
+		return nil
+	}
+	return checker.Health(ctx)
+}
+
+// dropASREngine removes an engine from the cache and shuts its worker down. It
+// only acts while the cache still holds the same engine, so two callers racing
+// on the same broken worker close it once.
+func (s *Server) dropASREngine(modelID string, expected *managedASREngine) {
+	s.mu.Lock()
+	current, ok := s.asrEngines[modelID]
+	if !ok || (expected != nil && current != expected) {
+		s.mu.Unlock()
+		return
+	}
+	delete(s.asrEngines, modelID)
+	s.mu.Unlock()
+	_ = current.engine.Close()
+}
+
+// dropTTSEngine is dropASREngine for the speech side.
+func (s *Server) dropTTSEngine(modelID string, expected *managedTTSEngine) {
+	s.mu.Lock()
+	current, ok := s.ttsEngines[modelID]
+	if !ok || (expected != nil && current != expected) {
+		s.mu.Unlock()
+		return
+	}
+	delete(s.ttsEngines, modelID)
+	s.mu.Unlock()
+	_ = current.engine.Close()
+}
+
+// retainASREngine marks the engine as in use so the idle reaper leaves it
+// alone, and refreshes its idle clock. The returned func releases it; it is
+// safe to call once the engine has already been dropped.
+func (s *Server) retainASREngine(modelID string) func() {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	s.mu.Lock()
+	me, ok := s.asrEngines[modelID]
+	if ok {
+		me.activeRequests++
+		me.lastUsed = time.Now()
+	}
+	s.mu.Unlock()
+	if !ok {
+		return func() {}
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			if me.activeRequests > 0 {
+				me.activeRequests--
+			}
+			me.lastUsed = time.Now()
+			s.mu.Unlock()
+		})
+	}
+}
+
+// retainTTSEngine is retainASREngine for the speech side.
+func (s *Server) retainTTSEngine(modelID string) func() {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	s.mu.Lock()
+	me, ok := s.ttsEngines[modelID]
+	if ok {
+		me.activeRequests++
+		me.lastUsed = time.Now()
+	}
+	s.mu.Unlock()
+	if !ok {
+		return func() {}
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			if me.activeRequests > 0 {
+				me.activeRequests--
+			}
+			me.lastUsed = time.Now()
+			s.mu.Unlock()
+		})
+	}
+}
+
 var newTTSEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (tts.Engine, error) {
 	return tts.NewPythonEngine(ctx, modelName, modelDir, runtimeManager)
 }
@@ -1464,7 +1599,15 @@ func (s *Server) getOrLoadTTSEngine(ctx context.Context, modelID string) (tts.En
 	me, ok := s.ttsEngines[modelID]
 	s.mu.RUnlock()
 	if ok {
-		return me.engine, nil
+		err := s.checkCachedEngine(ctx, me.engine)
+		if err == nil {
+			return me.engine, nil
+		}
+		// A worker that died mid-synthesis stays cached until something tries
+		// to use it and gets "connection refused". Replacing it here turns that
+		// into one slow request instead of a failed one.
+		log.Printf("MODEL %s: replacing unresponsive TTS engine: %v", modelID, err)
+		s.dropTTSEngine(modelID, me)
 	}
 
 	modelDir, err := s.manager.ModelPath(modelID)
@@ -1518,7 +1661,7 @@ func (s *Server) getOrLoadTTSEngine(ctx context.Context, modelID string) (tts.En
 			s.ttsEngines[modelID] = &managedTTSEngine{
 				engine:    state.engine,
 				lastUsed:  time.Now(),
-				keepAlive: DefaultKeepAlive,
+				keepAlive: DefaultSpeechKeepAlive,
 			}
 		}
 		close(state.done)

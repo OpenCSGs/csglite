@@ -28,6 +28,9 @@ type deferredTranscriber struct {
 	commitPending bool
 	dropped       int
 	closed        bool
+	// failed records that the engine will never arrive, so the buffer is not
+	// held for a session that has no recognition.
+	failed bool
 }
 
 func (d *deferredTranscriber) Write(pcm []byte) error {
@@ -37,7 +40,7 @@ func (d *deferredTranscriber) Write(pcm []byte) error {
 		d.mu.Unlock()
 		return engine.Write(pcm)
 	}
-	if d.closed {
+	if d.closed || d.failed {
 		d.mu.Unlock()
 		return nil
 	}
@@ -74,6 +77,16 @@ func (d *deferredTranscriber) Reset() error {
 	d.commitPending = false
 	d.mu.Unlock()
 	return nil
+}
+
+// fail marks the engine as never arriving, so audio stops accumulating and a
+// later commit is answered rather than silently swallowed.
+func (d *deferredTranscriber) fail() {
+	d.mu.Lock()
+	d.failed = true
+	d.pending = nil
+	d.commitPending = false
+	d.mu.Unlock()
 }
 
 func (d *deferredTranscriber) Close() error {
@@ -141,6 +154,12 @@ func (s *Server) newRealtimePipeline(ctx context.Context, cfg realtime.SessionCo
 			if err != nil {
 				log.Printf("REALTIME: transcription unavailable: %v", err)
 				session.EmitError("transcription_unavailable", err.Error(), "")
+				// A generic error event tells the operator what happened but
+				// resolves nothing the client is waiting on: a caller who has
+				// already committed a turn is waiting for a transcript, and
+				// without this it waits out its own timeout instead.
+				_ = session.HandleTranscript(realtime.TranscriptEvent{Kind: "failed", Error: err})
+				deferred.fail()
 				return
 			}
 			if engine == nil {

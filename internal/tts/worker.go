@@ -25,6 +25,11 @@ import (
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
+// healthProbeTimeout bounds a liveness check on a worker. A healthy worker
+// answers /health immediately even mid-synthesis, so anything near this is a
+// worker that cannot serve the request about to be handed to it.
+const healthProbeTimeout = 3 * time.Second
+
 //go:embed worker/tts_worker.py
 var ttsWorkerScript []byte
 
@@ -300,6 +305,29 @@ func (e *PythonEngine) Info(ctx context.Context) (*api.SpeechVoicesResponse, err
 	}
 	out.Model = e.modelName
 	return &out, nil
+}
+
+// Health reports whether the worker is still answering. A crashed worker and a
+// worker busy generating are indistinguishable from the cache, so this is what
+// separates "reuse the cached engine" from "that process is gone, start a new
+// one". The timeout is short because it runs on the path to every request.
+func (e *PythonEngine) Health(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.url("/health"), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("TTS worker health check: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("TTS worker health check: status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (e *PythonEngine) Close() error {

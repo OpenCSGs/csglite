@@ -25,6 +25,11 @@ import (
 //go:embed worker/asr_worker.py
 var asrWorkerScript []byte
 
+// healthProbeTimeout bounds a liveness check on a worker. A healthy worker
+// answers /health in well under a millisecond, so anything approaching this is
+// already a worker that cannot serve the session about to be handed to it.
+const healthProbeTimeout = 3 * time.Second
+
 type PythonEngine struct {
 	modelName string
 	modelDir  string
@@ -160,6 +165,30 @@ func (e *PythonEngine) TranscribeStream(ctx context.Context, req api.OpenAIAudio
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("reading ASR worker stream response: %w", err)
+	}
+	return nil
+}
+
+// Health reports whether the worker is still answering. A wedged worker keeps
+// its port bound and accepts connections, so "the process is alive" and "the
+// process can serve a request" are different questions; only this answers the
+// second one. The timeout is short on purpose: this runs on the path that
+// decides whether to reuse a cached engine.
+func (e *PythonEngine) Health(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.url("/health"), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ASR worker health check: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ASR worker health check: status %d", resp.StatusCode)
 	}
 	return nil
 }

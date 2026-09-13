@@ -78,7 +78,17 @@ ASR worker 还支持以下高级调优变量：
 | `CSGHUB_ASR_USE_VAD` | `false` | 是否为 FunASR 启用 VAD。 |
 | `CSGHUB_ASR_VAD_MODEL` | `fsmn-vad` | VAD 模型名称。 |
 | `CSGHUB_ASR_VAD_MAX_SEGMENT_MS` | `30000` | VAD 单段最大毫秒数。 |
+| `CSGHUB_ASR_LIVE_PARTIALS` | `true` | 是否在实时会话中生成中间结果。模型跟不上音频时可关掉，只保留每轮的最终结果。 |
+| `CSGHUB_ASR_LIVE_PARTIAL_WINDOW_SECONDS` | `15` | 单次中间结果回看的音频秒数。中间结果靠重新转写实现，覆盖整轮音频会让每一次都比上一次更贵。 |
+| `CSGHUB_ASR_LIVE_MAX_BUFFER_SECONDS` | `60` | 单轮音频缓冲上限。一直不提交的调用方不会让缓冲无限增长，超出部分丢弃最旧的音频。 |
+| `CSGHUB_ASR_WARMUP` | `true` | 是否在报告 ready 之前跑一次空转推理。首次推理比之后每一次都慢好几秒，预热把这段成本挪到加载阶段。 |
 | `FUNASR_TRUST_REMOTE_CODE` | `false` | 是否允许 FunASR 模型执行远程自定义代码。仅对可信模型开启。 |
+
+TTS worker 支持：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `CSGHUB_TTS_WARMUP` | `true` | 是否在报告 ready 之前合成一小段丢弃的语音，理由同上。 |
 
 ## 主安装脚本
 
