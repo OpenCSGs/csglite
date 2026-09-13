@@ -90,7 +90,20 @@ type Session struct {
 	// audioStopped records whether output_audio_buffer.stopped has been sent for
 	// the current response, so cancel and normal completion cannot both send it.
 	audioStopped bool
+	// commitWatchdog bounds how long a committed turn may go without a final
+	// transcript. Guarded by mu.
+	commitWatchdog *time.Timer
 }
+
+// transcriptCommitTimeout bounds the wait for a final transcript after a
+// commit. Recognition can fail in ways that produce no event at all -- a worker
+// that stops answering, a stream that dies mid-turn -- and the client is then
+// left waiting on a future that will never resolve. Answering with a failure
+// inside this window is what lets it fall back to something else while the
+// caller is still in the conversation; the SDKs give up at thirty seconds, so
+// arriving after that is the same as never arriving.
+// It is a variable so tests can shorten the wait rather than sleep through it.
+var transcriptCommitTimeout = 15 * time.Second
 
 // NewSession creates a session and emits session.created.
 func NewSession(cfg SessionConfig, sender Sender, transcriber Transcriber, synth Synthesizer) (*Session, error) {
@@ -165,8 +178,10 @@ func (s *Session) HandleTranscript(ev TranscriptEvent) error {
 	case "delta":
 		return s.emit(ServerEvent{Type: ServerTranscriptDelta, Delta: ev.Text, ItemID: "item_" + randomID()})
 	case "completed":
+		s.stopCommitWatchdog()
 		return s.emit(ServerEvent{Type: ServerTranscriptCompleted, Transcript: ev.Text, ItemID: "item_" + randomID()})
 	case "failed":
+		s.stopCommitWatchdog()
 		message := "transcription failed"
 		if ev.Error != nil {
 			message = ev.Error.Error()
@@ -185,8 +200,42 @@ func (s *Session) Commit() error {
 		if err := s.transcriber.Commit(); err != nil {
 			return err
 		}
+		s.armCommitWatchdog()
 	}
 	return s.emit(ServerEvent{Type: ServerInputAudioCommitted})
+}
+
+// armCommitWatchdog starts the wait for this turn's final transcript, replacing
+// any wait already running: a second commit supersedes the first.
+func (s *Session) armCommitWatchdog() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.commitWatchdog != nil {
+		s.commitWatchdog.Stop()
+	}
+	s.commitWatchdog = time.AfterFunc(transcriptCommitTimeout, func() {
+		s.mu.Lock()
+		s.commitWatchdog = nil
+		s.mu.Unlock()
+		_ = s.emit(ServerEvent{
+			Type: ServerTranscriptFailed,
+			Error: &EventError{
+				Type:    "server_error",
+				Code:    "transcription_timeout",
+				Message: fmt.Sprintf("no transcript within %s of the commit", transcriptCommitTimeout),
+			},
+		})
+	})
+}
+
+// stopCommitWatchdog cancels the wait because the turn has been answered.
+func (s *Session) stopCommitWatchdog() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.commitWatchdog != nil {
+		s.commitWatchdog.Stop()
+		s.commitWatchdog = nil
+	}
 }
 
 // ClearInput discards buffered caller audio.
@@ -195,6 +244,9 @@ func (s *Session) ClearInput() error {
 		if err := s.transcriber.Reset(); err != nil {
 			return err
 		}
+		// The turn being waited on has been thrown away, so there is nothing
+		// left to report a timeout about.
+		s.stopCommitWatchdog()
 	}
 	return s.emit(ServerEvent{Type: ServerInputAudioCleared})
 }
@@ -374,6 +426,7 @@ func (s *Session) ClearOutputAudio() error {
 // Close releases the session's engines.
 func (s *Session) Close() {
 	s.cancelActive("closed")
+	s.stopCommitWatchdog()
 	s.mu.Lock()
 	transcriber := s.transcriber
 	s.transcriber = nil

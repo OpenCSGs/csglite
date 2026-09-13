@@ -311,6 +311,10 @@ func (s *Server) newRealtimeTranscriber(ctx context.Context, cfg realtime.Sessio
 	if !ok {
 		return nil, nil, errRealtimeASRNotStreaming
 	}
+	// Held for the length of the session: a call outlasts the idle window, and
+	// the reaper closing the worker underneath a live stream ends recognition
+	// for the rest of the call without saying so.
+	release := s.retainASREngine(model)
 	rate := realtime.DefaultInputSampleRate
 	if cfg.Audio != nil && cfg.Audio.Input != nil && cfg.Audio.Input.Format != nil && cfg.Audio.Input.Format.Rate > 0 {
 		rate = cfg.Audio.Input.Format.Rate
@@ -324,11 +328,16 @@ func (s *Server) newRealtimeTranscriber(ctx context.Context, cfg realtime.Sessio
 	}
 	stream, err := streaming.OpenLive(ctx, asr.LiveConfig{SampleRate: rate, Request: request})
 	if err != nil {
+		release()
+		// The worker accepted the connection and then never completed the
+		// handshake, so it is not going to serve the next session either.
+		s.dropASREngine(s.resolveLocalModelStorageID(model), nil)
 		return nil, nil, err
 	}
 	events := make(chan realtime.TranscriptEvent, 32)
 	go func() {
 		defer close(events)
+		defer release()
 		for ev := range stream.Events() {
 			switch ev.Kind {
 			case "ready", "committed", "cleared":
@@ -340,7 +349,6 @@ func (s *Server) newRealtimeTranscriber(ctx context.Context, cfg realtime.Sessio
 			}
 		}
 	}()
-	s.touchASREngine(model)
 	return stream, events, nil
 }
 
@@ -377,6 +385,10 @@ func (r *realtimeSynth) Speak(ctx context.Context, model, text, voice string, on
 	if err != nil {
 		return 0, err
 	}
+	// Held for the response, so a long answer is not cut short by the idle
+	// reaper closing the worker between two of its sentences.
+	release := r.server.retainTTSEngine(model)
+	defer release()
 	rate := realtime.DefaultOutputSampleRate
 	if info, infoErr := engine.Info(ctx); infoErr == nil && info.SampleRate > 0 {
 		rate = info.SampleRate
@@ -400,6 +412,5 @@ func (r *realtimeSynth) Speak(ctx context.Context, model, text, voice string, on
 		}
 		return onAudio(chunk.Data)
 	})
-	r.server.touchTTSEngine(model)
 	return rate, err
 }

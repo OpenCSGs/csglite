@@ -225,6 +225,14 @@ func (s *Server) handleTTSVoices(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
+	// A model's voices do not change, so once they have been seen the list is
+	// served from memory. Asking the worker means loading the model, which for
+	// Qwen3-TTS is eight seconds -- paid again after every eviction, by a
+	// request that only wants to populate a dropdown.
+	if info, ok := s.cachedTTSVoices(modelID); ok {
+		writeJSON(w, http.StatusOK, info)
+		return
+	}
 	eng, err := s.getOrLoadTTSEngine(r.Context(), modelID)
 	if err != nil {
 		writeSpeechEngineError(w, err)
@@ -235,6 +243,29 @@ func (s *Server) handleTTSVoices(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.rememberTTSVoices(modelID, info)
 	s.touchTTSEngine(modelID)
 	writeJSON(w, http.StatusOK, info)
+}
+
+// cachedTTSVoices returns a previously seen voice list for the model. The id is
+// resolved before the lock is taken, since resolving it reads the model
+// registry and nothing else should wait on that.
+func (s *Server) cachedTTSVoices(modelID string) (*api.SpeechVoicesResponse, bool) {
+	modelID = s.resolveLocalModelStorageID(modelID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	info, ok := s.ttsVoices[modelID]
+	return info, ok
+}
+
+// rememberTTSVoices records a voice list so later callers need no worker.
+func (s *Server) rememberTTSVoices(modelID string, info *api.SpeechVoicesResponse) {
+	if info == nil {
+		return
+	}
+	modelID = s.resolveLocalModelStorageID(modelID)
+	s.mu.Lock()
+	s.ttsVoices[modelID] = info
+	s.mu.Unlock()
 }

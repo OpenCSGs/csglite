@@ -12,6 +12,14 @@ import (
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
+// liveDialer opens the session socket to the worker. gorilla's default dialer
+// waits 45 seconds for a handshake, which is longer than a caller waiting to
+// hear itself transcribed will tolerate: by the time it gave up, the client had
+// already timed out with nothing to show. The worker is on loopback and answers
+// immediately unless it is wedged, so failing fast is what lets the caller be
+// told, and the wedged worker be replaced, while the session is still useful.
+var liveDialer = &websocket.Dialer{HandshakeTimeout: 8 * time.Second}
+
 // LiveEvent is a transcript event from a streaming session.
 type LiveEvent struct {
 	// Kind is "ready", "speech_started", "speech_stopped", "delta",
@@ -59,7 +67,7 @@ func (e *PythonEngine) OpenLive(ctx context.Context, cfg LiveConfig) (*LiveStrea
 		cfg.PartialInterval = 600 * time.Millisecond
 	}
 	endpoint := url.URL{Scheme: "ws", Host: fmt.Sprintf("127.0.0.1:%d", e.port), Path: "/transcribe_live"}
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, endpoint.String(), nil)
+	conn, _, err := liveDialer.DialContext(ctx, endpoint.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("opening ASR live stream: %w", err)
 	}
