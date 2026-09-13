@@ -91,8 +91,12 @@ func isAllowedDesktopOrigin(r *http.Request) bool {
 
 func (s *Server) apiAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !requiresRemoteAPIAuth(r) || isLoopbackRequest(r) || s.apiKeys == nil {
+		if s.apiKeys == nil {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if !requiresRemoteAPIAuth(r) || isLoopbackRequest(r) {
+			next.ServeHTTP(w, s.requestWithIdentifiedAPIKey(r))
 			return
 		}
 
@@ -102,7 +106,7 @@ func (s *Server) apiAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if !state.AuthEnabled {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, s.requestWithIdentifiedAPIKey(r))
 			return
 		}
 
@@ -120,6 +124,28 @@ func (s *Server) apiAuthMiddleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), apiKeyContextKey{}, record)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// requestWithIdentifiedAPIKey attaches a recognized API key to the request even
+// when authentication is not enforced (loopback callers, or auth disabled), so
+// usage is attributed to the key that made the call instead of the built-in
+// local client. An absent or unknown key leaves the request untouched.
+func (s *Server) requestWithIdentifiedAPIKey(r *http.Request) *http.Request {
+	if s == nil || s.apiKeys == nil || !identifiesAPIKeyForUsage(r) {
+		return r
+	}
+	if _, ok := authenticatedAPIKey(r); ok {
+		return r
+	}
+	apiKey := requestAPIKey(r)
+	if apiKey == "" {
+		return r
+	}
+	record, ok, err := s.apiKeys.Validate(apiKey)
+	if err != nil || !ok {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), apiKeyContextKey{}, record))
 }
 
 func authenticatedAPIKey(r *http.Request) (config.APIKeyRecord, bool) {
@@ -178,6 +204,24 @@ func requestAPIKey(r *http.Request) string {
 		return strings.TrimSpace(auth[len("bearer "):])
 	}
 	return ""
+}
+
+// identifiesAPIKeyForUsage reports whether a request targets an inference route
+// whose usage is metered per API key.
+func identifiesAPIKeyForUsage(r *http.Request) bool {
+	if r.Method == http.MethodOptions {
+		return false
+	}
+	path := providerRouteLegacyPath(r.URL.Path)
+	if strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/anthropic/") {
+		return true
+	}
+	switch path {
+	case "/api/chat", "/api/generate", "/api/load", "/api/stop":
+		return true
+	default:
+		return false
+	}
 }
 
 func isLoopbackRequest(r *http.Request) bool {

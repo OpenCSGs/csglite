@@ -1175,6 +1175,10 @@ export const en: Record<string, string> = {
   "settings.apiUsageCloudModels": "Cloud Models",
   "settings.apiUsageTotalHistory": "Historical Total",
   "settings.apiUsageBreakdown": "Model Breakdown",
+  "settings.apiUsageKeyBreakdown": "API Key Breakdown",
+  "settings.apiUsageKeyBreakdownDesc": "Per API key consumption for the selected period and provider.",
+  "settings.apiUsageKeyModels": "Models",
+  "settings.apiUsageKeyEmpty": "No API key usage recorded yet.",
   "settings.apiUsageProviderFilter": "Provider",
   "settings.apiUsageProviderAll": "All Providers",
 
@@ -2891,6 +2895,10 @@ export const zh: Record<string, string> = {
   "settings.apiUsageCloudModels": "云端模型",
   "settings.apiUsageTotalHistory": "历史总计",
   "settings.apiUsageBreakdown": "模型明细",
+  "settings.apiUsageKeyBreakdown": "API Key 统计",
+  "settings.apiUsageKeyBreakdownDesc": "按所选周期和 Provider 统计每个 API Key 的消耗。",
+  "settings.apiUsageKeyModels": "模型数",
+  "settings.apiUsageKeyEmpty": "暂无 API Key 用量记录。",
   "settings.apiUsageProviderFilter": "Provider",
   "settings.apiUsageProviderAll": "全部 Provider",
 

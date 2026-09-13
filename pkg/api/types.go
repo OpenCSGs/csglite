@@ -818,6 +818,17 @@ type APIUsagePoolTotal struct {
 	Members       []APIUsagePoolMemberTotal `json:"members"`
 }
 
+type APIUsageKeyTotal struct {
+	APIKeyID     string    `json:"api_key_id"`
+	APIKeyName   string    `json:"api_key_name"`
+	Requests     int64     `json:"requests"`
+	InputTokens  int64     `json:"input_tokens"`
+	OutputTokens int64     `json:"output_tokens"`
+	TotalTokens  int64     `json:"total_tokens"`
+	Models       int64     `json:"models"`
+	LastUsedAt   time.Time `json:"last_used_at"`
+}
+
 type APIUsageSummarySeries struct {
 	Name string  `json:"name"`
 	Type string  `json:"type"`
@@ -836,6 +847,7 @@ type APIUsageResponse struct {
 	TotalHistory int64                 `json:"total_history"`
 	TotalSummary APIUsageTotalSummary  `json:"total_summary"`
 	SourceTotals []APIUsageSourceTotal `json:"source_totals"`
+	KeyTotals    []APIUsageKeyTotal    `json:"key_totals"`
 	PoolTotals   []APIUsagePoolTotal   `json:"pool_totals"`
 	Rows         []APIUsageRow         `json:"rows"`
 }

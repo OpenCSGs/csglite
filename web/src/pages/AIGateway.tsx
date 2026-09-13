@@ -1,3 +1,4 @@
+import { Fragment } from "preact";
 import { signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { t, locale } from "../i18n";
@@ -75,6 +76,7 @@ const localAPIUsageLoading = signal(false);
 const localAPIUsageError = signal("");
 const localAPIUsagePeriod = signal<UsagePeriod>("week");
 const localAPIUsageProvider = signal("");
+const localAPIUsageExpandedKeys = signal<Record<string, boolean>>({});
 const providers = signal<ThirdPartyProvider[]>([]);
 const providerPools = signal<ProviderPool[]>([]);
 const providerPoolModels = signal<ModelInfo[]>([]);
@@ -1225,6 +1227,11 @@ async function removeProviderPool(pool: ProviderPool) {
   }
 }
 
+function toggleLocalAPIUsageKey(keyID: string) {
+  const expanded = localAPIUsageExpandedKeys.value;
+  localAPIUsageExpandedKeys.value = { ...expanded, [keyID]: !expanded[keyID] };
+}
+
 function selectLocalAPIUsagePeriod(period: UsagePeriod) {
   localAPIUsagePeriod.value = period;
   void fetchLocalAPIUsage(period);
@@ -2198,6 +2205,82 @@ function UsageStatisticsSection() {
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+      <UsageKeyBreakdown usage={usage} />
+    </div>
+  );
+}
+
+function UsageKeyBreakdown({ usage }: { usage: LocalAPIUsageResponse | null }) {
+  const keyTotals = usage?.key_totals || [];
+  const rows = usage?.rows || [];
+  const expanded = localAPIUsageExpandedKeys.value;
+  return (
+    <div>
+      <div class="mb-3 mt-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900">{t("settings.apiUsageKeyBreakdown")}</h3>
+          <span class="text-xs text-gray-400">{t("settings.apiUsageKeyBreakdownDesc")}</span>
+        </div>
+      </div>
+      <div class="overflow-hidden rounded-xl border border-gray-200 bg-white">
+        {keyTotals.length === 0 ? (
+          <p class="p-4 text-sm text-gray-400">{localAPIUsageLoading.value ? "..." : t("settings.apiUsageKeyEmpty")}</p>
+        ) : (
+          <table class="w-full table-fixed divide-y divide-gray-100 text-sm">
+            <thead class="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
+              <tr>
+                <th class="w-[27%] whitespace-nowrap px-4 py-3">{t("settings.apiUsageKey")}</th>
+                <th class="w-[10%] whitespace-nowrap px-4 py-3">{t("settings.apiUsageRequests")}</th>
+                <th class="w-[10%] whitespace-nowrap px-4 py-3">{t("settings.apiUsageKeyModels")}</th>
+                <th class="w-[13%] whitespace-nowrap px-4 py-3">{t("settings.apiUsageInput")}</th>
+                <th class="w-[13%] whitespace-nowrap px-4 py-3">{t("settings.apiUsageOutput")}</th>
+                <th class="w-[12%] whitespace-nowrap px-4 py-3">{t("settings.apiUsageTotal")}</th>
+                <th class="w-[15%] whitespace-nowrap px-4 py-3">{t("settings.apiUsageLastUsed")}</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              {keyTotals.map((total) => {
+                const open = Boolean(expanded[total.api_key_id]);
+                const keyRows = rows.filter((row) => row.api_key_id === total.api_key_id);
+                return (
+                  <Fragment key={total.api_key_id}>
+                    <tr class="cursor-pointer hover:bg-gray-50" onClick={() => toggleLocalAPIUsageKey(total.api_key_id)}>
+                      <td class="truncate whitespace-nowrap px-4 py-3 text-gray-700" title={total.api_key_name || total.api_key_id}>
+                        <span class="mr-2 inline-block w-3 text-gray-400">{open ? "−" : "+"}</span>
+                        {total.api_key_name || total.api_key_id}
+                      </td>
+                      <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(total.requests)}</td>
+                      <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(total.models)}</td>
+                      <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(total.input_tokens)}</td>
+                      <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(total.output_tokens)}</td>
+                      <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-700">{formatNumber(total.total_tokens)}</td>
+                      <td class="truncate whitespace-nowrap px-4 py-3 text-gray-500" title={formatDateTime(total.last_used_at)}>
+                        {formatDateTime(total.last_used_at)}
+                      </td>
+                    </tr>
+                    {open && keyRows.map((row) => (
+                      <tr key={`${total.api_key_id}:${row.source}:${row.model}`} class="bg-gray-50/60">
+                        <td class="truncate whitespace-nowrap px-4 py-2 pl-11 text-xs text-gray-500" title={`${row.member_model ? `${row.model} → ${row.member_model}` : row.model} · ${apiUsageSourceRowLabel(row.source_type, row.source_name, row.pool_name)}`}>
+                          {row.member_model ? `${row.model} → ${row.member_model}` : row.model}
+                          <span class="ml-2 text-gray-400">{apiUsageSourceRowLabel(row.source_type, row.source_name, row.pool_name)}</span>
+                        </td>
+                        <td class="whitespace-nowrap px-4 py-2 text-xs tabular-nums text-gray-500">{formatNumber(row.requests)}</td>
+                        <td class="whitespace-nowrap px-4 py-2 text-xs text-gray-300">—</td>
+                        <td class="whitespace-nowrap px-4 py-2 text-xs tabular-nums text-gray-500">{formatNumber(row.input_tokens)}</td>
+                        <td class="whitespace-nowrap px-4 py-2 text-xs tabular-nums text-gray-500">{formatNumber(row.output_tokens)}</td>
+                        <td class="whitespace-nowrap px-4 py-2 text-xs tabular-nums text-gray-500">{formatNumber(row.total_tokens)}</td>
+                        <td class="truncate whitespace-nowrap px-4 py-2 text-xs text-gray-400" title={formatDateTime(row.last_used_at)}>
+                          {formatDateTime(row.last_used_at)}
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
         )}
       </div>
     </div>
