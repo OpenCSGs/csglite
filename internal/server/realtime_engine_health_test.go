@@ -183,3 +183,60 @@ func TestTTSVoicesAreServedFromCache(t *testing.T) {
 		t.Fatal("serving a cached voice list loaded the model")
 	}
 }
+
+// When the engine never arrives, audio must stop accumulating: the session
+// otherwise holds thirty seconds of PCM for a call that will never transcribe
+// it, and replays it into nothing.
+func TestDeferredTranscriberStopsBufferingOnceTheEngineFails(t *testing.T) {
+	d := &deferredTranscriber{}
+	if err := d.Write(make([]byte, 1024)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(d.pending) == 0 {
+		t.Fatal("audio was not buffered while the engine loaded")
+	}
+
+	d.fail()
+	if len(d.pending) != 0 {
+		t.Fatal("buffered audio was kept after the engine failed")
+	}
+	if err := d.Write(make([]byte, 1024)); err != nil {
+		t.Fatalf("Write after fail: %v", err)
+	}
+	if len(d.pending) != 0 {
+		t.Fatal("audio is still being buffered for an engine that will never arrive")
+	}
+}
+
+// A commit that arrived before the engine did must still be finalised once it
+// attaches, or the first turn of every call is lost.
+func TestDeferredTranscriberReplaysAPendingCommit(t *testing.T) {
+	d := &deferredTranscriber{}
+	if err := d.Write([]byte{1, 2, 3, 4}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := d.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	engine := &recordingTranscriber{}
+	if !d.attach(engine) {
+		t.Fatal("attach reported a closed session")
+	}
+	if engine.written != 4 {
+		t.Fatalf("replayed %d bytes, want 4", engine.written)
+	}
+	if engine.commits != 1 {
+		t.Fatalf("replayed %d commits, want 1", engine.commits)
+	}
+}
+
+type recordingTranscriber struct {
+	written int
+	commits int
+}
+
+func (r *recordingTranscriber) Write(pcm []byte) error { r.written += len(pcm); return nil }
+func (r *recordingTranscriber) Commit() error          { r.commits++; return nil }
+func (r *recordingTranscriber) Reset() error           { return nil }
+func (r *recordingTranscriber) Close() error           { return nil }
