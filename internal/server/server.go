@@ -594,6 +594,9 @@ func (s *Server) shutdownRuntime() {
 		s.observability = nil
 	}
 	s.observabilityMu.Unlock()
+	if s.apiUsage != nil {
+		_ = s.apiUsage.Close()
+	}
 	s.modelMetadataMu.Lock()
 	if s.modelMetadata != nil {
 		_ = s.modelMetadata.Close()

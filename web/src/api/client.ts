@@ -523,6 +523,17 @@ export interface LocalAPIUsageSourceTotal {
   total_tokens: number;
 }
 
+export interface LocalAPIUsageKeyTotal {
+  api_key_id: string;
+  api_key_name: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  models: number;
+  last_used_at: string;
+}
+
 export interface LocalAPIUsagePoolMemberTotal extends LocalAPIUsageSourceTotal {
   model: string;
   fallback_count: number;
@@ -572,6 +583,7 @@ export interface LocalAPIUsageResponse {
   total_history: number;
   total_summary: LocalAPIUsageTotalSummary;
   source_totals: LocalAPIUsageSourceTotal[];
+  key_totals: LocalAPIUsageKeyTotal[];
   pool_totals: LocalAPIUsagePoolTotal[];
   rows: LocalAPIUsageRow[];
 }

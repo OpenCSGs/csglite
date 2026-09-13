@@ -41,7 +41,8 @@
       "Bash(glab --version)",
       "Bash(bash *)",
       "Read(//private/tmp/cuda-analysis/**)",
-      "Bash(tar xzf *)"
+      "Bash(tar xzf *)",
+      "Bash(curl *)"
     ]
   }
 }

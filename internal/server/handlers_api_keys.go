@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -113,8 +114,10 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 		TotalHistory: apiUsageTotalTokens(historyState.Records),
 		Rows:         make([]api.APIUsageRow, 0, len(state.Records)),
 		SourceTotals: make([]api.APIUsageSourceTotal, 0, 4),
+		KeyTotals:    make([]api.APIUsageKeyTotal, 0),
 		PoolTotals:   make([]api.APIUsagePoolTotal, 0),
 	}
+	keyTotals := newAPIUsageKeyTotals()
 	sourceHints := apiUsageSourceHints(historyState.Events, historyState.Records)
 	resp.TotalSummary = s.apiUsageTotalSummary(r.Context(), state.Events, since, sourceHints)
 	if since != nil {
@@ -139,7 +142,9 @@ func (s *Server) handleAPIUsage(w http.ResponseWriter, r *http.Request) {
 		resp.Rows = append(resp.Rows, row)
 		addAPIUsageSourceTotal(&resp.SourceTotals, row)
 		addAPIUsagePoolTotal(&resp.PoolTotals, row)
+		keyTotals.add(row)
 	}
+	resp.KeyTotals = keyTotals.build()
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -376,6 +381,69 @@ func addAPIUsagePoolMemberTotal(total *api.APIUsagePoolMemberTotal, row api.APIU
 	total.TotalTokens += row.TotalTokens
 	total.FallbackCount += row.FallbackCount
 	total.LimitedCount += row.LimitedCount
+}
+
+// apiUsageKeyTotals aggregates usage rows per API key so the gateway can report
+// consumption per key alongside the existing per-model breakdown. It uses the
+// same filtered rows, so key totals always follow the selected period and
+// provider filters.
+type apiUsageKeyTotals struct {
+	order  []string
+	totals map[string]*api.APIUsageKeyTotal
+	models map[string]map[string]struct{}
+}
+
+func newAPIUsageKeyTotals() *apiUsageKeyTotals {
+	return &apiUsageKeyTotals{
+		totals: map[string]*api.APIUsageKeyTotal{},
+		models: map[string]map[string]struct{}{},
+	}
+}
+
+func (k *apiUsageKeyTotals) add(row api.APIUsageRow) {
+	keyID := strings.TrimSpace(row.APIKeyID)
+	if keyID == "" {
+		return
+	}
+	total, ok := k.totals[keyID]
+	if !ok {
+		total = &api.APIUsageKeyTotal{APIKeyID: keyID, APIKeyName: strings.TrimSpace(row.APIKeyName)}
+		k.totals[keyID] = total
+		k.models[keyID] = map[string]struct{}{}
+		k.order = append(k.order, keyID)
+	}
+	if total.APIKeyName == "" {
+		total.APIKeyName = strings.TrimSpace(row.APIKeyName)
+	}
+	total.Requests += row.Requests
+	total.InputTokens += row.InputTokens
+	total.OutputTokens += row.OutputTokens
+	total.TotalTokens += row.TotalTokens
+	if model := strings.TrimSpace(row.Model); model != "" {
+		k.models[keyID][model] = struct{}{}
+	}
+	if row.LastUsedAt.After(total.LastUsedAt) {
+		total.LastUsedAt = row.LastUsedAt
+	}
+}
+
+func (k *apiUsageKeyTotals) build() []api.APIUsageKeyTotal {
+	totals := make([]api.APIUsageKeyTotal, 0, len(k.order))
+	for _, keyID := range k.order {
+		total := *k.totals[keyID]
+		total.Models = int64(len(k.models[keyID]))
+		totals = append(totals, total)
+	}
+	sort.SliceStable(totals, func(i, j int) bool {
+		if totals[i].TotalTokens != totals[j].TotalTokens {
+			return totals[i].TotalTokens > totals[j].TotalTokens
+		}
+		if !totals[i].LastUsedAt.Equal(totals[j].LastUsedAt) {
+			return totals[i].LastUsedAt.After(totals[j].LastUsedAt)
+		}
+		return totals[i].APIKeyName < totals[j].APIKeyName
+	})
+	return totals
 }
 
 func addAPIUsageSourceTotal(totals *[]api.APIUsageSourceTotal, row api.APIUsageRow) {

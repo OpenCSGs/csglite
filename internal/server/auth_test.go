@@ -839,3 +839,137 @@ func TestAPIUsageDefaultsToWeekPeriod(t *testing.T) {
 		t.Fatalf("default total summary xAxis = %#v, want filled weekly range", resp.TotalSummary.XAxis)
 	}
 }
+
+func TestAPIUsageKeyTotalsAggregatePerKeyAndFollowFilters(t *testing.T) {
+	s := newTestServer(t)
+	now := time.Now().UTC()
+	for _, event := range []config.APIUsageEvent{
+		{
+			APIKeyID: "key-a", APIKeyName: "Key A", Model: "model-a",
+			Source: "provider:a", SourceType: "provider", SourceName: "Provider A",
+			InputTokens: 10, OutputTokens: 10, CreatedAt: now.AddDate(0, 0, -1),
+		},
+		{
+			APIKeyID: "key-a", APIKeyName: "Key A", Model: "model-b",
+			Source: "provider:b", SourceType: "provider", SourceName: "Provider B",
+			InputTokens: 5, OutputTokens: 5, CreatedAt: now,
+		},
+		{
+			APIKeyID: "key-b", APIKeyName: "Key B", Model: "model-a",
+			Source: "provider:a", SourceType: "provider", SourceName: "Provider A",
+			InputTokens: 1, OutputTokens: 1, CreatedAt: now,
+		},
+		{
+			APIKeyID: "key-c", APIKeyName: "Key C", Model: "model-a",
+			Source: "provider:a", SourceType: "provider", SourceName: "Provider A",
+			InputTokens: 100, OutputTokens: 100, CreatedAt: now.AddDate(0, 0, -60),
+		},
+	} {
+		if err := s.apiUsage.Add(event); err != nil {
+			t.Fatalf("add usage: %v", err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	s.handleAPIUsage(w, httptest.NewRequest(http.MethodGet, "/api/api-usage", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+	var resp api.APIUsageResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode usage: %v", err)
+	}
+	if len(resp.KeyTotals) != 2 {
+		t.Fatalf("key totals = %#v, want the two keys used within the period", resp.KeyTotals)
+	}
+	if resp.KeyTotals[0].APIKeyID != "key-a" || resp.KeyTotals[0].APIKeyName != "Key A" {
+		t.Fatalf("key totals are not sorted by consumption: %#v", resp.KeyTotals)
+	}
+	if resp.KeyTotals[0].Requests != 2 || resp.KeyTotals[0].InputTokens != 15 ||
+		resp.KeyTotals[0].OutputTokens != 15 || resp.KeyTotals[0].TotalTokens != 30 {
+		t.Fatalf("unexpected key-a totals: %#v", resp.KeyTotals[0])
+	}
+	if resp.KeyTotals[0].Models != 2 {
+		t.Fatalf("key-a models = %d, want 2 distinct models", resp.KeyTotals[0].Models)
+	}
+	if resp.KeyTotals[0].LastUsedAt.Before(resp.KeyTotals[1].LastUsedAt.Add(-24 * time.Hour)) {
+		t.Fatalf("key-a last used = %v, want the newest of its rows", resp.KeyTotals[0].LastUsedAt)
+	}
+	if resp.KeyTotals[1].APIKeyID != "key-b" || resp.KeyTotals[1].TotalTokens != 2 {
+		t.Fatalf("unexpected key-b totals: %#v", resp.KeyTotals[1])
+	}
+
+	w = httptest.NewRecorder()
+	s.handleAPIUsage(w, httptest.NewRequest(http.MethodGet, "/api/api-usage?provider=provider+b", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", w.Code, w.Body.String())
+	}
+	var filtered api.APIUsageResponse
+	if err := json.NewDecoder(w.Body).Decode(&filtered); err != nil {
+		t.Fatalf("decode filtered usage: %v", err)
+	}
+	if len(filtered.KeyTotals) != 1 || filtered.KeyTotals[0].APIKeyID != "key-a" ||
+		filtered.KeyTotals[0].TotalTokens != 10 || filtered.KeyTotals[0].Models != 1 {
+		t.Fatalf("key totals ignore the provider filter: %#v", filtered.KeyTotals)
+	}
+}
+
+func TestAPIKeyIsIdentifiedForUsageWhenAuthIsNotEnforced(t *testing.T) {
+	s := newTestServer(t)
+	record, plain, err := s.apiKeys.Create("reporting")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+
+	var seen []string
+	handler := s.apiAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if key, ok := authenticatedAPIKey(r); ok {
+			seen = append(seen, key.ID)
+			return
+		}
+		seen = append(seen, apiUsageBuiltinKeyID)
+	}))
+
+	embeddings := httptest.NewRequest(http.MethodPost, "/v1/embeddings", nil)
+	embeddings.RemoteAddr = "127.0.0.1:5555"
+	embeddings.Header.Set("Authorization", "Bearer "+plain)
+	handler.ServeHTTP(httptest.NewRecorder(), embeddings)
+
+	loopback := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	loopback.RemoteAddr = "127.0.0.1:5555"
+	loopback.Header.Set("Authorization", "Bearer "+plain)
+	handler.ServeHTTP(httptest.NewRecorder(), loopback)
+
+	remote := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	remote.RemoteAddr = "192.168.1.20:5555"
+	remote.Header.Set("x-api-key", plain)
+	handler.ServeHTTP(httptest.NewRecorder(), remote)
+
+	unknown := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	unknown.RemoteAddr = "127.0.0.1:5555"
+	unknown.Header.Set("Authorization", "Bearer sk-unknown")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, unknown)
+	if w.Code == http.StatusUnauthorized {
+		t.Fatalf("unknown key on loopback status = %d, want the request to still pass", w.Code)
+	}
+
+	discovery := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	discovery.RemoteAddr = "127.0.0.1:5555"
+	discovery.Header.Set("Authorization", "Bearer "+plain)
+	handler.ServeHTTP(httptest.NewRecorder(), discovery)
+
+	anonymous := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	anonymous.RemoteAddr = "127.0.0.1:5555"
+	handler.ServeHTTP(httptest.NewRecorder(), anonymous)
+
+	want := []string{record.ID, record.ID, record.ID, apiUsageBuiltinKeyID, apiUsageBuiltinKeyID, apiUsageBuiltinKeyID}
+	if len(seen) != len(want) {
+		t.Fatalf("identified keys = %#v, want %#v", seen, want)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Fatalf("identified keys = %#v, want %#v", seen, want)
+		}
+	}
+}
