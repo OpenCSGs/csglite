@@ -273,7 +273,4 @@ func TestAPIUsageVaryingRequestMetadataCompactsByMemberDayAndCostSemantics(t *te
 	if _, err := os.Stat(filepath.Join(dir, APIUsageFile)); !os.IsNotExist(err) {
 		t.Fatalf("legacy api_usage.json still present after import: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, APIUsageFile+apiUsageLegacyImportedSuffix)); err != nil {
-		t.Fatalf("legacy api_usage.json was not archived: %v", err)
-	}
 }

@@ -18,8 +18,6 @@ import (
 // api_usage.json, which had to be rewritten in full on every metered request.
 const APIUsageDatabaseFile = "api_usage.db"
 
-const apiUsageLegacyImportedSuffix = ".migrated"
-
 const apiUsageSchema = `
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;
@@ -192,8 +190,9 @@ func (s *APIUsageStore) openLocked() (*sql.DB, error) {
 	return db, nil
 }
 
-// importLegacyLocked loads api_usage.json once, then renames it so the import
-// never runs twice. The renamed file is kept as a backup.
+// importLegacyLocked loads api_usage.json once and deletes it afterwards, so no
+// stale copy is left behind. The import is also recorded in the database, so a
+// file restored from elsewhere is not counted twice.
 func (s *APIUsageStore) importLegacyLocked(db *sql.DB) error {
 	if s.legacyPath == "" {
 		return nil
@@ -224,9 +223,8 @@ func (s *APIUsageStore) importLegacyLocked(db *sql.DB) error {
 		}
 		log.Printf("API USAGE: imported %d legacy usage buckets into %s", len(events), s.path)
 	}
-	backup := s.legacyPath + apiUsageLegacyImportedSuffix
-	if err := os.Rename(s.legacyPath, backup); err != nil {
-		return fmt.Errorf("archiving legacy API usage file: %w", err)
+	if err := os.Remove(s.legacyPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing imported API usage file: %w", err)
 	}
 	return nil
 }

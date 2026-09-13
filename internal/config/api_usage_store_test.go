@@ -80,7 +80,7 @@ func persistedAPIUsageColumns(t *testing.T, dir string) []string {
 	return columns
 }
 
-func TestAPIUsageImportsLegacyJSONOnceAndKeepsBackup(t *testing.T) {
+func TestAPIUsageImportsLegacyJSONOnceAndRemovesIt(t *testing.T) {
 	dir := t.TempDir()
 	legacy := APIUsageState{
 		Events: []APIUsageEventRecord{
@@ -110,19 +110,15 @@ func TestAPIUsageImportsLegacyJSONOnceAndKeepsBackup(t *testing.T) {
 		t.Fatalf("imported records = %#v, want the legacy bucket", state.Records)
 	}
 	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
-		t.Fatalf("legacy file still in place: %v", err)
-	}
-	backup := legacyPath + apiUsageLegacyImportedSuffix
-	if _, err := os.Stat(backup); err != nil {
-		t.Fatalf("legacy backup missing: %v", err)
+		t.Fatalf("imported file was left behind: %v", err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
 
-	// Restoring the backup must not double count: the import is marked done in
-	// the database, not only by the file being renamed.
-	if err := os.Rename(backup, legacyPath); err != nil {
+	// A file restored from elsewhere must not double count: the import is
+	// marked done in the database, not only by the file being gone.
+	if err := os.WriteFile(legacyPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	reopened := NewAPIUsageStore(dir)
@@ -133,6 +129,9 @@ func TestAPIUsageImportsLegacyJSONOnceAndKeepsBackup(t *testing.T) {
 	}
 	if len(state.Records) != 1 || state.Records[0].Requests != 4 || state.Records[0].TotalTokens != 16 {
 		t.Fatalf("records after reopen = %#v, want the import to run only once", state.Records)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("restored file was left behind: %v", err)
 	}
 }
 
