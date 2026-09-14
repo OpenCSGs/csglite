@@ -23,10 +23,12 @@ const minModelNumParallel = 1
 // modelNumCtxSetting returns the per-model context window saved for modelID,
 // or 0 when the model has no setting of its own.
 func (s *Server) modelNumCtxSetting(modelID string) int {
-	if s.cfg == nil || len(s.cfg.Inference.ModelNumCtx) == 0 {
+	if s.cfg == nil {
 		return 0
 	}
 	storageID := s.resolveLocalModelStorageID(modelID)
+	s.modelSettingsMu.RLock()
+	defer s.modelSettingsMu.RUnlock()
 	if numCtx, ok := s.cfg.Inference.ModelNumCtx[storageID]; ok && numCtx >= minModelNumCtx {
 		return numCtx
 	}
@@ -36,10 +38,12 @@ func (s *Server) modelNumCtxSetting(modelID string) int {
 // modelNumParallelSetting returns the per-model slot count saved for modelID,
 // or 0 when the model has no setting of its own.
 func (s *Server) modelNumParallelSetting(modelID string) int {
-	if s.cfg == nil || len(s.cfg.Inference.ModelNumParallel) == 0 {
+	if s.cfg == nil {
 		return 0
 	}
 	storageID := s.resolveLocalModelStorageID(modelID)
+	s.modelSettingsMu.RLock()
+	defer s.modelSettingsMu.RUnlock()
 	if numParallel, ok := s.cfg.Inference.ModelNumParallel[storageID]; ok && numParallel >= minModelNumParallel {
 		return numParallel
 	}
@@ -49,10 +53,12 @@ func (s *Server) modelNumParallelSetting(modelID string) int {
 // modelDTypeSetting returns the per-model GGUF quantization saved for modelID,
 // or "" when the model has no setting of its own.
 func (s *Server) modelDTypeSetting(modelID string) string {
-	if s.cfg == nil || len(s.cfg.Inference.ModelDType) == 0 {
+	if s.cfg == nil {
 		return ""
 	}
 	storageID := s.resolveLocalModelStorageID(modelID)
+	s.modelSettingsMu.RLock()
+	defer s.modelSettingsMu.RUnlock()
 	return strings.TrimSpace(s.cfg.Inference.ModelDType[storageID])
 }
 
@@ -128,6 +134,22 @@ func (s *Server) handleModelConfigUpdateForID(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// Refuse a quantization this model cannot actually serve. A saved dtype
+		// is applied to every later load that names none, so an unservable one
+		// would either start a SafeTensors conversion inside an ordinary chat
+		// request or quietly load the repository default while the cache entry
+		// claims otherwise.
+		if normalizedDType != "" {
+			_, haveGGUF, err := convert.FindGGUFForDType(modelDir, normalizedDType)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if !haveGGUF && !convert.HasConvertibleHFWeights(modelDir) {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("model %q has no %s build and no weights to convert into one", modelID, normalizedDType))
+				return
+			}
+		}
 	}
 
 	// num_parallel is optional so that a client which only knows about the
@@ -142,6 +164,7 @@ func (s *Server) handleModelConfigUpdateForID(w http.ResponseWriter, r *http.Req
 	}
 
 	storageID := s.resolveLocalModelStorageID(modelID)
+	s.modelSettingsMu.Lock()
 	if numCtx == 0 {
 		delete(s.cfg.Inference.ModelNumCtx, storageID)
 	} else {
@@ -170,6 +193,7 @@ func (s *Server) handleModelConfigUpdateForID(w http.ResponseWriter, r *http.Req
 			s.cfg.Inference.ModelDType[storageID] = normalizedDType
 		}
 	}
+	s.modelSettingsMu.Unlock()
 	if err := config.Save(s.cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("save config: %v", err))
 		return

@@ -1344,8 +1344,12 @@ export function Chat() {
     const ac = new AbortController();
     abortRef.current = ac;
 
+    // Only a context length this conversation was explicitly given is sent. The
+    // global default must not travel with the request: it would outrank the
+    // model's own saved setting and reload the engine at the wrong size, the
+    // same way the slot count used to.
     const savedNumCtx = conv.settings?.num_ctx;
-    const numCtx = savedNumCtx ? normalizeNumCtx(savedNumCtx) : defaultNumCtx(currentModel);
+    const numCtx = savedNumCtx ? normalizeNumCtx(savedNumCtx) : undefined;
     chatError.value = "";
     const responseStartedAt = Date.now();
     try {

@@ -269,9 +269,21 @@ func TestModelConfigNumParallelOmittedKeepsSetting(t *testing.T) {
 // The reported bug: a repository holding several quantizations served Q8_0
 // again as soon as anything reloaded the engine, because a chat request names
 // no dtype and the loader then falls back to the repository default.
+// seedGGUFQuant drops a file whose name carries a quantization label into the
+// model directory, so the config endpoint can see that the model can serve it.
+func seedGGUFQuant(t *testing.T, s *Server, quant string) {
+	t.Helper()
+	modelDir := model.ModelDir(s.cfg.ModelDir, "Acme", "ctx-model")
+	path := filepath.Join(modelDir, "ctx-model-"+quant+".gguf")
+	if err := os.WriteFile(path, []byte("GGUF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestModelConfigDTypeSurvivesARequestWithoutOne(t *testing.T) {
 	s := newTestServer(t)
 	modelID := seedModelForConfig(t, s, "40960")
+	seedGGUFQuant(t, s, "Q5_K")
 
 	if _, got := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"dtype":"Q5_K"}`); got.DType != "q5_k" {
 		t.Fatalf("DType = %q, want %q", got.DType, "q5_k")
@@ -287,6 +299,22 @@ func TestModelConfigDTypeSurvivesARequestWithoutOne(t *testing.T) {
 	// An empty dtype clears it and returns the model to the repository default.
 	if _, got := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"dtype":""}`); got.DType != "" {
 		t.Fatalf("DType = %q after clearing, want empty", got.DType)
+	}
+}
+
+// A dtype the model cannot serve must not be saved: it would otherwise be
+// applied to every later load that names none.
+func TestModelConfigRejectsDTypeWithNoBuild(t *testing.T) {
+	s := newTestServer(t)
+	modelID := seedModelForConfig(t, s, "40960")
+	seedGGUFQuant(t, s, "Q8_0")
+
+	rec, _ := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"dtype":"Q5_K"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %q", rec.Code, rec.Body.String())
+	}
+	if s.modelDTypeSetting(modelID) != "" {
+		t.Fatalf("modelDTypeSetting = %q, want it not saved", s.modelDTypeSetting(modelID))
 	}
 }
 

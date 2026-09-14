@@ -195,6 +195,12 @@ type Server struct {
 	authCallbackHTTP *http.Server
 	logBuf           *LogBuffer
 
+	// modelSettingsMu guards the per-model maps inside cfg.Inference. They are
+	// written by the model-config handler and read by every engine load, on
+	// different request goroutines, and a concurrent map read and write is a
+	// non-recoverable runtime fatal rather than a panic.
+	modelSettingsMu sync.RWMutex
+
 	mu           sync.RWMutex
 	engines      map[string]*managedEngine
 	loading      map[string]*engineLoadState
@@ -1167,7 +1173,10 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 
 	s.mu.Lock()
 	me, ok := s.engines[cacheKey]
-	if ok && !runtimeOverrides && loadedDTypeMatchesRequest(me.dtype, normalizedDType) && (!speculativeRequested || me.speculativeKey == speculativeKey) {
+	// A caller that named a dtype still takes the long route: this shortcut
+	// skips the numCtx/numParallel/nGPULayers/cache comparison entirely, and a
+	// load naming only a dtype carries no runtime override to force it open.
+	if ok && !runtimeOverrides && requestedDType == "" && loadedDTypeMatchesRequest(me.dtype, normalizedDType) && (!speculativeRequested || me.speculativeKey == speculativeKey) {
 		me.lastUsed = time.Now()
 		eng := me.engine
 		s.mu.Unlock()
@@ -1211,9 +1220,9 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		speculativeKey,
 	)
 	// Only a dtype the caller named is checked for a pending conversion: the
-	// check parses the header of every GGUF in the model directory, and a
-	// per-model setting was written by a load that already found its file, so
-	// running it for every chat request would be pure cost.
+	// check parses the header of every GGUF in the model directory, and the
+	// config endpoint already refused to save a dtype the model cannot serve,
+	// so running it for every chat request would be pure cost.
 	needsRequestedDTypeConversion := false
 	if requestedDType != "" {
 		if needs, err := convert.NeedsConversionForDType(modelDir, requestedDType); err != nil {
@@ -1227,7 +1236,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		s.mu.Lock()
 
 		if me, ok := s.engines[cacheKey]; ok {
-			if !requestedOverrides && loadedDTypeMatchesRequest(me.dtype, normalizedDType) {
+			if !requestedOverrides && requestedDType == "" && loadedDTypeMatchesRequest(me.dtype, normalizedDType) {
 				me.lastUsed = time.Now()
 				eng := me.engine
 				s.mu.Unlock()

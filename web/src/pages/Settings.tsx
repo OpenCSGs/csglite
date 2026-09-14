@@ -159,7 +159,17 @@ async function saveContextMode(mode: ContextLengthMode) {
 
 function parallelIndexFor(value: number): number {
   const idx = parallelSteps.indexOf(value);
-  return idx >= 0 ? idx : 0;
+  if (idx >= 0) return idx;
+  // A value set through the environment or a hand-edited config need not be one
+  // of the four steps. Show the nearest one rather than snapping the display to
+  // 1 and misreporting what loads actually use.
+  let nearest = 0;
+  for (let i = 1; i < parallelSteps.length; i++) {
+    if (Math.abs(parallelSteps[i] - value) < Math.abs(parallelSteps[nearest] - value)) {
+      nearest = i;
+    }
+  }
+  return nearest;
 }
 
 // The slot count lives in the server config rather than in this browser: the
@@ -171,7 +181,11 @@ async function saveParallelIndex(idx: number) {
   const value = parallelSteps[idx] || parallelSteps[0];
   parallelIndex.value = idx;
   try {
-    applySettings(await saveSettings({ llama_num_parallel: value }));
+    // Only this slider's own value is taken from the response. applySettings
+    // would overwrite every field on the page, discarding directory and
+    // endpoint text the user has typed but not yet saved.
+    const data = await saveSettings({ llama_num_parallel: value });
+    parallelIndex.value = parallelIndexFor(data.llama_num_parallel);
   } catch {
     parallelIndex.value = previous;
   }
@@ -1047,6 +1061,9 @@ export function Settings() {
             step="1"
             value={parallelIndex.value}
             onInput={(e) => {
+              parallelIndex.value = Number((e.target as HTMLInputElement).value);
+            }}
+            onChange={(e) => {
               void saveParallelIndex(Number((e.target as HTMLInputElement).value));
             }}
             class="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-indigo-600"

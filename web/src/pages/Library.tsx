@@ -104,6 +104,9 @@ const runDialogGGUFQuants = signal<string[]>([]);
 const runDialogQuantsLoading = signal(false);
 const runParams = signal<RunModelParams>(loadSavedRunParams());
 const runDialogModelConfig = signal<ModelConfigResponse | null>(null);
+// The dialog's per-model fields are blank until this fetch lands, so Run stays
+// disabled while it is in flight rather than saving the blanks.
+const runDialogConfigLoading = signal(false);
 const uploadDialogOpen = signal(false);
 const uploadModelID = signal("");
 const uploadMode = signal<UploadMode>("files");
@@ -263,6 +266,9 @@ function buildLoadOptionsForModel(model: ModelInfo, params: RunModelParams): Loa
 	if (isEmbeddingModel(model)) {
 		return {
 			num_ctx: optionalInt(params.numCtx, t("lib.runParamNumCtx"), 1024),
+			// The dialog shows the slot count for these too, and llama.cpp serves
+			// them with it: dropping it here would clear the saved value on save.
+			num_parallel: optionalInt(params.numParallel, t("lib.runParamNumParallel"), 1),
 			n_gpu_layers: optionalInt(params.nGpuLayers, t("lib.runParamNGPULayers"), 0),
 			dtype: optionalText(params.dtype),
 			keep_alive: optionalText(params.keepAlive),
@@ -724,6 +730,7 @@ export function Library() {
     runDialogQuantsLoading.value = model.format === "gguf";
     libraryError.value = "";
     runDialogModelConfig.value = null;
+    runDialogConfigLoading.value = numCtxApplies(model);
     runDialogModel.value = model;
     if (numCtxApplies(model)) {
       getModelConfig(model.name).then((info) => {
@@ -736,7 +743,12 @@ export function Library() {
           dtype: info.dtype || runParams.value.dtype,
         };
       }).catch(() => {
-        /* Leave the field empty so the load follows the global setting. */
+        /* Leave the fields empty so the load follows the global settings, and
+           leave runDialogModelConfig null so nothing is written back. */
+      }).finally(() => {
+        if (runDialogModel.value?.name === model.name) {
+          runDialogConfigLoading.value = false;
+        }
       });
     }
     if (model.format === "gguf") {
@@ -768,6 +780,7 @@ export function Library() {
     runDialogGGUFQuants.value = [];
     runDialogQuantsLoading.value = false;
     runDialogModelConfig.value = null;
+    runDialogConfigLoading.value = false;
   };
 
   const updateRunParam = (field: keyof RunModelParams, value: string) => {
@@ -786,7 +799,11 @@ export function Library() {
       return;
     }
     saveRunParams(runParams.value);
-    if (numCtxApplies(model)) {
+    // Only write back settings the dialog actually showed. Its fields start
+    // blank and are filled by an async fetch, so saving before that lands -- or
+    // after it failed -- would persist three empty values over the model's
+    // saved ones and send the next load to the repository default.
+    if (numCtxApplies(model) && runDialogModelConfig.value) {
       // Persist them per model so every later load - from this dialog, the CLI
       // or the API - uses the same context length and slot count without
       // retyping them. 0 clears a setting and returns it to the global default.
@@ -1076,7 +1093,7 @@ export function Library() {
           modelConfig={runDialogModelConfig.value}
           ggufQuants={runDialogGGUFQuants.value}
           quantsLoading={runDialogQuantsLoading.value}
-          disabled={!!loadingRun.value}
+          disabled={!!loadingRun.value || runDialogConfigLoading.value}
           onChange={updateRunParam}
           onCancel={closeRunDialog}
           onSubmit={submitRunDialog}
