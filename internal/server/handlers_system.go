@@ -614,6 +614,9 @@ func getGPUInfo(systemMemoryTotal uint64) gpuInfo {
 	if info, ok := getNVIDIAGPUInfo(systemMemoryTotal); ok {
 		return info
 	}
+	if info, ok := getROCmGPUInfo(systemMemoryTotal); ok {
+		return info
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		return getDarwinGPUInfo(systemMemoryTotal)
@@ -942,4 +945,159 @@ func isNVIDIAUnifiedMemoryGPU(name string) bool {
 	return strings.Contains(name, "gb10") ||
 		strings.Contains(name, "grace blackwell") ||
 		strings.Contains(name, "dgx spark")
+}
+
+func getROCmGPUInfo(systemMemoryTotal uint64) (gpuInfo, bool) {
+	if runtime.GOOS != "linux" {
+		return gpuInfo{}, false
+	}
+	if _, err := os.Stat("/dev/kfd"); err != nil {
+		return gpuInfo{}, false
+	}
+	if info, ok := getROCmSMIGPUInfo(); ok {
+		return info, true
+	}
+	return getKFDGPUInfo(systemMemoryTotal)
+}
+
+func getROCmSMIGPUInfo() (gpuInfo, bool) {
+	binary, err := exec.LookPath("rocm-smi")
+	if err != nil {
+		return gpuInfo{}, false
+	}
+	out, err := exec.Command(binary, "--showproductname", "--showmeminfo", "vram", "--json").Output()
+	if err != nil {
+		return gpuInfo{}, false
+	}
+	return parseROCmSMIOutput(out)
+}
+
+func parseROCmSMIOutput(out []byte) (gpuInfo, bool) {
+	var cards map[string]map[string]string
+	if err := json.Unmarshal(out, &cards); err != nil {
+		return gpuInfo{}, false
+	}
+	var best gpuInfo
+	for _, card := range cards {
+		name := strings.TrimSpace(card["Card model"])
+		totalStr := strings.TrimSpace(card["VRAM Total Memory (B)"])
+		usedStr := strings.TrimSpace(card["VRAM Total Used Memory (B)"])
+		if name == "" || totalStr == "" {
+			continue
+		}
+		total, _ := strconv.ParseUint(totalStr, 10, 64)
+		used, _ := strconv.ParseUint(usedStr, 10, 64)
+		if total > best.VRAMTotal {
+			best = gpuInfo{
+				Name:           name,
+				VRAMTotal:      total,
+				VRAMUsed:       used,
+				UsageAvailable: true,
+			}
+		}
+	}
+	if best.Name == "" {
+		return gpuInfo{}, false
+	}
+	return best, true
+}
+
+// getKFDGPUInfo is the sysfs fallback when rocm-smi is unavailable.
+// It reads VRAM from KFD topology and DRM sysfs.
+func getKFDGPUInfo(systemMemoryTotal uint64) (gpuInfo, bool) {
+	info, ok := readKFDGPUInfo()
+	if !ok {
+		return gpuInfo{}, false
+	}
+	if info.VRAMTotal == 0 {
+		info.SharedMemory = true
+		info.VRAMTotal = systemMemoryTotal / 2
+	}
+	if used, ok := readDRMVRAMUsed(); ok {
+		info.VRAMUsed = used
+		info.UsageAvailable = true
+	}
+	if info.VRAMUsed > info.VRAMTotal {
+		info.VRAMUsed = info.VRAMTotal
+	}
+	return info, true
+}
+
+// readKFDGPUInfo reads the GPU name and total VRAM from KFD topology.
+// Returns the first discrete GPU, or the first APU if no dGPU is found.
+func readKFDGPUInfo() (gpuInfo, bool) {
+	const kfdDir = "/sys/class/kfd/kfd/topology/nodes"
+	entries, err := os.ReadDir(kfdDir)
+	if err != nil {
+		return gpuInfo{}, false
+	}
+	var apuFound bool
+	var apu gpuInfo
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(kfdDir, entry.Name(), "properties"))
+		if err != nil {
+			continue
+		}
+		var simdCount, localMemSize int64
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) != 2 {
+				continue
+			}
+			switch fields[0] {
+			case "simd_count":
+				simdCount, _ = strconv.ParseInt(fields[1], 10, 64)
+			case "local_mem_size":
+				localMemSize, _ = strconv.ParseInt(fields[1], 10, 64)
+			}
+		}
+		if simdCount <= 0 {
+			continue
+		}
+		name := readKFDNodeName(filepath.Join(kfdDir, entry.Name()))
+		gpu := gpuInfo{Name: name, VRAMTotal: uint64(localMemSize)}
+		if localMemSize > 0 {
+			return gpu, true
+		}
+		if !apuFound {
+			apu = gpu
+			apuFound = true
+		}
+	}
+	if apuFound {
+		return apu, true
+	}
+	return gpuInfo{}, false
+}
+
+// readKFDNodeName reads the GPU name from the KFD topology node's "name" file.
+func readKFDNodeName(nodeDir string) string {
+	data, err := os.ReadFile(filepath.Join(nodeDir, "name"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// readDRMVRAMUsed reads VRAM usage from the amdgpu DRM sysfs interface.
+func readDRMVRAMUsed() (uint64, bool) {
+	const drmDir = "/sys/class/drm"
+	entries, err := os.ReadDir(drmDir)
+	if err != nil {
+		return 0, false
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "card") || strings.Contains(entry.Name(), "-") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(drmDir, entry.Name(), "device", "mem_info_vram_used"))
+		if err != nil {
+			continue
+		}
+		used, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+		if err == nil {
+			return used, true
+		}
+	}
+	return 0, false
 }

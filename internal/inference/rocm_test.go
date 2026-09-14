@@ -52,20 +52,20 @@ func TestROCMUnifiedMemoryModeFollowsAPUDetection(t *testing.T) {
 }
 
 func TestParseKFDNodeProperties(t *testing.T) {
-	apu := strings.NewReader("cpu_cores_count 0\nsimd_count 24\nlocal_mem_size 0\nfw_version 1\n")
-	simd, localMem := parseKFDNodeProperties(apu)
-	if simd != 24 || localMem != 0 {
-		t.Fatalf("apu node: simd=%d localMem=%d, want 24, 0", simd, localMem)
+	apu := strings.NewReader("cpu_cores_count 0\nsimd_count 24\nlocal_mem_size 0\ngfx_target_version 115003\nfw_version 1\n")
+	simd, localMem, gfxVer := parseKFDNodeProperties(apu)
+	if simd != 24 || localMem != 0 || gfxVer != 115003 {
+		t.Fatalf("apu node: simd=%d localMem=%d gfx=%d, want 24, 0, 115003", simd, localMem, gfxVer)
 	}
 
-	dgpu := strings.NewReader("simd_count 304\nlocal_mem_size 25753026560\n")
-	simd, localMem = parseKFDNodeProperties(dgpu)
-	if simd != 304 || localMem != 25753026560 {
-		t.Fatalf("dgpu node: simd=%d localMem=%d, want 304, 25753026560", simd, localMem)
+	dgpu := strings.NewReader("simd_count 304\nlocal_mem_size 25753026560\ngfx_target_version 110003\n")
+	simd, localMem, gfxVer = parseKFDNodeProperties(dgpu)
+	if simd != 304 || localMem != 25753026560 || gfxVer != 110003 {
+		t.Fatalf("dgpu node: simd=%d localMem=%d gfx=%d, want 304, 25753026560, 110003", simd, localMem, gfxVer)
 	}
 
 	cpu := strings.NewReader("cpu_cores_count 16\nsimd_count 0\nlocal_mem_size 0\n")
-	simd, _ = parseKFDNodeProperties(cpu)
+	simd, _, _ = parseKFDNodeProperties(cpu)
 	if simd != 0 {
 		t.Fatalf("cpu node: simd=%d, want 0", simd)
 	}
