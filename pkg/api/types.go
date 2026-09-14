@@ -206,6 +206,17 @@ type ModelConfigResponse struct {
 	// EffectiveNumCtx is what a load without a request-level context length
 	// would use right now.
 	EffectiveNumCtx int `json:"effective_num_ctx"`
+	// NumParallel is the per-model llama-server slot count, or 0 when the model
+	// has none and follows the global setting.
+	NumParallel int `json:"num_parallel"`
+	// GlobalNumParallel is what this model would use with no per-model setting.
+	GlobalNumParallel int `json:"global_num_parallel"`
+	// EffectiveNumParallel is what a load without a request-level slot count
+	// would use right now.
+	EffectiveNumParallel int `json:"effective_num_parallel"`
+	// DType is the per-model GGUF quantization, or "" when the model has none
+	// and follows the repository default.
+	DType string `json:"dtype"`
 	// Runtime names the runtime that serves this model: "llama",
 	// "python-embedding", "python-asr", "python-tts" or "diffusers". Clients
 	// use it to decide which load options mean anything -- the llama.cpp
@@ -223,10 +234,14 @@ const (
 	ModelRuntimeDiffusers       = "diffusers"
 )
 
-// ModelConfigUpdateRequest sets the per-model context window. NumCtx is
+// ModelConfigUpdateRequest sets the per-model runtime settings. NumCtx is
 // required; 0 clears the setting and returns the model to the global default.
+// NumParallel is optional -- omitting it leaves the saved slot count alone --
+// and 0 clears it.
 type ModelConfigUpdateRequest struct {
-	NumCtx *int `json:"num_ctx"`
+	NumCtx      *int    `json:"num_ctx"`
+	NumParallel *int    `json:"num_parallel,omitempty"`
+	DType       *string `json:"dtype,omitempty"`
 }
 
 type ModelUploadResponse struct {
@@ -499,6 +514,7 @@ type SettingsResponse struct {
 	WebSearch                WebSearchSettings     `json:"web_search"`
 	Observability            ObservabilitySettings `json:"observability"`
 	LlamaUseModelMaxCtx      bool                  `json:"llama_use_model_max_ctx"`
+	LlamaNumParallel         int                   `json:"llama_num_parallel"`
 	HiddenNavItems           []string              `json:"hidden_nav_items"`
 }
 
@@ -519,6 +535,7 @@ type SettingsUpdateRequest struct {
 	WebSearch                *WebSearchSettings     `json:"web_search,omitempty"`
 	Observability            *ObservabilitySettings `json:"observability,omitempty"`
 	LlamaUseModelMaxCtx      *bool                  `json:"llama_use_model_max_ctx,omitempty"`
+	LlamaNumParallel         *int                   `json:"llama_num_parallel,omitempty"`
 }
 
 type ObservabilitySettings struct {

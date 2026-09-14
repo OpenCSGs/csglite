@@ -25,7 +25,6 @@ const contextModeStorageKey = "csghub.chat.num_ctx_mode";
 type ContextLengthMode = "global" | "model_max";
 const parallelSteps = [1, 2, 4, 8];
 const parallelLabels = ["1", "2", "4", "8"];
-const parallelStorageKey = "csghub.chat.num_parallel";
 const upgradeReloadTimeoutMs = 45_000;
 
 const storageLocation = signal("");
@@ -38,7 +37,7 @@ const autostartEnabled = signal(false);
 const isSavingAutostart = signal(false);
 const contextIndex = signal(1);
 const contextMode = signal<ContextLengthMode>("global");
-const parallelIndex = signal(2);
+const parallelIndex = signal(0);
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudAuthError = signal("");
 const isClearingCloudToken = signal(false);
@@ -158,24 +157,23 @@ async function saveContextMode(mode: ContextLengthMode) {
   }
 }
 
-function loadParallelIndex(): number {
-  try {
-    const raw = localStorage.getItem(parallelStorageKey);
-    const num = Number(raw);
-    const idx = parallelSteps.indexOf(num);
-    if (idx >= 0) return idx;
-  } catch {
-    /* ignore */
-  }
-  return 2; // default index for 4
+function parallelIndexFor(value: number): number {
+  const idx = parallelSteps.indexOf(value);
+  return idx >= 0 ? idx : 0;
 }
 
-function saveParallelIndex(idx: number) {
-  const value = parallelSteps[idx] || parallelSteps[2];
+// The slot count lives in the server config rather than in this browser: the
+// chat page no longer sends one with each request, so a value kept here would
+// never reach a model load. A model with its own slot count in the run dialog
+// ignores this global default.
+async function saveParallelIndex(idx: number) {
+  const previous = parallelIndex.value;
+  const value = parallelSteps[idx] || parallelSteps[0];
+  parallelIndex.value = idx;
   try {
-    localStorage.setItem(parallelStorageKey, String(value));
+    applySettings(await saveSettings({ llama_num_parallel: value }));
   } catch {
-    /* ignore */
+    parallelIndex.value = previous;
   }
 }
 
@@ -186,8 +184,7 @@ async function resetDefaults() {
   contextIndex.value = 1;
   saveContextIndex(1);
   setContextModeLocal("global");
-  parallelIndex.value = 2;
-  saveParallelIndex(2);
+  parallelIndex.value = parallelIndexFor(1);
   setCloudServiceFeedback("", "");
   try {
     const data = await saveSettings({
@@ -195,6 +192,7 @@ async function resetDefaults() {
       ai_gateway_url: "",
       cloud_provider_name: "",
       llama_use_model_max_ctx: false,
+      llama_num_parallel: 1,
     });
     applySettings(data);
     notifyProvidersChanged();
@@ -213,6 +211,7 @@ async function resetDefaults() {
 
 function applySettings(data: AppSettings) {
   setContextModeLocal(data.llama_use_model_max_ctx ? "model_max" : "global");
+  parallelIndex.value = parallelIndexFor(data.llama_num_parallel);
   storageLocation.value = data.storage_dir || "";
   storageDirInput.value = data.storage_dir || "";
   modelDirectory.value = data.model_dir || "";
@@ -860,7 +859,6 @@ export function Settings() {
     void fetchUpgradeInfo();
     contextIndex.value = loadContextIndex();
     contextMode.value = loadContextMode();
-    parallelIndex.value = loadParallelIndex();
   }, []);
 
   return (
@@ -1049,9 +1047,7 @@ export function Settings() {
             step="1"
             value={parallelIndex.value}
             onInput={(e) => {
-              const idx = Number((e.target as HTMLInputElement).value);
-              parallelIndex.value = idx;
-              saveParallelIndex(idx);
+              void saveParallelIndex(Number((e.target as HTMLInputElement).value));
             }}
             class="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-indigo-600"
           />

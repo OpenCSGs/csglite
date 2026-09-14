@@ -335,8 +335,23 @@ func UseModelMaxCtxByDefault(configured bool) bool {
 // ResolveNumParallel returns the effective number of parallel slots for llama-server.
 // Explicit requests win, then CSGHUB_LITE_LLAMA_NUM_PARALLEL, then defaultLlamaParallel.
 func ResolveNumParallel(requested int) int {
+	return ResolveNumParallelWithModelSetting(requested, 0, 0)
+}
+
+// ResolveNumParallelWithModelSetting resolves the slot count with a per-model
+// setting slotted between the request and the global setting. The order is
+// request > per-model setting > global setting > environment > default, so the
+// slot count typed into a model's run dialog beats the global one chosen in
+// settings. A model without a setting resolves exactly as it did before.
+func ResolveNumParallelWithModelSetting(requested, modelSetting, globalSetting int) int {
 	if requested >= 1 {
 		return requested
+	}
+	if modelSetting >= 1 {
+		return modelSetting
+	}
+	if globalSetting >= 1 {
+		return globalSetting
 	}
 	if v := strings.TrimSpace(os.Getenv("CSGHUB_LITE_LLAMA_NUM_PARALLEL")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 1 {

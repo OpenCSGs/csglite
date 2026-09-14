@@ -1140,9 +1140,18 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	if err != nil {
 		return nil, err
 	}
-	normalizedDType, err := convert.NormalizeRuntimeDType(dtype)
+	requestedDType, err := convert.NormalizeRuntimeDType(dtype)
 	if err != nil {
 		return nil, err
+	}
+	// A caller that names no quantization gets the one saved for this model
+	// rather than the repository default. Without this a reload triggered by
+	// anything else -- a changed runtime option, an idle eviction -- silently
+	// swaps a repository's Q5 build back to the Q8 build that FindModelFile
+	// picks, which is neither what the user chose nor what it costs in memory.
+	normalizedDType := requestedDType
+	if normalizedDType == "" {
+		normalizedDType = s.modelDTypeSetting(modelID)
 	}
 	speculative, err = inference.NormalizeSpeculativeConfig(speculative)
 	if err != nil {
@@ -1158,7 +1167,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 
 	s.mu.Lock()
 	me, ok := s.engines[cacheKey]
-	if ok && !runtimeOverrides && normalizedDType == "" && (!speculativeRequested || me.speculativeKey == speculativeKey) {
+	if ok && !runtimeOverrides && loadedDTypeMatchesRequest(me.dtype, normalizedDType) && (!speculativeRequested || me.speculativeKey == speculativeKey) {
 		me.lastUsed = time.Now()
 		eng := me.engine
 		s.mu.Unlock()
@@ -1189,7 +1198,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 			effectiveNumCtx = capped
 		}
 	}
-	effectiveNumParallel := inference.ResolveNumParallel(numParallel)
+	effectiveNumParallel := inference.ResolveNumParallelWithModelSetting(numParallel, s.modelNumParallelSetting(modelID), s.cfg.Inference.LlamaNumParallel)
 	effectiveNGPULayers := inference.ResolveNGPULayers(normalizedNGPULayers)
 	loadConfigKey := fmt.Sprintf(
 		"%d|%d|%d|%s|%s|%s|%s",
@@ -1201,9 +1210,13 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		normalizedDType,
 		speculativeKey,
 	)
+	// Only a dtype the caller named is checked for a pending conversion: the
+	// check parses the header of every GGUF in the model directory, and a
+	// per-model setting was written by a load that already found its file, so
+	// running it for every chat request would be pure cost.
 	needsRequestedDTypeConversion := false
-	if normalizedDType != "" {
-		if needs, err := convert.NeedsConversionForDType(modelDir, normalizedDType); err != nil {
+	if requestedDType != "" {
+		if needs, err := convert.NeedsConversionForDType(modelDir, requestedDType); err != nil {
 			return nil, err
 		} else {
 			needsRequestedDTypeConversion = needs
@@ -1214,7 +1227,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		s.mu.Lock()
 
 		if me, ok := s.engines[cacheKey]; ok {
-			if !requestedOverrides && normalizedDType == "" {
+			if !requestedOverrides && loadedDTypeMatchesRequest(me.dtype, normalizedDType) {
 				me.lastUsed = time.Now()
 				eng := me.engine
 				s.mu.Unlock()

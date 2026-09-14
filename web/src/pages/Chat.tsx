@@ -105,8 +105,6 @@ const contextStorageKey = "csghub.chat.num_ctx";
 const contextModeStorageKey = "csghub.chat.num_ctx_mode";
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
-const parallelStorageKey = "csghub.chat.num_parallel";
-const parallelSteps = [1, 2, 4, 8];
 const selectedModelStorageKey = "csghub.chat.selected_model";
 const modelContextBoundaryStorageKey = "csghub.chat.model_context_boundary";
 const webSearchStorageKey = "csghub.chat.web_search.enabled";
@@ -733,21 +731,6 @@ function normalizeNumCtx(v: number | undefined): number {
   return defaultNumCtx();
 }
 
-function readNumParallel(): number | undefined {
-  try {
-    const raw = localStorage.getItem(parallelStorageKey);
-    const n = Number(raw);
-    if (parallelSteps.includes(n)) return n;
-  } catch {
-    /* ignore */
-  }
-  return undefined;
-}
-
-function defaultNumParallel(): number {
-  return readNumParallel() || 4;
-}
-
 function relativeTime(dateStr: string): string {
   const now = Date.now();
   const then = new Date(dateStr).getTime();
@@ -834,7 +817,6 @@ async function migrateLocalStorage() {
         messages: session.messages,
         settings: {
           num_ctx: session.numCtx || defaultNumCtx(),
-          num_parallel: session.numParallel || defaultNumParallel(),
         },
       });
     }
@@ -1364,8 +1346,6 @@ export function Chat() {
 
     const savedNumCtx = conv.settings?.num_ctx;
     const numCtx = savedNumCtx ? normalizeNumCtx(savedNumCtx) : defaultNumCtx(currentModel);
-    const numParallel = conv.settings?.num_parallel || defaultNumParallel();
-
     chatError.value = "";
     const responseStartedAt = Date.now();
     try {
@@ -1517,7 +1497,6 @@ export function Chat() {
           top_p: topP.value,
           max_tokens: maxTokens.value,
           num_ctx: numCtx,
-          num_parallel: numParallel,
           system: systemPrompt.value || undefined,
           source: currentModel.source,
           thread_id: conv.id,
