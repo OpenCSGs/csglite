@@ -88,6 +88,14 @@ export interface ModelConfigResponse {
   global_num_ctx: number;
   // What a load without a request-level context length would use right now.
   effective_num_ctx: number;
+  // Per-model llama-server slot count; 0 means the model follows the global setting.
+  num_parallel: number;
+  // What this model would use with no per-model slot count.
+  global_num_parallel: number;
+  // What a load without a request-level slot count would use right now.
+  effective_num_parallel: number;
+  // Per-model GGUF quantization; "" means the model follows the repository default.
+  dtype: string;
   // Which runtime serves this model. The llama.cpp load options mean nothing
   // for a model served by a Python runtime, and the pipeline tag cannot say
   // which one it is: an embedding model runs on llama.cpp when its weights
@@ -313,6 +321,7 @@ export interface AppSettings {
   local_api_url?: string;
   autostart: boolean;
   llama_use_model_max_ctx: boolean;
+  llama_num_parallel: number;
   web_search: WebSearchSettings;
   observability: ObservabilitySettings;
   hidden_nav_items: string[];
@@ -1117,12 +1126,19 @@ export async function getModelConfig(model: string): Promise<ModelConfigResponse
   return fetchJSON<ModelConfigResponse>(modelConfigPath(model));
 }
 
-// numCtx of 0 clears the per-model setting and returns the model to the global default.
-export async function setModelConfig(model: string, numCtx: number): Promise<ModelConfigResponse> {
+// A value of 0 clears that per-model setting and returns the model to the
+// global default. numParallel and dtype are optional: omitting one leaves the
+// saved value untouched, and an empty dtype clears it.
+export async function setModelConfig(
+  model: string,
+  numCtx: number,
+  numParallel?: number,
+  dtype?: string
+): Promise<ModelConfigResponse> {
   return fetchJSON<ModelConfigResponse>(modelConfigPath(model), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ num_ctx: numCtx }),
+    body: JSON.stringify({ num_ctx: numCtx, num_parallel: numParallel, dtype }),
   });
 }
 
@@ -1604,6 +1620,7 @@ export async function saveSettings(patch: {
   marketplace_dataset_source?: ArtifactSource;
   autostart?: boolean;
   llama_use_model_max_ctx?: boolean;
+  llama_num_parallel?: number;
   web_search?: WebSearchSettings;
   observability?: ObservabilitySettings;
 }): Promise<AppSettings> {
@@ -1916,7 +1933,6 @@ export interface ConversationMeta {
 
 export interface ConversationSettings {
   num_ctx?: number;
-  num_parallel?: number;
 }
 
 export interface Conversation {
@@ -1974,7 +1990,7 @@ export async function deleteConversation(id: string): Promise<void> {
 export function streamChat(
   model: string,
   messages: ChatMessage[],
-  options: { temperature?: number; top_p?: number; max_tokens?: number; num_ctx?: number; num_parallel?: number; system?: string; source?: string; thread_id?: string; trace_id?: string; web_search?: { enabled: boolean; query?: string } },
+  options: { temperature?: number; top_p?: number; max_tokens?: number; num_ctx?: number; system?: string; source?: string; thread_id?: string; trace_id?: string; web_search?: { enabled: boolean; query?: string } },
   onToken: (token: string, done: boolean) => void,
   signal?: AbortSignal,
   onSearching?: (query: string) => void,
@@ -2011,7 +2027,6 @@ export function streamChat(
           top_p: options.top_p,
           max_tokens: options.max_tokens,
           num_ctx: options.num_ctx,
-          num_parallel: options.num_parallel,
         },
       }),
       signal,

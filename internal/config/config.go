@@ -142,6 +142,24 @@ type InferenceConfig struct {
 	// length sent with the request. It lives in the app config rather than in
 	// the model directory so that re-downloading a model keeps the setting.
 	ModelNumCtx map[string]int `json:"model_num_ctx,omitempty"`
+
+	// LlamaNumParallel is the global default slot count for llama-server. It
+	// lives here rather than in the browser because the chat UI no longer sends
+	// a slot count with each request: only a model's own setting and this
+	// global default decide how many slots a load gets.
+	LlamaNumParallel int `json:"llama_num_parallel,omitempty"`
+
+	// ModelNumParallel holds per-model slot counts keyed by model ID. A model
+	// listed here overrides LlamaNumParallel, mirroring how ModelNumCtx
+	// overrides the global context window.
+	ModelNumParallel map[string]int `json:"model_num_parallel,omitempty"`
+
+	// ModelDType holds per-model GGUF quantizations keyed by model ID. A
+	// request that names no dtype falls back to this one, so a repository
+	// holding several quantizations keeps serving the one the user picked
+	// instead of silently reverting to the repository default on the next
+	// reload or after an idle eviction.
+	ModelDType map[string]string `json:"model_dtype,omitempty"`
 }
 
 // DefaultRealtimeMaxSessions bounds how many realtime voice sessions may run at

@@ -160,6 +160,15 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Inference.LlamaUseModelMaxCtx = *req.LlamaUseModelMaxCtx
 		configUpdated = true
 	}
+	if req.LlamaNumParallel != nil {
+		numParallel := *req.LlamaNumParallel
+		if numParallel < 0 {
+			writeError(w, http.StatusBadRequest, "llama_num_parallel must be 0 to follow the built-in default, or at least 1")
+			return
+		}
+		s.cfg.Inference.LlamaNumParallel = numParallel
+		configUpdated = true
+	}
 	if req.ServerURL != nil {
 		serverURL := strings.TrimSpace(*req.ServerURL)
 		if serverURL == "" {
@@ -336,6 +345,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 			RetentionDays: config.ObservabilityRetentionDays(cfg.Observability),
 		},
 		LlamaUseModelMaxCtx: inference.UseModelMaxCtxByDefault(cfg.Inference.LlamaUseModelMaxCtx),
+		LlamaNumParallel:    inference.ResolveNumParallel(cfg.Inference.LlamaNumParallel),
 		HiddenNavItems:      append([]string{}, cfg.HiddenNavItems...),
 	}
 }

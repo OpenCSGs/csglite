@@ -225,3 +225,105 @@ func TestModelConfigReportsTheServingRuntime(t *testing.T) {
 		})
 	}
 }
+
+func TestModelConfigNumParallelBeatsGlobalSetting(t *testing.T) {
+	s := newTestServer(t)
+	modelID := seedModelForConfig(t, s, "40960")
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_PARALLEL", "")
+	s.cfg.Inference.LlamaNumParallel = 8
+
+	rec, got := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"num_parallel":1}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if got.NumParallel != 1 || got.EffectiveNumParallel != 1 {
+		t.Fatalf("NumParallel = %d, EffectiveNumParallel = %d, want 1 for both", got.NumParallel, got.EffectiveNumParallel)
+	}
+	if got.GlobalNumParallel != 8 {
+		t.Fatalf("GlobalNumParallel = %d, want 8", got.GlobalNumParallel)
+	}
+	if s.modelNumParallelSetting(modelID) != 1 {
+		t.Fatalf("modelNumParallelSetting = %d, want 1", s.modelNumParallelSetting(modelID))
+	}
+}
+
+// A model with its own slot count keeps it even though the chat page used to
+// send the global one with every request, which is what silently reloaded the
+// engine at eight times the KV cache.
+func TestModelConfigNumParallelOmittedKeepsSetting(t *testing.T) {
+	s := newTestServer(t)
+	modelID := seedModelForConfig(t, s, "40960")
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_PARALLEL", "")
+
+	if _, got := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"num_parallel":2}`); got.NumParallel != 2 {
+		t.Fatalf("NumParallel = %d, want 2", got.NumParallel)
+	}
+	if _, got := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0}`); got.NumParallel != 2 {
+		t.Fatalf("NumParallel = %d after an update without num_parallel, want the stored 2", got.NumParallel)
+	}
+	if _, got := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"num_parallel":0}`); got.NumParallel != 0 {
+		t.Fatalf("NumParallel = %d after clearing, want 0", got.NumParallel)
+	}
+}
+
+// The reported bug: a repository holding several quantizations served Q8_0
+// again as soon as anything reloaded the engine, because a chat request names
+// no dtype and the loader then falls back to the repository default.
+// seedGGUFQuant drops a file whose name carries a quantization label into the
+// model directory, so the config endpoint can see that the model can serve it.
+func seedGGUFQuant(t *testing.T, s *Server, quant string) {
+	t.Helper()
+	modelDir := model.ModelDir(s.cfg.ModelDir, "Acme", "ctx-model")
+	path := filepath.Join(modelDir, "ctx-model-"+quant+".gguf")
+	if err := os.WriteFile(path, []byte("GGUF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestModelConfigDTypeSurvivesARequestWithoutOne(t *testing.T) {
+	s := newTestServer(t)
+	modelID := seedModelForConfig(t, s, "40960")
+	seedGGUFQuant(t, s, "Q5_K")
+
+	if _, got := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"dtype":"Q5_K"}`); got.DType != "q5_k" {
+		t.Fatalf("DType = %q, want %q", got.DType, "q5_k")
+	}
+	if s.modelDTypeSetting(modelID) != "q5_k" {
+		t.Fatalf("modelDTypeSetting = %q, want %q", s.modelDTypeSetting(modelID), "q5_k")
+	}
+
+	// An update that carries no dtype must not drop it.
+	if _, got := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0}`); got.DType != "q5_k" {
+		t.Fatalf("DType = %q after an update without dtype, want it kept", got.DType)
+	}
+	// An empty dtype clears it and returns the model to the repository default.
+	if _, got := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"dtype":""}`); got.DType != "" {
+		t.Fatalf("DType = %q after clearing, want empty", got.DType)
+	}
+}
+
+// A dtype the model cannot serve must not be saved: it would otherwise be
+// applied to every later load that names none.
+func TestModelConfigRejectsDTypeWithNoBuild(t *testing.T) {
+	s := newTestServer(t)
+	modelID := seedModelForConfig(t, s, "40960")
+	seedGGUFQuant(t, s, "Q8_0")
+
+	rec, _ := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"dtype":"Q5_K"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %q", rec.Code, rec.Body.String())
+	}
+	if s.modelDTypeSetting(modelID) != "" {
+		t.Fatalf("modelDTypeSetting = %q, want it not saved", s.modelDTypeSetting(modelID))
+	}
+}
+
+func TestModelConfigRejectsUnknownDType(t *testing.T) {
+	s := newTestServer(t)
+	modelID := seedModelForConfig(t, s, "40960")
+
+	rec, _ := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"dtype":"not-a-quant"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %q", rec.Code, rec.Body.String())
+	}
+}

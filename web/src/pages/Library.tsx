@@ -104,6 +104,9 @@ const runDialogGGUFQuants = signal<string[]>([]);
 const runDialogQuantsLoading = signal(false);
 const runParams = signal<RunModelParams>(loadSavedRunParams());
 const runDialogModelConfig = signal<ModelConfigResponse | null>(null);
+// The dialog's per-model fields are blank until this fetch lands, so Run stays
+// disabled while it is in flight rather than saving the blanks.
+const runDialogConfigLoading = signal(false);
 const uploadDialogOpen = signal(false);
 const uploadModelID = signal("");
 const uploadMode = signal<UploadMode>("files");
@@ -160,9 +163,10 @@ function loadSavedRunParams(): RunModelParams {
 
 function saveRunParams(params: RunModelParams) {
   try {
-    // numCtx is persisted per model through /api/models/{model}/config, so it
-    // must not also be remembered browser-wide for every other model.
-    const { numCtx: _perModel, ...shared } = params;
+    // numCtx, numParallel and dtype are persisted per model through
+    // /api/models/{model}/config, so they must not also be remembered
+    // browser-wide for every other model.
+    const { numCtx: _perModelCtx, numParallel: _perModelParallel, dtype: _perModelDType, ...shared } = params;
     localStorage.setItem(RUN_PARAMS_STORAGE_KEY, JSON.stringify(shared));
   } catch {
     /* ignore localStorage failures */
@@ -262,6 +266,9 @@ function buildLoadOptionsForModel(model: ModelInfo, params: RunModelParams): Loa
 	if (isEmbeddingModel(model)) {
 		return {
 			num_ctx: optionalInt(params.numCtx, t("lib.runParamNumCtx"), 1024),
+			// The dialog shows the slot count for these too, and llama.cpp serves
+			// them with it: dropping it here would clear the saved value on save.
+			num_parallel: optionalInt(params.numParallel, t("lib.runParamNumParallel"), 1),
 			n_gpu_layers: optionalInt(params.nGpuLayers, t("lib.runParamNGPULayers"), 0),
 			dtype: optionalText(params.dtype),
 			keep_alive: optionalText(params.keepAlive),
@@ -715,21 +722,33 @@ export function Library() {
   };
 
   const openRunDialog = (model: ModelInfo) => {
-    // numCtx comes from this model's saved setting, not from the shared params.
-    runParams.value = { ...loadSavedRunParams(), numCtx: "" };
+    // numCtx, numParallel and dtype come from this model's saved settings, not
+    // from the shared params.
+    runParams.value = { ...loadSavedRunParams(), numCtx: "", numParallel: "", dtype: "" };
     runDialogError.value = "";
     runDialogGGUFQuants.value = [];
     runDialogQuantsLoading.value = model.format === "gguf";
     libraryError.value = "";
     runDialogModelConfig.value = null;
+    runDialogConfigLoading.value = numCtxApplies(model);
     runDialogModel.value = model;
     if (numCtxApplies(model)) {
       getModelConfig(model.name).then((info) => {
         if (runDialogModel.value?.name !== model.name) return;
         runDialogModelConfig.value = info;
-        runParams.value = { ...runParams.value, numCtx: info.num_ctx > 0 ? String(info.num_ctx) : "" };
+        runParams.value = {
+          ...runParams.value,
+          numCtx: info.num_ctx > 0 ? String(info.num_ctx) : "",
+          numParallel: info.num_parallel > 0 ? String(info.num_parallel) : "",
+          dtype: info.dtype || runParams.value.dtype,
+        };
       }).catch(() => {
-        /* Leave the field empty so the load follows the global setting. */
+        /* Leave the fields empty so the load follows the global settings, and
+           leave runDialogModelConfig null so nothing is written back. */
+      }).finally(() => {
+        if (runDialogModel.value?.name === model.name) {
+          runDialogConfigLoading.value = false;
+        }
       });
     }
     if (model.format === "gguf") {
@@ -761,6 +780,7 @@ export function Library() {
     runDialogGGUFQuants.value = [];
     runDialogQuantsLoading.value = false;
     runDialogModelConfig.value = null;
+    runDialogConfigLoading.value = false;
   };
 
   const updateRunParam = (field: keyof RunModelParams, value: string) => {
@@ -779,11 +799,16 @@ export function Library() {
       return;
     }
     saveRunParams(runParams.value);
-    if (numCtxApplies(model)) {
-      // Persist it per model so every later load - from this dialog, the CLI or
-      // the API - uses the same context length without retyping it. 0 clears it.
+    // Only write back settings the dialog actually showed. Its fields start
+    // blank and are filled by an async fetch, so saving before that lands -- or
+    // after it failed -- would persist three empty values over the model's
+    // saved ones and send the next load to the repository default.
+    if (numCtxApplies(model) && runDialogModelConfig.value) {
+      // Persist them per model so every later load - from this dialog, the CLI
+      // or the API - uses the same context length and slot count without
+      // retyping them. 0 clears a setting and returns it to the global default.
       try {
-        await setModelConfig(model.name, options.num_ctx ?? 0);
+        await setModelConfig(model.name, options.num_ctx ?? 0, options.num_parallel ?? 0, options.dtype ?? "");
       } catch (e: any) {
         runDialogError.value = e?.message || String(e);
         return;
@@ -1068,7 +1093,7 @@ export function Library() {
           modelConfig={runDialogModelConfig.value}
           ggufQuants={runDialogGGUFQuants.value}
           quantsLoading={runDialogQuantsLoading.value}
-          disabled={!!loadingRun.value}
+          disabled={!!loadingRun.value || runDialogConfigLoading.value}
           onChange={updateRunParam}
           onCancel={closeRunDialog}
           onSubmit={submitRunDialog}
@@ -1368,14 +1393,21 @@ function RunParamsDialog({
                   <p class="text-xs text-amber-700 mt-1">{t("lib.runParamNumCtxAboveModelMax", modelMaxNumCtx)}</p>
                 )}
               </div>
-              <RunNumberField
-                label={t("lib.runParamNumParallel")}
-                value={params.numParallel}
-                min={1}
-                placeholder="1"
-                hint={embeddingModel ? t("lib.runParamNumParallelEmbeddingHint") : t("lib.runParamNumParallelHint")}
-                onInput={(value) => onChange("numParallel", value)}
-              />
+              <div>
+                <RunNumberField
+                  label={t("lib.runParamNumParallel")}
+                  value={params.numParallel}
+                  min={1}
+                  placeholder={String(modelConfig?.global_num_parallel || 1)}
+                  hint={embeddingModel ? t("lib.runParamNumParallelEmbeddingHint") : t("lib.runParamNumParallelHint")}
+                  onInput={(value) => onChange("numParallel", value)}
+                />
+                {modelConfig && (
+                  <p class="text-xs text-gray-400 mt-1">
+                    {t("lib.runParamNumParallelGlobal", modelConfig.global_num_parallel)}
+                  </p>
+                )}
+              </div>
               <RunNumberField
                 label={t("lib.runParamNGPULayers")}
                 value={params.nGpuLayers}

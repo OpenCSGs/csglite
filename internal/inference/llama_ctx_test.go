@@ -323,3 +323,31 @@ func TestCapNumCtxToEmbeddingModelMax(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveNumParallelWithModelSettingPrefersRequest(t *testing.T) {
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_PARALLEL", "")
+	if got := ResolveNumParallelWithModelSetting(2, 4, 8); got != 2 {
+		t.Fatalf("ResolveNumParallelWithModelSetting returned %d, want 2", got)
+	}
+}
+
+func TestResolveNumParallelWithModelSettingBeatsGlobal(t *testing.T) {
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_PARALLEL", "")
+	if got := ResolveNumParallelWithModelSetting(0, 1, 8); got != 1 {
+		t.Fatalf("ResolveNumParallelWithModelSetting returned %d, want the model's own 1", got)
+	}
+}
+
+func TestResolveNumParallelWithModelSettingFallsBackToGlobal(t *testing.T) {
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_PARALLEL", "")
+	if got := ResolveNumParallelWithModelSetting(0, 0, 8); got != 8 {
+		t.Fatalf("ResolveNumParallelWithModelSetting returned %d, want the global 8", got)
+	}
+}
+
+func TestResolveNumParallelWithModelSettingFallsBackToDefault(t *testing.T) {
+	t.Setenv("CSGHUB_LITE_LLAMA_NUM_PARALLEL", "")
+	if got := ResolveNumParallelWithModelSetting(0, 0, 0); got != defaultLlamaParallel {
+		t.Fatalf("ResolveNumParallelWithModelSetting returned %d, want %d", got, defaultLlamaParallel)
+	}
+}
