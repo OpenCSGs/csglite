@@ -47,6 +47,10 @@ var errInvalidSDPOffer = errors.New("invalid SDP offer")
 type webrtcSender struct {
 	mu    sync.Mutex
 	track *webrtc.TrackLocalStaticSample
+	// codec encodes the reply for the track. It is chosen once per call from
+	// what the caller offered, and its encoder is stateful, so every frame goes
+	// through it under mu and in order.
+	codec *outboundCodec
 	// events is nil until the client opens the channel; events produced before
 	// that are queued so session.created is not lost.
 	events  *webrtc.DataChannel
@@ -109,15 +113,12 @@ func (w *webrtcSender) Send(ev realtime.ServerEvent) error {
 	return w.sendOn(dc, ev)
 }
 
-// pcmuFrameBytes is one 20ms outbound frame expressed as PCM16 at 8kHz: 160
-// samples, two bytes each.
-const pcmuFrameBytes = realtime.PCMUSampleRate / (1000 / outboundFrameMS) * 2
-
-// nextFrames resamples a synthesis chunk to 8kHz and cuts it into whole 20ms
-// mu-law frames, holding back the tail that did not fill one. Synthesis chunk
-// boundaries have nothing to do with frame boundaries, so without the carry
-// every chunk would lose up to 20ms of audio. It also returns the generation
-// the frames belong to, so a clear that arrives mid-write can drop them.
+// nextFrames resamples a synthesis chunk to the codec's rate and cuts it into
+// whole 20ms packets, holding back the tail that did not fill one. Synthesis
+// chunk boundaries have nothing to do with frame boundaries, so without the
+// carry every chunk would lose up to 20ms of audio. It also returns the
+// generation the frames belong to, so a clear that arrives mid-write can drop
+// them.
 func (w *webrtcSender) nextFrames(pcm []byte, sampleRate int) ([][]byte, uint64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -128,13 +129,22 @@ func (w *webrtcSender) nextFrames(pcm []byte, sampleRate int) ([][]byte, uint64)
 	if rate <= 0 {
 		rate = realtime.DefaultOutputSampleRate
 	}
-	buffered := append(w.residual, realtime.ResamplePCM16(pcm, rate, realtime.PCMUSampleRate)...)
-	whole := len(buffered) / pcmuFrameBytes * pcmuFrameBytes
-	frames := make([][]byte, 0, whole/pcmuFrameBytes)
-	for offset := 0; offset < whole; offset += pcmuFrameBytes {
-		frames = append(frames, realtime.PCM16ToMuLaw(buffered[offset:offset+pcmuFrameBytes]))
+	frameBytes := w.codec.frameBytes
+	buffered := append(w.residual, realtime.ResamplePCM16(pcm, rate, w.codec.sampleRate)...)
+	whole := len(buffered) / frameBytes * frameBytes
+	frames := make([][]byte, 0, whole/frameBytes)
+	for offset := 0; offset < whole; offset += frameBytes {
+		packet, err := w.codec.encode(buffered[offset : offset+frameBytes])
+		if err != nil {
+			// A frame that will not encode is dropped rather than failing the
+			// response: the next one is independent of it, and 20ms of silence
+			// is a better answer than an aborted reply.
+			log.Printf("REALTIME: encoding outbound audio: %v", err)
+			continue
+		}
+		frames = append(frames, packet)
 	}
-	// The residual is kept at 8kHz so it is never resampled twice.
+	// The residual is kept at the codec's rate so it is never resampled twice.
 	w.residual = append([]byte(nil), buffered[whole:]...)
 	return frames, w.generation
 }
@@ -170,8 +180,8 @@ func (w *webrtcSender) waitForFrameSlot(generation uint64) bool {
 }
 
 // SendAudio packetises synthesised PCM onto the media track. Audio arrives in
-// synthesis-sized chunks at the model's rate and has to leave as 20ms mu-law
-// frames at 8kHz, paced at real time.
+// synthesis-sized chunks at the model's rate and has to leave as 20ms packets
+// at the negotiated codec's rate, paced at real time.
 func (w *webrtcSender) SendAudio(audio realtime.AudioFrame) error {
 	frames, generation := w.nextFrames(audio.PCM, audio.SampleRate)
 	for _, frame := range frames {
@@ -387,23 +397,21 @@ func (s *Server) admitRealtimeSession() error {
 
 // startRealtimeCall negotiates the peer connection and wires it to a session.
 func (s *Server) startRealtimeCall(ctx context.Context, offerSDP string, cfg realtime.SessionConfig) (string, string, error) {
-	// Only the codecs this build can actually handle are registered: Opus for
-	// the inbound track, which pion decodes, and PCMU for the outbound one,
-	// which is encoded in pure Go. Advertising Opus for output would negotiate a
-	// codec nothing here can produce.
+	// Both directions speak Opus where the caller offers it: pion decodes the
+	// inbound track and now encodes the outbound one, both in pure Go, so the
+	// synthesised 24kHz audio no longer has to be thrown away down to G.711's
+	// telephone bandwidth. PCMU stays registered as the fallback for a caller
+	// that offers nothing else.
 	mediaEngine := &webrtc.MediaEngine{}
 	if err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2,
-			SDPFmtpLine: "minptime=10;useinbandfec=1",
-		},
-		PayloadType: 111,
+		RTPCodecCapability: opusCapability,
+		PayloadType:        opusPayloadType,
 	}, webrtc.RTPCodecTypeAudio); err != nil {
 		return "", "", err
 	}
 	if err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypePCMU, ClockRate: 8000, Channels: 1},
-		PayloadType:        0,
+		RTPCodecCapability: pcmuCapability,
+		PayloadType:        pcmuPayloadType,
 	}, webrtc.RTPCodecTypeAudio); err != nil {
 		return "", "", err
 	}
@@ -440,10 +448,10 @@ func (s *Server) startRealtimeCall(ctx context.Context, offerSDP string, cfg rea
 		return "", "", err
 	}
 
-	track, err := webrtc.NewTrackLocalStaticSample(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypePCMU, ClockRate: 8000, Channels: 1},
-		"audio", "csglite-tts",
-	)
+	// The track has to carry one codec and is created before the answer, so the
+	// choice is read from the offer rather than from the negotiated result.
+	outbound := newOutboundCodec(offerSDP)
+	track, err := webrtc.NewTrackLocalStaticSample(outbound.capability, "audio", "csglite-tts")
 	if err != nil {
 		_ = peer.Close()
 		return "", "", err
@@ -453,7 +461,7 @@ func (s *Server) startRealtimeCall(ctx context.Context, offerSDP string, cfg rea
 		return "", "", err
 	}
 
-	sender := &webrtcSender{track: track, sourceRate: realtime.DefaultOutputSampleRate}
+	sender := &webrtcSender{track: track, codec: outbound, sourceRate: realtime.DefaultOutputSampleRate}
 	sessionCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 
 	synth := s.newRealtimeSynthesizer()
@@ -470,7 +478,8 @@ func (s *Server) startRealtimeCall(ctx context.Context, offerSDP string, cfg rea
 	call := &realtimeCall{id: session.ID, peer: peer, session: session, cancel: cancel, started: time.Now()}
 	s.registerRealtimeCall(call)
 	session.SetResponder(sessionCtx, s.newRealtimeResponder())
-	log.Printf("REALTIME: call %s pipeline=%s model=%q", session.ID, session.Pipeline(), cfg.Model)
+	log.Printf("REALTIME: call %s pipeline=%s model=%q output=%s/%d",
+		session.ID, session.Pipeline(), cfg.Model, outbound.capability.MimeType, outbound.sampleRate)
 	if startTranscription != nil {
 		startTranscription(session)
 	}
