@@ -20,6 +20,7 @@ import {
   formatModelOptionLabel as modelLabel,
   loadModelOptions,
   modelOptionKey as modelKey,
+  realtimeChatOptions as buildRealtimeChatOptions,
   realtimeVoiceOptions as buildRealtimeVoiceOptions,
 } from "../utils/modelOptions";
 
@@ -141,6 +142,14 @@ function isTTSModel(model?: Pick<ModelInfo, "pipeline_tag" | "output_modalities"
 }
 
 type ChatModelMode = "chat" | "vision" | "image" | "asr" | "tts";
+
+// isConversationModel picks the models a realtime session can answer with:
+// anything that takes text and writes text, so neither a speech nor an image
+// model.
+function isConversationModel(model?: ModelInfo | null): boolean {
+  const mode = getChatModelMode(model);
+  return mode === "chat" || mode === "vision";
+}
 
 function getChatModelMode(model?: ModelInfo | null): ChatModelMode {
   if (!model) return "chat";
@@ -2192,8 +2201,14 @@ export function Chat() {
         <RealtimeVoiceDialog
           asrModels={realtimeVoiceOptions(isASRModel)}
           ttsModels={realtimeVoiceOptions(isTTSModel)}
+          llmModels={buildRealtimeChatOptions(availableModels.value, isConversationModel, modelLabel)}
           initialASRModel={asrMode ? modelKey(selectedModelInfo.value!) : undefined}
           initialTTSModel={ttsMode ? modelKey(selectedModelInfo.value!) : undefined}
+          initialLLMModel={
+            selectedModelInfo.value && isConversationModel(selectedModelInfo.value)
+              ? modelKey(selectedModelInfo.value)
+              : undefined
+          }
           onClose={() => { showRealtimeVoice.value = false; }}
         />
       )}

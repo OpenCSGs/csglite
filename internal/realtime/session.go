@@ -150,6 +150,20 @@ func (c *SessionConfig) TranscriptionOptions() *Transcription {
 	return c.Audio.Input.Transcription
 }
 
+// createsResponses reports whether a finished turn should be answered by the
+// session itself. It is true unless the client set
+// turn_detection.create_response to false, which is how the OpenAI clients say
+// they will ask for each response themselves. turn_detection being absent does
+// not count against it: the server detects turns whether or not the client
+// configured that, and clients in the field rarely send the object at all.
+func (c *SessionConfig) createsResponses() bool {
+	if c.Audio == nil || c.Audio.Input == nil || c.Audio.Input.TurnDetection == nil {
+		return true
+	}
+	create := c.Audio.Input.TurnDetection.CreateResponse
+	return create == nil || *create
+}
+
 // Voice reports the requested output voice, empty for the model's default.
 func (c *SessionConfig) Voice() string {
 	if c.Audio == nil || c.Audio.Output == nil {

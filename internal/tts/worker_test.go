@@ -128,6 +128,7 @@ func TestWorkerBackendNamesMatchGoConstants(t *testing.T) {
 	}
 	known := map[string]bool{
 		model.TTSBackendQwen3:        true,
+		model.TTSBackendQwen3MLX:     true,
 		model.TTSBackendKokoro:       true,
 		model.TTSBackendTransformers: true,
 		model.TTSBackendVoxCPM:       true,
@@ -162,7 +163,7 @@ func TestWorkerStreamsSentenceBySentence(t *testing.T) {
 	// whole-text synthesis, which preserves intonation across sentences.
 	streamIdx := strings.Index(script, "async def speak_stream")
 	plainIdx := strings.Index(script, "async def speak(")
-	splitIdx := strings.LastIndex(script, "_split_for_streaming(text)")
+	splitIdx := strings.LastIndex(script, "_split_for_streaming(text")
 	if streamIdx < 0 || plainIdx < 0 || splitIdx < 0 {
 		t.Fatal("could not locate the speak handlers or the split call")
 	}

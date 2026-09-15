@@ -191,7 +191,7 @@ GET  /v1/audio/transcriptions/realtime
 | `input_audio_buffer.append` | WebSocket 传输下的上行音频（base64 PCM16）；WebRTC 下不用 |
 | `input_audio_buffer.commit` | 手动结束一轮（`turn_detection: null` 时必需） |
 | `input_audio_buffer.clear` | 丢弃未提交的上行缓冲 |
-| `conversation.item.create` | 注入文本消息（如客户端侧 LLM 的结果） |
+| `conversation.item.create` | 以文字注入一条用户消息；会话有 `model` 时进入对话历史，供下一次 `response.create` 使用（不自动生成） |
 | `response.create` | 请求生成/合成 |
 | `response.cancel` | 取消进行中的 LLM / TTS 生成 |
 | `output_audio_buffer.clear` | **WebRTC 专有**：立刻丢弃已排队未发送的音频帧，停止说话 |
@@ -704,8 +704,72 @@ WebSocket 合并计数**——两种会话都可能同时占着一个 ASR 和一
 （`internal/server/realtime_transcription.go` 的 `deferredTranscriber`），answer 7ms 就返回；
 加载期间到达的音频**缓冲最多 30s 后回放**，而不是丢掉——不然用户抢答的头几个字就没了。
 
-另外补了一条 WebRTC 特有的收尾逻辑：发送端可能用 DTX，在静音时**根本不发包**，服务端 VAD 因此
-永远等不到静音、这一轮永远不结束。现在轨道静默 800ms 即视为一轮结束（`inboundGapCommit`）。
+**4. 一轮永远不结束**。最初的切轮条件是「轨道 800ms 不发包」，前提是发送端在静音时用 DTX 停发。
+浏览器不停：麦克风持续送环境噪声，于是一轮要一直攒到某次调度空档才被误判为静音——实测每轮
+12s 上下，全都加在用户说完到模型看到文字之间。现在由服务端自己听：`internal/server/realtime_turn.go`
+的 `inboundTurn` 对解码后的 PCM 算 RMS，跟踪噪声底（快降慢升、并设上限，避免长句把自己的门限
+抬过头），说话后静音 `inboundSilenceCommit`（700ms）即切轮；无停顿的长句由 `inboundMaxTurn`
+（15s）兜底。DTX 发送端不需要特例：不发包就没有更响的音频进来，同一条静音规则照样收尾。
+只有噪声、没有语音的一轮不会提交，否则空转一次识别只换回一条空转写。
+
+**5. LLM 与 TTS 串行**。`asr_llm_tts` 这个 pipeline 一直只是声明（`session.Model` 非空即选中），
+服务端从未真的调过模型：转写只是 `emit` 给客户端，由客户端自己去请求 `/v1/chat/completions`，
+拿到**完整**回复后再 `response.create`。于是 LLM 的整段生成时间和 TTS 首包是纯相加的，一个字都
+不重叠——实测 LLM 中位 1.2s 全部落在出声之前。现在会话自己写回复（`internal/realtime/responder.go`
+的 `Responder`，服务端适配在 `internal/server/realtime_responder.go`，直接复用 `getChatEngine`
+的模型解析）：一轮转写完成即调用模型，流式文本经 `sentenceSplitter` 按句切开，**每句一完成就送 TTS**，
+模型继续往后写；首句还允许在逗号处提前放出（≥3 字），所以「好的，」一出口就开始合成。
+模型写出的文本以 `response.output_audio_transcript.delta` / `.done` 发给客户端。
+
+开关语义沿用 OpenAI：`session.model` 非空即启用；客户端若要自己决定何时回复，
+发 `turn_detection.create_response: false`，此时转写照常记入历史，`response.create`（不带文本）
+再触发模型回复。`model` 留空时行为与之前完全一致——只转写、只念客户端给的文本。
+思考模式对语音回复一律关闭（`DisableThinking`）：念出来的推理过程只是出声前的几秒噪音。
+每个会话建立时日志会打 `pipeline=... model=...`，用来确认客户端到底落进了哪条 pipeline。
+
+**6. 回声、空轮次与切碎**。切轮改灵敏之后暴露出三件事，实测一通 4 分钟的通话里：11 个真实轮次后面
+11 个都跟着一个 ~1s 的空轮次（说完后的呼吸重新点亮检测器）；出现了 `12.3s`、`12.2s`、`11.0s` 的
+大轮次，长度正好是助手上一句的播放时长——麦克风把助手自己的声音录了回来，用户接着说的话和回声
+打包成一块送去识别，LLM 拿到自己上一句的片段当输入；还有 `2 字`、`3 字` 的轮次，是 700ms 把句中
+停顿当成了句尾。三条对应的处理都在服务端：
+
+- **半双工**（`handlers_realtime_webrtc.go` 的 `forwardRemoteAudio`）：`Session.Speaking()` 为真
+  （从第一帧回复音频到 `output_audio_buffer.stopped`）期间不听麦克风，之后再关 `inboundPlayoutTail`
+  （400ms）等浏览器的抖动缓冲和房间把声音放完。代价是不能抢话——没有服务端信得过的回声消除，
+  一次误把回声当成抢话的后果（转写、回答、答的是空气）比漏掉一次打断严重得多。
+- **空轮次不上报**（`session_runtime.go` 的 `HandleTranscript`）：服务端自己切出来、识别为空的轮次，
+  不再发 `conversation.item.input_audio_transcription.completed`——客户端收到空转写只会去回答它。
+  客户端自己 `input_audio_buffer.commit` 的轮次仍然必答（`Commit` 与 `CommitTurn` 分开计数），
+  否则它等不到回应会挂住。
+- **静音时长可配**：默认 700ms → **900ms**，并遵守 `turn_detection.silence_duration_ms`
+  （限定在 200ms–3s）。能量检测器分不出换气和说完，只能靠时长补；真正的解法是端点模型，见下。
+- 每次切轮打一行 `REALTIME: call <id> turn ended speech=… peak=… floor=…`，回声和真人的电平差
+  以后从这里读，不再盲调门限。
+
+Web UI 的实时语音对话框加了「对话模型」下拉（`RealtimeVoiceDialog`），选中即在 session 里带
+`model`，可以不改任何客户端直接体验服务端 `asr_llm_tts`；助手的文字以另一种颜色显示在转写区。
+
+### 同类开源方案对照
+
+调研时间 2026-09。业界 STT→LLM→TTS 流水线的语音到语音目标是 **~800ms**，四段各约 200ms
+（传输、STT+端点、LLM 首 token、TTS 首包）。本项目当前每段的差距和对应的开源做法：
+
+| 环节 | 本项目 | 业界做法 |
+|---|---|---|
+| 端点检测 | 能量 + 静音 900ms | Silero VAD 判有无语音 + 端点模型判说完没说完：[LiveKit turn-detector](https://huggingface.co/livekit/turn-detector)（按转写语义，含中文）、[Pipecat Smart Turn v3](https://huggingface.co/pipecat-ai/smart-turn-v3)（按音频，Whisper-tiny 底座 8M 参数，CPU 12ms，23 语言含中文）。有端点模型才能把静音压到 200–300ms 而不切碎句子。 |
+| ASR | Qwen3-ASR 0.6B，0.1–0.35s | 达标。 |
+| LLM | 客户端等完整回复再 `response.create` | 服务端流式按句喂 TTS——即本文第 5 条；[Pipecat](https://github.com/pipecat-ai/pipecat)、[LiveKit Agents](https://docs.livekit.io/agents/) 都是这个结构。 |
+| TTS 首包 | Qwen3-TTS 0.6B 经 PyTorch-MPS，**RTF ≈ 2.6**，约 0.25s/字 | 同一模型经 MLX（[mlx-audio](https://github.com/Blaizzy/mlx-audio)）在 M2 Max 上 **RTF ≈ 0.55**、首包 ~120ms；[CosyVoice 2](https://github.com/FunAudioLLM/CosyVoice) 流式首包 ~150ms，中文与方言强。 |
+
+结论：本项目的 TTS 不是模型慢，是运行时——PyTorch 的 MPS 后端跑这个模型比 MLX 慢约 5 倍。
+
+据此在 Apple Silicon 上把 Qwen3-TTS 切到了 MLX（`tts_worker.py` 的 `QwenTTSMLXEngine`，
+`CSGHUB_TTS_QWEN3_RUNTIME` 可强制 `mlx` / `torch`）。mlx 相关包装在私有 overlay 里
+（`internal/imagegen/runtime.go` 的 `ttsOverlayPackagesFor`，`--no-deps`），因为 mlx-audio 钉
+`transformers>=5.14` 而 qwen-tts 钉 `<5`；实测它在 venv 的 4.57 上正常加载、合成，波形统计与
+PyTorch 输出一致（峰值 0.66 vs 0.68，RMS 0.093 vs 0.095）。原始权重目录直接加载，无需转换下载。
+MLX 后端本身是流式的，因此 `_shorten_first_chunk` 只对整块合成的后端生效，不再为了首包切碎首句。
+其他平台照旧走 PyTorch。
 
 ### 实测
 

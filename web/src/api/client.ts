@@ -1398,6 +1398,10 @@ export interface RealtimeSessionOptions {
   // Synthesis model; omit for a session that only listens.
   ttsModel?: string;
   voice?: string;
+  // Conversation model. With one set the server writes and speaks the reply to
+  // each finished turn itself; without it the session only transcribes and
+  // speaks the text response.create supplies.
+  model?: string;
 }
 
 export interface RealtimeCall {
@@ -1410,6 +1414,7 @@ export interface RealtimeCall {
 // which is the multipart form the OpenAI clients send.
 export async function startRealtimeCall(offer: string, options: RealtimeSessionOptions): Promise<RealtimeCall> {
   const session: Record<string, unknown> = { type: "realtime" };
+  if (options.model) session.model = options.model;
   const audio: Record<string, unknown> = {};
   if (options.asrModel) audio.input = { transcription: { model: options.asrModel } };
   if (options.ttsModel) {

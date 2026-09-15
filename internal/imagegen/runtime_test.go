@@ -962,6 +962,42 @@ func TestModelTTSPackagesFor(t *testing.T) {
 	}
 }
 
+func TestTTSOverlayPackagesForPlatform(t *testing.T) {
+	got := ttsOverlayPackagesFor("qwen3-tts", "darwin", "arm64")
+	want := map[string]bool{"mlx-audio": true, "mlx": true, "mlx-metal": true}
+	for _, pkg := range got {
+		delete(want, pkg)
+	}
+	if len(want) != 0 {
+		t.Fatalf("darwin/arm64 overlay = %v, missing %v", got, want)
+	}
+	// MLX is Apple Silicon only; everywhere else the torch path is the only one
+	// and nothing is overlaid.
+	for _, platform := range [][2]string{{"darwin", "amd64"}, {"linux", "amd64"}, {"linux", "arm64"}, {"windows", "amd64"}} {
+		if got := ttsOverlayPackagesFor("qwen3-tts", platform[0], platform[1]); got != nil {
+			t.Fatalf("%s/%s overlay = %v, want none", platform[0], platform[1], got)
+		}
+	}
+	if got := ttsOverlayPackagesFor("kokoro", "darwin", "arm64"); got != nil {
+		t.Fatalf("kokoro overlay = %v, want none", got)
+	}
+	// mlx-metal has no importable module; its presence is probed through
+	// mlx.core, or the overlay would be reinstalled on every start.
+	names := importNamesFor(got)
+	var probesCore bool
+	for _, name := range names {
+		if name == "mlx_metal" {
+			t.Fatalf("import names %v probe mlx_metal, which never imports", names)
+		}
+		if name == "mlx.core" {
+			probesCore = true
+		}
+	}
+	if !probesCore {
+		t.Fatalf("import names %v do not probe mlx.core for mlx-metal", names)
+	}
+}
+
 func TestImportNamesFor(t *testing.T) {
 	got := importNamesFor([]string{"kokoro", "misaki[zh]"})
 	want := map[string]bool{"kokoro": true, "misaki": true, "ordered_set": true}
