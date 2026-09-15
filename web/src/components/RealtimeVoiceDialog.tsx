@@ -22,6 +22,8 @@ interface TranscriptLine {
   id: number;
   text: string;
   final: boolean;
+  // assistant marks the server's own reply, shown apart from the caller's words.
+  assistant?: boolean;
 }
 
 // The events this dialog reacts to. Everything else is displayed in the log
@@ -46,20 +48,31 @@ interface RealtimeEvent {
 export function RealtimeVoiceDialog({
   asrModels,
   ttsModels,
+  llmModels = [],
   initialASRModel,
   initialTTSModel,
+  initialLLMModel,
   onClose,
 }: {
   asrModels: RealtimeVoiceModel[];
   ttsModels: RealtimeVoiceModel[];
+  // Conversation models the server may answer with. Optional: the dialog
+  // works as a transcribe-and-speak console without one.
+  llmModels?: RealtimeVoiceModel[];
   initialASRModel?: string;
   initialTTSModel?: string;
+  initialLLMModel?: string;
   onClose: () => void;
 }) {
   const [asrModel, setASRModel] = useState(initialASRModel || asrModels[0]?.key || "");
   const [ttsModel, setTTSModel] = useState(initialTTSModel || ttsModels[0]?.key || "");
+  // The conversation model is only preselected when the chat this dialog was
+  // opened from is using one: naming it makes the server write the replies,
+  // which is a change of behaviour the user should be choosing.
+  const [llmModel, setLLMModel] = useState(initialLLMModel || "");
   const asrModelID = realtimeModelID(asrModels, asrModel);
   const ttsModelID = realtimeModelID(ttsModels, ttsModel);
+  const llmModelID = realtimeModelID(llmModels, llmModel);
   const [voices, setVoices] = useState<SpeechVoice[]>([]);
   const [voice, setVoice] = useState("");
   const [state, setState] = useState<CallState>("idle");
@@ -100,17 +113,21 @@ export function RealtimeVoiceDialog({
     return () => { cancelled = true; };
   }, [ttsModelID]);
 
-  const appendLine = (text: string, final: boolean) => {
+  const appendLine = (text: string, final: boolean, assistant = false) => {
     setLines((prev) => {
       const next = [...prev];
       // Partial transcripts replace the previous partial rather than piling up:
       // a delta is the current best guess at the whole utterance, not an
-      // append-only prefix.
-      if (next.length > 0 && !next[next.length - 1].final) {
-        next[next.length - 1] = { ...next[next.length - 1], text, final };
+      // append-only prefix. The assistant's deltas are the exception -- each is
+      // the next piece of the reply -- so they accumulate, until the final
+      // event carries the whole text and replaces what they built.
+      const last = next[next.length - 1];
+      if (last && !last.final && Boolean(last.assistant) === assistant) {
+        const merged = assistant && !final ? last.text + text : text;
+        next[next.length - 1] = { ...last, text: merged, final };
         return next;
       }
-      next.push({ id: ++lineIdRef.current, text, final });
+      next.push({ id: ++lineIdRef.current, text, final, assistant });
       return next;
     });
   };
@@ -122,6 +139,12 @@ export function RealtimeVoiceDialog({
         break;
       case "conversation.item.input_audio_transcription.completed":
         if (ev.transcript) appendLine(ev.transcript, true);
+        break;
+      case "response.output_audio_transcript.delta":
+        if (ev.delta) appendLine(ev.delta, false, true);
+        break;
+      case "response.output_audio_transcript.done":
+        if (ev.transcript) appendLine(ev.transcript, true, true);
         break;
       case "output_audio_buffer.started":
         setSpeaking(true);
@@ -219,6 +242,7 @@ export function RealtimeVoiceDialog({
         asrModel: asrModelID || undefined,
         ttsModel: ttsModelID || undefined,
         voice: voice || undefined,
+        model: llmModelID || undefined,
       });
       callIdRef.current = call.callId;
       await peer.setRemoteDescription({ type: "answer", sdp: call.answer });
@@ -312,6 +336,22 @@ export function RealtimeVoiceDialog({
             </label>
           </div>
 
+          {llmModels.length > 0 && (
+            <label class="text-sm block">
+              <span class="block text-gray-600 mb-1">{t("realtime.llmModel")}</span>
+              <select
+                class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50"
+                value={llmModel}
+                disabled={live || state === "connecting"}
+                onChange={(e) => setLLMModel((e.target as HTMLSelectElement).value)}
+              >
+                <option value="">{t("realtime.noModel")}</option>
+                {llmModels.map((m) => <option value={m.key} key={m.key}>{m.label}</option>)}
+              </select>
+              <span class="block text-xs text-gray-400 mt-1">{t("realtime.llmHint")}</span>
+            </label>
+          )}
+
           {voices.length > 0 && (
             <label class="text-sm block">
               <span class="block text-gray-600 mb-1">{t("realtime.voice")}</span>
@@ -397,7 +437,17 @@ export function RealtimeVoiceDialog({
                   <span class="text-gray-400">{live ? t("realtime.listening") : t("realtime.transcriptEmpty")}</span>
                 ) : (
                   lines.map((line) => (
-                    <p key={line.id} class={line.final ? "text-gray-900" : "text-gray-500 italic"}>{line.text}</p>
+                    <p
+                      key={line.id}
+                      class={
+                        line.assistant
+                          ? (line.final ? "text-indigo-700" : "text-indigo-400 italic")
+                          : (line.final ? "text-gray-900" : "text-gray-500 italic")
+                      }
+                    >
+                      {line.assistant && <span class="mr-1 text-xs text-indigo-400">{t("realtime.assistant")}</span>}
+                      {line.text}
+                    </p>
                   ))
                 )}
               </div>

@@ -276,7 +276,13 @@ func IsTTSModelFamily(name string) bool {
 // text-to-speech model the runtime cannot synthesise, and saying so is better
 // than reporting support and failing at synthesis time.
 const (
-	TTSBackendQwen3        = "qwen3-tts"
+	TTSBackendQwen3 = "qwen3-tts"
+	// TTSBackendQwen3MLX is what the worker reports when it serves a Qwen3-TTS
+	// checkpoint through MLX on Apple Silicon. TTSBackendFor never returns it:
+	// which runtime runs is the runtime's decision, made once the model is on
+	// a particular machine, and the library advertises the model the same way
+	// either way.
+	TTSBackendQwen3MLX     = "qwen3-tts-mlx"
 	TTSBackendKokoro       = "kokoro"
 	TTSBackendTransformers = "transformers"
 	TTSBackendVoxCPM       = "voxcpm"

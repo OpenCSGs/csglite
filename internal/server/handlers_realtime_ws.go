@@ -124,6 +124,8 @@ func (s *Server) handleRealtimeWebSocket(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer session.Close()
+	session.SetResponder(ctx, s.newRealtimeResponder())
+	log.Printf("REALTIME: session %s pipeline=%s model=%q", session.ID, session.Pipeline(), cfg.Model)
 	if startTranscription != nil {
 		startTranscription(session)
 	}
@@ -185,7 +187,15 @@ func (s *Server) dispatchRealtimeEvent(ctx context.Context, session *realtime.Se
 		// Synthesis runs in its own goroutine so cancel and further audio can be
 		// processed while it speaks.
 		go func() {
-			if err := session.Respond(ctx, text, voice); err != nil {
+			var err error
+			if text == "" && session.Pipeline() == realtime.PipelineASRLLMTTS {
+				// No text to speak and a model to write it: this is the OpenAI
+				// shape of response.create, asking the model for the reply.
+				err = session.RespondWithModel(ctx)
+			} else {
+				err = session.Respond(ctx, text, voice)
+			}
+			if err != nil {
 				log.Printf("REALTIME: respond failed: %v", err)
 			}
 		}()
@@ -198,12 +208,51 @@ func (s *Server) dispatchRealtimeEvent(ctx context.Context, session *realtime.Se
 			session.EmitError("clear_failed", err.Error(), ev.EventID)
 		}
 	case realtime.ClientConversationItemAdd:
-		// Accepted so a client can inject text, but nothing is generated until
-		// response.create asks for it.
+		// A user message becomes part of what the model sees; nothing is
+		// generated until response.create asks for it.
+		if text := realtimeItemUserText(ev.Item); text != "" {
+			session.AddUserText(text)
+		}
 	default:
 		session.EmitError("unknown_event", "unsupported event type: "+ev.Type, ev.EventID)
 	}
 	return nil
+}
+
+// realtimeItemUserText extracts the text of a user message from a
+// conversation.item.create, in the OpenAI shape: a "message" item with role
+// "user" whose content parts are input_text (or text). Anything else -- an
+// assistant item, an audio part, a function call -- yields "" and is ignored.
+func realtimeItemUserText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var item struct {
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(raw, &item) != nil {
+		return ""
+	}
+	if item.Type != "" && item.Type != "message" {
+		return ""
+	}
+	if item.Role != "" && !strings.EqualFold(item.Role, "user") {
+		return ""
+	}
+	var parts []string
+	for _, part := range item.Content {
+		if part.Type == "" || part.Type == "input_text" || part.Type == "text" {
+			if text := strings.TrimSpace(part.Text); text != "" {
+				parts = append(parts, text)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // realtimeResponseText extracts what to speak from a response.create. A session

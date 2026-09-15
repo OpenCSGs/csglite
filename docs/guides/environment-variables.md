@@ -75,6 +75,8 @@ ASR worker 还支持以下高级调优变量：
 | --- | --- | --- |
 | `CSGHUB_ASR_CHUNK_SECONDS` | `30` | FunASR 长音频分块秒数。 |
 | `CSGHUB_ASR_LONG_AUDIO_THRESHOLD_SECONDS` | 与分块秒数相同 | 超过该时长后启用长音频分块。 |
+| `CSGHUB_TTS_QWEN3_RUNTIME` | `auto` | Qwen3-TTS 用哪个运行时：`auto`（Apple Silicon 上装好了 mlx-audio 就用 MLX，否则 PyTorch）、`mlx`、`torch`。同一份权重在 M 系列芯片上 MLX 首包 0.12s、RTF 0.5，PyTorch-MPS 首包 1.65s、RTF 2.6。auto 下 MLX 起不来会回退 PyTorch。 |
+| `CSGHUB_TTS_STREAM_FIRST_CHUNK_CHARS` | `6` | 流式合成时开头一段的字数上限。首包延迟基本与这个字数成正比（实测 Apple MPS 上 Qwen3-TTS 约 0.25s/字），机器慢就调小，机器快可调大以保留更完整的语调。 |
 | `CSGHUB_ASR_USE_VAD` | `false` | 是否为 FunASR 启用 VAD。 |
 | `CSGHUB_ASR_VAD_MODEL` | `fsmn-vad` | VAD 模型名称。 |
 | `CSGHUB_ASR_VAD_MAX_SEGMENT_MS` | `30000` | VAD 单段最大毫秒数。 |

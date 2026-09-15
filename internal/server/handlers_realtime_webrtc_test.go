@@ -499,3 +499,21 @@ func TestRealtimeSynthesizerResolvesTheModelPerResponse(t *testing.T) {
 		t.Fatal("CanSpeak = false with a default configured")
 	}
 }
+
+func TestRealtimeItemUserTextReadsTheOpenAIShape(t *testing.T) {
+	cases := map[string]string{
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"你好"},{"type":"input_text","text":"在吗"}]}`: "你好\n在吗",
+		`{"type":"message","role":"assistant","content":[{"type":"text","text":"我在"}]}`:                                    "",
+		`{"type":"function_call","name":"x"}`:                               "",
+		`{"role":"user","content":[{"type":"input_audio","audio":"AAAA"}]}`: "",
+		`not json`: "",
+	}
+	for raw, want := range cases {
+		if got := realtimeItemUserText(json.RawMessage(raw)); got != want {
+			t.Errorf("%s: got %q, want %q", raw, got, want)
+		}
+	}
+	if got := realtimeItemUserText(nil); got != "" {
+		t.Errorf("nil item: got %q", got)
+	}
+}

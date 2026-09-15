@@ -28,6 +28,20 @@ export function realtimeVoiceOptions(
     .map((model) => ({ key: modelOptionKey(model), id: modelOptionID(model), label: label(model) }));
 }
 
+// realtimeChatOptions lists the conversation models the realtime session may
+// answer with. Unlike the speech halves this is not limited to local models:
+// the reply is written through the same chat engines as /v1/chat/completions,
+// so a cloud model serves it as well as a local one does.
+export function realtimeChatOptions(
+  models: ModelInfo[],
+  matches: (model: ModelInfo) => boolean,
+  label: (model: ModelInfo) => string,
+): { key: string; id: string; label: string }[] {
+  return models
+    .filter((model) => matches(model) && (!model.source || model.source === "local" || model.source === "cloud") && modelOptionID(model) !== "")
+    .map((model) => ({ key: modelOptionKey(model), id: modelOptionID(model), label: label(model) }));
+}
+
 export function normalizeModelOptions(models: ModelInfo[]): ModelInfo[] {
   const seen = new Set<string>();
   const out: ModelInfo[] = [];

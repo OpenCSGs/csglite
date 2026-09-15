@@ -32,11 +32,16 @@ const (
 	ServerResponseCreated     = "response.created"
 	ServerAudioDelta          = "response.output_audio.delta"
 	ServerAudioDone           = "response.output_audio.done"
-	ServerResponseDone        = "response.done"
-	ServerOutputAudioStarted  = "output_audio_buffer.started"
-	ServerOutputAudioStopped  = "output_audio_buffer.stopped"
-	ServerOutputAudioCleared  = "output_audio_buffer.cleared"
-	ServerError               = "error"
+	// ServerAudioTranscriptDelta and ServerAudioTranscriptDone carry the text
+	// the model wrote, as it is written, when the session generates replies
+	// itself. A client that only ever sees audio cannot show a transcript.
+	ServerAudioTranscriptDelta = "response.output_audio_transcript.delta"
+	ServerAudioTranscriptDone  = "response.output_audio_transcript.done"
+	ServerResponseDone         = "response.done"
+	ServerOutputAudioStarted   = "output_audio_buffer.started"
+	ServerOutputAudioStopped   = "output_audio_buffer.stopped"
+	ServerOutputAudioCleared   = "output_audio_buffer.cleared"
+	ServerError                = "error"
 )
 
 // ClientEvent is an inbound event. Only the fields the session acts on are

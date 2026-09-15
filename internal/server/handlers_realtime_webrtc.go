@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pion/opus"
@@ -31,11 +30,11 @@ const (
 	maxSDPBodyBytes = 1 << 20
 	// opusSampleRate is the rate Opus always decodes to.
 	opusSampleRate = 48000
-	// inboundGapCommit ends the turn when the track goes quiet for this long.
-	// WebRTC senders may use discontinuous transmission and stop sending
-	// packets during silence, in which case the server-side VAD never sees the
-	// silence that would close the utterance.
-	inboundGapCommit = 800 * time.Millisecond
+	// inboundPlayoutTail is how long after the last reply frame was written the
+	// microphone stays closed. Frames are paced onto the track in real time,
+	// so the reply has finished leaving when speaking ends, but the browser's
+	// jitter buffer and the room are still playing it.
+	inboundPlayoutTail = 400 * time.Millisecond
 )
 
 // errInvalidSDPOffer marks a setup failure the caller caused, so it is answered
@@ -470,6 +469,8 @@ func (s *Server) startRealtimeCall(ctx context.Context, offerSDP string, cfg rea
 	}
 	call := &realtimeCall{id: session.ID, peer: peer, session: session, cancel: cancel, started: time.Now()}
 	s.registerRealtimeCall(call)
+	session.SetResponder(sessionCtx, s.newRealtimeResponder())
+	log.Printf("REALTIME: call %s pipeline=%s model=%q", session.ID, session.Pipeline(), cfg.Model)
 	if startTranscription != nil {
 		startTranscription(session)
 	}
@@ -534,6 +535,22 @@ func (s *Server) startRealtimeCall(ctx context.Context, offerSDP string, cfg rea
 	return call.id, peer.LocalDescription().SDP, nil
 }
 
+// realtimeSilenceDuration bounds the session's turn_detection.silence_duration_ms
+// to something a detector can act on; zero selects the default.
+func realtimeSilenceDuration(ms int) time.Duration {
+	if ms <= 0 {
+		return 0
+	}
+	d := time.Duration(ms) * time.Millisecond
+	if d < inboundSilenceMin {
+		return inboundSilenceMin
+	}
+	if d > inboundSilenceMax {
+		return inboundSilenceMax
+	}
+	return d
+}
+
 // forwardRemoteAudio decodes the caller's track and feeds it to recognition.
 func forwardRemoteAudio(ctx context.Context, remote *webrtc.TrackRemote, session *realtime.Session) {
 	codec := strings.ToLower(remote.Codec().MimeType)
@@ -548,32 +565,37 @@ func forwardRemoteAudio(ctx context.Context, remote *webrtc.TrackRemote, session
 	samples := make([]int16, opusSampleRate/1000*120)
 	pcm := make([]byte, 0, len(samples)*2)
 
-	// A sender that stops transmitting during silence would otherwise leave the
-	// turn open forever, so a gap in the track commits it.
-	gaps := time.NewTicker(inboundGapCommit / 2)
-	defer gaps.Stop()
-	var lastPacket atomic.Int64
-	lastPacket.Store(time.Now().UnixMilli())
-	spoken := &atomic.Bool{}
+	// Nothing in the protocol says when an utterance ends, so the server has to
+	// hear it: the turn is committed once the caller falls silent, or once it
+	// has run long enough that waiting for a pause is no longer worth it.
+	turn := newInboundTurn(realtimeSilenceDuration(session.TurnSilenceMS()))
+	ticks := time.NewTicker(inboundTurnTick)
+	defer ticks.Stop()
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case now := <-gaps.C:
-				if !spoken.Load() {
+			case now := <-ticks.C:
+				if !turn.due(now) {
 					continue
 				}
-				if now.Sub(time.UnixMilli(lastPacket.Load())) < inboundGapCommit {
-					continue
-				}
-				spoken.Store(false)
-				if err := session.Commit(); err != nil {
+				log.Printf("REALTIME: call %s turn ended %s", session.ID, turn.report())
+				if err := session.CommitTurn(); err != nil {
 					return
 				}
 			}
 		}
 	}()
+
+	// The call is half-duplex: while the reply plays, the microphone is not
+	// listened to. Browsers cancel echo, but not well enough that the reply
+	// coming back through the room stays under the speech threshold, and a
+	// turn made of the session's own words is worse than a missed interruption
+	// -- it is transcribed, answered, and the answer is to nothing the caller
+	// said. Barge-in needs echo cancellation the server can trust, which it
+	// does not have.
+	var quietUntil time.Time
 
 	for {
 		if ctx.Err() != nil {
@@ -583,7 +605,6 @@ func forwardRemoteAudio(ctx context.Context, remote *webrtc.TrackRemote, session
 		if err != nil {
 			return
 		}
-		lastPacket.Store(time.Now().UnixMilli())
 		if len(packet.Payload) == 0 {
 			continue
 		}
@@ -611,7 +632,16 @@ func forwardRemoteAudio(ctx context.Context, remote *webrtc.TrackRemote, session
 		if len(frame) == 0 {
 			continue
 		}
-		spoken.Store(true)
+		now := time.Now()
+		if session.Speaking() {
+			quietUntil = now.Add(inboundPlayoutTail)
+			turn.abandon()
+			continue
+		}
+		if now.Before(quietUntil) {
+			continue
+		}
+		turn.observe(frame, now)
 		if err := session.HandleAudio(frame); err != nil {
 			return
 		}

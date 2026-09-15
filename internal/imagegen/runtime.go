@@ -564,17 +564,24 @@ func (m *RuntimeManager) EnsureTTSReady(ctx context.Context) error {
 	return &RuntimeNotReadyError{Status: status}
 }
 
-// ttsOverlayPackages lists, per backend, packages kept out of the shared venv
-// because they would move a version another backend depends on. They install
-// into a private directory placed on PYTHONPATH ahead of the venv's
-// site-packages, so the backend sees them while torch, numpy, transformers and
-// protobuf stay shared -- reuse first, private only where it is actually needed.
+// ttsOverlayPackagesFor lists, per backend and platform, the packages kept out
+// of the shared venv and installed into a private overlay instead. The overlay
+// is installed --no-deps, so every wheel the backend needs is named here and
+// anything not named is taken from the venv.
 //
-// Empty today: every supported backend coexists in the shared venv. The
-// mechanism stays because letting a backend's pins rewrite the shared
-// environment breaks the others; docs/guides/realtime-audio-api.md records the
-// conflicts measured while adding these backends.
-var ttsOverlayPackages = map[string][]string{}
+// Qwen3-TTS on Apple Silicon runs through MLX. The same checkpoint measured
+// five times faster there than through PyTorch's Metal backend on this
+// hardware: 0.12s to first audio and a real-time factor of 0.5, against 1.65s
+// and 2.6. mlx-audio pins transformers>=5.14 while qwen-tts, which stays
+// installed for the fallback, pins <5; it imports and synthesises correctly
+// against the venv's 4.57, which is why only the mlx packages go into the
+// overlay and transformers is left where it is.
+func ttsOverlayPackagesFor(backend, goos, goarch string) []string {
+	if backend == "qwen3-tts" && goos == "darwin" && goarch == "arm64" {
+		return []string{"mlx-audio", "mlx", "mlx-metal", "miniaudio", "sounddevice"}
+	}
+	return nil
+}
 
 // ttsOverlayProjectRootMarker names the marker some packages look for when they
 // call pyrootutils.setup_root(__file__, indicator=".project-root"), walking up
@@ -585,7 +592,7 @@ const ttsOverlayProjectRootMarker = ".project-root"
 // TTSOverlayDir reports where a backend's private packages live. Empty when the
 // backend needs none, which is the common case.
 func (m *RuntimeManager) TTSOverlayDir(backend string) string {
-	if len(ttsOverlayPackages[backend]) == 0 {
+	if len(ttsOverlayPackagesFor(backend, runtime.GOOS, runtime.GOARCH)) == 0 {
 		return ""
 	}
 	return filepath.Join(m.rootDir, "overlays", backend)
@@ -595,7 +602,7 @@ func (m *RuntimeManager) TTSOverlayDir(backend string) string {
 // returns the directory to put on PYTHONPATH, or "" when the backend shares
 // everything.
 func (m *RuntimeManager) EnsureTTSOverlay(ctx context.Context, backend string) (string, error) {
-	packages := ttsOverlayPackages[backend]
+	packages := ttsOverlayPackagesFor(backend, runtime.GOOS, runtime.GOARCH)
 	if len(packages) == 0 {
 		return "", nil
 	}
@@ -704,6 +711,12 @@ func importNamesFor(packages []string) []string {
 		name = strings.NewReplacer("-", "_", ".", "_").Replace(name)
 		if name == "qwen_tts" {
 			names = append(names, "qwen_tts")
+			continue
+		}
+		if name == "mlx_metal" {
+			// mlx-metal ships no module of its own, only the Metal library mlx
+			// loads; mlx.core importing is what proves it is there.
+			names = append(names, "mlx.core")
 			continue
 		}
 		if name != "" {
@@ -1682,9 +1695,16 @@ print(json.dumps(missing))
 // missingPackagesWithPath probes for packages with an overlay directory placed
 // ahead of the venv's site-packages, the same way the worker will see them.
 func missingPackagesWithPath(ctx context.Context, python, overlayDir string, packages []string) ([]string, error) {
+	// find_spec on a dotted name imports the parent first and raises when the
+	// parent is absent, so a probe such as mlx.core has to count that as
+	// missing rather than fail the whole check.
 	script := `import importlib.util, json, sys
-missing = [name for name in sys.argv[1:] if importlib.util.find_spec(name) is None]
-print(json.dumps(missing))
+def missing(name):
+    try:
+        return importlib.util.find_spec(name) is None
+    except Exception:
+        return True
+print(json.dumps([name for name in sys.argv[1:] if missing(name)]))
 `
 	args := append([]string{"-c", script}, packages...)
 	cmd := exec.CommandContext(ctx, python, args...)
