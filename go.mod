@@ -7,7 +7,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/opencsgs/llama-cpp-assets v0.5.0
 	github.com/opencsgs/semantic-router v0.4.0
-	github.com/pion/opus v0.1.0
+	github.com/pion/opus v0.1.1-0.20260914225119-00c5c6e17c7e
 	github.com/pion/webrtc/v4 v4.2.20
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/net v0.50.0

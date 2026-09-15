@@ -655,17 +655,37 @@ WebRTC 传输已落地，issue 里客户端首选的协议现在可用。
 会话层没有任何改动，这正是 P2 里那句「只需实现一个新的 Sender」的兑现：`webrtcSender` 把事件写
 DataChannel、把音频写媒体轨，`Session`、事件协议、打断逻辑一行未动。
 
-### 编解码：上行 Opus、下行 PCMU
+### 编解码：双向 Opus，PCMU 作回退
 
-`pion/opus v0.1.0` **只导出解码器**（`NewDecoder`），编码器只存在于未发布的 `main` 分支。而发版是
-`CGO_ENABLED=0`（commit db332be），不能引入 libopus 绑定。因此选择：
+最初 `pion/opus v0.1.0` **只导出解码器**，编码器还在未发布的 `main` 分支，而发版是
+`CGO_ENABLED=0`（commit db332be）不能引入 libopus 绑定，所以下行只能退到 mu-law：合成的 24kHz
+音频重采样到 8kHz 再编码，全部 4kHz 以上的信息直接扔掉，也就是电话音质。
 
-- **上行**：浏览器发 Opus → `pion/opus` 解码 → 48kHz 立体声下混单声道 → 重采样到 16kHz → 喂给流式 ASR。
-- **下行**：合成音频（多为 24kHz）→ 重采样到 8kHz → mu-law 编码 → 20ms 一帧写入 `TrackLocalStaticSample`。
+`pion/opus` 的 main 分支现在有了纯 Go 编码器（带一致性与质量测试），实测 `CGO_ENABLED=0` 正常构建，
+所以下行也换成了 Opus：
 
-代价是下行为电话音质。升级到 Opus 只需换掉 `g711.go` 与注册的 codec，其余不动——这也是 §9 第 1 条
-早就写下的退路，现在落在了 Go 侧而不是 Python worker 侧（worker 里装 `PyAV` 会把三平台的 wheel
-可装性问题带进来）。
+- **上行**：浏览器发 Opus → `pion/opus` 解码（直接输出 48kHz 单声道）→ 重采样到 24kHz → 流式 ASR。
+- **下行**：合成音频（多为 24kHz）→ 重采样到 48kHz → Opus 编码（VoIP 模式，24kbps）→ 20ms 一帧
+  写入 `TrackLocalStaticSample`。
+
+编解码选择集中在 `internal/server/realtime_outbound.go` 的 `outboundCodec`：它把"重采样到多少"、
+"20ms 是多少字节"、"怎么打包"三件事收在一起，`webrtcSender` 因此不需要知道自己拿的是哪个编解码器。
+媒体轨必须在应答之前建好、且只能承载一个编解码器，所以选择是**从 offer 里读的**（`offerHasOpus`
+解析 SDP 的 rtpmap），不是从协商结果读的；offer 里没有 Opus 的调用方仍然得到 PCMU。
+
+实测（本机 M5，pion 客户端对着真实服务打通话）：
+
+| | 上行 | 下行采样率 | 码率 | 编码耗时 |
+|---|---|---|---|---|
+| 改之前 | Opus 48k | **8 kHz** mu-law | 64 kbps | ~0 |
+| 现在 | Opus 48k | **48 kHz** Opus | **24 kbps** | 0.10ms / 20ms 帧（实时的 0.5%） |
+
+用 MLX 合成的真实中文语音做往返编解码，输出 RMS 是输入的 **1.00×**（16/24/32/64 kbps 都一样），
+说明没有电平损失；真实通话里客户端解出 4.88s 音频、RMS 2993，源文件是 3042。码率反而降了 62%。
+
+**代价**：`go.mod` 钉在 `pion/opus` 的一个未发布 commit 上。编码器有上游的一致性测试，且与
+`pion/webrtc` 同一团队维护，但升级时要留意 API 变动。真要回退，把 `newOutboundCodec` 恒返回
+`newPCMUOutbound()` 即可，其余不动。
 
 ### 两个容易漏掉的细节
 

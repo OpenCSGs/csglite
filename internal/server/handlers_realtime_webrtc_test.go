@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/opus"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/opencsgs/csglite/internal/config"
@@ -107,8 +109,25 @@ func TestWebRTCCallNegotiatesAndHangsUp(t *testing.T) {
 	if !strings.Contains(answer, "m=audio") {
 		t.Fatalf("answer has no audio section:\n%s", answer)
 	}
+	// The client offered Opus, so the reply comes back in Opus: synthesis is
+	// 24kHz and G.711 would throw away everything above 4kHz of it. PCMU stays
+	// in the answer as the fallback for callers that offer nothing else.
+	if !strings.Contains(strings.ToLower(answer), "opus/48000") {
+		t.Fatalf("answer does not carry Opus for an offer that listed it:\n%s", answer)
+	}
 	if !strings.Contains(answer, "PCMU/8000") {
-		t.Fatalf("answer does not offer the PCMU codec this build encodes:\n%s", answer)
+		t.Fatalf("answer dropped the PCMU fallback:\n%s", answer)
+	}
+	audioLine := ""
+	for _, line := range strings.Split(answer, "\n") {
+		if strings.HasPrefix(line, "m=audio") {
+			audioLine = strings.TrimSpace(line)
+			break
+		}
+	}
+	// The first payload type is the one that will actually be sent.
+	if !strings.Contains(audioLine, fmt.Sprintf("SAVPF %d", opusPayloadType)) {
+		t.Fatalf("audio line %q does not select Opus (%d) first", audioLine, opusPayloadType)
 	}
 
 	callID := strings.TrimPrefix(location, "/v1/realtime/calls/")
@@ -236,26 +255,29 @@ func TestParseRealtimeCallRequestReadsBothForms(t *testing.T) {
 	}
 }
 
+// pcmuTestFrameBytes is 20ms of PCM16 at 8kHz: 160 samples, two bytes each.
+var pcmuTestFrameBytes = frameBytesAt(realtime.PCMUSampleRate)
+
 // Synthesis chunks do not line up with 20ms frames, so the packetiser has to
 // carry the tail over. Losing it would drop audio at every chunk boundary.
 func TestWebRTCSenderCutsWholeFramesAndCarriesTheRest(t *testing.T) {
-	sender := &webrtcSender{sourceRate: realtime.PCMUSampleRate}
+	sender := &webrtcSender{codec: newPCMUOutbound(), sourceRate: realtime.PCMUSampleRate}
 
 	// One and a half frames in: one frame out, half a frame held back.
-	frames, _ := sender.nextFrames(make([]byte, pcmuFrameBytes*3/2), realtime.PCMUSampleRate)
+	frames, _ := sender.nextFrames(make([]byte, pcmuTestFrameBytes*3/2), realtime.PCMUSampleRate)
 	if len(frames) != 1 {
 		t.Fatalf("frames = %d, want 1", len(frames))
 	}
-	if len(frames[0]) != pcmuFrameBytes/2 {
-		t.Fatalf("frame size = %d bytes of mu-law, want %d", len(frames[0]), pcmuFrameBytes/2)
+	if len(frames[0]) != pcmuTestFrameBytes/2 {
+		t.Fatalf("frame size = %d bytes of mu-law, want %d", len(frames[0]), pcmuTestFrameBytes/2)
 	}
-	if len(sender.residual) != pcmuFrameBytes/2 {
+	if len(sender.residual) != pcmuTestFrameBytes/2 {
 		t.Fatalf("residual = %d, want the half frame to be held back", len(sender.residual))
 	}
 
 	// The next half frame completes it, so exactly one more frame comes out and
 	// nothing is left over.
-	frames, _ = sender.nextFrames(make([]byte, pcmuFrameBytes/2), realtime.PCMUSampleRate)
+	frames, _ = sender.nextFrames(make([]byte, pcmuTestFrameBytes/2), realtime.PCMUSampleRate)
 	if len(frames) != 1 {
 		t.Fatalf("frames = %d, want the carried half to complete one frame", len(frames))
 	}
@@ -267,7 +289,7 @@ func TestWebRTCSenderCutsWholeFramesAndCarriesTheRest(t *testing.T) {
 // 24kHz synthesis output is the common case: a frame must still be 20ms of
 // 8kHz mu-law after resampling, not 20ms of the source rate.
 func TestWebRTCSenderResamplesToTheCodecRate(t *testing.T) {
-	sender := &webrtcSender{sourceRate: realtime.DefaultOutputSampleRate}
+	sender := &webrtcSender{codec: newPCMUOutbound(), sourceRate: realtime.DefaultOutputSampleRate}
 	// 100ms at 24kHz PCM16.
 	frames, _ := sender.nextFrames(make([]byte, 24000/10*2), 24000)
 	if len(frames) != 5 {
@@ -283,9 +305,9 @@ func TestWebRTCSenderResamplesToTheCodecRate(t *testing.T) {
 // output_audio_buffer.clear must stop playback promptly: frames already cut
 // from an earlier chunk belong to a stale generation and are dropped.
 func TestWebRTCSenderDiscardsPendingAudio(t *testing.T) {
-	sender := &webrtcSender{sourceRate: realtime.PCMUSampleRate}
-	_, generation := sender.nextFrames(make([]byte, pcmuFrameBytes), realtime.PCMUSampleRate)
-	sender.nextFrames(make([]byte, pcmuFrameBytes/2), realtime.PCMUSampleRate)
+	sender := &webrtcSender{codec: newPCMUOutbound(), sourceRate: realtime.PCMUSampleRate}
+	_, generation := sender.nextFrames(make([]byte, pcmuTestFrameBytes), realtime.PCMUSampleRate)
+	sender.nextFrames(make([]byte, pcmuTestFrameBytes/2), realtime.PCMUSampleRate)
 	sender.DiscardPendingAudio()
 
 	if len(sender.residual) != 0 {
@@ -515,5 +537,89 @@ func TestRealtimeItemUserTextReadsTheOpenAIShape(t *testing.T) {
 	}
 	if got := realtimeItemUserText(nil); got != "" {
 		t.Errorf("nil item: got %q", got)
+	}
+}
+
+// The reply is synthesised at 24kHz and G.711 can only carry 8kHz of it, so a
+// caller that offers Opus is answered in Opus.
+func TestOutboundCodecFollowsTheOffer(t *testing.T) {
+	// A parseable offer needs its session lines; a browser always sends them.
+	const preamble = "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n"
+	const withOpus = preamble +
+		"m=audio 9 UDP/TLS/RTP/SAVPF 111 0\r\n" +
+		"a=rtpmap:111 opus/48000/2\r\n" +
+		"a=rtpmap:0 PCMU/8000\r\n"
+	const g711Only = preamble +
+		"m=audio 9 UDP/TLS/RTP/SAVPF 0\r\n" +
+		"a=rtpmap:0 PCMU/8000\r\n"
+
+	if codec := newOutboundCodec(withOpus); codec.capability.MimeType != webrtc.MimeTypeOpus {
+		t.Fatalf("an offer listing Opus was answered with %s", codec.capability.MimeType)
+	} else if codec.sampleRate != 48000 || codec.frameBytes != 1920 {
+		t.Fatalf("opus: rate %d, frame %d bytes; want 48000 and 1920", codec.sampleRate, codec.frameBytes)
+	}
+
+	codec := newOutboundCodec(g711Only)
+	if codec.capability.MimeType != webrtc.MimeTypePCMU {
+		t.Fatalf("an offer with no Opus was answered with %s", codec.capability.MimeType)
+	}
+	if codec.sampleRate != realtime.PCMUSampleRate || codec.frameBytes != 320 {
+		t.Fatalf("pcmu: rate %d, frame %d bytes; want 8000 and 320", codec.sampleRate, codec.frameBytes)
+	}
+
+	// A video-only or unparseable offer must not be answered in a codec the
+	// caller never offered.
+	for _, sdp := range []string{
+		preamble + "m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 VP8/90000\r\n",
+		"not an sdp",
+	} {
+		if offerHasOpus(sdp) {
+			t.Fatalf("offerHasOpus(%q) = true", sdp)
+		}
+	}
+}
+
+// The Opus path must cut the same 20ms frames as G.711 does, at its own rate,
+// and produce packets a decoder accepts -- a browser will not take anything
+// less.
+func TestWebRTCSenderEncodesOpusFrames(t *testing.T) {
+	codec, err := newOpusOutbound()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &webrtcSender{codec: codec, sourceRate: realtime.DefaultOutputSampleRate}
+
+	// 100ms of 24kHz synthesis: five 20ms packets, and nothing held back.
+	frames, _ := sender.nextFrames(make([]byte, 24000/10*2), 24000)
+	if len(frames) != 5 {
+		t.Fatalf("frames = %d, want 5 packets for 100ms of audio", len(frames))
+	}
+	if len(sender.residual) != 0 {
+		t.Fatalf("residual = %d, want 0", len(sender.residual))
+	}
+	decoder, err := opus.NewDecoderWithOutput(48000, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, frame := range frames {
+		if len(frame) == 0 {
+			t.Fatalf("packet %d is empty", i)
+		}
+		pcm := make([]int16, 960*6)
+		n, err := decoder.DecodeToInt16(frame, pcm)
+		if err != nil {
+			t.Fatalf("packet %d does not decode: %v", i, err)
+		}
+		if n != 960 {
+			t.Fatalf("packet %d decoded to %d samples, want 960 (20ms at 48kHz)", i, n)
+		}
+	}
+
+	// A chunk that does not fill a frame is carried, exactly as for G.711.
+	if frames, _ := sender.nextFrames(make([]byte, 24000/100*2), 24000); len(frames) != 0 {
+		t.Fatalf("10ms of audio produced %d packets, want it held back", len(frames))
+	}
+	if len(sender.residual) == 0 {
+		t.Fatal("the partial frame was not carried")
 	}
 }
