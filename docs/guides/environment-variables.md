@@ -130,6 +130,17 @@ TTS worker 支持：
 | `CSGHUB_LITE_PI_INSTALL_ROOT` | `~/.local/share/pi-coding-agent` | Pi 用户级安装目录。 |
 | `CSGHUB_LITE_TMPDIR` | `~/.csghub-lite/tmp/...` | 直接运行部分内置应用安装脚本时覆盖临时目录。由 CSGLite 启动脚本时会自动设置到存储根下。 |
 
+## 企业版 License
+
+| 变量 | 说明 | 默认值 |
+|---|---|---|
+| `CSGHUB_LITE_LICENSE_FILE` | License 文件路径 | `<存储根目录>/license.key` |
+| `CSGHUB_LITE_LICENSE` | 直接提供 `LICENSE KEY` PEM 文本，优先于文件；设置后不能通过 API 或 CLI 安装、删除 License | 未设置 |
+| `CSGHUB_LITE_LICENSE_PUBLIC_KEY_FILE` | 用指定 PEM 公钥替代内置的 CSGHub 签发方公钥，仅用于预发环境联调 | 未设置，使用内置公钥 |
+
+详见 [`license` 命令](../cli/license.md) 与
+[企业版 License 功能门控设计](ee-license-design.md)。
+
 ## 开发和内部保留变量
 
 | 变量 | 用途 |

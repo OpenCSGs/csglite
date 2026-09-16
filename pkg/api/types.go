@@ -516,6 +516,74 @@ type SettingsResponse struct {
 	LlamaUseModelMaxCtx      bool                  `json:"llama_use_model_max_ctx"`
 	LlamaNumParallel         int                   `json:"llama_num_parallel"`
 	HiddenNavItems           []string              `json:"hidden_nav_items"`
+	// Edition is "Enterprise" while a license is in effect, otherwise "Community".
+	Edition string `json:"edition"`
+	// LicenseStatus is the license.Status string; "none" when no license is installed.
+	LicenseStatus string `json:"license_status"`
+	// License summarises the installed license, or is null.
+	License *LicenseSummary `json:"license"`
+	// Features lists the boolean feature keys currently in effect, sorted.
+	Features []string `json:"features"`
+	// Limits maps integer quota keys to their effective value; 0 means unlimited.
+	Limits map[string]int `json:"limits"`
+	// FeatureCatalog lists every license-gated feature so the UI can mark
+	// locked navigation items.
+	FeatureCatalog []LicenseFeatureDefinition `json:"feature_catalog"`
+}
+
+// LicenseSummary mirrors the signed CSGHub license body without the raw text.
+// Field names follow starhub-server's LicenseStatusResp JSON tags.
+type LicenseSummary struct {
+	Key        string    `json:"key"`
+	Company    string    `json:"company"`
+	Email      string    `json:"email"`
+	Product    string    `json:"product"`
+	Edition    string    `json:"edition"`
+	MaxUser    int       `json:"max_user"`
+	StartTime  time.Time `json:"start_time"`
+	ExpireTime time.Time `json:"expire_time"`
+	Version    string    `json:"version,omitempty"`
+}
+
+// LicenseState is the evaluated license status returned by GET /api/license.
+type LicenseState struct {
+	Status     string          `json:"status"`
+	Edition    string          `json:"edition"`
+	License    *LicenseSummary `json:"license"`
+	Features   []string        `json:"features"`
+	Limits     map[string]int  `json:"limits"`
+	GraceUntil *time.Time      `json:"grace_until,omitempty"`
+	Reason     string          `json:"reason,omitempty"`
+	Warnings   []string        `json:"warnings,omitempty"`
+	Source     string          `json:"source,omitempty"`
+	FilePath   string          `json:"file_path,omitempty"`
+	CheckedAt  time.Time       `json:"checked_at"`
+}
+
+// LicenseImportRequest carries the LICENSE KEY PEM text, as CSGHub's ImportLicenseReq does.
+type LicenseImportRequest struct {
+	Data string `json:"data"`
+}
+
+// LicenseVerifyResponse is the result of checking a license without saving it.
+type LicenseVerifyResponse struct {
+	Valid    bool            `json:"valid"`
+	Status   string          `json:"status"`
+	License  *LicenseSummary `json:"license"`
+	Features []string        `json:"features"`
+	Limits   map[string]int  `json:"limits"`
+	Reason   string          `json:"reason,omitempty"`
+	Warnings []string        `json:"warnings,omitempty"`
+}
+
+// LicenseFeatureDefinition describes one license-gated feature.
+type LicenseFeatureDefinition struct {
+	Key          string `json:"key"`
+	Type         string `json:"type"`
+	DefaultValue any    `json:"default_value"`
+	NavItem      string `json:"nav_item,omitempty"`
+	Since        string `json:"since,omitempty"`
+	Enabled      bool   `json:"enabled"`
 }
 
 type SettingsUpdateRequest struct {
@@ -1415,29 +1483,29 @@ type ProviderPoolRouterBaselines struct {
 }
 
 type ProviderPoolRouterMetrics struct {
-	QueryCount              int            `json:"query_count"`
-	CellCount               int            `json:"cell_count"`
-	TrialCount              int            `json:"trial_count"`
-	Repeats                 int            `json:"repeats"`
-	ResponseOutcomes        map[string]int `json:"response_outcomes"`
-	WinRate                 float64        `json:"win_rate"`
-	Spend                   float64        `json:"spend"`
-	TotalCost               float64        `json:"total_cost"`
-	Currency                string         `json:"currency,omitempty"`
-	CostUnit                string         `json:"cost_unit"`
-	MonetarySpendKnown      bool           `json:"monetary_spend_known"`
-	UnknownMonetarySpend    bool           `json:"unknown_monetary_spend"`
-	TrainQueryCount         int            `json:"train_query_count"`
-	HeldOutQueryCount       int            `json:"held_out_query_count"`
-	CVFoldCount             int            `json:"cv_fold_count"`
-	TrainUtility            float64        `json:"train_utility"`
-	TrainQuality            float64        `json:"train_quality"`
-	TrainCost               float64        `json:"train_cost_score"`
-	HeldOutUtility          float64        `json:"held_out_utility"`
-	HeldOutQuality          float64        `json:"held_out_quality"`
-	HeldOutCost             float64        `json:"held_out_cost_score"`
-	AllClustersOneMember    bool           `json:"all_clusters_one_member"`
-	SemanticDifferentiation bool           `json:"semantic_differentiation"`
+	QueryCount              int                         `json:"query_count"`
+	CellCount               int                         `json:"cell_count"`
+	TrialCount              int                         `json:"trial_count"`
+	Repeats                 int                         `json:"repeats"`
+	ResponseOutcomes        map[string]int              `json:"response_outcomes"`
+	WinRate                 float64                     `json:"win_rate"`
+	Spend                   float64                     `json:"spend"`
+	TotalCost               float64                     `json:"total_cost"`
+	Currency                string                      `json:"currency,omitempty"`
+	CostUnit                string                      `json:"cost_unit"`
+	MonetarySpendKnown      bool                        `json:"monetary_spend_known"`
+	UnknownMonetarySpend    bool                        `json:"unknown_monetary_spend"`
+	TrainQueryCount         int                         `json:"train_query_count"`
+	HeldOutQueryCount       int                         `json:"held_out_query_count"`
+	CVFoldCount             int                         `json:"cv_fold_count"`
+	TrainUtility            float64                     `json:"train_utility"`
+	TrainQuality            float64                     `json:"train_quality"`
+	TrainCost               float64                     `json:"train_cost_score"`
+	HeldOutUtility          float64                     `json:"held_out_utility"`
+	HeldOutQuality          float64                     `json:"held_out_quality"`
+	HeldOutCost             float64                     `json:"held_out_cost_score"`
+	AllClustersOneMember    bool                        `json:"all_clusters_one_member"`
+	SemanticDifferentiation bool                        `json:"semantic_differentiation"`
 	Baselines               ProviderPoolRouterBaselines `json:"baselines"`
 }
 

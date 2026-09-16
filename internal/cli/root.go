@@ -38,6 +38,7 @@ and the full CSGHub platform.`,
 		newLoginCmd(),
 		newSearchCmd(),
 		newConfigCmd(),
+		newLicenseCmd(version),
 		newUninstallCmd(),
 		newUpgradeCmd(),
 	)

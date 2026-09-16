@@ -36,6 +36,7 @@ CSGLite 提供以下命令：
 |------|------|
 | [`login`](login.md) | 设置 CSGHub 访问令牌 |
 | [`config`](config.md) | 查看或修改配置 |
+| [`license`](license.md) | 查看、校验、安装或删除企业版 License |
 
 ## 其他
 

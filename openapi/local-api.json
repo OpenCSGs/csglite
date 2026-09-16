@@ -53,6 +53,10 @@
       "description": "OpenCSG access token status and management."
     },
     {
+      "name": "License",
+      "description": "Enterprise license status, verification and installation. Licenses are issued by the CSGHub license issuer; CSGLite only verifies them."
+    },
+    {
       "name": "Logs",
       "description": "Server-side and AI App log streaming."
     },
@@ -4362,6 +4366,157 @@
         }
       }
     },
+    "/api/license": {
+      "get": {
+        "tags": ["License"],
+        "summary": "Get the evaluated license state",
+        "operationId": "getLicense",
+        "responses": {
+          "200": {
+            "description": "Current license status. `status` is `none` when no license is installed and the server runs as the Community edition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseState"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["License"],
+        "summary": "Install or replace the license",
+        "description": "Verifies the LICENSE KEY PEM text against the embedded CSGHub issuer public key, writes it to the storage root and re-evaluates. A license that is invalid, issued for another product, or whose grace period has already ended is rejected and the installed state is left untouched. Installation is refused while `CSGHUB_LITE_LICENSE` supplies the license.",
+        "operationId": "importLicense",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LicenseImportRequest"
+              },
+              "example": {
+                "data": "-----BEGIN LICENSE KEY-----\nL/+FAwEBB1JTQUluZm8B...\n-----END LICENSE KEY-----"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "License state after installation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseState"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "413": {
+            "description": "The license text exceeds 64 KiB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["License"],
+        "summary": "Remove the installed license",
+        "description": "Deletes the license file and returns to the Community edition. Idempotent. Refused while `CSGHUB_LITE_LICENSE` supplies the license.",
+        "operationId": "deleteLicense",
+        "responses": {
+          "200": {
+            "description": "License state after removal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseState"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/license/verify": {
+      "post": {
+        "tags": ["License"],
+        "summary": "Verify a license without installing it",
+        "operationId": "verifyLicense",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LicenseImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification outcome. An unreadable or unsigned license yields `valid: false` with a `reason`, not an error status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseVerifyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "413": {
+            "description": "The license text exceeds 64 KiB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/license/features": {
+      "get": {
+        "tags": ["License"],
+        "summary": "List license-gated features and their current state",
+        "operationId": "listLicenseFeatures",
+        "responses": {
+          "200": {
+            "description": "Every catalog entry with whether it is currently in effect.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LicenseFeatureDefinition"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/shutdown": {
       "post": {
         "tags": [
@@ -7804,7 +7959,13 @@
           "llama_use_model_max_ctx",
           "web_search",
           "observability",
-          "hidden_nav_items"
+          "hidden_nav_items",
+          "edition",
+          "license_status",
+          "license",
+          "features",
+          "limits",
+          "feature_catalog"
         ],
         "properties": {
           "version": {
@@ -7885,6 +8046,44 @@
             "description": "Stable IDs of left navigation items hidden by the runtime environment configuration.",
             "items": {
               "type": "string"
+            }
+          },
+          "edition": {
+            "type": "string",
+            "description": "`Enterprise` while a valid or grace-period license is in effect, otherwise `Community`."
+          },
+          "license_status": {
+            "$ref": "#/components/schemas/LicenseStatus"
+          },
+          "license": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LicenseSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "features": {
+            "type": "array",
+            "description": "Boolean feature keys currently in effect, sorted.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limits": {
+            "type": "object",
+            "description": "Integer quota keys mapped to their effective value; 0 means unlimited.",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "feature_catalog": {
+            "type": "array",
+            "description": "Every license-gated feature, so the UI can mark locked navigation items.",
+            "items": {
+              "$ref": "#/components/schemas/LicenseFeatureDefinition"
             }
           }
         }
@@ -10480,6 +10679,202 @@
           },
           "user": {
             "$ref": "#/components/schemas/CloudAuthUser"
+          }
+        }
+      },
+      "LicenseStatus": {
+        "type": "string",
+        "enum": ["none", "not_started", "valid", "grace", "expired", "invalid"],
+        "description": "`none`: no license installed. `not_started`: verified but before start_time. `valid`: within term. `grace`: expired less than 14 days ago (or the system clock appears to have been turned back); features stay enabled. `expired`: grace period over. `invalid`: unreadable, unsigned by a known key, issued for another product, or requires a newer CSGLite."
+      },
+      "LicenseSummary": {
+        "type": "object",
+        "description": "The signed CSGHub license body without the raw text. Field names follow the CSGHub license status response.",
+        "additionalProperties": false,
+        "required": ["key", "company", "email", "product", "edition", "max_user", "start_time", "expire_time"],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "License ID assigned by the issuer."
+          },
+          "company": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "product": {
+            "type": "string",
+            "description": "Always `CSGLite` for an accepted license."
+          },
+          "edition": {
+            "type": "string"
+          },
+          "max_user": {
+            "type": "integer",
+            "description": "Seat count from the issuer; displayed, not enforced."
+          },
+          "start_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expire_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "string",
+            "description": "Minimum CSGLite version the license applies to; empty means unconstrained."
+          }
+        }
+      },
+      "LicenseState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "edition", "license", "features", "limits", "checked_at"],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/LicenseStatus"
+          },
+          "edition": {
+            "type": "string"
+          },
+          "license": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LicenseSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limits": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "grace_until": {
+            "type": "string",
+            "format": "date-time",
+            "description": "End of the grace period; present for `valid` and `grace`."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Explains `invalid`, `grace`, `expired` and `not_started`."
+          },
+          "warnings": {
+            "type": "array",
+            "description": "Non-fatal notes, such as Extra keys this CSGLite does not know.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "type": "string",
+            "enum": ["env", "file", ""],
+            "description": "Where the license was read from."
+          },
+          "file_path": {
+            "type": "string",
+            "description": "Path the license file is read from and written to."
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LicenseImportRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "string",
+            "description": "LICENSE KEY PEM text exactly as downloaded from the CSGHub license issuer."
+          }
+        }
+      },
+      "LicenseVerifyResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["valid", "status", "license", "features", "limits"],
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "description": "True when the license would be in effect (`valid` or `grace`) if installed now."
+          },
+          "status": {
+            "$ref": "#/components/schemas/LicenseStatus"
+          },
+          "license": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LicenseSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limits": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "reason": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "LicenseFeatureDefinition": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "type", "default_value", "enabled"],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "`feature.lite.<name>` for booleans, `quota.lite.<name>` for integer limits; registered verbatim in the CSGHub issuer."
+          },
+          "type": {
+            "type": "string",
+            "enum": ["boolean", "int"]
+          },
+          "default_value": {
+            "description": "Value applied under an Enterprise license whose Extra does not mention the key."
+          },
+          "nav_item": {
+            "type": "string",
+            "description": "Left navigation item the feature unlocks, if any."
+          },
+          "since": {
+            "type": "string",
+            "description": "CSGLite version in which the feature became license-gated."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the feature is currently in effect."
           }
         }
       },

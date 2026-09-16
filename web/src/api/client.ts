@@ -325,6 +325,91 @@ export interface AppSettings {
   web_search: WebSearchSettings;
   observability: ObservabilitySettings;
   hidden_nav_items: string[];
+  /** "Enterprise" while a license is in effect, otherwise "Community". */
+  edition: string;
+  license_status: LicenseStatus;
+  license: LicenseSummary | null;
+  /** Boolean feature keys currently in effect. */
+  features: string[];
+  /** Integer quota keys mapped to their value; 0 means unlimited. */
+  limits: Record<string, number>;
+  feature_catalog: LicenseFeatureDefinition[];
+}
+
+export type LicenseStatus = "none" | "not_started" | "valid" | "grace" | "expired" | "invalid";
+
+export interface LicenseSummary {
+  key: string;
+  company: string;
+  email: string;
+  product: string;
+  edition: string;
+  max_user: number;
+  start_time: string;
+  expire_time: string;
+  version?: string;
+}
+
+export interface LicenseState {
+  status: LicenseStatus;
+  edition: string;
+  license: LicenseSummary | null;
+  features: string[];
+  limits: Record<string, number>;
+  grace_until?: string;
+  reason?: string;
+  warnings?: string[];
+  source?: string;
+  file_path?: string;
+  checked_at: string;
+}
+
+export interface LicenseVerifyResponse {
+  valid: boolean;
+  status: LicenseStatus;
+  license: LicenseSummary | null;
+  features: string[];
+  limits: Record<string, number>;
+  reason?: string;
+  warnings?: string[];
+}
+
+export interface LicenseFeatureDefinition {
+  key: string;
+  type: "boolean" | "int";
+  default_value: unknown;
+  nav_item?: string;
+  since?: string;
+  enabled: boolean;
+}
+
+/** Error code carried by 403 responses from license-gated routes. */
+export const FEATURE_NOT_LICENSED = "feature_not_licensed";
+
+export function getLicense(): Promise<LicenseState> {
+  return fetchJSON<LicenseState>("/api/license");
+}
+
+export function verifyLicense(data: string): Promise<LicenseVerifyResponse> {
+  return fetchJSON<LicenseVerifyResponse>("/api/license/verify", {
+    method: "POST",
+    body: JSON.stringify({ data }),
+  });
+}
+
+export function importLicense(data: string): Promise<LicenseState> {
+  return fetchJSON<LicenseState>("/api/license", {
+    method: "PUT",
+    body: JSON.stringify({ data }),
+  });
+}
+
+export function deleteLicense(): Promise<LicenseState> {
+  return fetchJSON<LicenseState>("/api/license", { method: "DELETE" });
+}
+
+export function getLicenseFeatures(): Promise<LicenseFeatureDefinition[]> {
+  return fetchJSON<LicenseFeatureDefinition[]>("/api/license/features");
 }
 
 export interface ObservabilitySettings {
