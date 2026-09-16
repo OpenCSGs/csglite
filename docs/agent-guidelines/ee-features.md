@@ -17,9 +17,11 @@ which features are active. Licenses are issued by the CSGHub license issuer
   nothing; update it deliberately when the first feature is gated.
 - Boolean keys are `feature.lite.<name>`, integer limits are
   `quota.lite.<name>`. `ValidateCatalog` and `TestCatalogIsValid` enforce this.
-- Every new catalog key must also be registered in starhub-server
-  (`common/types/feature_registry.go` plus `common/i18n/*/features.json`) in a
-  companion MR; the issuer refuses to sign unknown keys.
+- The CSGHub issuer accepts any well-formed `feature.lite.*` / `quota.lite.*`
+  key without registration, so a new catalog key needs no starhub-server
+  change. Registering it there (`common/types/feature_registry.go` plus
+  `common/i18n/*/features.json`) is optional and only adds a display name in
+  the issuer UI.
 - Gate HTTP routes only in `internal/server/routes.go` by wrapping the handler
   with `s.requireFeature(license.FeatureX)`. Do not check the license inside
   handlers. Background jobs and non-HTTP entry points call
@@ -38,4 +40,4 @@ which features are active. Licenses are issued by the CSGHub license issuer
   Apache-2.0.
 - A PR that gates a feature must, in the same change: set `Gated: true` on
   the catalog entry, wrap the route(s), update `openapi/local-api.json`, add the web UI lock
-  state, prefix the release note with `[EE]`, and link the starhub-server MR.
+  state, and prefix the release note with `[EE]`.
