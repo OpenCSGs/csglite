@@ -84,7 +84,8 @@ func (s *Server) saveCloudAccessToken(token string) error {
 // handleCloudAuthCallback is the browser redirect target for the "lite" SSO
 // flow. The user service redirects here after a successful web login with the
 // access token in the query string; we persist it and return a small page that
-// closes itself so the waiting web UI can pick up the new login state.
+// asks the browser to close the tab so the waiting web UI can pick up the new
+// login state. Browsers that refuse to close it keep the manual hint.
 func (s *Server) handleCloudAuthCallback(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
 	if token == "" {
@@ -105,7 +106,7 @@ func writeCloudAuthCallbackPage(w http.ResponseWriter, success bool, errCode str
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(http.StatusOK)
 	if success {
-		_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>Login complete</title></head><body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0"><p>Login complete. You can close this window and return to csglite.</p></body></html>`)
+		_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>Login complete</title></head><body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0"><p>Login complete. You can close this window and return to csglite.</p><script>window.close();</script></body></html>`)
 		return
 	}
 	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>Login failed</title></head><body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0"><p>Login failed (`+errCode+`). Please try again.</p></body></html>`)
