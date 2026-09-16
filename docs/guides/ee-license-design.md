@@ -78,8 +78,10 @@ CSGHub 在 `common/types/feature_registry.go` 中定义了功能注册表
 
 - 布尔功能开关的 Key 必须以 `feature.` 开头，写在 License `Extra.features` 里；
 - 整数配额的 Key 必须以 `quota.` 开头，写在 License `Extra.limits` 里；
-- **签发端严格校验**：`ValidateLicenseExtraForIssue` 拒绝任何未注册的 Key，
-  所以 CSGLite 的功能必须先在 CSGHub 的注册表里登记，才能被签进 License。
+- 签发端对未注册的 Key 严格拒签，**但 `lite.` 产品段例外**：
+  `feature.lite.*`、`quota.lite.*` 只按前缀做类型校验（布尔 / 整数），不要求
+  事先登记。CSGLite 自己的注册表是这段命名空间的唯一真源，新增或改名 Key 只
+  改 csglite 一个仓库；在 CSGHub 注册表里登记只是让签发后台能展示中英文名。
 
 为避免与 CSGHub 自身功能（如 `feature.audit_log`）在同一平面命名空间冲突，
 CSGLite 的 Key 统一加产品段：`feature.lite.<name>`、`quota.lite.<name>`。
@@ -164,8 +166,9 @@ var Catalog = []FeatureDefinition{ /* 以上全部 */ }
 
 - PR 模板增加必选项：`功能归属：CE / EE / 不涉及`。
 - 选择 EE 的 PR 必须同时包含：`Catalog` 条目标记 `Gated: true`、路由门控、前端门控、
-  `openapi/local-api.json` 更新、发布说明 `[EE]` 前缀，**以及一个对应的
-  starhub-server MR**（见第 13 节）。任一缺失 CI 失败。
+  `openapi/local-api.json` 更新、发布说明 `[EE]` 前缀。任一缺失 CI 失败。
+  不需要改 starhub-server；如希望签发后台显示该功能的中英文名，可另提 MR
+  登记（见第 13 节）。
 - `docs/agent-guidelines/` 新增 `ee-features.md`，把本节规则写成 agent 可
   执行的检查清单。
 
@@ -499,13 +502,16 @@ starhub-server 仓库的 MR 与发版配合。在线校验与席位强制不在�
 
 CSGHub 已有完整的 License 体系，CSGLite 全部复用，两边只需要以下配合：
 
-### 13.1 必须做的 starhub-server 改动
+### 13.1 已完成的 starhub-server 改动（MR !3054）
 
 | 改动 | 位置 | 说明 |
 |---|---|---|
-| 登记 CSGLite 功能 | `common/types/feature_registry.go` | 把 3.2 节的 `feature.lite.*` / `quota.lite.*` 加入 `featureCatalog`；否则签发端严格校验会拒绝 |
-| 功能名称与描述 | `common/i18n/{zh-CN,en-US,zh-HK}/features.json` | 键名 `license.<key>.name` / `license.<key>.description`，签发后台通过 `GET /licenses/management/features` 展示 |
-| 注册表测试 | 对应 `_test.go` | `ValidateFeatureCatalog` 已强制命名空间与默认值类型，新条目跟随现有测试 |
+| `lite.` 命名空间放行 | `common/types/license_extra.go` | 签发时 `feature.lite.*` 按布尔、`quota.lite.*` 按整数做类型校验，不要求登记；前缀与所在小节不匹配仍报错 |
+| 登记首批 CSGLite 功能 | `common/types/feature_registry.go` | 3.2 节的 7 个 Key，仅用于签发后台展示名称 |
+| 功能名称与描述 | `common/i18n/{zh-CN,en-US,zh-HK}/features.json` | 键名 `license.<key>.name` / `license.<key>.description` |
+
+以后 CSGLite 新增 Key 时 starhub-server **不需要改动**；登记与 i18n 是可选的
+体验优化。
 
 ### 13.2 建议做的 starhub-server 改动
 
@@ -519,7 +525,8 @@ CSGHub 已有完整的 License 体系，CSGLite 全部复用，两边只需要�
 
 - 载荷结构、gob 编码、RSA-SHA256 PKCS#1 v1.5、base64 换行与 PEM 包裹全部一致，
   由黄金向量测试锁定。
-- `Extra` 只有 `features` 与 `limits` 两个顶层键；导入宽松、签发严格。
+- `Extra` 只有 `features` 与 `limits` 两个顶层键；导入宽松、签发严格，
+  `lite.` 段只按前缀校验类型。
 - 状态命名沿用 `active` / `inactive` / `expired` 的语义，CSGLite 额外增加
   `grace`、`not_started`、`invalid`、`none` 用于本地单文件场景。
 - 导入与校验接口的请求体字段名为 `data`，与 `ImportLicenseReq` 一致。
