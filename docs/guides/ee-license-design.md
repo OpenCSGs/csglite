@@ -103,7 +103,8 @@ const (
 type FeatureDefinition struct {
     Key          string      // 与 CSGHub 注册表中的 Key 完全相同
     Type         FeatureType
-    DefaultValue any         // 持有有效 License 但 Extra 未提及该 Key 时的取值
+    Gated        bool        // true 才校验 License；false 的功能在任何版本下始终开启
+    DefaultValue any         // Gated 功能持有有效 License 但 Extra 未提及该 Key 时的取值
     NavItem      string      // 对应前端导航项 id，可为空
     Since        string      // 首次进入 EE 的 CSGLite 版本
 }
@@ -122,10 +123,16 @@ var (
 var Catalog = []FeatureDefinition{ /* 以上全部 */ }
 ```
 
-取值语义与 CSGHub 的 `licenseProvider` 一致：
+**只有 `Gated: true` 的功能才受 License 控制；未标记的功能在社区版、开发
+构建和任何 License 状态下都始终开启。** 把一个功能收进 EE 的动作就是把它的
+`Gated` 改为 `true` 并包裹对应路由；在此之前注册表条目只是与签发端对齐名字，
+不影响任何行为。当前仓库里没有任何条目是 `Gated: true`。
+
+对 `Gated` 功能，取值语义与 CSGHub 的 `licenseProvider` 一致：
 
 | 情形 | 布尔功能 | 整数配额 |
 |---|---|---|
+| 未标记 `Gated` | `true`（始终开启） | `0`（不限） |
 | 无有效 License | `false` | `0` |
 | 有效 License，Extra 未提及 | `DefaultValue` | `DefaultValue` |
 | 有效 License，Extra 明确给值 | Extra 中的值 | Extra 中的值 |
@@ -156,7 +163,7 @@ var Catalog = []FeatureDefinition{ /* 以上全部 */ }
 ### 3.4 PR 流程
 
 - PR 模板增加必选项：`功能归属：CE / EE / 不涉及`。
-- 选择 EE 的 PR 必须同时包含：`Catalog` 新增条目、路由门控、前端门控、
+- 选择 EE 的 PR 必须同时包含：`Catalog` 条目标记 `Gated: true`、路由门控、前端门控、
   `openapi/local-api.json` 更新、发布说明 `[EE]` 前缀，**以及一个对应的
   starhub-server MR**（见第 13 节）。任一缺失 CI 失败。
 - `docs/agent-guidelines/` 新增 `ee-features.md`，把本节规则写成 agent 可
@@ -462,7 +469,8 @@ csghub-lite license features           # 列出 Catalog 及当前是否可用
 > 实施进度：阶段一、二（`internal/license`、`/api/license*`、CLI、OpenAPI）和
 > 阶段三的 License 管理部分（Settings 页导入/校验/删除、侧边栏 “CSGLite EE”
 > 标识）已完成；导航锁标与 `FeatureLocked` 组件随第一条被门控的路由一起做。
-> `Catalog` 已声明但尚未包裹任何路由，等待产品确认初始划分（第 12 节问题 1）。
+> `Catalog` 已声明但没有任何条目 `Gated: true`，也未包裹路由，所有功能在所有版本
+> 下开启；等待产品确认初始划分（第 12 节问题 1）后逐条标记。
 
 
 | 阶段 | 内容 | 估时 |

@@ -365,12 +365,12 @@ func newLicenseFeaturesCmd(version string) *cobra.Command {
 				}
 				st := m.State()
 				for _, def := range license.Catalog() {
-					enabled := st.Licensed()
+					enabled := !def.Gated || st.Licensed()
 					if def.Type == license.FeatureTypeBoolean {
 						enabled = st.Enabled(def)
 					}
 					entries = append(entries, api.LicenseFeatureDefinition{
-						Key: def.Key, Type: string(def.Type), DefaultValue: def.DefaultValue,
+						Key: def.Key, Type: string(def.Type), Gated: def.Gated, DefaultValue: def.DefaultValue,
 						NavItem: def.NavItem, Since: def.Since, Enabled: enabled,
 					})
 				}
@@ -379,9 +379,13 @@ func newLicenseFeaturesCmd(version string) *cobra.Command {
 				return printJSON(entries)
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-			fmt.Fprintln(w, "FEATURE\tTYPE\tENABLED\tDEFAULT\tSINCE")
+			fmt.Fprintln(w, "FEATURE\tTYPE\tEE\tENABLED\tDEFAULT\tSINCE")
 			for _, e := range entries {
-				fmt.Fprintf(w, "%s\t%s\t%v\t%v\t%s\n", e.Key, e.Type, e.Enabled, e.DefaultValue, e.Since)
+				gated := "-"
+				if e.Gated {
+					gated = "yes"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%v\t%v\t%s\n", e.Key, e.Type, gated, e.Enabled, e.DefaultValue, e.Since)
 			}
 			return w.Flush()
 		},

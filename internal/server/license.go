@@ -49,8 +49,9 @@ func newLicenseManager(storageRoot, version string) *license.Manager {
 }
 
 // requireFeature refuses the wrapped handler with 403 unless the boolean
-// feature is in effect. Wrap routes in routes.go only; background jobs check
-// s.license.Enabled directly.
+// feature is in effect. A definition that is not Gated always passes, so
+// wrapping a route is harmless until the catalog entry is flipped to EE.
+// Wrap routes in routes.go only; background jobs check s.license.Enabled.
 func (s *Server) requireFeature(def license.FeatureDefinition) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +120,7 @@ func licenseFeatureCatalog(state license.State) []api.LicenseFeatureDefinition {
 		entry := api.LicenseFeatureDefinition{
 			Key:          def.Key,
 			Type:         string(def.Type),
+			Gated:        def.Gated,
 			DefaultValue: def.DefaultValue,
 			NavItem:      def.NavItem,
 			Since:        def.Since,
@@ -127,7 +129,7 @@ func licenseFeatureCatalog(state license.State) []api.LicenseFeatureDefinition {
 		case license.FeatureTypeBoolean:
 			entry.Enabled = state.Enabled(def)
 		case license.FeatureTypeInt:
-			entry.Enabled = state.Licensed()
+			entry.Enabled = !def.Gated || state.Licensed()
 		}
 		out = append(out, entry)
 	}

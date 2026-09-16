@@ -26,10 +26,26 @@ func installTestLicenseKeys(t *testing.T, s *Server) *rsa.PrivateKey {
 		FilePath:      filepath.Join(root, license.FileName),
 		PublicKeys:    []*rsa.PublicKey{&key.PublicKey},
 		Version:       s.version,
+		Catalog:       gatedTestCatalog(),
 		LastCheckPath: filepath.Join(root, "license.lastcheck"),
 	})
 	s.license.Refresh()
 	return key
+}
+
+// gatedTestCatalog gates every shipped entry so the tests exercise the
+// licensed path; the shipped catalog itself gates nothing yet.
+func gatedTestCatalog() []license.FeatureDefinition {
+	defs := license.Catalog()
+	for i := range defs {
+		defs[i].Gated = true
+	}
+	return defs
+}
+
+func gatedDef(def license.FeatureDefinition) license.FeatureDefinition {
+	def.Gated = true
+	return def
 }
 
 func licenseJSONRequest(method, target, data string) *http.Request {
@@ -44,7 +60,7 @@ func TestRequireFeatureWithoutLicenseReturnsForbidden(t *testing.T) {
 	installTestLicenseKeys(t, s)
 
 	called := false
-	handler := s.requireFeature(license.FeatureObservability)(func(w http.ResponseWriter, r *http.Request) {
+	handler := s.requireFeature(gatedDef(license.FeatureObservability))(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -66,11 +82,36 @@ func TestRequireFeatureWithoutLicenseReturnsForbidden(t *testing.T) {
 	}
 }
 
+func TestRequireFeatureUngatedAlwaysPasses(t *testing.T) {
+	s := newTestServer(t)
+	installTestLicenseKeys(t, s)
+	for _, srv := range []*Server{s, {version: "test"}} { // with and without a manager
+		rec := httptest.NewRecorder()
+		srv.requireFeature(license.FeatureObservability)(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("ungated feature refused without a license: %d", rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	s.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/license/features", nil))
+	var catalog []api.LicenseFeatureDefinition
+	if err := json.Unmarshal(rec.Body.Bytes(), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range catalog {
+		if entry.Gated || !entry.Enabled {
+			t.Fatalf("shipped catalog entry %s should be ungated and enabled: %+v", entry.Key, entry)
+		}
+	}
+}
+
 func TestRequireFeatureNilManagerIsCommunity(t *testing.T) {
 	s := newTestServer(t)
 	s.license = nil
 	rec := httptest.NewRecorder()
-	s.requireFeature(license.FeatureAIApps)(func(w http.ResponseWriter, r *http.Request) {
+	s.requireFeature(gatedDef(license.FeatureAIApps))(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler must not run")
 	})(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusForbidden {
@@ -128,7 +169,7 @@ func TestLicenseLifecycleOverHTTP(t *testing.T) {
 
 	// Gated handler now passes, settings reflect the license.
 	rec = httptest.NewRecorder()
-	s.requireFeature(license.FeatureObservability)(func(w http.ResponseWriter, r *http.Request) {
+	s.requireFeature(gatedDef(license.FeatureObservability))(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusNoContent {

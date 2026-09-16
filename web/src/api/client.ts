@@ -377,6 +377,8 @@ export interface LicenseVerifyResponse {
 export interface LicenseFeatureDefinition {
   key: string;
   type: "boolean" | "int";
+  /** Enterprise-only; consults the license. Ungated features are always enabled. */
+  gated: boolean;
   default_value: unknown;
   nav_item?: string;
   since?: string;

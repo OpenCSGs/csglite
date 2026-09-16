@@ -10851,7 +10851,7 @@
       "LicenseFeatureDefinition": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["key", "type", "default_value", "enabled"],
+        "required": ["key", "type", "gated", "default_value", "enabled"],
         "properties": {
           "key": {
             "type": "string",
@@ -10861,8 +10861,12 @@
             "type": "string",
             "enum": ["boolean", "int"]
           },
+          "gated": {
+            "type": "boolean",
+            "description": "True for enterprise-only features that consult the license. Ungated features are always enabled, whatever the license state."
+          },
           "default_value": {
-            "description": "Value applied under an Enterprise license whose Extra does not mention the key."
+            "description": "For a gated feature: value applied under an Enterprise license whose Extra does not mention the key."
           },
           "nav_item": {
             "type": "string",

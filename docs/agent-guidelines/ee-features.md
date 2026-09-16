@@ -9,6 +9,12 @@ which features are active. Licenses are issued by the CSGHub license issuer
 
 - `internal/license/features.go` is the single source of truth for gated
   features. Never gate on a raw string; reference a `FeatureDefinition`.
+- Only a definition with `Gated: true` consults the license. Everything else
+  is always enabled, in every edition and in development builds. Moving a
+  feature to EE means setting `Gated: true` on its catalog entry and wrapping
+  its routes; adding a catalog entry alone changes nothing.
+  `TestUngatedFeaturesIgnoreTheLicense` asserts the shipped catalog gates
+  nothing; update it deliberately when the first feature is gated.
 - Boolean keys are `feature.lite.<name>`, integer limits are
   `quota.lite.<name>`. `ValidateCatalog` and `TestCatalogIsValid` enforce this.
 - Every new catalog key must also be registered in starhub-server
@@ -30,6 +36,6 @@ which features are active. Licenses are issued by the CSGHub license issuer
 - New EE implementation code goes under `ee/` with the enterprise license
   header once that directory exists; the gating framework itself stays
   Apache-2.0.
-- A PR that gates a feature must, in the same change: add the catalog entry,
-  wrap the route(s), update `openapi/local-api.json`, add the web UI lock
+- A PR that gates a feature must, in the same change: set `Gated: true` on
+  the catalog entry, wrap the route(s), update `openapi/local-api.json`, add the web UI lock
   state, prefix the release note with `[EE]`, and link the starhub-server MR.

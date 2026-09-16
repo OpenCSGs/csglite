@@ -13,7 +13,7 @@ csghub-lite license show               # 查看当前 License 状态
 csghub-lite license verify <file|->    # 只校验，不安装
 csghub-lite license install <file|->   # 安装（覆盖已有 License）
 csghub-lite license remove             # 删除 License，回到社区版
-csghub-lite license features           # 列出受 License 控制的功能及当前状态
+csghub-lite license features           # 列出功能注册表；EE 列为 yes 的才受 License 控制
 ```
 
 `<file|->` 可以是文件路径，也可以是 `-` 表示从标准输入读取。`show`、
@@ -41,6 +41,9 @@ csghub-lite license features           # 列出受 License 控制的功能及当
 | `invalid` | 签名错误、格式错误、产品不是 CSGLite，或要求更高的 CSGLite 版本 |
 
 `install` 会拒绝 `invalid` 和 `expired` 的 License，已安装的 License 不受影响。
+
+只有在注册表中标记为 EE（`features` 输出的 EE 列为 `yes`）的功能才会校验
+License，其余功能在社区版下也始终可用。
 
 ## 相关环境变量
 

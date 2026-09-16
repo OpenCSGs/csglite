@@ -578,8 +578,11 @@ type LicenseVerifyResponse struct {
 
 // LicenseFeatureDefinition describes one license-gated feature.
 type LicenseFeatureDefinition struct {
-	Key          string `json:"key"`
-	Type         string `json:"type"`
+	Key  string `json:"key"`
+	Type string `json:"type"`
+	// Gated is true for enterprise-only features that consult the license;
+	// ungated features are always enabled.
+	Gated        bool   `json:"gated"`
 	DefaultValue any    `json:"default_value"`
 	NavItem      string `json:"nav_item,omitempty"`
 	Since        string `json:"since,omitempty"`

@@ -14,6 +14,22 @@ import (
 
 var testNow = time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 
+// gated returns def marked enterprise-only, so tests exercise the licensed
+// path even while the shipped catalog has nothing gated.
+func gated(def license.FeatureDefinition) license.FeatureDefinition {
+	def.Gated = true
+	return def
+}
+
+// gatedCatalog is the shipped catalog with every entry gated.
+func gatedCatalog() []license.FeatureDefinition {
+	defs := license.Catalog()
+	for i := range defs {
+		defs[i].Gated = true
+	}
+	return defs
+}
+
 func newManager(t *testing.T, key *rsa.PrivateKey, mutate func(*license.Options)) (*license.Manager, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -21,6 +37,7 @@ func newManager(t *testing.T, key *rsa.PrivateKey, mutate func(*license.Options)
 		FilePath:      filepath.Join(root, license.FileName),
 		PublicKeys:    []*rsa.PublicKey{&key.PublicKey},
 		Version:       "0.10.3",
+		Catalog:       gatedCatalog(),
 		Now:           func() time.Time { return testNow },
 		LastCheckPath: filepath.Join(root, "license.lastcheck"),
 	}
@@ -66,12 +83,54 @@ func TestRefreshWithoutFileIsCommunity(t *testing.T) {
 	if st.Status != license.StatusNone || st.Licensed() || st.Edition() != license.EditionCommunity {
 		t.Fatalf("unexpected state %+v", st)
 	}
-	if m.Enabled(license.FeatureObservability) {
-		t.Fatal("feature enabled without a license")
+	if m.Enabled(gated(license.FeatureObservability)) {
+		t.Fatal("gated feature enabled without a license")
+	}
+	if !m.Enabled(license.FeatureObservability) {
+		t.Fatal("ungated feature must be enabled without a license")
 	}
 	var nilManager *license.Manager
-	if nilManager.State().Status != license.StatusNone || nilManager.Enabled(license.FeatureObservability) {
+	if nilManager.State().Status != license.StatusNone || nilManager.Enabled(gated(license.FeatureObservability)) {
 		t.Fatal("nil manager must behave as Community")
+	}
+	if !nilManager.Enabled(license.FeatureObservability) || nilManager.Limit(license.QuotaMaxProviderPools) != 0 {
+		t.Fatal("nil manager must keep ungated features open")
+	}
+}
+
+func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
+	key := licensetest.NewKey(t)
+	// Shipped catalog: nothing gated.
+	m, _ := newManager(t, key, func(o *license.Options) { o.Catalog = license.Catalog() })
+	if len(license.GatedCatalog()) != 0 {
+		t.Fatalf("shipped catalog unexpectedly gates %v; update this test and the docs deliberately", license.GatedCatalog())
+	}
+	st := m.Refresh()
+	if st.Status != license.StatusNone {
+		t.Fatalf("status %s", st.Status)
+	}
+	for _, def := range license.Catalog() {
+		switch def.Type {
+		case license.FeatureTypeBoolean:
+			if !st.Enabled(def) {
+				t.Errorf("%s must be enabled without a license", def.Key)
+			}
+		case license.FeatureTypeInt:
+			if st.Limit(def) != 0 {
+				t.Errorf("%s must be unlimited without a license", def.Key)
+			}
+		}
+	}
+	if got := len(st.EnabledKeys()); got != 6 {
+		t.Fatalf("EnabledKeys = %d, want all 6 ungated booleans", got)
+	}
+
+	// A license that explicitly disables an ungated feature has no effect on it.
+	p := licensetest.Payload(testNow)
+	p.Extra = `{"features": {"feature.lite.observability": false}}`
+	st = m.Verify(licensetest.Encode(t, key, p))
+	if st.Status != license.StatusValid || !st.Enabled(license.FeatureObservability) {
+		t.Fatalf("ungated feature must stay enabled: %+v", st)
 	}
 }
 
@@ -87,7 +146,7 @@ func TestInstallEnterpriseUnlocksCatalogDefaults(t *testing.T) {
 	if st.Status != license.StatusValid || st.Edition() != license.EditionEnterprise || st.Source != "file" {
 		t.Fatalf("unexpected state %+v", st)
 	}
-	for _, def := range license.Catalog() {
+	for _, def := range gatedCatalog() {
 		switch def.Type {
 		case license.FeatureTypeBoolean:
 			if !st.Enabled(def) {
@@ -113,6 +172,7 @@ func TestInstallEnterpriseUnlocksCatalogDefaults(t *testing.T) {
 	again := license.NewManager(license.Options{
 		FilePath:   filepath.Join(root, license.FileName),
 		PublicKeys: []*rsa.PublicKey{&key.PublicKey},
+		Catalog:    gatedCatalog(),
 		Now:        func() time.Time { return testNow },
 	})
 	if got := again.Refresh().Status; got != license.StatusValid {
@@ -138,14 +198,14 @@ func TestExtraOverridesAndWarnings(t *testing.T) {
 	if st.Status != license.StatusValid {
 		t.Fatalf("status %s: %s", st.Status, st.Reason)
 	}
-	if st.Enabled(license.FeatureObservability) {
+	if st.Enabled(gated(license.FeatureObservability)) {
 		t.Error("explicit false must disable observability")
 	}
-	if !st.Enabled(license.FeatureAIApps) {
+	if !st.Enabled(gated(license.FeatureAIApps)) {
 		t.Error("unmentioned feature must keep its default")
 	}
-	if st.Limit(license.QuotaMaxProviderPools) != 3 {
-		t.Errorf("limit = %d, want 3", st.Limit(license.QuotaMaxProviderPools))
+	if st.Limit(gated(license.QuotaMaxProviderPools)) != 3 {
+		t.Errorf("limit = %d, want 3", st.Limit(gated(license.QuotaMaxProviderPools)))
 	}
 	if len(st.Warnings) != 3 {
 		t.Errorf("warnings = %v, want 3 (unknown field, feature, limit)", st.Warnings)
@@ -175,7 +235,7 @@ func TestNonEnterpriseEditionOnlyGetsExplicitFeatures(t *testing.T) {
 	if st.Status != license.StatusValid || st.Edition() != "Trial" {
 		t.Fatalf("unexpected %+v", st)
 	}
-	if !st.Enabled(license.FeatureObservability) || st.Enabled(license.FeatureAIApps) {
+	if !st.Enabled(gated(license.FeatureObservability)) || st.Enabled(gated(license.FeatureAIApps)) {
 		t.Fatalf("features = %v", st.Features)
 	}
 }

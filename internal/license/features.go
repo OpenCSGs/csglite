@@ -30,9 +30,14 @@ type FeatureDefinition struct {
 	// integer limits.
 	Key  string
 	Type FeatureType
-	// DefaultValue applies when a valid Enterprise license does not mention
-	// the key in Extra. Without a valid license every boolean is false and
-	// every limit is 0.
+	// Gated marks a feature as enterprise-only. Only gated features consult
+	// the license: without a valid license a gated boolean is false and a
+	// gated limit is 0. Everything else is always enabled, so development and
+	// the Community edition are never blocked by a feature nobody has decided
+	// to sell yet. Flipping Gated to true is the act of moving a feature to EE.
+	Gated bool
+	// DefaultValue applies to a gated feature when a valid Enterprise license
+	// does not mention the key in Extra.
 	DefaultValue any
 	// NavItem is the web UI navigation id the feature unlocks, or empty.
 	NavItem string
@@ -40,37 +45,37 @@ type FeatureDefinition struct {
 	Since string
 }
 
-// Catalog entries. Nothing in the repository gates on these yet; they are
-// declared so that the issuer registry and this binary agree on the names
-// before the first route is gated.
+// Catalog entries. None is gated yet, so every one is enabled regardless of
+// license. They are declared so that the issuer registry and this binary
+// agree on the names before the first feature moves to EE.
 var (
 	FeatureProviderPools = FeatureDefinition{
-		Key: featurePrefix + "provider_pools", Type: FeatureTypeBoolean, DefaultValue: true,
+		Key: featurePrefix + "provider_pools", Type: FeatureTypeBoolean, Gated: false, DefaultValue: true,
 		NavItem: "ai-gateway", Since: "0.10.0",
 	}
 	FeatureObservability = FeatureDefinition{
-		Key: featurePrefix + "observability", Type: FeatureTypeBoolean, DefaultValue: true,
+		Key: featurePrefix + "observability", Type: FeatureTypeBoolean, Gated: false, DefaultValue: true,
 		NavItem: "observability", Since: "0.10.0",
 	}
 	FeatureRemoteAPIKeys = FeatureDefinition{
-		Key: featurePrefix + "remote_api_keys", Type: FeatureTypeBoolean, DefaultValue: true,
+		Key: featurePrefix + "remote_api_keys", Type: FeatureTypeBoolean, Gated: false, DefaultValue: true,
 		Since: "0.10.0",
 	}
 	FeatureAIApps = FeatureDefinition{
-		Key: featurePrefix + "ai_apps", Type: FeatureTypeBoolean, DefaultValue: true,
+		Key: featurePrefix + "ai_apps", Type: FeatureTypeBoolean, Gated: false, DefaultValue: true,
 		NavItem: "ai-apps", Since: "0.10.0",
 	}
 	FeatureRealtimeVoice = FeatureDefinition{
-		Key: featurePrefix + "realtime_voice", Type: FeatureTypeBoolean, DefaultValue: true,
+		Key: featurePrefix + "realtime_voice", Type: FeatureTypeBoolean, Gated: false, DefaultValue: true,
 		Since: "0.10.0",
 	}
 	FeatureImageGeneration = FeatureDefinition{
-		Key: featurePrefix + "image_generation", Type: FeatureTypeBoolean, DefaultValue: true,
+		Key: featurePrefix + "image_generation", Type: FeatureTypeBoolean, Gated: false, DefaultValue: true,
 		NavItem: "images", Since: "0.10.0",
 	}
 	// QuotaMaxProviderPools caps configured provider pools; 0 means unlimited.
 	QuotaMaxProviderPools = FeatureDefinition{
-		Key: quotaPrefix + "max_provider_pools", Type: FeatureTypeInt, DefaultValue: 0,
+		Key: quotaPrefix + "max_provider_pools", Type: FeatureTypeInt, Gated: false, DefaultValue: 0,
 		Since: "0.10.0",
 	}
 )
@@ -88,6 +93,17 @@ var catalog = []FeatureDefinition{
 // Catalog returns a copy of every registered feature definition.
 func Catalog() []FeatureDefinition {
 	return append([]FeatureDefinition(nil), catalog...)
+}
+
+// GatedCatalog returns only the entries that require a license.
+func GatedCatalog() []FeatureDefinition {
+	var out []FeatureDefinition
+	for _, def := range catalog {
+		if def.Gated {
+			out = append(out, def)
+		}
+	}
+	return out
 }
 
 // Lookup returns the catalog entry for key.

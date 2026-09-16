@@ -94,17 +94,22 @@ func (s State) Edition() string {
 	return EditionCommunity
 }
 
-// Enabled reports whether a boolean feature is in effect.
+// Enabled reports whether a boolean feature is in effect. A feature that is
+// not gated is always enabled; a gated one follows the license.
 func (s State) Enabled(def FeatureDefinition) bool {
 	if def.Type != FeatureTypeBoolean {
 		return false
 	}
+	if !def.Gated {
+		return true
+	}
 	return s.Features[def.Key]
 }
 
-// Limit returns an integer limit; 0 means unlimited or unlicensed.
+// Limit returns an integer limit; 0 means unlimited. A limit that is not
+// gated is always unlimited; a gated one comes from the license.
 func (s State) Limit(def FeatureDefinition) int {
-	if def.Type != FeatureTypeInt {
+	if def.Type != FeatureTypeInt || !def.Gated {
 		return 0
 	}
 	return s.Limits[def.Key]
@@ -230,6 +235,7 @@ func (m *Manager) Refresh() State {
 	}
 	state.Source = source
 	state.CheckedAt = now
+	m.fillUnlicensed(&state)
 
 	if state.Licensed() && m.clockTurnedBack(now) {
 		state.Status = StatusGrace
@@ -250,7 +256,17 @@ func (m *Manager) Verify(data string) State {
 	}
 	state := m.evaluate(data, m.opts.Now())
 	state.CheckedAt = m.opts.Now()
+	m.fillUnlicensed(&state)
 	return state
+}
+
+// fillUnlicensed gives an unlicensed state the entitlements every edition
+// has: ungated features on, gated ones off.
+func (m *Manager) fillUnlicensed(state *State) {
+	if state.Licensed() {
+		return
+	}
+	state.Features, state.Limits = resolveEntitlements("", Extra{}, m.opts.Catalog)
 }
 
 // Install verifies data, writes it to the license file and refreshes. Like
@@ -398,14 +414,25 @@ func (m *Manager) evaluate(data string, now time.Time) State {
 	return state
 }
 
-// resolveEntitlements applies CSGHub's provider semantics: an explicit value
-// in Extra wins; otherwise an Enterprise license gets each catalog default and
-// any other edition gets nothing.
+// resolveEntitlements applies CSGHub's provider semantics to the gated
+// entries: an explicit value in Extra wins; otherwise an Enterprise license
+// gets each catalog default and any other edition gets nothing. Ungated
+// entries are always on (booleans) or unlimited (limits). An empty edition
+// means "no license".
 func resolveEntitlements(edition string, extra Extra, defs []FeatureDefinition) (map[string]bool, map[string]int) {
 	features := make(map[string]bool, len(defs))
 	limits := make(map[string]int, len(defs))
 	enterprise := edition == EditionEnterprise
 	for _, def := range defs {
+		if !def.Gated {
+			switch def.Type {
+			case FeatureTypeBoolean:
+				features[def.Key] = true
+			case FeatureTypeInt:
+				limits[def.Key] = 0
+			}
+			continue
+		}
 		switch def.Type {
 		case FeatureTypeBoolean:
 			if v, ok := extra.Features[def.Key]; ok {
