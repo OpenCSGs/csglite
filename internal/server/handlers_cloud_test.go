@@ -247,6 +247,9 @@ func TestHandleCloudAuthCallback(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "Login complete") {
 		t.Fatalf("body = %q, want success page", w.Body.String())
 	}
+	if !strings.Contains(w.Body.String(), "window.close()") {
+		t.Fatalf("body = %q, want success page to close the tab", w.Body.String())
+	}
 	if s.cfg.Token != "test-token" {
 		t.Fatalf("saved token = %q, want %q", s.cfg.Token, "test-token")
 	}
@@ -264,6 +267,9 @@ func TestHandleCloudAuthCallbackMissingToken(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "Login failed") || !strings.Contains(w.Body.String(), "missing_token") {
 		t.Fatalf("body = %q, want failure page with missing_token", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "window.close()") {
+		t.Fatalf("body = %q, want failure page to stay open for reading", w.Body.String())
 	}
 }
 
