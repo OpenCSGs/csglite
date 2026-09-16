@@ -1,5 +1,6 @@
 import { signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DirectoryPickerDialog } from "../components/DirectoryPickerDialog";
 import { UpgradeDialog, type UpgradeProgress } from "../components/UpgradeDialog";
 import { t, locale, setLocale } from "../i18n";
@@ -9,7 +10,10 @@ import {
   checkUpgrade,
   clearObservabilityData,
   clearCloudToken,
+  deleteLicense,
   getCloudAuthStatus,
+  importLicense,
+  verifyLicense,
   getTags,
   installImageRuntime,
   getSettings,
@@ -17,6 +21,17 @@ import {
   upgradeWithProgress,
 } from "../api/client";
 import type { AppSettings, ArtifactSource, CloudAuthStatus, LocalDirectoryBrowseResponse } from "../api/client";
+import {
+  editionOf,
+  formatLicenseDate,
+  isLicensed,
+  licenseLoadError,
+  licenseState,
+  licenseStatusKey,
+  licenseTone,
+  loadLicense,
+} from "../license";
+import type { LicenseTone } from "../license";
 
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const contextLengthLabels = ["4k", "8k", "16k", "32k", "64k", "128k", "256k"];
@@ -87,6 +102,16 @@ const isClearingObservability = signal(false);
 const observabilityMessage = signal("");
 const observabilityError = signal("");
 const providersChangedEvent = "csghub:providers-changed";
+const licenseEnvVar = "CSGHUB_LITE_LICENSE";
+const licenseFormOpen = signal(false);
+const licenseInput = signal("");
+const licenseFileName = signal("");
+const licenseMessage = signal("");
+const licenseError = signal("");
+const isVerifyingLicense = signal(false);
+const isInstallingLicense = signal(false);
+const isRemovingLicense = signal(false);
+const licenseRemoveDialogOpen = signal(false);
 
 function normalizeObservabilityRetentionDays(days: number | undefined | null): number {
   const value = Math.max(0, Math.min(3650, Math.round(days ?? 30)));
@@ -839,6 +864,302 @@ function OpenCSGAccountPanel() {
   );
 }
 
+function editionLabel(edition: string): string {
+  if (edition === "Enterprise") return t("settings.licenseEditionEnterprise");
+  if (edition === "Community") return t("settings.licenseEditionCommunity");
+  return edition;
+}
+
+const licenseToneClasses: Record<LicenseTone, { badge: string; dot: string }> = {
+  neutral: { badge: "bg-gray-100 text-gray-600", dot: "bg-gray-400" },
+  ok: { badge: "bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
+  warn: { badge: "bg-amber-50 text-amber-700", dot: "bg-amber-500" },
+  error: { badge: "bg-red-50 text-red-700", dot: "bg-red-500" },
+};
+
+function openLicenseForm() {
+  licenseInput.value = "";
+  licenseFileName.value = "";
+  licenseMessage.value = "";
+  licenseError.value = "";
+  licenseFormOpen.value = true;
+}
+
+function closeLicenseForm() {
+  licenseFormOpen.value = false;
+  licenseInput.value = "";
+  licenseFileName.value = "";
+  licenseError.value = "";
+}
+
+function readLicenseFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    licenseInput.value = String(reader.result ?? "").trim();
+    licenseFileName.value = file.name;
+    licenseMessage.value = "";
+    licenseError.value = "";
+  };
+  reader.onerror = () => {
+    licenseError.value = t("settings.licenseReadFileFailed");
+  };
+  reader.readAsText(file);
+  input.value = "";
+}
+
+async function verifyLicenseInput() {
+  const data = licenseInput.value.trim();
+  if (!data) {
+    licenseError.value = t("settings.licenseEmpty");
+    return;
+  }
+  isVerifyingLicense.value = true;
+  licenseMessage.value = "";
+  licenseError.value = "";
+  try {
+    const result = await verifyLicense(data);
+    if (result.valid && result.license) {
+      licenseMessage.value = t(
+        "settings.licenseVerifyValid",
+        result.license.company,
+        editionLabel(result.license.edition),
+        formatLicenseDate(result.license.expire_time, locale.value),
+      );
+    } else {
+      licenseError.value = t("settings.licenseVerifyInvalid", result.reason || t(licenseStatusKey(result.status)));
+    }
+  } catch (err: any) {
+    licenseError.value = err?.message || t("settings.licenseVerifyFailed");
+  } finally {
+    isVerifyingLicense.value = false;
+  }
+}
+
+async function installLicenseInput() {
+  const data = licenseInput.value.trim();
+  if (!data) {
+    licenseError.value = t("settings.licenseEmpty");
+    return;
+  }
+  isInstallingLicense.value = true;
+  licenseMessage.value = "";
+  licenseError.value = "";
+  try {
+    const state = await importLicense(data);
+    licenseState.value = state;
+    closeLicenseForm();
+    licenseMessage.value = t("settings.licenseInstallSuccess", editionLabel(editionOf(state)));
+  } catch (err: any) {
+    licenseError.value = err?.message || t("settings.licenseInstallFailed");
+  } finally {
+    isInstallingLicense.value = false;
+  }
+}
+
+async function removeInstalledLicense() {
+  isRemovingLicense.value = true;
+  licenseMessage.value = "";
+  licenseError.value = "";
+  try {
+    licenseState.value = await deleteLicense();
+    licenseRemoveDialogOpen.value = false;
+    licenseMessage.value = t("settings.licenseRemoveSuccess");
+  } catch (err: any) {
+    licenseRemoveDialogOpen.value = false;
+    licenseError.value = err?.message || t("settings.licenseRemoveFailed");
+  } finally {
+    isRemovingLicense.value = false;
+  }
+}
+
+function LicenseSection() {
+  const state = licenseState.value;
+  const licensed = isLicensed(state);
+  const tone = licenseToneClasses[licenseTone(state?.status)];
+  const fromEnv = state?.source === "env";
+  const summary = state?.license ?? null;
+  const dateLocale = locale.value;
+  const showForm = licenseFormOpen.value || (!licensed && !fromEnv && state !== null && state.status === "none");
+
+  return (
+    <div class="mb-10">
+      <div class="flex items-center gap-2 mb-1">
+        <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+        </svg>
+        <span class="font-semibold text-gray-900">{t("settings.license")}</span>
+        {state !== null && (
+          <span class={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${tone.badge}`}>
+            <span class={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
+            {editionLabel(editionOf(state))} · {t(licenseStatusKey(state.status))}
+          </span>
+        )}
+      </div>
+      <p class="text-sm text-gray-500 mb-3 ml-7">{t("settings.licenseDesc")}</p>
+      <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4">
+        {state === null ? (
+          <p class="text-sm text-gray-500">{licenseLoadError.value || "..."}</p>
+        ) : (
+          <>
+            {summary && (
+              <dl class="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+                <div class="flex justify-between gap-4 sm:block">
+                  <dt class="text-gray-500">{t("settings.licenseCompany")}</dt>
+                  <dd class="font-medium text-gray-900 text-right sm:text-left">{summary.company}</dd>
+                </div>
+                <div class="flex justify-between gap-4 sm:block">
+                  <dt class="text-gray-500">{t("settings.licenseKey")}</dt>
+                  <dd class="font-mono text-xs text-gray-700 text-right sm:text-left break-all">{summary.key}</dd>
+                </div>
+                <div class="flex justify-between gap-4 sm:block">
+                  <dt class="text-gray-500">{t("settings.licenseValidFrom")}</dt>
+                  <dd class="text-gray-900 text-right sm:text-left">{formatLicenseDate(summary.start_time, dateLocale)}</dd>
+                </div>
+                <div class="flex justify-between gap-4 sm:block">
+                  <dt class="text-gray-500">{t("settings.licenseExpires")}</dt>
+                  <dd class="text-gray-900 text-right sm:text-left">{formatLicenseDate(summary.expire_time, dateLocale)}</dd>
+                </div>
+                <div class="flex justify-between gap-4 sm:block">
+                  <dt class="text-gray-500">{t("settings.licenseSeats")}</dt>
+                  <dd class="text-gray-900 text-right sm:text-left">{summary.max_user}</dd>
+                </div>
+                <div class="flex justify-between gap-4 sm:block">
+                  <dt class="text-gray-500">{t("settings.licenseFeatures")}</dt>
+                  <dd class="text-gray-900 text-right sm:text-left">
+                    {state.features.length > 0 ? state.features.length : t("settings.licenseFeaturesNone")}
+                  </dd>
+                </div>
+              </dl>
+            )}
+            {!summary && state.status === "none" && (
+              <p class="text-sm text-gray-600">{t("settings.licenseCommunityHint")}</p>
+            )}
+            {state.status === "grace" && state.grace_until && (
+              <p class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {t("settings.licenseGraceUntil", formatLicenseDate(state.grace_until, dateLocale))}
+              </p>
+            )}
+            {(state.status === "expired" || state.status === "invalid" || state.status === "not_started") && state.reason && (
+              <p class={`mt-3 rounded-lg px-3 py-2 text-sm ${state.status === "not_started" ? "bg-amber-50 text-amber-800" : "bg-red-50 text-red-700"}`}>
+                {state.reason}
+              </p>
+            )}
+            {state.warnings && state.warnings.length > 0 && (
+              <div class="mt-3 text-xs text-gray-500">
+                <p class="font-medium text-gray-600">{t("settings.licenseNotes")}</p>
+                <ul class="mt-1 list-disc pl-4">
+                  {state.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {fromEnv ? (
+              <p class="mt-3 text-sm text-gray-500">{t("settings.licenseFromEnv", licenseEnvVar)}</p>
+            ) : (
+              <>
+                {!showForm && (
+                  <div class="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={openLicenseForm}
+                      class="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
+                    >
+                      {summary ? t("settings.licenseReplace") : t("settings.licenseImport")}
+                    </button>
+                    {summary && (
+                      <button
+                        type="button"
+                        onClick={() => (licenseRemoveDialogOpen.value = true)}
+                        disabled={isRemovingLicense.value}
+                        class="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isRemovingLicense.value ? t("settings.licenseRemoving") : t("settings.licenseRemove")}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {showForm && (
+                  <div class={summary ? "mt-4 border-t border-gray-100 pt-4" : "mt-3"}>
+                    <textarea
+                      value={licenseInput.value}
+                      onInput={(e) => {
+                        licenseInput.value = (e.target as HTMLTextAreaElement).value;
+                        licenseFileName.value = "";
+                        licenseMessage.value = "";
+                        licenseError.value = "";
+                      }}
+                      rows={6}
+                      spellcheck={false}
+                      placeholder={t("settings.licensePlaceholder")}
+                      class="w-full rounded-lg border border-gray-200 px-3 py-2 font-mono text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <div class="mt-3 flex flex-wrap items-center gap-2">
+                      <label class="cursor-pointer rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-50">
+                        {t("settings.licenseChooseFile")}
+                        <input type="file" class="hidden" accept=".lic,.key,.pem,.txt,text/plain" onChange={readLicenseFile} />
+                      </label>
+                      {licenseFileName.value && (
+                        <span class="text-xs text-gray-500 truncate max-w-[16rem]" title={licenseFileName.value}>
+                          {licenseFileName.value}
+                        </span>
+                      )}
+                      <span class="flex-1" />
+                      {(summary || licenseFormOpen.value) && (
+                        <button
+                          type="button"
+                          onClick={closeLicenseForm}
+                          disabled={isInstallingLicense.value}
+                          class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+                        >
+                          {t("settings.licenseCancel")}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void verifyLicenseInput()}
+                        disabled={isVerifyingLicense.value || isInstallingLicense.value}
+                        class="rounded-lg border border-indigo-200 bg-white px-3.5 py-1.5 text-sm text-indigo-700 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isVerifyingLicense.value ? t("settings.licenseVerifying") : t("settings.licenseVerify")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void installLicenseInput()}
+                        disabled={isInstallingLicense.value || isVerifyingLicense.value}
+                        class="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isInstallingLicense.value ? t("settings.licenseInstalling") : t("settings.licenseInstall")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+            {licenseMessage.value && <p class="mt-3 text-sm text-emerald-700">{licenseMessage.value}</p>}
+            {licenseError.value && <p class="mt-3 text-sm text-red-600">{licenseError.value}</p>}
+          </>
+        )}
+      </div>
+      <ConfirmDialog
+        open={licenseRemoveDialogOpen.value}
+        title={t("settings.licenseRemoveTitle")}
+        name={summary?.company}
+        description={t("settings.licenseRemoveDesc")}
+        confirmLabel={t("settings.licenseRemove")}
+        busy={isRemovingLicense.value}
+        onConfirm={() => void removeInstalledLicense()}
+        onCancel={() => {
+          if (!isRemovingLicense.value) licenseRemoveDialogOpen.value = false;
+        }}
+      />
+    </div>
+  );
+}
+
 function CloudServiceActions({
   saving,
   onSave,
@@ -870,6 +1191,7 @@ export function Settings() {
   useEffect(() => {
     fetchSettings();
     fetchCloudAuth();
+    void loadLicense();
     void fetchUpgradeInfo();
     contextIndex.value = loadContextIndex();
     contextMode.value = loadContextMode();
@@ -1280,6 +1602,8 @@ export function Settings() {
           </div>
         </div>
       )}
+
+      <LicenseSection />
 
       {/* API docs */}
       <div class="mb-10">

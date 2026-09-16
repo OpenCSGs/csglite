@@ -19,6 +19,9 @@ csghub-lite license features           # 列出受 License 控制的功能及当
 `<file|->` 可以是文件路径，也可以是 `-` 表示从标准输入读取。`show`、
 `verify`、`features` 支持 `--json` 输出原始 JSON。
 
+也可以在 Web 界面的「设置 → License」中粘贴或选择文件导入、校验和删除。
+导入成功后侧边栏左上角显示 “CSGLite EE”。
+
 ## 工作方式
 
 - 本机有正在运行的 `csghub-lite` 服务时，所有子命令通过本地 API

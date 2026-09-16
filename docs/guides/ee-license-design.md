@@ -459,9 +459,10 @@ csghub-lite license features           # 列出 Catalog 及当前是否可用
 
 ## 11. 分期计划
 
-> 实施进度：阶段一、二（`internal/license`、`/api/license*`、CLI、OpenAPI）已
-> 完成并合入基础框架；`Catalog` 已声明但尚未包裹任何路由，等待产品确认初始
-> 划分（第 12 节问题 1）后再逐条门控。
+> 实施进度：阶段一、二（`internal/license`、`/api/license*`、CLI、OpenAPI）和
+> 阶段三的 License 管理部分（Settings 页导入/校验/删除、侧边栏 “CSGLite EE”
+> 标识）已完成；导航锁标与 `FeatureLocked` 组件随第一条被门控的路由一起做。
+> `Catalog` 已声明但尚未包裹任何路由，等待产品确认初始划分（第 12 节问题 1）。
 
 
 | 阶段 | 内容 | 估时 |

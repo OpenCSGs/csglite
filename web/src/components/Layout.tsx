@@ -3,6 +3,7 @@ import { useLocation } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
 import { getSettings, openExternalURL } from "../api/client";
 import { t, locale } from "../i18n";
+import { isLicensed, licenseState, loadLicense, productTitle } from "../license";
 
 const helpURL = "https://opencsg.com/docs/csghub/101/function/csghub-lite/intro";
 
@@ -56,6 +57,11 @@ export function Layout({ children }: { children: ComponentChildren }) {
   const { path, route } = useLocation();
   const [hiddenNavItems, setHiddenNavItems] = useState<Set<string> | null>(null);
   void locale.value;
+  const license = licenseState.value;
+
+  useEffect(() => {
+    void loadLicense();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -77,8 +83,15 @@ export function Layout({ children }: { children: ComponentChildren }) {
     <div class="flex h-screen overflow-hidden">
       <aside class="w-52 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col">
         <div class="flex items-center gap-2 px-5 py-5">
-          <img src="/favicon.svg" alt="CSGLite" class="w-8 h-8" />
-          <span class="font-semibold text-base text-gray-900">CSGLite</span>
+          <img src="/favicon.svg" alt={productTitle(license)} class="w-8 h-8" />
+          <span class="font-semibold text-base text-gray-900" title={isLicensed(license) ? t("settings.licenseEditionEnterprise") : undefined}>
+            CSGLite
+            {isLicensed(license) && (
+              <span class="ml-1.5 inline-flex items-center rounded-md bg-indigo-600 px-1.5 py-0.5 text-[11px] font-bold leading-none tracking-wide text-white align-middle">
+                EE
+              </span>
+            )}
+          </span>
         </div>
         <nav class="flex-1 px-3 space-y-1 mt-2">
           {navKeys.filter((item) => showNavItem(item.id)).map((item) => {
