@@ -96,6 +96,14 @@ export interface ModelConfigResponse {
   effective_num_parallel: number;
   // Per-model GGUF quantization; "" means the model follows the repository default.
   dtype: string;
+  // Per-model idle window before the model is unloaded ("30s", "1h", "-1" for
+  // never); "" means the model follows the runtime default.
+  keep_alive: string;
+  // What this model would use with no per-model keep-alive. It differs by
+  // runtime: recognition and speech models idle out later than text models.
+  global_keep_alive: string;
+  // What a load without a request-level keep-alive would use right now.
+  effective_keep_alive: string;
   // Which runtime serves this model. The llama.cpp load options mean nothing
   // for a model served by a Python runtime, and the pipeline tag cannot say
   // which one it is: an embedding model runs on llama.cpp when its weights
@@ -1126,19 +1134,24 @@ export async function getModelConfig(model: string): Promise<ModelConfigResponse
   return fetchJSON<ModelConfigResponse>(modelConfigPath(model));
 }
 
-// A value of 0 clears that per-model setting and returns the model to the
-// global default. numParallel and dtype are optional: omitting one leaves the
-// saved value untouched, and an empty dtype clears it.
+export interface ModelConfigUpdate {
+  num_ctx?: number;
+  num_parallel?: number;
+  dtype?: string;
+  keep_alive?: string;
+}
+
+// Every setting is optional: omitting one leaves the saved value untouched, so
+// a caller that shows only some of the fields cannot clear the rest. A 0 or an
+// empty string clears that setting and returns the model to the global default.
 export async function setModelConfig(
   model: string,
-  numCtx: number,
-  numParallel?: number,
-  dtype?: string
+  update: ModelConfigUpdate
 ): Promise<ModelConfigResponse> {
   return fetchJSON<ModelConfigResponse>(modelConfigPath(model), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ num_ctx: numCtx, num_parallel: numParallel, dtype }),
+    body: JSON.stringify(update),
   });
 }
 

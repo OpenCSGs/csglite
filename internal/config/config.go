@@ -137,29 +137,113 @@ type WebSearchConfig struct {
 type InferenceConfig struct {
 	LlamaUseModelMaxCtx bool `json:"llama_use_model_max_ctx,omitempty"`
 
-	// ModelNumCtx holds per-model context windows keyed by model ID. A model
-	// listed here overrides the global default but still loses to a context
-	// length sent with the request. It lives in the app config rather than in
-	// the model directory so that re-downloading a model keeps the setting.
-	ModelNumCtx map[string]int `json:"model_num_ctx,omitempty"`
-
 	// LlamaNumParallel is the global default slot count for llama-server. It
 	// lives here rather than in the browser because the chat UI no longer sends
 	// a slot count with each request: only a model's own setting and this
 	// global default decide how many slots a load gets.
 	LlamaNumParallel int `json:"llama_num_parallel,omitempty"`
 
-	// ModelNumParallel holds per-model slot counts keyed by model ID. A model
-	// listed here overrides LlamaNumParallel, mirroring how ModelNumCtx
-	// overrides the global context window.
-	ModelNumParallel map[string]int `json:"model_num_parallel,omitempty"`
+	// Models holds the per-model load options keyed by model ID. They live in
+	// the app config rather than in the model directory so that re-downloading
+	// a model keeps its settings.
+	Models map[string]ModelRuntimeSettings `json:"models,omitempty"`
 
-	// ModelDType holds per-model GGUF quantizations keyed by model ID. A
-	// request that names no dtype falls back to this one, so a repository
-	// holding several quantizations keeps serving the one the user picked
-	// instead of silently reverting to the repository default on the next
-	// reload or after an idle eviction.
-	ModelDType map[string]string `json:"model_dtype,omitempty"`
+	// The fields below are the per-model maps written before the settings were
+	// grouped into Models. Load migrates them and stops writing them; they stay
+	// here only so an existing config.json is still read correctly.
+	LegacyModelNumCtx      map[string]int    `json:"model_num_ctx,omitempty"`
+	LegacyModelNumParallel map[string]int    `json:"model_num_parallel,omitempty"`
+	LegacyModelDType       map[string]string `json:"model_dtype,omitempty"`
+}
+
+// ModelRuntimeSettings are the load options a user pinned for one model. Each
+// one overrides the corresponding global default and still loses to a value
+// sent with the request.
+type ModelRuntimeSettings struct {
+	// NumCtx is the context window, 0 when the model follows the global one.
+	NumCtx int `json:"num_ctx,omitempty"`
+	// NumParallel is the llama-server slot count, 0 when the model follows
+	// LlamaNumParallel.
+	NumParallel int `json:"num_parallel,omitempty"`
+	// DType is the GGUF quantization to serve, "" for the repository default.
+	// A repository holding several quantizations keeps serving the one the
+	// user picked instead of reverting on the next reload or idle eviction.
+	DType string `json:"dtype,omitempty"`
+	// KeepAlive is the idle window before the engine is unloaded, in the same
+	// spelling the API and CLI accept: "30s", "1h", or "-1" to keep the model
+	// loaded until it is stopped. Empty follows the runtime default. Without
+	// it the window survived only as long as one engine instance, so a restart
+	// -- or a load started by a chat request, which carries no keep-alive --
+	// silently went back to the five-minute default.
+	KeepAlive string `json:"keep_alive,omitempty"`
+}
+
+// IsZero reports whether the model has no pinned setting left, in which case
+// it is dropped from the config rather than stored as an empty object.
+func (s ModelRuntimeSettings) IsZero() bool {
+	return s == ModelRuntimeSettings{}
+}
+
+// ModelSettings returns the settings pinned for modelID, or the zero value.
+func (c *InferenceConfig) ModelSettings(modelID string) ModelRuntimeSettings {
+	if c == nil {
+		return ModelRuntimeSettings{}
+	}
+	return c.Models[modelID]
+}
+
+// SetModelSettings stores the settings for modelID, removing the entry once
+// nothing is pinned for it any more.
+func (c *InferenceConfig) SetModelSettings(modelID string, settings ModelRuntimeSettings) {
+	if c == nil {
+		return
+	}
+	if settings.IsZero() {
+		delete(c.Models, modelID)
+		return
+	}
+	if c.Models == nil {
+		c.Models = make(map[string]ModelRuntimeSettings)
+	}
+	c.Models[modelID] = settings
+}
+
+// migrateLegacyModelSettings folds the pre-Models per-model maps into Models
+// and clears them so they are no longer written back. Values already in Models
+// win, since they were written by a newer build.
+func migrateLegacyModelSettings(c *InferenceConfig) {
+	upsert := func(modelID string, apply func(*ModelRuntimeSettings)) {
+		if strings.TrimSpace(modelID) == "" {
+			return
+		}
+		settings := c.Models[modelID]
+		apply(&settings)
+		c.SetModelSettings(modelID, settings)
+	}
+	for modelID, numCtx := range c.LegacyModelNumCtx {
+		upsert(modelID, func(s *ModelRuntimeSettings) {
+			if s.NumCtx == 0 {
+				s.NumCtx = numCtx
+			}
+		})
+	}
+	for modelID, numParallel := range c.LegacyModelNumParallel {
+		upsert(modelID, func(s *ModelRuntimeSettings) {
+			if s.NumParallel == 0 {
+				s.NumParallel = numParallel
+			}
+		})
+	}
+	for modelID, dtype := range c.LegacyModelDType {
+		upsert(modelID, func(s *ModelRuntimeSettings) {
+			if s.DType == "" {
+				s.DType = dtype
+			}
+		})
+	}
+	c.LegacyModelNumCtx = nil
+	c.LegacyModelNumParallel = nil
+	c.LegacyModelDType = nil
 }
 
 // DefaultRealtimeMaxSessions bounds how many realtime voice sessions may run at
@@ -401,6 +485,7 @@ func Load() (*Config, error) {
 			globalConfig.AIAppModelBindings = map[string][]api.AIAppModelBinding{}
 		}
 		globalConfig.WebSearch = NormalizeWebSearchConfig(globalConfig.WebSearch)
+		migrateLegacyModelSettings(&globalConfig.Inference)
 	})
 	return globalConfig, loadErr
 }

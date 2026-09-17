@@ -635,3 +635,110 @@ func TestRealtimeConfigEdgeValues(t *testing.T) {
 		}
 	}
 }
+
+// Per-model settings were first written as one map per option. They are now one
+// typed object per model, so an existing config.json has to keep its settings
+// and stop carrying the old keys once it is saved again.
+func TestLoadMigratesLegacyPerModelSettingMaps(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	clearCloudServiceEnv(t)
+
+	cfgPath := filepath.Join(home, ".csghub-lite", ConfigFile)
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+	  "inference": {
+	    "model_num_ctx": {"local/a": 32768, "local/b": 8192},
+	    "model_num_parallel": {"local/a": 2},
+	    "model_dtype": {"local/a": "q4_k_m", "local/c": "q8_0"}
+	  }
+	}`
+	if err := os.WriteFile(cfgPath, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	Reset()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := map[string]ModelRuntimeSettings{
+		"local/a": {NumCtx: 32768, NumParallel: 2, DType: "q4_k_m"},
+		"local/b": {NumCtx: 8192},
+		"local/c": {DType: "q8_0"},
+	}
+	for modelID, settings := range want {
+		if got := cfg.Inference.ModelSettings(modelID); got != settings {
+			t.Errorf("ModelSettings(%q) = %+v, want %+v", modelID, got, settings)
+		}
+	}
+	if len(cfg.Inference.Models) != len(want) {
+		t.Errorf("Models has %d entries, want %d: %+v", len(cfg.Inference.Models), len(want), cfg.Inference.Models)
+	}
+
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+	saved, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, legacyKey := range []string{"model_num_ctx", "model_num_parallel", "model_dtype"} {
+		if strings.Contains(string(saved), legacyKey) {
+			t.Errorf("saved config still writes the legacy key %q:\n%s", legacyKey, saved)
+		}
+	}
+	if !strings.Contains(string(saved), `"models"`) {
+		t.Errorf("saved config does not write the per-model settings:\n%s", saved)
+	}
+}
+
+// A build that already wrote the typed object may be downgraded and then
+// upgraded again, leaving both shapes in the file. The newer one wins.
+func TestLoadPrefersTypedPerModelSettingsOverLegacyMaps(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	clearCloudServiceEnv(t)
+
+	cfgPath := filepath.Join(home, ".csghub-lite", ConfigFile)
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mixed := `{
+	  "inference": {
+	    "models": {"local/a": {"num_ctx": 65536, "keep_alive": "-1"}},
+	    "model_num_ctx": {"local/a": 32768},
+	    "model_dtype": {"local/a": "q4_k_m"}
+	  }
+	}`
+	if err := os.WriteFile(cfgPath, []byte(mixed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	Reset()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	want := ModelRuntimeSettings{NumCtx: 65536, DType: "q4_k_m", KeepAlive: "-1"}
+	if got := cfg.Inference.ModelSettings("local/a"); got != want {
+		t.Fatalf("ModelSettings = %+v, want %+v", got, want)
+	}
+}
+
+func TestSetModelSettingsDropsEmptyEntries(t *testing.T) {
+	var inference InferenceConfig
+	inference.SetModelSettings("local/a", ModelRuntimeSettings{KeepAlive: "-1"})
+	if got := inference.ModelSettings("local/a"); got.KeepAlive != "-1" {
+		t.Fatalf("ModelSettings = %+v, want the keep-alive stored", got)
+	}
+	inference.SetModelSettings("local/a", ModelRuntimeSettings{})
+	if _, ok := inference.Models["local/a"]; ok {
+		t.Fatalf("Models still holds an empty entry: %+v", inference.Models)
+	}
+}

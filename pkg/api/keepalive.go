@@ -28,3 +28,12 @@ func ParseKeepAlive(raw string) (time.Duration, bool, error) {
 	}
 	return d, true, nil
 }
+
+// FormatKeepAlive renders a keep-alive duration the way ParseKeepAlive accepts
+// it, so a value read back from the API can be sent straight back.
+func FormatKeepAlive(d time.Duration) string {
+	if d < 0 {
+		return "-1"
+	}
+	return d.String()
+}

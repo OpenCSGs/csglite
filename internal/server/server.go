@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -195,10 +196,11 @@ type Server struct {
 	authCallbackHTTP *http.Server
 	logBuf           *LogBuffer
 
-	// modelSettingsMu guards the per-model maps inside cfg.Inference. They are
-	// written by the model-config handler and read by every engine load, on
-	// different request goroutines, and a concurrent map read and write is a
-	// non-recoverable runtime fatal rather than a panic.
+	// modelSettingsMu guards cfg.Inference.Models. It is written by the
+	// model-config handler and read by every engine load, on different request
+	// goroutines, and a concurrent map read and write is a non-recoverable
+	// runtime fatal rather than a panic. It is always released before mu is
+	// taken, so the two never nest in both directions.
 	modelSettingsMu sync.RWMutex
 
 	mu           sync.RWMutex
@@ -508,6 +510,10 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	go func() {
 		addr := displayServerAddr(boundAddr)
+		// The version goes in the log on every start: a user report arrives as
+		// a log file, and without it the build has to be guessed from which
+		// static assets the browser requested.
+		log.Printf("csghub-lite %s (%s/%s, %s) starting", s.displayVersion(), runtime.GOOS, runtime.GOARCH, runtime.Version())
 		log.Printf("csghub-lite server listening on %s", boundAddr)
 		log.Printf("  Web UI: %s", "http://"+addr+"/")
 		log.Printf("  Ollama API: %s", "http://"+addr+"/api/chat")
@@ -842,6 +848,63 @@ func (s *Server) recordSelfHealFailure(cacheKey string, now time.Time) (int, boo
 	return state.count, state.count >= selfHealBreakerMaxHits
 }
 
+// displayVersion is the build version for logs. A binary built without the
+// release ldflags reports "dev"; an empty value would otherwise print as a gap
+// in the banner.
+func (s *Server) displayVersion() string {
+	if version := strings.TrimSpace(s.version); version != "" {
+		return version
+	}
+	return "dev"
+}
+
+// defaultKeepAliveFor reports the idle window a model gets with no per-model
+// setting, for a caller that does not already know which runtime serves it.
+// Recognition and speech models idle out later than text models, and working
+// this out reads the model directory, so the load paths pass their own runtime
+// default to resolveModelKeepAlive instead of calling this.
+func (s *Server) defaultKeepAliveFor(modelID string) time.Duration {
+	if s.modelUsesASREngine(modelID) || s.modelUsesTTSEngine(modelID) {
+		return DefaultSpeechKeepAlive
+	}
+	return DefaultKeepAlive
+}
+
+// resolveModelKeepAlive picks the idle window for a load that carries none of
+// its own: the model's saved setting wins over runtimeDefault. A keep-alive
+// sent with a request is applied on top of this by the caller, so the order is
+// request > per-model setting > runtime default, matching how the context
+// window and slot count resolve.
+//
+// Resolving here rather than only in /api/load is the point of the setting: a
+// model loaded by an ordinary chat request carries no keep-alive at all, and
+// before this it silently fell back to the default no matter what the user had
+// chosen in the run dialog.
+func (s *Server) resolveModelKeepAlive(modelID string, runtimeDefault time.Duration) time.Duration {
+	if keepAlive, ok := s.modelKeepAliveSetting(modelID); ok {
+		return keepAlive
+	}
+	return runtimeDefault
+}
+
+// effectiveModelKeepAlive is resolveModelKeepAlive for a caller that does not
+// already know which runtime serves the model, such as the config endpoint. It
+// reports what the next load of the model would use with no keep-alive of its
+// own.
+func (s *Server) effectiveModelKeepAlive(modelID string) time.Duration {
+	return s.resolveModelKeepAlive(modelID, s.defaultKeepAliveFor(modelID))
+}
+
+// applyModelKeepAlive updates the idle window of whichever engine currently
+// serves modelID, so a setting saved while a model is loaded takes effect
+// without reloading it.
+func (s *Server) applyModelKeepAlive(modelID string, keepAlive time.Duration) {
+	s.setEngineKeepAlive(modelID, keepAlive)
+	s.setImageEngineKeepAlive(modelID, keepAlive)
+	s.setASREngineKeepAlive(modelID, keepAlive)
+	s.setTTSEngineKeepAlive(modelID, keepAlive)
+}
+
 func (s *Server) setEngineKeepAlive(modelID string, keepAlive time.Duration) {
 	modelID = s.resolveLocalModelStorageID(modelID)
 	s.mu.Lock()
@@ -1101,6 +1164,7 @@ func (s *Server) getOrLoadPythonEmbeddingEngine(ctx context.Context, modelID str
 		s.loading[cacheKey] = state
 		s.mu.Unlock()
 
+		keepAlive := s.resolveModelKeepAlive(modelID, DefaultKeepAlive)
 		log.Printf("MODEL %s: python embedding engine load started", modelID)
 		runtimeManager, err := imagegen.NewEmbeddingRuntimeManager()
 		if err == nil {
@@ -1117,7 +1181,7 @@ func (s *Server) getOrLoadPythonEmbeddingEngine(ctx context.Context, modelID str
 			s.engines[cacheKey] = &managedEngine{
 				engine:    state.engine,
 				lastUsed:  time.Now(),
-				keepAlive: DefaultKeepAlive,
+				keepAlive: keepAlive,
 			}
 		}
 		close(state.done)
@@ -1208,6 +1272,9 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		}
 	}
 	effectiveNumParallel := inference.ResolveNumParallelWithModelSetting(numParallel, s.modelNumParallelSetting(modelID), s.cfg.Inference.LlamaNumParallel)
+	// Resolved with the other per-model settings, before the engine lock is
+	// taken: reading them touches the config and the model directory.
+	resolvedKeepAlive := s.resolveModelKeepAlive(modelID, DefaultKeepAlive)
 	effectiveNGPULayers := inference.ResolveNGPULayers(normalizedNGPULayers)
 	loadConfigKey := fmt.Sprintf(
 		"%d|%d|%d|%s|%s|%s|%s",
@@ -1283,11 +1350,11 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 			configKey: loadConfigKey,
 		}
 		s.loading[cacheKey] = state
-		log.Printf("MODEL %s: %s engine load started num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q speculative=%q", modelID, mode, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType, speculativeKey)
+		nextKeepAlive := resolvedKeepAlive
+		log.Printf("MODEL %s: %s engine load started num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q speculative=%q keep_alive=%s", modelID, mode, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType, speculativeKey, api.FormatKeepAlive(nextKeepAlive))
 
 		var oldEngine inference.Engine
 		var closedEngines []inference.Engine
-		nextKeepAlive := DefaultKeepAlive
 		if rocmSingleEngineMode() {
 			closedEngines = s.closeOtherInferenceEnginesLocked(cacheKey)
 		}
@@ -1399,6 +1466,7 @@ func (s *Server) getOrLoadImageEngineWithProgress(ctx context.Context, modelID s
 		s.imageLoading[modelID] = state
 		s.mu.Unlock()
 
+		keepAlive := s.resolveModelKeepAlive(modelID, DefaultKeepAlive)
 		log.Printf("MODEL %s: image engine load started", modelID)
 		runtimeManager, err := imagegen.NewRuntimeManager()
 		if err == nil {
@@ -1415,7 +1483,7 @@ func (s *Server) getOrLoadImageEngineWithProgress(ctx context.Context, modelID s
 			s.imageEngines[modelID] = &managedImageEngine{
 				engine:    state.engine,
 				lastUsed:  time.Now(),
-				keepAlive: DefaultKeepAlive,
+				keepAlive: keepAlive,
 			}
 		}
 		close(state.done)
@@ -1504,6 +1572,7 @@ func (s *Server) getOrLoadASREngine(ctx context.Context, modelID string) (asr.En
 // and the request that follows would start it again from nothing.
 func (s *Server) loadASREngine(modelID, modelDir string, state *asrEngineLoadState) {
 	ctx := s.engineLoadContext()
+	keepAlive := s.resolveModelKeepAlive(modelID, DefaultSpeechKeepAlive)
 	log.Printf("MODEL %s: ASR engine load started", modelID)
 	runtimeManager, err := imagegen.NewASRRuntimeManager()
 	if err == nil {
@@ -1520,7 +1589,7 @@ func (s *Server) loadASREngine(modelID, modelDir string, state *asrEngineLoadSta
 		s.asrEngines[modelID] = &managedASREngine{
 			engine:    state.engine,
 			lastUsed:  time.Now(),
-			keepAlive: DefaultSpeechKeepAlive,
+			keepAlive: keepAlive,
 		}
 	}
 	close(state.done)
@@ -1713,6 +1782,7 @@ func (s *Server) getOrLoadTTSEngine(ctx context.Context, modelID string) (tts.En
 // loadTTSEngine is loadASREngine for the speech side.
 func (s *Server) loadTTSEngine(modelID, modelDir string, state *ttsEngineLoadState) {
 	ctx := s.engineLoadContext()
+	keepAlive := s.resolveModelKeepAlive(modelID, DefaultSpeechKeepAlive)
 	log.Printf("MODEL %s: TTS engine load started", modelID)
 	runtimeManager, err := imagegen.NewTTSRuntimeManager()
 	if err == nil {
@@ -1729,7 +1799,7 @@ func (s *Server) loadTTSEngine(modelID, modelDir string, state *ttsEngineLoadSta
 		s.ttsEngines[modelID] = &managedTTSEngine{
 			engine:    state.engine,
 			lastUsed:  time.Now(),
-			keepAlive: DefaultSpeechKeepAlive,
+			keepAlive: keepAlive,
 		}
 	}
 	close(state.done)

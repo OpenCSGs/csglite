@@ -217,6 +217,17 @@ type ModelConfigResponse struct {
 	// DType is the per-model GGUF quantization, or "" when the model has none
 	// and follows the repository default.
 	DType string `json:"dtype"`
+	// KeepAlive is the per-model idle window before the engine is unloaded, in
+	// the spelling ParseKeepAlive accepts, or "" when the model has none and
+	// follows the runtime default.
+	KeepAlive string `json:"keep_alive"`
+	// GlobalKeepAlive is what this model would use with no per-model setting.
+	// It differs by runtime: recognition and speech models idle out later than
+	// text models.
+	GlobalKeepAlive string `json:"global_keep_alive"`
+	// EffectiveKeepAlive is what a load without a request-level keep-alive
+	// would use right now.
+	EffectiveKeepAlive string `json:"effective_keep_alive"`
 	// Runtime names the runtime that serves this model: "llama",
 	// "python-embedding", "python-asr", "python-tts" or "diffusers". Clients
 	// use it to decide which load options mean anything -- the llama.cpp
@@ -234,14 +245,23 @@ const (
 	ModelRuntimeDiffusers       = "diffusers"
 )
 
-// ModelConfigUpdateRequest sets the per-model runtime settings. NumCtx is
-// required; 0 clears the setting and returns the model to the global default.
-// NumParallel is optional -- omitting it leaves the saved slot count alone --
-// and 0 clears it.
+// ModelConfigUpdateRequest sets the per-model runtime settings. Every field is
+// optional: omitting one leaves that saved setting alone, so a client that
+// knows about only some of them cannot clear the rest. A zero number and an
+// empty string clear the corresponding setting and return the model to the
+// global default.
+//
+// NumCtx stays a required field for clients written against the first version
+// of this endpoint, which always sent it; it is accepted as absent now because
+// a model served by a Python runtime has no context window to set but does
+// have a keep-alive.
 type ModelConfigUpdateRequest struct {
-	NumCtx      *int    `json:"num_ctx"`
+	NumCtx      *int    `json:"num_ctx,omitempty"`
 	NumParallel *int    `json:"num_parallel,omitempty"`
 	DType       *string `json:"dtype,omitempty"`
+	// KeepAlive is a duration such as "30s" or "1h", "-1" to keep the model
+	// loaded until it is stopped, or "" to clear the setting.
+	KeepAlive *string `json:"keep_alive,omitempty"`
 }
 
 type ModelUploadResponse struct {
@@ -1415,29 +1435,29 @@ type ProviderPoolRouterBaselines struct {
 }
 
 type ProviderPoolRouterMetrics struct {
-	QueryCount              int            `json:"query_count"`
-	CellCount               int            `json:"cell_count"`
-	TrialCount              int            `json:"trial_count"`
-	Repeats                 int            `json:"repeats"`
-	ResponseOutcomes        map[string]int `json:"response_outcomes"`
-	WinRate                 float64        `json:"win_rate"`
-	Spend                   float64        `json:"spend"`
-	TotalCost               float64        `json:"total_cost"`
-	Currency                string         `json:"currency,omitempty"`
-	CostUnit                string         `json:"cost_unit"`
-	MonetarySpendKnown      bool           `json:"monetary_spend_known"`
-	UnknownMonetarySpend    bool           `json:"unknown_monetary_spend"`
-	TrainQueryCount         int            `json:"train_query_count"`
-	HeldOutQueryCount       int            `json:"held_out_query_count"`
-	CVFoldCount             int            `json:"cv_fold_count"`
-	TrainUtility            float64        `json:"train_utility"`
-	TrainQuality            float64        `json:"train_quality"`
-	TrainCost               float64        `json:"train_cost_score"`
-	HeldOutUtility          float64        `json:"held_out_utility"`
-	HeldOutQuality          float64        `json:"held_out_quality"`
-	HeldOutCost             float64        `json:"held_out_cost_score"`
-	AllClustersOneMember    bool           `json:"all_clusters_one_member"`
-	SemanticDifferentiation bool           `json:"semantic_differentiation"`
+	QueryCount              int                         `json:"query_count"`
+	CellCount               int                         `json:"cell_count"`
+	TrialCount              int                         `json:"trial_count"`
+	Repeats                 int                         `json:"repeats"`
+	ResponseOutcomes        map[string]int              `json:"response_outcomes"`
+	WinRate                 float64                     `json:"win_rate"`
+	Spend                   float64                     `json:"spend"`
+	TotalCost               float64                     `json:"total_cost"`
+	Currency                string                      `json:"currency,omitempty"`
+	CostUnit                string                      `json:"cost_unit"`
+	MonetarySpendKnown      bool                        `json:"monetary_spend_known"`
+	UnknownMonetarySpend    bool                        `json:"unknown_monetary_spend"`
+	TrainQueryCount         int                         `json:"train_query_count"`
+	HeldOutQueryCount       int                         `json:"held_out_query_count"`
+	CVFoldCount             int                         `json:"cv_fold_count"`
+	TrainUtility            float64                     `json:"train_utility"`
+	TrainQuality            float64                     `json:"train_quality"`
+	TrainCost               float64                     `json:"train_cost_score"`
+	HeldOutUtility          float64                     `json:"held_out_utility"`
+	HeldOutQuality          float64                     `json:"held_out_quality"`
+	HeldOutCost             float64                     `json:"held_out_cost_score"`
+	AllClustersOneMember    bool                        `json:"all_clusters_one_member"`
+	SemanticDifferentiation bool                        `json:"semantic_differentiation"`
 	Baselines               ProviderPoolRouterBaselines `json:"baselines"`
 }
 
