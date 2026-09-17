@@ -982,7 +982,10 @@ function LicenseSection() {
   const fromEnv = state?.source === "env";
   const summary = state?.license ?? null;
   const dateLocale = locale.value;
-  const showForm = licenseFormOpen.value || (!licensed && !fromEnv && state !== null && state.status === "none");
+  // Auto-expand the import form only when nothing is installed. An unreadable
+  // or expired file keeps the buttons so the user can replace or remove it.
+  const hasFile = state !== null && state.status !== "none";
+  const showForm = licenseFormOpen.value || (!licensed && !fromEnv && state !== null && !hasFile);
 
   return (
     <div class="mb-10">
@@ -1068,9 +1071,9 @@ function LicenseSection() {
                       onClick={openLicenseForm}
                       class="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
                     >
-                      {summary ? t("settings.licenseReplace") : t("settings.licenseImport")}
+                      {hasFile ? t("settings.licenseReplace") : t("settings.licenseImport")}
                     </button>
-                    {summary && (
+                    {hasFile && (
                       <button
                         type="button"
                         onClick={() => (licenseRemoveDialogOpen.value = true)}
@@ -1083,7 +1086,7 @@ function LicenseSection() {
                   </div>
                 )}
                 {showForm && (
-                  <div class={summary ? "mt-4 border-t border-gray-100 pt-4" : "mt-3"}>
+                  <div class={hasFile ? "mt-4 border-t border-gray-100 pt-4" : "mt-3"}>
                     <textarea
                       value={licenseInput.value}
                       onInput={(e) => {
@@ -1108,7 +1111,7 @@ function LicenseSection() {
                         </span>
                       )}
                       <span class="flex-1" />
-                      {(summary || licenseFormOpen.value) && (
+                      {(hasFile || licenseFormOpen.value) && (
                         <button
                           type="button"
                           onClick={closeLicenseForm}

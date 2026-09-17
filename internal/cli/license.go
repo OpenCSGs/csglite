@@ -142,36 +142,7 @@ func (c *licenseClient) state() (api.LicenseState, error) {
 	if err != nil {
 		return api.LicenseState{}, err
 	}
-	return stateToAPI(m, m.State()), nil
-}
-
-func stateToAPI(m *license.Manager, st license.State) api.LicenseState {
-	limits := make(map[string]int, len(st.Limits))
-	for k, v := range st.Limits {
-		limits[k] = v
-	}
-	out := api.LicenseState{
-		Status:    string(st.Status),
-		Edition:   st.Edition(),
-		Features:  st.EnabledKeys(),
-		Limits:    limits,
-		Reason:    st.Reason,
-		Warnings:  st.Warnings,
-		Source:    st.Source,
-		FilePath:  m.FilePath(),
-		CheckedAt: st.CheckedAt,
-	}
-	if p := st.Payload; p != nil {
-		out.License = &api.LicenseSummary{
-			Key: p.Key, Company: p.Company, Email: p.Email, Product: p.Product, Edition: p.Edition,
-			MaxUser: p.MaxUser, StartTime: p.StartTime, ExpireTime: p.ExpireTime, Version: p.Version,
-		}
-	}
-	if !st.GraceUntil.IsZero() {
-		g := st.GraceUntil
-		out.GraceUntil = &g
-	}
-	return out
+	return m.State().APIState(m.FilePath()), nil
 }
 
 func readLicenseArg(arg string) (string, error) {
@@ -243,12 +214,7 @@ func newLicenseVerifyCmd(version string) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				st := stateToAPI(m, m.Verify(data))
-				resp = api.LicenseVerifyResponse{
-					Valid:  st.Status == string(license.StatusValid) || st.Status == string(license.StatusGrace),
-					Status: st.Status, License: st.License, Features: st.Features, Limits: st.Limits,
-					Reason: st.Reason, Warnings: st.Warnings,
-				}
+				resp = m.Verify(data).APIVerify()
 			}
 			if asJSON {
 				return printJSON(resp)
@@ -303,7 +269,7 @@ func newLicenseInstallCmd(version string) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				st = stateToAPI(m, installed)
+				st = installed.APIState(m.FilePath())
 			}
 			fmt.Println("License installed.")
 			printLicenseState(st, c.baseURL == "")
@@ -363,17 +329,7 @@ func newLicenseFeaturesCmd(version string) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				st := m.State()
-				for _, def := range license.Catalog() {
-					enabled := !def.Gated || st.Licensed()
-					if def.Type == license.FeatureTypeBoolean {
-						enabled = st.Enabled(def)
-					}
-					entries = append(entries, api.LicenseFeatureDefinition{
-						Key: def.Key, Type: string(def.Type), Gated: def.Gated, DefaultValue: def.DefaultValue,
-						NavItem: def.NavItem, Since: def.Since, Enabled: enabled,
-					})
-				}
+				entries = m.State().APICatalog(license.Catalog())
 			}
 			if asJSON {
 				return printJSON(entries)

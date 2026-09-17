@@ -107,6 +107,16 @@ func TestRequireFeatureUngatedAlwaysPasses(t *testing.T) {
 	}
 }
 
+func TestRequireFeaturePanicsOnNonBooleanDefinition(t *testing.T) {
+	s := newTestServer(t)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("requireFeature accepted an integer limit; it must panic at registration time")
+		}
+	}()
+	s.requireFeature(license.QuotaMaxProviderPools)
+}
+
 func TestRequireFeatureNilManagerIsCommunity(t *testing.T) {
 	s := newTestServer(t)
 	s.license = nil

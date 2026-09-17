@@ -384,3 +384,39 @@ func TestResolvePublicKeysEnvOverride(t *testing.T) {
 		t.Fatalf("embedded keys expected: %v", err)
 	}
 }
+
+func TestAPIViewsMirrorState(t *testing.T) {
+	key := licensetest.NewKey(t)
+	m, _ := newManager(t, key, nil)
+
+	none := m.Refresh().APIState(m.FilePath())
+	if none.Status != "none" || none.Edition != license.EditionCommunity || none.License != nil || none.Limits == nil || none.FilePath != m.FilePath() {
+		t.Fatalf("unlicensed view %+v", none)
+	}
+
+	p := licensetest.Payload(testNow)
+	p.Extra = `{"features": {"feature.lite.observability": false}, "limits": {"quota.lite.max_provider_pools": 2}}`
+	st := m.Verify(licensetest.Encode(t, key, p))
+	verify := st.APIVerify()
+	if !verify.Valid || verify.License == nil || verify.License.Company != p.Company || verify.Limits["quota.lite.max_provider_pools"] != 2 {
+		t.Fatalf("verify view %+v", verify)
+	}
+	catalog := st.APICatalog(gatedCatalog())
+	if len(catalog) != len(license.Catalog()) {
+		t.Fatalf("catalog view has %d entries", len(catalog))
+	}
+	for _, entry := range catalog {
+		want := entry.Key != license.FeatureObservability.Key
+		if entry.Enabled != want || !entry.Gated {
+			t.Errorf("%s: enabled=%v gated=%v", entry.Key, entry.Enabled, entry.Gated)
+		}
+	}
+	full := st.APIState("")
+	if full.GraceUntil == nil || len(full.Features) != 5 {
+		t.Fatalf("state view %+v", full)
+	}
+	verify.Limits["quota.lite.max_provider_pools"] = 99
+	if st.Limits["quota.lite.max_provider_pools"] != 2 {
+		t.Fatal("API view must copy the limits map, not alias it")
+	}
+}

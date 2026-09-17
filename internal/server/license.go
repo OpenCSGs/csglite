@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -53,6 +54,12 @@ func newLicenseManager(storageRoot, version string) *license.Manager {
 // wrapping a route is harmless until the catalog entry is flipped to EE.
 // Wrap routes in routes.go only; background jobs check s.license.Enabled.
 func (s *Server) requireFeature(def license.FeatureDefinition) func(http.HandlerFunc) http.HandlerFunc {
+	if def.Type != license.FeatureTypeBoolean {
+		// Wrapping happens at route registration, so a misuse fails the
+		// process (and every test that builds routes) instead of turning into
+		// a route that silently answers 403 forever.
+		panic(fmt.Sprintf("requireFeature: %q is a %s limit, not a boolean feature; check it with s.license.Limit", def.Key, def.Type))
+	}
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if s.license.Enabled(def) {
@@ -80,90 +87,21 @@ func (s *Server) settingsResponse() api.SettingsResponse {
 	state := s.license.State()
 	resp.Edition = state.Edition()
 	resp.LicenseStatus = string(state.Status)
-	resp.License = licenseSummary(state)
+	resp.License = license.Summary(state.Payload)
 	resp.Features = state.EnabledKeys()
-	resp.Limits = licenseLimits(state)
-	resp.FeatureCatalog = licenseFeatureCatalog(state)
-	return resp
-}
-
-func licenseSummary(state license.State) *api.LicenseSummary {
-	p := state.Payload
-	if p == nil {
-		return nil
-	}
-	return &api.LicenseSummary{
-		Key:        p.Key,
-		Company:    p.Company,
-		Email:      p.Email,
-		Product:    p.Product,
-		Edition:    p.Edition,
-		MaxUser:    p.MaxUser,
-		StartTime:  p.StartTime,
-		ExpireTime: p.ExpireTime,
-		Version:    p.Version,
-	}
-}
-
-func licenseLimits(state license.State) map[string]int {
-	out := make(map[string]int, len(state.Limits))
-	for k, v := range state.Limits {
-		out[k] = v
-	}
-	return out
-}
-
-func licenseFeatureCatalog(state license.State) []api.LicenseFeatureDefinition {
-	defs := license.Catalog()
-	out := make([]api.LicenseFeatureDefinition, 0, len(defs))
-	for _, def := range defs {
-		entry := api.LicenseFeatureDefinition{
-			Key:          def.Key,
-			Type:         string(def.Type),
-			Gated:        def.Gated,
-			DefaultValue: def.DefaultValue,
-			NavItem:      def.NavItem,
-			Since:        def.Since,
-		}
-		switch def.Type {
-		case license.FeatureTypeBoolean:
-			entry.Enabled = state.Enabled(def)
-		case license.FeatureTypeInt:
-			entry.Enabled = !def.Gated || state.Licensed()
-		}
-		out = append(out, entry)
-	}
-	return out
-}
-
-func licenseStateResponse(m *license.Manager, state license.State) api.LicenseState {
-	resp := api.LicenseState{
-		Status:    string(state.Status),
-		Edition:   state.Edition(),
-		License:   licenseSummary(state),
-		Features:  state.EnabledKeys(),
-		Limits:    licenseLimits(state),
-		Reason:    state.Reason,
-		Warnings:  state.Warnings,
-		Source:    state.Source,
-		FilePath:  m.FilePath(),
-		CheckedAt: state.CheckedAt,
-	}
-	if !state.GraceUntil.IsZero() {
-		grace := state.GraceUntil
-		resp.GraceUntil = &grace
-	}
+	resp.Limits = state.LimitsCopy()
+	resp.FeatureCatalog = state.APICatalog(license.Catalog())
 	return resp
 }
 
 // GET /api/license -- current license status
 func (s *Server) handleLicenseGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, licenseStateResponse(s.license, s.license.State()))
+	writeJSON(w, http.StatusOK, s.license.State().APIState(s.license.FilePath()))
 }
 
 // GET /api/license/features -- the catalog with each feature's current state
 func (s *Server) handleLicenseFeatures(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, licenseFeatureCatalog(s.license.State()))
+	writeJSON(w, http.StatusOK, s.license.State().APICatalog(license.Catalog()))
 }
 
 func readLicenseImportRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -195,16 +133,7 @@ func (s *Server) handleLicenseVerify(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	state := s.license.Verify(data)
-	writeJSON(w, http.StatusOK, api.LicenseVerifyResponse{
-		Valid:    state.Licensed(),
-		Status:   string(state.Status),
-		License:  licenseSummary(state),
-		Features: state.EnabledKeys(),
-		Limits:   licenseLimits(state),
-		Reason:   state.Reason,
-		Warnings: state.Warnings,
-	})
+	writeJSON(w, http.StatusOK, s.license.Verify(data).APIVerify())
 }
 
 // PUT /api/license -- install (replace) the license file
@@ -223,7 +152,7 @@ func (s *Server) handleLicenseImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("license: installed %s license for %s (status %s)", state.Edition(), state.Payload.Company, state.Status)
-	writeJSON(w, http.StatusOK, licenseStateResponse(s.license, state))
+	writeJSON(w, http.StatusOK, state.APIState(s.license.FilePath()))
 }
 
 // DELETE /api/license -- remove the license file
@@ -234,5 +163,5 @@ func (s *Server) handleLicenseDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("license: removed; running as %s edition", state.Edition())
-	writeJSON(w, http.StatusOK, licenseStateResponse(s.license, state))
+	writeJSON(w, http.StatusOK, state.APIState(s.license.FilePath()))
 }
