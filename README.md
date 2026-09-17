@@ -13,7 +13,7 @@ Inspired by [Ollama](https://ollama.com), CSGLite provides model download, local
 ### Core
 
 - **One command to start** — `csghub-lite run` downloads, loads, and chats
-- **Model keep-alive** — models stay loaded after exit (default 5 min), instant reconnect
+- **Model keep-alive** — models stay loaded after exit (default 5 min, or set per model in the Web UI run dialog), instant reconnect
 - **Auto-start server** — background API server starts automatically, no manual setup
 - **Model download** from CSGHub platform (hub.opencsg.com or private deployments)
 - **Local inference** via llama.cpp (GGUF models, SafeTensors auto-converted)

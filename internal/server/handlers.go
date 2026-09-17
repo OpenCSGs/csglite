@@ -294,13 +294,17 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
+		expiresAt := time.Time{}
+		if me.keepAlive >= 0 {
+			expiresAt = me.lastUsed.Add(me.keepAlive)
+		}
 		models = append(models, api.RunningModel{
 			Name:      s.localInferenceModelID(lm.FullName()),
 			Model:     s.localInferenceModelID(lm.FullName()),
 			Size:      lm.Size,
 			Format:    string(lm.Format),
 			Status:    "running",
-			ExpiresAt: me.lastUsed.Add(me.keepAlive),
+			ExpiresAt: expiresAt,
 		})
 	}
 	for id := range s.imageLoading {
@@ -610,7 +614,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	stream := req.Stream != nil && *req.Stream
 
 	if !stream {
-		log.Printf("MODEL %s: load requested stream=false num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q", req.Model, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+		log.Printf("MODEL %s: load requested stream=false num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q keep_alive=%q", req.Model, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType, req.KeepAlive)
 		var err error
 		if imageGenerationModel {
 			_, err = s.getOrLoadImageEngine(context.Background(), req.Model)
@@ -675,7 +679,7 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	safeSSE(api.LoadResponse{Status: "loading " + req.Model})
-	log.Printf("MODEL %s: load requested stream=true num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q", req.Model, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
+	log.Printf("MODEL %s: load requested stream=true num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q keep_alive=%q", req.Model, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType, req.KeepAlive)
 
 	stepModelID := s.resolveLocalModelStorageID(req.Model)
 	defer s.clearLoadStep(stepModelID)

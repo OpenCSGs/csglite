@@ -606,7 +606,7 @@
           "Models"
         ],
         "summary": "Set per-model runtime settings by public model ID",
-        "description": "Sets the per-model context window. It overrides the global setting but loses to a context length sent with the request. Send num_ctx 0 to clear the setting and follow the global default.",
+        "description": "Sets the per-model load options: context window, llama-server slot count, GGUF quantization and keep-alive. Each overrides the global default and still loses to a value sent with the request, and each applies to every later load of the model -- including one started by an ordinary chat request, which carries no load options of its own.",
         "operationId": "setModelConfigByPublicID",
         "parameters": [
           {
@@ -695,7 +695,7 @@
           "Models"
         ],
         "summary": "Set per-model runtime settings",
-        "description": "Sets the per-model context window. It overrides the global setting but loses to a context length sent with the request. Send num_ctx 0 to clear the setting and follow the global default.",
+        "description": "Sets the per-model load options: context window, llama-server slot count, GGUF quantization and keep-alive. Each overrides the global default and still loses to a value sent with the request, and each applies to every later load of the model -- including one started by an ordinary chat request, which carries no load options of its own.",
         "operationId": "setModelConfig",
         "parameters": [
           {
@@ -9879,6 +9879,13 @@
           "model_max_num_ctx",
           "global_num_ctx",
           "effective_num_ctx",
+          "num_parallel",
+          "global_num_parallel",
+          "effective_num_parallel",
+          "dtype",
+          "keep_alive",
+          "global_keep_alive",
+          "effective_keep_alive",
           "runtime"
         ],
         "properties": {
@@ -9901,6 +9908,34 @@
             "type": "integer",
             "description": "Context window a load without a request-level value would use now."
           },
+          "num_parallel": {
+            "type": "integer",
+            "description": "Per-model llama-server slot count; 0 when the model follows the global setting."
+          },
+          "global_num_parallel": {
+            "type": "integer",
+            "description": "Slot count this model would use with no per-model setting."
+          },
+          "effective_num_parallel": {
+            "type": "integer",
+            "description": "Slot count a load without a request-level value would use now."
+          },
+          "dtype": {
+            "type": "string",
+            "description": "Per-model GGUF quantization; empty when the model follows the repository default."
+          },
+          "keep_alive": {
+            "type": "string",
+            "description": "Per-model idle window before the model is unloaded: a duration such as \"30s\" or \"1h\", or \"-1\" to keep it loaded until stopped. Empty when the model follows the runtime default."
+          },
+          "global_keep_alive": {
+            "type": "string",
+            "description": "Idle window this model would use with no per-model setting. It differs by runtime: recognition and speech models idle out later than text models."
+          },
+          "effective_keep_alive": {
+            "type": "string",
+            "description": "Idle window a load without a request-level keep-alive would use now."
+          },
           "runtime": {
             "type": "string",
             "enum": ["llama", "python-embedding", "python-asr", "python-tts", "diffusers"],
@@ -9911,13 +9946,23 @@
       "ModelConfigUpdateRequest": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "num_ctx"
-        ],
+        "description": "Every setting is optional: omitting one leaves that saved setting alone, so a client that knows about only some of them cannot clear the rest. A zero number or an empty string clears that setting and returns the model to the global default.",
         "properties": {
           "num_ctx": {
             "type": "integer",
             "description": "Context window for this model, at least 1024. Send 0 to clear the setting."
+          },
+          "num_parallel": {
+            "type": "integer",
+            "description": "llama-server slot count for this model, at least 1. Send 0 to clear the setting."
+          },
+          "dtype": {
+            "type": "string",
+            "description": "GGUF quantization to serve, such as \"Q4_K_M\". Send an empty string to clear the setting and follow the repository default."
+          },
+          "keep_alive": {
+            "type": "string",
+            "description": "Idle window before the model is unloaded: a duration such as \"30s\" or \"1h\", or \"-1\" to keep it loaded until stopped. Send an empty string to clear the setting and follow the runtime default."
           }
         }
       },

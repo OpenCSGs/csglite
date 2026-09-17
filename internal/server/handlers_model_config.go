@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/convert"
@@ -20,16 +21,22 @@ const minModelNumCtx = 1024
 // the slot count; anything below it is treated as "not set".
 const minModelNumParallel = 1
 
-// modelNumCtxSetting returns the per-model context window saved for modelID,
-// or 0 when the model has no setting of its own.
-func (s *Server) modelNumCtxSetting(modelID string) int {
+// modelSettings returns the per-model load options saved for modelID, or the
+// zero value when the model has none of its own.
+func (s *Server) modelSettings(modelID string) config.ModelRuntimeSettings {
 	if s.cfg == nil {
-		return 0
+		return config.ModelRuntimeSettings{}
 	}
 	storageID := s.resolveLocalModelStorageID(modelID)
 	s.modelSettingsMu.RLock()
 	defer s.modelSettingsMu.RUnlock()
-	if numCtx, ok := s.cfg.Inference.ModelNumCtx[storageID]; ok && numCtx >= minModelNumCtx {
+	return s.cfg.Inference.ModelSettings(storageID)
+}
+
+// modelNumCtxSetting returns the per-model context window saved for modelID,
+// or 0 when the model has no setting of its own.
+func (s *Server) modelNumCtxSetting(modelID string) int {
+	if numCtx := s.modelSettings(modelID).NumCtx; numCtx >= minModelNumCtx {
 		return numCtx
 	}
 	return 0
@@ -38,13 +45,7 @@ func (s *Server) modelNumCtxSetting(modelID string) int {
 // modelNumParallelSetting returns the per-model slot count saved for modelID,
 // or 0 when the model has no setting of its own.
 func (s *Server) modelNumParallelSetting(modelID string) int {
-	if s.cfg == nil {
-		return 0
-	}
-	storageID := s.resolveLocalModelStorageID(modelID)
-	s.modelSettingsMu.RLock()
-	defer s.modelSettingsMu.RUnlock()
-	if numParallel, ok := s.cfg.Inference.ModelNumParallel[storageID]; ok && numParallel >= minModelNumParallel {
+	if numParallel := s.modelSettings(modelID).NumParallel; numParallel >= minModelNumParallel {
 		return numParallel
 	}
 	return 0
@@ -53,13 +54,18 @@ func (s *Server) modelNumParallelSetting(modelID string) int {
 // modelDTypeSetting returns the per-model GGUF quantization saved for modelID,
 // or "" when the model has no setting of its own.
 func (s *Server) modelDTypeSetting(modelID string) string {
-	if s.cfg == nil {
-		return ""
+	return strings.TrimSpace(s.modelSettings(modelID).DType)
+}
+
+// modelKeepAliveSetting returns the per-model idle window saved for modelID and
+// whether the model has one. An unparsable saved value is reported as absent
+// rather than failing the load it is resolved for.
+func (s *Server) modelKeepAliveSetting(modelID string) (time.Duration, bool) {
+	keepAlive, set, err := api.ParseKeepAlive(s.modelSettings(modelID).KeepAlive)
+	if err != nil || !set {
+		return 0, false
 	}
-	storageID := s.resolveLocalModelStorageID(modelID)
-	s.modelSettingsMu.RLock()
-	defer s.modelSettingsMu.RUnlock()
-	return strings.TrimSpace(s.cfg.Inference.ModelDType[storageID])
+	return keepAlive, true
 }
 
 // GET /api/models/{namespace}/{name}/config
@@ -115,14 +121,31 @@ func (s *Server) handleModelConfigUpdateForID(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.NumCtx == nil {
-		writeError(w, http.StatusBadRequest, "num_ctx is required; send 0 to clear the setting")
-		return
+	// Every field is optional so that a client which knows about only some of
+	// them keeps the rest of the model's saved settings: a model served by a
+	// Python runtime has a keep-alive but no context window to send along.
+	numCtx := 0
+	if req.NumCtx != nil {
+		numCtx = *req.NumCtx
+		if numCtx != 0 && numCtx < minModelNumCtx {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("num_ctx must be 0 to clear the setting, or at least %d", minModelNumCtx))
+			return
+		}
 	}
-	numCtx := *req.NumCtx
-	if numCtx != 0 && numCtx < minModelNumCtx {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("num_ctx must be 0 to clear the setting, or at least %d", minModelNumCtx))
-		return
+
+	// keep_alive is stored in the spelling it arrived in, but parsing it here
+	// keeps an unusable value out of the config: it is resolved on every later
+	// load, where there is no caller left to report the error to.
+	normalizedKeepAlive := ""
+	if req.KeepAlive != nil {
+		keepAlive, set, err := api.ParseKeepAlive(*req.KeepAlive)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "keep_alive "+err.Error())
+			return
+		}
+		if set {
+			normalizedKeepAlive = api.FormatKeepAlive(keepAlive)
+		}
 	}
 
 	// dtype is optional for the same reason as num_parallel; an empty string
@@ -165,38 +188,30 @@ func (s *Server) handleModelConfigUpdateForID(w http.ResponseWriter, r *http.Req
 
 	storageID := s.resolveLocalModelStorageID(modelID)
 	s.modelSettingsMu.Lock()
-	if numCtx == 0 {
-		delete(s.cfg.Inference.ModelNumCtx, storageID)
-	} else {
-		if s.cfg.Inference.ModelNumCtx == nil {
-			s.cfg.Inference.ModelNumCtx = make(map[string]int)
-		}
-		s.cfg.Inference.ModelNumCtx[storageID] = numCtx
+	settings := s.cfg.Inference.ModelSettings(storageID)
+	if req.NumCtx != nil {
+		settings.NumCtx = numCtx
 	}
 	if req.NumParallel != nil {
-		if numParallel == 0 {
-			delete(s.cfg.Inference.ModelNumParallel, storageID)
-		} else {
-			if s.cfg.Inference.ModelNumParallel == nil {
-				s.cfg.Inference.ModelNumParallel = make(map[string]int)
-			}
-			s.cfg.Inference.ModelNumParallel[storageID] = numParallel
-		}
+		settings.NumParallel = numParallel
 	}
 	if req.DType != nil {
-		if normalizedDType == "" {
-			delete(s.cfg.Inference.ModelDType, storageID)
-		} else {
-			if s.cfg.Inference.ModelDType == nil {
-				s.cfg.Inference.ModelDType = make(map[string]string)
-			}
-			s.cfg.Inference.ModelDType[storageID] = normalizedDType
-		}
+		settings.DType = normalizedDType
 	}
+	if req.KeepAlive != nil {
+		settings.KeepAlive = normalizedKeepAlive
+	}
+	s.cfg.Inference.SetModelSettings(storageID, settings)
 	s.modelSettingsMu.Unlock()
 	if err := config.Save(s.cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("save config: %v", err))
 		return
+	}
+
+	// An engine already loaded keeps running, so apply the new window to it
+	// instead of making the user reload the model to change when it expires.
+	if req.KeepAlive != nil {
+		s.applyModelKeepAlive(modelID, s.effectiveModelKeepAlive(modelID))
 	}
 
 	writeJSON(w, http.StatusOK, s.modelConfigResponse(modelID, modelDir))
@@ -205,6 +220,11 @@ func (s *Server) handleModelConfigUpdateForID(w http.ResponseWriter, r *http.Req
 func (s *Server) modelConfigResponse(modelID, modelDir string) api.ModelConfigResponse {
 	setting := s.modelNumCtxSetting(modelID)
 	parallelSetting := s.modelNumParallelSetting(modelID)
+	keepAliveSetting, keepAliveSet := s.modelKeepAliveSetting(modelID)
+	savedKeepAlive := ""
+	if keepAliveSet {
+		savedKeepAlive = api.FormatKeepAlive(keepAliveSetting)
+	}
 	return api.ModelConfigResponse{
 		Model:                modelID,
 		NumCtx:               setting,
@@ -215,6 +235,9 @@ func (s *Server) modelConfigResponse(modelID, modelDir string) api.ModelConfigRe
 		GlobalNumParallel:    inference.ResolveNumParallel(s.cfg.Inference.LlamaNumParallel),
 		EffectiveNumParallel: inference.ResolveNumParallelWithModelSetting(0, parallelSetting, s.cfg.Inference.LlamaNumParallel),
 		DType:                s.modelDTypeSetting(modelID),
+		KeepAlive:            savedKeepAlive,
+		GlobalKeepAlive:      api.FormatKeepAlive(s.defaultKeepAliveFor(modelID)),
+		EffectiveKeepAlive:   api.FormatKeepAlive(s.effectiveModelKeepAlive(modelID)),
 		Runtime:              s.modelRuntimeKind(modelID),
 	}
 }

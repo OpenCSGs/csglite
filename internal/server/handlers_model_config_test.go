@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
@@ -136,13 +137,107 @@ func TestModelConfigRejectsTooSmallNumCtx(t *testing.T) {
 	}
 }
 
-func TestModelConfigRequiresNumCtxField(t *testing.T) {
+// Every field is optional so that a client which shows only some of them
+// cannot wipe the rest: the run dialog omits the llama.cpp options entirely for
+// a model served by a Python runtime and still has to save its keep-alive.
+func TestModelConfigLeavesOmittedFieldsAlone(t *testing.T) {
 	s := newTestServer(t)
 	modelID := seedModelForConfig(t, s, "40960")
 
-	rec, _ := modelConfigRequest(t, s, http.MethodPut, modelID, `{}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+	if rec, _ := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":32768,"num_parallel":2}`); rec.Code != http.StatusOK {
+		t.Fatalf("seeding status = %d, want 200", rec.Code)
+	}
+
+	rec, got := modelConfigRequest(t, s, http.MethodPut, modelID, `{"keep_alive":"-1"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if got.NumCtx != 32768 {
+		t.Fatalf("NumCtx = %d, want the saved 32768 to survive a keep-alive-only update", got.NumCtx)
+	}
+	if got.NumParallel != 2 {
+		t.Fatalf("NumParallel = %d, want the saved 2 to survive a keep-alive-only update", got.NumParallel)
+	}
+	if got.KeepAlive != "-1" {
+		t.Fatalf("KeepAlive = %q, want %q", got.KeepAlive, "-1")
+	}
+
+	// An empty body changes nothing rather than clearing the model's settings.
+	rec, got = modelConfigRequest(t, s, http.MethodPut, modelID, `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if got.NumCtx != 32768 || got.NumParallel != 2 || got.KeepAlive != "-1" {
+		t.Fatalf("empty update changed the settings: %+v", got)
+	}
+}
+
+// The keep-alive has to outlive the engine it was set on: before it was saved
+// per model it lived only on one managedEngine, so an idle eviction or a
+// restart silently returned the model to the five-minute default.
+func TestModelConfigKeepAliveSurvivesAndResolves(t *testing.T) {
+	s := newTestServer(t)
+	modelID := seedModelForConfig(t, s, "40960")
+
+	rec, got := modelConfigRequest(t, s, http.MethodGet, modelID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if got.KeepAlive != "" {
+		t.Fatalf("KeepAlive = %q, want empty when unset", got.KeepAlive)
+	}
+	if want := api.FormatKeepAlive(DefaultKeepAlive); got.EffectiveKeepAlive != want {
+		t.Fatalf("EffectiveKeepAlive = %q, want the default %q", got.EffectiveKeepAlive, want)
+	}
+
+	rec, got = modelConfigRequest(t, s, http.MethodPut, modelID, `{"keep_alive":"-1"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if got.KeepAlive != "-1" || got.EffectiveKeepAlive != "-1" {
+		t.Fatalf("KeepAlive = %q, EffectiveKeepAlive = %q, want -1 for both", got.KeepAlive, got.EffectiveKeepAlive)
+	}
+	// This is what a load started by a plain chat request resolves, and it is
+	// the value the evictor reads: -1 means the model is never evicted.
+	if resolved := s.effectiveModelKeepAlive(modelID); resolved != api.KeepAliveForever {
+		t.Fatalf("effectiveModelKeepAlive = %s, want %s", resolved, api.KeepAliveForever)
+	}
+
+	rec, got = modelConfigRequest(t, s, http.MethodPut, modelID, `{"keep_alive":"90s"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if got.KeepAlive != "1m30s" {
+		t.Fatalf("KeepAlive = %q, want the normalized %q", got.KeepAlive, "1m30s")
+	}
+	if resolved := s.effectiveModelKeepAlive(modelID); resolved != 90*time.Second {
+		t.Fatalf("effectiveModelKeepAlive = %s, want 1m30s", resolved)
+	}
+
+	rec, got = modelConfigRequest(t, s, http.MethodPut, modelID, `{"keep_alive":""}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if got.KeepAlive != "" {
+		t.Fatalf("KeepAlive = %q, want empty after clearing", got.KeepAlive)
+	}
+	if resolved := s.effectiveModelKeepAlive(modelID); resolved != DefaultKeepAlive {
+		t.Fatalf("effectiveModelKeepAlive = %s, want the default %s after clearing", resolved, DefaultKeepAlive)
+	}
+}
+
+func TestModelConfigRejectsUnusableKeepAlive(t *testing.T) {
+	s := newTestServer(t)
+	modelID := seedModelForConfig(t, s, "40960")
+
+	for _, body := range []string{`{"keep_alive":"soon"}`, `{"keep_alive":"-5m"}`} {
+		rec, _ := modelConfigRequest(t, s, http.MethodPut, modelID, body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d for %s, want 400", rec.Code, body)
+		}
+	}
+	if s.modelSettings(modelID).KeepAlive != "" {
+		t.Fatalf("KeepAlive = %q, want nothing saved after a rejected update", s.modelSettings(modelID).KeepAlive)
 	}
 }
 
@@ -171,9 +266,9 @@ func TestModelConfigReportsTheServingRuntime(t *testing.T) {
 			format:      model.FormatSafeTensors,
 			// An architecture the GGUF converter does not handle: those that it
 			// does still prefer llama.cpp.
-			config:      `{"architectures":["JinaEmbeddingsV5OmniModel"]}`,
-			files:       []string{"model.safetensors"},
-			want:        api.ModelRuntimePythonEmbedding,
+			config: `{"architectures":["JinaEmbeddingsV5OmniModel"]}`,
+			files:  []string{"model.safetensors"},
+			want:   api.ModelRuntimePythonEmbedding,
 		},
 		{
 			name:        "text-to-speech",
@@ -325,5 +420,44 @@ func TestModelConfigRejectsUnknownDType(t *testing.T) {
 	rec, _ := modelConfigRequest(t, s, http.MethodPut, modelID, `{"num_ctx":0,"dtype":"not-a-quant"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %q", rec.Code, rec.Body.String())
+	}
+}
+
+// Saving a keep-alive while the model is loaded has to reach the running
+// engine, and -1 has to make the evictor skip it: an idle eviction is exactly
+// what the setting exists to prevent.
+func TestModelConfigKeepAliveReachesALoadedEngine(t *testing.T) {
+	s := newTestServer(t)
+	modelID := seedModelForConfig(t, s, "40960")
+	cacheKey := engineCacheKey(modelID, engineModeChat)
+
+	s.engines[cacheKey] = &managedEngine{
+		engine:    &poolRuntimeTestEngine{},
+		lastUsed:  time.Now().Add(-time.Hour),
+		keepAlive: DefaultKeepAlive,
+	}
+
+	if rec, _ := modelConfigRequest(t, s, http.MethodPut, modelID, `{"keep_alive":"-1"}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := s.engines[cacheKey].keepAlive; got != api.KeepAliveForever {
+		t.Fatalf("loaded engine keepAlive = %s, want %s without a reload", got, api.KeepAliveForever)
+	}
+	s.evictExpired(time.Now())
+	if _, ok := s.engines[cacheKey]; !ok {
+		t.Fatal("engine evicted although its keep-alive is -1")
+	}
+
+	// Clearing the setting hands the model back to the default, which an hour
+	// of idling is past.
+	if rec, _ := modelConfigRequest(t, s, http.MethodPut, modelID, `{"keep_alive":""}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := s.engines[cacheKey].keepAlive; got != DefaultKeepAlive {
+		t.Fatalf("loaded engine keepAlive = %s, want the default %s after clearing", got, DefaultKeepAlive)
+	}
+	s.evictExpired(time.Now())
+	if _, ok := s.engines[cacheKey]; ok {
+		t.Fatal("engine not evicted although its keep-alive went back to the default")
 	}
 }

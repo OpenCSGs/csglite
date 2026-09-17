@@ -163,10 +163,16 @@ function loadSavedRunParams(): RunModelParams {
 
 function saveRunParams(params: RunModelParams) {
   try {
-    // numCtx, numParallel and dtype are persisted per model through
+    // numCtx, numParallel, dtype and keepAlive are persisted per model through
     // /api/models/{model}/config, so they must not also be remembered
     // browser-wide for every other model.
-    const { numCtx: _perModelCtx, numParallel: _perModelParallel, dtype: _perModelDType, ...shared } = params;
+    const {
+      numCtx: _perModelCtx,
+      numParallel: _perModelParallel,
+      dtype: _perModelDType,
+      keepAlive: _perModelKeepAlive,
+      ...shared
+    } = params;
     localStorage.setItem(RUN_PARAMS_STORAGE_KEY, JSON.stringify(shared));
   } catch {
     /* ignore localStorage failures */
@@ -722,35 +728,37 @@ export function Library() {
   };
 
   const openRunDialog = (model: ModelInfo) => {
-    // numCtx, numParallel and dtype come from this model's saved settings, not
-    // from the shared params.
-    runParams.value = { ...loadSavedRunParams(), numCtx: "", numParallel: "", dtype: "" };
+    // numCtx, numParallel, dtype and keepAlive come from this model's saved
+    // settings, not from the shared params.
+    runParams.value = { ...loadSavedRunParams(), numCtx: "", numParallel: "", dtype: "", keepAlive: "" };
     runDialogError.value = "";
     runDialogGGUFQuants.value = [];
     runDialogQuantsLoading.value = model.format === "gguf";
     libraryError.value = "";
     runDialogModelConfig.value = null;
-    runDialogConfigLoading.value = numCtxApplies(model);
+    // Fetched for every model, not only the ones with a context window: the
+    // keep-alive applies to the Python runtimes too, and the response is what
+    // tells the dialog which runtime actually serves the model.
+    runDialogConfigLoading.value = true;
     runDialogModel.value = model;
-    if (numCtxApplies(model)) {
-      getModelConfig(model.name).then((info) => {
-        if (runDialogModel.value?.name !== model.name) return;
-        runDialogModelConfig.value = info;
-        runParams.value = {
-          ...runParams.value,
-          numCtx: info.num_ctx > 0 ? String(info.num_ctx) : "",
-          numParallel: info.num_parallel > 0 ? String(info.num_parallel) : "",
-          dtype: info.dtype || runParams.value.dtype,
-        };
-      }).catch(() => {
-        /* Leave the fields empty so the load follows the global settings, and
-           leave runDialogModelConfig null so nothing is written back. */
-      }).finally(() => {
-        if (runDialogModel.value?.name === model.name) {
-          runDialogConfigLoading.value = false;
-        }
-      });
-    }
+    getModelConfig(model.name).then((info) => {
+      if (runDialogModel.value?.name !== model.name) return;
+      runDialogModelConfig.value = info;
+      runParams.value = {
+        ...runParams.value,
+        numCtx: numCtxApplies(model) && info.num_ctx > 0 ? String(info.num_ctx) : "",
+        numParallel: info.num_parallel > 0 ? String(info.num_parallel) : "",
+        dtype: info.dtype || runParams.value.dtype,
+        keepAlive: info.keep_alive || "",
+      };
+    }).catch(() => {
+      /* Leave the fields empty so the load follows the global settings, and
+         leave runDialogModelConfig null so nothing is written back. */
+    }).finally(() => {
+      if (runDialogModel.value?.name === model.name) {
+        runDialogConfigLoading.value = false;
+      }
+    });
     if (model.format === "gguf") {
       getModelManifest(model.name).then((manifest) => {
         if (runDialogModel.value?.name !== model.name) return;
@@ -801,14 +809,25 @@ export function Library() {
     saveRunParams(runParams.value);
     // Only write back settings the dialog actually showed. Its fields start
     // blank and are filled by an async fetch, so saving before that lands -- or
-    // after it failed -- would persist three empty values over the model's
-    // saved ones and send the next load to the repository default.
-    if (numCtxApplies(model) && runDialogModelConfig.value) {
-      // Persist them per model so every later load - from this dialog, the CLI
-      // or the API - uses the same context length and slot count without
-      // retyping them. 0 clears a setting and returns it to the global default.
+    // after it failed -- would persist empty values over the model's saved ones
+    // and send the next load to the repository default.
+    if (runDialogModelConfig.value) {
+      // Persist them per model so every later load - from this dialog, the CLI,
+      // the API, or a plain chat request that names no load options at all -
+      // uses the same settings without retyping them. 0 or an empty string
+      // clears a setting and returns it to the global default. Fields the
+      // dialog does not show for this runtime are left out so they keep their
+      // saved values.
       try {
-        await setModelConfig(model.name, options.num_ctx ?? 0, options.num_parallel ?? 0, options.dtype ?? "");
+        await setModelConfig(model.name, {
+          // The image, ASR and text-to-speech runtimes take none of the
+          // llama.cpp options, so the dialog does not show them and the save
+          // must leave whatever is stored for them alone.
+          ...(numCtxApplies(model)
+            ? { num_ctx: options.num_ctx ?? 0, num_parallel: options.num_parallel ?? 0, dtype: options.dtype ?? "" }
+            : {}),
+          keep_alive: options.keep_alive ?? "",
+        });
       } catch (e: any) {
         runDialogError.value = e?.message || String(e);
         return;
@@ -1551,9 +1570,14 @@ function RunParamsDialog({
               type="text"
               value={params.keepAlive}
               onInput={(e) => onChange("keepAlive", (e.currentTarget as HTMLInputElement).value)}
-              placeholder="5m, 1h, -1"
+              placeholder={modelConfig?.global_keep_alive || "5m, 1h, -1"}
               class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             />
+            {modelConfig && (
+              <p class="text-xs text-gray-400 mt-1">
+                {t("lib.runParamKeepAliveGlobal", modelConfig.global_keep_alive)}
+              </p>
+            )}
             <p class="text-xs text-gray-400 mt-1">{t("lib.runParamKeepAliveHint")}</p>
           </div>
         </div>
