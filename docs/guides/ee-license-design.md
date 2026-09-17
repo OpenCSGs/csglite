@@ -73,32 +73,23 @@ follows” 段落：`ee/` 目录（若存在）适用 `ee/LICENSE`，第三方�
 // See ee/LICENSE for details.
 ```
 
-### 2.3 与现有《企业版许可协议》的关系（需法务裁决）
+### 2.3 取代旧的《企业版许可协议》
 
-仓库里早已存在一条企业版安装流程：`EE=1 sh install.sh` 会把内部 GitLab
-`opensource/public_files` 上的 `license.txt`（《CSGHub-Lite Enterprise Edition
-License Agreement》v1.0，2026-03 加入）复制到安装目录。它是一份面向最终用户的
-法律协议文本，与本设计的签名文件 `license.key` 是两样东西：前者规定使用条款，
-后者证明客户持有授权。`ee/LICENSE` 把这份协议作为 “EE Terms” 引用。
+2026-03 起安装脚本曾有 `EE=1` 流程，把内部 GitLab `opensource/public_files`
+上的《CSGHub-Lite Enterprise Edition License Agreement》v1.0 复制为安装目录下的
+`license.txt`。该协议以“EE 不开源、禁止修改”为前提，与本设计的 open core 路线
+冲突，已决定**以 `ee/LICENSE` 为唯一基准**：
 
-两份文本目前有冲突，需要法务在合入前定夺：
+- `scripts/install.sh`、`scripts/install.ps1` 中的 `EE=1` 分支和 `license.txt`
+  下载逻辑已删除，安装文档同步更新；企业版与社区版使用同一个安装包，靠导入
+  `license.key` 区分。
+- `ee/LICENSE` 独立成文，不再引用旧协议；生产使用的商业条款以 OpenCSG 签发
+  License 时附带的合同为准。
+- 内部 GitLab 上的 `license.txt` 文件由维护者另行下线或替换为 `ee/LICENSE`
+  的内容，本仓库不再引用它。
 
-| 条款 | 现有协议 v1.0 | `ee/LICENSE` 草稿（GitLab 模式） |
-|---|---|---|
-| 源码是否公开 | §4 “Enterprise Edition is NOT open source” | EE 源码公开在同一仓库的 `ee/` 目录 |
-| 修改与派生 | §3.3 禁止修改、fork、派生 | 允许修改和发布补丁，权利归 OpenCSG |
-| 开发测试 | 未提及 | 明确免费 |
-| 绕过校验 | §3.4 禁止 | 同样禁止，且不构成生产授权 |
-| 再分发 / SaaS / OEM | §3.1、§3.2、§5 详细规定 | 一句“禁止复制、分发、再许可、出售” |
-| 审计、终止、管辖法 | §7、§8、§11 有 | 无 |
-
-建议的收敛方式：以现有协议为商业条款主文本，修订其 §3.3 和 §4 以容纳
-“源码公开、允许开发测试和提交补丁”的 open core 模式；`ee/LICENSE` 保持短文本，
-只负责声明目录归属并指向该协议。若法务坚持 EE 不公开源码，则回到第 1 节讨论
-过的“EE 代码放私有仓库”路线，本设计的门控框架不受影响。
-
-另外需确认：是否需要中文或双语版本；“修改的权利归 OpenCSG”这一条在国内法下
-的表述；协议正式发布位置（目前仅在内部 GitLab，公开仓库无法链接）。
+法务仍需确认：是否需要中文或双语版本；“修改的权利归 OpenCSG”这一条在国内法下
+的表述；再分发、SaaS、OEM 等场景是否需要在 `ee/LICENSE` 之外另立合同模板。
 
 ## 3. 功能注册表：唯一真源
 

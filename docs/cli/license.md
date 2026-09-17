@@ -45,12 +45,6 @@ csghub-lite license features           # 列出功能注册表；EE 列为 yes �
 只有在注册表中标记为 EE（`features` 输出的 EE 列为 `yes`）的功能才会校验
 License，其余功能在社区版下也始终可用。
 
-## 与 `license.txt` 的区别
-
-`EE=1` 方式安装时，安装脚本会把《企业版许可协议》文本写为安装目录下的
-`license.txt`，那是法律条款，不是授权凭证。本命令管理的是 OpenCSG 签发的签名
-文件 `license.key`，只有它能解锁企业版功能。
-
 ## 相关环境变量
 
 | 变量 | 说明 |

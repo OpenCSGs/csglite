@@ -24,23 +24,13 @@ macOS 上，安装脚本会优先选择当前已经在 `PATH` 且可写的目录
 curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh | CSGHUB_LITE_VERSION=v0.1.0 sh
 ```
 
-企业版安装（会额外把 `license.txt` 写入安装目录）：
-
-```bash
-curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh | EE=1 sh
-```
-
-Windows PowerShell 同样支持：
-
-```powershell
-$env:EE="1"; irm https://hub.opencsg.com/csghub-lite/install.ps1 | iex
-```
+企业版使用同一个安装包，安装后导入 OpenCSG 签发的 License 即可解锁企业版
+功能，见 [`license` 命令](../cli/license.md)。
 
 安装脚本环境变量（可选，`install.sh` 与 `install.ps1` 共同支持通用变量）：
 
 | 变量 | 说明 |
 |------|------|
-| `EE` | 设为 `1` 时，将企业版 `license.txt` 写入 `csghub-lite` 安装目录。 |
 | `INSTALL_DIR` | 指定 `csghub-lite` 安装目录。未设置时，macOS 会优先选择当前 `PATH` 中可写的目录，否则回退到 `~/bin`；Linux 仍默认使用已有安装目录或 `/usr/local/bin`。 |
 | `CSGHUB_LITE_LLAMA_SERVER_INSTALL_DIR` | 指定 `llama-server` 安装目录。未设置时，macOS 默认跟随 `csghub-lite` 的安装目录。 |
 | `CSGHUB_LITE_LLAMA_CPP_TAG` | 指定要安装的 `llama.cpp` release tag。默认固定到与 `llama-cpp-assets` 依赖对齐的 tag，确保 converter、`gguf-py` 和 `llama-server` 版本一致。 |

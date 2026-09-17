@@ -7,7 +7,6 @@ REPO="${REPO:-OpenCSGs/csglite}"
 INSTALL_DIR="${INSTALL_DIR:-}"
 INSTALL_DIR_DEFAULT="/usr/local/bin"
 BINARY_NAME="${BINARY_NAME:-csghub-lite}"
-EE="${EE:-}"
 LLAMA_CPP_REPO="ggml-org/llama.cpp"
 LLAMA_CPP_DEFAULT_TAG="${CSGHUB_LITE_LLAMA_CPP_TAG:-b10830}"
 INSTALL_PATH_PROFILE=""
@@ -18,7 +17,6 @@ GITLAB_HOST="https://git-devops.opencsg.com"
 GITLAB_API="${GITLAB_HOST}/api/v4/projects"
 GITLAB_CSGHUB_ID="392"
 GITLAB_LLAMA_ID="393"
-ENTERPRISE_LICENSE_URL="${GITLAB_HOST}/opensource/public_files/-/raw/main/license.txt"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -413,37 +411,6 @@ ensure_cuda_runtime_for_llama() {
 
     warn "Could not install CUDA runtime libraries automatically."
     warn "Try manually: apt-get install cuda-libraries-${_cuda_pkg_suffix}"
-}
-
-install_enterprise_license() {
-    _install_dir="$1"
-    if [ "$EE" != "1" ]; then
-        return 0
-    fi
-
-    _license_path="${_install_dir}/license.txt"
-    _license_tmp="$(mktemp)"
-
-    info "EE=1 detected. Installing enterprise license..."
-    if ! download_text "$ENTERPRISE_LICENSE_URL" > "$_license_tmp"; then
-        rm -f "$_license_tmp"
-        error "Failed to download enterprise license from ${ENTERPRISE_LICENSE_URL}"
-    fi
-    if [ ! -s "$_license_tmp" ]; then
-        rm -f "$_license_tmp"
-        error "Downloaded enterprise license is empty"
-    fi
-
-    if [ -w "$_install_dir" ]; then
-        mv "$_license_tmp" "$_license_path"
-        chmod 0644 "$_license_path"
-    else
-        info "Requires root privileges to install enterprise license to ${_install_dir}"
-        run_privileged mv "$_license_tmp" "$_license_path"
-        run_privileged chmod 0644 "$_license_path"
-    fi
-
-    info "Installed enterprise license to ${_license_path}"
 }
 
 path_contains_dir() {
@@ -1098,7 +1065,6 @@ main() {
         run_privileged mv "$BINARY_PATH" "$TARGET"
     fi
     rm -rf "$TMPDIR"
-    install_enterprise_license "$INSTALL_DIR"
     cleanup_previous_binary "$EXISTING_BIN" "$TARGET"
 
     ACTIVE_BIN="$(command -v "$BINARY_NAME" 2>/dev/null || true)"
