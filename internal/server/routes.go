@@ -185,9 +185,9 @@ func (s *Server) routes() http.Handler {
 	}
 
 	return correlationMiddleware(LogMiddleware(
-		s.desktopAuthMiddleware(s.corsMiddleware(s.apiAuthMiddleware(
+		s.desktopAuthMiddleware(s.corsMiddleware(licenseOriginGuard(s.apiAuthMiddleware(
 			s.observabilityMiddleware(providerPoolUsageMiddleware(mux)),
-		))),
+		)))),
 	))
 }
 
@@ -267,7 +267,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Add("Vary", "Origin")
 			}
-		} else {
+		} else if !isLicenseManagementPath(r.URL.Path) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
 		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-B3-TraceId, X-CSGLite-Request-ID, X-CSGLite-Trace-ID, X-CSGLite-Thread-ID")

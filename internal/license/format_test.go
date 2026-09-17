@@ -123,3 +123,29 @@ func TestEmbeddedPublicKeysParse(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeRejectsOverlappingHeaderAndFooter(t *testing.T) {
+	key, _ := ParsePublicKey([]byte(csghubGoldenPublicKey))
+	// Both markers start with five dashes, so a short string can satisfy the
+	// prefix and the suffix check at once. Slicing it without a length check
+	// panics, and Refresh runs this on a background goroutine where a panic
+	// takes the process down.
+	cases := []string{
+		PEMHeader[:len(PEMHeader)-4] + "-----END LICENSE KEY-----",
+		"-----BEGIN LICENSE KEY---------END LICENSE KEY-----",
+		PEMHeader,
+		PEMFooter,
+	}
+	for _, bad := range cases {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("Decode(%q) panicked: %v", bad, r)
+				}
+			}()
+			if _, err := Decode(bad, []*rsa.PublicKey{key}); !errors.Is(err, ErrMalformed) {
+				t.Fatalf("Decode(%q) = %v, want ErrMalformed", bad, err)
+			}
+		}()
+	}
+}

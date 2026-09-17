@@ -280,3 +280,79 @@ func TestLicenseRoutesAreLocalOnly(t *testing.T) {
 		t.Fatalf("external API exposes /api/license: %d", rec.Code)
 	}
 }
+
+func TestLicenseRoutesRefuseCrossOriginBrowsers(t *testing.T) {
+	s := newTestServer(t)
+	key := installTestLicenseKeys(t, s)
+	handler := s.routes()
+	if _, err := s.license.Install(licensetest.Encode(t, key, licensetest.Payload(time.Now()))); err != nil {
+		t.Fatal(err)
+	}
+
+	// A page on another origin must not be able to read the customer name and
+	// license ID, nor delete the license.
+	for _, method := range []string{http.MethodGet, http.MethodDelete} {
+		req := httptest.NewRequest(method, "/api/license", nil)
+		req.Header.Set("Origin", "https://evil.example")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s from a foreign origin: %d, want 403", method, rec.Code)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Fatalf("license route advertises CORS origin %q", got)
+		}
+	}
+	if s.license.State().Status != license.StatusValid {
+		t.Fatal("a refused cross-origin DELETE must not touch the installed license")
+	}
+
+	// The same-origin web UI and non-browser callers still work.
+	sameOrigin := httptest.NewRequest(http.MethodGet, "/api/license", nil)
+	sameOrigin.Header.Set("Origin", "http://"+sameOrigin.Host)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, sameOrigin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("same-origin GET: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/license", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("no-Origin GET: %d", rec.Code)
+	}
+
+	// Other local API routes keep their existing wildcard CORS behaviour.
+	other := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	other.Header.Set("Origin", "https://evil.example")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, other)
+	if rec.Code != http.StatusOK || rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("unrelated route changed: %d %q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestLicenseImportFromEnvIsAConflictNotAServerError(t *testing.T) {
+	s := newTestServer(t)
+	key := licensetest.NewKey(t)
+	data := licensetest.Encode(t, key, licensetest.Payload(time.Now()))
+	root := t.TempDir()
+	s.license = license.NewManager(license.Options{
+		FilePath:   filepath.Join(root, license.FileName),
+		PublicKeys: []*rsa.PublicKey{&key.PublicKey},
+		Inline:     data,
+		Catalog:    gatedTestCatalog(),
+	})
+	s.license.Refresh()
+	handler := s.routes()
+
+	for _, req := range []*http.Request{
+		licenseJSONRequest(http.MethodPut, "/api/license", data),
+		httptest.NewRequest(http.MethodDelete, "/api/license", nil),
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusConflict {
+			t.Errorf("%s /api/license = %d, want 409: %s", req.Method, rec.Code, rec.Body.String())
+		}
+	}
+}

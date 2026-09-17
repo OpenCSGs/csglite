@@ -43,6 +43,16 @@ const (
 	clockRollbackTolerance = 24 * time.Hour
 )
 
+var (
+	// ErrManagedByEnv means the license comes from CSGHUB_LITE_LICENSE, so it
+	// cannot be installed or removed through the file. The caller has to
+	// change the environment, which is a configuration conflict, not a
+	// server fault.
+	ErrManagedByEnv = errors.New("the license is provided by the environment")
+	// ErrNoFilePath means the manager has nowhere to write the license.
+	ErrNoFilePath = errors.New("no license file path configured")
+)
+
 // Status is the evaluated state of the license source.
 type Status string
 
@@ -107,7 +117,8 @@ func (s State) Enabled(def FeatureDefinition) bool {
 }
 
 // Limit returns an integer limit; 0 means unlimited. A limit that is not
-// gated is always unlimited; a gated one comes from the license.
+// gated is always unlimited. A gated one comes from the license, and falls
+// back to the definition's CommunityValue when there is none.
 func (s State) Limit(def FeatureDefinition) int {
 	if def.Type != FeatureTypeInt || !def.Gated {
 		return 0
@@ -277,10 +288,10 @@ func (m *Manager) Install(data string) (State, error) {
 		return State{}, errors.New("license manager is not initialised")
 	}
 	if strings.TrimSpace(m.opts.Inline) != "" {
-		return State{}, fmt.Errorf("the license is provided by %s; unset it before installing a file", EnvLicense)
+		return State{}, fmt.Errorf("%w: unset %s before installing a file", ErrManagedByEnv, EnvLicense)
 	}
 	if strings.TrimSpace(m.opts.FilePath) == "" {
-		return State{}, errors.New("no license file path configured")
+		return State{}, ErrNoFilePath
 	}
 	candidate := m.evaluate(data, m.opts.Now())
 	switch candidate.Status {
@@ -302,7 +313,7 @@ func (m *Manager) Remove() (State, error) {
 		return State{}, errors.New("license manager is not initialised")
 	}
 	if strings.TrimSpace(m.opts.Inline) != "" {
-		return State{}, fmt.Errorf("the license is provided by %s; unset it to remove the license", EnvLicense)
+		return State{}, fmt.Errorf("%w: unset %s to remove the license", ErrManagedByEnv, EnvLicense)
 	}
 	if m.opts.FilePath != "" {
 		if err := os.Remove(m.opts.FilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -448,7 +459,10 @@ func resolveEntitlements(edition string, extra Extra, defs []FeatureDefinition) 
 			} else if enterprise {
 				limits[def.Key], _ = def.DefaultValue.(int)
 			} else {
-				limits[def.Key] = 0
+				// No license, or an edition with no default entitlements:
+				// fall back to the Community cap rather than 0, which would
+				// mean unlimited.
+				limits[def.Key] = def.CommunityValue
 			}
 		}
 	}

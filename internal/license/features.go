@@ -39,6 +39,12 @@ type FeatureDefinition struct {
 	// DefaultValue applies to a gated feature when a valid Enterprise license
 	// does not mention the key in Extra.
 	DefaultValue any
+	// CommunityValue is what an unlicensed instance gets for a gated integer
+	// limit. Booleans are simply off when unlicensed, so this only applies to
+	// FeatureTypeInt, and a gated limit must set it to a non-zero value:
+	// 0 means unlimited, which would leave Community users less restricted
+	// than paying ones. ValidateCatalog rejects a gated limit that leaves it 0.
+	CommunityValue int
 	// NavItem is the web UI navigation id the feature unlocks, or empty.
 	NavItem string
 	// Since is the CSGLite version in which the feature became license-gated.
@@ -143,8 +149,14 @@ func ValidateCatalog(defs []FeatureDefinition) error {
 			if _, ok := def.DefaultValue.(int); !ok {
 				return fmt.Errorf("integer limit %q must have an int default", def.Key)
 			}
+			if def.Gated && def.CommunityValue == 0 {
+				return fmt.Errorf("gated limit %q must set CommunityValue to a non-zero cap; 0 means unlimited and would leave Community users less restricted than licensed ones", def.Key)
+			}
 		default:
 			return fmt.Errorf("feature %q has unsupported type %q", def.Key, def.Type)
+		}
+		if !def.Gated && def.CommunityValue != 0 {
+			return fmt.Errorf("feature %q is not gated, so CommunityValue is never used; leave it 0", def.Key)
 		}
 		if strings.TrimSpace(def.Since) == "" {
 			return fmt.Errorf("feature %q must record the version it was gated in", def.Key)

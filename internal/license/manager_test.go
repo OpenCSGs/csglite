@@ -2,6 +2,7 @@ package license_test
 
 import (
 	"crypto/rsa"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -418,5 +419,65 @@ func TestAPIViewsMirrorState(t *testing.T) {
 	verify.Limits["quota.lite.max_provider_pools"] = 99
 	if st.Limits["quota.lite.max_provider_pools"] != 2 {
 		t.Fatal("API view must copy the limits map, not alias it")
+	}
+}
+
+func TestGatedLimitFallsBackToTheCommunityCap(t *testing.T) {
+	key := licensetest.NewKey(t)
+	quota := license.QuotaMaxProviderPools
+	quota.Gated = true
+	quota.DefaultValue = 0 // unlimited for licensed customers
+	quota.CommunityValue = 1
+	m, _ := newManager(t, key, func(o *license.Options) {
+		o.Catalog = []license.FeatureDefinition{quota}
+	})
+
+	// No license: the Community cap applies, not 0 (which means unlimited).
+	if got := m.Refresh().Limit(quota); got != 1 {
+		t.Fatalf("unlicensed limit = %d, want the Community cap 1", got)
+	}
+	// Enterprise with no override: the catalog default, here unlimited.
+	if got := m.Verify(licensetest.Encode(t, key, licensetest.Payload(testNow))).Limit(quota); got != 0 {
+		t.Fatalf("licensed limit = %d, want 0 (unlimited)", got)
+	}
+	// Enterprise with an explicit cap.
+	p := licensetest.Payload(testNow)
+	p.Extra = `{"limits": {"quota.lite.max_provider_pools": 10}}`
+	if got := m.Verify(licensetest.Encode(t, key, p)).Limit(quota); got != 10 {
+		t.Fatalf("tailored limit = %d, want 10", got)
+	}
+}
+
+func TestValidateCatalogRejectsGatedLimitWithoutCommunityCap(t *testing.T) {
+	quota := license.QuotaMaxProviderPools
+	quota.Gated = true
+	if err := license.ValidateCatalog([]license.FeatureDefinition{quota}); err == nil {
+		t.Fatal("a gated limit with CommunityValue 0 would leave Community users unlimited; it must be rejected")
+	}
+	quota.CommunityValue = 2
+	if err := license.ValidateCatalog([]license.FeatureDefinition{quota}); err != nil {
+		t.Fatalf("gated limit with a cap rejected: %v", err)
+	}
+	ungated := license.FeatureObservability
+	ungated.CommunityValue = 5
+	if err := license.ValidateCatalog([]license.FeatureDefinition{ungated}); err == nil {
+		t.Fatal("CommunityValue on an ungated feature is never used and must be rejected")
+	}
+}
+
+func TestInstallAndRemoveReportEnvManagement(t *testing.T) {
+	key := licensetest.NewKey(t)
+	data := licensetest.Encode(t, key, licensetest.Payload(testNow))
+	m, _ := newManager(t, key, func(o *license.Options) { o.Inline = data })
+	if _, err := m.Install(data); !errors.Is(err, license.ErrManagedByEnv) {
+		t.Fatalf("Install error = %v, want ErrManagedByEnv", err)
+	}
+	if _, err := m.Remove(); !errors.Is(err, license.ErrManagedByEnv) {
+		t.Fatalf("Remove error = %v, want ErrManagedByEnv", err)
+	}
+
+	noPath, _ := newManager(t, key, func(o *license.Options) { o.FilePath = "" })
+	if _, err := noPath.Install(data); !errors.Is(err, license.ErrNoFilePath) {
+		t.Fatalf("Install error = %v, want ErrNoFilePath", err)
 	}
 }

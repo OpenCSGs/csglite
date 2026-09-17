@@ -54,7 +54,7 @@
     },
     {
       "name": "License",
-      "description": "Enterprise license status, verification and installation. Licenses are issued by the CSGHub license issuer; CSGLite only verifies them."
+      "description": "Enterprise license status, verification and installation. Licenses are issued by the CSGHub license issuer; CSGLite only verifies them. These endpoints carry customer identity and can delete the installed license, so unlike the rest of the local API they are same-origin only: a request whose Origin header names another host is refused with 403 and no CORS header is returned."
     },
     {
       "name": "Logs",
@@ -4416,6 +4416,9 @@
           "400": {
             "$ref": "#/components/responses/BadRequest"
           },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "413": {
             "description": "The license text exceeds 64 KiB.",
             "content": {
@@ -4446,6 +4449,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"

@@ -136,6 +136,13 @@ func Decode(data string, keys []*rsa.PublicKey) (*RSAPayload, error) {
 
 func unwrapPEM(data string) (string, error) {
 	text := strings.TrimSpace(strings.ReplaceAll(data, "\r\n", "\n"))
+	// The header and footer can overlap in a string shorter than both
+	// combined (both start with five dashes), so the length check must come
+	// before the slice or it panics on input such as
+	// "-----BEGIN LICENSE KEY---------END LICENSE KEY-----".
+	if len(text) < len(PEMHeader)+len(PEMFooter) {
+		return "", ErrMalformed
+	}
 	if !strings.HasPrefix(text, PEMHeader) || !strings.HasSuffix(text, PEMFooter) {
 		return "", ErrMalformed
 	}

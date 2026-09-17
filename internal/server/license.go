@@ -2,10 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/opencsgs/csglite/internal/license"
@@ -27,6 +29,55 @@ type licenseErrorResponse struct {
 	Code            string `json:"code"`
 	Feature         string `json:"feature"`
 	EditionRequired string `json:"edition_required"`
+}
+
+// licenseWriteErrorStatus maps an install or remove failure onto a status the
+// caller can act on: a rejected license and an environment-managed license are
+// the caller's to fix, everything else is a server fault.
+func licenseWriteErrorStatus(state license.State, err error) int {
+	switch {
+	case errors.Is(err, license.ErrManagedByEnv):
+		return http.StatusConflict
+	case state.Status == license.StatusInvalid || state.Status == license.StatusExpired:
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// isLicenseManagementPath reports whether a path reads or changes the
+// installed license. These carry customer identity and allow deleting the
+// license, so they are kept same-origin even though the rest of the local API
+// answers with a wildcard CORS header.
+func isLicenseManagementPath(path string) bool {
+	return path == "/api/license" || strings.HasPrefix(path, "/api/license/")
+}
+
+// requestIsCrossOrigin reports whether a browser sent this request from
+// another origin. Non-browser callers (the CLI, curl) send no Origin at all.
+func requestIsCrossOrigin(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return true
+	}
+	return !strings.EqualFold(parsed.Host, r.Host)
+}
+
+// licenseOriginGuard refuses license routes to pages served from another
+// origin, so a site the user happens to visit cannot read the customer name
+// and license ID out of the local API or delete the installed license.
+func licenseOriginGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isLicenseManagementPath(r.URL.Path) && requestIsCrossOrigin(r) {
+			writeError(w, http.StatusForbidden, "license endpoints are not available to cross-origin callers")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func newLicenseManager(storageRoot, version string) *license.Manager {
@@ -144,14 +195,16 @@ func (s *Server) handleLicenseImport(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := s.license.Install(data)
 	if err != nil {
-		status := http.StatusBadRequest
-		if state.Status != license.StatusInvalid && state.Status != license.StatusExpired {
-			status = http.StatusInternalServerError
-		}
-		writeError(w, status, err.Error())
+		writeError(w, licenseWriteErrorStatus(state, err), err.Error())
 		return
 	}
-	log.Printf("license: installed %s license for %s (status %s)", state.Edition(), state.Payload.Company, state.Status)
+	// Install re-reads the source, so a concurrent delete can leave no
+	// payload behind even though the write succeeded.
+	company := "unknown"
+	if state.Payload != nil {
+		company = state.Payload.Company
+	}
+	log.Printf("license: installed %s license for %s (status %s)", state.Edition(), company, state.Status)
 	writeJSON(w, http.StatusOK, state.APIState(s.license.FilePath()))
 }
 
@@ -159,7 +212,7 @@ func (s *Server) handleLicenseImport(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLicenseDelete(w http.ResponseWriter, r *http.Request) {
 	state, err := s.license.Remove()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, licenseWriteErrorStatus(state, err), err.Error())
 		return
 	}
 	log.Printf("license: removed; running as %s edition", state.Edition())

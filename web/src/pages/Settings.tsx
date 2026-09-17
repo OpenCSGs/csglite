@@ -1004,7 +1004,20 @@ function LicenseSection() {
       <p class="text-sm text-gray-500 mb-3 ml-7">{t("settings.licenseDesc")}</p>
       <div class="ml-7 rounded-xl border border-gray-200 bg-white p-4">
         {state === null ? (
-          <p class="text-sm text-gray-500">{licenseLoadError.value || "..."}</p>
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p class={`text-sm ${licenseLoadError.value ? "text-red-600" : "text-gray-500"}`}>
+              {licenseLoadError.value ? t("settings.licenseLoadFailed") : "..."}
+            </p>
+            {licenseLoadError.value && (
+              <button
+                type="button"
+                onClick={() => void loadLicense()}
+                class="self-start rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                {t("settings.licenseRetry")}
+              </button>
+            )}
+          </div>
         ) : (
           <>
             {summary && (
