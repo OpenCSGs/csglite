@@ -14,7 +14,6 @@ $GitLabHost = "https://git-devops.opencsg.com"
 $GitLabApi = "$GitLabHost/api/v4/projects"
 $GitLabCsghubId = "392"
 $GitLabLlamaId = "393"
-$EnterpriseLicenseUrl = "$GitLabHost/opensource/public_files/-/raw/main/license.txt"
 
 function Info([string]$msg) { Write-Host "[INFO] $msg" -ForegroundColor Green }
 function Warn([string]$msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
@@ -155,26 +154,6 @@ function Resolve-NVIDIASMI {
     return $null
 }
 
-function Install-EnterpriseLicense([string]$dir) {
-    if ($env:EE -ne "1") { return }
-
-    $licensePath = Join-Path $dir "license.txt"
-    Info "EE=1 detected. Installing enterprise license to $licensePath"
-
-    try {
-        $licenseText = (Invoke-WebRequest -Uri $EnterpriseLicenseUrl -UseBasicParsing -TimeoutSec 30).Content
-    } catch {
-        Fail "Failed to download enterprise license from $EnterpriseLicenseUrl"
-    }
-
-    if (-not $licenseText) {
-        Fail "Downloaded enterprise license is empty."
-    }
-
-    Set-Content -Path $licensePath -Value $licenseText -Encoding UTF8 -Force
-    Info "Installed enterprise license to $licensePath"
-}
-
 function Install-CsghubLite {
     $arch = $env:PROCESSOR_ARCHITECTURE
     switch ($arch) {
@@ -207,7 +186,6 @@ function Install-CsghubLite {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     $target = Join-Path $InstallDir "csghub-lite.exe"
     Copy-Item -Path $bin.FullName -Destination $target -Force
-    Install-EnterpriseLicense -dir $InstallDir
     Ensure-PathContains -dir $InstallDir
     Info "Installed csghub-lite to $target"
 }

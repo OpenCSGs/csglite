@@ -18,6 +18,7 @@ this repository. They are written for any coding agent, not only Cursor.
 - `app-installs.md` - user-scoped AI app installer behavior and install detection.
 - `ai-app-oss-mirror.md` - AI app OSS mirror workflow (claude-code, open-code, codex).
 - `config-schema.md` - stable, consolidated persisted configuration design.
+- `ee-features.md` - enterprise feature gating: catalog, route wrapping, issuer sync.
 - `cross-platform.md` - macOS, Linux, and Windows compatibility rules.
 - `frontend-i18n.md` - web UI localization rules.
 - `go-conventions.md` - Go project structure and coding conventions.

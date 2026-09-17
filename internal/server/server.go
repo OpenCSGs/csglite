@@ -30,6 +30,7 @@ import (
 	"github.com/opencsgs/csglite/internal/embedding"
 	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelmetadata"
 	"github.com/opencsgs/csglite/internal/observability"
@@ -191,6 +192,7 @@ type Server struct {
 	sourceSwitches   *apps.SourceSwitchManager
 	appShells        *aiAppShellManager
 	cloud            *cloud.Service
+	license          *license.Manager
 	http             *http.Server
 	externalHTTP     *http.Server
 	authCallbackHTTP *http.Server
@@ -315,6 +317,7 @@ func New(cfg *config.Config, version string) *Server {
 	s := &Server{
 		cfg:                  cfg,
 		version:              version,
+		license:              newLicenseManager(storageRoot, version),
 		manager:              mgr,
 		datasetManager:       dsMgr,
 		appManager:           apps.NewManager(cfg),
@@ -471,6 +474,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
+	go s.license.Run(ctx, license.DefaultRefreshInterval)
 	curationCtx, cancelCuration := context.WithCancel(ctx)
 	s.routerCurationCancel = cancelCuration
 	s.routerCurationWG.Add(1)

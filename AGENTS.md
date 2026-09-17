@@ -54,6 +54,7 @@ Copilot, and Aider.
 - `docs/agent-guidelines/ai-app-oss-mirror.md`
 - `docs/agent-guidelines/config-schema.md`
 - `docs/agent-guidelines/cross-platform.md`
+- `docs/agent-guidelines/ee-features.md`
 - `docs/agent-guidelines/frontend-i18n.md`
 - `docs/agent-guidelines/go-conventions.md`
 - `docs/agent-guidelines/llama-cpp.md`

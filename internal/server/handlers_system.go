@@ -93,7 +93,7 @@ type windowsGPUAdapterMemory struct {
 
 // GET /api/settings -- application settings (version, model directory, etc.)
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, currentSettingsResponse(s.cfg, s.version))
+	writeJSON(w, http.StatusOK, s.settingsResponse())
 }
 
 // POST /api/settings -- update application settings (e.g., model directory)
@@ -294,7 +294,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, currentSettingsResponse(s.cfg, s.version))
+	writeJSON(w, http.StatusOK, s.settingsResponse())
 }
 
 func (s *Server) applyRuntimeSettingsUpdate(serverURLUpdated, aiGatewayURLUpdated, cloudTokenUpdated bool) {
