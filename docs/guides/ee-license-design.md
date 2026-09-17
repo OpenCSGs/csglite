@@ -48,26 +48,33 @@ License 体系**：CSGHub SaaS 管理后台签发，CSGLite 只做校验和门�
 功能实现放在 `ee/` 下。搬迁存量代码作为后续独立任务，避免一次性大改动带来的
 合并冲突。
 
-### 2.2 许可证文本要点
+### 2.2 许可证文本
 
-`ee/LICENSE` 需要覆盖以下条款，措辞可参考 GitLab EE License 和 PostHog
-Enterprise License：
+`ee/LICENSE` 已按 GitLab EE License 的结构起草（**待法务审阅**），要点：
 
-- 本目录代码不受根目录 Apache-2.0 覆盖。
-- 允许出于评估、开发、测试目的免费使用和修改。
-- 生产环境使用需持有 OpenCSG 签发的有效 License。
-- 不得移除、禁用或绕过 License 校验逻辑。
-- 允许社区提交修改（贡献者协议按现有流程）。
+- 生产使用必须已同意 CSGLite 企业版订阅条款，并持有 OpenCSG 签发的、席位数
+  正确的有效 License。
+- 允许出于开发和测试目的复制、修改，无需 License。
+- 允许修改和发布补丁，但修改和补丁的全部权利归 OpenCSG，且同样只能在有效
+  License 下使用。
+- 禁止复制、合并、发布、分发、再许可、出售。
+- 移除、禁用或绕过内置的 License 校验不构成生产使用的授权。
+- 复制时必须附带完整许可证文本；按现状提供、免责；第三方组件沿用各自许可。
 
-根目录 `LICENSE` 顶部追加一段说明：`ee/` 目录下的文件适用 `ee/LICENSE`。
-`README.md` 的许可证章节同步说明。
+根目录 `LICENSE` 顶部已追加 “Portions of this software are licensed as
+follows” 段落：`ee/` 目录（若存在）适用 `ee/LICENSE`，第三方组件沿用原许可，
+其余为 Apache-2.0。`README.md` 的 License 章节同步说明。`ee/README.md` 说明
+该目录只放 `Gated: true` 功能的实现代码，校验框架本身留在 Apache-2.0 下。
 
 `ee/` 下每个源文件文件头统一加注释：
 
 ```go
-// Copyright (c) OpenCSG. Licensed under the CSGLite Enterprise License.
+// Copyright (c) OpenCSG. Licensed under the CSGLite Enterprise Edition License.
 // See ee/LICENSE for details.
 ```
+
+法务需要确认的点：是否需要中文或双语版本；“修改的权利归 OpenCSG”这一条在
+国内法下的表述；订阅条款的正式名称和发布位置。
 
 ## 3. 功能注册表：唯一真源
 

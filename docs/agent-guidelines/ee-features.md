@@ -35,8 +35,8 @@ which features are active. Licenses are issued by the CSGHub license issuer
 - The wire format (gob + RSA-SHA256 PKCS#1 v1.5 + LICENSE KEY PEM) mirrors
   starhub-server's `builder/rsa`. `TestDecodeCSGHubGoldenVector` pins it; if
   it fails, fix the decoder, never the vector.
-- New EE implementation code goes under `ee/` with the enterprise license
-  header once that directory exists; the gating framework itself stays
+- New EE implementation code goes under `ee/` with the header from
+  `ee/README.md`; `ee/LICENSE` governs it. The gating framework itself stays
   Apache-2.0.
 - A PR that gates a feature must, in the same change: set `Gated: true` on
   the catalog entry, wrap the route(s), update `openapi/local-api.json`, add the web UI lock
