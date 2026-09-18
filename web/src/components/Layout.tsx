@@ -25,6 +25,7 @@ const navKeys = [
   { id: "chat", path: "/chat", key: "nav.chat", icon: ChatIcon },
   { id: "ai-apps", path: "/ai-apps", key: "nav.aiApps", icon: AIAppsIcon },
   { id: "ai-gateway", path: "/ai-gateway", key: "nav.aiGateway", icon: AIGatewayIcon },
+  { id: "cluster", path: "/cluster", key: "nav.cluster", icon: ClusterIcon },
   { id: "observability", path: "/observability", key: "nav.observability", icon: ObservabilityIcon },
 ];
 
@@ -242,6 +243,16 @@ function ObservabilityIcon({ active }: { active: boolean }) {
     <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke={active ? "currentColor" : "#9CA3AF"} stroke-width="2">
       <path stroke-linecap="round" stroke-linejoin="round" d="M4 19V9m5 10V5m5 14v-7m5 7V3" />
       <path stroke-linecap="round" stroke-linejoin="round" d="M3 19h18" />
+    </svg>
+  );
+}
+
+function ClusterIcon({ active }: { active: boolean }) {
+  return (
+    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke={active ? "currentColor" : "#9CA3AF"} stroke-width="2">
+      <rect x="3" y="4" width="18" height="6" rx="1.5" stroke-linecap="round" stroke-linejoin="round" />
+      <rect x="3" y="14" width="18" height="6" rx="1.5" stroke-linecap="round" stroke-linejoin="round" />
+      <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 17h.01M11 7h4M11 17h4" />
     </svg>
   );
 }

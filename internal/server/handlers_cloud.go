@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"github.com/opencsgs/csglite/ee/cluster"
 	"io"
 	"log"
 	"net/http"
@@ -227,6 +228,15 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 	if normalizedSource == "cloud" {
 		return s.newCloudEngine(ctx, modelID)
 	}
+	if cluster.IsClusterSource(source) {
+		return s.clusterChatEngine(ctx, modelID, source, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
+	}
+	// No source named: the LAN cluster takes the request when a peer holds a
+	// model this node lacks, or for every model in balanced mode. A model
+	// present here in local-first mode keeps today's path below.
+	if normalizedSource == "" && s.clusterRoutingWanted(modelID) {
+		return s.clusterChatEngine(ctx, modelID, cluster.SourceCluster, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
+	}
 
 	eng, err := s.getOrLoadEngineWithOpts(modelID, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
 	if err == nil {
@@ -234,6 +244,11 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 	}
 	if normalizedSource == "local" {
 		return nil, err
+	}
+	// The local load failed: a peer that holds the model is the closest
+	// substitute, ahead of third-party providers and the cloud.
+	if s.cluster != nil && len(s.cluster.RemoteHolders(modelID)) > 0 {
+		return s.clusterChatEngine(ctx, modelID, cluster.SourceCluster, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
 	}
 
 	if !s.hasCloudCredential() {
@@ -297,6 +312,12 @@ func (s *Server) getEmbeddingEngine(ctx context.Context, modelID, source string,
 	if normalizedSource == "cloud" {
 		return s.newCloudEngine(ctx, modelID)
 	}
+	if cluster.IsClusterSource(source) {
+		return s.clusterChatEngine(ctx, modelID, source, numCtx, 0, nGPULayers, "", "", dtype)
+	}
+	if normalizedSource == "" && s.clusterRoutingWanted(modelID) {
+		return s.clusterChatEngine(ctx, modelID, cluster.SourceCluster, numCtx, 0, nGPULayers, "", "", dtype)
+	}
 
 	// An embeddings request carries no slot count: the concurrency a loaded
 	// engine serves is set when it is loaded, so 0 keeps whatever is running.
@@ -306,6 +327,9 @@ func (s *Server) getEmbeddingEngine(ctx context.Context, modelID, source string,
 	}
 	if normalizedSource == "local" {
 		return nil, err
+	}
+	if s.cluster != nil && len(s.cluster.RemoteHolders(modelID)) > 0 {
+		return s.clusterChatEngine(ctx, modelID, cluster.SourceCluster, numCtx, 0, nGPULayers, "", "", dtype)
 	}
 
 	if providerSource := s.thirdPartyProviderSourceForModel(ctx, modelID); providerSource != "" {

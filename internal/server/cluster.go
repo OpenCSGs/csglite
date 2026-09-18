@@ -1,0 +1,461 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/opencsgs/csglite/ee/cluster"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/license"
+	"github.com/opencsgs/csglite/pkg/api"
+)
+
+// Cluster environment variables. The cluster itself is configured through
+// its own state file; these only shape how this process participates.
+const (
+	EnvClusterDisabled      = "CSGHUB_LITE_CLUSTER_DISABLED"
+	EnvClusterAddr          = "CSGHUB_LITE_CLUSTER_ADDR"
+	EnvClusterSeeds         = "CSGHUB_LITE_CLUSTER_SEEDS"
+	EnvClusterJoinToken     = "CSGHUB_LITE_CLUSTER_JOIN_TOKEN"
+	EnvClusterAdvertiseHost = "CSGHUB_LITE_CLUSTER_ADVERTISE_HOST"
+	EnvClusterDiscovery     = "CSGHUB_LITE_CLUSTER_DISCOVERY"
+)
+
+// clusterStorageDir is where identity, membership and perf samples live.
+const clusterStorageDir = "cluster"
+
+// clusterHost adapts the server to what the cluster manager needs. It is the
+// only place the Apache-licensed server hands capabilities to the EE code.
+type clusterHost struct {
+	s *Server
+
+	hwMu   sync.Mutex
+	hwAt   time.Time
+	hwGPUs []cluster.GPUStatus
+	hwCPU  cluster.CPUStatus
+	hwRAM  cluster.RAMStatus
+	hwDisk cluster.DiskStatus
+}
+
+// clusterTestHooks lets tests run several servers in one process with an
+// in-memory discovery bus and ephemeral ports. Nil in production.
+var clusterTestHooks struct {
+	discoverer func() cluster.Discoverer
+	listenAddr string
+}
+
+// newClusterManager builds the manager; nil means the cluster is disabled
+// for this process (env) or could not be initialised (logged).
+func newClusterManager(s *Server, storageRoot string) *cluster.Manager {
+	if envTruthy(os.Getenv(EnvClusterDisabled)) {
+		return nil
+	}
+	if storageRoot == "" {
+		return nil
+	}
+	var disc cluster.Discoverer
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvClusterDiscovery))) {
+	case "none", "off", "static":
+		disc = cluster.NopDiscoverer{}
+	default:
+		disc = cluster.NewMDNSDiscoverer()
+	}
+	if clusterTestHooks.discoverer != nil {
+		disc = clusterTestHooks.discoverer()
+	}
+	var seeds []string
+	for _, seed := range strings.Split(os.Getenv(EnvClusterSeeds), ",") {
+		if seed = strings.TrimSpace(seed); seed != "" {
+			seeds = append(seeds, seed)
+		}
+	}
+	addr := strings.TrimSpace(os.Getenv(EnvClusterAddr))
+	if addr == "" {
+		addr = cluster.DefaultListenAddr
+	}
+	if clusterTestHooks.listenAddr != "" {
+		addr = clusterTestHooks.listenAddr
+	}
+	m, err := cluster.New(cluster.Options{
+		Dir:           filepath.Join(storageRoot, clusterStorageDir),
+		Host:          &clusterHost{s: s},
+		Discoverer:    disc,
+		ListenAddr:    addr,
+		Seeds:         seeds,
+		JoinToken:     strings.TrimSpace(os.Getenv(EnvClusterJoinToken)),
+		AdvertiseHost: strings.TrimSpace(os.Getenv(EnvClusterAdvertiseHost)),
+		Logf:          log.Printf,
+	})
+	if err != nil {
+		log.Printf("cluster: disabled: %v", err)
+		return nil
+	}
+	return m
+}
+
+func envTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// startCluster opens the peer listener once the API port is known.
+func (s *Server) startCluster(ctx context.Context) {
+	if s.cluster == nil {
+		return
+	}
+	if err := s.cluster.Start(ctx); err != nil {
+		log.Printf("cluster: %v; the cluster feature is unavailable in this process", err)
+		s.cluster = nil
+	}
+}
+
+func (s *Server) stopCluster() {
+	if s.cluster != nil {
+		s.cluster.Stop()
+	}
+}
+
+// ---- cluster.Host ----
+
+func (h *clusterHost) Version() string { return h.s.version }
+
+func (h *clusterHost) Licensed() bool {
+	return h.s.license != nil && h.s.license.State().Licensed()
+}
+
+func (h *clusterHost) NodeLimit() int {
+	if h.s.license == nil {
+		return license.QuotaMaxClusterNodes.CommunityValue
+	}
+	return h.s.license.Limit(license.QuotaMaxClusterNodes)
+}
+
+func (h *clusterHost) APIPort() int {
+	addr := h.s.cfg.BoundAddr
+	if addr == "" {
+		addr = h.s.cfg.EffectiveListenAddr()
+	}
+	_, port, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(port)
+	return n
+}
+
+func (h *clusterHost) LocalEngine(ctx context.Context, modelID string, opts cluster.EngineOptions) (inference.Engine, error) {
+	return h.s.getOrLoadEngineWithOpts(modelID, opts.NumCtx, opts.NumParallel, opts.NGPULayers, opts.CacheTypeK, opts.CacheTypeV, opts.DType)
+}
+
+// InferenceHandler serves a request forwarded by another member. The route
+// source is pinned to "local" so the request can never be routed onward, and
+// there is no API-key check: the mTLS client certificate already proved the
+// caller is a paired member.
+func (h *clusterHost) InferenceHandler() http.Handler {
+	s := h.s
+	mux := http.NewServeMux()
+	local := func(handler http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), providerRouteSourceContextKey{}, "local")
+			handler(w, r.WithContext(ctx))
+		}
+	}
+	mux.HandleFunc("POST /v1/chat/completions", local(s.handleOpenAIChatCompletions))
+	mux.HandleFunc("POST /v1/embeddings", local(s.handleOpenAIEmbeddings))
+	mux.HandleFunc("POST /v1/responses", local(s.handleOpenAIResponses))
+	mux.HandleFunc("POST /v1/messages", local(s.handleAnthropicMessages))
+	mux.HandleFunc("POST /v1/messages/count_tokens", local(s.handleAnthropicCountTokens))
+	mux.HandleFunc("POST /api/chat", local(s.handleChat))
+	mux.HandleFunc("POST /api/generate", local(s.handleGenerate))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not a forwardable inference endpoint")
+	})
+	return correlationMiddleware(s.observabilityMiddleware(providerPoolUsageMiddleware(mux)))
+}
+
+func (h *clusterHost) PullHandler() http.Handler {
+	return http.HandlerFunc(h.s.handlePullJobCreate)
+}
+
+// LocalStatus reports this node's models, load and hardware.
+func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
+	s := h.s
+	st := cluster.Status{Models: []cluster.ModelStatus{}}
+	st.Hostname, _ = os.Hostname()
+	if i := strings.IndexByte(st.Hostname, '.'); i > 0 {
+		st.Hostname = st.Hostname[:i]
+	}
+	st.ModelSource = cluster.ModelSource{
+		ServerURL:          strings.TrimSpace(s.cfg.ServerURL),
+		HFEndpoint:         strings.TrimSpace(s.cfg.HuggingFaceEndpoint),
+		ModelScopeEndpoint: strings.TrimSpace(s.cfg.ModelScopeEndpoint),
+	}
+
+	// Loaded engines, keyed by public model id.
+	type loaded struct {
+		slots, active, ngl int
+		expires            time.Time
+		toolStreaming      bool
+		loading            bool
+	}
+	engines := map[string]loaded{}
+	s.mu.RLock()
+	for key, me := range s.engines {
+		if engineModelIDFromKey(key) != key {
+			continue // embedding-mode engines are tracked with the chat engine
+		}
+		public := s.localInferenceModelID(key)
+		engines[public] = loaded{
+			slots: me.numParallel, active: me.activeRequests, ngl: me.nGPULayers, expires: me.expiresAt(),
+			toolStreaming: inference.SupportsNativeToolStreaming(me.engine),
+		}
+		st.Inflight += me.activeRequests
+	}
+	for key := range s.loading {
+		if _, ok := s.engines[key]; ok {
+			continue
+		}
+		public := s.localInferenceModelID(engineModelIDFromKey(key))
+		if _, ok := engines[public]; !ok {
+			engines[public] = loaded{loading: true}
+		}
+	}
+	s.mu.RUnlock()
+
+	if infos, err := s.listLocalModelInfos(); err == nil {
+		for _, info := range infos {
+			ms := cluster.ModelStatus{ID: info.Model, Size: info.Size, Format: info.Format, PipelineTag: info.PipelineTag, Category: info.Category, NGPULayers: -1}
+			if l, ok := engines[info.Model]; ok {
+				ms.Loaded = !l.loading
+				ms.Loading = l.loading
+				ms.Slots = l.slots
+				ms.Active = l.active
+				ms.NGPULayers = l.ngl
+				ms.NativeToolStreaming = l.toolStreaming
+				if !l.expires.IsZero() {
+					t := l.expires
+					ms.ExpiresAt = &t
+				}
+			}
+			if d, ok := s.modelLoadDuration(info.Model); ok {
+				ms.Perf = &cluster.ModelPerf{LoadSeconds: d.Seconds()}
+			}
+			st.Models = append(st.Models, ms)
+		}
+	}
+	if s.pullJobs != nil {
+		st.Jobs.Pulling = s.pullJobs.activeModelNames()
+	}
+	if st.Jobs.Pulling == nil {
+		st.Jobs.Pulling = []string{}
+	}
+	st.Jobs.Converting = []string{}
+
+	gpus, cpu, ram, disk := h.hardware()
+	st.GPUs, st.CPU, st.RAM, st.Disk = gpus, cpu, ram, disk
+	return st
+}
+
+// hardware collects GPU, CPU, RAM and disk figures, cached for two seconds
+// because each poll shells out to nvidia-smi and friends.
+func (h *clusterHost) hardware() ([]cluster.GPUStatus, cluster.CPUStatus, cluster.RAMStatus, cluster.DiskStatus) {
+	h.hwMu.Lock()
+	defer h.hwMu.Unlock()
+	if !h.hwAt.IsZero() && time.Since(h.hwAt) < 2*time.Second {
+		return h.hwGPUs, h.hwCPU, h.hwRAM, h.hwDisk
+	}
+	used, total, _ := getRAMInfo()
+	ram := cluster.RAMStatus{Total: total, Used: used}
+	gpus := clusterGPUStatuses(total)
+	for _, g := range gpus {
+		if g.Shared {
+			ram.Unified = true
+		}
+	}
+	cpu := cluster.CPUStatus{Cores: runtime.NumCPU()}
+	if load, ok := cpuLoad1(); ok {
+		cpu.Load1 = &load
+	}
+	if util, ok := cpuUtilQuick(); ok {
+		cpu.Util = &util
+	}
+	disk := cluster.DiskStatus{Path: h.s.cfg.ModelDir}
+	if dt, df, err := diskUsage(h.s.cfg.ModelDir); err == nil {
+		disk.Total, disk.Free = dt, df
+	}
+	if h.s.pullJobs != nil && len(h.s.pullJobs.activeModelNames()) > 0 {
+		disk.IOBusy = true
+	}
+	h.hwGPUs, h.hwCPU, h.hwRAM, h.hwDisk, h.hwAt = gpus, cpu, ram, disk, time.Now()
+	return gpus, cpu, ram, disk
+}
+
+// ---- routing hooks ----
+
+// clusterRoutingWanted decides whether a request without a pinned source
+// should go through the cluster router: always for models this node lacks
+// but a peer holds, and for every model in balanced mode.
+func (s *Server) clusterRoutingWanted(modelID string) bool {
+	if s.cluster == nil || !s.cluster.Store().InCluster() {
+		return false
+	}
+	if len(s.cluster.RemoteHolders(modelID)) == 0 {
+		return false
+	}
+	if s.cluster.Store().Settings().RoutingMode == cluster.RoutingBalanced {
+		return true
+	}
+	return !s.modelPresentLocally(modelID)
+}
+
+func (s *Server) modelPresentLocally(modelID string) bool {
+	if s.manager == nil {
+		return false
+	}
+	_, err := s.manager.ResolveLocalModel(strings.TrimSpace(modelID))
+	return err == nil
+}
+
+// clusterChatEngine returns the cluster router for a request.
+func (s *Server) clusterChatEngine(ctx context.Context, modelID, source string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (inference.Engine, error) {
+	if s.cluster == nil {
+		return nil, inference.NewHTTPStatusError(http.StatusNotFound, "the cluster feature is disabled on this node")
+	}
+	if key := providerPoolUsageCaptureFromContext(ctx).affinityKey(); key != "" {
+		ctx = cluster.WithAffinityKey(ctx, key)
+	}
+	return s.cluster.ChatEngine(ctx, modelID, source, cluster.EngineOptions{
+		NumCtx: numCtx, NumParallel: numParallel, NGPULayers: nGPULayers, CacheTypeK: cacheTypeK, CacheTypeV: cacheTypeV, DType: dtype,
+	})
+}
+
+// clusterModelInfos lists models that peers hold, for /v1/models and the UI,
+// annotated with where each one lives. Models this node has locally are
+// returned too so the caller can attach the node list to its own entry.
+func (s *Server) clusterModelInfos(ctx context.Context) ([]api.ModelInfo, map[string][]api.ModelNodePresence) {
+	if s.cluster == nil || !s.cluster.Store().InCluster() {
+		return nil, nil
+	}
+	presence := map[string][]api.ModelNodePresence{}
+	var remoteOnly []api.ModelInfo
+	for _, cm := range s.cluster.Models(ctx) {
+		local := false
+		for _, n := range cm.Nodes {
+			presence[cm.ID] = append(presence[cm.ID], api.ModelNodePresence{UUID: n.UUID, Name: n.Name, Loaded: n.Loaded, Online: n.Online, Local: n.Local})
+			if n.Local {
+				local = true
+			}
+		}
+		if local {
+			continue
+		}
+		category := cm.Category
+		if category == "" {
+			category = categoryForPipelineTag(cm.PipelineTag)
+		}
+		remoteOnly = append(remoteOnly, api.ModelInfo{
+			Name: cm.ID, Model: cm.ID, Size: cm.Size, Format: cm.Format, Label: cm.ID, DisplayName: cm.ID,
+			Source: cluster.SourceCluster, Provider: "cluster", Category: category, PipelineTag: cm.PipelineTag,
+			Nodes: presence[cm.ID],
+		})
+	}
+	return remoteOnly, presence
+}
+
+// clusterNodeHeaders are copied from a routed response to the caller.
+var clusterNodeHeaders = []string{cluster.NodeHeader, cluster.NodeNameHeader}
+
+// ---- /api/cluster route helpers ----
+
+// withCluster wraps a manager handler; without a manager the routes answer
+// 503 so the UI can explain that the feature is off in this process.
+func (s *Server) withCluster(fn func(*cluster.Manager) http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.cluster == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error": "the cluster feature is disabled on this node (" + EnvClusterDisabled + ")", "errorCode": http.StatusServiceUnavailable, "code": "cluster_disabled",
+			})
+			return
+		}
+		fn(s.cluster)(w, r)
+	}
+}
+
+// handleClusterSummary is GET /api/cluster/summary; it answers in every
+// edition, with an empty summary when the cluster is disabled.
+func (s *Server) handleClusterSummary(w http.ResponseWriter, r *http.Request) {
+	if s.cluster == nil {
+		writeJSON(w, http.StatusOK, cluster.Summary{Nodes: []cluster.SummaryNode{}, NodeLimit: license.QuotaMaxClusterNodes.CommunityValue})
+		return
+	}
+	s.cluster.HandleSummary(w, r)
+}
+
+// modelLoadDuration reports how long the last load of a model took.
+func (s *Server) modelLoadDuration(modelID string) (time.Duration, bool) {
+	s.loadDurMu.Lock()
+	defer s.loadDurMu.Unlock()
+	d, ok := s.loadDurations[s.resolveLocalModelStorageID(modelID)]
+	return d, ok
+}
+
+func (s *Server) recordModelLoadDuration(storageID string, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	s.loadDurMu.Lock()
+	if s.loadDurations == nil {
+		s.loadDurations = map[string]time.Duration{}
+	}
+	s.loadDurations[storageID] = d
+	s.loadDurMu.Unlock()
+}
+
+// activeModelNames lists models with a running or queued pull job.
+func (st *pullJobStore) activeModelNames() []string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	var out []string
+	for _, id := range st.activeKey {
+		job := st.jobs[id]
+		if job == nil {
+			continue
+		}
+		job.mu.Lock()
+		if job.kind == "model" && (job.status == pullJobRunning || job.status == pullJobQueued) {
+			out = append(out, job.name)
+		}
+		job.mu.Unlock()
+	}
+	return out
+}
+
+// clusterErrorResponse renders a routing failure in the local API's shape.
+func clusterErrorResponse(err error) (int, any) {
+	status := cluster.StatusCodeForError(err)
+	body := map[string]any{"error": inference.HTTPErrorMessage(err), "errorCode": status}
+	var noNode *cluster.ErrNoNode
+	if errors.As(err, &noNode) {
+		body["code"] = cluster.ErrNoNodeCode
+		body["tried"] = noNode.Tried
+	}
+	return status, body
+}
+
+var _ = json.Marshal
+var _ = config.DefaultServerURL

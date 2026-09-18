@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/apps"
 	"github.com/opencsgs/csglite/internal/asr"
 	"github.com/opencsgs/csglite/internal/chathistory"
@@ -279,6 +280,12 @@ type Server struct {
 	evaluationCatalogLoader   func(context.Context) ([]api.ModelInfo, error)
 	desktopBootstrapped       atomic.Bool
 
+	// cluster is the LAN compute cluster manager, nil when disabled for this
+	// process. It is started in Run once the API port is bound.
+	cluster       *cluster.Manager
+	loadDurMu     sync.Mutex
+	loadDurations map[string]time.Duration
+
 	// shutdownCancel stops the Run loop. It is set in Run and invoked by the
 	// /api/shutdown handler so an HTTP-initiated shutdown actually exits the
 	// process instead of only closing the listeners.
@@ -404,6 +411,7 @@ func New(cfg *config.Config, version string) *Server {
 			IdleTimeout:       120 * time.Second,
 		}
 	}
+	s.cluster = newClusterManager(s, storageRoot)
 	return s
 }
 
@@ -470,6 +478,7 @@ func (s *Server) Run(ctx context.Context) error {
 	s.loadCtx = ctx
 	s.mu.Unlock()
 
+	s.startCluster(ctx)
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
 	go s.license.Run(ctx, license.DefaultRefreshInterval)
@@ -618,6 +627,7 @@ func validateDesktopConfig(cfg *config.Config) error {
 }
 
 func (s *Server) shutdownRuntime() {
+	s.stopCluster()
 	if s.routerCurationCancel != nil {
 		s.routerCurationCancel()
 	}
@@ -1227,11 +1237,16 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		}
 
 		lm, err := s.manager.Get(modelID)
+		loadStarted := time.Now()
 		if err == nil {
 			if mode == engineModeEmbed {
 				state.engine, err = loadEmbeddingEngineWithProgress(modelDir, lm, progress, false, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType)
 			} else {
 				state.engine, err = loadEngineWithSpeculativeProgress(modelDir, lm, progress, false, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType, speculative)
+			}
+			if err == nil {
+				// The cluster scheduler estimates cold starts from this.
+				s.recordModelLoadDuration(modelID, time.Since(loadStarted))
 			}
 		}
 		state.err = err

@@ -3254,3 +3254,455 @@ export async function deleteProvider(id: string): Promise<void> {
     method: "DELETE",
   });
 }
+
+// ---------------------------------------------------------------------------
+// LAN compute cluster
+// ---------------------------------------------------------------------------
+
+/**
+ * Error thrown by cluster calls. Unlike the plain Error thrown by fetchJSON it
+ * keeps the structured fields of the JSON error body so callers can react to
+ * `code === "feature_not_licensed"` (node cap reached, with `limit`/`current`)
+ * or `code === "cluster_disabled"` (HTTP 503, feature disabled in this process).
+ */
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  errorCode?: string;
+  limit?: number;
+  current?: number;
+
+  constructor(message: string, status: number, details?: { code?: string; errorCode?: string; limit?: number; current?: number }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = details?.code;
+    this.errorCode = details?.errorCode;
+    this.limit = details?.limit;
+    this.current = details?.current;
+  }
+}
+
+export const CLUSTER_DISABLED = "cluster_disabled";
+
+export function isApiError(err: unknown): err is ApiError {
+  return err instanceof ApiError;
+}
+
+/** True for a 403 whose body carries `code: "feature_not_licensed"`. */
+export function isFeatureNotLicensedError(err: unknown): err is ApiError {
+  return isApiError(err) && (err.code === FEATURE_NOT_LICENSED || err.errorCode === FEATURE_NOT_LICENSED);
+}
+
+/** True for the 503 returned while the cluster feature is disabled in this process. */
+export function isClusterDisabledError(err: unknown): err is ApiError {
+  return isApiError(err) && (err.code === CLUSTER_DISABLED || err.errorCode === CLUSTER_DISABLED);
+}
+
+function parseApiError(body: string, contentType: string, status: number, fallback: string): ApiError {
+  const message = extractErrorMessage(body, contentType, fallback);
+  if (contentType.includes("application/json")) {
+    try {
+      const parsed = JSON.parse(body) as { code?: unknown; errorCode?: unknown; limit?: unknown; current?: unknown };
+      return new ApiError(message, status, {
+        code: typeof parsed.code === "string" ? parsed.code : undefined,
+        errorCode: typeof parsed.errorCode === "string" ? parsed.errorCode : undefined,
+        limit: typeof parsed.limit === "number" ? parsed.limit : undefined,
+        current: typeof parsed.current === "number" ? parsed.current : undefined,
+      });
+    } catch {
+      /* fall through */
+    }
+  }
+  return new ApiError(message, status);
+}
+
+async function fetchClusterJSON<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const resp = await fetch(url, withLocaleHeader({ ...init, headers }));
+  const contentType = resp.headers.get("content-type") || "";
+  const body = await resp.text();
+
+  if (!resp.ok) {
+    throw parseApiError(body, contentType, resp.status, resp.statusText);
+  }
+  if (!body.trim()) return undefined as T;
+  if (!contentType.includes("application/json")) {
+    throw unexpectedJSONError(url, contentType, body);
+  }
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    throw unexpectedJSONError(url, contentType, body);
+  }
+}
+
+export type ClusterNodeHealth = "unknown" | "healthy" | "suspect" | "down" | "probing";
+export type ClusterNodeState = "active" | "drain" | "maintenance";
+export type ClusterRoutingMode = "local_first" | "balanced";
+
+export interface ClusterSummaryNode {
+  uuid: string;
+  name: string;
+  hostname?: string;
+  local: boolean;
+  online: boolean;
+  health: ClusterNodeHealth;
+  state: ClusterNodeState;
+  licensed: boolean;
+  version?: string;
+  addr?: string;
+  gpu_name?: string;
+  gpu_count: number;
+  vram_total: number;
+  vram_used: number;
+  gpu_util?: number | null;
+  cpu_cores: number;
+  cpu_util?: number | null;
+  ram_total: number;
+  ram_used: number;
+  disk_total: number;
+  disk_free: number;
+  loaded_models: string[];
+  model_count: number;
+  inflight: number;
+}
+
+export interface ClusterSummary {
+  in_cluster: boolean;
+  cluster_name?: string;
+  cluster_uuid?: string;
+  node_count: number;
+  online_count: number;
+  /** 0 means unlimited. */
+  node_limit: number;
+  licensed: boolean;
+  vram_total: number;
+  vram_used: number;
+  inflight: number;
+  nodes: ClusterSummaryNode[];
+}
+
+export interface ClusterSettings {
+  accept_work: boolean;
+  state: ClusterNodeState;
+  weight: number;
+  prefer_local: boolean;
+  routing_mode: ClusterRoutingMode;
+  affinity_max_queue: number;
+  disk_reserve_gb: number;
+  static_addresses: Record<string, string>;
+}
+
+export interface ClusterGPUStatus {
+  index: number;
+  name: string;
+  vram_total: number;
+  vram_used: number;
+  util?: number;
+  temperature?: number;
+  power_draw?: number;
+  power_limit?: number;
+  throttled: boolean;
+  shared_memory?: boolean;
+  usage_known: boolean;
+}
+
+export interface ClusterNodeModelStatus {
+  id: string;
+  size: number;
+  format?: string;
+  pipeline_tag?: string;
+  category?: string;
+  loaded: boolean;
+  loading: boolean;
+  slots?: number;
+  active: number;
+  expires_at?: string;
+  n_gpu_layers?: number;
+  native_tool_streaming: boolean;
+  perf?: {
+    decode_tps?: number;
+    prompt_tps?: number;
+    load_seconds?: number;
+    samples?: number;
+  };
+}
+
+export interface ClusterNodeStatus {
+  uuid: string;
+  name: string;
+  version: string;
+  protocol: number;
+  cluster_uuid?: string;
+  licensed: boolean;
+  node_limit: number;
+  accept_work: boolean;
+  state: ClusterNodeState;
+  weight: number;
+  api_port: number;
+  cluster_port: number;
+  hostname?: string;
+  os?: string;
+  arch?: string;
+  gpus: ClusterGPUStatus[];
+  cpu: { cores: number; load1?: number; util?: number; model?: string };
+  ram: { total: number; used: number; unified: boolean };
+  disk: { path: string; total: number; free: number; read_mbps_class?: string; read_mbps?: number; io_busy: boolean };
+  net: { link_mbps?: number; addrs?: string[] };
+  jobs: { pulling: string[]; converting: string[] };
+  model_source: { server_url: string; hf_endpoint?: string; modelscope_endpoint?: string };
+  models: ClusterNodeModelStatus[];
+  inflight: number;
+  uptime_sec: number;
+  time: string;
+}
+
+export interface ClusterNodeView {
+  uuid: string;
+  name: string;
+  local: boolean;
+  health: ClusterNodeHealth;
+  online: boolean;
+  addr?: string;
+  last_seen?: string;
+  last_error?: string;
+  joined_at?: string;
+  static_address?: string;
+  api_port?: number;
+  status?: ClusterNodeStatus;
+}
+
+export interface ClusterInfo {
+  uuid: string;
+  name: string;
+  created_at: string;
+}
+
+export interface ClusterView {
+  node: { uuid: string; name: string; version: string; cluster_port: number; api_port: number };
+  cluster: ClusterInfo | null;
+  node_limit: number;
+  licensed: boolean;
+  join_token_available: boolean;
+  settings: ClusterSettings;
+  members: ClusterNodeView[];
+  discovered_count: number;
+  model_source_mixed: boolean;
+}
+
+export interface ClusterCreateResponse {
+  cluster: ClusterInfo;
+  join_token: string;
+}
+
+export interface ClusterTokenResponse {
+  token: string;
+  available: boolean;
+}
+
+export interface ClusterCodeResponse {
+  code: string;
+  expires_at: string;
+}
+
+export interface DiscoveredClusterNode {
+  uuid: string;
+  name: string;
+  addr: string;
+  cluster_uuid?: string;
+  version?: string;
+  api_port?: number;
+  licensed: boolean;
+  seen: string;
+  source: string;
+}
+
+export interface ClusterModelNode {
+  uuid: string;
+  name: string;
+  loaded: boolean;
+  online: boolean;
+  local: boolean;
+}
+
+export interface ClusterModelDistribution {
+  id: string;
+  size: number;
+  format?: string;
+  pipeline_tag?: string;
+  category?: string;
+  nodes: ClusterModelNode[];
+}
+
+export interface ClusterSyncResult {
+  node_uuid: string;
+  node_name: string;
+  skipped?: string;
+  error?: string;
+  job?: PullJob;
+}
+
+export interface ClusterSyncResponse {
+  model: string;
+  results: ClusterSyncResult[];
+}
+
+export interface ClusterExplainCandidate {
+  uuid: string;
+  name: string;
+  local: boolean;
+  eligible: boolean;
+  excluded?: string;
+  warm: boolean;
+  affinity: boolean;
+  estimated_seconds: number;
+  factors?: string[];
+  rank: number;
+}
+
+export interface ClusterExplainResponse {
+  model: string;
+  order: string[];
+  candidates: ClusterExplainCandidate[];
+}
+
+export interface ClusterRecommendation {
+  model: string;
+  node_uuid: string;
+  node_name: string;
+  reason: string;
+}
+
+export interface ClusterSettingsUpdate {
+  accept_work?: boolean;
+  prefer_local?: boolean;
+  routing_mode?: ClusterRoutingMode;
+  affinity_max_queue?: number;
+  disk_reserve_gb?: number;
+  weight?: number;
+  state?: ClusterNodeState;
+}
+
+export function getClusterSummary(): Promise<ClusterSummary> {
+  return fetchClusterJSON<ClusterSummary>("/api/cluster/summary", { cache: "no-store" });
+}
+
+export function getCluster(): Promise<ClusterView> {
+  return fetchClusterJSON<ClusterView>("/api/cluster", { cache: "no-store" });
+}
+
+export function createCluster(name: string): Promise<ClusterCreateResponse> {
+  return fetchClusterJSON<ClusterCreateResponse>("/api/cluster", {
+    method: "POST",
+    body: JSON.stringify({ name: name.trim() }),
+  });
+}
+
+export function leaveCluster(): Promise<ClusterView> {
+  return fetchClusterJSON<ClusterView>("/api/cluster", { method: "DELETE" });
+}
+
+export function joinCluster(token: string, address?: string): Promise<ClusterView> {
+  return fetchClusterJSON<ClusterView>("/api/cluster/join", {
+    method: "POST",
+    body: JSON.stringify({ token: token.trim(), address: address?.trim() || undefined }),
+  });
+}
+
+export function getClusterToken(): Promise<ClusterTokenResponse> {
+  return fetchClusterJSON<ClusterTokenResponse>("/api/cluster/token", { cache: "no-store" });
+}
+
+export function rotateClusterToken(): Promise<ClusterTokenResponse> {
+  return fetchClusterJSON<ClusterTokenResponse>("/api/cluster/token/rotate", { method: "POST" });
+}
+
+export function getClusterCode(): Promise<ClusterCodeResponse> {
+  return fetchClusterJSON<ClusterCodeResponse>("/api/cluster/code", { cache: "no-store" });
+}
+
+export async function getDiscoveredClusterNodes(): Promise<DiscoveredClusterNode[]> {
+  const data = await fetchClusterJSON<{ nodes?: DiscoveredClusterNode[] }>("/api/cluster/discovered", { cache: "no-store" });
+  return data?.nodes ?? [];
+}
+
+export function inviteClusterNode(code: string, options?: { uuid?: string; address?: string }): Promise<ClusterNodeView> {
+  return fetchClusterJSON<ClusterNodeView>("/api/cluster/invite", {
+    method: "POST",
+    body: JSON.stringify({
+      code: code.trim(),
+      uuid: options?.uuid || undefined,
+      address: options?.address?.trim() || undefined,
+    }),
+  });
+}
+
+export function updateClusterNode(uuid: string, patch: { name?: string; static_address?: string }): Promise<ClusterNodeView> {
+  return fetchClusterJSON<ClusterNodeView>(`/api/cluster/nodes/${encodeURIComponent(uuid)}`, {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function removeClusterNode(uuid: string): Promise<ClusterView> {
+  return fetchClusterJSON<ClusterView>(`/api/cluster/nodes/${encodeURIComponent(uuid)}`, { method: "DELETE" });
+}
+
+export function setClusterNodeState(uuid: string, state: ClusterNodeState): Promise<ClusterSettings> {
+  return fetchClusterJSON<ClusterSettings>(`/api/cluster/nodes/${encodeURIComponent(uuid)}/state`, {
+    method: "POST",
+    body: JSON.stringify({ state }),
+  });
+}
+
+export function pullClusterNodeModel(
+  uuid: string,
+  model: string,
+  options?: { artifactSource?: ArtifactSource; revision?: string; quant?: string },
+): Promise<PullJob> {
+  return fetchClusterJSON<PullJob>(`/api/cluster/nodes/${encodeURIComponent(uuid)}/models/pull`, {
+    method: "POST",
+    body: JSON.stringify({
+      model,
+      artifact_source: options?.artifactSource || undefined,
+      revision: options?.revision?.trim() || undefined,
+      quant: options?.quant || undefined,
+    }),
+  });
+}
+
+export async function getClusterModels(): Promise<ClusterModelDistribution[]> {
+  const data = await fetchClusterJSON<{ models?: ClusterModelDistribution[] }>("/api/cluster/models", { cache: "no-store" });
+  return data?.models ?? [];
+}
+
+export function syncClusterModel(model: string, nodes: string[] | "all"): Promise<ClusterSyncResponse> {
+  return fetchClusterJSON<ClusterSyncResponse>("/api/cluster/models/sync", {
+    method: "POST",
+    body: JSON.stringify({ model, nodes }),
+  });
+}
+
+export function explainClusterScheduling(
+  model: string,
+  options?: { promptTokens?: number; maxTokens?: number },
+): Promise<ClusterExplainResponse> {
+  const query = new URLSearchParams({ model });
+  if (options?.promptTokens !== undefined) query.set("prompt_tokens", String(options.promptTokens));
+  if (options?.maxTokens !== undefined) query.set("max_tokens", String(options.maxTokens));
+  return fetchClusterJSON<ClusterExplainResponse>(`/api/cluster/explain?${query.toString()}`, { cache: "no-store" });
+}
+
+export async function getClusterRecommendations(): Promise<ClusterRecommendation[]> {
+  const data = await fetchClusterJSON<{ recommendations?: ClusterRecommendation[] }>("/api/cluster/recommendations", { cache: "no-store" });
+  return data?.recommendations ?? [];
+}
+
+export function updateClusterSettings(patch: ClusterSettingsUpdate): Promise<ClusterSettings> {
+  return fetchClusterJSON<ClusterSettings>("/api/cluster/settings", {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
+}

@@ -67,6 +67,10 @@
     {
       "name": "Compatibility",
       "description": "OpenAI- and Anthropic-compatible `/v1/*` endpoints."
+    },
+    {
+      "name": "Cluster",
+      "description": "LAN compute cluster: discover CSGLite nodes on the local network, pair them, route inference to the node that holds the model and show every machine on the dashboard. Open to every edition; the Community edition may pair two nodes and an Enterprise license lifts the cap (quota.lite.max_cluster_nodes)."
     }
   ],
   "paths": {
@@ -6779,6 +6783,1134 @@
           }
         }
       }
+    },
+    "/api/cluster": {
+      "get": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Get the cluster view",
+        "description": "This node's identity, the cluster it belongs to (null when unpaired), the licensed node cap, settings and every member with its live status. Members are polled every two seconds; a member that stops answering becomes `suspect`, then `down` after three failures or a minute of silence, and is probed with backoff until it returns.",
+        "operationId": "getCluster",
+        "responses": {
+          "200": {
+            "description": "Cluster view.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterView"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Create a cluster",
+        "description": "Founds a cluster of one on this node and returns the join token once. Other nodes join with `csghub-lite cluster join <token>`, `POST /api/cluster/join`, or automatically at first start when CSGHUB_LITE_CLUSTER_JOIN_TOKEN is set.",
+        "operationId": "createCluster",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Cluster created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "cluster",
+                    "join_token"
+                  ],
+                  "properties": {
+                    "cluster": {
+                      "$ref": "#/components/schemas/ClusterInfo"
+                    },
+                    "join_token": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This node already belongs to a cluster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Leave the cluster",
+        "description": "Announces departure to every member and forgets the cluster. The node identity is kept, so the node can be paired again.",
+        "operationId": "leaveCluster",
+        "responses": {
+          "200": {
+            "description": "Left; the view now shows no cluster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterView"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This node is not in a cluster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/summary": {
+      "get": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Get the dashboard summary",
+        "description": "One compact card per machine (host name, GPU, memory, disk, loaded models, in-flight requests) plus totals. Available in every edition and even when the cluster feature is disabled, in which case the node list is empty.",
+        "operationId": "getClusterSummary",
+        "responses": {
+          "200": {
+            "description": "Summary.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/join": {
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Join a cluster with a token",
+        "description": "Parses the cluster uuid out of the token, finds a member over multicast DNS (or uses `address` / CSGHUB_LITE_CLUSTER_SEEDS), performs the authenticated handshake and adopts the member table. Pairing pins certificate fingerprints by node uuid, so members keep recognising each other after any IP change.",
+        "operationId": "joinCluster",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClusterJoinRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Joined.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The token is not valid for that cluster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The licensed node cap is reached (`code: feature_not_licensed`, with `limit` and `current`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already in a cluster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "No member could be reached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/token": {
+      "get": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Get the join token",
+        "description": "Returns the join token minted in this process. Only its hash is persisted, so after a restart `available` is false and the token must be rotated to be shown again.",
+        "operationId": "getClusterToken",
+        "responses": {
+          "200": {
+            "description": "Token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "token",
+                    "available"
+                  ],
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "available": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/token/rotate": {
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Rotate the join token",
+        "description": "Mints a new join token; already paired members are unaffected.",
+        "operationId": "rotateClusterToken",
+        "responses": {
+          "200": {
+            "description": "New token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "token",
+                    "available"
+                  ],
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "available": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/code": {
+      "get": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Get this node's admission code",
+        "description": "An 8-digit code, valid for ten minutes and for one use, that a member enters to invite this unpaired node (`POST /api/cluster/invite` there).",
+        "operationId": "getClusterCode",
+        "responses": {
+          "200": {
+            "description": "Code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "expires_at"
+                  ],
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This node already belongs to a cluster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/discovered": {
+      "get": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "List unpaired nodes seen on the network",
+        "operationId": "listDiscoveredClusterNodes",
+        "responses": {
+          "200": {
+            "description": "Discovered nodes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "nodes"
+                  ],
+                  "properties": {
+                    "nodes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ClusterDiscoveredNode"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/invite": {
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Invite a discovered node",
+        "description": "Pairs an unpaired node using the admission code shown on it. The handshake is authenticated with the code and the inviting node's certificate; the invited node adopts this cluster's member table.",
+        "operationId": "inviteClusterNode",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClusterInviteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterNodeView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong admission code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The licensed node cap is reached (`code: feature_not_licensed`, with `limit` and `current`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/nodes/{uuid}": {
+      "put": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Update a node",
+        "description": "Renames this node (`name`, own uuid only) or pins a static cluster endpoint for a member (`static_address`) on networks without multicast.",
+        "operationId": "updateClusterNode",
+        "parameters": [
+          {
+            "name": "uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Member node uuid."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "static_address": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated node.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterNodeView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Remove a member",
+        "description": "Drops the member, tells it, and lets gossip carry a tombstone so it is not re-added by a stale peer. Use DELETE /api/cluster to remove this node itself.",
+        "operationId": "removeClusterNode",
+        "parameters": [
+          {
+            "name": "uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Member node uuid."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cluster view without the member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/nodes/{uuid}/state": {
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Set this node's admission state",
+        "description": "`drain` finishes in-flight requests and takes no new ones; `maintenance` also excludes the node from sync. A node's state is set on the node itself.",
+        "operationId": "setClusterNodeState",
+        "parameters": [
+          {
+            "name": "uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Member node uuid."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "drain",
+                      "maintenance"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/nodes/{uuid}/models/pull": {
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Start a model download on a member",
+        "description": "Creates a pull job on the named node from that node's own model source. Same body as POST /api/pull/jobs.",
+        "operationId": "pullModelOnClusterNode",
+        "parameters": [
+          {
+            "name": "uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Member node uuid."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PullRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Pull job on the node.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PullJobResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/models": {
+      "get": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "List models across the cluster",
+        "description": "Union of every member's models with the nodes holding each one and whether it is loaded there.",
+        "operationId": "listClusterModels",
+        "responses": {
+          "200": {
+            "description": "Models.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "models"
+                  ],
+                  "properties": {
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ClusterModel"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/models/sync": {
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Sync a model to nodes",
+        "description": "Asks each target node to pull the model from its own model source (the on-prem CSGHub in the intended deployment). Nodes that already hold it are skipped. Refused while members use different model sources.",
+        "operationId": "syncClusterModel",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClusterSyncRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Per-node results.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "model",
+                    "results"
+                  ],
+                  "properties": {
+                    "model": {
+                      "type": "string"
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ClusterSyncResult"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Members use different model sources.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/explain": {
+      "get": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Explain a scheduling decision",
+        "description": "Runs the scheduler for a hypothetical request and returns every candidate with its exclusion reason or estimated completion time (queue, cold start, measured throughput, thermal and load penalties, session affinity).",
+        "operationId": "explainClusterScheduling",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "prompt_tokens",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "max_tokens",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "affinity_key",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterExplain"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/recommendations": {
+      "get": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Get replica placement suggestions",
+        "description": "Models served by a single node are suggested for a second replica on the online member with the most free memory and disk.",
+        "operationId": "getClusterRecommendations",
+        "responses": {
+          "200": {
+            "description": "Recommendations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "recommendations"
+                  ],
+                  "properties": {
+                    "recommendations": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ClusterRecommendation"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/settings": {
+      "put": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Update cluster settings on this node",
+        "operationId": "updateClusterSettings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClusterSettingsUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cluster error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -9756,6 +10888,13 @@
           },
           "pricing": {
             "$ref": "#/components/schemas/ModelPricing"
+          },
+          "nodes": {
+            "type": "array",
+            "description": "Cluster members holding this model; present only while the node belongs to a LAN cluster.",
+            "items": {
+              "$ref": "#/components/schemas/ClusterModelNode"
+            }
           }
         }
       },
@@ -13368,6 +14507,1049 @@
             "items": {
               "$ref": "#/components/schemas/APIUsagePoolMemberTotal"
             }
+          }
+        }
+      },
+      "ClusterErrorResponse": {
+        "type": "object",
+        "description": "Error envelope of the cluster endpoints; the standard shape plus an optional code.",
+        "required": [
+          "error",
+          "errorCode"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "integer"
+          },
+          "code": {
+            "type": "string",
+            "description": "Machine-readable code. `feature_not_licensed` when the licensed node cap is reached, `cluster_disabled` when the feature is off in this process, `cluster_no_available_node` when no member can serve a routed request."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Licensed node cap when code is feature_not_licensed."
+          },
+          "current": {
+            "type": "integer",
+            "description": "Current member count when code is feature_not_licensed."
+          }
+        }
+      },
+      "ClusterInfo": {
+        "type": "object",
+        "required": [
+          "uuid",
+          "name",
+          "created_at"
+        ],
+        "properties": {
+          "uuid": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ClusterSettings": {
+        "type": "object",
+        "required": [
+          "accept_work",
+          "state",
+          "weight",
+          "prefer_local",
+          "routing_mode",
+          "affinity_max_queue",
+          "disk_reserve_gb",
+          "static_addresses"
+        ],
+        "properties": {
+          "accept_work": {
+            "type": "boolean",
+            "description": "Whether this node accepts requests routed by peers."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "drain",
+              "maintenance"
+            ],
+            "description": "`drain` finishes in-flight requests and takes no new ones; `maintenance` additionally excludes the node from model sync and placement."
+          },
+          "weight": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 200,
+            "description": "Operator weight; 100 is neutral, lower values receive fewer requests."
+          },
+          "prefer_local": {
+            "type": "boolean",
+            "description": "Prefer this node when candidates tie."
+          },
+          "routing_mode": {
+            "type": "string",
+            "enum": [
+              "local_first",
+              "balanced"
+            ],
+            "description": "`local_first` runs a model present on this node here and routes only models it lacks; `balanced` lets the scheduler choose among every node holding the model."
+          },
+          "affinity_max_queue": {
+            "type": "integer",
+            "description": "Requests that may queue on the session-affinity node before the request spills to another node; 0 spills immediately."
+          },
+          "disk_reserve_gb": {
+            "type": "integer",
+            "description": "Free disk to keep on a node before it is suggested as a sync target."
+          },
+          "static_addresses": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Operator-pinned cluster endpoints (host or host:port) by member uuid, for networks without multicast."
+          }
+        }
+      },
+      "ClusterGPUStatus": {
+        "type": "object",
+        "required": [
+          "index",
+          "name",
+          "vram_total",
+          "vram_used",
+          "throttled",
+          "usage_known"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "vram_total": {
+            "type": "integer"
+          },
+          "vram_used": {
+            "type": "integer"
+          },
+          "util": {
+            "type": "integer",
+            "nullable": true
+          },
+          "temperature": {
+            "type": "integer",
+            "nullable": true
+          },
+          "power_draw": {
+            "type": "integer",
+            "nullable": true
+          },
+          "power_limit": {
+            "type": "integer",
+            "nullable": true
+          },
+          "throttled": {
+            "type": "boolean"
+          },
+          "shared_memory": {
+            "type": "boolean"
+          },
+          "usage_known": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ClusterModelPerf": {
+        "type": "object",
+        "description": "Measured throughput of a model on a node (exponential moving averages).",
+        "properties": {
+          "decode_tps": {
+            "type": "number"
+          },
+          "prompt_tps": {
+            "type": "number"
+          },
+          "load_seconds": {
+            "type": "number"
+          },
+          "samples": {
+            "type": "integer"
+          }
+        }
+      },
+      "ClusterModelStatus": {
+        "type": "object",
+        "required": [
+          "id",
+          "size",
+          "loaded",
+          "loading",
+          "active",
+          "native_tool_streaming"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "format": {
+            "type": "string"
+          },
+          "pipeline_tag": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "loaded": {
+            "type": "boolean"
+          },
+          "loading": {
+            "type": "boolean"
+          },
+          "slots": {
+            "type": "integer"
+          },
+          "active": {
+            "type": "integer"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "n_gpu_layers": {
+            "type": "integer"
+          },
+          "native_tool_streaming": {
+            "type": "boolean"
+          },
+          "perf": {
+            "$ref": "#/components/schemas/ClusterModelPerf"
+          }
+        }
+      },
+      "ClusterNodeStatus": {
+        "type": "object",
+        "description": "Everything a node reports to its peers: identity, admission state, hardware, loaded models and load. Collected on the node itself and polled by every member.",
+        "required": [
+          "uuid",
+          "name",
+          "version",
+          "protocol",
+          "licensed",
+          "node_limit",
+          "accept_work",
+          "state",
+          "gpus",
+          "models",
+          "inflight",
+          "time"
+        ],
+        "properties": {
+          "uuid": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "integer"
+          },
+          "cluster_uuid": {
+            "type": "string"
+          },
+          "licensed": {
+            "type": "boolean",
+            "description": "False when the node's own license does not cover a cluster of the current size; such a node is not scheduled."
+          },
+          "node_limit": {
+            "type": "integer"
+          },
+          "accept_work": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "drain",
+              "maintenance"
+            ]
+          },
+          "weight": {
+            "type": "integer"
+          },
+          "api_port": {
+            "type": "integer"
+          },
+          "cluster_port": {
+            "type": "integer"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string"
+          },
+          "arch": {
+            "type": "string"
+          },
+          "gpus": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClusterGPUStatus"
+            }
+          },
+          "cpu": {
+            "type": "object",
+            "properties": {
+              "cores": {
+                "type": "integer"
+              },
+              "load1": {
+                "type": "number",
+                "nullable": true
+              },
+              "util": {
+                "type": "number",
+                "nullable": true
+              },
+              "model": {
+                "type": "string"
+              }
+            }
+          },
+          "ram": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "used": {
+                "type": "integer"
+              },
+              "unified": {
+                "type": "boolean"
+              }
+            }
+          },
+          "disk": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "total": {
+                "type": "integer"
+              },
+              "free": {
+                "type": "integer"
+              },
+              "read_mbps_class": {
+                "type": "string"
+              },
+              "read_mbps": {
+                "type": "integer"
+              },
+              "io_busy": {
+                "type": "boolean"
+              }
+            }
+          },
+          "net": {
+            "type": "object",
+            "properties": {
+              "link_mbps": {
+                "type": "integer"
+              },
+              "addrs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "jobs": {
+            "type": "object",
+            "properties": {
+              "pulling": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "converting": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "model_source": {
+            "type": "object",
+            "properties": {
+              "server_url": {
+                "type": "string"
+              },
+              "hf_endpoint": {
+                "type": "string"
+              },
+              "modelscope_endpoint": {
+                "type": "string"
+              }
+            }
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClusterModelStatus"
+            }
+          },
+          "inflight": {
+            "type": "integer"
+          },
+          "uptime_sec": {
+            "type": "integer"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ClusterNodeView": {
+        "type": "object",
+        "required": [
+          "uuid",
+          "name",
+          "local",
+          "health",
+          "online"
+        ],
+        "properties": {
+          "uuid": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "local": {
+            "type": "boolean",
+            "description": "True for the node answering the request."
+          },
+          "health": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "healthy",
+              "suspect",
+              "down",
+              "probing"
+            ]
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "addr": {
+            "type": "string",
+            "description": "Cluster endpoint (host:port) the node was last reached on."
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "joined_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "static_address": {
+            "type": "string"
+          },
+          "api_port": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ClusterNodeStatus"
+          }
+        }
+      },
+      "ClusterView": {
+        "type": "object",
+        "required": [
+          "node",
+          "cluster",
+          "node_limit",
+          "licensed",
+          "join_token_available",
+          "settings",
+          "members",
+          "discovered_count",
+          "model_source_mixed"
+        ],
+        "properties": {
+          "node": {
+            "type": "object",
+            "required": [
+              "uuid",
+              "name",
+              "version",
+              "cluster_port",
+              "api_port"
+            ],
+            "properties": {
+              "uuid": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "cluster_port": {
+                "type": "integer"
+              },
+              "api_port": {
+                "type": "integer"
+              }
+            }
+          },
+          "cluster": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClusterInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null while this node is not in a cluster."
+          },
+          "node_limit": {
+            "type": "integer",
+            "description": "Licensed member cap including this node; 0 means unlimited."
+          },
+          "licensed": {
+            "type": "boolean"
+          },
+          "join_token_available": {
+            "type": "boolean",
+            "description": "Whether GET /api/cluster/token can return the current token (tokens are shown only in the process that minted them; rotate to get a new one)."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/ClusterSettings"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClusterNodeView"
+            },
+            "description": "This node first, then every paired member."
+          },
+          "discovered_count": {
+            "type": "integer"
+          },
+          "model_source_mixed": {
+            "type": "boolean",
+            "description": "True when members download models from different sources; sync is refused until they agree."
+          }
+        }
+      },
+      "ClusterSummaryNode": {
+        "type": "object",
+        "required": [
+          "uuid",
+          "name",
+          "local",
+          "online",
+          "health",
+          "state",
+          "loaded_models",
+          "inflight"
+        ],
+        "properties": {
+          "uuid": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "local": {
+            "type": "boolean"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "health": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "licensed": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          },
+          "addr": {
+            "type": "string"
+          },
+          "gpu_name": {
+            "type": "string"
+          },
+          "gpu_count": {
+            "type": "integer"
+          },
+          "vram_total": {
+            "type": "integer"
+          },
+          "vram_used": {
+            "type": "integer"
+          },
+          "gpu_util": {
+            "type": "integer",
+            "nullable": true
+          },
+          "cpu_cores": {
+            "type": "integer"
+          },
+          "cpu_util": {
+            "type": "number",
+            "nullable": true
+          },
+          "ram_total": {
+            "type": "integer"
+          },
+          "ram_used": {
+            "type": "integer"
+          },
+          "disk_total": {
+            "type": "integer"
+          },
+          "disk_free": {
+            "type": "integer"
+          },
+          "loaded_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model_count": {
+            "type": "integer"
+          },
+          "inflight": {
+            "type": "integer"
+          }
+        }
+      },
+      "ClusterSummary": {
+        "type": "object",
+        "description": "Compact per-machine cards for the dashboard. Available in every edition; an empty list when the node is not in a cluster.",
+        "required": [
+          "in_cluster",
+          "node_count",
+          "online_count",
+          "node_limit",
+          "licensed",
+          "nodes"
+        ],
+        "properties": {
+          "in_cluster": {
+            "type": "boolean"
+          },
+          "cluster_name": {
+            "type": "string"
+          },
+          "cluster_uuid": {
+            "type": "string"
+          },
+          "node_count": {
+            "type": "integer"
+          },
+          "online_count": {
+            "type": "integer"
+          },
+          "node_limit": {
+            "type": "integer"
+          },
+          "licensed": {
+            "type": "boolean"
+          },
+          "vram_total": {
+            "type": "integer"
+          },
+          "vram_used": {
+            "type": "integer"
+          },
+          "inflight": {
+            "type": "integer"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClusterSummaryNode"
+            }
+          }
+        }
+      },
+      "ClusterDiscoveredNode": {
+        "type": "object",
+        "required": [
+          "uuid",
+          "name",
+          "addr",
+          "seen",
+          "source"
+        ],
+        "properties": {
+          "uuid": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "addr": {
+            "type": "string"
+          },
+          "cluster_uuid": {
+            "type": "string",
+            "description": "Set when the node already belongs to another cluster."
+          },
+          "version": {
+            "type": "string"
+          },
+          "api_port": {
+            "type": "integer"
+          },
+          "licensed": {
+            "type": "boolean"
+          },
+          "seen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "mdns",
+              "seed",
+              "memory"
+            ]
+          }
+        }
+      },
+      "ClusterModelNode": {
+        "type": "object",
+        "required": [
+          "uuid",
+          "name",
+          "loaded",
+          "online",
+          "local"
+        ],
+        "properties": {
+          "uuid": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "loaded": {
+            "type": "boolean"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "local": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ClusterModel": {
+        "type": "object",
+        "required": [
+          "id",
+          "size",
+          "nodes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "format": {
+            "type": "string"
+          },
+          "pipeline_tag": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClusterModelNode"
+            }
+          }
+        }
+      },
+      "ClusterExplain": {
+        "type": "object",
+        "description": "The scheduler's decision for a hypothetical request: every candidate with its exclusion reason or estimated completion time and the factors behind it.",
+        "required": [
+          "model",
+          "order",
+          "candidates"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "order": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Eligible node uuids in scheduling order."
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "uuid",
+                "name",
+                "local",
+                "eligible",
+                "warm",
+                "affinity",
+                "estimated_seconds",
+                "rank"
+              ],
+              "properties": {
+                "uuid": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "local": {
+                  "type": "boolean"
+                },
+                "eligible": {
+                  "type": "boolean"
+                },
+                "excluded": {
+                  "type": "string"
+                },
+                "warm": {
+                  "type": "boolean"
+                },
+                "affinity": {
+                  "type": "boolean"
+                },
+                "estimated_seconds": {
+                  "type": "number"
+                },
+                "factors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "rank": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ClusterRecommendation": {
+        "type": "object",
+        "required": [
+          "model",
+          "node_uuid",
+          "node_name",
+          "reason"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "node_uuid": {
+            "type": "string"
+          },
+          "node_name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "ClusterSyncResult": {
+        "type": "object",
+        "required": [
+          "node_uuid"
+        ],
+        "properties": {
+          "node_uuid": {
+            "type": "string"
+          },
+          "node_name": {
+            "type": "string"
+          },
+          "skipped": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "job": {
+            "$ref": "#/components/schemas/PullJobResponse"
+          }
+        }
+      },
+      "ClusterJoinRequest": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Join token `csgl1-<cluster uuid>-<secret>` from GET /api/cluster/token on a member."
+          },
+          "address": {
+            "type": "string",
+            "description": "Optional member cluster endpoint (host or host:port) when multicast discovery cannot find one."
+          }
+        }
+      },
+      "ClusterInviteRequest": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "uuid": {
+            "type": "string",
+            "description": "Discovered node uuid (from GET /api/cluster/discovered)."
+          },
+          "code": {
+            "type": "string",
+            "description": "The 8-digit admission code shown on the invited node (GET /api/cluster/code there)."
+          },
+          "address": {
+            "type": "string",
+            "description": "Optional cluster endpoint when the node was not discovered."
+          }
+        }
+      },
+      "ClusterSyncRequest": {
+        "type": "object",
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "nodes": {
+            "description": "Member uuids to sync to, or the string \"all\" (default). Nodes that already hold the model are skipped.",
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "all"
+                ]
+              }
+            ]
+          },
+          "artifact_source": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "quant": {
+            "type": "string"
+          },
+          "quants": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ClusterSettingsUpdate": {
+        "type": "object",
+        "properties": {
+          "accept_work": {
+            "type": "boolean"
+          },
+          "prefer_local": {
+            "type": "boolean"
+          },
+          "routing_mode": {
+            "type": "string",
+            "enum": [
+              "local_first",
+              "balanced"
+            ]
+          },
+          "affinity_max_queue": {
+            "type": "integer"
+          },
+          "disk_reserve_gb": {
+            "type": "integer"
+          },
+          "weight": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "drain",
+              "maintenance"
+            ]
           }
         }
       }

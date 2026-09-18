@@ -228,12 +228,12 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 	}
-	for _, header := range []string{
+	for _, header := range append([]string{
 		providerPoolMemberSourceHeader,
 		providerPoolMemberModelHeader,
 		providerPoolFallbackCountHeader,
 		providerPoolLimitedCountHeader,
-	} {
+	}, clusterNodeHeaders...) {
 		if value := strings.TrimSpace(resp.Header.Get(header)); value != "" {
 			w.Header().Set(header, value)
 		}

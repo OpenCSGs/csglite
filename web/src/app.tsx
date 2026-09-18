@@ -13,6 +13,7 @@ import { Pricing } from "./pages/Pricing";
 import { AIApps } from "./pages/AIApps";
 import { AIAppShell } from "./pages/AIAppShell";
 import { AIGateway } from "./pages/AIGateway";
+import { Cluster } from "./pages/Cluster";
 import { Observability, ObservabilityTraceDetailPage } from "./pages/Observability";
 
 export function App() {
@@ -43,6 +44,7 @@ function AppRoutes() {
         <Route path="/images" component={ImageGeneration} />
         <Route path="/ai-apps" component={AIApps} />
         <Route path="/ai-gateway" component={AIGateway} />
+        <Route path="/cluster" component={Cluster} />
         <Route path="/observability/traces/:traceID" component={ObservabilityTraceDetailPage} />
         <Route path="/observability" component={Observability} />
         <Route path="/settings" component={Settings} />

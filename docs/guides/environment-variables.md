@@ -141,6 +141,20 @@ TTS worker 支持：
 详见 [`license` 命令](../cli/license.md) 与
 [企业版 License 功能门控设计](ee-license-design.md)。
 
+## 局域网算力集群
+
+| 变量 | 说明 | 默认值 |
+|---|---|---|
+| `CSGHUB_LITE_CLUSTER_JOIN_TOKEN` | 本机未入集群时，启动后用该令牌自动加入（盒子批量部署） | 未设置 |
+| `CSGHUB_LITE_CLUSTER_ADDR` | 节点间 mTLS 监听地址；各节点端口可以不同，发现记录里带真实端口 | `:11438` |
+| `CSGHUB_LITE_CLUSTER_SEEDS` | 逗号分隔的成员地址（`host` 或 `host:port`），多播不可用时用来找到集群 | 未设置 |
+| `CSGHUB_LITE_CLUSTER_DISCOVERY` | `mdns` 用多播 DNS 自动发现；`none` 只用静态地址与成员表 | `mdns` |
+| `CSGHUB_LITE_CLUSTER_ADVERTISE_HOST` | 多网卡机器上对外公布的主机名或 IP | 未设置，自动取对方连过来的地址 |
+| `CSGHUB_LITE_CLUSTER_DISABLED` | `1` 时不启动集群组件，`/api/cluster*` 返回 503 | 未设置 |
+
+详见 [`cluster` 命令](../cli/cluster.md) 与
+[局域网算力集群设计](lan-cluster-design.md)。
+
 ## 开发和内部保留变量
 
 | 变量 | 用途 |
