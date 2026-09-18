@@ -37,20 +37,7 @@ import type {
 } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { t, locale } from "../i18n";
-import {
-  fmtGB,
-  fmtGBPair,
-  fmtSeconds,
-  healthDotClass,
-  healthKey,
-  healthTone,
-  isValidAdmissionCode,
-  nodeLimitLabel,
-  normalizeAdmissionCode,
-  percentOf,
-  secondsUntil,
-  stateKey,
-} from "../cluster";
+import { fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, shortVersion, stateKey } from "../cluster";
 
 type ClusterTab = "overview" | "discovered" | "models" | "settings";
 
@@ -566,21 +553,24 @@ function HeaderStats({ view }: { view: ClusterView }) {
     { total: 0, used: 0 },
   );
   const inflight = view.members.reduce((sum, m) => sum + (m.status?.inflight ?? 0), 0);
+  const nodesValue = view.node_limit > 0 ? `${view.members.length} / ${view.node_limit}` : String(view.members.length);
+  const nodesHint = view.node_limit > 0 ? (limit.atLimit ? t("cluster.capHintShort") : "") : t("cluster.nodesUnlimitedHint");
   return (
     <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
       <Stat label={t("cluster.statOnline")} value={`${online} / ${view.members.length}`} />
-      <Stat label={t("cluster.statNodes")} value={t(limit.key, ...limit.args)} tone={limit.atLimit ? "warn" : "normal"} />
-      <Stat label={t("cluster.statVRAM")} value={fmtGBPair(vram.used, vram.total)} />
+      <Stat label={t("cluster.statNodes")} value={nodesValue} hint={nodesHint} tone={limit.atLimit ? "warn" : "normal"} />
+      <Stat label={t("cluster.statVRAM")} value={fmtGBPairShort(vram.used, vram.total)} />
       <Stat label={t("cluster.statInflight")} value={String(inflight)} />
     </div>
   );
 }
 
-function Stat({ label, value, tone = "normal" }: { label: string; value: string; tone?: "normal" | "warn" }) {
+function Stat({ label, value, hint, tone = "normal" }: { label: string; value: string; hint?: string; tone?: "normal" | "warn" }) {
   return (
     <div class={`rounded-xl border px-4 py-3 ${tone === "warn" ? "border-amber-200 bg-amber-50" : "border-gray-200 bg-white"}`}>
       <div class="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</div>
-      <div class={`mt-0.5 text-sm font-semibold ${tone === "warn" ? "text-amber-800" : "text-gray-900"}`}>{value}</div>
+      <div class={`mt-0.5 text-lg font-semibold leading-tight ${tone === "warn" ? "text-amber-800" : "text-gray-900"}`}>{value}</div>
+      {hint && <div class={`mt-0.5 text-[11px] ${tone === "warn" ? "text-amber-700" : "text-gray-400"}`}>{hint}</div>}
     </div>
   );
 }
@@ -899,17 +889,16 @@ function OverviewSection({ view }: { view: ClusterView }) {
         <p class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{overviewError.value}</p>
       )}
       <div class="overflow-x-auto">
-        <table class="w-full min-w-[960px] text-sm">
+        <table class="w-full min-w-[880px] text-sm">
           <thead>
-            <tr class="border-b border-gray-100 text-left text-gray-500">
-              <th class="pb-3 pr-3 font-medium">{t("cluster.colNode")}</th>
-              <th class="pb-3 pr-3 font-medium">{t("cluster.colStatus")}</th>
-              <th class="pb-3 pr-3 font-medium">{t("cluster.colGPU")}</th>
-              <th class="pb-3 pr-3 font-medium">{t("cluster.colCPURAM")}</th>
-              <th class="pb-3 pr-3 font-medium">{t("cluster.colDisk")}</th>
-              <th class="pb-3 pr-3 font-medium">{t("cluster.colModels")}</th>
-              <th class="pb-3 pr-3 font-medium text-right">{t("cluster.colInflight")}</th>
-              <th class="pb-3 pr-3 font-medium">{t("cluster.colVersion")}</th>
+            <tr class="border-b border-gray-100 text-left text-gray-500 whitespace-nowrap">
+              <th class="pb-3 pr-4 font-medium">{t("cluster.colNode")}</th>
+              <th class="pb-3 pr-4 font-medium">{t("cluster.colStatus")}</th>
+              <th class="pb-3 pr-4 font-medium">{t("cluster.colGPU")}</th>
+              <th class="pb-3 pr-4 font-medium">{t("cluster.colCPURAM")}</th>
+              <th class="pb-3 pr-4 font-medium">{t("cluster.colDisk")}</th>
+              <th class="pb-3 pr-4 font-medium">{t("cluster.colModels")}</th>
+              <th class="pb-3 pr-4 font-medium">{t("cluster.colVersion")}</th>
               <th class="pb-3 font-medium text-right">{t("cluster.colActions")}</th>
             </tr>
           </thead>
@@ -942,7 +931,7 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
 
   return (
     <tr class={`border-b border-gray-50 align-top ${node.online ? "" : "bg-gray-50/60"}`}>
-      <td class="py-3 pr-3">
+      <td class="py-3 pr-4">
         {node.local && nameEditing.value ? (
           <div class="flex items-center gap-1.5">
             <input
@@ -963,8 +952,10 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
             </button>
           </div>
         ) : (
-          <div class="flex items-center gap-2 min-w-0">
-            <span class={`font-medium ${node.online ? "text-gray-900" : "text-gray-500"}`}>{node.name}</span>
+          <div class="flex items-center gap-2 min-w-0 whitespace-nowrap">
+            <span class={`font-medium truncate max-w-[14rem] ${node.online ? "text-gray-900" : "text-gray-500"}`} title={node.name}>
+              {node.name}
+            </span>
             {node.local && (
               <>
                 <span class="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
@@ -979,7 +970,7 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
             )}
           </div>
         )}
-        {st?.hostname && <div class="text-xs text-gray-400">{st.hostname}</div>}
+        {st?.hostname && !isNoiseHostname(st.hostname, node.name) && <div class="text-xs text-gray-400">{st.hostname}</div>}
         {editingStatic ? (
           <div class="mt-1 flex items-center gap-1.5">
             <input
@@ -1009,7 +1000,7 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
           )
         )}
       </td>
-      <td class="py-3 pr-3">
+      <td class="py-3 pr-4">
         <div class="flex items-center gap-1.5 whitespace-nowrap" title={node.last_error || undefined}>
           <span class={`h-2 w-2 rounded-full ${healthDotClass[tone]}`} />
           <span class={node.online ? "text-gray-700" : "text-gray-400"}>{t(healthKey(node.health, node.online))}</span>
@@ -1028,16 +1019,17 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
         {st && !st.licensed && view.node_limit > 0 && (
           <div class="text-[11px] text-gray-400">{t("cluster.communityNode")}</div>
         )}
+        {st && st.inflight > 0 && <div class="text-[11px] text-indigo-600 whitespace-nowrap">{t("cluster.inflightCount", st.inflight)}</div>}
       </td>
-      <td class={`py-3 pr-3 ${muted}`}>
-        <div class="truncate max-w-[12rem]" title={gpuName}>
+      <td class={`py-3 pr-4 ${muted}`}>
+        <div class="truncate max-w-[11rem] whitespace-nowrap" title={gpuName}>
           {gpuName}
           {gpus.length > 1 ? ` ×${gpus.length}` : ""}
         </div>
         {vramTotal > 0 ? (
           <>
-            <div class="text-xs text-gray-500">{fmtGBPair(vramUsed, vramTotal)}</div>
-            <div class="mt-1 h-1.5 w-32 rounded-full bg-gray-100 overflow-hidden">
+            <div class="text-xs text-gray-500 whitespace-nowrap">{fmtGBPairShort(vramUsed, vramTotal)}</div>
+            <div class="mt-1 h-1.5 w-28 rounded-full bg-gray-100 overflow-hidden">
               <div class={`h-full rounded-full ${vramPct > 80 ? "bg-red-500" : vramPct > 50 ? "bg-amber-400" : "bg-indigo-500"}`} style={{ width: `${vramPct}%` }} />
             </div>
           </>
@@ -1045,7 +1037,7 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
           st && <div class="text-xs text-gray-400">{t("dash.na")}</div>
         )}
       </td>
-      <td class={`py-3 pr-3 whitespace-nowrap ${muted}`}>
+      <td class={`py-3 pr-4 whitespace-nowrap ${muted}`}>
         {st ? (
           <>
             <div>
@@ -1053,17 +1045,23 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
                 ? t("dash.clusterCPUWithUtil", st.cpu.cores, Math.round(st.cpu.util))
                 : t("dash.clusterCPUCores", st.cpu.cores)}
             </div>
-            <div class="text-xs text-gray-500">
-              {fmtGBPair(st.ram.used, st.ram.total)}
-              {st.ram.unified ? ` · ${t("dash.unifiedMemory")}` : ""}
+            <div class="text-xs text-gray-500" title={st.ram.unified ? t("dash.unifiedMemory") : undefined}>
+              {fmtGBPairShort(st.ram.used, st.ram.total)}
             </div>
           </>
         ) : (
           "—"
         )}
       </td>
-      <td class={`py-3 pr-3 whitespace-nowrap ${muted}`}>
-        {st ? t("dash.clusterDiskFree", fmtGB(st.disk.free), fmtGB(st.disk.total)) : "—"}
+      <td class={`py-3 pr-4 whitespace-nowrap ${muted}`}>
+        {st ? (
+          <>
+            <div>{fmtGBPairShort(st.disk.total - st.disk.free, st.disk.total)}</div>
+            <div class="text-xs text-gray-500">{t("cluster.diskFreeShort", fmtGBShort(st.disk.free))}</div>
+          </>
+        ) : (
+          "—"
+        )}
         {st?.disk.io_busy && <div class="text-[11px] text-amber-600">{t("cluster.diskBusy")}</div>}
         {st && (st.jobs.pulling.length > 0 || st.jobs.converting.length > 0) && (
           <div class="text-[11px] text-indigo-600" title={[...st.jobs.pulling, ...st.jobs.converting].join("\n")}>
@@ -1071,17 +1069,18 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
           </div>
         )}
       </td>
-      <td class={`py-3 pr-3 ${muted}`}>
+      <td class={`py-3 pr-4 whitespace-nowrap ${muted}`}>
         {st ? (
           <span class={loaded.length > 0 ? "cursor-help underline decoration-dotted" : ""} title={loaded.map((m) => m.id).join("\n")}>
-            {t("cluster.modelsLoadedOf", loaded.length, st.models.length)}
+            {loaded.length} / {st.models.length}
           </span>
         ) : (
           "—"
         )}
       </td>
-      <td class={`py-3 pr-3 text-right ${muted}`}>{st ? st.inflight : "—"}</td>
-      <td class={`py-3 pr-3 whitespace-nowrap ${muted}`}>{st?.version || "—"}</td>
+      <td class={`py-3 pr-4 whitespace-nowrap ${muted}`} title={st?.version}>
+        {shortVersion(st?.version)}
+      </td>
       <td class="py-3 text-right whitespace-nowrap">
         {node.local ? (
           <select

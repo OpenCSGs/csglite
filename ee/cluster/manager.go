@@ -141,10 +141,11 @@ func New(opts Options) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	if id.DisplayName() == genericNodeName {
+	if name := id.DisplayName(); name == genericNodeName || strings.HasPrefix(name, "csglite-node-") {
 		// Several appliances with IP-style host names would otherwise all be
-		// called the same; the UUID prefix tells them apart in every list.
-		_ = id.SaveName(genericNodeName + "-" + shortUUID(id.UUID))
+		// called the same; a short UUID prefix tells them apart without
+		// wrapping in tables. Names from the earlier long scheme are shortened.
+		_ = id.SaveName(defaultShortName(id.UUID))
 	}
 	store, err := OpenStore(opts.Dir)
 	if err != nil {

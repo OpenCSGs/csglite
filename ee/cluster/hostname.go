@@ -48,3 +48,13 @@ func defaultNodeName() string {
 	}
 	return h
 }
+
+// defaultShortName is the generated name for a node without a usable host
+// name: "node-" plus the first six hex digits of its UUID.
+func defaultShortName(nodeUUID string) string {
+	hex := strings.ReplaceAll(nodeUUID, "-", "")
+	if len(hex) > 6 {
+		hex = hex[:6]
+	}
+	return "node-" + hex
+}

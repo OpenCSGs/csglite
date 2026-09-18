@@ -13,6 +13,32 @@ export function fmtGB(bytes: number): string {
   return (bytes / GB).toFixed(1);
 }
 
+/** Bytes to gigabytes for tight table cells: no decimals from 100 GB up. */
+export function fmtGBShort(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0";
+  const gb = bytes / GB;
+  return gb >= 100 ? Math.round(gb).toString() : gb.toFixed(1);
+}
+
+/** "used / total GB" in the short form. */
+export function fmtGBPairShort(used: number, total: number): string {
+  return `${fmtGBShort(used)} / ${fmtGBShort(total)} GB`;
+}
+
+/** Strip the commit suffix from a dev version: "v0.9.82-19-g90e3644" -> "v0.9.82". */
+export function shortVersion(version: string | undefined): string {
+  if (!version) return "—";
+  const match = /^(v?\d+\.\d+\.\d+)/.exec(version);
+  return match ? match[1] : version;
+}
+
+/** True when a host name is just an IP address or a number, which adds nothing next to the node name. */
+export function isNoiseHostname(hostname: string | undefined, name: string): boolean {
+  if (!hostname) return true;
+  if (hostname === name) return true;
+  return /^[\d.:]+$/.test(hostname);
+}
+
 /** "used / total GB" with one decimal each. */
 export function fmtGBPair(used: number, total: number): string {
   return `${fmtGB(used)} / ${fmtGB(total)} GB`;
