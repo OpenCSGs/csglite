@@ -241,7 +241,7 @@ func (m *Manager) View(ctx context.Context) ClusterView {
 		JoinTokenAvailable: m.store.JoinToken() != "",
 		Settings:           m.store.Settings(),
 		Members:            members,
-		DiscoveredCount:    len(m.dir.Discovered(2 * time.Minute)),
+		DiscoveredCount:    len(m.dir.Discovered(discoveredMaxAge)),
 	}
 	var source *ModelSource
 	for _, mv := range members {
@@ -318,7 +318,7 @@ func (m *Manager) Summary(ctx context.Context) Summary {
 // Discovered lists unpaired nodes for the UI.
 func (m *Manager) DiscoveredNodes() []DiscoveredView {
 	out := []DiscoveredView{}
-	for _, obs := range m.dir.Discovered(2 * time.Minute) {
+	for _, obs := range m.dir.Discovered(discoveredMaxAge) {
 		out = append(out, DiscoveredView{UUID: obs.UUID, Name: obs.Name, Addr: obs.Endpoint(), ClusterUUID: obs.ClusterUUID, Version: obs.Version, APIPort: obs.APIPort, Licensed: obs.Licensed, Seen: obs.Seen, Source: obs.Source})
 	}
 	return out

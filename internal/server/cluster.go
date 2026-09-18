@@ -206,7 +206,9 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 		ModelScopeEndpoint: strings.TrimSpace(s.cfg.ModelScopeEndpoint),
 	}
 
-	// Loaded engines, keyed by public model id.
+	// Loaded engines, keyed by public model id. A model may run a chat and
+	// an embedding engine at once; the chat engine's figures win where both
+	// report the same field.
 	type loaded struct {
 		slots, active, ngl int
 		expires            time.Time
@@ -216,14 +218,19 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 	engines := map[string]loaded{}
 	s.mu.RLock()
 	for key, me := range s.engines {
-		if engineModelIDFromKey(key) != key {
-			continue // embedding-mode engines are tracked with the chat engine
+		modelKey := engineModelIDFromKey(key)
+		public := s.localInferenceModelID(modelKey)
+		cur, seen := engines[public]
+		chatEngine := modelKey == key
+		if !seen || chatEngine {
+			cur.slots = me.numParallel
+			cur.ngl = me.nGPULayers
+			cur.toolStreaming = inference.SupportsNativeToolStreaming(me.engine)
+			cur.expires = me.expiresAt()
 		}
-		public := s.localInferenceModelID(key)
-		engines[public] = loaded{
-			slots: me.numParallel, active: me.activeRequests, ngl: me.nGPULayers, expires: me.expiresAt(),
-			toolStreaming: inference.SupportsNativeToolStreaming(me.engine),
-		}
+		cur.active += me.activeRequests
+		cur.loading = false
+		engines[public] = cur
 		st.Inflight += me.activeRequests
 	}
 	for key := range s.loading {
@@ -314,7 +321,10 @@ func (s *Server) clusterRoutingWanted(modelID string) bool {
 	if s.cluster == nil || !s.cluster.Store().InCluster() {
 		return false
 	}
-	if len(s.cluster.RemoteHolders(modelID)) == 0 {
+	// Any online member holding the model counts, even one that is
+	// draining: the router then answers with a clear "no node available"
+	// instead of a misleading "model not found locally".
+	if !s.cluster.RemoteHasModel(modelID) {
 		return false
 	}
 	if s.cluster.Store().Settings().RoutingMode == cluster.RoutingBalanced {
@@ -379,6 +389,16 @@ func (s *Server) clusterModelInfos(ctx context.Context) ([]api.ModelInfo, map[st
 
 // clusterNodeHeaders are copied from a routed response to the caller.
 var clusterNodeHeaders = []string{cluster.NodeHeader, cluster.NodeNameHeader}
+
+// copyClusterNodeHeaders forwards the executing-node headers of a routed
+// upstream response to the caller.
+func copyClusterNodeHeaders(w http.ResponseWriter, upstream http.Header) {
+	for _, header := range clusterNodeHeaders {
+		if value := strings.TrimSpace(upstream.Get(header)); value != "" {
+			w.Header().Set(header, value)
+		}
+	}
+}
 
 // ---- /api/cluster route helpers ----
 

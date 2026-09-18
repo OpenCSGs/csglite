@@ -208,6 +208,7 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 		contentType string
 		usageSource string
 		usagePool   *apiUsagePoolMetadata
+		upstream    http.Header
 	}
 	result, err := runWithLocalInferenceSelfHeal(s, req.Source, req.Model, engineModeEmbed, eng,
 		func(engine inference.Engine) (embeddingResponse, error) {
@@ -229,6 +230,7 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 				contentType: strings.TrimSpace(resp.Header.Get("Content-Type")),
 				usageSource: requestPoolUsageSource(req.Source, resp),
 				usagePool:   requestPoolUsageMetadata(req.Model, req.Source, resp),
+				upstream:    resp.Header,
 			}, nil
 		},
 		func() (inference.Engine, error) {
@@ -244,6 +246,7 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 	}
+	copyClusterNodeHeaders(w, result.upstream)
 	w.WriteHeader(http.StatusOK)
 	body := result.body
 	s.recordAPIUsageWithPool(r, req.Model, result.usageSource, openAIEmbeddingPromptTokens(body, req.Input), 0, result.usagePool)

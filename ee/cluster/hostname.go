@@ -25,14 +25,16 @@ func hostnameShort() (string, error) {
 // defaultNodeName is the display name a node gets on first start: the host
 // name when it is a real name, otherwise a generic one (a host named after
 // its IP address, as some appliances are, would otherwise show up as "192").
+const genericNodeName = "csglite-node"
+
 func defaultNodeName() string {
 	h, err := hostnameShort()
 	if err != nil || h == "" {
-		return "csglite-node"
+		return genericNodeName
 	}
 	full, _ := os.Hostname()
 	if _, err := netip.ParseAddr(strings.TrimSpace(full)); err == nil {
-		return "csglite-node"
+		return genericNodeName
 	}
 	allDigits := true
 	for _, r := range h {
@@ -42,7 +44,7 @@ func defaultNodeName() string {
 		}
 	}
 	if allDigits {
-		return "csglite-node"
+		return genericNodeName
 	}
 	return h
 }

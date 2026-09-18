@@ -196,6 +196,29 @@ func (d *Directory) Discovered(maxAge time.Duration) []Observation {
 	return out
 }
 
+// DiscoveredAll lists unpaired nodes regardless of age, for refresh probes.
+func (d *Directory) DiscoveredAll() []Observation {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]Observation, 0, len(d.discovered))
+	for _, obs := range d.discovered {
+		out = append(out, obs)
+	}
+	return out
+}
+
+// ExpireDiscovered drops unpaired nodes not seen for maxAge.
+func (d *Directory) ExpireDiscovered(maxAge time.Duration) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := d.now()
+	for id, obs := range d.discovered {
+		if now.Sub(obs.Seen) > maxAge {
+			delete(d.discovered, id)
+		}
+	}
+}
+
 // DropDiscovered removes an unpaired node once it has been paired.
 func (d *Directory) DropDiscovered(nodeUUID string) {
 	d.mu.Lock()

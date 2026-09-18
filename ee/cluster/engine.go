@@ -905,6 +905,25 @@ func (m *Manager) RemoteHolders(model string) []string {
 	return out
 }
 
+// RemoteHasModel reports whether any online member other than this node
+// holds the model at all, whatever its admission state. It decides whether a
+// request belongs to the cluster router; the scheduler then explains why a
+// holder may still be unusable.
+func (m *Manager) RemoteHasModel(model string) bool {
+	for _, rt := range m.dir.Snapshot() {
+		if !rt.Online() || rt.Status == nil {
+			continue
+		}
+		if _, ok := m.store.Member(rt.UUID); !ok {
+			continue
+		}
+		if _, ok := rt.Status.Model(model); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // Explain runs the scheduler for a hypothetical request.
 func (m *Manager) Explain(ctx context.Context, model string, promptTokens, maxTokens int, affinityKey string) Explain {
 	e := &clusterEngine{m: m, model: model, affinity: affinityKey}

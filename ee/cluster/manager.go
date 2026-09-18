@@ -132,6 +132,11 @@ func New(opts Options) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	if id.Name == genericNodeName {
+		// Several appliances with IP-style host names would otherwise all be
+		// called the same; the UUID prefix tells them apart in every list.
+		_ = id.SaveName(genericNodeName + "-" + shortUUID(id.UUID))
+	}
 	store, err := OpenStore(opts.Dir)
 	if err != nil {
 		return nil, err
@@ -203,6 +208,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	go m.pollLoop()
 	go m.gossipLoop()
+	go m.discoveredRefreshLoop()
 	if token := strings.TrimSpace(m.opts.JoinToken); token != "" && !m.store.InCluster() {
 		go m.autoJoin(token)
 	}
@@ -691,6 +697,54 @@ func (m *Manager) pollMember(ctx context.Context, mem Member) {
 	}
 }
 
+// discoveredRefreshLoop re-reads every unpaired node it knows about. mDNS
+// only reports a node once (and again when its record changes), so a node
+// that restarts, joins another cluster or simply stays around would otherwise
+// age out of the discovered list or show stale cluster membership. A direct
+// public-status probe keeps the list current and works without multicast.
+func (m *Manager) discoveredRefreshLoop() {
+	ctx := m.context()
+	ticker := time.NewTicker(discoveredRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		var wg sync.WaitGroup
+		for _, obs := range m.dir.DiscoveredAll() {
+			wg.Add(1)
+			go func(obs Observation) {
+				defer wg.Done()
+				attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				st, err := m.fetchStatusUnpinned(attempt, obs.Endpoint())
+				if err != nil || st.UUID != obs.UUID {
+					return
+				}
+				refreshed := obs
+				refreshed.Seen = time.Now()
+				refreshed.ClusterUUID = st.ClusterUUID
+				refreshed.Name = st.Name
+				refreshed.Version = st.Version
+				refreshed.Licensed = st.Licensed
+				refreshed.APIPort = st.APIPort
+				m.onObservation(refreshed)
+			}(obs)
+		}
+		wg.Wait()
+		m.dir.ExpireDiscovered(discoveredMaxAge)
+	}
+}
+
+const (
+	discoveredRefreshInterval = 20 * time.Second
+	// discoveredMaxAge is how long an unpaired node stays listed after its
+	// last successful observation or probe.
+	discoveredMaxAge = 3 * time.Minute
+)
+
 // gossipLoop exchanges member tables every 15 seconds, or sooner when woken
 // by a membership change.
 func (m *Manager) gossipLoop() {
@@ -939,8 +993,16 @@ func (m *Manager) joinTargets(clusterUUID, address string) []string {
 		}
 		targets = append(targets, address)
 	}
-	for _, obs := range m.dir.Discovered(2 * time.Minute) {
+	discovered := m.dir.Discovered(discoveredMaxAge)
+	for _, obs := range discovered {
 		if obs.ClusterUUID == clusterUUID {
+			targets = append(targets, obs.Endpoint())
+		}
+	}
+	// A node whose membership we have not refreshed yet may still be a
+	// member; the join handler refuses a wrong cluster, so trying costs little.
+	for _, obs := range discovered {
+		if obs.ClusterUUID != clusterUUID && !containsString(targets, obs.Endpoint()) {
 			targets = append(targets, obs.Endpoint())
 		}
 	}
@@ -1081,7 +1143,7 @@ func (m *Manager) Invite(ctx context.Context, nodeUUID, code, address string) (M
 			target = net.JoinHostPort(target, strconv.Itoa(portOf(DefaultListenAddr)))
 		}
 	} else {
-		for _, obs := range m.dir.Discovered(5 * time.Minute) {
+		for _, obs := range m.dir.Discovered(discoveredMaxAge) {
 			if obs.UUID == nodeUUID {
 				target = obs.Endpoint()
 				break

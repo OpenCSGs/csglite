@@ -247,7 +247,7 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 	}
 	// The local load failed: a peer that holds the model is the closest
 	// substitute, ahead of third-party providers and the cloud.
-	if s.cluster != nil && len(s.cluster.RemoteHolders(modelID)) > 0 {
+	if s.cluster != nil && s.cluster.RemoteHasModel(modelID) {
 		return s.clusterChatEngine(ctx, modelID, cluster.SourceCluster, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
 	}
 
@@ -328,7 +328,7 @@ func (s *Server) getEmbeddingEngine(ctx context.Context, modelID, source string,
 	if normalizedSource == "local" {
 		return nil, err
 	}
-	if s.cluster != nil && len(s.cluster.RemoteHolders(modelID)) > 0 {
+	if s.cluster != nil && s.cluster.RemoteHasModel(modelID) {
 		return s.clusterChatEngine(ctx, modelID, cluster.SourceCluster, numCtx, 0, nGPULayers, "", "", dtype)
 	}
 
