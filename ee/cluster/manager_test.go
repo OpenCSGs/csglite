@@ -703,8 +703,8 @@ func TestAutoFormJoinsWithoutAnyCommand(t *testing.T) {
 	if a.m.store.Cluster().UUID != derived || b.m.store.Cluster().UUID != derived {
 		t.Fatal("cluster uuid is not the derived one")
 	}
-	time.Sleep(600 * time.Millisecond)
-	if !stranger.m.store.InCluster() || stranger.m.store.Cluster().UUID == derived {
+	waitFor(t, "stranger to found its own cluster", func() bool { return stranger.m.store.InCluster() })
+	if stranger.m.store.Cluster().UUID == derived {
 		t.Fatal("a node with another secret must form its own cluster, not join this one")
 	}
 	if _, ok := a.m.store.Member(stranger.m.identity.UUID); ok {
