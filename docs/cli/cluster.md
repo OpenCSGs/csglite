@@ -32,7 +32,25 @@ csghub-lite cluster drain | activate | maintenance
 
 `status`、`nodes`、`discovered`、`models` 支持 `--json` 输出原始 JSON。
 
-## 两种入网方式
+## 最简单的方式：安装时指定共享密钥
+
+给所有盒子用同一个密钥安装，之后一切自动：
+
+```bash
+CSGHUB_LITE_CLUSTER_SECRET='机房一层-2026' CSGHUB_LITE_CLUSTER_NAME='机房一层' \
+  curl -fsSL https://.../install.sh | sh
+```
+
+安装脚本把密钥写入 `config.json`（等价于 `csghub-lite config set cluster_secret <密钥>`）。
+第一台启动的机器自动建群，后面启动的机器在网络上发现同一集群后自动加入；
+两台同时启动各自建群也会在几秒内自动合并成一个。集群 UUID 和加入令牌都由
+密钥派生，密钥本身不落盘、不上网，没有密钥的机器进不来。
+
+已装好的机器补设密钥：`csghub-lite config set cluster_secret <密钥>` 后
+`csghub-lite restart`。在自动组网的节点上执行 `cluster leave` 会暂停自动组网
+（否则几秒后又会加回来），再执行 `cluster join` 或 `create` 即恢复。
+
+## 其它两种入网方式
 
 **令牌入网**（适合批量部署的盒子）：在任一节点 `cluster create`，把打印出的
 `csgl1-<集群 UUID>-<密钥>` 令牌带到其它机器执行 `cluster join <token>`；
@@ -77,7 +95,9 @@ Web 界面「算力集群」页看到。
 
 | 变量 | 说明 |
 |---|---|
-| `CSGHUB_LITE_CLUSTER_JOIN_TOKEN` | 首次启动且未入集群时自动加入 |
+| `CSGHUB_LITE_CLUSTER_SECRET` | 共享密钥，同一密钥的机器自动组成一个集群（推荐） |
+| `CSGHUB_LITE_CLUSTER_NAME` | 自动组网时的集群显示名 |
+| `CSGHUB_LITE_CLUSTER_JOIN_TOKEN` | 首次启动且未入集群时用令牌自动加入 |
 | `CSGHUB_LITE_CLUSTER_ADDR` | 节点间监听地址，默认 `:11438` |
 | `CSGHUB_LITE_CLUSTER_SEEDS` | 逗号分隔的成员地址，多播不可用时使用 |
 | `CSGHUB_LITE_CLUSTER_DISCOVERY` | `mdns`（默认）或 `none` |

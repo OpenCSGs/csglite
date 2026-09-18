@@ -39,6 +39,8 @@ csghub-lite config set <key> <value>
 | `dataset_dir` | `~/.csghub-lite/datasets` | 实际数据集存储目录，通常由 `storage_dir` 自动派生 |
 | `listen_addr` | `:11435` | API 服务监听地址 |
 | `token` | （空） | CSGHub 访问令牌 |
+| `cluster_secret` | （空） | 局域网算力集群的共享密钥（至少 8 位）；同一密钥的机器自动组成一个集群，改后需 `csghub-lite restart` |
+| `cluster_name` | `CSGLite Cluster` | 自动组网时集群的显示名 |
 
 ## 配置文件
 

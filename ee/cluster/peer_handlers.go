@@ -378,7 +378,7 @@ func (m *Manager) handlePeerInference(w http.ResponseWriter, r *http.Request) {
 	r2.URL.RawPath = ""
 	r2.RequestURI = ""
 	w.Header().Set(NodeHeader, m.identity.UUID)
-	w.Header().Set(NodeNameHeader, m.identity.Name)
+	w.Header().Set(NodeNameHeader, m.identity.DisplayName())
 	m.opts.Host.InferenceHandler().ServeHTTP(w, r2)
 }
 

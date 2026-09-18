@@ -279,7 +279,26 @@ cluster/
 
 ## 6. 配对与安全
 
-### 6.1 两种入网方式，一套握手
+### 6.1 三种入网方式，一套握手
+
+**方式 0：共享密钥自动组网（已定为默认交付方式）**
+
+安装时指定 `CSGHUB_LITE_CLUSTER_SECRET`（安装脚本写入 `config.json` 的
+`cluster.secret`，也可 `csghub-lite config set cluster_secret`）。集群 UUID 由
+密钥经 UUIDv5 派生，加入令牌的密钥部分由密钥经 HMAC 派生，因此所有持有同一
+密钥的节点对"集群是谁、令牌是什么"有一致答案，而密钥本身既不落盘也不上网：
+
+1. 节点启动后先监听发现结果 8–14 秒（含按 UUID 的固定抖动），看到有节点广播
+   派生出的集群 UUID 就用派生令牌走方式 A 的握手加入；
+2. 宽限期内没看到就自己建群（`CreateDerived`），之后成为别人的加入目标；
+3. 两台同时建群会得到同一个集群 UUID 的两个单节点集群；任一方在发现列表里
+   看到"同集群 UUID 但不在我成员表里"的节点，就对它发起同一握手并把成员表
+   取并集（`mergeVia`），几秒内合并为一个集群；
+4. 节点被操作者显式 `leave` 时暂停自动组网（`settings.auto_form_paused`），
+   避免几秒后被自动拉回；任何 `create` / `join` 恢复；
+5. 节点已在另一个（非派生）集群时，自动组网不干预，操作者的决定优先。
+
+节点数配额照常在接收加入的一侧校验。
 
 **方式 A：令牌入网（推荐用于盒子批量部署）**
 
@@ -890,7 +909,8 @@ PR 清单：配额条目 `Gated: true`、加入 / 邀请入口的配额校验、
 > 节点转发引擎与失败切换、会话亲和、`/api/cluster/*`、`/cluster/v1/*`、
 > `csghub-lite cluster` CLI、节点数配额、OpenAPI）；阶段二的 Dashboard 集群区块、
 > 集群管理页与 i18n 已实现；阶段三中的"同步到节点"（远程 pull）、模型源一致性
-> 检查、副本放置建议、`drain` / `maintenance`、文档已实现；provider pool 成员的
+> 检查、副本放置建议、`drain` / `maintenance`、共享密钥自动组网（6.1 方式 0，含
+> 并行建群合并、安装脚本写入配置）、文档已实现；provider pool 成员的
 > `source` 可以填 `cluster` 或 `node:<uuid>`（成员引擎走同一个 `getChatEngine`）。
 > 未做：UDP 广播兜底、LRU 副本回收、Chat 页来源徽标、可观测性节点列、安装器
 > 防火墙规则。

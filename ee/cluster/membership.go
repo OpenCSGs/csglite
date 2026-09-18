@@ -80,6 +80,10 @@ type Settings struct {
 	// StaticAddresses maps a member UUID to a host:port the operator pinned,
 	// for networks that do not forward multicast.
 	StaticAddresses map[string]string `json:"static_addresses"`
+	// AutoFormPaused is set when an operator explicitly leaves a cluster on
+	// a secret-provisioned node, so automatic formation does not pull the
+	// node straight back in. Creating or joining a cluster clears it.
+	AutoFormPaused bool `json:"auto_form_paused,omitempty"`
 }
 
 func defaultSettings() Settings {
@@ -340,11 +344,31 @@ func (st *Store) Create(name string) (ClusterInfo, string, error) {
 	st.data.Members = []Member{}
 	st.data.Tombstones = nil
 	st.data.NodeCode = nil
+	st.data.Settings.AutoFormPaused = false
 	st.joinToken = token
 	if err := st.saveLocked(); err != nil {
 		return ClusterInfo{}, "", err
 	}
 	return info, token, nil
+}
+
+// CreateDerived founds a cluster with an identity and join-token hash that
+// were derived from a shared secret, so every node with the secret founds or
+// joins the very same cluster.
+func (st *Store) CreateDerived(info ClusterInfo, tokenHash string) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.data.Cluster != nil {
+		return ErrAlreadyClustered
+	}
+	st.data.Cluster = &info
+	st.data.JoinTokenHash = tokenHash
+	st.data.Members = []Member{}
+	st.data.Tombstones = nil
+	st.data.NodeCode = nil
+	st.data.Settings.AutoFormPaused = false
+	st.joinToken = ""
+	return st.saveLocked()
 }
 
 // Adopt makes this node a member of an existing cluster with the given
@@ -360,6 +384,7 @@ func (st *Store) Adopt(info ClusterInfo, tokenHash string, members []Member, sel
 	if tokenHash != "" {
 		st.data.JoinTokenHash = tokenHash
 	}
+	st.data.Settings.AutoFormPaused = false
 	st.data.NodeCode = nil
 	st.data.Tombstones = nil
 	st.data.Members = []Member{}

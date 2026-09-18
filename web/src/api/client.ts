@@ -3490,6 +3490,8 @@ export interface ClusterView {
   members: ClusterNodeView[];
   discovered_count: number;
   model_source_mixed: boolean;
+  auto_form?: boolean;
+  auto_form_paused?: boolean;
 }
 
 export interface ClusterCreateResponse {

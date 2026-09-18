@@ -959,9 +959,29 @@ restart_running_csghub_lite_server() {
     return 0
 }
 
+# apply_cluster_secret persists CSGHUB_LITE_CLUSTER_SECRET (and the optional
+# CSGHUB_LITE_CLUSTER_NAME) into config.json so machines installed with the
+# same secret form one LAN compute cluster automatically, however the service
+# is started later.
+apply_cluster_secret() {
+    _server_bin="$1"
+    if [ -z "${CSGHUB_LITE_CLUSTER_SECRET:-}" ]; then
+        return 0
+    fi
+    if "$_server_bin" config set cluster_secret "$CSGHUB_LITE_CLUSTER_SECRET" >/dev/null 2>&1; then
+        info "Cluster secret saved; this machine will join the cluster of every machine installed with the same secret."
+    else
+        warn "Could not save the cluster secret. Run: ${_server_bin} config set cluster_secret <secret>"
+    fi
+    if [ -n "${CSGHUB_LITE_CLUSTER_NAME:-}" ]; then
+        "$_server_bin" config set cluster_name "$CSGHUB_LITE_CLUSTER_NAME" >/dev/null 2>&1 || true
+    fi
+}
+
 start_csghub_lite_server() {
     _server_bin="$1"
     _restarted=false
+    apply_cluster_secret "$_server_bin"
     if restart_running_csghub_lite_server "$_server_bin"; then
         _restarted=true
     elif [ "${SERVER_START_STATUS:-}" = "stale" ]; then

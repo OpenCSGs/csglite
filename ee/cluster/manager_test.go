@@ -96,15 +96,21 @@ type testNode struct {
 }
 
 func startNode(t *testing.T, bus *MemoryBus, name string, host *fakeHost) *testNode {
+	return startNodeWith(t, bus, name, host, func(*Options) {})
+}
+
+func startNodeWith(t *testing.T, bus *MemoryBus, name string, host *fakeHost, tweak func(*Options)) *testNode {
 	t.Helper()
 	host.name = name
-	m, err := New(Options{
+	opts := Options{
 		Dir:        t.TempDir(),
 		Host:       host,
 		Discoverer: bus.NewDiscoverer(mustAddr("127.0.0.1")),
 		ListenAddr: "127.0.0.1:0",
 		Logf:       func(format string, args ...any) { t.Logf(format, args...) },
-	})
+	}
+	tweak(&opts)
+	m, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,4 +580,109 @@ func TestPerfRates(t *testing.T) {
 	if d, p := perfRates(start, perfSample{ok: false}); d != 0 || p != 0 {
 		t.Fatal("failed request produced a sample")
 	}
+}
+
+func shortAutoForm(t *testing.T, grace, jitter, interval time.Duration) {
+	t.Helper()
+	g, j, i := autoFormGrace, autoFormMaxJitter, autoFormInterval
+	autoFormGrace, autoFormMaxJitter, autoFormInterval = grace, jitter, interval
+	t.Cleanup(func() { autoFormGrace, autoFormMaxJitter, autoFormInterval = g, j, i })
+}
+
+func TestDeriveAutoFormIsStableAndSecretNeverAppears(t *testing.T) {
+	uuid1, token1, err := DeriveAutoForm("lab-shared-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uuid2, token2, _ := DeriveAutoForm("lab-shared-secret")
+	if uuid1 != uuid2 || token1 != token2 {
+		t.Fatal("derivation is not deterministic")
+	}
+	other, _, _ := DeriveAutoForm("another-secret!")
+	if other == uuid1 {
+		t.Fatal("different secrets derive the same cluster")
+	}
+	if strings.Contains(token1, "lab-shared-secret") {
+		t.Fatal("the shared secret must not appear in the token")
+	}
+	if cu, _, err := ParseJoinToken(token1); err != nil || cu != uuid1 {
+		t.Fatalf("derived token does not parse to the derived cluster: %v", err)
+	}
+	if _, _, err := DeriveAutoForm("short"); err == nil {
+		t.Fatal("short secret accepted")
+	}
+}
+
+func TestAutoFormJoinsWithoutAnyCommand(t *testing.T) {
+	shortAutoForm(t, 400*time.Millisecond, 200*time.Millisecond, 200*time.Millisecond)
+	bus := NewMemoryBus()
+	withSecret := func(secret string) func(*Options) {
+		return func(o *Options) { o.AutoFormSecret = secret; o.AutoFormName = "Lab" }
+	}
+	a := startNodeWith(t, bus, "alpha", &fakeHost{licensed: true}, withSecret("lab-shared-secret"))
+	// b starts after a has had time to found the cluster.
+	waitFor(t, "a to found", func() bool { return a.m.store.InCluster() })
+	b := startNodeWith(t, bus, "beta", &fakeHost{licensed: true}, withSecret("lab-shared-secret"))
+	stranger := startNodeWith(t, bus, "gamma", &fakeHost{licensed: true}, withSecret("a-different-secret"))
+	waitFor(t, "b to join a", func() bool {
+		_, ok := a.m.store.Member(b.m.identity.UUID)
+		return ok && b.m.store.InCluster()
+	})
+	if c := a.m.store.Cluster(); c.Name != "Lab" {
+		t.Fatalf("cluster name %q", c.Name)
+	}
+	derived, _, _ := DeriveAutoForm("lab-shared-secret")
+	if a.m.store.Cluster().UUID != derived || b.m.store.Cluster().UUID != derived {
+		t.Fatal("cluster uuid is not the derived one")
+	}
+	time.Sleep(600 * time.Millisecond)
+	if !stranger.m.store.InCluster() || stranger.m.store.Cluster().UUID == derived {
+		t.Fatal("a node with another secret must form its own cluster, not join this one")
+	}
+	if _, ok := a.m.store.Member(stranger.m.identity.UUID); ok {
+		t.Fatal("stranger was admitted")
+	}
+	// An explicit leave pauses automatic formation; it does not snap back.
+	if err := b.m.Leave(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(700 * time.Millisecond)
+	if b.m.store.InCluster() {
+		t.Fatal("automatic formation re-joined a node that was told to leave")
+	}
+	view := b.m.View(context.Background())
+	if !view.AutoForm || !view.AutoFormPaused {
+		t.Fatalf("view %+v", view)
+	}
+	// Joining again (any way) resumes it.
+	_, token, _ := DeriveAutoForm("lab-shared-secret")
+	if _, err := b.m.Join(context.Background(), token, ""); err != nil {
+		t.Fatal(err)
+	}
+	if b.m.store.Settings().AutoFormPaused {
+		t.Fatal("pause not cleared by an explicit join")
+	}
+}
+
+func TestAutoFormMergesClustersFoundedInParallel(t *testing.T) {
+	// No grace and no jitter: both nodes found a one-node cluster at once.
+	shortAutoForm(t, 0, 0, 200*time.Millisecond)
+	bus := NewMemoryBus()
+	secret := func(o *Options) { o.AutoFormSecret = "lab-shared-secret" }
+	a := startNodeWith(t, bus, "alpha", &fakeHost{licensed: true}, secret)
+	b := startNodeWith(t, bus, "beta", &fakeHost{licensed: true}, secret)
+	waitFor(t, "both to found", func() bool { return a.m.store.InCluster() && b.m.store.InCluster() })
+	waitFor(t, "the two clusters to merge", func() bool {
+		_, ab := a.m.store.Member(b.m.identity.UUID)
+		_, ba := b.m.store.Member(a.m.identity.UUID)
+		return ab && ba
+	})
+	if a.m.store.Cluster().UUID != b.m.store.Cluster().UUID {
+		t.Fatal("merged nodes disagree on the cluster uuid")
+	}
+	waitFor(t, "healthy mesh", func() bool {
+		ra, _ := a.m.dir.Get(b.m.identity.UUID)
+		rb, _ := b.m.dir.Get(a.m.identity.UUID)
+		return ra.Health == HealthHealthy && rb.Health == HealthHealthy
+	})
 }

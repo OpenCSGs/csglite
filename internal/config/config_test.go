@@ -742,3 +742,50 @@ func TestSetModelSettingsDropsEmptyEntries(t *testing.T) {
 		t.Fatalf("Models still holds an empty entry: %+v", inference.Models)
 	}
 }
+
+func TestClusterConfigRoundTripAndEnvOverride(t *testing.T) {
+	dir := setupTestDir(t)
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	cfg := &Config{ModelDir: filepath.Join(dir, "models"), Cluster: ClusterConfig{Secret: "lab-secret", Name: "机房一层"}}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	cfgPath, err := ConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk map[string]any
+	if err := json.Unmarshal(raw, &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	section, ok := onDisk["cluster"].(map[string]any)
+	if !ok || section["secret"] != "lab-secret" || section["name"] != "机房一层" {
+		t.Fatalf("cluster section on disk: %v", onDisk["cluster"])
+	}
+	var loaded Config
+	if err := json.Unmarshal(raw, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Cluster != cfg.Cluster {
+		t.Fatalf("round trip %+v != %+v", loaded.Cluster, cfg.Cluster)
+	}
+	// A config without the section still loads, and the environment overrides.
+	var legacy Config
+	if err := json.Unmarshal([]byte(`{"server_url":"https://hub.opencsg.com"}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Cluster.Secret != "" {
+		t.Fatal("legacy config grew a secret")
+	}
+	t.Setenv(EnvClusterSecret, "from-env")
+	t.Setenv(EnvClusterName, "env-name")
+	ApplyEnvironmentDefaults(&loaded)
+	if loaded.Cluster.Secret != "from-env" || loaded.Cluster.Name != "env-name" {
+		t.Fatalf("env override %+v", loaded.Cluster)
+	}
+}

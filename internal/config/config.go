@@ -28,6 +28,8 @@ const (
 	EnvCloudProviderName       = "CSGHUB_LITE_CLOUD_PROVIDER_NAME"
 	EnvOpenAIStreamDefault     = "CSGHUB_LITE_OPENAI_STREAM_DEFAULT"
 	EnvHiddenNavItems          = "CSGHUB_LITE_HIDDEN_NAV_ITEMS"
+	EnvClusterSecret           = "CSGHUB_LITE_CLUSTER_SECRET"
+	EnvClusterName             = "CSGHUB_LITE_CLUSTER_NAME"
 	EnvHuggingFaceEndpoint     = "HF_ENDPOINT"
 	EnvHuggingFaceToken        = "HF_TOKEN"
 	EnvHuggingFaceHubToken     = "HUGGING_FACE_HUB_TOKEN"
@@ -80,17 +82,22 @@ type Config struct {
 	Observability            ObservabilityConfig                `json:"observability,omitempty"`
 	Inference                InferenceConfig                    `json:"inference,omitempty"`
 	Realtime                 RealtimeConfig                     `json:"realtime,omitempty"`
-	DesktopMode              bool                               `json:"-"`
-	DesktopToken             string                             `json:"-"`
-	DesktopSessionToken      string                             `json:"-"`
-	DesktopControlToken      string                             `json:"-"`
-	DesktopInstanceID        string                             `json:"-"`
-	ListenAddrOverride       string                             `json:"-"`
-	BoundAddr                string                             `json:"-"`
-	DesktopAPIAddr           string                             `json:"-"`
-	DesktopAPIBindAddr       string                             `json:"-"`
-	DesktopAPIBoundAddr      string                             `json:"-"`
-	AuthCallbackAddr         string                             `json:"-"`
+	// Cluster holds the LAN compute cluster settings that must survive
+	// however the service is launched (systemd, launchd, `csghub-lite
+	// start`): the shared secret that forms the cluster automatically.
+	// Membership itself is runtime state and lives in <storage>/cluster/.
+	Cluster             ClusterConfig `json:"cluster,omitempty"`
+	DesktopMode         bool          `json:"-"`
+	DesktopToken        string        `json:"-"`
+	DesktopSessionToken string        `json:"-"`
+	DesktopControlToken string        `json:"-"`
+	DesktopInstanceID   string        `json:"-"`
+	ListenAddrOverride  string        `json:"-"`
+	BoundAddr           string        `json:"-"`
+	DesktopAPIAddr      string        `json:"-"`
+	DesktopAPIBindAddr  string        `json:"-"`
+	DesktopAPIBoundAddr string        `json:"-"`
+	AuthCallbackAddr    string        `json:"-"`
 }
 
 func (c *Config) EffectiveListenAddr() string {
@@ -250,6 +257,16 @@ func migrateLegacyModelSettings(c *InferenceConfig) {
 // once. Each one can hold a recognition and a synthesis model, so the cap is
 // about memory, not about request rate.
 const DefaultRealtimeMaxSessions = 4
+
+// ClusterConfig is the provisioning side of the LAN compute cluster
+// (docs/guides/lan-cluster-design.md). Nodes installed with the same Secret
+// find each other over the network and form one cluster without any create
+// or join step; the secret is the credential, so keep it private.
+type ClusterConfig struct {
+	Secret string `json:"secret,omitempty"`
+	// Name is the display name given to an automatically formed cluster.
+	Name string `json:"name,omitempty"`
+}
 
 // RealtimeConfig groups the settings of the realtime voice API
 // (docs/guides/realtime-audio-api.md). Per-model defaults such as voice and
@@ -557,6 +574,15 @@ func ApplyEnvironmentDefaults(cfg *Config) {
 	}
 	cfg.OpenAIStreamDefault = environmentBool(EnvOpenAIStreamDefault, cfg.OpenAIStreamDefault)
 	cfg.HiddenNavItems = parseHiddenNavItems(os.Getenv(EnvHiddenNavItems))
+	// The cluster secret from the environment wins over the file: an
+	// operator who exports it for a service unit expects that value to be
+	// the one in effect.
+	if value := strings.TrimSpace(os.Getenv(EnvClusterSecret)); value != "" {
+		cfg.Cluster.Secret = value
+	}
+	if value := strings.TrimSpace(os.Getenv(EnvClusterName)); value != "" {
+		cfg.Cluster.Name = value
+	}
 }
 
 func parseHiddenNavItems(value string) []string {

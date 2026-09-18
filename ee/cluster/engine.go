@@ -390,7 +390,7 @@ func (e *clusterEngine) LastExplain() Explain {
 func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 	var out []Candidate
 	local := m.cachedLocalStatus(ctx)
-	out = append(out, Candidate{UUID: m.identity.UUID, Name: m.identity.Name, Local: true, Status: local, Health: HealthHealthy, Breaker: m.dir.ModelBroken(m.identity.UUID, model)})
+	out = append(out, Candidate{UUID: m.identity.UUID, Name: m.identity.DisplayName(), Local: true, Status: local, Health: HealthHealthy, Breaker: m.dir.ModelBroken(m.identity.UUID, model)})
 	now := time.Now()
 	for _, rt := range m.dir.Snapshot() {
 		if _, ok := m.store.Member(rt.UUID); !ok {
@@ -865,7 +865,7 @@ func (m *Manager) Models(ctx context.Context) []ClusterModel {
 			cm.Nodes = append(cm.Nodes, ModelNode{UUID: uuid, Name: name, Loaded: ms.Loaded, Online: online, Local: local})
 		}
 	}
-	add(m.identity.UUID, m.identity.Name, true, true, m.cachedLocalStatus(ctx))
+	add(m.identity.UUID, m.identity.DisplayName(), true, true, m.cachedLocalStatus(ctx))
 	for _, rt := range m.dir.Snapshot() {
 		mem, ok := m.store.Member(rt.UUID)
 		if !ok {

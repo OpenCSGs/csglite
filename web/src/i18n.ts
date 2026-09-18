@@ -1826,6 +1826,9 @@ export const en: Record<string, string> = {
 
   "cluster.createTitle": "Create a cluster",
   "cluster.createDesc": "Make this machine the first member. You will get a join token to run on the other machines.",
+  "cluster.autoFormTitle": "Automatic clustering is on",
+  "cluster.autoFormDesc": "This machine was installed with a shared cluster secret. It joins the cluster of every machine with the same secret by itself, usually within a few seconds of starting; nothing needs to be created or joined here.",
+  "cluster.autoFormPaused": "This machine was installed with a shared cluster secret, but automatic clustering is paused because the cluster was left explicitly. Join or create a cluster to resume it.",
   "cluster.createName": "Cluster name",
   "cluster.createNamePlaceholder": "e.g. office-lab",
   "cluster.createNameRequired": "Enter a cluster name.",
@@ -3782,6 +3785,9 @@ export const zh: Record<string, string> = {
 
   "cluster.createTitle": "创建集群",
   "cluster.createDesc": "让本机成为第一个成员，创建后会得到一个加入令牌，在其他机器上使用。",
+  "cluster.autoFormTitle": "已启用自动组网",
+  "cluster.autoFormDesc": "本机安装时指定了共享密钥，会在启动后几秒内自动加入所有使用同一密钥的机器组成的集群，无需在这里创建或加入。",
+  "cluster.autoFormPaused": "本机安装时指定了共享密钥，但因为手动离开了集群，自动组网已暂停。重新加入或创建集群即可恢复。",
   "cluster.createName": "集群名称",
   "cluster.createNamePlaceholder": "例如 office-lab",
   "cluster.createNameRequired": "请输入集群名称。",

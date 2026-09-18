@@ -96,7 +96,12 @@ func newClusterManager(s *Server, storageRoot string) *cluster.Manager {
 		Seeds:         seeds,
 		JoinToken:     strings.TrimSpace(os.Getenv(EnvClusterJoinToken)),
 		AdvertiseHost: strings.TrimSpace(os.Getenv(EnvClusterAdvertiseHost)),
-		Logf:          log.Printf,
+		// The shared secret comes from config.json (installer or
+		// `config set cluster_secret`), with CSGHUB_LITE_CLUSTER_SECRET
+		// applied on top by config.ApplyEnvironmentDefaults.
+		AutoFormSecret: strings.TrimSpace(s.cfg.Cluster.Secret),
+		AutoFormName:   strings.TrimSpace(s.cfg.Cluster.Name),
+		Logf:           log.Printf,
 	})
 	if err != nil {
 		log.Printf("cluster: disabled: %v", err)

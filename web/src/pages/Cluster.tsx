@@ -625,12 +625,23 @@ function CopyButton({ text, id, tone = "gray" }: { text: string; id: string; ton
 
 // ---- not in a cluster ------------------------------------------------------
 
+function AutoFormNotice({ view }: { view: ClusterView }) {
+  if (!view.auto_form) return null;
+  return (
+    <div class="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+      <div class="font-semibold">{t("cluster.autoFormTitle")}</div>
+      <p class="mt-1 text-indigo-800">{view.auto_form_paused ? t("cluster.autoFormPaused") : t("cluster.autoFormDesc")}</p>
+    </div>
+  );
+}
+
 function NotInCluster({ view }: { view: ClusterView }) {
   const code = admissionCode.value;
   const remaining = codeCountdown.value ?? secondsUntil(code?.expires_at);
   return (
     <>
       <CapBanner />
+      <AutoFormNotice view={view} />
       <div class="grid gap-6 lg:grid-cols-2">
         {/* Create */}
         <section class="bg-white rounded-xl border border-gray-200 p-6">

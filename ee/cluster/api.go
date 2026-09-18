@@ -55,6 +55,11 @@ type ClusterView struct {
 	Members            []NodeView   `json:"members"`
 	DiscoveredCount    int          `json:"discovered_count"`
 	ModelSourceMixed   bool         `json:"model_source_mixed"`
+	// AutoForm is true when this node was provisioned with a shared secret
+	// and forms its cluster automatically; AutoFormPaused when an operator
+	// left that cluster explicitly.
+	AutoForm       bool `json:"auto_form"`
+	AutoFormPaused bool `json:"auto_form_paused"`
 }
 
 // SummaryNode is a compact card for the dashboard.
@@ -188,13 +193,13 @@ func decodeJSON(r *http.Request, out any) error {
 // ---- views ----
 
 func (m *Manager) selfView() SelfView {
-	return SelfView{UUID: m.identity.UUID, Name: m.identity.Name, Version: m.opts.Host.Version(), ClusterPort: m.ListenPort(), APIPort: m.opts.Host.APIPort()}
+	return SelfView{UUID: m.identity.UUID, Name: m.identity.DisplayName(), Version: m.opts.Host.Version(), ClusterPort: m.ListenPort(), APIPort: m.opts.Host.APIPort()}
 }
 
 func (m *Manager) memberViews(ctx context.Context, withStatus bool) []NodeView {
 	local := m.cachedLocalStatus(ctx)
 	now := time.Now()
-	self := NodeView{UUID: m.identity.UUID, Name: m.identity.Name, Local: true, Health: HealthHealthy, Online: true, LastSeen: &now, APIPort: m.opts.Host.APIPort()}
+	self := NodeView{UUID: m.identity.UUID, Name: m.identity.DisplayName(), Local: true, Health: HealthHealthy, Online: true, LastSeen: &now, APIPort: m.opts.Host.APIPort()}
 	if withStatus {
 		self.Status = local
 	}
@@ -242,6 +247,8 @@ func (m *Manager) View(ctx context.Context) ClusterView {
 		Settings:           m.store.Settings(),
 		Members:            members,
 		DiscoveredCount:    len(m.dir.Discovered(discoveredMaxAge)),
+		AutoForm:           m.AutoFormEnabled(),
+		AutoFormPaused:     m.AutoFormEnabled() && m.store.Settings().AutoFormPaused,
 	}
 	var source *ModelSource
 	for _, mv := range members {

@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,6 +45,9 @@ type Identity struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
 
+	// nameMu guards Name, which the API may rename while discovery and
+	// status goroutines read it.
+	nameMu      sync.RWMutex
 	cert        tls.Certificate
 	leaf        *x509.Certificate
 	fingerprint string
@@ -159,14 +163,27 @@ func createIdentity(dir, name string) (*Identity, error) {
 	return loadIdentity(dir)
 }
 
+// DisplayName returns the node's current display name.
+func (id *Identity) DisplayName() string {
+	id.nameMu.RLock()
+	defer id.nameMu.RUnlock()
+	return id.Name
+}
+
 // SaveName persists a new display name for this node.
 func (id *Identity) SaveName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("node name cannot be empty")
 	}
+	id.nameMu.Lock()
+	defer id.nameMu.Unlock()
 	id.Name = name
-	raw, _ := json.MarshalIndent(id, "", "  ")
+	raw, _ := json.MarshalIndent(struct {
+		UUID      string    `json:"uuid"`
+		Name      string    `json:"name"`
+		CreatedAt time.Time `json:"created_at"`
+	}{id.UUID, id.Name, id.CreatedAt}, "", "  ")
 	return writeFileAtomic(filepath.Join(id.dir, identityFile), raw, 0o600)
 }
 

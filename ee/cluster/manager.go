@@ -74,6 +74,12 @@ type Options struct {
 	// JoinToken, when set and the node is unpaired, joins automatically at
 	// startup (CSGHUB_LITE_CLUSTER_JOIN_TOKEN).
 	JoinToken string
+	// AutoFormSecret, when set, forms the cluster automatically: every node
+	// provisioned with the same secret founds or joins the same derived
+	// cluster with no create or join step (see autoform.go). AutoFormName is
+	// the display name the founding node gives it.
+	AutoFormSecret string
+	AutoFormName   string
 	// AdvertiseHost, when set, is the host name or IP published to peers
 	// instead of the address the peer observed (for NAT-free but multi-homed
 	// boxes that should be reached on one interface).
@@ -132,7 +138,7 @@ func New(opts Options) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	if id.Name == genericNodeName {
+	if id.DisplayName() == genericNodeName {
 		// Several appliances with IP-style host names would otherwise all be
 		// called the same; the UUID prefix tells them apart in every list.
 		_ = id.SaveName(genericNodeName + "-" + shortUUID(id.UUID))
@@ -212,7 +218,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	if token := strings.TrimSpace(m.opts.JoinToken); token != "" && !m.store.InCluster() {
 		go m.autoJoin(token)
 	}
-	m.logf("cluster: node %s (%s) listening on :%d", shortUUID(m.identity.UUID), m.identity.Name, m.listenPort)
+	if m.AutoFormEnabled() {
+		go m.autoFormLoop()
+	}
+	m.logf("cluster: node %s (%s) listening on :%d", shortUUID(m.identity.UUID), m.identity.DisplayName(), m.listenPort)
 	return nil
 }
 
@@ -242,7 +251,7 @@ func (m *Manager) context() context.Context {
 func (m *Manager) announcement() Announcement {
 	a := Announcement{
 		UUID:        m.identity.UUID,
-		Name:        m.identity.Name,
+		Name:        m.identity.DisplayName(),
 		Version:     m.opts.Host.Version(),
 		Protocol:    ProtocolVersion,
 		ClusterPort: m.ListenPort(),
@@ -331,7 +340,7 @@ func (m *Manager) LocalStatus(ctx context.Context) Status {
 	st := m.opts.Host.LocalStatus(ctx)
 	settings := m.store.Settings()
 	st.UUID = m.identity.UUID
-	st.Name = m.identity.Name
+	st.Name = m.identity.DisplayName()
 	st.Version = m.opts.Host.Version()
 	st.Protocol = ProtocolVersion
 	if c := m.store.Cluster(); c != nil {
@@ -411,7 +420,7 @@ func (m *Manager) localAddrs() []string {
 func (m *Manager) card() nodeCard {
 	return nodeCard{
 		UUID:        m.identity.UUID,
-		Name:        m.identity.Name,
+		Name:        m.identity.DisplayName(),
 		CertPEM:     m.identity.CertPEM(),
 		Fingerprint: m.identity.Fingerprint(),
 		APIPort:     m.opts.Host.APIPort(),
@@ -977,8 +986,11 @@ func (m *Manager) Join(ctx context.Context, token, address string) (ClusterInfo,
 		}
 		lastErr = err
 		var pe *peerError
-		if errors.As(err, &pe) && (pe.Status == http.StatusForbidden || pe.Status == http.StatusUnauthorized || pe.Status == http.StatusConflict) {
-			// A definitive refusal; other members will say the same.
+		if errors.As(err, &pe) && pe.Body.Code != "wrong_cluster" && pe.Body.Code != "not_clustered" &&
+			(pe.Status == http.StatusForbidden || pe.Status == http.StatusUnauthorized || pe.Status == http.StatusConflict) {
+			// A definitive refusal (bad token, node cap); other members will
+			// say the same. A node that is simply not in that cluster is
+			// skipped and the next target tried.
 			return ClusterInfo{}, err
 		}
 	}
@@ -1017,10 +1029,13 @@ func (m *Manager) joinTargets(clusterUUID, address string) []string {
 	return targets
 }
 
-func (m *Manager) joinVia(ctx context.Context, addr, clusterUUID, key string) (ClusterInfo, error) {
+// joinHandshake performs the authenticated join exchange with a member at
+// addr and returns its reply and verified card. It does not change state;
+// joinVia adopts the reply and mergeVia unions it.
+func (m *Manager) joinHandshake(ctx context.Context, addr, clusterUUID, key string) (joinResponse, Member, error) {
 	nonce, err := randomNonce()
 	if err != nil {
-		return ClusterInfo{}, err
+		return joinResponse{}, Member{}, err
 	}
 	now := time.Now().Unix()
 	req := joinRequest{Node: m.card(), Nonce: nonce, TS: now}
@@ -1031,12 +1046,12 @@ func (m *Manager) joinVia(ctx context.Context, addr, clusterUUID, key string) (C
 	raw, _ := json.Marshal(req)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+addr+peerPathJoin+"?cluster="+clusterUUID, bytes.NewReader(raw))
 	if err != nil {
-		return ClusterInfo{}, err
+		return joinResponse{}, Member{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return ClusterInfo{}, fmt.Errorf("contacting %s: %w", addr, err)
+		return joinResponse{}, Member{}, fmt.Errorf("contacting %s: %w", addr, err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -1046,28 +1061,36 @@ func (m *Manager) joinVia(ctx context.Context, addr, clusterUUID, key string) (C
 		if pe.Body.Error == "" {
 			pe.Body.Error = strings.TrimSpace(string(body))
 		}
-		return ClusterInfo{}, pe
+		return joinResponse{}, Member{}, pe
 	}
 	var reply joinResponse
 	if err := json.Unmarshal(body, &reply); err != nil {
-		return ClusterInfo{}, fmt.Errorf("parsing join response: %w", err)
+		return joinResponse{}, Member{}, fmt.Errorf("parsing join response: %w", err)
 	}
 	if reply.Cluster.UUID != clusterUUID {
-		return ClusterInfo{}, errors.New("peer answered for a different cluster")
+		return joinResponse{}, Member{}, errors.New("peer answered for a different cluster")
 	}
 	// The TLS peer must be the responder it claims to be.
 	if resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {
-		return ClusterInfo{}, errors.New("peer presented no certificate")
+		return joinResponse{}, Member{}, errors.New("peer presented no certificate")
 	}
 	if got := CertFingerprint(resp.TLS.PeerCertificates[0]); got != reply.Responder.Fingerprint || uuidFromCert(resp.TLS.PeerCertificates[0]) != reply.Responder.UUID {
-		return ClusterInfo{}, errors.New("peer certificate does not match the responder's identity")
+		return joinResponse{}, Member{}, errors.New("peer certificate does not match the responder's identity")
 	}
-	members := make([]Member, 0, len(reply.Members)+1)
 	responder, err := m.memberFromCard(reply.Responder)
+	if err != nil {
+		return joinResponse{}, Member{}, err
+	}
+	responder.LastAddresses = append([]string{addr}, responder.LastAddresses...)
+	return reply, responder, nil
+}
+
+func (m *Manager) joinVia(ctx context.Context, addr, clusterUUID, key string) (ClusterInfo, error) {
+	reply, responder, err := m.joinHandshake(ctx, addr, clusterUUID, key)
 	if err != nil {
 		return ClusterInfo{}, err
 	}
-	responder.LastAddresses = append([]string{addr}, responder.LastAddresses...)
+	members := make([]Member, 0, len(reply.Members)+1)
 	members = append(members, responder)
 	for _, card := range reply.Members {
 		if card.UUID == m.identity.UUID || card.UUID == responder.UUID {
@@ -1218,10 +1241,15 @@ func (e *LimitError) Error() string {
 	return fmt.Sprintf("cluster is limited to %d nodes by the license (currently %d)", e.Limit, e.Current)
 }
 
-// Leave announces departure to every member and forgets the cluster.
+// Leave announces departure to every member and forgets the cluster. On a
+// secret-provisioned node it also pauses automatic formation, otherwise the
+// node would rejoin within seconds; creating or joining a cluster resumes it.
 func (m *Manager) Leave(ctx context.Context) error {
 	if !m.store.InCluster() {
 		return ErrNotClustered
+	}
+	if m.AutoFormEnabled() {
+		_, _ = m.store.UpdateSettings(func(s *Settings) { s.AutoFormPaused = true })
 	}
 	msg := leaveMessage{UUID: m.identity.UUID}
 	var wg sync.WaitGroup
@@ -1243,10 +1271,32 @@ func (m *Manager) Leave(ctx context.Context) error {
 }
 
 func (m *Manager) leaveLocally() error {
+	// Former members stay visible as discovered nodes of the cluster we
+	// left, so a re-join needs no fresh multicast announcement from them.
+	var former []Observation
+	if c := m.store.Cluster(); c != nil {
+		for _, mem := range m.store.Members() {
+			addrs := m.dir.Candidates(mem.UUID)
+			if len(addrs) == 0 {
+				continue
+			}
+			ip, err := netip.ParseAddr(endpointHost(addrs[0]))
+			if err != nil {
+				continue
+			}
+			former = append(former, Observation{
+				Announcement: Announcement{UUID: mem.UUID, ClusterUUID: c.UUID, Name: mem.Name, Protocol: ProtocolVersion, ClusterPort: portOf(addrs[0]), APIPort: mem.APIPort},
+				Addr:         ip, Seen: time.Now(), Source: "former-member",
+			})
+		}
+	}
 	if err := m.store.Leave(); err != nil && !errors.Is(err, ErrNotClustered) {
 		return err
 	}
 	m.dir.Reset()
+	for _, obs := range former {
+		m.dir.Observe(obs, func(string) bool { return false })
+	}
 	m.reannounce()
 	m.logf("cluster: left the cluster")
 	return nil
