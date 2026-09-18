@@ -665,8 +665,10 @@ CSGHub 同步一次，盒子之间不做 P2P。
 推理接口不新增路径：`/v1/chat/completions`、`/v1/embeddings`、`/v1/messages`、
 `/v1/responses`、`/api/chat` 的 `source` 接受 `cluster` 与 `node:<uuid>`；
 provider 路由族新增 `/providers/cluster/v1/*` 与 `/providers/node:<uuid>/v1/*`
-（复用 `registerProviderInferenceRoutes`）。图像、语音第一期不参与集群路由，
-对 `cluster` 来源返回与 pool 相同的 `providerPoolRouteUnsupported`。
+（复用 `registerProviderInferenceRoutes`）。语音识别 `/v1/audio/transcriptions`
+与语音合成 `/v1/audio/speech` 走同一套"按 model + source 取引擎"的解析
+（`getASREngine` / `getTTSEngine` 与 `getChatEngine` 同构），集群只是又一种引擎，
+handler 不感知；图像生成第一期不参与集群路由。
 
 以上全部同步到 `openapi/local-api.json`，由 `openapi_sync_test.go` 兜底。
 
@@ -916,7 +918,7 @@ PR 清单：配额条目 `Gated: true`、加入 / 邀请入口的配额校验、
 > 节点转发引擎与失败切换、会话亲和、`/api/cluster/*`、`/cluster/v1/*`、
 > `csghub-lite cluster` CLI、节点数配额、OpenAPI）；阶段二的 Dashboard 集群区块、
 > 集群管理页与 i18n 已实现；阶段三中的"同步到节点"（远程 pull）、模型源一致性
-> 检查、副本放置建议、`drain` / `maintenance`、默认休眠与显式启用（5.3）、共享密钥自动组网（6.1 方式 0，含
+> 检查、副本放置建议、`drain` / `maintenance`、默认休眠与显式启用（5.3）、语音识别与合成路由（8.1）、共享密钥自动组网（6.1 方式 0，含
 > 并行建群合并、安装脚本写入配置）、文档已实现；provider pool 成员的
 > `source` 可以填 `cluster` 或 `node:<uuid>`（成员引擎走同一个 `getChatEngine`）。
 > 未做：UDP 广播兜底、LRU 副本回收、Chat 页来源徽标、可观测性节点列、安装器

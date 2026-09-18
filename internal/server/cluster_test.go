@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"mime/multipart"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -223,5 +224,95 @@ func TestClusterLocalStatusReportsLoadedModels(t *testing.T) {
 	}
 	if st.ModelSource.ServerURL != "https://hub.opencsg.com" {
 		t.Fatalf("model source %+v", st.ModelSource)
+	}
+}
+
+// fakeASREngine answers every transcription with a fixed text.
+type fakeASREngine struct{ text string }
+
+func (f *fakeASREngine) Transcribe(context.Context, api.OpenAIAudioTranscriptionRequest) (*api.OpenAIAudioTranscriptionResponse, error) {
+	return &api.OpenAIAudioTranscriptionResponse{Text: f.text, Language: "zh"}, nil
+}
+
+func (f *fakeASREngine) TranscribeStream(_ context.Context, _ api.OpenAIAudioTranscriptionRequest, onChunk func(api.OpenAIAudioTranscriptionResponse) error) error {
+	return onChunk(api.OpenAIAudioTranscriptionResponse{Text: f.text})
+}
+func (f *fakeASREngine) Close() error      { return nil }
+func (f *fakeASREngine) ModelName() string { return "fake-asr" }
+
+func TestClusterRoutesTranscriptionThroughTheSameResolver(t *testing.T) {
+	bus := cluster.NewMemoryBus()
+	a := newClusterTestServer(t, bus)
+	b := newClusterTestServer(t, bus)
+	mustSaveLocalModel(t, a.cfg.ModelDir, &model.LocalModel{Namespace: "Qwen", Name: "Qwen3-ASR-0.6B", Format: model.FormatPyTorch, Size: 1 << 30, PipelineTag: "automatic-speech-recognition", Files: []string{"model.safetensors"}, DownloadedAt: time.Unix(100, 0)})
+	storageID := "Qwen/Qwen3-ASR-0.6B"
+	publicID := a.localInferenceModelID(storageID)
+	a.mu.Lock()
+	a.asrEngines[storageID] = &managedASREngine{engine: &fakeASREngine{text: "你好 集群"}, lastUsed: time.Now(), keepAlive: -1}
+	a.mu.Unlock()
+
+	rec := httptest.NewRecorder()
+	a.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/cluster", strings.NewReader(`{"name":"Lab"}`)))
+	var created struct {
+		JoinToken string `json:"join_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	clusterWait(t, "b to discover a", func() bool { return len(b.cluster.DiscoveredNodes()) == 1 })
+	rec = httptest.NewRecorder()
+	joinBody, _ := json.Marshal(map[string]string{"token": created.JoinToken})
+	b.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/cluster/join", bytes.NewReader(joinBody)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("join %d %s", rec.Code, rec.Body)
+	}
+	clusterWait(t, "b to see a's ASR model loaded", func() bool {
+		rt, ok := b.cluster.Directory().Get(a.cluster.Identity().UUID)
+		if !ok || rt.Status == nil {
+			return false
+		}
+		ms, ok := rt.Status.Model(publicID)
+		return ok && ms.Loaded && ms.Slots == 1
+	})
+
+	// A multipart upload on B for a model only A holds goes to A.
+	var form bytes.Buffer
+	mw := multipart.NewWriter(&form)
+	part, _ := mw.CreateFormFile("file", "hello.wav")
+	_, _ = part.Write([]byte("RIFF....WAVEfmt fake"))
+	_ = mw.WriteField("model", publicID)
+	_ = mw.WriteField("response_format", "json")
+	_ = mw.Close()
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", bytes.NewReader(form.Bytes()))
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	b.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "你好 集群") {
+		t.Fatalf("routed transcription %d %s", rec.Code, rec.Body)
+	}
+	if rec.Header().Get(cluster.NodeHeader) != a.cluster.Identity().UUID {
+		t.Fatalf("missing node header: %v", rec.Header())
+	}
+	// Streaming takes the same route.
+	_ = mw
+	var form2 bytes.Buffer
+	mw2 := multipart.NewWriter(&form2)
+	part2, _ := mw2.CreateFormFile("file", "hello.wav")
+	_, _ = part2.Write([]byte("RIFF....WAVEfmt fake"))
+	_ = mw2.WriteField("model", publicID)
+	_ = mw2.WriteField("stream", "true")
+	_ = mw2.Close()
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", bytes.NewReader(form2.Bytes()))
+	req.Header.Set("Content-Type", mw2.FormDataContentType())
+	b.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "你好 集群") || !strings.Contains(rec.Body.String(), `"done":true`) {
+		t.Fatalf("routed stream %d %s", rec.Code, rec.Body)
+	}
+	// On A itself the model is local and stays local.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", bytes.NewReader(form.Bytes()))
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	a.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Header().Get(cluster.NodeHeader) != "" {
+		t.Fatalf("local transcription %d header=%q %s", rec.Code, rec.Header().Get(cluster.NodeHeader), rec.Body)
 	}
 }

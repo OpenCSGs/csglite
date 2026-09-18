@@ -266,11 +266,19 @@ func (m *Manager) View(ctx context.Context) ClusterView {
 			source = &s
 			continue
 		}
-		if mv.Status.ModelSource != *source {
+		if !sameModelSource(mv.Status.ModelSource, *source) {
 			v.ModelSourceMixed = true
 		}
 	}
 	return v
+}
+
+// sameModelSource compares the registries that decide which bytes a model
+// id resolves to. Hugging Face mirrors serve identical files, so the HF
+// endpoint (auto-selected by region) is not part of the comparison.
+func sameModelSource(a, b ModelSource) bool {
+	return strings.TrimSuffix(a.ServerURL, "/") == strings.TrimSuffix(b.ServerURL, "/") &&
+		strings.TrimSuffix(a.ModelScopeEndpoint, "/") == strings.TrimSuffix(b.ModelScopeEndpoint, "/")
 }
 
 // Summary is GET /api/cluster/summary.

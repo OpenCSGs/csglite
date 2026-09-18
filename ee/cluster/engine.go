@@ -65,6 +65,10 @@ func (e *ErrNoNode) Error() string {
 // ErrNoNodeCode is the machine-readable code for ErrNoNode.
 const ErrNoNodeCode = "cluster_no_available_node"
 
+// ErrServeLocally tells the caller that the scheduler chose this node, so
+// the request should run through the ordinary local path.
+var ErrServeLocally = errors.New("cluster: serve locally")
+
 // ---- node engine: one remote member ----
 
 type nodeEngine struct {
@@ -510,6 +514,10 @@ func (e *clusterEngine) dispatch(ctx context.Context, promptTokens, maxTokens in
 		release := e.m.dir.Reserve(target.UUID)
 		started := time.Now()
 		resp, err := attempt(target)
+		if errors.Is(err, ErrServeLocally) {
+			release()
+			return nil, ErrServeLocally
+		}
 		if err != nil {
 			release()
 			tried = append(tried, target.UUID)
@@ -552,8 +560,16 @@ func (e *clusterEngine) dispatch(ctx context.Context, promptTokens, maxTokens in
 	err := &ErrNoNode{Model: e.model, Tried: tried, Last: lastErr, Ex: ex}
 	status := http.StatusServiceUnavailable
 	var re *routeError
-	if errors.As(lastErr, &re) && re.status >= 400 && re.status != http.StatusServiceUnavailable && re.status != http.StatusBadGateway {
-		status = re.status
+	if errors.As(lastErr, &re) {
+		if re.status == http.StatusNotFound && strings.Contains(re.body, "not a forwardable inference endpoint") {
+			// The peer runs an older CSGLite that cannot execute this kind of
+			// request for others; that is a deployment problem, not a
+			// missing model.
+			return nil, inference.NewHTTPStatusError(http.StatusBadGateway, fmt.Sprintf("model %q: the node that holds it runs an older CSGLite version without cluster support for this endpoint; upgrade that node", e.model))
+		}
+		if re.status >= 400 && re.status != http.StatusServiceUnavailable && re.status != http.StatusBadGateway {
+			status = re.status
+		}
 	}
 	return nil, inference.NewHTTPStatusError(status, err.Error())
 }
@@ -903,6 +919,37 @@ func (m *Manager) RemoteHolders(model string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// RouteRaw places a request whose body is not JSON chat (audio uploads,
+// speech synthesis) on the best member and returns the member's raw response.
+// It returns ErrServeLocally when this node is the best choice, so the caller
+// runs its normal handler; the response of a remote node is streamed back
+// as-is with the node headers set.
+func (m *Manager) RouteRaw(ctx context.Context, modelID, source, path string, body []byte, headers http.Header) (*http.Response, error) {
+	pinned := NodeUUIDFromSource(source)
+	if pinned != "" && pinned == m.identity.UUID {
+		return nil, ErrServeLocally
+	}
+	if pinned != "" {
+		if _, ok := m.store.Member(pinned); !ok {
+			return nil, inference.NewHTTPStatusError(http.StatusNotFound, fmt.Sprintf("node %s is not a member of this cluster", shortUUID(pinned)))
+		}
+	}
+	if !m.store.InCluster() && pinned == "" {
+		return nil, inference.NewHTTPStatusError(http.StatusNotFound, "this node is not part of a cluster")
+	}
+	e := &clusterEngine{m: m, model: modelID, pinned: pinned, affinity: AffinityKeyFromContext(ctx)}
+	return e.dispatch(ctx, len(body)/4, 1, func(target Ranked) (*http.Response, error) {
+		if target.Local {
+			return nil, ErrServeLocally
+		}
+		mem, ok := m.store.Member(target.UUID)
+		if !ok {
+			return nil, &routeError{status: 0, err: fmt.Errorf("node %s is no longer a member", shortUUID(target.UUID))}
+		}
+		return m.newNodeEngine(mem, modelID, false).forward(ctx, path, body, headers)
+	})
 }
 
 // RemoteHasModel reports whether any online member other than this node

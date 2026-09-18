@@ -77,7 +77,7 @@ func (s *Server) handleOpenAIAudioSpeech(w http.ResponseWriter, r *http.Request)
 	}
 	req.Source = source
 
-	eng, err := s.getOrLoadTTSEngine(r.Context(), req.Model)
+	eng, err := s.getTTSEngine(r.Context(), req.Model, req.Source)
 	if err != nil {
 		writeSpeechEngineError(w, err)
 		return
@@ -91,6 +91,10 @@ func (s *Server) handleOpenAIAudioSpeech(w http.ResponseWriter, r *http.Request)
 	audio, err := eng.Speak(r.Context(), req)
 	if err != nil {
 		log.Printf("MODEL %s: speech synthesis failed: %v", req.Model, err)
+		if isRoutedEngine(eng) {
+			writeOpenAIInferenceError(w, err)
+			return
+		}
 		if writeSpeechRequestFault(w, err) {
 			return
 		}
@@ -99,6 +103,7 @@ func (s *Server) handleOpenAIAudioSpeech(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.touchTTSEngine(req.Model)
+	setRoutedNodeHeaders(w, eng)
 	w.Header().Set("Content-Type", speechContentType(req.ResponseFormat, audio.SampleRate))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(audio.Data)))
 	w.WriteHeader(http.StatusOK)
@@ -118,6 +123,7 @@ func (s *Server) streamAudioSpeech(w http.ResponseWriter, r *http.Request, eng t
 			return nil
 		}
 		if !wrote {
+			setRoutedNodeHeaders(w, eng)
 			w.Header().Set("Content-Type", speechContentType(req.ResponseFormat, req.SampleRate))
 			w.Header().Set("Cache-Control", "no-store")
 			w.WriteHeader(http.StatusOK)

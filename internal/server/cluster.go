@@ -187,6 +187,8 @@ func (h *clusterHost) InferenceHandler() http.Handler {
 	mux.HandleFunc("POST /v1/messages/count_tokens", local(s.handleAnthropicCountTokens))
 	mux.HandleFunc("POST /api/chat", local(s.handleChat))
 	mux.HandleFunc("POST /api/generate", local(s.handleGenerate))
+	mux.HandleFunc("POST /v1/audio/transcriptions", local(s.handleOpenAIAudioTranscriptions))
+	mux.HandleFunc("POST /v1/audio/speech", local(s.handleOpenAIAudioSpeech))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not a forwardable inference endpoint")
 	})
@@ -245,6 +247,37 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 		public := s.localInferenceModelID(engineModelIDFromKey(key))
 		if _, ok := engines[public]; !ok {
 			engines[public] = loaded{loading: true}
+		}
+	}
+	// Python workers (speech recognition, synthesis, image generation) serve
+	// one request at a time, so they count as a single slot.
+	for id, me := range s.asrEngines {
+		public := s.localInferenceModelID(id)
+		engines[public] = loaded{slots: 1, active: me.activeRequests, ngl: -1, expires: workerExpiry(me.lastUsed, me.keepAlive)}
+		st.Inflight += me.activeRequests
+	}
+	for id, me := range s.ttsEngines {
+		public := s.localInferenceModelID(id)
+		engines[public] = loaded{slots: 1, active: me.activeRequests, ngl: -1, expires: workerExpiry(me.lastUsed, me.keepAlive)}
+		st.Inflight += me.activeRequests
+	}
+	for id, me := range s.imageEngines {
+		public := s.localInferenceModelID(id)
+		engines[public] = loaded{slots: 1, ngl: -1, expires: workerExpiry(me.lastUsed, me.keepAlive)}
+	}
+	for id := range s.asrLoading {
+		if _, ok := s.asrEngines[id]; !ok {
+			engines[s.localInferenceModelID(id)] = loaded{loading: true}
+		}
+	}
+	for id := range s.ttsLoading {
+		if _, ok := s.ttsEngines[id]; !ok {
+			engines[s.localInferenceModelID(id)] = loaded{loading: true}
+		}
+	}
+	for id := range s.imageLoading {
+		if _, ok := s.imageEngines[id]; !ok {
+			engines[s.localInferenceModelID(id)] = loaded{loading: true}
 		}
 	}
 	s.mu.RUnlock()
@@ -429,6 +462,13 @@ func (s *Server) handleClusterSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.cluster.HandleSummary(w, r)
+}
+
+func workerExpiry(lastUsed time.Time, keepAlive time.Duration) time.Time {
+	if keepAlive < 0 {
+		return time.Time{}
+	}
+	return lastUsed.Add(keepAlive)
 }
 
 // modelLoadDuration reports how long the last load of a model took.

@@ -754,3 +754,37 @@ func TestAutoFormMergesClustersFoundedInParallel(t *testing.T) {
 		return ra.Health == HealthHealthy && rb.Health == HealthHealthy
 	})
 }
+
+func TestRouteRawForwardsUploadsAndServesLocallyWhenBest(t *testing.T) {
+	bus := NewMemoryBus()
+	a := startNode(t, bus, "alpha", &fakeHost{licensed: true, models: []ModelStatus{{ID: "asr-local", Size: gb, Loaded: true, Slots: 1}}})
+	b := startNode(t, bus, "beta", &fakeHost{licensed: true, models: []ModelStatus{{ID: "asr-remote", Size: gb, Loaded: true, Slots: 1}}})
+	_, token, _ := a.m.CreateCluster("Lab")
+	waitFor(t, "discovery", func() bool { return len(b.m.dir.Discovered(time.Minute)) >= 1 })
+	if _, err := b.m.Join(context.Background(), token, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "status", func() bool { rt, ok := a.m.dir.Get(b.m.identity.UUID); return ok && rt.Status != nil })
+
+	body := []byte("--x\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nasr-remote\r\n--x--\r\n")
+	headers := http.Header{"Content-Type": []string{"multipart/form-data; boundary=x"}}
+	resp, err := a.m.RouteRaw(context.Background(), "asr-remote", "", "/v1/audio/transcriptions", body, headers)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	out, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.Header.Get(NodeHeader) != b.m.identity.UUID || !strings.Contains(string(out), "hello from beta") {
+		t.Fatalf("routed response %s headers %v", out, resp.Header)
+	}
+	// A model this node holds is served here in local-first terms.
+	if _, err := a.m.RouteRaw(context.Background(), "asr-local", SourceCluster, "/v1/audio/transcriptions", body, headers); !errors.Is(err, ErrServeLocally) {
+		t.Fatalf("expected ErrServeLocally, got %v", err)
+	}
+	if _, err := a.m.RouteRaw(context.Background(), "asr-local", SourceNodePrefix+a.m.identity.UUID, "/v1/audio/speech", body, headers); !errors.Is(err, ErrServeLocally) {
+		t.Fatalf("pinned self should serve locally, got %v", err)
+	}
+	if _, err := a.m.RouteRaw(context.Background(), "missing", SourceCluster, "/v1/audio/speech", body, headers); err == nil || inference.HTTPStatusCode(err) != http.StatusServiceUnavailable {
+		t.Fatalf("unknown model should be 503, got %v", err)
+	}
+}

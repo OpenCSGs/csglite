@@ -101,7 +101,7 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		return
 	}
 
-	eng, err := s.getOrLoadASREngine(r.Context(), modelID)
+	eng, err := s.getASREngine(r.Context(), modelID, req.Source)
 	if err != nil {
 		if s.audioTranscriptionCanFallbackToCloud(r.Context(), req) {
 			req.Source = "cloud"
@@ -138,6 +138,10 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		return
 	}
 	resp, err := eng.Transcribe(r.Context(), req)
+	if err != nil && isRoutedEngine(eng) {
+		writeOpenAIInferenceError(w, err)
+		return
+	}
 	if err != nil {
 		log.Printf("MODEL %s: ASR transcription failed, reloading worker once: %v", modelID, err)
 		s.closeASREngine(modelID)
@@ -153,6 +157,7 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		}
 	}
 	s.touchASREngine(modelID)
+	setRoutedNodeHeaders(w, eng)
 	writeAudioTranscriptionResponse(w, req, resp)
 }
 
@@ -163,6 +168,7 @@ func (s *Server) streamAudioTranscription(w http.ResponseWriter, r *http.Request
 	var fullText strings.Builder
 	err := eng.TranscribeStream(r.Context(), req, func(chunk api.OpenAIAudioTranscriptionResponse) error {
 		fullText.WriteString(chunk.Text)
+		setRoutedNodeHeaders(w, eng)
 		writeSSE(w, map[string]interface{}{
 			"text":     chunk.Text,
 			"response": chunk,
@@ -172,7 +178,9 @@ func (s *Server) streamAudioTranscription(w http.ResponseWriter, r *http.Request
 	})
 	if err != nil {
 		log.Printf("MODEL %s: ASR stream transcription failed: %v", modelID, err)
-		s.closeASREngine(modelID)
+		if !isRoutedEngine(eng) {
+			s.closeASREngine(modelID)
+		}
 		writeSSE(w, map[string]interface{}{
 			"error": err.Error(),
 			"done":  true,
@@ -180,6 +188,7 @@ func (s *Server) streamAudioTranscription(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.touchASREngine(modelID)
+	setRoutedNodeHeaders(w, eng)
 	writeSSE(w, map[string]interface{}{
 		"text": fullText.String(),
 		"done": true,
