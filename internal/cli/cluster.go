@@ -33,6 +33,10 @@ func newClusterCmd() *cobra.Command {
 			"no action. Requests for a model this node lacks are routed to a member",
 			"that holds it.",
 			"",
+			"A plain single machine keeps all of this off: no listener, no multicast,",
+			"no polling. Networking starts when the machine is given a cluster secret",
+			"or token, or when one of these commands pairs it.",
+			"",
 			"The Community edition may pair two nodes; an Enterprise license lifts the cap.",
 			"",
 			"Examples:",
@@ -61,6 +65,8 @@ func newClusterCmd() *cobra.Command {
 		newClusterModelsCmd(),
 		newClusterSyncCmd(),
 		newClusterExplainCmd(),
+		newClusterToggleCmd("enable", "/api/cluster/enable", "Switch cluster networking on (listener and discovery) without joining yet"),
+		newClusterToggleCmd("disable", "/api/cluster/disable", "Switch cluster networking off; the node goes dormant (leave first if it is a member)"),
 		newClusterStateCmd("drain", cluster.NodeStateDrain, "Finish in-flight requests on this node and take no new ones"),
 		newClusterStateCmd("activate", cluster.NodeStateActive, "Return this node to active duty"),
 		newClusterStateCmd("maintenance", cluster.NodeStateMaintenance, "Take this node out of routing and model sync"),
@@ -198,6 +204,10 @@ func printClusterView(v cluster.ClusterView) {
 	fmt.Printf("Node:     %s (%s)\n", v.Node.Name, v.Node.UUID)
 	fmt.Printf("Version:  %s   cluster port %d   api port %d\n", v.Node.Version, v.Node.ClusterPort, v.Node.APIPort)
 	if v.Cluster == nil {
+		if !v.Active {
+			fmt.Println("Cluster:  none; cluster networking is off (dormant). 'cluster create', 'cluster join <token>' or 'cluster enable' switches it on.")
+			return
+		}
 		fmt.Println("Cluster:  none (create one with 'cluster create' or join with 'cluster join <token>')")
 		if v.DiscoveredCount > 0 {
 			fmt.Printf("Seen on the network: %d unpaired node(s); run 'cluster discovered'\n", v.DiscoveredCount)
@@ -679,6 +689,30 @@ func newClusterExplainCmd() *cobra.Command {
 	cmd.Flags().IntVar(&promptTokens, "prompt-tokens", 512, "assumed prompt length")
 	cmd.Flags().IntVar(&maxTokens, "max-tokens", 256, "assumed completion length")
 	return cmd
+}
+
+func newClusterToggleCmd(use, path, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClusterClient()
+			if err != nil {
+				return err
+			}
+			var v cluster.ClusterView
+			if err := c.do(http.MethodPost, path, nil, &v); err != nil {
+				return err
+			}
+			if v.Active {
+				fmt.Printf("Cluster networking is on (listening on port %d).\n", v.Node.ClusterPort)
+			} else {
+				fmt.Println("Cluster networking is off; this node is dormant.")
+			}
+			return nil
+		},
+	}
 }
 
 func newClusterStateCmd(use string, state cluster.NodeState, short string) *cobra.Command {

@@ -44,6 +44,13 @@ func newClusterTestServer(t *testing.T, bus *cluster.MemoryBus) *Server {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.startCluster(ctx)
+	if s.cluster.Active() {
+		t.Fatal("a fresh node must start dormant")
+	}
+	// The operator enables the feature on both machines before pairing.
+	if err := s.cluster.Activate(); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		cancel()
 		s.shutdownRuntime()

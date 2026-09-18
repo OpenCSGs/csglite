@@ -80,6 +80,11 @@ type Settings struct {
 	// StaticAddresses maps a member UUID to a host:port the operator pinned,
 	// for networks that do not forward multicast.
 	StaticAddresses map[string]string `json:"static_addresses"`
+	// Enabled records that the operator switched the cluster feature on
+	// (created, joined, invited or showed an admission code), so the node
+	// comes up listening and discovering after a restart. A plain single
+	// machine keeps it false and runs no cluster networking at all.
+	Enabled bool `json:"enabled,omitempty"`
 	// AutoFormPaused is set when an operator explicitly leaves a cluster on
 	// a secret-provisioned node, so automatic formation does not pull the
 	// node straight back in. Creating or joining a cluster clears it.

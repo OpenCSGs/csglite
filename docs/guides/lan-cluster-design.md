@@ -197,6 +197,13 @@ type clusterRouter interface {
 
 ### 5.3 网络端口
 
+**默认休眠**：单机不为集群付出任何代价。没有共享密钥、没有加入令牌、也没有
+集群成员身份且没被启用过的节点，不打开 11438、不加入多播组、不发 mDNS 查询、
+不起轮询与 gossip 协程。触发激活的只有：配置了密钥或令牌、已是成员、上次已
+启用（`cluster.json` 的 `settings.enabled`），以及操作者的 create / join /
+invite / 显示准入码 / `POST /api/cluster/enable`。非密钥节点 `leave` 后回到
+休眠。GET 类读取（发现列表、视图）不会隐式开启网络。
+
 | 端口 | 监听地址 | 用途 | 鉴权 |
 |---|---|---|---|
 | 11435（现有） | 配置决定 | Web UI、管理 API、对外推理 API | 现有 API Key；加入 / 邀请入口另做节点数配额校验 |
@@ -909,7 +916,7 @@ PR 清单：配额条目 `Gated: true`、加入 / 邀请入口的配额校验、
 > 节点转发引擎与失败切换、会话亲和、`/api/cluster/*`、`/cluster/v1/*`、
 > `csghub-lite cluster` CLI、节点数配额、OpenAPI）；阶段二的 Dashboard 集群区块、
 > 集群管理页与 i18n 已实现；阶段三中的"同步到节点"（远程 pull）、模型源一致性
-> 检查、副本放置建议、`drain` / `maintenance`、共享密钥自动组网（6.1 方式 0，含
+> 检查、副本放置建议、`drain` / `maintenance`、默认休眠与显式启用（5.3）、共享密钥自动组网（6.1 方式 0，含
 > 并行建群合并、安装脚本写入配置）、文档已实现；provider pool 成员的
 > `source` 可以填 `cluster` 或 `node:<uuid>`（成员引擎走同一个 `getChatEngine`）。
 > 未做：UDP 广播兜底、LRU 副本回收、Chat 页来源徽标、可观测性节点列、安装器

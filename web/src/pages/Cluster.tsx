@@ -20,8 +20,7 @@ import {
   setClusterNodeState,
   syncClusterModel,
   updateClusterNode,
-  updateClusterSettings,
-} from "../api/client";
+  updateClusterSettings, enableCluster } from "../api/client";
 import type {
   ClusterCodeResponse,
   ClusterExplainResponse,
@@ -625,6 +624,38 @@ function CopyButton({ text, id, tone = "gray" }: { text: string; id: string; ton
 
 // ---- not in a cluster ------------------------------------------------------
 
+const enablingCluster = signal(false);
+
+function DormantNotice({ current }: { current: ClusterView }) {
+  if (current.active !== false) return null;
+  const enable = async () => {
+    enablingCluster.value = true;
+    try {
+      view.value = await enableCluster();
+    } catch (err: any) {
+      viewError.value = err?.message || t("cluster.unknownError");
+    } finally {
+      enablingCluster.value = false;
+    }
+  };
+  return (
+    <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div class="font-semibold text-gray-900">{t("cluster.dormantTitle")}</div>
+        <p class="mt-1">{t("cluster.dormantDesc")}</p>
+      </div>
+      <button
+        type="button"
+        disabled={enablingCluster.value}
+        onClick={enable}
+        class="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+      >
+        {enablingCluster.value ? t("cluster.enabling") : t("cluster.enableAction")}
+      </button>
+    </div>
+  );
+}
+
 function AutoFormNotice({ view }: { view: ClusterView }) {
   if (!view.auto_form) return null;
   return (
@@ -641,6 +672,7 @@ function NotInCluster({ view }: { view: ClusterView }) {
   return (
     <>
       <CapBanner />
+      <DormantNotice current={view} />
       <AutoFormNotice view={view} />
       <div class="grid gap-6 lg:grid-cols-2">
         {/* Create */}
@@ -1101,7 +1133,7 @@ function DiscoveredSection({ readOnly = false }: { readOnly?: boolean }) {
       {!discoveredLoaded.value ? (
         <p class="text-sm text-gray-400 py-2">{t("cluster.loading")}</p>
       ) : list.length === 0 ? (
-        <p class="text-sm text-gray-400 py-2">{t("cluster.discoveredEmpty")}</p>
+        <p class="text-sm text-gray-400 py-2">{view.value?.active === false ? t("cluster.discoveredDormant") : t("cluster.discoveredEmpty")}</p>
       ) : (
         <table class="w-full text-sm">
           <thead>

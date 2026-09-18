@@ -11,6 +11,12 @@
 所有子命令都通过本机正在运行的 `csghub-lite` 服务（`/api/cluster*`）操作，
 因此先要 `csghub-lite serve` 或 `csghub-lite start`。
 
+**单机不受影响**：没有共享密钥、没有加入令牌、也没进过集群的机器处于休眠
+状态，不监听节点间端口、不发 mDNS 广播、不起任何轮询。只有配置了密钥 / 令牌、
+已是成员、或执行了 `create` / `join` / `invite` / `code` / `enable` 之一才会
+开启网络，并记住这个选择；`leave` 之后（非密钥节点）自动回到休眠，也可以用
+`disable` 关闭。
+
 ## 用法
 
 ```bash
@@ -28,6 +34,7 @@ csghub-lite cluster models                      # 模型 × 节点分布
 csghub-lite cluster sync <model> [--all | --node <uuid|名称> ...]
 csghub-lite cluster explain <model>             # 调度器会怎样放置一条请求
 csghub-lite cluster drain | activate | maintenance
+csghub-lite cluster enable | disable            # 开 / 关集群网络（休眠）
 ```
 
 `status`、`nodes`、`discovered`、`models` 支持 `--json` 输出原始 JSON。

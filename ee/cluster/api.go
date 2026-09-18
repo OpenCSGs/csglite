@@ -60,6 +60,11 @@ type ClusterView struct {
 	// left that cluster explicitly.
 	AutoForm       bool `json:"auto_form"`
 	AutoFormPaused bool `json:"auto_form_paused"`
+	// Active is false while the node is dormant: no listener, no
+	// multicast, no polling. Creating, joining, inviting or showing the
+	// admission code activates it; POST /api/cluster/enable does so
+	// explicitly.
+	Active bool `json:"active"`
 }
 
 // SummaryNode is a compact card for the dashboard.
@@ -249,6 +254,7 @@ func (m *Manager) View(ctx context.Context) ClusterView {
 		DiscoveredCount:    len(m.dir.Discovered(discoveredMaxAge)),
 		AutoForm:           m.AutoFormEnabled(),
 		AutoFormPaused:     m.AutoFormEnabled() && m.store.Settings().AutoFormPaused,
+		Active:             m.Active(),
 	}
 	var source *ModelSource
 	for _, mv := range members {
@@ -457,8 +463,34 @@ func (m *Manager) HandleTokenRotate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "available": true})
 }
 
+// HandleEnable is POST /api/cluster/enable: start listening and discovering
+// without joining anything yet, so unpaired nodes show up.
+func (m *Manager) HandleEnable(w http.ResponseWriter, r *http.Request) {
+	if err := m.Activate(); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, m.View(r.Context()))
+}
+
+// HandleDisable is POST /api/cluster/disable: back to dormant (not while a
+// member; leave first).
+func (m *Manager) HandleDisable(w http.ResponseWriter, r *http.Request) {
+	if err := m.Deactivate(); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, m.View(r.Context()))
+}
+
 // HandleCode is GET /api/cluster/code.
 func (m *Manager) HandleCode(w http.ResponseWriter, r *http.Request) {
+	// Showing the code means an invite is expected, which needs the
+	// listener up.
+	if err := m.Activate(); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	code, expires, err := m.store.NodeCode()
 	if err != nil {
 		writeOpError(w, err)
@@ -467,9 +499,10 @@ func (m *Manager) HandleCode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"code": code, "expires_at": expires})
 }
 
-// HandleDiscovered is GET /api/cluster/discovered.
+// HandleDiscovered is GET /api/cluster/discovered. A dormant node lists
+// nothing and says so; reading must not switch networking on.
 func (m *Manager) HandleDiscovered(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"nodes": m.DiscoveredNodes()})
+	writeJSON(w, http.StatusOK, map[string]any{"nodes": m.DiscoveredNodes(), "active": m.Active()})
 }
 
 // HandleInvite is POST /api/cluster/invite.

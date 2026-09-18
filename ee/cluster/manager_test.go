@@ -118,9 +118,74 @@ func startNodeWith(t *testing.T, bus *MemoryBus, name string, host *fakeHost, tw
 	if err := m.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if !m.AutoFormEnabled() {
+		if err := m.Activate(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Cleanup(func() { cancel(); m.Stop() })
 	_ = m.identity.SaveName(name)
 	return &testNode{m: m, host: host}
+}
+
+func TestDormantByDefaultUntilActivated(t *testing.T) {
+	bus := NewMemoryBus()
+	host := &fakeHost{licensed: true, name: "solo"}
+	m, err := New(Options{Dir: t.TempDir(), Host: host, Discoverer: bus.NewDiscoverer(mustAddr("127.0.0.1")), ListenAddr: "127.0.0.1:0", Logf: t.Logf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.Stop)
+	if m.Active() || m.ListenPort() != 0 {
+		t.Fatalf("a plain node must stay dormant: active=%v port=%d", m.Active(), m.ListenPort())
+	}
+	// Another active node on the bus must not see the dormant one.
+	other := startNode(t, bus, "other", &fakeHost{licensed: true})
+	time.Sleep(200 * time.Millisecond)
+	if len(other.m.dir.Discovered(time.Minute)) != 0 {
+		t.Fatal("dormant node was advertised")
+	}
+	view := m.View(context.Background())
+	if view.Active {
+		t.Fatal("view claims active")
+	}
+	// An operator action switches it on and the choice persists.
+	if _, _, err := m.CreateCluster("Lab"); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Active() || m.ListenPort() == 0 || !m.store.Settings().Enabled {
+		t.Fatal("create did not activate")
+	}
+	waitFor(t, "other to see it", func() bool { return len(other.m.dir.Discovered(time.Minute)) == 1 })
+	// Leaving on purpose makes it dormant again.
+	if err := m.Leave(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if m.Active() || m.store.Settings().Enabled {
+		t.Fatal("leave did not return the node to dormant")
+	}
+	// Reopening the store on a node that was enabled and still a member
+	// activates at start.
+	dir := t.TempDir()
+	m2, err := New(Options{Dir: dir, Host: host, Discoverer: bus.NewDiscoverer(mustAddr("127.0.0.1")), ListenAddr: "127.0.0.1:0", Logf: t.Logf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m2.store.UpdateSettings(func(s *Settings) { s.Enabled = true }); err != nil {
+		t.Fatal(err)
+	}
+	if err := m2.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m2.Stop)
+	if !m2.Active() {
+		t.Fatal("previously enabled node did not activate at start")
+	}
 }
 
 func waitFor(t *testing.T, what string, cond func() bool) {

@@ -154,6 +154,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/cluster", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleCreate }))
 	mux.HandleFunc("DELETE /api/cluster", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleLeave }))
 	mux.HandleFunc("GET /api/cluster/summary", s.handleClusterSummary)
+	mux.HandleFunc("POST /api/cluster/enable", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleEnable }))
+	mux.HandleFunc("POST /api/cluster/disable", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleDisable }))
 	mux.HandleFunc("POST /api/cluster/join", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleJoin }))
 	mux.HandleFunc("GET /api/cluster/token", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleToken }))
 	mux.HandleFunc("POST /api/cluster/token/rotate", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleTokenRotate }))

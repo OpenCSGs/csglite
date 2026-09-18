@@ -100,6 +100,9 @@ type Manager struct {
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
+	runCtx      context.Context
+	runCancel   context.CancelFunc
+	active      bool
 	listenPort  int
 	peerServer  *http.Server
 	startedAt   time.Time
@@ -182,7 +185,11 @@ func (m *Manager) ListenPort() int {
 	return m.listenPort
 }
 
-// Start opens the peer listener, starts discovery and the background loops.
+// Start prepares the manager. Networking stays off ("dormant") on a plain
+// single machine: no listener, no multicast, no polling goroutines. It is
+// switched on (Activate) when the node was provisioned with a shared secret
+// or a join token, already belongs to a cluster, was enabled before, or when
+// an operator performs a cluster action.
 func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	if m.started {
@@ -191,22 +198,61 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.startedAt = time.Now()
+	m.started = true
+	m.mu.Unlock()
+	if m.shouldActivateAtStart() {
+		return m.Activate()
+	}
+	m.logf("cluster: node %s (%s) is dormant; no cluster secret, token or membership configured", shortUUID(m.identity.UUID), m.identity.DisplayName())
+	return nil
+}
+
+func (m *Manager) shouldActivateAtStart() bool {
+	return m.AutoFormEnabled() || strings.TrimSpace(m.opts.JoinToken) != "" || m.store.InCluster() || m.store.Settings().Enabled
+}
+
+// Active reports whether the listener and discovery are running.
+func (m *Manager) Active() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.active
+}
+
+// Activate opens the peer listener, starts discovery and the background
+// loops, and remembers the choice so the node comes up active next time.
+// It is idempotent.
+func (m *Manager) Activate() error {
+	m.mu.Lock()
+	if m.active {
+		m.mu.Unlock()
+		return nil
+	}
+	if m.ctx == nil {
+		m.ctx, m.cancel = context.WithCancel(context.Background())
+		m.started = true
+	}
+	runCtx, runCancel := context.WithCancel(m.ctx)
 	ln, srv, err := listenPeer(m.opts.ListenAddr, m.identity, m.peerMux())
 	if err != nil {
+		runCancel()
 		m.mu.Unlock()
 		return fmt.Errorf("cluster listener on %s: %w", m.opts.ListenAddr, err)
 	}
+	m.runCtx, m.runCancel = runCtx, runCancel
 	m.listenPort = ln.Addr().(*net.TCPAddr).Port
 	m.peerServer = srv
-	m.started = true
+	m.active = true
 	m.mu.Unlock()
 
+	if !m.store.Settings().Enabled {
+		_, _ = m.store.UpdateSettings(func(s *Settings) { s.Enabled = true })
+	}
 	go func() {
-		if err := serveTLS(m.ctx, srv, ln); err != nil {
+		if err := serveTLS(runCtx, srv, ln); err != nil {
 			m.logf("cluster: peer listener stopped: %v", err)
 		}
 	}()
-	if err := m.discoverer.Start(m.ctx, m.announcement(), m.onObservation); err != nil {
+	if err := m.discoverer.Start(runCtx, m.announcement(), m.onObservation); err != nil {
 		m.logf("cluster: discovery unavailable (%v); relying on static addresses and gossip", err)
 	}
 	for _, seed := range m.opts.Seeds {
@@ -225,9 +271,41 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop shuts the manager down. It announces "not accepting work" first so
-// peers stop routing here while in-flight requests finish.
+// Deactivate closes the listener and discovery and stops every loop, putting
+// the node back to dormant. It refuses while the node is a cluster member.
+func (m *Manager) Deactivate() error {
+	if m.store.InCluster() {
+		return errors.New("leave the cluster before disabling the cluster feature")
+	}
+	m.deactivate()
+	_, _ = m.store.UpdateSettings(func(s *Settings) { s.Enabled = false })
+	m.logf("cluster: node %s is dormant", shortUUID(m.identity.UUID))
+	return nil
+}
+
+func (m *Manager) deactivate() {
+	m.mu.Lock()
+	if !m.active {
+		m.mu.Unlock()
+		return
+	}
+	cancel := m.runCancel
+	m.active = false
+	m.listenPort = 0
+	m.peerServer = nil
+	m.runCancel = nil
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	_ = m.discoverer.Close()
+	m.dir.Reset()
+	m.invalidateLocalStatus()
+}
+
+// Stop shuts the manager down for process exit.
 func (m *Manager) Stop() {
+	m.deactivate()
 	m.mu.Lock()
 	cancel := m.cancel
 	m.started = false
@@ -235,13 +313,17 @@ func (m *Manager) Stop() {
 	if cancel != nil {
 		cancel()
 	}
-	_ = m.discoverer.Close()
 	m.perf.flush()
 }
 
+// context is the lifetime of the current activation (or the manager when
+// dormant), which every background loop watches.
 func (m *Manager) context() context.Context {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if m.runCtx != nil && m.active {
+		return m.runCtx
+	}
 	if m.ctx == nil {
 		return context.Background()
 	}
@@ -938,6 +1020,9 @@ func (m *Manager) mergeGossip(msg gossipMessage, from string) {
 
 // CreateCluster founds a cluster of one and returns the join token.
 func (m *Manager) CreateCluster(name string) (ClusterInfo, string, error) {
+	if err := m.Activate(); err != nil {
+		return ClusterInfo{}, "", err
+	}
 	info, token, err := m.store.Create(name)
 	if err != nil {
 		return ClusterInfo{}, "", err
@@ -968,6 +1053,9 @@ func (m *Manager) JoinToken(rotate bool) (string, error) {
 func (m *Manager) Join(ctx context.Context, token, address string) (ClusterInfo, error) {
 	if m.store.InCluster() {
 		return ClusterInfo{}, ErrAlreadyClustered
+	}
+	if err := m.Activate(); err != nil {
+		return ClusterInfo{}, err
 	}
 	clusterUUID, secret, err := ParseJoinToken(token)
 	if err != nil {
@@ -1156,6 +1244,9 @@ func (m *Manager) Invite(ctx context.Context, nodeUUID, code, address string) (M
 	if !m.store.InCluster() {
 		return Member{}, ErrNotClustered
 	}
+	if err := m.Activate(); err != nil {
+		return Member{}, err
+	}
 	if !m.withinNodeLimit(len(m.store.Members()) + 2) {
 		return Member{}, &LimitError{Limit: m.NodeLimit(), Current: len(m.store.Members()) + 1}
 	}
@@ -1267,7 +1358,16 @@ func (m *Manager) Leave(ctx context.Context) error {
 		}(mem, addrs[0])
 	}
 	wg.Wait()
-	return m.leaveLocally()
+	if err := m.leaveLocally(); err != nil {
+		return err
+	}
+	if !m.AutoFormEnabled() && strings.TrimSpace(m.opts.JoinToken) == "" {
+		// A machine that left on purpose is a single machine again: stop
+		// listening and broadcasting until the operator clusters it again.
+		m.deactivate()
+		_, _ = m.store.UpdateSettings(func(s *Settings) { s.Enabled = false })
+	}
+	return nil
 }
 
 func (m *Manager) leaveLocally() error {

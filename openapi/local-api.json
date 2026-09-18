@@ -6945,6 +6945,80 @@
         }
       }
     },
+    "/api/cluster/enable": {
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Switch the cluster networking on",
+        "description": "A plain node is dormant: no peer listener, no multicast DNS, no polling. Creating, joining, inviting or showing the admission code switches networking on implicitly; this endpoint does so explicitly so unpaired nodes can be listed first. The choice is remembered across restarts.",
+        "operationId": "enableCluster",
+        "responses": {
+          "200": {
+            "description": "Cluster view with `active: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterView"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/disable": {
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Switch the cluster networking off",
+        "description": "Returns the node to dormant. Refused while the node is a cluster member; leave first (DELETE /api/cluster), which also goes dormant on a node without a provisioned secret or token.",
+        "operationId": "disableCluster",
+        "responses": {
+          "200": {
+            "description": "Cluster view with `active: false`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterView"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Still a member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The cluster feature is disabled in this process (CSGHUB_LITE_CLUSTER_DISABLED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cluster/join": {
       "post": {
         "tags": [
@@ -15072,6 +15146,17 @@
           "model_source_mixed": {
             "type": "boolean",
             "description": "True when members download models from different sources; sync is refused until they agree."
+          },
+          "auto_form": {
+            "type": "boolean",
+            "description": "True when the node was provisioned with a shared cluster secret and forms its cluster automatically."
+          },
+          "auto_form_paused": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "boolean",
+            "description": "False while the node is dormant (no listener, no multicast, no polling)."
           }
         }
       },

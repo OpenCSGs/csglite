@@ -3492,6 +3492,8 @@ export interface ClusterView {
   model_source_mixed: boolean;
   auto_form?: boolean;
   auto_form_paused?: boolean;
+  /** False while the node is dormant: no listener, no multicast, no polling. */
+  active?: boolean;
 }
 
 export interface ClusterCreateResponse {
@@ -3623,6 +3625,14 @@ export function rotateClusterToken(): Promise<ClusterTokenResponse> {
 
 export function getClusterCode(): Promise<ClusterCodeResponse> {
   return fetchClusterJSON<ClusterCodeResponse>("/api/cluster/code", { cache: "no-store" });
+}
+
+export async function enableCluster(): Promise<ClusterView> {
+  return fetchClusterJSON<ClusterView>("/api/cluster/enable", { method: "POST" });
+}
+
+export async function disableCluster(): Promise<ClusterView> {
+  return fetchClusterJSON<ClusterView>("/api/cluster/disable", { method: "POST" });
 }
 
 export async function getDiscoveredClusterNodes(): Promise<DiscoveredClusterNode[]> {
