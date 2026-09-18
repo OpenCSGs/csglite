@@ -27,8 +27,12 @@ import (
 const (
 	// DefaultAutoFormName names a cluster formed from a secret.
 	DefaultAutoFormName = "CSGLite Cluster"
-	// MinAutoFormSecretLen guards against trivially guessable secrets.
-	MinAutoFormSecretLen = 8
+	// MinAutoFormSecretLen rejects empty or near-empty secrets; anything
+	// shorter than RecommendedAutoFormSecretLen is accepted with a warning,
+	// because the operator may deliberately pick something short on a
+	// physically private network.
+	MinAutoFormSecretLen         = 4
+	RecommendedAutoFormSecretLen = 12
 )
 
 // Timing of automatic formation; variables so tests can shorten them.
@@ -51,7 +55,7 @@ var autoFormNamespace = uuid.MustParse("6f2c7b4e-9d3a-4c1f-8e5b-2a1d0c9b7e61")
 func DeriveAutoForm(secret string) (clusterUUID, joinToken string, err error) {
 	secret = strings.TrimSpace(secret)
 	if len(secret) < MinAutoFormSecretLen {
-		return "", "", errors.New("cluster secret must be at least 8 characters")
+		return "", "", errors.New("cluster secret must be at least 4 characters")
 	}
 	clusterUUID = uuid.NewSHA1(autoFormNamespace, []byte("csglite-cluster:"+secret)).String()
 	mac := hmac.New(sha256.New, []byte("csglite-join-token"))
@@ -72,6 +76,9 @@ func (m *Manager) autoFormLoop() {
 	if err != nil {
 		m.logf("cluster: automatic formation disabled: %v", err)
 		return
+	}
+	if len(strings.TrimSpace(m.opts.AutoFormSecret)) < RecommendedAutoFormSecretLen {
+		m.logf("cluster: the cluster secret is short (%d characters); anyone on the network who guesses it can join. %d or more is recommended", len(strings.TrimSpace(m.opts.AutoFormSecret)), RecommendedAutoFormSecretLen)
 	}
 	_, tokenSecret, _ := ParseJoinToken(token)
 	tokenHash := hashSecret(tokenSecret)

@@ -145,7 +145,7 @@ TTS worker 支持：
 
 | 变量 | 说明 | 默认值 |
 |---|---|---|
-| `CSGHUB_LITE_CLUSTER_SECRET` | 共享密钥（至少 8 位）。用同一密钥安装的机器自动组成一个集群，不需要任何 create / join 操作；覆盖 `config.json` 中的 `cluster.secret`。安装脚本会把它写入配置文件 | 未设置 |
+| `CSGHUB_LITE_CLUSTER_SECRET` | 共享密钥（至少 4 位，建议 12 位以上）。用同一密钥安装的机器自动组成一个集群，不需要任何 create / join 操作；覆盖 `config.json` 中的 `cluster.secret`。安装脚本会把它写入配置文件 | 未设置 |
 | `CSGHUB_LITE_CLUSTER_NAME` | 自动组网时集群的显示名 | `CSGLite Cluster` |
 | `CSGHUB_LITE_CLUSTER_JOIN_TOKEN` | 本机未入集群时，启动后用该令牌自动加入（不用共享密钥时的另一种批量部署方式） | 未设置 |
 | `CSGHUB_LITE_CLUSTER_ADDR` | 节点间 mTLS 监听地址；各节点端口可以不同，发现记录里带真实端口 | `:11438` |

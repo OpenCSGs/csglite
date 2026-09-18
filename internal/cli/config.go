@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/opencsgs/csglite/ee/cluster"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,8 +189,11 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		cfg.Token = strings.TrimSpace(value)
 	case "cluster_secret":
 		secret := strings.TrimSpace(value)
-		if len(secret) < 8 {
-			return fmt.Errorf("cluster_secret must be at least 8 characters")
+		if len(secret) < cluster.MinAutoFormSecretLen {
+			return fmt.Errorf("cluster_secret must be at least %d characters", cluster.MinAutoFormSecretLen)
+		}
+		if len(secret) < cluster.RecommendedAutoFormSecretLen {
+			fmt.Fprintf(os.Stderr, "Warning: a short cluster secret is easy to guess; %d or more characters are recommended.\n", cluster.RecommendedAutoFormSecretLen)
 		}
 		cfg.Cluster.Secret = secret
 	case "cluster_name":

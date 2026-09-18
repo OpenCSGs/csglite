@@ -673,8 +673,11 @@ func TestDeriveAutoFormIsStableAndSecretNeverAppears(t *testing.T) {
 	if cu, _, err := ParseJoinToken(token1); err != nil || cu != uuid1 {
 		t.Fatalf("derived token does not parse to the derived cluster: %v", err)
 	}
-	if _, _, err := DeriveAutoForm("short"); err == nil {
-		t.Fatal("short secret accepted")
+	if _, _, err := DeriveAutoForm("abc"); err == nil {
+		t.Fatal("near-empty secret accepted")
+	}
+	if _, _, err := DeriveAutoForm("james"); err != nil {
+		t.Fatalf("a short but deliberate secret must be accepted: %v", err)
 	}
 }
 
