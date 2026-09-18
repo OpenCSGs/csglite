@@ -214,8 +214,11 @@ response = client.chat.completions.create(
 )
 
 for chunk in response:
-    if chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="")`,
+    if not chunk.choices:
+        continue
+    delta = chunk.choices[0].delta
+    if delta and delta.content:
+        print(delta.content, end="", flush=True)`,
         javascript: `const imgBase64 = "..."; // Base64-encoded image data
 
 const response = await fetch("${baseUrl}/v1/chat/completions", {
@@ -266,8 +269,11 @@ response = client.chat.completions.create(
 )
 
 for chunk in response:
-    if chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="")`,
+    if not chunk.choices:
+        continue
+    delta = chunk.choices[0].delta
+    if delta and delta.content:
+        print(delta.content, end="", flush=True)`,
         javascript: `const response = await fetch("${baseUrl}/v1/chat/completions", {
   method: "POST",
   headers: { "Content-Type": "application/json" },

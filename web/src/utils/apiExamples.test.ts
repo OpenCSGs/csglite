@@ -24,4 +24,12 @@ describe("buildApiExamples", () => {
     expect(examples.curl).toContain("/providers/pool-one/v1/embeddings");
     expect(examples.python).toContain("client.embeddings.create");
   });
+
+  it("guards against empty choices and null delta in streaming examples", () => {
+    for (const mode of ["chat", "vision"] as const) {
+      const { python } = buildApiExamples("http://localhost:11435", "m", mode);
+      expect(python).toContain("if not chunk.choices");
+      expect(python).not.toMatch(/if chunk\.choices\[0\]/);
+    }
+  });
 });
