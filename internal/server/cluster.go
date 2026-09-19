@@ -205,6 +205,19 @@ func (h *clusterHost) PullHandler() http.Handler {
 // OpenCSG repositories and pass through unchanged.
 func (h *clusterHost) PullSpec(modelID string) (string, string) {
 	modelID = strings.TrimSpace(modelID)
+	// A model this node holds answers the question exactly: an OpenCSG
+	// model is advertised under its short name, which is not a repository.
+	if lm, err := h.s.manager.ResolveLocalModel(modelID); err == nil && lm != nil {
+		repo := strings.TrimSpace(lm.Repository)
+		if repo == "" {
+			repo = lm.Namespace + "/" + lm.Name
+		}
+		source := strings.TrimSpace(lm.ArtifactSource)
+		if source == "opencsg" {
+			source = ""
+		}
+		return repo, source
+	}
 	for _, source := range []modelregistry.Source{modelregistry.SourceHuggingFace, modelregistry.SourceModelScope} {
 		prefix := string(source) + "/"
 		if strings.HasPrefix(strings.ToLower(modelID), prefix) && strings.Count(modelID, "/") >= 2 {
@@ -297,9 +310,31 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 	}
 	s.mu.RUnlock()
 
+	// Repository and artifact source per public id, so a peer can turn a
+	// cluster model id back into a pull job.
+	pullSpecs := map[string][2]string{}
+	if locals, err := s.manager.List(); err == nil {
+		for _, lm := range locals {
+			if lm == nil {
+				continue
+			}
+			repo := strings.TrimSpace(lm.Repository)
+			if repo == "" {
+				repo = lm.Namespace + "/" + lm.Name
+			}
+			source := strings.TrimSpace(lm.ArtifactSource)
+			if source == "" {
+				source = "opencsg"
+			}
+			pullSpecs[s.localInferenceModelID(lm.FullName())] = [2]string{repo, source}
+		}
+	}
 	if infos, err := s.listLocalModelInfos(); err == nil {
 		for _, info := range infos {
 			ms := cluster.ModelStatus{ID: info.Model, Size: info.Size, Format: info.Format, PipelineTag: info.PipelineTag, Category: info.Category, NGPULayers: -1}
+			if spec, ok := pullSpecs[info.Model]; ok {
+				ms.Repo, ms.Source = spec[0], spec[1]
+			}
 			if l, ok := engines[info.Model]; ok {
 				ms.Loaded = !l.loading
 				ms.Loading = l.loading

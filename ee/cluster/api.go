@@ -780,13 +780,27 @@ func (m *Manager) HandleModelSync(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	members := m.memberViews(r.Context(), false)
+	members := m.memberViews(r.Context(), true)
 	if all {
 		for _, v := range members {
 			targets = append(targets, v.UUID)
 		}
 	}
-	repo, artifactSource := m.opts.Host.PullSpec(req.Model)
+	// Whichever node holds the model knows exactly how to fetch it; fall
+	// back to parsing the id when none of them reports it.
+	repo, artifactSource := "", ""
+	for _, mv := range members {
+		if mv.Status == nil {
+			continue
+		}
+		if ms, ok := mv.Status.Model(req.Model); ok && ms.Repo != "" {
+			repo, artifactSource = ms.Repo, ms.Source
+			break
+		}
+	}
+	if repo == "" {
+		repo, artifactSource = m.opts.Host.PullSpec(req.Model)
+	}
 	pull := map[string]any{"model": repo}
 	if req.ArtifactSource != "" {
 		pull["artifact_source"] = req.ArtifactSource

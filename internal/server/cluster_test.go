@@ -319,7 +319,8 @@ func TestClusterRoutesTranscriptionThroughTheSameResolver(t *testing.T) {
 }
 
 func TestClusterPullSpecSplitsRegistryPrefix(t *testing.T) {
-	h := &clusterHost{}
+	s := newTestServer(t)
+	h := &clusterHost{s: s}
 	cases := map[string][2]string{
 		"modelscope/Qwen/Qwen3.5-2B":   {"Qwen/Qwen3.5-2B", "modelscope"},
 		"huggingface/acme/demo":        {"acme/demo", "huggingface"},
@@ -409,6 +410,13 @@ func TestClusterPullJobCopiesModelFromPeer(t *testing.T) {
 	lm, err := b.manager.Get("Qwen/Tiny-GGUF")
 	if err != nil || lm.Format != model.FormatGGUF || lm.Size != 3000 {
 		t.Fatalf("manifest on b: %+v %v", lm, err)
+	}
+	// The status carries what a pull job needs, including for an OpenCSG
+	// model whose public id is just its short name.
+	st := a.cluster.LocalStatus(context.Background())
+	ms, ok := st.Model(publicID)
+	if !ok || ms.Repo != "Qwen/Tiny-GGUF" || ms.Source != "opencsg" {
+		t.Fatalf("model status pull spec: %+v (found %v)", ms, ok)
 	}
 	// The derived extra follows in the background on a fast (loopback) link.
 	clusterWait(t, "derived file to arrive", func() bool {

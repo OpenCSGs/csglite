@@ -105,7 +105,12 @@ type ModelPerf struct {
 
 // ModelStatus is one model present on a node.
 type ModelStatus struct {
-	ID                  string     `json:"id"`
+	ID string `json:"id"`
+	// Repo and Source are what a pull job needs to fetch this model:
+	// "namespace/name" and the artifact source. The public ID alone is not
+	// enough, because an OpenCSG model is advertised under its short name.
+	Repo                string     `json:"repo,omitempty"`
+	Source              string     `json:"source,omitempty"`
 	Size                int64      `json:"size"`
 	Format              string     `json:"format,omitempty"`
 	PipelineTag         string     `json:"pipeline_tag,omitempty"`
