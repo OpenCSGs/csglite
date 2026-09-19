@@ -602,7 +602,15 @@ T_decode = est_completion_tokens / perf.decode_tps      （est 取请求 max_tok
 用）；`maintenance` 再加上不参与同步与放置。CLI：`csghub-lite cluster drain
 <node>` / `activate <node>`。
 
-### 7.8 模型在节点间的分发：以私有化 CSGHub 为内网源（已定）
+### 7.8 模型在节点间的分发：内网同伴优先，模型源兜底（已实现）
+
+> 实施说明：最终实现为"**先从已持有该模型的集群成员复制，没有再回源下载**"。
+> 成员通过 mTLS 通道提供 `GET /cluster/v1/model-bundle?model=` （manifest 与
+> 文件清单）和 `GET /cluster/v1/model-file?model=&path=`（分块传输，尾部带
+> SHA-256）；接收方按普通 pull 的目录布局落盘、校验大小与摘要、写入同伴的
+> manifest 后原子改名。任何一步失败即删除临时目录并回退到模型源。带量化或
+> 版本参数的拉取不走复制（同伴的副本可能是别的量化）。这就是当时列的
+> 方案 B 的简化版（只复制完整副本，不做边下边传）。下面保留原始决策记录。
 
 多台盒子对外网带宽通常只有几十到几百 Mbps，而局域网是 1–10 Gbps。**已定
 方案：客户内网部署私有化 CSGHub，所有盒子以它为模型源**，公网到内网只由
@@ -918,7 +926,7 @@ PR 清单：配额条目 `Gated: true`、加入 / 邀请入口的配额校验、
 > 节点转发引擎与失败切换、会话亲和、`/api/cluster/*`、`/cluster/v1/*`、
 > `csghub-lite cluster` CLI、节点数配额、OpenAPI）；阶段二的 Dashboard 集群区块、
 > 集群管理页与 i18n 已实现；阶段三中的"同步到节点"（远程 pull）、模型源一致性
-> 检查、副本放置建议、`drain` / `maintenance`、默认休眠与显式启用（5.3）、语音识别与合成路由（8.1）、共享密钥自动组网（6.1 方式 0，含
+> 检查、副本放置建议、`drain` / `maintenance`、默认休眠与显式启用（5.3）、语音识别与合成路由（8.1）、同伴优先的模型复制（7.8）、共享密钥自动组网（6.1 方式 0，含
 > 并行建群合并、安装脚本写入配置）、文档已实现；provider pool 成员的
 > `source` 可以填 `cluster` 或 `node:<uuid>`（成员引擎走同一个 `getChatEngine`）。
 > 未做：UDP 广播兜底、LRU 副本回收、Chat 页来源徽标、可观测性节点列、安装器
