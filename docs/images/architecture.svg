@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 812" width="1440" height="812" role="img" aria-labelledby="title desc">
+  <title id="title">CSGLite architecture on one machine and across a LAN cluster</title>
+  <desc id="desc">On one machine CSGLite serves an OpenAI, Ollama and Anthropic compatible API from local engines, falling back to the cloud and third-party providers. Several machines on the same network form a cluster: they find each other over mDNS, pin each other's certificates, place each request on whichever node will finish it soonest, and copy models between themselves.</desc>
+
+  <style>
+    .t   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .h1  { font-size: 25px; font-weight: 600; fill: #1f2328; }
+    .h2  { font-size: 17px; font-weight: 600; fill: #1f2328; }
+    .lbl { font-size: 14px; font-weight: 600; fill: #1f2328; }
+    .txt { font-size: 13px; fill: #424a53; }
+    .dim { font-size: 12px; fill: #6e7781; }
+    .cap { font-size: 12px; fill: #6e7781; font-style: italic; }
+    .pill{ font-size: 12.5px; fill: #1f2328; }
+    .mono{ font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; fill: #6e7781; }
+  </style>
+
+  <rect width="1440" height="812" fill="#ffffff"/>
+
+  <text x="40" y="46" class="t h1">CSGLite</text>
+  <text x="148" y="46" class="t dim">one machine, or every machine on the network</text>
+
+  <!-- ══════════════════════ LEFT: single machine ══════════════════════ -->
+  <rect x="40" y="70" width="640" height="702" rx="12" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="64" y="102" class="t h2">One machine</text>
+  <text x="64" y="124" class="t cap">what you get from a single binary</text>
+
+  <!-- clients -->
+  <rect x="64" y="142" width="592" height="54" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="80" y="164" class="t lbl">Clients</text>
+  <text x="80" y="184" class="t txt">terminal · web UI · coding agents · anything that speaks the OpenAI API</text>
+
+  <path d="M360 196 L360 222" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- the node -->
+  <rect x="64" y="222" width="592" height="382" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+  <rect x="64" y="222" width="592" height="34" rx="10" fill="#2563eb"/>
+  <rect x="64" y="246" width="592" height="10" fill="#2563eb"/>
+  <text x="80" y="245" class="t lbl" fill="#ffffff">csghub-lite</text>
+  <text x="530" y="245" class="t mono" fill="#cfe0ff">:11435</text>
+
+  <rect x="84" y="276" width="552" height="52" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="100" y="297" class="t lbl">HTTP API</text>
+  <text x="100" y="316" class="t txt">OpenAI · Ollama · Anthropic shapes, plus chat, embeddings, speech and images</text>
+
+  <rect x="84" y="340" width="552" height="58" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="100" y="361" class="t lbl">Router</text>
+  <text x="100" y="380" class="t txt">the request names where it runs, or says nothing and is placed for you</text>
+  <text x="100" y="394" class="t mono">source: local · cloud · provider:… · pool:… · cluster · node:…</text>
+
+  <rect x="84" y="410" width="268" height="86" rx="7" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="100" y="431" class="t lbl">llama.cpp</text>
+  <text x="100" y="450" class="t txt">chat and embeddings, GGUF</text>
+  <text x="100" y="468" class="t txt">SafeTensors converted on first</text>
+  <text x="100" y="484" class="t txt">use, then kept</text>
+
+  <rect x="368" y="410" width="268" height="86" rx="7" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="384" y="431" class="t lbl">Python runtimes</text>
+  <text x="384" y="450" class="t txt">speech recognition, speech</text>
+  <text x="384" y="468" class="t txt">synthesis and image generation,</text>
+  <text x="384" y="484" class="t txt">each in its own environment</text>
+
+  <rect x="84" y="508" width="552" height="76" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="100" y="529" class="t lbl">Models on disk</text>
+  <text x="100" y="548" class="t txt">downloaded from CSGHub or another registry, or uploaded by hand</text>
+  <text x="100" y="568" class="t mono">~/.csghub-lite/models</text>
+
+  <path d="M360 604 L360 630" stroke="#8c959f" stroke-width="1.5" stroke-dasharray="4 4" fill="none" marker-end="url(#arrow)"/>
+  <rect x="64" y="630" width="592" height="66" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-dasharray="4 4"/>
+  <text x="80" y="652" class="t lbl">When the model is not here</text>
+  <text x="80" y="672" class="t txt">CSGHub cloud, a third-party provider, or a pool that spreads load across several</text>
+  <text x="80" y="688" class="t txt">of them. Nothing leaves the machine unless the request allows it.</text>
+
+  <text x="64" y="732" class="t cap">No cluster is formed and nothing is broadcast until you ask for one.</text>
+
+  <!-- ══════════════════════ RIGHT: many machines ══════════════════════ -->
+  <rect x="716" y="70" width="684" height="702" rx="12" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="740" y="102" class="t h2">Many machines, one network</text>
+  <text x="740" y="124" class="t cap">the same binary on each box, joined into one pool of compute</text>
+
+  <rect x="740" y="142" width="636" height="54" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="756" y="164" class="t lbl">Clients</text>
+  <text x="756" y="184" class="t txt">talk to any node; whichever one answers, the API is the same</text>
+
+  <path d="M855 196 L855 226" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M1059 196 L1059 226" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M1263 196 L1263 226" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- three nodes -->
+  <g>
+    <rect x="760" y="226" width="190" height="132" rx="9" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5"/>
+    <rect x="760" y="226" width="190" height="30" rx="9" fill="#7c3aed"/>
+    <rect x="760" y="246" width="190" height="10" fill="#7c3aed"/>
+    <text x="776" y="247" class="t lbl" fill="#ffffff">node A</text>
+    <text x="776" y="282" class="t txt">GPU, models, queue</text>
+    <text x="776" y="302" class="t txt">reports its own load</text>
+    <text x="776" y="330" class="t mono">Qwen3.5-2B</text>
+    <text x="776" y="347" class="t mono">Qwen3-Embedding</text>
+  </g>
+  <g>
+    <rect x="964" y="226" width="190" height="132" rx="9" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5"/>
+    <rect x="964" y="226" width="190" height="30" rx="9" fill="#7c3aed"/>
+    <rect x="964" y="246" width="190" height="10" fill="#7c3aed"/>
+    <text x="980" y="247" class="t lbl" fill="#ffffff">node B</text>
+    <text x="980" y="282" class="t txt">a different GPU</text>
+    <text x="980" y="302" class="t txt">and a different queue</text>
+    <text x="980" y="330" class="t mono">Qwen3.5-2B</text>
+    <text x="980" y="347" class="t mono">Qwen3-ASR</text>
+  </g>
+  <g>
+    <rect x="1168" y="226" width="190" height="132" rx="9" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5"/>
+    <rect x="1168" y="226" width="190" height="30" rx="9" fill="#7c3aed"/>
+    <rect x="1168" y="246" width="190" height="10" fill="#7c3aed"/>
+    <text x="1184" y="247" class="t lbl" fill="#ffffff">node C</text>
+    <text x="1184" y="282" class="t txt">joins by running the</text>
+    <text x="1184" y="302" class="t txt">same install command</text>
+    <text x="1184" y="330" class="t mono">Qwen3-Embedding</text>
+  </g>
+
+  <!-- fabric links between nodes -->
+  <path d="M960 300 L958 300" stroke="#7c3aed" stroke-width="0"/>
+  <path d="M855 358 L855 386" stroke="#7c3aed" stroke-width="1.5" fill="none" marker-end="url(#arrowp)"/>
+  <path d="M1059 358 L1059 386" stroke="#7c3aed" stroke-width="1.5" fill="none" marker-end="url(#arrowp)"/>
+  <path d="M1263 358 L1263 386" stroke="#7c3aed" stroke-width="1.5" fill="none" marker-end="url(#arrowp)"/>
+
+  <rect x="740" y="386" width="636" height="310" rx="10" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="760" y="412" class="t lbl" fill="#7c3aed">What the nodes do between themselves</text>
+  <text x="1300" y="412" class="t mono" fill="#7c3aed">:11438</text>
+
+  <rect x="760" y="426" width="596" height="58" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="776" y="447" class="t lbl">Find each other</text>
+  <text x="776" y="466" class="t txt">announced over mDNS, so an address that changes on reboot is relearned and</text>
+  <text x="776" y="480" class="t txt">no machine has to be given a fixed IP</text>
+
+  <rect x="760" y="494" width="596" height="58" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="776" y="515" class="t lbl">Trust each other</text>
+  <text x="776" y="534" class="t txt">each node keeps a certificate it made itself; joining pins it, and every call</text>
+  <text x="776" y="548" class="t txt">between nodes is mutual TLS against that pin</text>
+
+  <rect x="760" y="562" width="596" height="58" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="776" y="583" class="t lbl">Place the work</text>
+  <text x="776" y="602" class="t txt">the node that will finish soonest wins, counting load time, queue and measured</text>
+  <text x="776" y="616" class="t txt">speed; a conversation stays put, and a node that fails is skipped</text>
+
+  <rect x="760" y="630" width="596" height="52" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="776" y="651" class="t lbl">Share the models</text>
+  <text x="776" y="670" class="t txt">a model already on one node is copied from it rather than downloaded again</text>
+
+  <text x="740" y="732" class="t cap">Two nodes without a licence, unlimited with one.</text>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8c959f"/>
+    </marker>
+    <marker id="arrowp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+</svg>
