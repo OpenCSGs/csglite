@@ -699,6 +699,10 @@ func doJSON(ctx context.Context, client *http.Client, addr, method, path string,
 	return nil
 }
 
+// statusFetchBudget caps one poll across every candidate address; it stays
+// below pollStuckAfter so a poll reports back before it is abandoned.
+const statusFetchBudget = 25 * time.Second
+
 // fetchStatusUnpinned reads a node's status without a pin (seed probing,
 // unpaired nodes). Only non-sensitive fields are trusted from it.
 func (m *Manager) fetchStatusUnpinned(ctx context.Context, addr string) (*Status, error) {
@@ -713,6 +717,11 @@ func (m *Manager) fetchStatusUnpinned(ctx context.Context, addr string) (*Status
 
 // fetchStatus polls a member, trying each known endpoint in turn.
 func (m *Manager) fetchStatus(ctx context.Context, mem Member) (*Status, string, error) {
+	// Bound the whole attempt, not just each address: a member with several
+	// stale addresses must still report back before the poll is considered
+	// stuck.
+	ctx, cancel := context.WithTimeout(ctx, statusFetchBudget)
+	defer cancel()
 	addrs := m.dir.Candidates(mem.UUID)
 	for _, a := range m.seedAddressesFor(mem) {
 		if !containsString(addrs, a) {

@@ -121,3 +121,54 @@ func TestDirectoryDiscoveredNodes(t *testing.T) {
 		t.Fatalf("member address %v", got)
 	}
 }
+
+func TestDirectoryRecoversFromAStuckPollAndProofOfLife(t *testing.T) {
+	d := NewDirectory()
+	now := time.Date(2026, 9, 19, 9, 0, 0, 0, time.UTC)
+	d.now = func() time.Time { return now }
+	d.Track("n1", []string{"10.0.0.5:11438"})
+	d.MarkSuccess("n1", "10.0.0.5:11438", &Status{UUID: "n1"})
+
+	// The member moves to a new address; polls of the old one fail until it
+	// is written off.
+	for i := 0; i < 3; i++ {
+		now = now.Add(30 * time.Second)
+		d.MarkFailure("n1", errors.New("no route to host"))
+	}
+	if rt, _ := d.Get("n1"); rt.Health != HealthDown {
+		t.Fatalf("health %s, want down", rt.Health)
+	}
+
+	// A poll starts and never reports back.
+	if !d.BeginPoll("n1") {
+		t.Fatal("poll refused")
+	}
+	now = now.Add(5 * time.Second)
+	if d.BeginPoll("n1") {
+		t.Fatal("a second poll started while one was in flight")
+	}
+	if len(d.Due()) != 0 {
+		t.Fatal("a member being polled must not be due")
+	}
+
+	// The member reaches us instead (gossip over its new address): that is
+	// proof of life and must heal it even though it was written off.
+	d.LearnAddress("n1", "10.0.0.9:11438", now)
+	d.RequestSucceeded("n1")
+	rt, _ := d.Get("n1")
+	if rt.Health != HealthHealthy || rt.Failures != 0 || rt.LastError != "" {
+		t.Fatalf("proof of life did not heal the member: %+v", rt)
+	}
+	if got := d.Candidates("n1"); len(got) == 0 || got[0] != "10.0.0.9:11438" {
+		t.Fatalf("new address not preferred: %v", got)
+	}
+
+	// The stuck poll is abandoned once it is plainly hung, so polling resumes.
+	now = now.Add(pollStuckAfter)
+	if len(d.Due()) != 1 {
+		t.Fatal("member is still not due after the stuck poll aged out")
+	}
+	if !d.BeginPoll("n1") {
+		t.Fatal("the stuck poll was not abandoned")
+	}
+}

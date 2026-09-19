@@ -41,6 +41,12 @@ const (
 
 var pollBackoff = []time.Duration{4 * time.Second, 8 * time.Second, 16 * time.Second, 30 * time.Second}
 
+// pollStuckAfter abandons a poll that never reported back. Without it one
+// request that never returns leaves the member marked "probing" for good:
+// no further poll is scheduled, so its health, address and last error stay
+// frozen even after the member is plainly reachable again.
+const pollStuckAfter = 45 * time.Second
+
 // NodeRuntime is the live state kept for one member.
 type NodeRuntime struct {
 	UUID      string
@@ -59,6 +65,7 @@ type NodeRuntime struct {
 	reservations map[int64]time.Time
 	reserveSeq   int64
 	probing      bool
+	probingSince time.Time
 }
 
 // Reserved counts outstanding dispatched requests.
@@ -278,7 +285,10 @@ func (d *Directory) Due() []string {
 	now := d.now()
 	var due []string
 	for id, n := range d.nodes {
-		if n.probing || now.Before(n.NextPoll) {
+		if n.probing && now.Sub(n.probingSince) < pollStuckAfter {
+			continue
+		}
+		if now.Before(n.NextPoll) {
 			continue
 		}
 		due = append(due, id)
@@ -288,14 +298,21 @@ func (d *Directory) Due() []string {
 }
 
 // BeginPoll marks a member as being polled so overlapping polls do not stack.
+// A poll that has not reported back within pollStuckAfter is abandoned rather
+// than blocking every later poll.
 func (d *Directory) BeginPoll(nodeUUID string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	n, ok := d.nodes[nodeUUID]
-	if !ok || n.probing {
+	if !ok {
+		return false
+	}
+	now := d.now()
+	if n.probing && now.Sub(n.probingSince) < pollStuckAfter {
 		return false
 	}
 	n.probing = true
+	n.probingSince = now
 	if n.Health == HealthDown {
 		n.Health = HealthProbing
 	}
@@ -402,15 +419,22 @@ func (d *Directory) RequestFailed(nodeUUID, modelID string, modelSpecific bool) 
 	n.NextPoll = now
 }
 
-// RequestSucceeded is proof of life: a node streaming an answer is up.
+// RequestSucceeded is proof of life: an authenticated request from the member,
+// or an answer it streamed back, says it is up whatever the polls concluded.
+// A member written off as down is healed here and polled again at once, which
+// is what recovers a node whose address changed while this node was failing
+// to reach its old one.
 func (d *Directory) RequestSucceeded(nodeUUID string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	n := d.node(nodeUUID)
-	n.LastSeen = d.now()
-	if n.Health == HealthSuspect || n.Health == HealthProbing {
+	now := d.now()
+	n.LastSeen = now
+	if n.Health != HealthHealthy {
 		n.Health = HealthHealthy
 		n.Failures = 0
+		n.LastError = ""
+		n.NextPoll = now
 	}
 }
 
