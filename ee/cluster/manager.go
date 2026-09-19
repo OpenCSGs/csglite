@@ -64,7 +64,6 @@ type Host interface {
 	APIPort() int
 }
 
-// EngineOptions are the runtime overrides a request may carry.
 // EngineKind names the kind of inference engine a routed request needs. It
 // travels with the request because the node that ends up serving it has to
 // load the matching engine, and only the caller knows which one was asked for.
@@ -78,6 +77,7 @@ const (
 	EngineEmbedding EngineKind = "embedding"
 )
 
+// EngineOptions are the runtime overrides a request may carry.
 type EngineOptions struct {
 	// Kind selects the engine a request needs. The zero value is EngineChat
 	// so callers that only ever wanted chat keep working unchanged.
@@ -124,6 +124,7 @@ type Manager struct {
 	dir      *Directory
 	affinity *Affinity
 	perf     *perfStore
+	peers    *peerClientCache
 
 	mu          sync.RWMutex
 	ctx         context.Context
@@ -187,6 +188,7 @@ func New(opts Options) (*Manager, error) {
 		dir:         NewDirectory(),
 		affinity:    NewAffinity(),
 		perf:        newPerfStore(filepath.Join(opts.Dir, "perf.json")),
+		peers:       newPeerClientCache(id),
 		gossipWake:  make(chan struct{}, 1),
 		discoverer:  opts.Discoverer,
 		observedIPs: map[string]time.Time{},
@@ -206,6 +208,15 @@ func (m *Manager) Store() *Store { return m.store }
 
 // Directory exposes the live member view.
 func (m *Manager) Directory() *Directory { return m.dir }
+
+// forgetNode drops everything this node holds about a former member: its live
+// health and addresses, and the pooled connections to it. Forgetting one
+// without the other would leave a client trusting a certificate for a node
+// that is no longer a member.
+func (m *Manager) forgetNode(nodeUUID string) {
+	m.dir.Forget(nodeUUID)
+	m.peers.forget(nodeUUID)
+}
 
 // ListenPort is the bound cluster port.
 func (m *Manager) ListenPort() int {
@@ -329,6 +340,7 @@ func (m *Manager) deactivate() {
 	}
 	_ = m.discoverer.Close()
 	m.dir.Reset()
+	m.peers.closeAll()
 	m.invalidateLocalStatus()
 }
 
@@ -675,9 +687,7 @@ func (e *peerError) Error() string {
 
 // peerJSON posts (or gets) JSON to a pinned member at addr.
 func (m *Manager) peerJSON(ctx context.Context, mem Member, addr, method, path string, in, out any) error {
-	client := peerClient(m.identity, mem.UUID, mem.CertFingerprint)
-	defer client.CloseIdleConnections()
-	return doJSON(ctx, client, addr, method, path, in, out)
+	return doJSON(ctx, m.peers.get(mem.UUID, mem.CertFingerprint), addr, method, path, in, out)
 }
 
 func doJSON(ctx context.Context, client *http.Client, addr, method, path string, in, out any) error {
@@ -806,7 +816,7 @@ func (m *Manager) pollLoop() {
 		for _, id := range m.dir.Due() {
 			mem, ok := m.store.Member(id)
 			if !ok {
-				m.dir.Forget(id)
+				m.forgetNode(id)
 				continue
 			}
 			if !m.dir.BeginPoll(id) {
@@ -1029,7 +1039,7 @@ func (m *Manager) mergeGossip(msg gossipMessage, from string) {
 	}
 	if removed, err := m.store.ApplyTombstones(msg.Tombstones); err == nil {
 		for _, id := range removed {
-			m.dir.Forget(id)
+			m.forgetNode(id)
 			m.logf("cluster: node %s removed by a peer", shortUUID(id))
 		}
 	}
@@ -1462,7 +1472,7 @@ func (m *Manager) RemoveMember(ctx context.Context, nodeUUID string) error {
 	if _, err := m.store.Remove(nodeUUID); err != nil {
 		return err
 	}
-	m.dir.Forget(nodeUUID)
+	m.forgetNode(nodeUUID)
 	if len(addrs) > 0 {
 		attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()

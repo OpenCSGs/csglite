@@ -339,7 +339,7 @@ func (m *Manager) handlePeerLeave(w http.ResponseWriter, r *http.Request) {
 			writePeerError(w, http.StatusInternalServerError, err.Error(), "store_error")
 			return
 		}
-		m.dir.Forget(peer)
+		m.forgetNode(peer)
 		m.wakeGossip()
 		m.logf("cluster: node %s left the cluster", shortUUID(peer))
 	case msg.UUID == m.identity.UUID:

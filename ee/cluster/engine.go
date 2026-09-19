@@ -120,7 +120,7 @@ func (e *nodeEngine) forward(ctx context.Context, path string, body []byte, head
 	if len(addrs) == 0 {
 		return nil, &routeError{status: 0, err: errors.New("node has no known address")}
 	}
-	client := peerClient(e.m.identity, e.mem.UUID, e.mem.CertFingerprint)
+	client := e.m.peers.get(e.mem.UUID, e.mem.CertFingerprint)
 	var lastErr error
 	for i, addr := range addrs {
 		if i > 1 {
@@ -1087,7 +1087,7 @@ func (m *Manager) FindPeerModel(ctx context.Context, modelID string) (*PeerModel
 // file; after it is read to EOF, resp.Trailer.Get(SHA256Trailer) holds the
 // digest the peer computed while sending.
 func (m *Manager) OpenPeerFile(ctx context.Context, pm *PeerModel, rel string) (*http.Response, error) {
-	client := peerClient(m.identity, pm.Node.UUID, pm.Node.CertFingerprint)
+	client := m.peers.get(pm.Node.UUID, pm.Node.CertFingerprint)
 	q := url.Values{"model": {modelIDOfManifest(pm)}, "path": {rel}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+pm.Addr+peerPathModelFile+"?"+q.Encode(), nil)
 	if err != nil {
