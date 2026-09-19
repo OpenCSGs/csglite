@@ -150,22 +150,7 @@ func TestFromLocalModelEmbeddingArchitecture(t *testing.T) {
 	}
 }
 
-func TestFromLocalModelJinaOmniUsesPythonEmbedding(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["JinaEmbeddingsV5OmniModel"]}`), 0o644); err != nil {
-		t.Fatalf("write config.json: %v", err)
-	}
-
-	support := FromLocalModel(&model.LocalModel{
-		Format:      model.FormatSafeTensors,
-		PipelineTag: "feature-extraction",
-	}, dir)
-	if !support.Supported || support.Runtime != "python-embedding" || support.Mode != "embedding" || support.Architecture != "JinaEmbeddingsV5OmniModel" {
-		t.Fatalf("support = %#v, want python-embedding embedding", support)
-	}
-}
-
-func TestFromLocalModelUnknownEmbeddingDoesNotUsePythonEmbedding(t *testing.T) {
+func TestFromLocalModelUnconvertibleEmbeddingUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["SomeUnsupportedEmbeddingModel"]}`), 0o644); err != nil {
 		t.Fatalf("write config.json: %v", err)
@@ -175,8 +160,8 @@ func TestFromLocalModelUnknownEmbeddingDoesNotUsePythonEmbedding(t *testing.T) {
 		Format:      model.FormatSafeTensors,
 		PipelineTag: "feature-extraction",
 	}, dir)
-	if support.Supported || support.Runtime == "python-embedding" {
-		t.Fatalf("support = %#v, want unsupported until Python worker has an explicit compatible path", support)
+	if support.Supported {
+		t.Fatalf("support = %#v, want unsupported: the GGUF converter does not handle this architecture", support)
 	}
 }
 

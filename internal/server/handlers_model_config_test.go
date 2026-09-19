@@ -261,14 +261,14 @@ func TestModelConfigReportsTheServingRuntime(t *testing.T) {
 			want:        api.ModelRuntimeLlama,
 		},
 		{
-			name:        "python-embedding",
+			name:        "safetensors-embedding",
 			pipelineTag: "feature-extraction",
 			format:      model.FormatSafeTensors,
-			// An architecture the GGUF converter does not handle: those that it
-			// does still prefer llama.cpp.
+			// Every embedding model is served by llama.cpp, whether or not the
+			// GGUF converter recognises the architecture.
 			config: `{"architectures":["JinaEmbeddingsV5OmniModel"]}`,
 			files:  []string{"model.safetensors"},
-			want:   api.ModelRuntimePythonEmbedding,
+			want:   api.ModelRuntimeLlama,
 		},
 		{
 			name:        "text-to-speech",

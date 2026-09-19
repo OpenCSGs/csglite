@@ -101,8 +101,6 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/tts-voices", s.handleTTSVoices)
 	mux.HandleFunc("GET /api/tts-runtime", s.handleTTSRuntimeStatus)
 	mux.HandleFunc("POST /api/tts-runtime/install", s.handleTTSRuntimeInstall)
-	mux.HandleFunc("GET /api/embedding-runtime", s.handleEmbeddingRuntimeStatus)
-	mux.HandleFunc("POST /api/embedding-runtime/install", s.handleEmbeddingRuntimeInstall)
 	mux.HandleFunc("GET /api/api-keys", s.handleAPIKeysList)
 	mux.HandleFunc("POST /api/api-keys/settings", s.handleAPIKeysSettingsUpdate)
 	mux.HandleFunc("POST /api/api-keys", s.handleAPIKeyCreate)

@@ -180,25 +180,10 @@ var embeddingArchitectures = map[string]bool{
 	"XLMRobertaModel":                     true,
 }
 
-var pythonEmbeddingArchitectures = map[string]bool{
-	// Jina v5 remote-code embedding models expose encode/embed helpers that the
-	// Python embedding worker can drive directly. Converter-supported entries
-	// still prefer llama.cpp because routing checks converter support first.
-	"JinaEmbeddingsV5Model":          true,
-	"JinaEmbeddingsV5OmniModel":      true,
-	"LlavaEuroBertAudioForEmbedding": true,
-}
-
 // IsEmbeddingArchitecture reports whether the HuggingFace architecture is treated
 // as a local embedding model by csghub-lite.
 func IsEmbeddingArchitecture(architecture string) bool {
 	return embeddingArchitectures[strings.TrimSpace(architecture)]
-}
-
-// IsPythonEmbeddingArchitecture reports whether the HuggingFace architecture is
-// supported by csghub-lite's Python embedding runtime.
-func IsPythonEmbeddingArchitecture(architecture string) bool {
-	return pythonEmbeddingArchitectures[strings.TrimSpace(architecture)]
 }
 
 // IsVisionArchitecture reports whether the HuggingFace architecture is a supported

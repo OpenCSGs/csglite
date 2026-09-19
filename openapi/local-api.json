@@ -6779,60 +6779,6 @@
           }
         }
       }
-    },
-    "/api/embedding-runtime": {
-      "get": {
-        "tags": [
-          "Runtime"
-        ],
-        "summary": "Get embedding runtime status",
-        "operationId": "getEmbeddingRuntimeStatus",
-        "responses": {
-          "200": {
-            "description": "Shared Python embedding runtime status.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ImageRuntimeStatus"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/embedding-runtime/install": {
-      "post": {
-        "tags": [
-          "Runtime"
-        ],
-        "summary": "Install embedding runtime packages",
-        "operationId": "installEmbeddingRuntime",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ImageRuntimeInstallRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Updated embedding runtime status.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ImageRuntimeStatus"
-                }
-              }
-            }
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalServerError"
-          }
-        }
-      }
     }
   },
   "components": {
@@ -10143,7 +10089,7 @@
           },
           "runtime": {
             "type": "string",
-            "enum": ["llama", "python-embedding", "python-asr", "python-tts", "diffusers"],
+            "enum": ["llama", "python-asr", "python-tts", "diffusers"],
             "description": "Runtime that serves this model. The llama.cpp load options apply only to \"llama\"; the pipeline tag does not determine this, since an embedding model runs on llama.cpp when its weights convert to GGUF and in the Python embedding runtime when they do not."
           }
         }

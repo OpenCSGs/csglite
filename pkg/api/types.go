@@ -229,7 +229,7 @@ type ModelConfigResponse struct {
 	// would use right now.
 	EffectiveKeepAlive string `json:"effective_keep_alive"`
 	// Runtime names the runtime that serves this model: "llama",
-	// "python-embedding", "python-asr", "python-tts" or "diffusers". Clients
+	// "python-asr", "python-tts" or "diffusers". Clients
 	// use it to decide which load options mean anything -- the llama.cpp
 	// options do not reach a model served by a Python runtime.
 	Runtime string `json:"runtime"`
@@ -238,11 +238,10 @@ type ModelConfigResponse struct {
 // Runtimes a local model can be served by, as reported in
 // ModelConfigResponse.Runtime.
 const (
-	ModelRuntimeLlama           = "llama"
-	ModelRuntimePythonEmbedding = "python-embedding"
-	ModelRuntimePythonASR       = "python-asr"
-	ModelRuntimePythonTTS       = "python-tts"
-	ModelRuntimeDiffusers       = "diffusers"
+	ModelRuntimeLlama     = "llama"
+	ModelRuntimePythonASR = "python-asr"
+	ModelRuntimePythonTTS = "python-tts"
+	ModelRuntimeDiffusers = "diffusers"
 )
 
 // ModelConfigUpdateRequest sets the per-model runtime settings. Every field is
