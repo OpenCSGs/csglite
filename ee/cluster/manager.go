@@ -39,7 +39,11 @@ type Host interface {
 	// manager fills in identity and cluster fields.
 	LocalStatus(ctx context.Context) Status
 	// LocalEngine returns the local inference engine for a model so the
-	// scheduler can pick this node like any other.
+	// scheduler can pick this node like any other. opts.Kind says which
+	// engine the request needs: a node answers chat and embedding requests
+	// from different processes started with different flags, so a locally
+	// placed embedding request served by a chat engine would reach a
+	// llama-server that was never given --embeddings.
 	LocalEngine(ctx context.Context, modelID string, opts EngineOptions) (inference.Engine, error)
 	// InferenceHandler serves a forwarded request on this node only.
 	InferenceHandler() http.Handler
@@ -61,7 +65,23 @@ type Host interface {
 }
 
 // EngineOptions are the runtime overrides a request may carry.
+// EngineKind names the kind of inference engine a routed request needs. It
+// travels with the request because the node that ends up serving it has to
+// load the matching engine, and only the caller knows which one was asked for.
+type EngineKind string
+
+const (
+	// EngineChat is the default: chat, completion and messages requests.
+	EngineChat EngineKind = ""
+	// EngineEmbedding is an embeddings request, served by a process started
+	// in embedding mode.
+	EngineEmbedding EngineKind = "embedding"
+)
+
 type EngineOptions struct {
+	// Kind selects the engine a request needs. The zero value is EngineChat
+	// so callers that only ever wanted chat keep working unchanged.
+	Kind        EngineKind
 	NumCtx      int
 	NumParallel int
 	NGPULayers  int

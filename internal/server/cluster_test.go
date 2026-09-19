@@ -16,6 +16,7 @@ import (
 
 	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
 )
@@ -429,4 +430,64 @@ func TestClusterPullJobCopiesModelFromPeer(t *testing.T) {
 		_, ok := st.Model(publicID)
 		return ok
 	})
+}
+
+// A cluster-routed embedding request that the scheduler places on this node
+// must load an embedding engine. Chat and embedding are served by different
+// llama-server processes: the chat one is started without --embeddings, so
+// answering an embeddings call from it reaches a backend that cannot do the
+// job. The engine kind travels with the routed request for exactly this.
+func TestClusterHostLocalEngineHonoursTheEngineKind(t *testing.T) {
+	s := newTestServer(t)
+	mustSaveLocalModel(t, s.cfg.ModelDir, &model.LocalModel{
+		Namespace:    "Qwen",
+		Name:         "Qwen3-Embedding-0.6B-GGUF",
+		Format:       model.FormatGGUF,
+		Size:         1024,
+		Files:        []string{"model.gguf"},
+		PipelineTag:  "feature-extraction",
+		DownloadedAt: time.Unix(100, 0),
+	})
+	modelDir := filepath.Join(s.cfg.ModelDir, "Qwen", "Qwen3-Embedding-0.6B-GGUF")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model.gguf"), []byte("gguf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origChat, origEmbed := loadEngineWithProgress, loadEmbeddingEngineWithProgress
+	t.Cleanup(func() {
+		loadEngineWithProgress = origChat
+		loadEmbeddingEngineWithProgress = origEmbed
+	})
+	var loadedAs string
+	loadEngineWithProgress = func(string, *model.LocalModel, inference.ConvertProgressFunc, bool, int, int, int, string, string, string) (inference.Engine, error) {
+		loadedAs = "chat"
+		return &fakeEngine{}, nil
+	}
+	loadEmbeddingEngineWithProgress = func(string, *model.LocalModel, inference.ConvertProgressFunc, bool, int, int, int, string, string, string) (inference.Engine, error) {
+		loadedAs = "embedding"
+		return &fakeEngine{}, nil
+	}
+
+	host := &clusterHost{s: s}
+	const id = "Qwen/Qwen3-Embedding-0.6B-GGUF"
+	for _, tc := range []struct {
+		kind cluster.EngineKind
+		want string
+	}{
+		{cluster.EngineEmbedding, "embedding"},
+		{cluster.EngineChat, "chat"},
+	} {
+		// Chat and embedding use different engine cache keys, so both
+		// loads really happen rather than one hitting the other's cache.
+		loadedAs = ""
+		if _, err := host.LocalEngine(context.Background(), id, cluster.EngineOptions{Kind: tc.kind}); err != nil {
+			t.Fatalf("LocalEngine(kind=%q): %v", tc.kind, err)
+		}
+		if loadedAs != tc.want {
+			t.Fatalf("kind %q loaded the %s engine, want %s", tc.kind, loadedAs, tc.want)
+		}
+	}
 }

@@ -165,6 +165,13 @@ func (h *clusterHost) APIPort() int {
 }
 
 func (h *clusterHost) LocalEngine(ctx context.Context, modelID string, opts cluster.EngineOptions) (inference.Engine, error) {
+	// The kind matters: an embedding request needs a process started in
+	// embedding mode, and the llama.cpp cache and speculative options mean
+	// nothing to it. Serving one from the chat engine reaches a llama-server
+	// that was never given --embeddings.
+	if opts.Kind == cluster.EngineEmbedding {
+		return h.s.getOrLoadEmbeddingEngineWithOpts(ctx, modelID, opts.NumCtx, opts.NumParallel, opts.NGPULayers, opts.DType)
+	}
 	return h.s.getOrLoadEngineWithOpts(modelID, opts.NumCtx, opts.NumParallel, opts.NGPULayers, opts.CacheTypeK, opts.CacheTypeV, opts.DType)
 }
 
@@ -429,16 +436,17 @@ func (s *Server) modelPresentLocally(modelID string) bool {
 	return err == nil
 }
 
-// clusterChatEngine returns the cluster router for a request.
-func (s *Server) clusterChatEngine(ctx context.Context, modelID, source string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (inference.Engine, error) {
+// clusterRoutedEngine returns the cluster router for a request. kind travels
+// with it so whichever node the scheduler picks loads the matching engine.
+func (s *Server) clusterRoutedEngine(ctx context.Context, kind cluster.EngineKind, modelID, source string, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (inference.Engine, error) {
 	if s.cluster == nil {
 		return nil, inference.NewHTTPStatusError(http.StatusNotFound, "the cluster feature is disabled on this node")
 	}
 	if key := providerPoolUsageCaptureFromContext(ctx).affinityKey(); key != "" {
 		ctx = cluster.WithAffinityKey(ctx, key)
 	}
-	return s.cluster.ChatEngine(ctx, modelID, source, cluster.EngineOptions{
-		NumCtx: numCtx, NumParallel: numParallel, NGPULayers: nGPULayers, CacheTypeK: cacheTypeK, CacheTypeV: cacheTypeV, DType: dtype,
+	return s.cluster.RoutedEngine(ctx, modelID, source, cluster.EngineOptions{
+		Kind: kind, NumCtx: numCtx, NumParallel: numParallel, NGPULayers: nGPULayers, CacheTypeK: cacheTypeK, CacheTypeV: cacheTypeV, DType: dtype,
 	})
 }
 

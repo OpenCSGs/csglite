@@ -365,10 +365,12 @@ type clusterEngine struct {
 	last     Explain
 }
 
-// ChatEngine returns an engine that places each call on the best member.
+// RoutedEngine returns an engine that places each call on the best member.
 // source is "cluster" or "node:<uuid>". A pin on this node itself yields the
-// local engine directly.
-func (m *Manager) ChatEngine(ctx context.Context, modelID, source string, opts EngineOptions) (inference.Engine, error) {
+// local engine directly. opts.Kind selects chat or embedding; it reaches both
+// the local engine here and, through the forwarded request path, the engine
+// the receiving node loads.
+func (m *Manager) RoutedEngine(ctx context.Context, modelID, source string, opts EngineOptions) (inference.Engine, error) {
 	pinned := NodeUUIDFromSource(source)
 	if pinned != "" && pinned == m.identity.UUID {
 		return m.opts.Host.LocalEngine(ctx, modelID, opts)

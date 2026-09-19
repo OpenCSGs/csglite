@@ -38,6 +38,7 @@ type fakeHost struct {
 	mu        sync.Mutex
 	statusMod func(*Status)
 	bundles   map[string]*ModelBundle
+	lastKind  atomic.Value // EngineKind of the last LocalEngine call
 }
 
 func (h *fakeHost) LocalStatus(context.Context) Status {
@@ -57,7 +58,8 @@ func (h *fakeHost) LocalStatus(context.Context) Status {
 	return st
 }
 
-func (h *fakeHost) LocalEngine(context.Context, string, EngineOptions) (inference.Engine, error) {
+func (h *fakeHost) LocalEngine(_ context.Context, _ string, opts EngineOptions) (inference.Engine, error) {
+	h.lastKind.Store(opts.Kind)
 	if h.localEng == nil {
 		return nil, errors.New("no local engine in test")
 	}
@@ -249,7 +251,7 @@ func TestJoinWithTokenAndRouteToPeer(t *testing.T) {
 	if len(holders) != 1 || holders[0] != b.m.identity.UUID {
 		t.Fatalf("remote holders %v", holders)
 	}
-	eng, err := a.m.ChatEngine(context.Background(), "m-b", SourceCluster, EngineOptions{})
+	eng, err := a.m.RoutedEngine(context.Background(), "m-b", SourceCluster, EngineOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +438,7 @@ func TestFailoverToNextNodeAndBreaker(t *testing.T) {
 		}
 	}
 	firstHost.failNext.Store(1)
-	eng, _ := a.m.ChatEngine(context.Background(), "m", SourceCluster, EngineOptions{})
+	eng, _ := a.m.RoutedEngine(context.Background(), "m", SourceCluster, EngineOptions{})
 	resp, err := eng.(inference.ChatCompletionProxier).ChatCompletion(context.Background(), map[string]any{"messages": []any{}})
 	if err != nil {
 		t.Fatalf("failover did not happen: %v", err)
@@ -449,7 +451,7 @@ func TestFailoverToNextNodeAndBreaker(t *testing.T) {
 		t.Fatal("model breaker not opened for the failing node")
 	}
 	// Pinning a node that lacks the model is a clear error.
-	pinned, err := a.m.ChatEngine(context.Background(), "nope", SourceNodePrefix+b.m.identity.UUID, EngineOptions{})
+	pinned, err := a.m.RoutedEngine(context.Background(), "nope", SourceNodePrefix+b.m.identity.UUID, EngineOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +493,7 @@ func TestSessionAffinitySticksToOneNode(t *testing.T) {
 	ctx := WithAffinityKey(context.Background(), "thread:t1")
 	seen := map[string]int{}
 	for i := 0; i < 6; i++ {
-		eng, _ := a.m.ChatEngine(ctx, "m", SourceCluster, EngineOptions{})
+		eng, _ := a.m.RoutedEngine(ctx, "m", SourceCluster, EngineOptions{})
 		resp, err := eng.(inference.ChatCompletionProxier).ChatCompletion(ctx, map[string]any{"messages": []any{}})
 		if err != nil {
 			t.Fatal(err)
@@ -504,7 +506,7 @@ func TestSessionAffinitySticksToOneNode(t *testing.T) {
 	}
 	// A different thread may land elsewhere but stays consistent too.
 	other := WithAffinityKey(context.Background(), "thread:t2")
-	eng, _ := a.m.ChatEngine(other, "m", SourceCluster, EngineOptions{})
+	eng, _ := a.m.RoutedEngine(other, "m", SourceCluster, EngineOptions{})
 	resp, err := eng.(inference.ChatCompletionProxier).ChatCompletion(other, map[string]any{"messages": []any{}})
 	if err != nil {
 		t.Fatal(err)
@@ -877,3 +879,48 @@ func TestPeerModelBundleAndFileCopy(t *testing.T) {
 		t.Fatalf("unknown model: %v %v", pm, err)
 	}
 }
+
+// A routed request carries the kind of engine it needs. When the scheduler
+// places an embedding request on the local node, the host must be asked for an
+// embedding engine: chat and embedding are served by different processes
+// started with different flags, so answering one from the other reaches a
+// backend that was never configured for it.
+func TestRoutedEngineCarriesTheEngineKindToTheLocalHost(t *testing.T) {
+	bus := NewMemoryBus()
+	host := &fakeHost{models: []ModelStatus{{ID: "m"}}, localEng: &stubEngine{}}
+	a := startNode(t, bus, "a", host)
+	self := SourceNodePrefix + a.m.identity.UUID
+
+	for _, tc := range []struct {
+		name string
+		kind EngineKind
+	}{
+		{"embedding", EngineEmbedding},
+		{"chat", EngineChat},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host.lastKind.Store(EngineKind("unset"))
+			if _, err := a.m.RoutedEngine(context.Background(), "m", self, EngineOptions{Kind: tc.kind}); err != nil {
+				t.Fatalf("RoutedEngine: %v", err)
+			}
+			if got := host.lastKind.Load(); got != tc.kind {
+				t.Fatalf("local host asked for kind %v, want %v", got, tc.kind)
+			}
+		})
+	}
+}
+
+// stubEngine is a do-nothing inference.Engine for tests that only care which
+// engine the host was asked for, not what it answers.
+type stubEngine struct{}
+
+func (*stubEngine) Generate(context.Context, string, inference.Options, inference.TokenCallback) (string, error) {
+	return "", nil
+}
+
+func (*stubEngine) Chat(context.Context, []inference.Message, inference.Options, inference.TokenCallback) (string, error) {
+	return "", nil
+}
+
+func (*stubEngine) Close() error      { return nil }
+func (*stubEngine) ModelName() string { return "m" }
