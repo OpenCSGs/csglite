@@ -6,6 +6,7 @@ package cluster
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -29,12 +30,18 @@ func TestIdentityIsMintedOnceAndSurvivesRestart(t *testing.T) {
 	if second.Name != "box-01" {
 		t.Fatalf("saved name lost: %q", second.Name)
 	}
+	// The private key must not be readable by anyone else. Windows has no
+	// Unix permission bits and Go reports 0666 for any file it can write, so
+	// the check is meaningful only where the mode is real; access there is
+	// governed by the directory's ACL instead.
 	info, err := os.Stat(filepath.Join(dir, nodeKeyFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		t.Fatalf("private key is world/group readable: %o", perm)
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			t.Fatalf("private key is world/group readable: %o", perm)
+		}
 	}
 }
 
