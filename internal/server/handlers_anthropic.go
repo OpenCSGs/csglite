@@ -286,6 +286,7 @@ func (s *Server) handleAnthropicMessagesProxy(
 		return
 	}
 	defer resp.Body.Close()
+	copyClusterNodeHeaders(w, resp.Header)
 
 	var openAIResp api.OpenAIChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
@@ -365,6 +366,7 @@ func (s *Server) handleAnthropicMessagesProxyStream(
 		return
 	}
 	defer resp.Body.Close()
+	copyClusterNodeHeaders(w, resp.Header)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

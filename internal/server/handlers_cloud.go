@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"github.com/opencsgs/csglite/ee/cluster"
 	"io"
 	"log"
 	"net/http"
@@ -213,20 +214,28 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 	if err != nil {
 		return nil, inference.NewHTTPStatusError(http.StatusBadRequest, err.Error())
 	}
-	if poolIDFromSource(source) != "" {
+	route, clusterSource, err := s.routeForSource(modelID, source, true)
+	if err != nil {
+		return nil, err
+	}
+	routedCluster := func(src string) (inference.Engine, error) {
+		return s.clusterRoutedEngine(ctx, cluster.EngineChat, modelID, src, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
+	}
+	switch route {
+	case routeProviderPool:
 		pool, ok := providerPoolForRequest(modelID, source)
 		if !ok {
 			return nil, inference.NewHTTPStatusError(http.StatusNotFound, "provider pool not found or disabled")
 		}
 		return s.newProviderPoolChatEngine(ctx, pool, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
+	case routeThirdPartyProvider:
+		return newThirdPartyProviderEngine(source, modelID)
+	case routeCloud:
+		return s.newCloudEngine(ctx, modelID)
+	case routeCluster:
+		return routedCluster(clusterSource)
 	}
 	normalizedSource := strings.ToLower(source)
-	if providerIDFromSource(source) != "" {
-		return newThirdPartyProviderEngine(source, modelID)
-	}
-	if normalizedSource == "cloud" {
-		return s.newCloudEngine(ctx, modelID)
-	}
 
 	eng, err := s.getOrLoadEngineWithOpts(modelID, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
 	if err == nil {
@@ -234,6 +243,11 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 	}
 	if normalizedSource == "local" {
 		return nil, err
+	}
+	// The local load failed: a peer that holds the model is the closest
+	// substitute, ahead of third-party providers and the cloud.
+	if s.clusterIsTheClosestSubstitute(modelID, source) {
+		return routedCluster(cluster.SourceCluster)
 	}
 
 	if !s.hasCloudCredential() {
@@ -283,20 +297,28 @@ func (s *Server) getEmbeddingEngine(ctx context.Context, modelID, source string,
 	if err != nil {
 		return nil, inference.NewHTTPStatusError(http.StatusBadRequest, err.Error())
 	}
-	if poolIDFromSource(source) != "" {
+	route, clusterSource, err := s.routeForSource(modelID, source, true)
+	if err != nil {
+		return nil, err
+	}
+	routedCluster := func(src string) (inference.Engine, error) {
+		return s.clusterRoutedEngine(ctx, cluster.EngineEmbedding, modelID, src, numCtx, 0, nGPULayers, "", "", dtype)
+	}
+	switch route {
+	case routeProviderPool:
 		pool, ok := providerPoolForRequest(modelID, source)
 		if !ok {
 			return nil, inference.NewHTTPStatusError(http.StatusNotFound, "provider pool not found or disabled")
 		}
 		return s.newProviderPoolEmbeddingEngine(ctx, pool, numCtx, nGPULayers, dtype)
+	case routeThirdPartyProvider:
+		return newThirdPartyProviderEngine(source, modelID)
+	case routeCloud:
+		return s.newCloudEngine(ctx, modelID)
+	case routeCluster:
+		return routedCluster(clusterSource)
 	}
 	normalizedSource := strings.ToLower(source)
-	if providerIDFromSource(source) != "" {
-		return newThirdPartyProviderEngine(source, modelID)
-	}
-	if normalizedSource == "cloud" {
-		return s.newCloudEngine(ctx, modelID)
-	}
 
 	// An embeddings request carries no slot count: the concurrency a loaded
 	// engine serves is set when it is loaded, so 0 keeps whatever is running.
@@ -306,6 +328,9 @@ func (s *Server) getEmbeddingEngine(ctx context.Context, modelID, source string,
 	}
 	if normalizedSource == "local" {
 		return nil, err
+	}
+	if s.clusterIsTheClosestSubstitute(modelID, source) {
+		return routedCluster(cluster.SourceCluster)
 	}
 
 	if providerSource := s.thirdPartyProviderSourceForModel(ctx, modelID); providerSource != "" {

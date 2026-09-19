@@ -477,9 +477,32 @@ function Test-CsghubLiteServerRunning {
     }
 }
 
+function Apply-ClusterSecret {
+    param([string]$BinaryPath)
+
+    # Persist CSGHUB_LITE_CLUSTER_SECRET (and the optional CSGHUB_LITE_CLUSTER_NAME)
+    # so machines installed with the same secret form one LAN compute cluster
+    # automatically, however the service is started later.
+    if (-not $env:CSGHUB_LITE_CLUSTER_SECRET) { return }
+    try {
+        & $BinaryPath config set cluster_secret $env:CSGHUB_LITE_CLUSTER_SECRET | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Info "Cluster secret saved; this machine will join the cluster of every machine installed with the same secret."
+        } else {
+            Warn "Could not save the cluster secret. Run: csghub-lite config set cluster_secret <secret>"
+        }
+        if ($env:CSGHUB_LITE_CLUSTER_NAME) {
+            & $BinaryPath config set cluster_name $env:CSGHUB_LITE_CLUSTER_NAME | Out-Null
+        }
+    } catch {
+        Warn "Could not save the cluster secret: $($_.Exception.Message)"
+    }
+}
+
 function Start-CsghubLiteServer {
     param([string]$BinaryPath)
 
+    Apply-ClusterSecret -BinaryPath $BinaryPath
     if (Test-CsghubLiteServerRunning -BinaryPath $BinaryPath) {
         Info "csghub-lite server is already running."
         $script:ServerStartStatus = "running"

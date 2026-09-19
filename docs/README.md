@@ -27,6 +27,7 @@ CSGLite 是一个轻量级的本地大语言模型运行工具，基于 [CSGHub]
 - [login](cli/login.md) — 设置访问令牌
 - [config](cli/config.md) — 配置管理
 - [license](cli/license.md) — 企业版 License 查看、校验、安装与删除
+- [cluster](cli/cluster.md) — 局域网算力集群：创建 / 加入、邀请、成员、模型分布、调度解释
 
 ### REST API 参考
 
@@ -46,3 +47,4 @@ CSGLite 是一个轻量级的本地大语言模型运行工具，基于 [CSGHub]
 - [实时语音 API 设计](guides/realtime-audio-api.md) — 语音合成（已支持的后端与选型判据）、以及 ASR + TTS 全双工、兼容 OpenAI Realtime 的接口设计与分期计划
 - [企业版 License 功能门控设计](guides/ee-license-design.md) — 同一仓库、单一二进制，用签名 License 区分 CE / EE 功能：功能注册表、License 格式、后端与前端门控、目录与许可证约定
 - [推理引擎可选安装与可插拔设计](guides/inference-engine-install-design.md) — 安装时可选 llama.cpp 或不装推理引擎，`csghub-lite engine` 子命令、`/api/engines`、安装清单，以及后续接入 vLLM / MLX 等引擎的约定与分期计划
+- [局域网算力集群设计（EE）](guides/lan-cluster-design.md) — 多台算力盒子安装时指定共享密钥即自动组网（也支持令牌 / 准入码配对）、mTLS 节点间转发，按模型、负载、磁盘与实测吞吐调度请求；会话亲和与故障切换；节点身份与 IP 分离，重启换 IP 自动恢复；以私有化 CSGHub 为内网模型源；CE 2 节点、EE 配额；NVIDIA PAIR 等方案调研与分期计划

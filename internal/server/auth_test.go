@@ -973,3 +973,81 @@ func TestAPIKeyIsIdentifiedForUsageWhenAuthIsNotEnforced(t *testing.T) {
 		}
 	}
 }
+
+// The join token is the whole of the admission check: anyone who can read it
+// can put a machine into the cluster. A page the user happens to have open
+// must not be able to read it, and neither must an unauthenticated caller
+// somewhere on the network.
+func TestClusterTokenIsNotReadableCrossOriginOrFromTheNetwork(t *testing.T) {
+	s := newTestServer(t)
+
+	crossOrigin := httptest.NewRequest(http.MethodGet, "/api/cluster/token", nil)
+	crossOrigin.Header.Set("Origin", "https://evil.example")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, crossOrigin)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin token read = %d body=%s, want 403", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got == "*" {
+		t.Fatal("the cluster API answers with a wildcard CORS header, so any page could read it")
+	}
+
+	// From the network with authentication off there is no key to present, so
+	// the answer is a refusal rather than the token.
+	remote := httptest.NewRequest(http.MethodGet, "/api/cluster/token", nil)
+	remote.RemoteAddr = "192.168.1.20:5555"
+	w = httptest.NewRecorder()
+	s.routes().ServeHTTP(w, remote)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("remote token read with auth off = %d body=%s, want 403", w.Code, w.Body.String())
+	}
+
+	// With authentication on it is a missing-credential error, not a refusal.
+	if _, err := s.apiKeys.SetAuthEnabled(true); err != nil {
+		t.Fatalf("enable auth: %v", err)
+	}
+	w = httptest.NewRecorder()
+	remote = httptest.NewRequest(http.MethodGet, "/api/cluster/token", nil)
+	remote.RemoteAddr = "192.168.1.20:5555"
+	s.routes().ServeHTTP(w, remote)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("remote token read with auth on = %d body=%s, want 401", w.Code, w.Body.String())
+	}
+}
+
+// Administering the cluster from another machine is an operator action and
+// needs a key once authentication is on, the same as inference does.
+func TestClusterManagementNeedsAKeyFromTheNetwork(t *testing.T) {
+	s := newTestServer(t)
+	if _, err := s.apiKeys.SetAuthEnabled(true); err != nil {
+		t.Fatalf("enable auth: %v", err)
+	}
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/api/cluster/join"},
+		{http.MethodPost, "/api/cluster/invite"},
+		{http.MethodDelete, "/api/cluster"},
+		{http.MethodPut, "/api/cluster/settings"},
+		{http.MethodGet, "/api/cluster/summary"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.RemoteAddr = "192.168.1.20:5555"
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s without a key = %d body=%s, want 401", tc.method, tc.path, w.Code, w.Body.String())
+		}
+	}
+}
+
+// The machine itself keeps working: the web UI and the CLI both reach the API
+// over loopback, and neither sends a cross-origin Origin header.
+func TestClusterAPIStillWorksOverLoopback(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/cluster/token", nil)
+	req.RemoteAddr = "127.0.0.1:5555"
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code == http.StatusForbidden || w.Code == http.StatusUnauthorized {
+		t.Fatalf("loopback token read = %d body=%s, want the handler's own answer", w.Code, w.Body.String())
+	}
+}

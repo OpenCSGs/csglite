@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/opencsgs/csglite/ee/cluster"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,14 @@ var configKeySpecs = []configKeySpec{
 	{
 		name:        "listen_addr",
 		description: "Local server listen address (default: " + config.DefaultListenAddr + ")",
+	},
+	{
+		name:        "cluster_secret",
+		description: "Shared secret; machines installed with the same secret form one LAN compute cluster automatically",
+	},
+	{
+		name:        "cluster_name",
+		description: "Display name for the automatically formed cluster (default: CSGLite Cluster)",
 	},
 	{
 		name:        "token",
@@ -178,6 +187,17 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		cfg.ListenAddr = strings.TrimSpace(value)
 	case "token":
 		cfg.Token = strings.TrimSpace(value)
+	case "cluster_secret":
+		secret := strings.TrimSpace(value)
+		if len(secret) < cluster.MinAutoFormSecretLen {
+			return fmt.Errorf("cluster_secret must be at least %d characters", cluster.MinAutoFormSecretLen)
+		}
+		if len(secret) < cluster.RecommendedAutoFormSecretLen {
+			fmt.Fprintf(os.Stderr, "Warning: a short cluster secret is easy to guess; %d or more characters are recommended.\n", cluster.RecommendedAutoFormSecretLen)
+		}
+		cfg.Cluster.Secret = secret
+	case "cluster_name":
+		cfg.Cluster.Name = strings.TrimSpace(value)
 	default:
 		return fmt.Errorf("unknown config key %q (valid: %s)", key, supportedConfigKeys())
 	}
@@ -190,6 +210,9 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Set %s = %s\n", key, displayConfigValue(cfg, key))
+	if key == "cluster_secret" || key == "cluster_name" {
+		fmt.Println("Restart the server for the cluster settings to take effect: csghub-lite restart")
+	}
 	return nil
 }
 
@@ -210,8 +233,12 @@ func runConfigUnset(cmd *cobra.Command, args []string) error {
 		cfg.ServerURL = config.DefaultServerURL
 	case "ai_gateway_url":
 		cfg.AIGatewayURL = ""
+	case "cluster_secret":
+		cfg.Cluster.Secret = ""
+	case "cluster_name":
+		cfg.Cluster.Name = ""
 	default:
-		return fmt.Errorf("config key %q cannot be unset (valid: server_url, ai_gateway_url)", key)
+		return fmt.Errorf("config key %q cannot be unset (valid: server_url, ai_gateway_url, cluster_secret, cluster_name)", key)
 	}
 
 	if err := config.Save(cfg); err != nil {
@@ -247,6 +274,10 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		fmt.Println(cfg.ListenAddr)
 	case "token":
 		fmt.Println(maskedToken(cfg.Token))
+	case "cluster_secret":
+		fmt.Println(maskedToken(cfg.Cluster.Secret))
+	case "cluster_name":
+		fmt.Println(cfg.Cluster.Name)
 	default:
 		return fmt.Errorf("unknown config key %q (valid: %s)", key, supportedConfigKeys())
 	}
@@ -266,6 +297,8 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("dataset_dir:     %s\n", cfg.DatasetDir)
 	fmt.Printf("listen_addr:     %s\n", cfg.ListenAddr)
 	fmt.Printf("token:           %s\n", maskedToken(cfg.Token))
+	fmt.Printf("cluster_secret:  %s\n", maskedToken(cfg.Cluster.Secret))
+	fmt.Printf("cluster_name:    %s\n", cfg.Cluster.Name)
 	return nil
 }
 
@@ -333,6 +366,10 @@ func displayConfigValue(cfg *config.Config, key string) string {
 		return effectiveAIGatewayURL(cfg)
 	case "token":
 		return maskedToken(cfg.Token)
+	case "cluster_secret":
+		return maskedToken(cfg.Cluster.Secret)
+	case "cluster_name":
+		return cfg.Cluster.Name
 	default:
 		return ""
 	}

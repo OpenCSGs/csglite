@@ -1,6 +1,10 @@
 package server
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/opencsgs/csglite/ee/cluster"
+)
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
@@ -143,6 +147,30 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/cloud/auth/token", s.handleCloudAuthTokenDelete)
 	mux.HandleFunc("POST /api/cloud/api-key", s.handleCloudAPIKeySave)
 	mux.HandleFunc("DELETE /api/cloud/api-key", s.handleCloudAPIKeyDelete)
+	// LAN compute cluster. The feature is open to every edition; the member
+	// cap is what the license controls (quota.lite.max_cluster_nodes), checked
+	// where a node joins or is invited.
+	mux.HandleFunc("GET /api/cluster", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleGet }))
+	mux.HandleFunc("POST /api/cluster", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleCreate }))
+	mux.HandleFunc("DELETE /api/cluster", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleLeave }))
+	mux.HandleFunc("GET /api/cluster/summary", s.handleClusterSummary)
+	mux.HandleFunc("POST /api/cluster/enable", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleEnable }))
+	mux.HandleFunc("POST /api/cluster/disable", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleDisable }))
+	mux.HandleFunc("POST /api/cluster/join", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleJoin }))
+	mux.HandleFunc("GET /api/cluster/token", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleToken }))
+	mux.HandleFunc("POST /api/cluster/token/rotate", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleTokenRotate }))
+	mux.HandleFunc("GET /api/cluster/code", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleCode }))
+	mux.HandleFunc("GET /api/cluster/discovered", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleDiscovered }))
+	mux.HandleFunc("POST /api/cluster/invite", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleInvite }))
+	mux.HandleFunc("PUT /api/cluster/nodes/{uuid}", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleNodeUpdate }))
+	mux.HandleFunc("DELETE /api/cluster/nodes/{uuid}", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleNodeRemove }))
+	mux.HandleFunc("POST /api/cluster/nodes/{uuid}/state", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleNodeState }))
+	mux.HandleFunc("POST /api/cluster/nodes/{uuid}/models/pull", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleNodePull }))
+	mux.HandleFunc("GET /api/cluster/models", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleModels }))
+	mux.HandleFunc("POST /api/cluster/models/sync", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleModelSync }))
+	mux.HandleFunc("GET /api/cluster/explain", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleExplain }))
+	mux.HandleFunc("GET /api/cluster/recommendations", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleRecommendations }))
+	mux.HandleFunc("PUT /api/cluster/settings", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.HandleSettingsUpdate }))
 	mux.HandleFunc("GET /api/license", s.handleLicenseGet)
 	mux.HandleFunc("PUT /api/license", s.handleLicenseImport)
 	mux.HandleFunc("DELETE /api/license", s.handleLicenseDelete)
@@ -183,7 +211,7 @@ func (s *Server) routes() http.Handler {
 	}
 
 	return correlationMiddleware(LogMiddleware(
-		s.desktopAuthMiddleware(s.corsMiddleware(licenseOriginGuard(s.apiAuthMiddleware(
+		s.desktopAuthMiddleware(s.corsMiddleware(sensitiveOriginGuard(s.apiAuthMiddleware(
 			s.observabilityMiddleware(providerPoolUsageMiddleware(mux)),
 		)))),
 	))
@@ -265,7 +293,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Add("Vary", "Origin")
 			}
-		} else if !isLicenseManagementPath(r.URL.Path) {
+		} else if !isSensitiveLocalPath(r.URL.Path) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
 		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-B3-TraceId, X-CSGLite-Request-ID, X-CSGLite-Trace-ID, X-CSGLite-Thread-ID")

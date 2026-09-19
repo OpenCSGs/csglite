@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/httpjson"
 	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/modelregistry"
@@ -19,18 +20,14 @@ import (
 )
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	httpjson.Write(w, status, v)
 }
 
-type apiErrorResponse struct {
-	Error     string `json:"error"`
-	ErrorCode int    `json:"errorCode"`
-}
+// apiErrorResponse is the server's name for the shared envelope.
+type apiErrorResponse = httpjson.Error
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, apiErrorResponse{Error: msg, ErrorCode: status})
+	httpjson.WriteError(w, status, msg)
 }
 
 func writeInferenceError(w http.ResponseWriter, err error) {

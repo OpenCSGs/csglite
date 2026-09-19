@@ -51,9 +51,10 @@ type FeatureDefinition struct {
 	Since string
 }
 
-// Catalog entries. None is gated yet, so every one is enabled regardless of
-// license. They are declared so that the issuer registry and this binary
-// agree on the names before the first feature moves to EE.
+// Catalog entries. Only QuotaMaxClusterNodes is gated; every boolean is
+// enabled regardless of license. The ungated entries are declared so that the
+// issuer registry and this binary agree on the names before a feature moves
+// to EE.
 var (
 	FeatureProviderPools = FeatureDefinition{
 		Key: featurePrefix + "provider_pools", Type: FeatureTypeBoolean, Gated: false, DefaultValue: true,
@@ -84,6 +85,22 @@ var (
 		Key: quotaPrefix + "max_provider_pools", Type: FeatureTypeInt, Gated: false, DefaultValue: 0,
 		Since: "0.10.0",
 	}
+	// FeatureLANCluster is the LAN compute cluster: discovery, pairing and
+	// request routing across CSGLite nodes. The feature itself is open to
+	// every edition; what the license controls is how many nodes may join
+	// (QuotaMaxClusterNodes), so there is one implementation and no CE/EE
+	// code fork. See docs/guides/lan-cluster-design.md.
+	FeatureLANCluster = FeatureDefinition{
+		Key: featurePrefix + "lan_cluster", Type: FeatureTypeBoolean, Gated: false, DefaultValue: true,
+		NavItem: "cluster", Since: "0.13.0",
+	}
+	// QuotaMaxClusterNodes caps the members of a LAN cluster, this node
+	// included. The Community edition may run two machines; an Enterprise
+	// license lifts the cap (0 = unlimited) or sets a tier in Extra.limits.
+	QuotaMaxClusterNodes = FeatureDefinition{
+		Key: quotaPrefix + "max_cluster_nodes", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
+		CommunityValue: 2, Since: "0.13.0",
+	}
 )
 
 var catalog = []FeatureDefinition{
@@ -94,6 +111,8 @@ var catalog = []FeatureDefinition{
 	FeatureRealtimeVoice,
 	FeatureImageGeneration,
 	QuotaMaxProviderPools,
+	FeatureLANCluster,
+	QuotaMaxClusterNodes,
 }
 
 // Catalog returns a copy of every registered feature definition.

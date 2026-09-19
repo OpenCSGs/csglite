@@ -381,6 +381,19 @@ type ModelInfo struct {
 	LLMType           string        `json:"llm_type,omitempty"`
 	OwnedBy           string        `json:"owned_by,omitempty"`
 	Pricing           *ModelPricing `json:"pricing,omitempty"`
+	// Nodes lists the cluster members holding this model. Only present while
+	// the node belongs to a LAN cluster.
+	Nodes []ModelNodePresence `json:"nodes,omitempty"`
+}
+
+// ModelNodePresence says which cluster node holds a model and whether it is
+// loaded there right now.
+type ModelNodePresence struct {
+	UUID   string `json:"uuid"`
+	Name   string `json:"name"`
+	Loaded bool   `json:"loaded"`
+	Online bool   `json:"online"`
+	Local  bool   `json:"local,omitempty"`
 }
 
 type ModelPricing struct {

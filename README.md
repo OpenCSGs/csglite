@@ -1,7 +1,7 @@
 [![engineering momentum](https://signals.gitdealflow.com/api/badge/opencsgs)](https://signals.gitdealflow.com/startup/opencsgs)
 # CSGLite
 <p align="center">
-  <img src="docs/images/apps.png" alt="AI Apps" width="80%">
+  <img src="docs/images/architecture.svg" alt="CSGLite on one machine and across a LAN cluster" width="95%">
 </p>
 
 A lightweight tool for running large language models locally, powered by models from the [CSGHub](https://opencsg.com) platform.
@@ -22,6 +22,11 @@ Inspired by [Ollama](https://ollama.com), CSGLite provides model download, local
 - **Cross-platform** — macOS, Linux, Windows
 - **Resume downloads** — interrupted downloads resume where they left off
 - **Pause/Resume** — pause ongoing downloads and resume later
+- **LAN cluster** — install the same binary on several machines with one shared
+  secret and they form a pool of compute: requests land on whichever node will
+  finish soonest, models are copied between nodes instead of downloaded again,
+  and an address that changes on reboot is relearned. Two nodes without a
+  licence, unlimited with one.
 
 ### Web UI
 

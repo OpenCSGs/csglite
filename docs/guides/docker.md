@@ -44,6 +44,18 @@ docker run -d --name csghub-lite \
   opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite:latest
 ```
 
+Join a LAN compute cluster from a container. Multicast discovery needs the
+host network; otherwise point the node at a member with
+`CSGHUB_LITE_CLUSTER_SEEDS` and publish the cluster port (`11438`):
+
+```bash
+docker run -d --name csghub-lite \
+  --network host \
+  -e CSGHUB_LITE_CLUSTER_JOIN_TOKEN=csgl1-<cluster-uuid>-<secret> \
+  -v csghub-lite-data:/root/.csghub-lite \
+  opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite:latest
+```
+
 Pin both runtime versions:
 
 ```bash
