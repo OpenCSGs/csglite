@@ -786,9 +786,12 @@ func (m *Manager) HandleModelSync(w http.ResponseWriter, r *http.Request) {
 			targets = append(targets, v.UUID)
 		}
 	}
-	pull := map[string]any{"model": req.Model}
+	repo, artifactSource := m.opts.Host.PullSpec(req.Model)
+	pull := map[string]any{"model": repo}
 	if req.ArtifactSource != "" {
 		pull["artifact_source"] = req.ArtifactSource
+	} else if artifactSource != "" {
+		pull["artifact_source"] = artifactSource
 	}
 	if req.Revision != "" {
 		pull["revision"] = req.Revision

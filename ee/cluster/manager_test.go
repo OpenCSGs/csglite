@@ -85,10 +85,11 @@ func (h *fakeHost) PullHandler() http.Handler {
 	})
 }
 
-func (h *fakeHost) NodeLimit() int  { return h.limit }
-func (h *fakeHost) Licensed() bool  { return h.licensed }
-func (h *fakeHost) Version() string { return "test" }
-func (h *fakeHost) APIPort() int    { return 11435 }
+func (h *fakeHost) PullSpec(modelID string) (string, string) { return modelID, "" }
+func (h *fakeHost) NodeLimit() int                           { return h.limit }
+func (h *fakeHost) Licensed() bool                           { return h.licensed }
+func (h *fakeHost) Version() string                          { return "test" }
+func (h *fakeHost) APIPort() int                             { return 11435 }
 
 type testNode struct {
 	m    *Manager

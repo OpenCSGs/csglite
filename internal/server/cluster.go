@@ -19,6 +19,7 @@ import (
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/license"
+	"github.com/opencsgs/csglite/internal/modelregistry"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -197,6 +198,20 @@ func (h *clusterHost) InferenceHandler() http.Handler {
 
 func (h *clusterHost) PullHandler() http.Handler {
 	return http.HandlerFunc(h.s.handlePullJobCreate)
+}
+
+// PullSpec splits a registry-prefixed public model id into the repository
+// and artifact source a pull job expects. Ids without a known prefix are
+// OpenCSG repositories and pass through unchanged.
+func (h *clusterHost) PullSpec(modelID string) (string, string) {
+	modelID = strings.TrimSpace(modelID)
+	for _, source := range []modelregistry.Source{modelregistry.SourceHuggingFace, modelregistry.SourceModelScope} {
+		prefix := string(source) + "/"
+		if strings.HasPrefix(strings.ToLower(modelID), prefix) && strings.Count(modelID, "/") >= 2 {
+			return modelID[len(prefix):], string(source)
+		}
+	}
+	return modelID, ""
 }
 
 // LocalStatus reports this node's models, load and hardware.

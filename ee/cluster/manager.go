@@ -44,6 +44,10 @@ type Host interface {
 	InferenceHandler() http.Handler
 	// PullHandler creates a pull job on this node (POST /api/pull/jobs body).
 	PullHandler() http.Handler
+	// PullSpec turns a cluster model id into the repository and artifact
+	// source a pull job needs: registry-prefixed ids such as
+	// "modelscope/Qwen/Qwen3.5-2B" split into ("Qwen/Qwen3.5-2B", "modelscope").
+	PullSpec(modelID string) (repo, artifactSource string)
 	// NodeLimit is the licensed member cap including this node; 0 = unlimited.
 	NodeLimit() int
 	// Licensed reports whether an enterprise license is in effect.

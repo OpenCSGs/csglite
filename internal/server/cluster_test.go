@@ -316,3 +316,20 @@ func TestClusterRoutesTranscriptionThroughTheSameResolver(t *testing.T) {
 		t.Fatalf("local transcription %d header=%q %s", rec.Code, rec.Header().Get(cluster.NodeHeader), rec.Body)
 	}
 }
+
+func TestClusterPullSpecSplitsRegistryPrefix(t *testing.T) {
+	h := &clusterHost{}
+	cases := map[string][2]string{
+		"modelscope/Qwen/Qwen3.5-2B":   {"Qwen/Qwen3.5-2B", "modelscope"},
+		"huggingface/acme/demo":        {"acme/demo", "huggingface"},
+		"Qwen/Qwen3-ASR-0.6B":          {"Qwen/Qwen3-ASR-0.6B", ""},
+		"Qwen3-Embedding-0.6B":         {"Qwen3-Embedding-0.6B", ""},
+		"modelscope/only-two-segments": {"modelscope/only-two-segments", ""},
+	}
+	for in, want := range cases {
+		repo, source := h.PullSpec(in)
+		if repo != want[0] || source != want[1] {
+			t.Errorf("PullSpec(%q) = %q, %q; want %q, %q", in, repo, source, want[0], want[1])
+		}
+	}
+}
