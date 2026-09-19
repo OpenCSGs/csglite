@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
@@ -1523,24 +1522,6 @@ func WithPythonPath(env []string, dir string) []string {
 	}
 	return append(out, "PYTHONPATH="+value)
 }
-
-// windowsEmbeddingWorkerImportCheckScript mirrors the import block at the top
-// of internal/embedding/worker/embedding_worker.py. A bare `import
-// transformers` is not enough: transformers lazy-loads submodules, so a broken
-// torchaudio only surfaces when the worker's real `from transformers import
-// AutoModel, ...` line expands the lazy module and pulls in the parakeet loss
-// chain (issue #54). Keep this script in sync with the worker imports; a test
-// enforces that.
-const windowsEmbeddingWorkerImportCheckScript = `import librosa
-import torch
-from PIL import Image
-from transformers import AutoModel, AutoProcessor, WhisperFeatureExtractor
-`
-
-// embeddingImportCheckPassed caches successful Windows embedding import checks
-// per runtime root so hot paths (status endpoint, engine reloads) do not pay
-// the multi-second torch+transformers import on every call.
-var embeddingImportCheckPassed sync.Map
 
 func verifyPythonScript(ctx context.Context, python, script string) error {
 	cmd := exec.CommandContext(ctx, python, "-c", script)
