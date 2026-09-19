@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -731,7 +732,10 @@ func (m *Manager) fetchStatus(ctx context.Context, mem Member) (*Status, string,
 	if len(addrs) == 0 {
 		return nil, "", errors.New("no known address")
 	}
-	var lastErr error
+	// Every address is reported, not just the last one: a member with one
+	// stale address and one good one otherwise hides the error that matters
+	// behind the stale address's "no route to host".
+	var failures []string
 	for _, addr := range addrs {
 		attempt, cancel := context.WithTimeout(ctx, 6*time.Second)
 		var st Status
@@ -739,14 +743,23 @@ func (m *Manager) fetchStatus(ctx context.Context, mem Member) (*Status, string,
 		cancel()
 		if err == nil {
 			if st.UUID != mem.UUID {
-				lastErr = fmt.Errorf("%s answered as %s", addr, shortUUID(st.UUID))
+				failures = append(failures, fmt.Sprintf("%s answered as %s", addr, shortUUID(st.UUID)))
 				continue
 			}
 			return &st, addr, nil
 		}
-		lastErr = err
+		failures = append(failures, fmt.Sprintf("%s: %v", addr, unwrapURLError(err)))
 	}
-	return nil, "", lastErr
+	return nil, "", errors.New(strings.Join(failures, "; "))
+}
+
+// unwrapURLError strips the URL wrapper so several attempts read as one line.
+func unwrapURLError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
 }
 
 func containsString(list []string, s string) bool {
