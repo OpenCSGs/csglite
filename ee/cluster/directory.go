@@ -92,6 +92,7 @@ type Directory struct {
 	nodes      map[string]*NodeRuntime
 	discovered map[string]Observation
 	breakers   map[string]time.Time
+	cooldowns  map[string]time.Time
 	now        func() time.Time
 }
 
@@ -101,6 +102,7 @@ func NewDirectory() *Directory {
 		nodes:      map[string]*NodeRuntime{},
 		discovered: map[string]Observation{},
 		breakers:   map[string]time.Time{},
+		cooldowns:  map[string]time.Time{},
 		now:        time.Now,
 	}
 }
@@ -140,6 +142,7 @@ func (d *Directory) Forget(nodeUUID string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.nodes, nodeUUID)
+	delete(d.cooldowns, nodeUUID)
 }
 
 // Reset drops every member (on leave).
@@ -148,6 +151,7 @@ func (d *Directory) Reset() {
 	defer d.mu.Unlock()
 	d.nodes = map[string]*NodeRuntime{}
 	d.breakers = map[string]time.Time{}
+	d.cooldowns = map[string]time.Time{}
 }
 
 // LearnAddress records an endpoint for a member from discovery or gossip. A
@@ -438,6 +442,37 @@ func (d *Directory) RequestSucceeded(nodeUUID string) {
 }
 
 // ModelBroken reports whether the (node, model) breaker is open.
+// CoolDown holds a node out of scheduling until a time it asked for. A member
+// that answers 429 is not broken, it is busy, and trying it again immediately
+// only moves the rejection around the cluster. The provider pool has honoured
+// Retry-After this way since it was written; the cluster did not, so a node
+// that said "come back in 30 seconds" was picked again on the next request.
+func (d *Directory) CoolDown(nodeUUID string, until time.Time) {
+	if nodeUUID == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if current, ok := d.cooldowns[nodeUUID]; !ok || until.After(current) {
+		d.cooldowns[nodeUUID] = until
+	}
+}
+
+// Cooling reports whether a node is still inside a cooldown it asked for.
+func (d *Directory) Cooling(nodeUUID string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	until, ok := d.cooldowns[nodeUUID]
+	if !ok {
+		return false
+	}
+	if !d.now().Before(until) {
+		delete(d.cooldowns, nodeUUID)
+		return false
+	}
+	return true
+}
+
 func (d *Directory) ModelBroken(nodeUUID, modelID string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()

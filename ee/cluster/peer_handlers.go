@@ -92,7 +92,7 @@ func (m *Manager) handlePeerStatus(w http.ResponseWriter, r *http.Request) {
 			writeCodedError(w, http.StatusForbidden, "this node is not a paired member of the cluster", "not_a_member")
 			return
 		}
-		st := m.LocalStatus(r.Context())
+		st := m.cachedLocalStatus(r.Context())
 		writeJSON(w, http.StatusOK, Status{
 			UUID: st.UUID, Name: st.Name, Version: st.Version, Protocol: st.Protocol, ClusterUUID: st.ClusterUUID,
 			Licensed: st.Licensed, NodeLimit: st.NodeLimit, APIPort: st.APIPort, ClusterPort: st.ClusterPort,
@@ -103,7 +103,7 @@ func (m *Manager) handlePeerStatus(w http.ResponseWriter, r *http.Request) {
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		m.dir.LearnAddress(peer, endpoint(host, m.memberClusterPort(peer)), time.Now())
 	}
-	writeJSON(w, http.StatusOK, m.LocalStatus(r.Context()))
+	writeJSON(w, http.StatusOK, m.cachedLocalStatus(r.Context()))
 }
 
 // POST /cluster/v1/join?cluster=<uuid>

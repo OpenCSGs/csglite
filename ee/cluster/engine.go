@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -148,7 +149,12 @@ func (e *nodeEngine) forward(ctx context.Context, path string, body []byte, head
 		if resp.StatusCode/100 != 2 {
 			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 			resp.Body.Close()
-			return nil, &routeError{status: resp.StatusCode, body: string(raw), err: fmt.Errorf("node %s answered %d", e.mem.Name, resp.StatusCode)}
+			return nil, &routeError{
+				status:     resp.StatusCode,
+				body:       string(raw),
+				err:        fmt.Errorf("node %s answered %d", e.mem.Name, resp.StatusCode),
+				retryAfter: resp.Header.Get("Retry-After"),
+			}
 		}
 		e.m.dir.RequestSucceeded(e.mem.UUID)
 		e.m.store.RecordAddress(e.mem.UUID, addr)
@@ -162,6 +168,10 @@ type routeError struct {
 	status int
 	body   string
 	err    error
+	// retryAfter is the peer's Retry-After header on a 429, so the caller can
+	// hold that node out for as long as it asked rather than trying it again
+	// on the very next request.
+	retryAfter string
 }
 
 func (e *routeError) Error() string {
@@ -262,7 +272,16 @@ func (e *nodeEngine) Generate(ctx context.Context, prompt string, opts inference
 	return e.Chat(ctx, []inference.Message{{Role: "user", Content: prompt}}, opts, onToken)
 }
 
-func (e *nodeEngine) Chat(ctx context.Context, messages []inference.Message, opts inference.Options, onToken inference.TokenCallback) (string, error) {
+// chatOverCompletions answers the Ollama-style Chat call on top of an
+// OpenAI-compatible /v1/chat/completions proxier. The single-node engine and
+// the cluster router both work this way, so the body building, the non-stream
+// decode and the stream reader live here once.
+//
+// num_ctx travels with the request: whichever node ends up serving it may be
+// the one that loads the model, and it can only honour a requested context
+// size if it is told. The cluster router used to leave it out, so an
+// Ollama-style chat routed to a peer silently lost it.
+func chatOverCompletions(ctx context.Context, proxier inference.ChatCompletionProxier, messages []inference.Message, opts inference.Options, onToken inference.TokenCallback) (string, error) {
 	stream := onToken != nil
 	body := map[string]interface{}{
 		"messages":    messages,
@@ -282,7 +301,7 @@ func (e *nodeEngine) Chat(ctx context.Context, messages []inference.Message, opt
 	if opts.NumCtx > 0 {
 		body["num_ctx"] = opts.NumCtx
 	}
-	resp, err := e.ChatCompletion(ctx, body)
+	resp, err := proxier.ChatCompletion(ctx, body)
 	if err != nil {
 		return "", err
 	}
@@ -304,6 +323,10 @@ func (e *nodeEngine) Chat(ctx context.Context, messages []inference.Message, opt
 		return parsed.Choices[0].Message.Content, nil
 	}
 	return readOpenAISSE(resp.Body, onToken)
+}
+
+func (e *nodeEngine) Chat(ctx context.Context, messages []inference.Message, opts inference.Options, onToken inference.TokenCallback) (string, error) {
+	return chatOverCompletions(ctx, e, messages, opts, onToken)
 }
 
 // readOpenAISSE collects delta content from a chat completions stream.
@@ -439,7 +462,7 @@ func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 			// we have measured this node ourselves.
 			st = m.overlayPerf(rt.UUID, st)
 		}
-		out = append(out, Candidate{UUID: rt.UUID, Name: name, Status: st, Health: rt.Health, Reserved: int(rt.reserveSeq), Breaker: m.dir.ModelBroken(rt.UUID, model)})
+		out = append(out, Candidate{UUID: rt.UUID, Name: name, Status: st, Health: rt.Health, Reserved: int(rt.reserveSeq), Breaker: m.dir.ModelBroken(rt.UUID, model), Cooling: m.dir.Cooling(rt.UUID)})
 	}
 	return out
 }
@@ -551,9 +574,13 @@ func (e *clusterEngine) dispatch(ctx context.Context, promptTokens, maxTokens in
 			lastErr = err
 			var re *routeError
 			if errors.As(err, &re) {
-				if re.status == 0 || re.status == http.StatusBadGateway || re.status == http.StatusServiceUnavailable {
+				switch {
+				case re.status == 0 || re.status == http.StatusBadGateway || re.status == http.StatusServiceUnavailable:
 					e.m.dir.RequestFailed(target.UUID, e.model, false)
-				} else if re.modelSpecific() {
+				case re.status == http.StatusTooManyRequests:
+					// Busy, not broken: hold it out for as long as it asked.
+					e.m.dir.CoolDown(target.UUID, retryAfterUntil(re.retryAfter, time.Now()))
+				case re.modelSpecific():
 					e.m.dir.RequestFailed(target.UUID, e.model, true)
 				}
 				if !re.retryable() {
@@ -669,44 +696,7 @@ func (e *clusterEngine) Generate(ctx context.Context, prompt string, opts infere
 // Chat serves the Ollama-style path by streaming a chat completion from the
 // chosen node.
 func (e *clusterEngine) Chat(ctx context.Context, messages []inference.Message, opts inference.Options, onToken inference.TokenCallback) (string, error) {
-	stream := onToken != nil
-	body := map[string]interface{}{
-		"messages":    messages,
-		"temperature": opts.Temperature,
-		"top_p":       opts.TopP,
-		"stream":      stream,
-	}
-	if opts.MaxTokens > 0 {
-		body["max_tokens"] = opts.MaxTokens
-	}
-	if opts.Seed >= 0 {
-		body["seed"] = opts.Seed
-	}
-	if len(opts.Stop) > 0 {
-		body["stop"] = opts.Stop
-	}
-	resp, err := e.ChatCompletion(ctx, body)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if !stream {
-		var parsed struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-			return "", err
-		}
-		if len(parsed.Choices) == 0 {
-			return "", nil
-		}
-		return parsed.Choices[0].Message.Content, nil
-	}
-	return readOpenAISSE(resp.Body, onToken)
+	return chatOverCompletions(ctx, e, messages, opts, onToken)
 }
 
 // estimateBodyTokens guesses prompt size (4 chars per token) and reads
@@ -1124,4 +1114,26 @@ func modelIDOfManifest(pm *PeerModel) string {
 		return repo
 	}
 	return source + "/" + repo
+}
+
+// defaultRateLimitCooldown is how long a node that answered 429 without a
+// Retry-After header is held out. It matches the provider pool's default so a
+// rate limit means the same thing wherever it is seen.
+const defaultRateLimitCooldown = time.Minute
+
+// retryAfterUntil reads a Retry-After header, in either of the two forms HTTP
+// allows: a number of seconds, or an absolute date. Anything unparsable falls
+// back to the default cooldown.
+func retryAfterUntil(header string, now time.Time) time.Time {
+	header = strings.TrimSpace(header)
+	if seconds, err := strconv.Atoi(header); header != "" && err == nil && seconds >= 0 {
+		return now.Add(time.Duration(seconds) * time.Second)
+	}
+	if at, err := http.ParseTime(header); header != "" && err == nil {
+		if at.After(now) {
+			return at
+		}
+		return now
+	}
+	return now.Add(defaultRateLimitCooldown)
 }

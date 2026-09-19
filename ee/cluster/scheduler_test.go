@@ -4,7 +4,9 @@
 package cluster
 
 import (
+	"net/http"
 	"testing"
+	"time"
 )
 
 const gb = 1 << 30
@@ -151,5 +153,41 @@ data: [DONE]
 	p, c = usageFromTail([]byte(`{"id":"x","usage":{"input_tokens":7,"output_tokens":9}}`))
 	if p != 7 || c != 9 {
 		t.Fatalf("anthropic usage %d/%d", p, c)
+	}
+}
+
+// A node that answers 429 is busy, not broken. Trying it again on the very
+// next request only moves the rejection around the cluster, so it is held out
+// for as long as it asked and the scheduler must honour that.
+func TestRankSkipsANodeInsideItsRequestedCooldown(t *testing.T) {
+	busy := nodeWithModel("busy", ModelStatus{ID: "m", Size: 1 * gb, Loaded: true, Slots: 4}, nil)
+	busy.Cooling = true
+	free := nodeWithModel("free", ModelStatus{ID: "m", Size: 1 * gb, Loaded: true, Slots: 4}, nil)
+	ranked, _ := Rank(RankRequest{Model: "m"}, []Candidate{busy, free})
+	for _, r := range ranked {
+		if r.UUID == "busy" && r.Excluded == "" {
+			t.Fatal("a node inside its cooldown was still eligible")
+		}
+		if r.UUID == "free" && r.Excluded != "" {
+			t.Fatalf("the idle node was excluded: %s", r.Excluded)
+		}
+	}
+}
+
+// Retry-After is allowed to be a number of seconds or an absolute date, and a
+// node that sends neither still has to be held out for a sane default.
+func TestRetryAfterUntilReadsBothHeaderForms(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	if got := retryAfterUntil("30", now); !got.Equal(now.Add(30 * time.Second)) {
+		t.Fatalf("seconds form gave %v", got)
+	}
+	if got := retryAfterUntil(now.Add(2*time.Minute).Format(http.TimeFormat), now); !got.After(now.Add(time.Minute)) {
+		t.Fatalf("date form gave %v", got)
+	}
+	if got := retryAfterUntil("", now); !got.Equal(now.Add(defaultRateLimitCooldown)) {
+		t.Fatalf("missing header gave %v, want the default cooldown", got)
+	}
+	if got := retryAfterUntil("nonsense", now); !got.Equal(now.Add(defaultRateLimitCooldown)) {
+		t.Fatalf("unparsable header gave %v, want the default cooldown", got)
 	}
 }

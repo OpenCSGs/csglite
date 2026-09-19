@@ -55,46 +55,49 @@ func setRoutedNodeHeaders(w http.ResponseWriter, eng any) {
 // cluster for models this node lacks (or every model in balanced mode), then
 // the local runtime, then a peer when the local load fails.
 func (s *Server) getASREngine(ctx context.Context, modelID, source string) (asr.Engine, error) {
-	source = strings.TrimSpace(source)
-	if cluster.IsClusterSource(source) {
-		if s.cluster == nil {
-			return nil, inference.NewHTTPStatusError(http.StatusNotFound, "the cluster feature is disabled on this node")
-		}
-		return &clusterASREngine{s: s, model: modelID, source: source}, nil
-	}
-	if source == "" && s.clusterRoutingWanted(modelID) {
-		return &clusterASREngine{s: s, model: modelID, source: cluster.SourceCluster}, nil
-	}
-	eng, err := s.getOrLoadASREngine(ctx, modelID)
-	if err == nil {
-		return eng, nil
-	}
-	if !strings.EqualFold(source, "local") && s.cluster != nil && s.cluster.RemoteHasModel(modelID) {
-		return &clusterASREngine{s: s, model: modelID, source: cluster.SourceCluster}, nil
-	}
-	return nil, err
+	return resolveWorkerEngine(ctx, s, modelID, source,
+		func(routedSource string) asr.Engine {
+			return &clusterASREngine{routedWorker: routedWorker{s: s, model: modelID, source: routedSource}}
+		},
+		func(ctx context.Context) (asr.Engine, error) { return s.getOrLoadASREngine(ctx, modelID) })
 }
 
 // getTTSEngine is getASREngine for speech synthesis.
 func (s *Server) getTTSEngine(ctx context.Context, modelID, source string) (tts.Engine, error) {
+	return resolveWorkerEngine(ctx, s, modelID, source,
+		func(routedSource string) tts.Engine {
+			return &clusterTTSEngine{routedWorker: routedWorker{s: s, model: modelID, source: routedSource}}
+		},
+		func(ctx context.Context) (tts.Engine, error) { return s.getOrLoadTTSEngine(ctx, modelID) })
+}
+
+// resolveWorkerEngine is the precedence a routed worker engine follows, which
+// is the same for speech recognition and speech synthesis: an explicit cluster
+// source wins, then the cluster when it wants this model anyway, then the local
+// runtime, and finally a peer when the local load failed and the caller did not
+// insist on this machine. Only the two constructors differ, so they are what
+// the caller passes in.
+func resolveWorkerEngine[T any](ctx context.Context, s *Server, modelID, source string,
+	routed func(routedSource string) T, loadLocal func(context.Context) (T, error)) (T, error) {
+	var zero T
 	source = strings.TrimSpace(source)
 	if cluster.IsClusterSource(source) {
 		if s.cluster == nil {
-			return nil, inference.NewHTTPStatusError(http.StatusNotFound, "the cluster feature is disabled on this node")
+			return zero, inference.NewHTTPStatusError(http.StatusNotFound, "the cluster feature is disabled on this node")
 		}
-		return &clusterTTSEngine{s: s, model: modelID, source: source}, nil
+		return routed(source), nil
 	}
 	if source == "" && s.clusterRoutingWanted(modelID) {
-		return &clusterTTSEngine{s: s, model: modelID, source: cluster.SourceCluster}, nil
+		return routed(cluster.SourceCluster), nil
 	}
-	eng, err := s.getOrLoadTTSEngine(ctx, modelID)
+	eng, err := loadLocal(ctx)
 	if err == nil {
 		return eng, nil
 	}
 	if !strings.EqualFold(source, "local") && s.cluster != nil && s.cluster.RemoteHasModel(modelID) {
-		return &clusterTTSEngine{s: s, model: modelID, source: cluster.SourceCluster}, nil
+		return routed(cluster.SourceCluster), nil
 	}
-	return nil, err
+	return zero, err
 }
 
 // routedNode remembers which member answered the last call.
@@ -139,16 +142,63 @@ func (s *Server) routeOrLocal(ctx context.Context, modelID, source, path string,
 
 // ---- speech recognition ----
 
-type clusterASREngine struct {
+// routedWorker is what a routed speech-recognition and a routed
+// speech-synthesis engine have in common: the model and source they route, and
+// which node answered last. Both embed it so the shared behaviour exists once.
+type routedWorker struct {
 	s      *Server
 	model  string
 	source string
 	node   routedNode
 }
 
-func (e *clusterASREngine) ModelName() string            { return e.model }
-func (e *clusterASREngine) Close() error                 { return nil }
-func (e *clusterASREngine) RoutedNode() (string, string) { return e.node.get() }
+func (w *routedWorker) ModelName() string            { return w.model }
+func (w *routedWorker) Close() error                 { return nil }
+func (w *routedWorker) RoutedNode() (string, string) { return w.node.get() }
+
+// routedCall places one worker request and runs exactly one of the two
+// outcomes: local when the scheduler kept the work on this node, remote when a
+// member took it. The local reservation is held for the whole local call, so
+// the scheduler cannot see this node as idle while it is busy; releasing it
+// before the work ran is what once made balanced mode never move anything.
+func routedCall[T any](ctx context.Context, w *routedWorker, path string, body []byte, contentType, accept string,
+	local func(context.Context) (T, error), remote func(*http.Response) (T, error)) (T, error) {
+	var zero T
+	resp, release, err := w.s.routeOrLocal(ctx, w.model, w.source, path, body, contentType, accept)
+	if err != nil {
+		return zero, err
+	}
+	if release != nil {
+		defer release()
+		return local(ctx)
+	}
+	defer resp.Body.Close()
+	w.node.set(resp.Header)
+	return remote(resp)
+}
+
+// routedStream is routedCall for a call whose only result is an error.
+func routedStream(ctx context.Context, w *routedWorker, path string, body []byte, contentType, accept string,
+	local func(context.Context) error, remote func(*http.Response) error) error {
+	_, err := routedCall(ctx, w, path, body, contentType, accept,
+		func(ctx context.Context) (struct{}, error) { return struct{}{}, local(ctx) },
+		func(resp *http.Response) (struct{}, error) { return struct{}{}, remote(resp) })
+	return err
+}
+
+type clusterASREngine struct {
+	routedWorker
+}
+
+// localASR loads this node's speech-recognition runtime and holds a reference
+// for the duration of the call, so a keep-alive sweep cannot unload it midway.
+func (e *clusterASREngine) localASR(ctx context.Context) (asr.Engine, func(), error) {
+	eng, err := e.s.getOrLoadASREngine(ctx, e.model)
+	if err != nil {
+		return nil, nil, err
+	}
+	return eng, e.s.retainASREngine(e.model), nil
+}
 
 // transcriptionForm rebuilds the multipart upload from the saved file.
 func transcriptionForm(req api.OpenAIAudioTranscriptionRequest, stream bool) ([]byte, string, error) {
@@ -204,26 +254,22 @@ func (e *clusterASREngine) Transcribe(ctx context.Context, req api.OpenAIAudioTr
 	if err != nil {
 		return nil, err
 	}
-	resp, release, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/transcriptions", body, contentType, "application/json")
-	if err != nil {
-		return nil, err
-	}
-	if release != nil {
-		defer release()
-		eng, err := e.s.getOrLoadASREngine(ctx, e.model)
-		if err != nil {
-			return nil, err
-		}
-		defer e.s.retainASREngine(e.model)()
-		return eng.Transcribe(ctx, req)
-	}
-	defer resp.Body.Close()
-	e.node.set(resp.Header)
-	var out api.OpenAIAudioTranscriptionResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<20)).Decode(&out); err != nil {
-		return nil, fmt.Errorf("decoding transcription from node: %w", err)
-	}
-	return &out, nil
+	return routedCall(ctx, &e.routedWorker, "/v1/audio/transcriptions", body, contentType, "application/json",
+		func(ctx context.Context) (*api.OpenAIAudioTranscriptionResponse, error) {
+			eng, done, err := e.localASR(ctx)
+			if err != nil {
+				return nil, err
+			}
+			defer done()
+			return eng.Transcribe(ctx, req)
+		},
+		func(resp *http.Response) (*api.OpenAIAudioTranscriptionResponse, error) {
+			var out api.OpenAIAudioTranscriptionResponse
+			if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<20)).Decode(&out); err != nil {
+				return nil, fmt.Errorf("decoding transcription from node: %w", err)
+			}
+			return &out, nil
+		})
 }
 
 func (e *clusterASREngine) TranscribeStream(ctx context.Context, req api.OpenAIAudioTranscriptionRequest, onChunk func(api.OpenAIAudioTranscriptionResponse) error) error {
@@ -231,21 +277,20 @@ func (e *clusterASREngine) TranscribeStream(ctx context.Context, req api.OpenAIA
 	if err != nil {
 		return err
 	}
-	resp, release, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/transcriptions", body, contentType, "text/event-stream")
-	if err != nil {
-		return err
-	}
-	if release != nil {
-		defer release()
-		eng, err := e.s.getOrLoadASREngine(ctx, e.model)
-		if err != nil {
-			return err
-		}
-		defer e.s.retainASREngine(e.model)()
-		return eng.TranscribeStream(ctx, req, onChunk)
-	}
-	defer resp.Body.Close()
-	e.node.set(resp.Header)
+	return routedStream(ctx, &e.routedWorker, "/v1/audio/transcriptions", body, contentType, "text/event-stream",
+		func(ctx context.Context) error {
+			eng, done, err := e.localASR(ctx)
+			if err != nil {
+				return err
+			}
+			defer done()
+			return eng.TranscribeStream(ctx, req, onChunk)
+		},
+		func(resp *http.Response) error { return decodeTranscriptionStream(resp, onChunk) })
+}
+
+// decodeTranscriptionStream reads the private SSE the ASR endpoint speaks.
+func decodeTranscriptionStream(resp *http.Response, onChunk func(api.OpenAIAudioTranscriptionResponse) error) error {
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -279,15 +324,18 @@ func (e *clusterASREngine) TranscribeStream(ctx context.Context, req api.OpenAIA
 // ---- speech synthesis ----
 
 type clusterTTSEngine struct {
-	s      *Server
-	model  string
-	source string
-	node   routedNode
+	routedWorker
 }
 
-func (e *clusterTTSEngine) ModelName() string            { return e.model }
-func (e *clusterTTSEngine) Close() error                 { return nil }
-func (e *clusterTTSEngine) RoutedNode() (string, string) { return e.node.get() }
+// localTTS loads this node's speech-synthesis runtime and holds a reference for
+// the duration of the call.
+func (e *clusterTTSEngine) localTTS(ctx context.Context) (tts.Engine, func(), error) {
+	eng, err := e.s.getOrLoadTTSEngine(ctx, e.model)
+	if err != nil {
+		return nil, nil, err
+	}
+	return eng, e.s.retainTTSEngine(e.model), nil
+}
 
 // Info is answered by the local runtime; voice lists are model facts, not
 // node facts, so any copy of the model will do.
@@ -319,30 +367,26 @@ func (e *clusterTTSEngine) Speak(ctx context.Context, req api.OpenAIAudioSpeechR
 	if err != nil {
 		return nil, err
 	}
-	resp, release, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/speech", body, "application/json", "")
-	if err != nil {
-		return nil, err
-	}
-	if release != nil {
-		defer release()
-		eng, err := e.s.getOrLoadTTSEngine(ctx, e.model)
-		if err != nil {
-			return nil, err
-		}
-		defer e.s.retainTTSEngine(e.model)()
-		return eng.Speak(ctx, req)
-	}
-	defer resp.Body.Close()
-	e.node.set(resp.Header)
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 512<<20))
-	if err != nil {
-		return nil, err
-	}
-	rate := sampleRateFromContentType(resp.Header.Get("Content-Type"))
-	if rate == 0 {
-		rate = req.SampleRate
-	}
-	return &tts.Audio{Data: data, Format: req.ResponseFormat, SampleRate: rate}, nil
+	return routedCall(ctx, &e.routedWorker, "/v1/audio/speech", body, "application/json", "",
+		func(ctx context.Context) (*tts.Audio, error) {
+			eng, done, err := e.localTTS(ctx)
+			if err != nil {
+				return nil, err
+			}
+			defer done()
+			return eng.Speak(ctx, req)
+		},
+		func(resp *http.Response) (*tts.Audio, error) {
+			data, err := io.ReadAll(io.LimitReader(resp.Body, 512<<20))
+			if err != nil {
+				return nil, err
+			}
+			rate := sampleRateFromContentType(resp.Header.Get("Content-Type"))
+			if rate == 0 {
+				rate = req.SampleRate
+			}
+			return &tts.Audio{Data: data, Format: req.ResponseFormat, SampleRate: rate}, nil
+		})
 }
 
 func (e *clusterTTSEngine) SpeakStream(ctx context.Context, req api.OpenAIAudioSpeechRequest, onChunk func(tts.Chunk) error) error {
@@ -350,21 +394,20 @@ func (e *clusterTTSEngine) SpeakStream(ctx context.Context, req api.OpenAIAudioS
 	if err != nil {
 		return err
 	}
-	resp, release, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/speech", body, "application/json", "")
-	if err != nil {
-		return err
-	}
-	if release != nil {
-		defer release()
-		eng, err := e.s.getOrLoadTTSEngine(ctx, e.model)
-		if err != nil {
-			return err
-		}
-		defer e.s.retainTTSEngine(e.model)()
-		return eng.SpeakStream(ctx, req, onChunk)
-	}
-	defer resp.Body.Close()
-	e.node.set(resp.Header)
+	return routedStream(ctx, &e.routedWorker, "/v1/audio/speech", body, "application/json", "",
+		func(ctx context.Context) error {
+			eng, done, err := e.localTTS(ctx)
+			if err != nil {
+				return err
+			}
+			defer done()
+			return eng.SpeakStream(ctx, req, onChunk)
+		},
+		func(resp *http.Response) error { return streamSpeechChunks(resp, onChunk) })
+}
+
+// streamSpeechChunks relays raw audio from the node that synthesised it.
+func streamSpeechChunks(resp *http.Response, onChunk func(tts.Chunk) error) error {
 	buf := make([]byte, 32*1024)
 	for {
 		n, readErr := resp.Body.Read(buf)

@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/opencsgs/csglite/ee/cluster"
@@ -39,13 +38,6 @@ const clusterStorageDir = "cluster"
 // only place the Apache-licensed server hands capabilities to the EE code.
 type clusterHost struct {
 	s *Server
-
-	hwMu   sync.Mutex
-	hwAt   time.Time
-	hwGPUs []cluster.GPUStatus
-	hwCPU  cluster.CPUStatus
-	hwRAM  cluster.RAMStatus
-	hwDisk cluster.DiskStatus
 }
 
 // clusterTestHooks lets tests run several servers in one process with an
@@ -371,14 +363,13 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 	return st
 }
 
-// hardware collects GPU, CPU, RAM and disk figures, cached for two seconds
-// because each poll shells out to nvidia-smi and friends.
+// hardware collects GPU, CPU, RAM and disk figures. Each call shells out to
+// nvidia-smi and friends, so it must not run per request: the manager caches
+// the whole status it builds from this, and that is the only cache. A second
+// one here used to hold these figures for two seconds of its own, which meant
+// invalidating the status after a settings change still returned stale
+// hardware from a cache the invalidation could not reach.
 func (h *clusterHost) hardware() ([]cluster.GPUStatus, cluster.CPUStatus, cluster.RAMStatus, cluster.DiskStatus) {
-	h.hwMu.Lock()
-	defer h.hwMu.Unlock()
-	if !h.hwAt.IsZero() && time.Since(h.hwAt) < 2*time.Second {
-		return h.hwGPUs, h.hwCPU, h.hwRAM, h.hwDisk
-	}
 	used, total, _ := getRAMInfo()
 	ram := cluster.RAMStatus{Total: total, Used: used}
 	gpus := clusterGPUStatuses(total)
@@ -401,7 +392,6 @@ func (h *clusterHost) hardware() ([]cluster.GPUStatus, cluster.CPUStatus, cluste
 	if h.s.pullJobs != nil && len(h.s.pullJobs.activeModelNames()) > 0 {
 		disk.IOBusy = true
 	}
-	h.hwGPUs, h.hwCPU, h.hwRAM, h.hwDisk, h.hwAt = gpus, cpu, ram, disk, time.Now()
 	return gpus, cpu, ram, disk
 }
 

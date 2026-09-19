@@ -19,6 +19,9 @@ type Candidate struct {
 	Health   Health
 	Reserved int
 	Breaker  bool
+	// Cooling is set when the node answered 429 and asked to be left alone
+	// for a while.
+	Cooling bool
 }
 
 // RankRequest describes the request being placed.
@@ -111,6 +114,8 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 			r.Excluded = "node state is " + string(st.State)
 		case c.Breaker:
 			r.Excluded = "model failed on this node recently"
+		case c.Cooling:
+			r.Excluded = "node asked to be retried later"
 		}
 		if r.Excluded != "" {
 			out = append(out, r)
