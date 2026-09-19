@@ -118,8 +118,9 @@ func (r *routedNode) get() (string, string) {
 }
 
 // routeOrLocal forwards through the cluster or reports that the scheduler
-// chose this node.
-func (s *Server) routeOrLocal(ctx context.Context, modelID, source, path string, body []byte, contentType, accept string) (*http.Response, bool, error) {
+// chose this node. When it did, release must be called once the local work
+// is done so the request keeps counting against this node meanwhile.
+func (s *Server) routeOrLocal(ctx context.Context, modelID, source, path string, body []byte, contentType, accept string) (resp *http.Response, release func(), err error) {
 	if key := providerPoolUsageCaptureFromContext(ctx).affinityKey(); key != "" {
 		ctx = cluster.WithAffinityKey(ctx, key)
 	}
@@ -128,11 +129,12 @@ func (s *Server) routeOrLocal(ctx context.Context, modelID, source, path string,
 	if accept != "" {
 		headers.Set("Accept", accept)
 	}
-	resp, err := s.cluster.RouteRaw(ctx, modelID, source, path, body, headers)
-	if errors.Is(err, cluster.ErrServeLocally) {
-		return nil, true, nil
+	resp, err = s.cluster.RouteRaw(ctx, modelID, source, path, body, headers)
+	var local *cluster.LocalChoice
+	if errors.As(err, &local) {
+		return nil, local.Release, nil
 	}
-	return resp, false, err
+	return resp, nil, err
 }
 
 // ---- speech recognition ----
@@ -202,15 +204,17 @@ func (e *clusterASREngine) Transcribe(ctx context.Context, req api.OpenAIAudioTr
 	if err != nil {
 		return nil, err
 	}
-	resp, local, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/transcriptions", body, contentType, "application/json")
+	resp, release, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/transcriptions", body, contentType, "application/json")
 	if err != nil {
 		return nil, err
 	}
-	if local {
+	if release != nil {
+		defer release()
 		eng, err := e.s.getOrLoadASREngine(ctx, e.model)
 		if err != nil {
 			return nil, err
 		}
+		defer e.s.retainASREngine(e.model)()
 		return eng.Transcribe(ctx, req)
 	}
 	defer resp.Body.Close()
@@ -227,15 +231,17 @@ func (e *clusterASREngine) TranscribeStream(ctx context.Context, req api.OpenAIA
 	if err != nil {
 		return err
 	}
-	resp, local, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/transcriptions", body, contentType, "text/event-stream")
+	resp, release, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/transcriptions", body, contentType, "text/event-stream")
 	if err != nil {
 		return err
 	}
-	if local {
+	if release != nil {
+		defer release()
 		eng, err := e.s.getOrLoadASREngine(ctx, e.model)
 		if err != nil {
 			return err
 		}
+		defer e.s.retainASREngine(e.model)()
 		return eng.TranscribeStream(ctx, req, onChunk)
 	}
 	defer resp.Body.Close()
@@ -313,15 +319,17 @@ func (e *clusterTTSEngine) Speak(ctx context.Context, req api.OpenAIAudioSpeechR
 	if err != nil {
 		return nil, err
 	}
-	resp, local, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/speech", body, "application/json", "")
+	resp, release, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/speech", body, "application/json", "")
 	if err != nil {
 		return nil, err
 	}
-	if local {
+	if release != nil {
+		defer release()
 		eng, err := e.s.getOrLoadTTSEngine(ctx, e.model)
 		if err != nil {
 			return nil, err
 		}
+		defer e.s.retainTTSEngine(e.model)()
 		return eng.Speak(ctx, req)
 	}
 	defer resp.Body.Close()
@@ -342,15 +350,17 @@ func (e *clusterTTSEngine) SpeakStream(ctx context.Context, req api.OpenAIAudioS
 	if err != nil {
 		return err
 	}
-	resp, local, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/speech", body, "application/json", "")
+	resp, release, err := e.s.routeOrLocal(ctx, e.model, e.source, "/v1/audio/speech", body, "application/json", "")
 	if err != nil {
 		return err
 	}
-	if local {
+	if release != nil {
+		defer release()
 		eng, err := e.s.getOrLoadTTSEngine(ctx, e.model)
 		if err != nil {
 			return err
 		}
+		defer e.s.retainTTSEngine(e.model)()
 		return eng.SpeakStream(ctx, req, onChunk)
 	}
 	defer resp.Body.Close()

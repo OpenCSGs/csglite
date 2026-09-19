@@ -2,9 +2,9 @@ package server
 
 import (
 	"bytes"
-	"mime/multipart"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"

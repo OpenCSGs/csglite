@@ -133,6 +133,9 @@ func (s *Server) handleOpenAIAudioTranscriptions(w http.ResponseWriter, r *http.
 		writeOpenAIError(w, http.StatusBadRequest, "model_not_found", err.Error())
 		return
 	}
+	if !isRoutedEngine(eng) {
+		defer s.retainASREngine(modelID)()
+	}
 	if stream {
 		s.streamAudioTranscription(w, r, modelID, eng, req)
 		return

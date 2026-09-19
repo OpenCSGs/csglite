@@ -69,6 +69,27 @@ const ErrNoNodeCode = "cluster_no_available_node"
 // the request should run through the ordinary local path.
 var ErrServeLocally = errors.New("cluster: serve locally")
 
+// LocalChoice is the error RouteRaw returns when this node is the best
+// place for the request. The caller runs the request locally and calls
+// Release when it is done, so the scheduler keeps counting the request
+// against this node while it is in flight.
+type LocalChoice struct {
+	release func()
+}
+
+func (c *LocalChoice) Error() string { return ErrServeLocally.Error() }
+func (c *LocalChoice) Is(target error) bool {
+	return target == ErrServeLocally
+}
+
+// Release ends the local reservation; safe to call more than once.
+func (c *LocalChoice) Release() {
+	if c != nil && c.release != nil {
+		c.release()
+		c.release = nil
+	}
+}
+
 // ---- node engine: one remote member ----
 
 type nodeEngine struct {
@@ -394,7 +415,11 @@ func (e *clusterEngine) LastExplain() Explain {
 func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 	var out []Candidate
 	local := m.cachedLocalStatus(ctx)
-	out = append(out, Candidate{UUID: m.identity.UUID, Name: m.identity.DisplayName(), Local: true, Status: local, Health: HealthHealthy, Breaker: m.dir.ModelBroken(m.identity.UUID, model)})
+	localReserved := 0
+	if rt, ok := m.dir.Get(m.identity.UUID); ok {
+		localReserved = int(rt.reserveSeq)
+	}
+	out = append(out, Candidate{UUID: m.identity.UUID, Name: m.identity.DisplayName(), Local: true, Status: local, Health: HealthHealthy, Reserved: localReserved, Breaker: m.dir.ModelBroken(m.identity.UUID, model)})
 	now := time.Now()
 	for _, rt := range m.dir.Snapshot() {
 		if _, ok := m.store.Member(rt.UUID); !ok {
@@ -515,8 +540,9 @@ func (e *clusterEngine) dispatch(ctx context.Context, promptTokens, maxTokens in
 		started := time.Now()
 		resp, err := attempt(target)
 		if errors.Is(err, ErrServeLocally) {
-			release()
-			return nil, ErrServeLocally
+			// The caller serves it here; the reservation stays until it
+			// reports completion so concurrent requests see this one.
+			return nil, &LocalChoice{release: release}
 		}
 		if err != nil {
 			release()
@@ -929,7 +955,7 @@ func (m *Manager) RemoteHolders(model string) []string {
 func (m *Manager) RouteRaw(ctx context.Context, modelID, source, path string, body []byte, headers http.Header) (*http.Response, error) {
 	pinned := NodeUUIDFromSource(source)
 	if pinned != "" && pinned == m.identity.UUID {
-		return nil, ErrServeLocally
+		return nil, &LocalChoice{release: m.dir.Reserve(m.identity.UUID)}
 	}
 	if pinned != "" {
 		if _, ok := m.store.Member(pinned); !ok {

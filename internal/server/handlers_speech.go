@@ -83,6 +83,11 @@ func (s *Server) handleOpenAIAudioSpeech(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if !isRoutedEngine(eng) {
+		// Count the request against the worker while it runs so the
+		// cluster scheduler on every node sees this machine as busy.
+		defer s.retainTTSEngine(req.Model)()
+	}
 	if req.Stream {
 		s.streamAudioSpeech(w, r, eng, req)
 		return
