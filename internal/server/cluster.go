@@ -582,3 +582,23 @@ func clusterErrorResponse(err error) (int, any) {
 
 var _ = json.Marshal
 var _ = config.DefaultServerURL
+
+// checkClusterRouteSource validates a /providers/{cluster|node:<uuid>} route
+// before the handler runs, so an app bound to a machine that has left the
+// cluster gets a clear 404 instead of a routing error deep in the request.
+func (s *Server) checkClusterRouteSource(source string) error {
+	if s.cluster == nil {
+		return inference.NewHTTPStatusError(http.StatusNotFound, "the cluster feature is disabled on this node")
+	}
+	if !s.cluster.Store().InCluster() {
+		return inference.NewHTTPStatusError(http.StatusNotFound, "this node is not part of a cluster")
+	}
+	uuid := cluster.NodeUUIDFromSource(source)
+	if uuid == "" || uuid == s.cluster.Identity().UUID {
+		return nil
+	}
+	if _, ok := s.cluster.Store().Member(uuid); !ok {
+		return inference.NewHTTPStatusError(http.StatusNotFound, "node is not a member of this cluster")
+	}
+	return nil
+}
