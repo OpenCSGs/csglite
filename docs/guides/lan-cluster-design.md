@@ -656,9 +656,9 @@ CSGHub 同步一次，盒子之间不做 P2P。
 | POST | `/api/cluster` | 创建集群 `{name}`；已在集群则 `409` |
 | DELETE | `/api/cluster` | 离开集群（通知全体成员，清空成员表，保留节点身份） |
 | POST | `/api/cluster/join` | `{token, address?}`；返回集群信息与成员表 |
-| GET | `/api/cluster/token` | 当前加入令牌（仅回环 / 桌面会话可读，与 `/api/license` 同样加 `licenseOriginGuard` 同源保护） |
-| POST | `/api/cluster/token/rotate` | 轮换加入令牌 |
-| GET | `/api/cluster/code` | 本节点准入码（未入集群时有效） |
+| GET | `/api/cluster/token` | 当前加入令牌（见下方「接口保护」） |
+| POST | `/api/cluster/token/rotate` | 轮换加入令牌（同上） |
+| GET | `/api/cluster/code` | 本节点准入码，未入集群时有效（同上） |
 | GET | `/api/cluster/discovered` | mDNS 看到但未配对的节点 |
 | POST | `/api/cluster/invite` | `{uuid, code}` 邀请已发现节点 |
 | PUT | `/api/cluster/nodes/{uuid}` | `{name?, accept_work?, weight?, static_address?}` |
@@ -669,6 +669,17 @@ CSGHub 同步一次，盒子之间不做 P2P。
 | GET | `/api/cluster/recommendations` | 副本放置建议（7.7） |
 | POST | `/api/cluster/nodes/{uuid}/state` | `{state: active|drain|maintenance}` |
 | PUT | `/api/cluster/settings` | `{prefer_local?, accept_work?, routing_mode?, affinity_max_queue?, replication?, disk_reserve_gb?}` |
+
+**接口保护。** `/api/cluster/*` 全部由 `sensitiveOriginGuard` 覆盖，跨源请求一律
+`403`，`corsMiddleware` 也不再对它们下发通配的 `Access-Control-Allow-Origin`，
+因此用户打开的任意网页读不到集群状态，更读不到加入令牌。这些路径同时计入
+`requiresRemoteAPIAuth`，开启 API key 认证后来自网络的调用需要密钥。
+
+加入令牌与准入码是准入检查的全部，读到即等于可以入网，因此比其余接口更严：
+`/api/cluster/token`、`/api/cluster/token/rotate`、`/api/cluster/code` 只在回环上
+无条件可读；来自网络的调用必须携带有效 API key，若未开启认证则直接 `403` 并提示
+在本机读取。CLI 走 `127.0.0.1` 因而不受影响。
+
 
 推理接口不新增路径：`/v1/chat/completions`、`/v1/embeddings`、`/v1/messages`、
 `/v1/responses`、`/api/chat` 的 `source` 接受 `cluster` 与 `node:<uuid>`；

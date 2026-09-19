@@ -924,3 +924,43 @@ func (*stubEngine) Chat(context.Context, []inference.Message, inference.Options,
 
 func (*stubEngine) Close() error      { return nil }
 func (*stubEngine) ModelName() string { return "m" }
+
+// Joining is capped by the licensed node count. Gossip carries member cards
+// from a peer, and accepting them without the same cap would let one member
+// grow the list past what this node is licensed for: every node then reports
+// itself unlicensed and the scheduler excludes all of them, which takes the
+// cluster out of service.
+func TestGossipDoesNotGrowTheClusterPastItsNodeLimit(t *testing.T) {
+	bus := NewMemoryBus()
+	host := &fakeHost{limit: 2, licensed: true}
+	a := startNode(t, bus, "alpha", host)
+	if _, _, err := a.m.CreateCluster("c"); err != nil {
+		t.Fatal(err)
+	}
+	info := a.m.store.Cluster()
+
+	// One more member is within the cap of two and is accepted.
+	first := memberCard(t, "11111111-1111-4111-8111-111111111111", "one")
+	a.m.mergeGossip(gossipMessage{ClusterUUID: info.UUID, Sender: first}, "")
+	if _, ok := a.m.store.Member(first.UUID); !ok {
+		t.Fatal("a member within the limit was refused")
+	}
+
+	// The next one would make three, so it is ignored rather than breaking
+	// the cluster.
+	second := memberCard(t, "22222222-2222-4222-8222-222222222222", "two")
+	a.m.mergeGossip(gossipMessage{ClusterUUID: info.UUID, Sender: second}, "")
+	if _, ok := a.m.store.Member(second.UUID); ok {
+		t.Fatal("gossip grew the cluster past its licensed node limit")
+	}
+	if n := len(a.m.store.Members()); n != 1 {
+		t.Fatalf("members = %d, want 1 besides this node", n)
+	}
+}
+
+// memberCard builds the smallest card gossip accepts: a uuid and the
+// fingerprint that will be pinned for it.
+func memberCard(t *testing.T, uuid, name string) nodeCard {
+	t.Helper()
+	return nodeCard{UUID: uuid, Name: name, Fingerprint: "sha256:" + uuid, ClusterPort: 11438, APIPort: 11435}
+}

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/opencsgs/csglite/internal/httpjson"
 	"io"
 	"net"
 	"net/http"
@@ -25,7 +26,7 @@ const handshakeSkew = 5 * time.Minute
 // decodePeerJSON reads a node-to-node body. Unlike the operator API a blank
 // body is an error here: every peer message has required fields.
 func decodePeerJSON(r *http.Request, out any, limit int64) error {
-	raw, err := readBody(r, limit)
+	raw, err := httpjson.ReadBody(r, limit)
 	if err != nil {
 		return err
 	}

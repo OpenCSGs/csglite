@@ -5,6 +5,8 @@ package cluster
 
 import (
 	"encoding/json"
+	"fmt"
+	"github.com/opencsgs/csglite/internal/httpjson"
 	"time"
 )
 
@@ -271,13 +273,9 @@ type leaveMessage struct {
 }
 
 // errorResponse is the JSON error body on the peer listener.
-type errorResponse struct {
-	Error     string `json:"error"`
-	ErrorCode int    `json:"errorCode"`
-	Code      string `json:"code,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
-	Current   int    `json:"current,omitempty"`
-}
+// errorResponse is this package's name for the shared envelope every CSGLite
+// HTTP surface answers with.
+type errorResponse = httpjson.Error
 
 // BundleFile is one file of a complete local model.
 type BundleFile struct {
@@ -295,4 +293,22 @@ type ModelBundle struct {
 	Manifest json.RawMessage `json:"manifest"`
 	Files    []BundleFile    `json:"files"`
 	Extras   []BundleFile    `json:"extras,omitempty"`
+}
+
+// checkBundlePaths rejects a peer's bundle unless every file it lists is named
+// by a plain relative path. The names are used to create files locally, so one
+// containing "..", an absolute prefix or a backslash would let the sending node
+// write outside the directory the copy belongs in.
+func checkBundlePaths(b ModelBundle) error {
+	for _, group := range [][]BundleFile{b.Files, b.Extras} {
+		for _, f := range group {
+			if !safeRelPath(f.Path) {
+				return fmt.Errorf("unsafe file path %q", f.Path)
+			}
+			if f.Size < 0 {
+				return fmt.Errorf("negative size for %q", f.Path)
+			}
+		}
+	}
+	return nil
 }

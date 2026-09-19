@@ -1049,6 +1049,16 @@ func (m *Manager) mergeGossip(msg gossipMessage, from string) {
 		if card.UUID == msg.Sender.UUID && from != "" {
 			mem.LastAddresses = append([]string{from}, mem.LastAddresses...)
 		}
+		// Joining is capped by the licensed node count, and gossip must not
+		// be a way around it. A member that is compromised, or simply out of
+		// step, can otherwise name any number of nodes: the count then
+		// exceeds the cap, every node reports itself unlicensed, and the
+		// scheduler excludes all of them, which takes the cluster out of
+		// service rather than granting extra capacity.
+		if _, known := m.store.Member(card.UUID); !known && !m.withinNodeLimit(len(m.store.Members())+2) {
+			m.logf("cluster: ignoring node %s from gossip: the cluster is at its licensed node limit of %d", shortUUID(card.UUID), m.NodeLimit())
+			continue
+		}
 		added, err := m.store.Upsert(mem, false)
 		if err != nil {
 			m.logf("cluster: gossip: %v", err)

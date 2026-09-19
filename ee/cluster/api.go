@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/opencsgs/csglite/internal/httpjson"
 	"io"
 	"net"
 	"net/http"
@@ -142,20 +143,16 @@ type SyncResult struct {
 
 // ---- JSON helpers matching the server's error envelope ----
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
+func writeJSON(w http.ResponseWriter, status int, v any) { httpjson.Write(w, status, v) }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, errorResponse{Error: msg, ErrorCode: status})
+	httpjson.WriteError(w, status, msg)
 }
 
 // writeCodedError adds the machine-readable code peers switch on, such as
 // "wrong_cluster", which the operator API does not always carry.
 func writeCodedError(w http.ResponseWriter, status int, msg, code string) {
-	writeJSON(w, status, errorResponse{Error: msg, ErrorCode: status, Code: code})
+	httpjson.WriteCodedError(w, status, msg, code)
 }
 
 func writeLimitError(w http.ResponseWriter, le *LimitError) {
@@ -190,15 +187,10 @@ func writeOpError(w http.ResponseWriter, err error) {
 	}
 }
 
-// readBody reads at most limit bytes of a request body.
-func readBody(r *http.Request, limit int64) ([]byte, error) {
-	return io.ReadAll(io.LimitReader(r.Body, limit))
-}
-
 // decodeJSON reads an operator API body. A blank body is accepted: several
 // endpoints take only optional fields, so sending nothing is a valid request.
 func decodeJSON(r *http.Request, out any) error {
-	raw, err := readBody(r, 1<<20)
+	raw, err := httpjson.ReadBody(r, 1<<20)
 	if err != nil {
 		return err
 	}

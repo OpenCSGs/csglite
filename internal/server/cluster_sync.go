@@ -248,7 +248,16 @@ func (s *Server) copyPeerExtras(pm *cluster.PeerModel, destDir, clusterID string
 	}
 	defer os.RemoveAll(tmpDir)
 	for _, f := range pm.Extras {
-		target := filepath.Join(destDir, filepath.FromSlash(f.Path))
+		target, err := resolveUnder(destDir, f.Path)
+		if err != nil {
+			log.Printf("cluster: refusing derived file %s of %s from %s: %v", f.Path, clusterID, pm.Node.Name, err)
+			return
+		}
+		staged, err := resolveUnder(tmpDir, f.Path)
+		if err != nil {
+			log.Printf("cluster: refusing derived file %s of %s from %s: %v", f.Path, clusterID, pm.Node.Name, err)
+			return
+		}
 		if info, err := os.Stat(target); err == nil && info.Size() == f.Size {
 			continue
 		}
@@ -259,7 +268,7 @@ func (s *Server) copyPeerExtras(pm *cluster.PeerModel, destDir, clusterID string
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return
 		}
-		if err := os.Rename(filepath.Join(tmpDir, filepath.FromSlash(f.Path)), target); err != nil {
+		if err := os.Rename(staged, target); err != nil {
 			log.Printf("cluster: installing derived file %s of %s: %v", f.Path, clusterID, err)
 			return
 		}
@@ -269,13 +278,33 @@ func (s *Server) copyPeerExtras(pm *cluster.PeerModel, destDir, clusterID string
 
 // copyPeerFile streams one file from the peer into tmpDir and verifies size
 // and, when the peer sent one, the SHA-256 trailer.
+// resolveUnder turns a path a peer named into a local one, and refuses
+// anything that would land outside root. The cluster package already rejects
+// an unsafe bundle when it is fetched; this is the second lock on the same
+// door, because everything below writes files and a single missed check is a
+// write anywhere the server can reach.
+func resolveUnder(root, rel string) (string, error) {
+	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "\\") {
+		return "", fmt.Errorf("unsafe file path %q", rel)
+	}
+	target := filepath.Join(root, filepath.FromSlash(rel))
+	cleanRoot := filepath.Clean(root)
+	if target != cleanRoot && !strings.HasPrefix(target, cleanRoot+string(os.PathSeparator)) {
+		return "", fmt.Errorf("file path %q escapes %s", rel, cleanRoot)
+	}
+	return target, nil
+}
+
 func (s *Server) copyPeerFile(ctx context.Context, pm *cluster.PeerModel, f cluster.BundleFile, tmpDir string, progress func(done int64)) (int64, error) {
 	resp, err := s.cluster.OpenPeerFile(ctx, pm, f.Path)
 	if err != nil {
 		return 0, err
 	}
 	defer resp.Body.Close()
-	target := filepath.Join(tmpDir, filepath.FromSlash(f.Path))
+	target, err := resolveUnder(tmpDir, f.Path)
+	if err != nil {
+		return 0, err
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return 0, err
 	}

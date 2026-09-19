@@ -1065,6 +1065,18 @@ func (m *Manager) FindPeerModel(ctx context.Context, modelID string) (*PeerModel
 				lastErr = fmt.Errorf("%s reports an empty model", mem.Name)
 				continue
 			}
+			// A bundle is data from another machine, and the paths in it
+			// become file names on this one. A member that is compromised or
+			// simply running something else could name "../../etc/x" and have
+			// us write outside the model directory, so the whole bundle is
+			// rejected unless every path is a plain relative one. The peer
+			// that serves a file applies the same rule, but a caller cannot
+			// rely on the other end to check on its behalf.
+			if err := checkBundlePaths(bundle); err != nil {
+				lastErr = fmt.Errorf("%s offered %s: %w", mem.Name, modelID, err)
+				m.logf("cluster: refusing the copy of %s from %s: %v", modelID, mem.Name, err)
+				continue
+			}
 			return &PeerModel{Node: mem, Addr: addr, Manifest: bundle.Manifest, Files: bundle.Files, Extras: bundle.Extras}, nil
 		}
 	}
