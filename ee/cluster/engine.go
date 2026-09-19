@@ -1024,12 +1024,22 @@ type PeerModel struct {
 	Addr     string
 	Manifest json.RawMessage
 	Files    []BundleFile
+	Extras   []BundleFile
 }
 
-// TotalSize sums the bundle's files.
+// TotalSize sums the required files.
 func (p *PeerModel) TotalSize() int64 {
 	var total int64
 	for _, f := range p.Files {
+		total += f.Size
+	}
+	return total
+}
+
+// ExtrasSize sums the optional derived files.
+func (p *PeerModel) ExtrasSize() int64 {
+	var total int64
+	for _, f := range p.Extras {
 		total += f.Size
 	}
 	return total
@@ -1065,7 +1075,7 @@ func (m *Manager) FindPeerModel(ctx context.Context, modelID string) (*PeerModel
 				lastErr = fmt.Errorf("%s reports an empty model", mem.Name)
 				continue
 			}
-			return &PeerModel{Node: mem, Addr: addr, Manifest: bundle.Manifest, Files: bundle.Files}, nil
+			return &PeerModel{Node: mem, Addr: addr, Manifest: bundle.Manifest, Files: bundle.Files, Extras: bundle.Extras}, nil
 		}
 	}
 	return nil, lastErr

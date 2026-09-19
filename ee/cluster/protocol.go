@@ -281,9 +281,13 @@ type BundleFile struct {
 }
 
 // ModelBundle describes a complete local model so a peer can copy it: the
-// manifest as stored on disk and every file with its size.
+// manifest as stored on disk, the files the manifest lists (what a fresh
+// download produces) and any extra artifacts the node derived from them,
+// such as a GGUF converted from safetensors. Extras are optional for the
+// receiver: it can regenerate them, so on a slow link it skips them.
 type ModelBundle struct {
 	Dir      string          `json:"-"`
 	Manifest json.RawMessage `json:"manifest"`
 	Files    []BundleFile    `json:"files"`
+	Extras   []BundleFile    `json:"extras,omitempty"`
 }

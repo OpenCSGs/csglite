@@ -349,7 +349,18 @@ func TestClusterPullJobCopiesModelFromPeer(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A derived artifact that is not in the manifest is an optional extra.
+	if err := os.WriteFile(filepath.Join(dir, "Tiny-f16.gguf"), bytes.Repeat([]byte("x"), 500), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	publicID := a.localInferenceModelID("Qwen/Tiny-GGUF")
+	bundle, err := (&clusterHost{s: a}).ModelBundle(publicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Files) != 2 || len(bundle.Extras) != 1 || bundle.Extras[0].Path != "Tiny-f16.gguf" {
+		t.Fatalf("bundle files %+v extras %+v", bundle.Files, bundle.Extras)
+	}
 
 	rec := httptest.NewRecorder()
 	a.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/cluster", strings.NewReader(`{"name":"Lab"}`)))
@@ -399,6 +410,11 @@ func TestClusterPullJobCopiesModelFromPeer(t *testing.T) {
 	if err != nil || lm.Format != model.FormatGGUF || lm.Size != 3000 {
 		t.Fatalf("manifest on b: %+v %v", lm, err)
 	}
+	// The derived extra follows in the background on a fast (loopback) link.
+	clusterWait(t, "derived file to arrive", func() bool {
+		info, err := os.Stat(filepath.Join(model.RegistryModelDir(b.cfg.ModelDir, "opencsg", "Qwen", "Tiny-GGUF"), "Tiny-f16.gguf"))
+		return err == nil && info.Size() == 500
+	})
 	// B now advertises the model too.
 	clusterWait(t, "b to list the copied model", func() bool {
 		st := b.cluster.LocalStatus(context.Background())

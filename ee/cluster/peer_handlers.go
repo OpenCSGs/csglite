@@ -439,7 +439,7 @@ func (m *Manager) handlePeerModelFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var size int64 = -1
-	for _, f := range bundle.Files {
+	for _, f := range append(bundle.Files, bundle.Extras...) {
 		if f.Path == rel {
 			size = f.Size
 		}

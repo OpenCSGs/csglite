@@ -44,6 +44,16 @@ func (h *clusterHost) ModelBundle(modelID string) (*cluster.ModelBundle, error) 
 	if err != nil {
 		return nil, err
 	}
+	// The manifest names the files a download produced; anything else in
+	// the directory (a GGUF converted from safetensors, for instance) is a
+	// derived extra the receiver may regenerate itself.
+	listed := map[string]bool{}
+	for _, f := range lm.Files {
+		listed[filepath.ToSlash(strings.TrimPrefix(f, "./"))] = true
+	}
+	for _, f := range lm.FileEntries {
+		listed[filepath.ToSlash(strings.TrimPrefix(f.Path, "./"))] = true
+	}
 	bundle := &cluster.ModelBundle{Dir: dir, Manifest: manifest}
 	err = filepath.Walk(dir, func(p string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
@@ -60,7 +70,12 @@ func (h *clusterHost) ModelBundle(modelID string) (*cluster.ModelBundle, error) 
 		if rel == "manifest.json" || strings.HasSuffix(rel, ".part") || strings.HasSuffix(rel, ".tmp") || strings.HasPrefix(filepath.Base(rel), ".") {
 			return nil
 		}
-		bundle.Files = append(bundle.Files, cluster.BundleFile{Path: rel, Size: info.Size()})
+		entry := cluster.BundleFile{Path: rel, Size: info.Size()}
+		if len(listed) == 0 || listed[rel] {
+			bundle.Files = append(bundle.Files, entry)
+		} else {
+			bundle.Extras = append(bundle.Extras, entry)
+		}
 		return nil
 	})
 	if err != nil {
@@ -71,6 +86,14 @@ func (h *clusterHost) ModelBundle(modelID string) (*cluster.ModelBundle, error) 
 	}
 	return bundle, nil
 }
+
+// peerExtrasMinRate is the copy throughput below which derived files are not
+// copied from a peer: regenerating a converted GGUF locally beats pulling
+// gigabytes over a slow link.
+const peerExtrasMinRate = 20 << 20 // 20 MB/s
+
+// peerRateSampleMin is the smallest copy whose throughput is trusted.
+const peerRateSampleMin = 64 << 20
 
 // hasActiveModelAnySource reports whether a pull job for the model is
 // running or queued, whatever its source.
@@ -145,6 +168,7 @@ func (s *Server) pullModelFromPeer(ctx context.Context, job *pullJob) (handled b
 
 	total := pm.TotalSize()
 	var doneAll int64
+	copyStarted := time.Now()
 	for _, f := range pm.Files {
 		if ctx.Err() != nil {
 			cleanup()
@@ -192,9 +216,55 @@ func (s *Server) pullModelFromPeer(ctx context.Context, job *pullJob) (handled b
 		log.Printf("PULL JOB %s: installing cluster copy failed: %v", job.id, err)
 		return false, nil
 	}
+	elapsed := time.Since(copyStarted)
+	rate := float64(total) / elapsed.Seconds()
 	job.setProgress(api.PullResponse{Status: "copied from " + pm.Node.Name, TotalBytes: total, CompletedBytes: total})
-	log.Printf("PULL JOB %s: %s copied from cluster node %s", job.id, clusterID, pm.Node.Name)
+	log.Printf("PULL JOB %s: %s copied from cluster node %s (%d bytes in %s, %.1f MB/s)", job.id, clusterID, pm.Node.Name, total, elapsed.Round(time.Second), rate/1e6)
+
+	// The model is installed and usable now. Derived files (a converted
+	// GGUF) are copied afterwards, in the background and only over a link
+	// fast enough for that to beat converting here; a failure changes
+	// nothing.
+	if len(pm.Extras) > 0 {
+		// A copy too small to time is not evidence of a slow link.
+		if total < peerRateSampleMin || rate >= peerExtrasMinRate {
+			go s.copyPeerExtras(pm, destDir, clusterID)
+		} else {
+			log.Printf("PULL JOB %s: link to %s ran at %.1f MB/s; skipping %d derived file(s) (%d bytes), they are regenerated on first use", job.id, pm.Node.Name, rate/1e6, len(pm.Extras), pm.ExtrasSize())
+		}
+	}
 	return true, nil
+}
+
+// copyPeerExtras fetches derived artifacts into an installed model directory,
+// each through a temporary name so a partial file is never picked up.
+func (s *Server) copyPeerExtras(pm *cluster.PeerModel, destDir, clusterID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancel()
+	tmpDir := destDir + ".cluster-extras"
+	_ = os.RemoveAll(tmpDir)
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		return
+	}
+	defer os.RemoveAll(tmpDir)
+	for _, f := range pm.Extras {
+		target := filepath.Join(destDir, filepath.FromSlash(f.Path))
+		if info, err := os.Stat(target); err == nil && info.Size() == f.Size {
+			continue
+		}
+		if _, err := s.copyPeerFile(ctx, pm, f, tmpDir, func(int64) {}); err != nil {
+			log.Printf("cluster: derived file %s of %s not copied from %s: %v", f.Path, clusterID, pm.Node.Name, err)
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return
+		}
+		if err := os.Rename(filepath.Join(tmpDir, filepath.FromSlash(f.Path)), target); err != nil {
+			log.Printf("cluster: installing derived file %s of %s: %v", f.Path, clusterID, err)
+			return
+		}
+		log.Printf("cluster: derived file %s of %s copied from %s", f.Path, clusterID, pm.Node.Name)
+	}
 }
 
 // copyPeerFile streams one file from the peer into tmpDir and verifies size
