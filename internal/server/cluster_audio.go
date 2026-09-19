@@ -81,20 +81,25 @@ func resolveWorkerEngine[T any](ctx context.Context, s *Server, modelID, source 
 	routed func(routedSource string) T, loadLocal func(context.Context) (T, error)) (T, error) {
 	var zero T
 	source = strings.TrimSpace(source)
-	if cluster.IsClusterSource(source) {
-		if s.cluster == nil {
-			return zero, inference.NewHTTPStatusError(http.StatusNotFound, "the cluster feature is disabled on this node")
-		}
-		return routed(source), nil
+	// Speech work is served by this node or by a member: pools, providers and
+	// the cloud do not take it, and a request that names one of those is not
+	// quietly served here instead. The order is the shared one.
+	route, clusterSource, err := s.routeForSource(modelID, source, true)
+	if err != nil {
+		return zero, err
 	}
-	if source == "" && s.clusterRoutingWanted(modelID) {
-		return routed(cluster.SourceCluster), nil
+	switch route {
+	case routeProviderPool, routeThirdPartyProvider, routeCloud:
+		return zero, inference.NewHTTPStatusError(http.StatusNotImplemented,
+			"speech models are served by this node or by a cluster member, not by "+source)
+	case routeCluster:
+		return routed(clusterSource), nil
 	}
 	eng, err := loadLocal(ctx)
 	if err == nil {
 		return eng, nil
 	}
-	if !strings.EqualFold(source, "local") && s.cluster != nil && s.cluster.RemoteHasModel(modelID) {
+	if s.clusterIsTheClosestSubstitute(modelID, source) {
 		return routed(cluster.SourceCluster), nil
 	}
 	return zero, err
