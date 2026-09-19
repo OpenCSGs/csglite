@@ -4,10 +4,15 @@
 package cluster
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +50,8 @@ func (m *Manager) peerMux() http.Handler {
 	mux.HandleFunc("POST "+peerPathLeave, m.requirePeer(m.handlePeerLeave))
 	mux.HandleFunc("POST "+peerPathPull, m.requirePeer(m.handlePeerPull))
 	mux.Handle(peerPathInference, m.requirePeer(m.handlePeerInference))
+	mux.HandleFunc("GET "+peerPathModelBundle, m.requirePeer(m.handlePeerModelBundle))
+	mux.HandleFunc("GET "+peerPathModelFile, m.requirePeer(m.handlePeerModelFile))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writePeerError(w, http.StatusNotFound, "not a cluster endpoint", "not_found")
 	})
@@ -398,4 +405,83 @@ func hmacEqual(a, b string) bool {
 		diff |= a[i] ^ b[i]
 	}
 	return diff == 0
+}
+
+// GET /cluster/v1/model-bundle?model=<id> -- manifest and file list of a
+// complete local model, for a member that wants to copy it.
+func (m *Manager) handlePeerModelBundle(w http.ResponseWriter, r *http.Request) {
+	modelID := strings.TrimSpace(r.URL.Query().Get("model"))
+	if modelID == "" {
+		writePeerError(w, http.StatusBadRequest, "model is required", "bad_request")
+		return
+	}
+	bundle, err := m.opts.Host.ModelBundle(modelID)
+	if err != nil {
+		writePeerError(w, http.StatusNotFound, err.Error(), "model_not_available")
+		return
+	}
+	writePeerJSON(w, http.StatusOK, bundle)
+}
+
+// GET /cluster/v1/model-file?model=<id>&path=<rel> -- one file of a local
+// model, streamed with its SHA-256 in a trailer so the receiver can verify
+// it without a second pass here.
+func (m *Manager) handlePeerModelFile(w http.ResponseWriter, r *http.Request) {
+	modelID := strings.TrimSpace(r.URL.Query().Get("model"))
+	rel := strings.TrimSpace(r.URL.Query().Get("path"))
+	if modelID == "" || rel == "" {
+		writePeerError(w, http.StatusBadRequest, "model and path are required", "bad_request")
+		return
+	}
+	bundle, err := m.opts.Host.ModelBundle(modelID)
+	if err != nil {
+		writePeerError(w, http.StatusNotFound, err.Error(), "model_not_available")
+		return
+	}
+	var size int64 = -1
+	for _, f := range bundle.Files {
+		if f.Path == rel {
+			size = f.Size
+		}
+	}
+	if size < 0 || !safeRelPath(rel) {
+		writePeerError(w, http.StatusNotFound, "no such file in the model", "not_found")
+		return
+	}
+	file, err := os.Open(filepath.Join(bundle.Dir, filepath.FromSlash(rel)))
+	if err != nil {
+		writePeerError(w, http.StatusNotFound, "file is not readable", "not_found")
+		return
+	}
+	defer file.Close()
+	// No Content-Length on purpose: HTTP/1.1 can only carry the digest
+	// trailer with chunked encoding. The receiver knows the size from the
+	// bundle and checks it.
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-CSGLite-Size", strconv.FormatInt(size, 10))
+	w.Header().Set("Trailer", SHA256Trailer)
+	w.WriteHeader(http.StatusOK)
+	hasher := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(w, hasher), io.LimitReader(file, size)); err != nil {
+		return
+	}
+	w.Header().Set(SHA256Trailer, hex.EncodeToString(hasher.Sum(nil)))
+}
+
+// safeRelPath accepts only clean, relative, forward-slash paths inside the
+// model directory.
+func safeRelPath(rel string) bool {
+	if rel == "" || strings.HasPrefix(rel, "/") || strings.Contains(rel, "\\") {
+		return false
+	}
+	clean := path.Clean(rel)
+	if clean != rel || clean == "." || strings.HasPrefix(clean, "../") || clean == ".." {
+		return false
+	}
+	for _, seg := range strings.Split(clean, "/") {
+		if seg == ".." || seg == "" {
+			return false
+		}
+	}
+	return true
 }

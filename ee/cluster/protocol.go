@@ -3,7 +3,10 @@
 
 package cluster
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ProtocolVersion is carried in discovery records and every handshake. Nodes
 // with a different major version see each other but refuse to pair or route.
@@ -18,6 +21,13 @@ const (
 	peerPathLeave     = "/cluster/v1/leave"
 	peerPathPull      = "/cluster/v1/pull"
 	peerPathInference = "/cluster/v1/inference/"
+	// peerPathModelBundle and peerPathModelFile let a member copy a model
+	// from a peer that already holds it, instead of downloading it again from
+	// the model source over the internet.
+	peerPathModelBundle = "/cluster/v1/model-bundle"
+	peerPathModelFile   = "/cluster/v1/model-file"
+	// SHA256Trailer carries the digest of a streamed model file.
+	SHA256Trailer = "X-CSGLite-SHA256"
 )
 
 // Headers added to routed requests and cluster responses.
@@ -262,4 +272,18 @@ type errorResponse struct {
 	Code      string `json:"code,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	Current   int    `json:"current,omitempty"`
+}
+
+// BundleFile is one file of a complete local model.
+type BundleFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+// ModelBundle describes a complete local model so a peer can copy it: the
+// manifest as stored on disk and every file with its size.
+type ModelBundle struct {
+	Dir      string          `json:"-"`
+	Manifest json.RawMessage `json:"manifest"`
+	Files    []BundleFile    `json:"files"`
 }

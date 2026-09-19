@@ -4,13 +4,18 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +37,7 @@ type fakeHost struct {
 	localEng  inference.Engine
 	mu        sync.Mutex
 	statusMod func(*Status)
+	bundles   map[string]*ModelBundle
 }
 
 func (h *fakeHost) LocalStatus(context.Context) Status {
@@ -86,10 +92,19 @@ func (h *fakeHost) PullHandler() http.Handler {
 }
 
 func (h *fakeHost) PullSpec(modelID string) (string, string) { return modelID, "" }
-func (h *fakeHost) NodeLimit() int                           { return h.limit }
-func (h *fakeHost) Licensed() bool                           { return h.licensed }
-func (h *fakeHost) Version() string                          { return "test" }
-func (h *fakeHost) APIPort() int                             { return 11435 }
+func (h *fakeHost) ModelBundle(modelID string) (*ModelBundle, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	b, ok := h.bundles[modelID]
+	if !ok {
+		return nil, errors.New("model not available")
+	}
+	return b, nil
+}
+func (h *fakeHost) NodeLimit() int  { return h.limit }
+func (h *fakeHost) Licensed() bool  { return h.licensed }
+func (h *fakeHost) Version() string { return "test" }
+func (h *fakeHost) APIPort() int    { return 11435 }
 
 type testNode struct {
 	m    *Manager
@@ -787,5 +802,78 @@ func TestRouteRawForwardsUploadsAndServesLocallyWhenBest(t *testing.T) {
 	}
 	if _, err := a.m.RouteRaw(context.Background(), "missing", SourceCluster, "/v1/audio/speech", body, headers); err == nil || inference.HTTPStatusCode(err) != http.StatusServiceUnavailable {
 		t.Fatalf("unknown model should be 503, got %v", err)
+	}
+}
+
+func TestPeerModelBundleAndFileCopy(t *testing.T) {
+	bus := NewMemoryBus()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte("csglite"), 100000)
+	if err := os.WriteFile(filepath.Join(dir, "model.gguf"), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "config.json"), []byte(`{"a":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := json.RawMessage(`{"namespace":"Qwen","name":"Demo","artifact_source":"modelscope","files":["model.gguf"]}`)
+	holder := &fakeHost{licensed: true, models: []ModelStatus{{ID: "modelscope/Qwen/Demo", Size: int64(len(payload))}}}
+	holder.bundles = map[string]*ModelBundle{"modelscope/Qwen/Demo": {Dir: dir, Manifest: manifest, Files: []BundleFile{{Path: "model.gguf", Size: int64(len(payload))}, {Path: "sub/config.json", Size: 7}}}}
+	a := startNode(t, bus, "alpha", holder)
+	b := startNode(t, bus, "beta", &fakeHost{licensed: true})
+	_, token, _ := a.m.CreateCluster("Lab")
+	waitFor(t, "discovery", func() bool { return len(b.m.dir.Discovered(time.Minute)) >= 1 })
+	if _, err := b.m.Join(context.Background(), token, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "b to see a's model", func() bool {
+		rt, ok := b.m.dir.Get(a.m.identity.UUID)
+		if !ok || rt.Status == nil {
+			return false
+		}
+		_, ok = rt.Status.Model("modelscope/Qwen/Demo")
+		return ok
+	})
+	pm, err := b.m.FindPeerModel(context.Background(), "modelscope/Qwen/Demo")
+	if err != nil || pm == nil {
+		t.Fatalf("FindPeerModel: %v %v", pm, err)
+	}
+	if pm.Node.UUID != a.m.identity.UUID || len(pm.Files) != 2 || pm.TotalSize() != int64(len(payload))+7 {
+		t.Fatalf("bundle %+v", pm)
+	}
+	if modelIDOfManifest(pm) != "modelscope/Qwen/Demo" {
+		t.Fatalf("model id from manifest %q", modelIDOfManifest(pm))
+	}
+	resp, err := b.m.OpenPeerFile(context.Background(), pm, "model.gguf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("file content differs (%d bytes)", len(got))
+	}
+	sum := sha256.Sum256(payload)
+	if resp.Trailer.Get(SHA256Trailer) != hex.EncodeToString(sum[:]) {
+		t.Fatalf("sha256 trailer %q", resp.Trailer.Get(SHA256Trailer))
+	}
+	resp, err = b.m.OpenPeerFile(context.Background(), pm, "sub/config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(got) != `{"a":1}` {
+		t.Fatalf("nested file %q", got)
+	}
+	for _, bad := range []string{"../identity.json", "/etc/passwd", "sub/../../x", "missing.bin"} {
+		if _, err := b.m.OpenPeerFile(context.Background(), pm, bad); err == nil {
+			t.Fatalf("path %q was served", bad)
+		}
+	}
+	if pm, err := b.m.FindPeerModel(context.Background(), "nobody-has-this"); pm != nil || err != nil {
+		t.Fatalf("unknown model: %v %v", pm, err)
 	}
 }

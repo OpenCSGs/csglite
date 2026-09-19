@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -1015,4 +1016,102 @@ func StatusCodeForError(err error) int {
 		return http.StatusBadGateway
 	}
 	return http.StatusInternalServerError
+}
+
+// PeerModel is a complete copy of a model on a member, ready to be copied.
+type PeerModel struct {
+	Node     Member
+	Addr     string
+	Manifest json.RawMessage
+	Files    []BundleFile
+}
+
+// TotalSize sums the bundle's files.
+func (p *PeerModel) TotalSize() int64 {
+	var total int64
+	for _, f := range p.Files {
+		total += f.Size
+	}
+	return total
+}
+
+// FindPeerModel looks for an online member that holds modelID completely and
+// returns its bundle. Members are tried in scheduler order (idle, fast disk
+// first); nil is returned when no member has the model.
+func (m *Manager) FindPeerModel(ctx context.Context, modelID string) (*PeerModel, error) {
+	var lastErr error
+	for _, rt := range m.dir.Snapshot() {
+		if !rt.Online() || rt.Status == nil {
+			continue
+		}
+		ms, ok := rt.Status.Model(modelID)
+		if !ok || ms.Loading {
+			continue
+		}
+		mem, ok := m.store.Member(rt.UUID)
+		if !ok {
+			continue
+		}
+		for _, addr := range m.dir.Candidates(rt.UUID)[:min(2, len(m.dir.Candidates(rt.UUID)))] {
+			var bundle ModelBundle
+			attempt, cancel := context.WithTimeout(ctx, 15*time.Second)
+			err := m.peerJSON(attempt, mem, addr, http.MethodGet, peerPathModelBundle+"?model="+url.QueryEscape(modelID), nil, &bundle)
+			cancel()
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if len(bundle.Files) == 0 {
+				lastErr = fmt.Errorf("%s reports an empty model", mem.Name)
+				continue
+			}
+			return &PeerModel{Node: mem, Addr: addr, Manifest: bundle.Manifest, Files: bundle.Files}, nil
+		}
+	}
+	return nil, lastErr
+}
+
+// OpenPeerFile streams one file of a peer model. The response body is the
+// file; after it is read to EOF, resp.Trailer.Get(SHA256Trailer) holds the
+// digest the peer computed while sending.
+func (m *Manager) OpenPeerFile(ctx context.Context, pm *PeerModel, rel string) (*http.Response, error) {
+	client := peerClient(m.identity, pm.Node.UUID, pm.Node.CertFingerprint)
+	q := url.Values{"model": {modelIDOfManifest(pm)}, "path": {rel}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+pm.Addr+peerPathModelFile+"?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		return nil, fmt.Errorf("%s answered %d for %s: %s", pm.Node.Name, resp.StatusCode, rel, strings.TrimSpace(string(raw)))
+	}
+	m.dir.RequestSucceeded(pm.Node.UUID)
+	return resp, nil
+}
+
+// modelIDOfManifest recovers the cluster model id a peer bundle was requested
+// under; it is stored on the PeerModel by FindPeerModel's caller through the
+// manifest, so we read it back from there.
+func modelIDOfManifest(pm *PeerModel) string {
+	var manifest struct {
+		Namespace      string `json:"namespace"`
+		Name           string `json:"name"`
+		ArtifactSource string `json:"artifact_source"`
+		Repository     string `json:"repository"`
+	}
+	_ = json.Unmarshal(pm.Manifest, &manifest)
+	repo := strings.Trim(manifest.Repository, "/")
+	if repo == "" {
+		repo = manifest.Namespace + "/" + manifest.Name
+	}
+	source := strings.ToLower(strings.TrimSpace(manifest.ArtifactSource))
+	if source == "" || source == "opencsg" {
+		return repo
+	}
+	return source + "/" + repo
 }

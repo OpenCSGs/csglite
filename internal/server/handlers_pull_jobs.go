@@ -293,7 +293,13 @@ func (s *Server) runPullJob(job *pullJob) {
 	var err error
 	switch job.kind {
 	case "model":
-		_, err = s.manager.PullFrom(ctx, job.name, job.source, job.revision, job.quants, progress)
+		// Inside a cluster a peer that already holds the model is the
+		// closest source; the internet is the fallback.
+		if handled, copyErr := s.pullModelFromPeer(ctx, job); handled {
+			err = copyErr
+		} else {
+			_, err = s.manager.PullFrom(ctx, job.name, job.source, job.revision, job.quants, progress)
+		}
 	case "dataset":
 		_, err = s.datasetManager.PullFrom(ctx, job.name, job.source, job.revision, progress)
 	default:

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -332,4 +333,76 @@ func TestClusterPullSpecSplitsRegistryPrefix(t *testing.T) {
 			t.Errorf("PullSpec(%q) = %q, %q; want %q, %q", in, repo, source, want[0], want[1])
 		}
 	}
+}
+
+func TestClusterPullJobCopiesModelFromPeer(t *testing.T) {
+	bus := cluster.NewMemoryBus()
+	a := newClusterTestServer(t, bus)
+	b := newClusterTestServer(t, bus)
+	// A holds a small "model" with real files.
+	mustSaveLocalModel(t, a.cfg.ModelDir, &model.LocalModel{Namespace: "Qwen", Name: "Tiny-GGUF", Format: model.FormatGGUF, Size: 3000, Files: []string{"tiny.gguf", "config.json"}, DownloadedAt: time.Unix(100, 0)})
+	dir := model.RegistryModelDir(a.cfg.ModelDir, "opencsg", "Qwen", "Tiny-GGUF")
+	payload := bytes.Repeat([]byte("g"), 3000)
+	if err := os.WriteFile(filepath.Join(dir, "tiny.gguf"), payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	publicID := a.localInferenceModelID("Qwen/Tiny-GGUF")
+
+	rec := httptest.NewRecorder()
+	a.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/cluster", strings.NewReader(`{"name":"Lab"}`)))
+	var created struct {
+		JoinToken string `json:"join_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	clusterWait(t, "b to discover a", func() bool { return len(b.cluster.DiscoveredNodes()) == 1 })
+	if _, err := b.cluster.Join(context.Background(), created.JoinToken, ""); err != nil {
+		t.Fatal(err)
+	}
+	clusterWait(t, "b to see the model on a", func() bool {
+		rt, ok := b.cluster.Directory().Get(a.cluster.Identity().UUID)
+		if !ok || rt.Status == nil {
+			return false
+		}
+		_, ok = rt.Status.Model(publicID)
+		return ok
+	})
+
+	// "Sync to node" on B is a plain pull job; it is satisfied from A.
+	job, err := b.createPullJob("model", "Qwen/Tiny-GGUF", "opencsg", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterWait(t, "pull job to finish", func() bool {
+		job.mu.Lock()
+		defer job.mu.Unlock()
+		return job.status == pullJobSucceeded || job.status == pullJobFailed
+	})
+	job.mu.Lock()
+	status, progress, jobErr := job.status, job.progress, job.err
+	job.mu.Unlock()
+	if status != pullJobSucceeded {
+		t.Fatalf("pull job %s: %s %s", status, progress.Status, jobErr)
+	}
+	// Qwen/Tiny-GGUF exists nowhere but on A, so success proves the copy
+	// came from the peer rather than the model source.
+	if !b.manager.Exists("Qwen/Tiny-GGUF") {
+		t.Fatal("copied model is not installed on b")
+	}
+	got, err := os.ReadFile(filepath.Join(model.RegistryModelDir(b.cfg.ModelDir, "opencsg", "Qwen", "Tiny-GGUF"), "tiny.gguf"))
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("copied file differs: %v (%d bytes)", err, len(got))
+	}
+	lm, err := b.manager.Get("Qwen/Tiny-GGUF")
+	if err != nil || lm.Format != model.FormatGGUF || lm.Size != 3000 {
+		t.Fatalf("manifest on b: %+v %v", lm, err)
+	}
+	// B now advertises the model too.
+	clusterWait(t, "b to list the copied model", func() bool {
+		st := b.cluster.LocalStatus(context.Background())
+		_, ok := st.Model(publicID)
+		return ok
+	})
 }

@@ -44,6 +44,9 @@ type Host interface {
 	InferenceHandler() http.Handler
 	// PullHandler creates a pull job on this node (POST /api/pull/jobs body).
 	PullHandler() http.Handler
+	// ModelBundle describes a complete local model for a peer to copy, or
+	// returns an error when the model is absent or still downloading.
+	ModelBundle(modelID string) (*ModelBundle, error)
 	// PullSpec turns a cluster model id into the repository and artifact
 	// source a pull job needs: registry-prefixed ids such as
 	// "modelscope/Qwen/Qwen3.5-2B" split into ("Qwen/Qwen3.5-2B", "modelscope").
