@@ -6,7 +6,6 @@ package cluster
 import (
 	"net"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -522,13 +521,4 @@ func endpointHost(addr string) string {
 		return addr
 	}
 	return host
-}
-
-// withPort replaces or adds the port of an endpoint.
-func withPort(addr string, port int) string {
-	host := endpointHost(addr)
-	if host == "" {
-		return ""
-	}
-	return net.JoinHostPort(host, strconv.Itoa(port))
 }

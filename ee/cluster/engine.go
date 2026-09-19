@@ -423,7 +423,6 @@ func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 		localReserved = int(rt.reserveSeq)
 	}
 	out = append(out, Candidate{UUID: m.identity.UUID, Name: m.identity.DisplayName(), Local: true, Status: local, Health: HealthHealthy, Reserved: localReserved, Breaker: m.dir.ModelBroken(m.identity.UUID, model)})
-	now := time.Now()
 	for _, rt := range m.dir.Snapshot() {
 		if _, ok := m.store.Member(rt.UUID); !ok {
 			continue
@@ -442,7 +441,6 @@ func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 		}
 		out = append(out, Candidate{UUID: rt.UUID, Name: name, Status: st, Health: rt.Health, Reserved: int(rt.reserveSeq), Breaker: m.dir.ModelBroken(rt.UUID, model)})
 	}
-	_ = now
 	return out
 }
 

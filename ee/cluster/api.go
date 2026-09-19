@@ -152,6 +152,12 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, errorResponse{Error: msg, ErrorCode: status})
 }
 
+// writeCodedError adds the machine-readable code peers switch on, such as
+// "wrong_cluster", which the operator API does not always carry.
+func writeCodedError(w http.ResponseWriter, status int, msg, code string) {
+	writeJSON(w, status, errorResponse{Error: msg, ErrorCode: status, Code: code})
+}
+
 func writeLimitError(w http.ResponseWriter, le *LimitError) {
 	writeJSON(w, http.StatusForbidden, errorResponse{
 		Error:     "the cluster has reached its licensed node limit; import a CSGLite Enterprise license to add more nodes",
@@ -184,8 +190,15 @@ func writeOpError(w http.ResponseWriter, err error) {
 	}
 }
 
+// readBody reads at most limit bytes of a request body.
+func readBody(r *http.Request, limit int64) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r.Body, limit))
+}
+
+// decodeJSON reads an operator API body. A blank body is accepted: several
+// endpoints take only optional fields, so sending nothing is a valid request.
 func decodeJSON(r *http.Request, out any) error {
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	raw, err := readBody(r, 1<<20)
 	if err != nil {
 		return err
 	}

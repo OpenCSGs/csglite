@@ -215,7 +215,7 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 			r.Factors = append(r.Factors, "partial GPU offload under CPU contention")
 		}
 		if st.RAM.Total > 0 && !st.RAM.Unified {
-			ramFree := st.RAM.Total - minU64(st.RAM.Used, st.RAM.Total)
+			ramFree := st.RAM.Total - min(st.RAM.Used, st.RAM.Total)
 			if ramFree < uint64(float64(m.Size)*0.5) {
 				mult *= 1.3
 				r.Factors = append(r.Factors, "little RAM left for the weight cache")
@@ -345,7 +345,7 @@ func freeMemoryForModel(st *Status) (uint64, bool) {
 		if st.RAM.Total == 0 {
 			return 0, false
 		}
-		return st.RAM.Total - minU64(st.RAM.Used, st.RAM.Total), true
+		return st.RAM.Total - min(st.RAM.Used, st.RAM.Total), true
 	}
 	known := false
 	for _, g := range st.GPUs {
@@ -357,13 +357,6 @@ func freeMemoryForModel(st *Status) (uint64, bool) {
 		return 0, false
 	}
 	return st.VRAMFree(), true
-}
-
-func minU64(a, b uint64) uint64 {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // stableTiebreak spreads same-score nodes deterministically per model, so two

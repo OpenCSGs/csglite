@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
 	"net"
@@ -16,7 +15,6 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/ee/cluster"
-	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/internal/modelregistry"
@@ -579,9 +577,6 @@ func clusterErrorResponse(err error) (int, any) {
 	}
 	return status, body
 }
-
-var _ = json.Marshal
-var _ = config.DefaultServerURL
 
 // checkClusterRouteSource validates a /providers/{cluster|node:<uuid>} route
 // before the handler runs, so an app bound to a machine that has left the

@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -410,9 +411,7 @@ func (m *Manager) probeSeed(seed string) {
 	if seed == "" {
 		return
 	}
-	if _, _, err := net.SplitHostPort(seed); err != nil {
-		seed = net.JoinHostPort(seed, strconv.Itoa(portOf(DefaultListenAddr)))
-	}
+	seed = withDefaultPort(seed)
 	go func() {
 		ctx, cancel := context.WithTimeout(m.context(), 5*time.Second)
 		defer cancel()
@@ -443,14 +442,7 @@ func portOf(addr string) int {
 func (m *Manager) seedAddressesFor(mem Member) []string {
 	var seeds []string
 	if static := m.store.Settings().StaticAddresses[mem.UUID]; static != "" {
-		if _, _, err := net.SplitHostPort(static); err != nil {
-			port := mem.ClusterPort
-			if port == 0 {
-				port = portOf(DefaultListenAddr)
-			}
-			static = net.JoinHostPort(static, strconv.Itoa(port))
-		}
-		seeds = append(seeds, static)
+		seeds = append(seeds, withMemberPort(static, mem.ClusterPort))
 	}
 	seeds = append(seeds, mem.LastAddresses...)
 	return seeds
@@ -566,7 +558,7 @@ func (m *Manager) advertisedEndpoints() []string {
 			return
 		}
 		seen[host] = true
-		out = append(out, net.JoinHostPort(host, strconv.Itoa(port)))
+		out = append(out, endpoint(host, port))
 	}
 	add(strings.TrimSpace(m.opts.AdvertiseHost))
 	if host := endpointHost(m.opts.ListenAddr); host != "" {
@@ -685,6 +677,19 @@ func (e *peerError) Error() string {
 	return fmt.Sprintf("peer answered %d", e.Status)
 }
 
+// peerErrorFrom turns a peer's non-2xx answer into an error carrying its
+// status and, when the body is the shared JSON envelope, its message and
+// machine-readable code. A body that is not that envelope becomes the message
+// as-is, so a bare text error is still readable.
+func peerErrorFrom(status int, body []byte) *peerError {
+	pe := &peerError{Status: status}
+	_ = json.Unmarshal(body, &pe.Body)
+	if pe.Body.Error == "" {
+		pe.Body.Error = strings.TrimSpace(string(body))
+	}
+	return pe
+}
+
 // peerJSON posts (or gets) JSON to a pinned member at addr.
 func (m *Manager) peerJSON(ctx context.Context, mem Member, addr, method, path string, in, out any) error {
 	return doJSON(ctx, m.peers.get(mem.UUID, mem.CertFingerprint), addr, method, path, in, out)
@@ -717,12 +722,7 @@ func doJSON(ctx context.Context, client *http.Client, addr, method, path string,
 		return err
 	}
 	if resp.StatusCode/100 != 2 {
-		pe := &peerError{Status: resp.StatusCode}
-		_ = json.Unmarshal(raw, &pe.Body)
-		if pe.Body.Error == "" {
-			pe.Body.Error = strings.TrimSpace(string(raw))
-		}
-		return pe
+		return peerErrorFrom(resp.StatusCode, raw)
 	}
 	if out != nil && len(raw) > 0 {
 		return json.Unmarshal(raw, out)
@@ -755,7 +755,7 @@ func (m *Manager) fetchStatus(ctx context.Context, mem Member) (*Status, string,
 	defer cancel()
 	addrs := m.dir.Candidates(mem.UUID)
 	for _, a := range m.seedAddressesFor(mem) {
-		if !containsString(addrs, a) {
+		if !slices.Contains(addrs, a) {
 			addrs = append(addrs, a)
 		}
 	}
@@ -790,15 +790,6 @@ func unwrapURLError(err error) error {
 		return urlErr.Err
 	}
 	return err
-}
-
-func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // ---- background loops ----
@@ -1147,10 +1138,7 @@ func (m *Manager) Join(ctx context.Context, token, address string) (ClusterInfo,
 
 func (m *Manager) joinTargets(clusterUUID, address string) []string {
 	var targets []string
-	if address = strings.TrimSpace(address); address != "" {
-		if _, _, err := net.SplitHostPort(address); err != nil {
-			address = net.JoinHostPort(address, strconv.Itoa(portOf(DefaultListenAddr)))
-		}
+	if address = withDefaultPort(address); address != "" {
 		targets = append(targets, address)
 	}
 	discovered := m.dir.Discovered(discoveredMaxAge)
@@ -1162,15 +1150,13 @@ func (m *Manager) joinTargets(clusterUUID, address string) []string {
 	// A node whose membership we have not refreshed yet may still be a
 	// member; the join handler refuses a wrong cluster, so trying costs little.
 	for _, obs := range discovered {
-		if obs.ClusterUUID != clusterUUID && !containsString(targets, obs.Endpoint()) {
+		if obs.ClusterUUID != clusterUUID && !slices.Contains(targets, obs.Endpoint()) {
 			targets = append(targets, obs.Endpoint())
 		}
 	}
 	for _, seed := range m.opts.Seeds {
-		if _, _, err := net.SplitHostPort(seed); err != nil {
-			seed = net.JoinHostPort(seed, strconv.Itoa(portOf(DefaultListenAddr)))
-		}
-		if !containsString(targets, seed) {
+		seed = withDefaultPort(seed)
+		if !slices.Contains(targets, seed) {
 			targets = append(targets, seed)
 		}
 	}
@@ -1204,12 +1190,7 @@ func (m *Manager) joinHandshake(ctx context.Context, addr, clusterUUID, key stri
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode/100 != 2 {
-		pe := &peerError{Status: resp.StatusCode}
-		_ = json.Unmarshal(body, &pe.Body)
-		if pe.Body.Error == "" {
-			pe.Body.Error = strings.TrimSpace(string(body))
-		}
-		return joinResponse{}, Member{}, pe
+		return joinResponse{}, Member{}, peerErrorFrom(resp.StatusCode, body)
 	}
 	var reply joinResponse
 	if err := json.Unmarshal(body, &reply); err != nil {
@@ -1311,12 +1292,7 @@ func (m *Manager) Invite(ctx context.Context, nodeUUID, code, address string) (M
 		return Member{}, &LimitError{Limit: m.NodeLimit(), Current: len(m.store.Members()) + 1}
 	}
 	var target string
-	if address = strings.TrimSpace(address); address != "" {
-		target = address
-		if _, _, err := net.SplitHostPort(target); err != nil {
-			target = net.JoinHostPort(target, strconv.Itoa(portOf(DefaultListenAddr)))
-		}
-	} else {
+	if target = withDefaultPort(address); target == "" {
 		for _, obs := range m.dir.Discovered(discoveredMaxAge) {
 			if obs.UUID == nodeUUID {
 				target = obs.Endpoint()
@@ -1349,12 +1325,7 @@ func (m *Manager) Invite(ctx context.Context, nodeUUID, code, address string) (M
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode/100 != 2 {
-		pe := &peerError{Status: resp.StatusCode}
-		_ = json.Unmarshal(body, &pe.Body)
-		if pe.Body.Error == "" {
-			pe.Body.Error = strings.TrimSpace(string(body))
-		}
-		return Member{}, pe
+		return Member{}, peerErrorFrom(resp.StatusCode, body)
 	}
 	var reply inviteResponse
 	if err := json.Unmarshal(body, &reply); err != nil {
