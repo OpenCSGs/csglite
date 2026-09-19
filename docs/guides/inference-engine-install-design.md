@@ -43,7 +43,7 @@
 | 生命周期级（本设计新增） | `engine.Provider` | 引擎软件本身是否装了、装在哪、什么版本、怎么装 | `llama.cpp`，未来 `vllm`、`mlx` |
 
 `api.LocalInferenceSupport.Runtime` 目前的取值 `llama` / `diffusers` /
-`python-embedding` / `python-asr` / `python-tts` 已经是“某个模型该交给谁跑”的路由
+`python-asr` / `python-tts` 已经是“某个模型该交给谁跑”的路由
 键。`Provider.Runtimes()` 声明自己能服务哪些路由键，从而把“模型 → 运行时 →
 引擎”串起来。
 

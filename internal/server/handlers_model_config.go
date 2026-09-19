@@ -254,8 +254,6 @@ func (s *Server) modelRuntimeKind(modelID string) string {
 		return api.ModelRuntimePythonASR
 	case s.modelUsesImageGenerationEngine(modelID):
 		return api.ModelRuntimeDiffusers
-	case s.shouldUsePythonEmbeddingRuntime(modelID):
-		return api.ModelRuntimePythonEmbedding
 	default:
 		return api.ModelRuntimeLlama
 	}

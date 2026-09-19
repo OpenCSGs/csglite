@@ -26,7 +26,6 @@ const stepPatterns: Array<[RegExp, string]> = [
   [/^detect system/i, "loadStep.detectSystem"],
   [/^prepare image runtime/i, "loadStep.prepareImageRuntime"],
   [/^prepare ASR runtime/i, "loadStep.prepareASRRuntime"],
-  [/^prepare embedding runtime/i, "loadStep.prepareEmbeddingRuntime"],
   [/^prepare pip and uv/i, "loadStep.preparePip"],
   [/^create Python venv/i, "loadStep.createVenv"],
   [/^install PyTorch/i, "loadStep.installTorch"],

@@ -21,21 +21,20 @@ import (
 )
 
 const (
-	runtimeDirName          = "ai-runtime"
-	asrRuntimeDirName       = "asr-runtime"
-	ttsRuntimeDirName       = "tts-runtime"
-	embeddingRuntimeDirName = "embedding-runtime"
-	uvCacheDirName          = "uv-cache"
-	legacyRuntimeDirName    = "image-runtime"
-	venvDirName             = "venv"
-	manifestFileName        = "runtime.json"
-	aliyunPyPIIndex         = "https://mirrors.aliyun.com/pypi/simple"
-	aliyunTorchRoot         = "https://mirrors.aliyun.com/pytorch-wheels"
-	officialTorchRoot       = "https://download.pytorch.org/whl"
-	mirrorModeEnv           = "CSGHUB_LITE_PACKAGE_MIRROR"
-	regionEnv               = "CSGHUB_LITE_REGION"
-	torchIndexOverrideEnv   = "CSGHUB_LITE_TORCH_INDEX_URL"
-	pypiIndexOverrideEnv    = "CSGHUB_LITE_PYPI_INDEX_URL"
+	runtimeDirName        = "ai-runtime"
+	asrRuntimeDirName     = "asr-runtime"
+	ttsRuntimeDirName     = "tts-runtime"
+	uvCacheDirName        = "uv-cache"
+	legacyRuntimeDirName  = "image-runtime"
+	venvDirName           = "venv"
+	manifestFileName      = "runtime.json"
+	aliyunPyPIIndex       = "https://mirrors.aliyun.com/pypi/simple"
+	aliyunTorchRoot       = "https://mirrors.aliyun.com/pytorch-wheels"
+	officialTorchRoot     = "https://download.pytorch.org/whl"
+	mirrorModeEnv         = "CSGHUB_LITE_PACKAGE_MIRROR"
+	regionEnv             = "CSGHUB_LITE_REGION"
+	torchIndexOverrideEnv = "CSGHUB_LITE_TORCH_INDEX_URL"
+	pypiIndexOverrideEnv  = "CSGHUB_LITE_PYPI_INDEX_URL"
 )
 
 var requiredPythonPackages = []string{
@@ -127,15 +126,6 @@ var requiredEmbeddingPythonPackages = []string{
 	"soundfile",
 }
 
-var embeddingPythonPackages = []string{
-	"transformers>=5.0",
-	"peft",
-	"pillow",
-	"numpy",
-	"librosa",
-	"soundfile",
-}
-
 var requiredQwenASRPythonPackages = []string{
 	"qwen_asr",
 }
@@ -144,17 +134,6 @@ var torchPackages = []string{
 	"torch",
 	"torchvision",
 	"torchaudio",
-}
-
-func embeddingTorchPackages() []string {
-	return embeddingTorchPackagesForGOOS(runtime.GOOS)
-}
-
-func embeddingTorchPackagesForGOOS(goos string) []string {
-	if goos == "windows" {
-		return []string{"torch", "torchvision"}
-	}
-	return torchPackages
 }
 
 // HardwareKind describes the PyTorch wheel/runtime family to use.
@@ -240,14 +219,6 @@ func NewTTSRuntimeManager() (*RuntimeManager, error) {
 		return nil, err
 	}
 	return NewRuntimeManagerAt(filepath.Join(home, ttsRuntimeDirName)), nil
-}
-
-func NewEmbeddingRuntimeManager() (*RuntimeManager, error) {
-	home, err := config.AppHome()
-	if err != nil {
-		return nil, err
-	}
-	return NewRuntimeManagerAt(filepath.Join(home, embeddingRuntimeDirName)), nil
 }
 
 func NewRuntimeManagerAt(rootDir string) *RuntimeManager {
@@ -726,52 +697,6 @@ func importNamesFor(packages []string) []string {
 	return names
 }
 
-func (m *RuntimeManager) EmbeddingStatus(ctx context.Context) RuntimeStatus {
-	hardware := DetectHardware()
-	indexes := ResolvePackageIndexes(hardware)
-	status := RuntimeStatus{
-		RuntimeDir:    m.rootDir,
-		VenvDir:       m.VenvDir(),
-		Python:        m.PythonPath(),
-		Platform:      runtime.GOOS,
-		Arch:          runtime.GOARCH,
-		Hardware:      hardware,
-		TorchIndexURL: torchSourceURL(indexes),
-	}
-	status.InstallCommand = m.EmbeddingInstallCommand(status.Hardware)
-
-	if _, err := os.Stat(status.Python); err != nil {
-		status.Error = "Embedding runtime is not installed"
-		status.MissingPackages = append([]string{"torch"}, requiredEmbeddingPythonPackages...)
-		return status
-	}
-	missing, err := missingPackages(ctx, status.Python, append([]string{"torch"}, requiredEmbeddingPythonPackages...))
-	if err != nil {
-		status.Error = err.Error()
-		status.MissingPackages = append([]string{"torch"}, requiredEmbeddingPythonPackages...)
-		return status
-	}
-	status.MissingPackages = missing
-	status.Ready = len(missing) == 0
-	if !status.Ready {
-		status.Error = "Embedding runtime is missing Python packages"
-		return status
-	}
-	if err := m.verifyEmbeddingWorkerImports(ctx, runtime.GOOS); err != nil {
-		status.Ready = false
-		status.Error = err.Error()
-	}
-	return status
-}
-
-func (m *RuntimeManager) EnsureEmbeddingReady(ctx context.Context) error {
-	status := m.EmbeddingStatus(ctx)
-	if status.Ready {
-		return nil
-	}
-	return &RuntimeNotReadyError{Status: status}
-}
-
 type RuntimeNotReadyError struct {
 	Status RuntimeStatus
 }
@@ -1032,119 +957,6 @@ func (m *RuntimeManager) InstallTTSWithProgressOptions(ctx context.Context, prog
 	return m.TTSStatus(ctx), nil
 }
 
-func (m *RuntimeManager) InstallEmbeddingWithProgressOptions(ctx context.Context, progress ProgressFunc, upgradePackages bool) (RuntimeStatus, error) {
-	if progress == nil {
-		progress = func(string, int, int) {}
-	}
-	// The install may change the environment; make the final EmbeddingStatus
-	// re-run the real import verification instead of trusting a cached pass.
-	m.InvalidateEmbeddingImportCheck()
-
-	hardware := DetectHardware()
-	indexes := ResolvePackageIndexes(hardware)
-	progress(fmt.Sprintf("detect system %s/%s %s mirror=%s", runtime.GOOS, runtime.GOARCH, hardware, indexes.Mirror), 1, 5)
-	progress("prepare embedding runtime", 2, 5)
-	if err := os.MkdirAll(m.rootDir, 0o755); err != nil {
-		return m.EmbeddingStatus(ctx), fmt.Errorf("creating runtime directory: %w", err)
-	}
-	if err := m.ensureVenvForInstall(ctx, progress, 3, 5, upgradePackages); err != nil {
-		return m.EmbeddingStatus(ctx), err
-	}
-
-	python := m.PythonPath()
-	torchMissing, err := missingPackages(ctx, python, []string{"torch"})
-	if err != nil {
-		return m.EmbeddingStatus(ctx), err
-	}
-	if len(torchMissing) > 0 || upgradePackages {
-		if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
-			return m.EmbeddingStatus(ctx), err
-		}
-		if indexes.TorchIndexURL != "" {
-			progress("install PyTorch from "+indexes.TorchIndexURL, 4, 5)
-		} else if indexes.TorchFindLinksURL != "" && indexes.PyPIIndexURL != "" {
-			progress("install PyTorch from "+string(indexes.Mirror)+" mirror", 4, 5)
-		} else if indexes.TorchFindLinksURL != "" {
-			progress("install PyTorch from "+indexes.TorchFindLinksURL, 4, 5)
-		} else if indexes.PyPIIndexURL != "" {
-			progress("install PyTorch from "+indexes.PyPIIndexURL, 4, 5)
-		} else {
-			progress("install PyTorch", 4, 5)
-		}
-		if err := m.uvPipInstall(ctx, python, indexes, embeddingTorchPackages(), upgradePackages, true); err != nil {
-			return m.EmbeddingStatus(ctx), fmt.Errorf("installing PyTorch: %w", err)
-		}
-	}
-	if runtime.GOOS == "windows" {
-		if err := m.uninstallBrokenWindowsTorchaudio(ctx, python); err != nil {
-			return m.EmbeddingStatus(ctx), err
-		}
-	}
-
-	missing, err := missingPackages(ctx, python, requiredEmbeddingPythonPackages)
-	if err != nil {
-		return m.EmbeddingStatus(ctx), err
-	}
-	if len(missing) == 0 && !upgradePackages {
-		return m.EmbeddingStatus(ctx), nil
-	}
-	installPackages := embeddingPythonPackages
-	if !upgradePackages {
-		installPackages = embeddingInstallPackagesForMissing(missing)
-	}
-	if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
-		return m.EmbeddingStatus(ctx), err
-	}
-	if indexes.PyPIIndexURL != "" {
-		if upgradePackages {
-			progress("upgrade embedding dependencies from "+indexes.PyPIIndexURL, 5, 5)
-		} else {
-			progress("install embedding dependencies from "+indexes.PyPIIndexURL, 5, 5)
-		}
-	} else {
-		if upgradePackages {
-			progress("upgrade embedding dependencies", 5, 5)
-		} else {
-			progress("install embedding dependencies", 5, 5)
-		}
-	}
-	if err := m.uvPipInstall(ctx, python, indexes, installPackages, upgradePackages, false); err != nil {
-		return m.EmbeddingStatus(ctx), fmt.Errorf("installing embedding dependencies: %w", err)
-	}
-
-	now := time.Now()
-	manifest := RuntimeManifest{
-		Python:      python,
-		Platform:    runtime.GOOS,
-		Arch:        runtime.GOARCH,
-		Hardware:    DetectHardware(),
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		TorchIndex:  torchSourceURL(indexes),
-		PyPIIndex:   indexes.PyPIIndexURL,
-		PackageSpec: append(embeddingTorchPackages(), embeddingPythonPackages...),
-	}
-	if err := writeManifest(filepath.Join(m.rootDir, manifestFileName), manifest); err != nil {
-		return m.EmbeddingStatus(ctx), err
-	}
-	return m.EmbeddingStatus(ctx), nil
-}
-
-func embeddingInstallPackagesForMissing(missing []string) []string {
-	out := make([]string, 0, len(missing))
-	for _, pkg := range missing {
-		switch pkg {
-		case "PIL":
-			out = append(out, "pillow")
-		case "transformers":
-			out = append(out, "transformers>=5.0")
-		default:
-			out = append(out, pkg)
-		}
-	}
-	return out
-}
-
 func (m *RuntimeManager) EnsureQwenASRReady(ctx context.Context) error {
 	if venvVersion, err := probePythonVersionAt(ctx, m.PythonPath()); err == nil && !hostPythonSupported(venvVersion) {
 		return fmt.Errorf("runtime venv uses Python %s; %s is required, please reinstall the ASR runtime", venvVersion, pythonVersionRangeHint)
@@ -1257,37 +1069,6 @@ func (m *RuntimeManager) venvInstallCommand(hw HardwareKind, torchPkgs, packages
 	cmd = append(cmd, torchInstallIndexArgs(indexes)...)
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
 	cmd = append(cmd, packages...)
-	if indexes.PyPIIndexURL != "" {
-		cmd = append(cmd, "--index-url", indexes.PyPIIndexURL)
-	}
-	return cmd
-}
-
-func (m *RuntimeManager) EmbeddingInstallCommand(hw HardwareKind) []string {
-	python := "python3"
-	if runtime.GOOS == "windows" {
-		python = "py -3"
-	}
-	venv := m.VenvDir()
-	if strings.ContainsAny(venv, " \t") {
-		venv = fmt.Sprintf("%q", venv)
-	}
-	pythonPath := m.PythonPath()
-	uvPath := m.uvPath()
-	indexes := ResolvePackageIndexes(hw)
-	cmd := []string{python, "-m", "venv", venv, "&&", pythonPath, "-m", "ensurepip", "--upgrade", "&&", pythonPath, "-m", "pip", "install", "--upgrade", "pip"}
-	if indexes.PyPIIndexURL != "" {
-		cmd = append(cmd, "-i", indexes.PyPIIndexURL)
-	}
-	cmd = append(cmd, "&&", pythonPath, "-m", "pip", "install", "uv")
-	if indexes.PyPIIndexURL != "" {
-		cmd = append(cmd, "-i", indexes.PyPIIndexURL)
-	}
-	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
-	cmd = append(cmd, embeddingTorchPackages()...)
-	cmd = append(cmd, torchInstallIndexArgs(indexes)...)
-	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
-	cmd = append(cmd, embeddingPythonPackages...)
 	if indexes.PyPIIndexURL != "" {
 		cmd = append(cmd, "--index-url", indexes.PyPIIndexURL)
 	}
@@ -1761,35 +1542,6 @@ from transformers import AutoModel, AutoProcessor, WhisperFeatureExtractor
 // the multi-second torch+transformers import on every call.
 var embeddingImportCheckPassed sync.Map
 
-// VerifyEmbeddingWorkerImports runs the embedding worker's real import block on
-// Windows and reports a readable error when it fails. It is a no-op elsewhere.
-func (m *RuntimeManager) VerifyEmbeddingWorkerImports(ctx context.Context) error {
-	return m.verifyEmbeddingWorkerImports(ctx, runtime.GOOS)
-}
-
-func (m *RuntimeManager) verifyEmbeddingWorkerImports(ctx context.Context, goos string) error {
-	if goos != "windows" {
-		return nil
-	}
-	if _, ok := embeddingImportCheckPassed.Load(m.rootDir); ok {
-		return nil
-	}
-	log.Printf("EMBEDDING RUNTIME: verifying worker imports python=%s", m.PythonPath())
-	if err := verifyPythonScript(ctx, m.PythonPath(), windowsEmbeddingWorkerImportCheckScript); err != nil {
-		log.Printf("EMBEDDING RUNTIME: worker import verification failed: %v", err)
-		return errors.New(windowsEmbeddingImportError(err))
-	}
-	log.Printf("EMBEDDING RUNTIME: worker import verification passed")
-	embeddingImportCheckPassed.Store(m.rootDir, struct{}{})
-	return nil
-}
-
-// InvalidateEmbeddingImportCheck forces the next readiness check to re-run the
-// real import verification, e.g. after the worker failed to start.
-func (m *RuntimeManager) InvalidateEmbeddingImportCheck() {
-	embeddingImportCheckPassed.Delete(m.rootDir)
-}
-
 func verifyPythonScript(ctx context.Context, python, script string) error {
 	cmd := exec.CommandContext(ctx, python, "-c", script)
 	out, err := cmd.CombinedOutput()
@@ -1801,15 +1553,6 @@ func verifyPythonScript(ctx context.Context, python, script string) error {
 		return fmt.Errorf("python import check failed: %s", tail)
 	}
 	return nil
-}
-
-func windowsEmbeddingImportError(err error) string {
-	msg := err.Error()
-	lower := strings.ToLower(msg)
-	if strings.Contains(msg, "WinError 126") || strings.Contains(lower, "libtorchaudio") {
-		msg += "\n提示: Windows 上检测到 torchaudio 动态库加载失败。请安装 Microsoft Visual C++ Redistributable；csghub-lite 会在准备 embedding runtime 时自动移除 torchaudio。\nHint: torchaudio failed to load on Windows. Install the Microsoft Visual C++ Redistributable; csghub-lite will automatically remove torchaudio when preparing the embedding runtime."
-	}
-	return msg
 }
 
 func (m *RuntimeManager) uninstallBrokenWindowsTorchaudio(ctx context.Context, python string) error {

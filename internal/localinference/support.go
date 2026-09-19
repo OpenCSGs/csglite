@@ -123,14 +123,6 @@ func llamaSupport(format, architecture string) api.LocalInferenceSupport {
 				RuntimeArchitecture: runtimeArch,
 			}
 		}
-		if model.IsPythonEmbeddingArchitecture(normalizedArch) {
-			return api.LocalInferenceSupport{
-				Supported:    true,
-				Runtime:      "python-embedding",
-				Mode:         "embedding",
-				Architecture: normalizedArch,
-			}
-		}
 	}
 
 	return unsupported(normalizedArch)

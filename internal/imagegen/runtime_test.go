@@ -181,22 +181,14 @@ func TestRuntimeManagersUseSeparateRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	embeddingRuntime, err := NewEmbeddingRuntimeManager()
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	wantImage := filepath.Join(home, config.AppDir, runtimeDirName)
 	wantASR := filepath.Join(home, config.AppDir, asrRuntimeDirName)
-	wantEmbedding := filepath.Join(home, config.AppDir, embeddingRuntimeDirName)
 	if imageRuntime.RootDir() != wantImage {
 		t.Fatalf("image runtime root = %q, want %q", imageRuntime.RootDir(), wantImage)
 	}
 	if asrRuntime.RootDir() != wantASR {
 		t.Fatalf("ASR runtime root = %q, want %q", asrRuntime.RootDir(), wantASR)
-	}
-	if embeddingRuntime.RootDir() != wantEmbedding {
-		t.Fatalf("embedding runtime root = %q, want %q", embeddingRuntime.RootDir(), wantEmbedding)
 	}
 }
 
@@ -204,7 +196,6 @@ func TestRuntimeManagersShareUVCache(t *testing.T) {
 	root := t.TempDir()
 	imageRuntime := NewRuntimeManagerAt(filepath.Join(root, runtimeDirName))
 	asrRuntime := NewRuntimeManagerAt(filepath.Join(root, asrRuntimeDirName))
-	embeddingRuntime := NewRuntimeManagerAt(filepath.Join(root, embeddingRuntimeDirName))
 
 	want := "UV_CACHE_DIR=" + filepath.Join(root, uvCacheDirName)
 	if got := imageRuntime.uvInstallEnv(); len(got) != 1 || got[0] != want {
@@ -212,48 +203,6 @@ func TestRuntimeManagersShareUVCache(t *testing.T) {
 	}
 	if got := asrRuntime.uvInstallEnv(); len(got) != 1 || got[0] != want {
 		t.Fatalf("ASR runtime uv env = %#v, want %#v", got, []string{want})
-	}
-	if got := embeddingRuntime.uvInstallEnv(); len(got) != 1 || got[0] != want {
-		t.Fatalf("embedding runtime uv env = %#v, want %#v", got, []string{want})
-	}
-}
-
-func TestEmbeddingRuntimeInstallCommand(t *testing.T) {
-	manager := NewRuntimeManagerAt(filepath.Join(t.TempDir(), embeddingRuntimeDirName))
-	cmd := manager.EmbeddingInstallCommand(HardwareCPU)
-	for _, want := range []string{"transformers>=5.0", "peft", "pillow", "numpy", "librosa", "soundfile"} {
-		if !hasString(cmd, want) {
-			t.Fatalf("embedding install command missing %q: %#v", want, cmd)
-		}
-	}
-	for _, unwanted := range []string{"diffusers>=0.34.0", "funasr", "sentence-transformers", "vllm==0.20.1", "torchcodec"} {
-		if hasString(cmd, unwanted) {
-			t.Fatalf("embedding install command should not include %q by default: %#v", unwanted, cmd)
-		}
-	}
-}
-
-func TestEmbeddingTorchPackagesByOS(t *testing.T) {
-	windowsPackages := embeddingTorchPackagesForGOOS("windows")
-	for _, unwanted := range []string{"torchaudio"} {
-		if hasString(windowsPackages, unwanted) {
-			t.Fatalf("Windows embedding torch packages should not include %q: %#v", unwanted, windowsPackages)
-		}
-	}
-	for _, want := range []string{"torch", "torchvision"} {
-		if !hasString(windowsPackages, want) {
-			t.Fatalf("Windows embedding torch packages missing %q: %#v", want, windowsPackages)
-		}
-	}
-
-	linuxPackages := embeddingTorchPackagesForGOOS("linux")
-	if len(linuxPackages) != len(torchPackages) {
-		t.Fatalf("Linux embedding torch packages = %#v, want %#v", linuxPackages, torchPackages)
-	}
-	for i := range torchPackages {
-		if linuxPackages[i] != torchPackages[i] {
-			t.Fatalf("Linux embedding torch packages = %#v, want %#v", linuxPackages, torchPackages)
-		}
 	}
 }
 
@@ -276,25 +225,6 @@ func TestVerifyPythonScriptWithFakePython(t *testing.T) {
 	}
 }
 
-// The Windows readiness check must reproduce the worker's exact import block:
-// a bare `import transformers` passes even with a broken torchaudio because
-// transformers lazy-loads its submodules (issue #54).
-func TestWindowsEmbeddingImportCheckScriptMatchesWorker(t *testing.T) {
-	if !strings.Contains(windowsEmbeddingWorkerImportCheckScript, "from transformers import AutoModel, AutoProcessor, WhisperFeatureExtractor") {
-		t.Fatalf("check script must expand transformers lazy modules the same way the worker does:\n%s", windowsEmbeddingWorkerImportCheckScript)
-	}
-	data, err := os.ReadFile(filepath.Join("..", "embedding", "worker", "embedding_worker.py"))
-	if err != nil {
-		t.Fatalf("reading embedding worker script: %v", err)
-	}
-	worker := string(data)
-	for _, line := range strings.Split(strings.TrimSpace(windowsEmbeddingWorkerImportCheckScript), "\n") {
-		if !strings.Contains(worker, line) {
-			t.Fatalf("check script line %q not found in embedding_worker.py; keep both in sync", line)
-		}
-	}
-}
-
 func writeFakePythonAt(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -302,47 +232,6 @@ func writeFakePythonAt(t *testing.T, path, body string) {
 	}
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestVerifyEmbeddingWorkerImportsGatingCacheAndHint(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses sh fake python")
-	}
-	ctx := context.Background()
-	m := NewRuntimeManagerAt(t.TempDir())
-	pythonPath := m.PythonPath()
-
-	// Non-Windows hosts skip the check entirely, even without a venv.
-	if err := m.verifyEmbeddingWorkerImports(ctx, "linux"); err != nil {
-		t.Fatalf("non-windows verify returned error: %v", err)
-	}
-
-	writeFakePythonAt(t, pythonPath, "printf '%s' 'OSError: Could not load this library: libtorchaudio.pyd' >&2\nexit 1\n")
-	err := m.verifyEmbeddingWorkerImports(ctx, "windows")
-	if err == nil {
-		t.Fatal("expected verify failure with broken python")
-	}
-	if !strings.Contains(err.Error(), "libtorchaudio") {
-		t.Fatalf("verify error missing traceback tail: %q", err.Error())
-	}
-	if !strings.Contains(err.Error(), "Visual C++") {
-		t.Fatalf("verify error missing actionable hint: %q", err.Error())
-	}
-
-	// A passing check is cached per runtime root...
-	writeFakePythonAt(t, pythonPath, "exit 0\n")
-	if err := m.verifyEmbeddingWorkerImports(ctx, "windows"); err != nil {
-		t.Fatalf("verify with healthy python returned error: %v", err)
-	}
-	writeFakePythonAt(t, pythonPath, "exit 1\n")
-	if err := m.verifyEmbeddingWorkerImports(ctx, "windows"); err != nil {
-		t.Fatalf("cached verify should not re-run python: %v", err)
-	}
-	// ...until invalidated (install ran or the worker failed to start).
-	m.InvalidateEmbeddingImportCheck()
-	if err := m.verifyEmbeddingWorkerImports(ctx, "windows"); err == nil {
-		t.Fatal("expected verify failure after invalidation")
 	}
 }
 
@@ -1014,9 +903,8 @@ func TestImportNamesFor(t *testing.T) {
 // them and the environment thrashes between installs.
 func TestTransformersIsNeverPinned(t *testing.T) {
 	lists := map[string][]string{
-		"tts":       ttsPythonPackages,
-		"asr":       asrPythonPackages,
-		"embedding": embeddingPythonPackages,
+		"tts": ttsPythonPackages,
+		"asr": asrPythonPackages,
 	}
 	for name, specs := range lists {
 		for _, spec := range specs {

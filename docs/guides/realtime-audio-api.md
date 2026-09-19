@@ -13,7 +13,7 @@
 | 文件式 ASR | `internal/server/handlers_audio.go`、`POST /v1/audio/transcriptions` | multipart 上传，支持 `response_format=json/verbose_json/text`，支持 `stream=true` 的**私有** SSE（`{text,response,done}`） |
 | 本地 ASR 运行时 | `internal/asr`（`PythonEngine` + 内嵌 `worker/asr_worker.py`） | 独立 Python venv 起 FastAPI worker，暴露 `GET /health`、`POST /transcribe`、`POST /transcribe_stream`；后端覆盖 Whisper（transformers）、FunASR/SenseVoice、Qwen3-ASR、GLM-ASR |
 | VAD | ASR worker 内 `fsmn-vad`（`CSGHUB_ASR_VAD_MODEL`） | 目前只用于长音频切段 |
-| 运行时安装管理 | `internal/imagegen/runtime.go` + `/api/asr-runtime`、`/api/image-runtime`、`/api/embedding-runtime` | 每类运行时一套 venv/包清单/状态与安装接口 |
+| 运行时安装管理 | `internal/imagegen/runtime.go` + `/api/asr-runtime`、`/api/image-runtime`、`/api/tts-runtime` | 每类运行时一套 venv/包清单/状态与安装接口 |
 | 云端回退 | `handlers_audio.go` 的 `audioTranscriptionCanFallbackToCloud` | 本地引擎起不来时按 `source` 回退 csghub |
 | 模型分类 | `internal/server/pipeline_tags.go` | 已有 `text_to_speech` / `speech_recognition` 两个分类 |
 | WebSocket 依赖 | `github.com/gorilla/websocket`（已在 `go.mod`） | 已被 `/api/apps/shell/{id}/ws` 使用，可直接复用 |

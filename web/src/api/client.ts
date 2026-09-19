@@ -108,7 +108,7 @@ export interface ModelConfigResponse {
   // for a model served by a Python runtime, and the pipeline tag cannot say
   // which one it is: an embedding model runs on llama.cpp when its weights
   // convert to GGUF and in the Python runtime when they do not.
-  runtime?: "llama" | "python-embedding" | "python-asr" | "python-tts" | "diffusers";
+  runtime?: "llama" | "python-asr" | "python-tts" | "diffusers";
 }
 
 export interface ModelUploadResponse {
@@ -222,7 +222,7 @@ export interface MarketplaceLocalModelStatus {
 
 export interface LocalInferenceSupport {
   supported: boolean;
-  runtime?: "llama" | "diffusers" | "python-asr" | "python-tts" | "python-embedding";
+  runtime?: "llama" | "diffusers" | "python-asr" | "python-tts";
   mode: "none" | "direct" | "convert" | "image" | "asr" | "tts" | "embedding";
   architecture?: string;
   runtime_architecture?: string;
@@ -450,8 +450,6 @@ export interface ImageRuntimeStatus {
 }
 
 export type ASRRuntimeStatus = ImageRuntimeStatus;
-
-export type EmbeddingRuntimeStatus = ImageRuntimeStatus;
 
 export type TTSRuntimeStatus = ImageRuntimeStatus;
 
@@ -1543,18 +1541,6 @@ export async function startRealtimeCall(offer: string, options: RealtimeSessionO
 export async function endRealtimeCall(callId: string): Promise<void> {
   if (!callId) return;
   await fetch(`/v1/realtime/calls/${encodeURIComponent(callId)}`, withLocaleHeader({ method: "DELETE" }));
-}
-
-export async function getEmbeddingRuntimeStatus(): Promise<EmbeddingRuntimeStatus> {
-  return fetchJSON<EmbeddingRuntimeStatus>("/api/embedding-runtime");
-}
-
-export async function installEmbeddingRuntime(options?: { upgrade_packages?: boolean }): Promise<EmbeddingRuntimeStatus> {
-  return fetchJSON<EmbeddingRuntimeStatus>("/api/embedding-runtime/install", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ upgrade_packages: options?.upgrade_packages || undefined }),
-  });
 }
 
 export async function transcribeAudio(req: AudioTranscriptionRequest, signal?: AbortSignal): Promise<AudioTranscriptionResponse> {

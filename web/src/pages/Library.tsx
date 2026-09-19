@@ -1336,12 +1336,7 @@ function RunParamsDialog({
   const embeddingModel = isEmbeddingModel(model);
   const asrModel = isASRModel(model);
   const ttsModel = isTTSModel(model);
-  // A model served by the Python embedding runtime takes none of the llama.cpp
-  // load options either, so it belongs with the runtime-managed models. The
-  // server reports which runtime it uses, since the pipeline tag cannot say:
-  // an embedding model runs on llama.cpp when its weights convert to GGUF.
-  const pythonEmbeddingModel = modelConfig?.runtime === "python-embedding";
-  const runtimeManagedModel = imageGenerationModel || asrModel || ttsModel || pythonEmbeddingModel;
+  const runtimeManagedModel = imageGenerationModel || asrModel || ttsModel;
   const ggufModel = model.format === "gguf";
   // GGUF models list only the quantizations actually downloaded locally
   // (issue #75); SafeTensors models keep the converter dtype options.
@@ -1383,9 +1378,7 @@ function RunParamsDialog({
               <div class="md:col-span-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
                 {imageGenerationModel
                   ? t("lib.runParamImageRuntimeHint")
-                  : pythonEmbeddingModel
-                    ? t("lib.runParamEmbeddingRuntimeHint")
-                    : t("lib.runParamASRRuntimeHint")}
+                  : t("lib.runParamASRRuntimeHint")}
               </div>
             )
           ) : (

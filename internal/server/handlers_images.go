@@ -764,35 +764,3 @@ func (s *Server) handleImageRuntimeInstall(w http.ResponseWriter, r *http.Reques
 	}
 	writeJSON(w, http.StatusOK, status)
 }
-
-// GET /api/embedding-runtime -- report the lazy embedding runtime status.
-func (s *Server) handleEmbeddingRuntimeStatus(w http.ResponseWriter, r *http.Request) {
-	manager, err := imagegen.NewEmbeddingRuntimeManager()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, manager.EmbeddingStatus(r.Context()))
-}
-
-// POST /api/embedding-runtime/install -- install or repair the embedding runtime.
-func (s *Server) handleEmbeddingRuntimeInstall(w http.ResponseWriter, r *http.Request) {
-	var req api.ImageRuntimeInstallRequest
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&req)
-	}
-	manager, err := imagegen.NewEmbeddingRuntimeManager()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	status, err := manager.InstallEmbeddingWithProgressOptions(r.Context(), nil, req.UpgradePackages)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
-			"error":  err.Error(),
-			"status": status,
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, status)
-}

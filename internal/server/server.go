@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -27,7 +26,6 @@ import (
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/convert"
 	"github.com/opencsgs/csglite/internal/dataset"
-	"github.com/opencsgs/csglite/internal/embedding"
 	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/license"
@@ -1021,27 +1019,6 @@ var loadEngineWithSpeculativeProgress = func(modelDir string, lm *model.LocalMod
 }
 var loadEmbeddingEngineWithProgress = inference.LoadEmbeddingEngineWithProgress
 var rocmSingleEngineMode = inference.ROCMSingleEngineMode
-var newPythonEmbeddingEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (inference.Engine, error) {
-	return embedding.NewPythonEngine(ctx, modelName, modelDir, runtimeManager)
-}
-var ensureEmbeddingRuntimeReady = func(ctx context.Context, runtimeManager *imagegen.RuntimeManager, progress imagegen.ProgressFunc, upgradePackages bool) error {
-	if status := runtimeManager.EmbeddingStatus(ctx); status.Ready && !upgradePackages {
-		return nil
-	}
-	status, err := runtimeManager.InstallEmbeddingWithProgressOptions(ctx, progress, upgradePackages)
-	if err != nil {
-		return err
-	}
-	// Never hand a broken runtime to the worker: the post-install status runs
-	// the real import verification on Windows (issue #54).
-	if !status.Ready {
-		if status.Error != "" {
-			return errors.New(status.Error)
-		}
-		return errors.New("embedding runtime is not ready after install")
-	}
-	return nil
-}
 var newDiffusersEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (imagegen.Engine, error) {
 	return imagegen.NewDiffusersEngine(ctx, modelName, modelDir, runtimeManager)
 }
@@ -1071,133 +1048,7 @@ func (s *Server) getOrLoadEmbeddingEngineWithOpts(ctx context.Context, modelID s
 // was previously pinned to the default, so the slot count could not be raised
 // however the model was loaded.
 func (s *Server) getOrLoadEmbeddingEngineWithProgress(ctx context.Context, modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, dtype string) (inference.Engine, error) {
-	if s.shouldUsePythonEmbeddingRuntime(modelID) {
-		// The Python embedding runtime batches inside the worker and takes none
-		// of the llama.cpp load options.
-		return s.getOrLoadPythonEmbeddingEngine(ctx, modelID)
-	}
 	return s.getOrLoadEngineFullMode(modelID, progress, numCtx, numParallel, nGPULayers, "", "", dtype, engineModeEmbed, inference.SpeculativeConfig{}, false)
-}
-
-func (s *Server) shouldUsePythonEmbeddingRuntime(modelID string) bool {
-	modelID = s.resolveLocalModelStorageID(modelID)
-	modelDir, err := s.manager.ModelPath(modelID)
-	if err != nil {
-		return false
-	}
-	lm, err := s.manager.Get(modelID)
-	if err != nil || lm == nil {
-		return false
-	}
-	pipelineTag := s.resolvedLocalPipelineTag(modelID, strings.TrimSpace(lm.PipelineTag))
-	if !isEmbeddingPipelineTag(pipelineTag) {
-		return false
-	}
-	if lm.Format == model.FormatGGUF {
-		return false
-	}
-	if !convert.HasConvertibleHFWeights(modelDir) {
-		return false
-	}
-	arch := readLocalModelArchitecture(modelDir)
-	if arch == "" {
-		return false
-	}
-	return model.IsPythonEmbeddingArchitecture(arch) && !convert.IsSupportedHFArchitecture(arch)
-}
-
-func readLocalModelArchitecture(modelDir string) string {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
-		return ""
-	}
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-	}
-	if json.Unmarshal(data, &cfg) != nil {
-		return ""
-	}
-	for _, arch := range cfg.Architectures {
-		if arch = strings.TrimSpace(arch); arch != "" {
-			return arch
-		}
-	}
-	return ""
-}
-
-func (s *Server) getOrLoadPythonEmbeddingEngine(ctx context.Context, modelID string) (inference.Engine, error) {
-	modelID = s.resolveLocalModelStorageID(modelID)
-	cacheKey := engineCacheKey(modelID, engineModeEmbed)
-
-	s.mu.Lock()
-	me, ok := s.engines[cacheKey]
-	if ok {
-		me.lastUsed = time.Now()
-		eng := me.engine
-		s.mu.Unlock()
-		return eng, nil
-	}
-	s.mu.Unlock()
-
-	modelDir, err := s.manager.ModelPath(modelID)
-	if err != nil {
-		return nil, fmt.Errorf("model %q not found locally; use 'csghub-lite pull %s' first", modelID, modelID)
-	}
-
-	for {
-		s.mu.Lock()
-		if me, ok := s.engines[cacheKey]; ok {
-			me.lastUsed = time.Now()
-			eng := me.engine
-			s.mu.Unlock()
-			return eng, nil
-		}
-		if state, ok := s.loading[cacheKey]; ok {
-			log.Printf("MODEL %s: waiting for in-flight python embedding load", modelID)
-			s.mu.Unlock()
-			<-state.done
-			if state.err != nil {
-				return nil, state.err
-			}
-			if state.engine != nil {
-				return state.engine, nil
-			}
-			continue
-		}
-		state := &engineLoadState{done: make(chan struct{})}
-		s.loading[cacheKey] = state
-		s.mu.Unlock()
-
-		keepAlive := s.resolveModelKeepAlive(modelID, DefaultKeepAlive)
-		log.Printf("MODEL %s: python embedding engine load started", modelID)
-		runtimeManager, err := imagegen.NewEmbeddingRuntimeManager()
-		if err == nil {
-			err = ensureEmbeddingRuntimeReady(ctx, runtimeManager, nil, false)
-			if err == nil {
-				state.engine, err = newPythonEmbeddingEngine(ctx, modelID, modelDir, runtimeManager)
-			}
-		}
-		state.err = err
-
-		s.mu.Lock()
-		delete(s.loading, cacheKey)
-		if state.err == nil {
-			s.engines[cacheKey] = &managedEngine{
-				engine:    state.engine,
-				lastUsed:  time.Now(),
-				keepAlive: keepAlive,
-			}
-		}
-		close(state.done)
-		s.mu.Unlock()
-
-		if state.err != nil {
-			log.Printf("MODEL %s: python embedding engine load failed: %v", modelID, state.err)
-			return nil, state.err
-		}
-		log.Printf("MODEL %s: python embedding engine load complete", modelID)
-		return state.engine, nil
-	}
 }
 
 func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype, mode string, speculative inference.SpeculativeConfig, speculativeRequested bool) (inference.Engine, error) {
