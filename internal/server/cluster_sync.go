@@ -284,7 +284,11 @@ func (s *Server) copyPeerExtras(pm *cluster.PeerModel, destDir, clusterID string
 // door, because everything below writes files and a single missed check is a
 // write anywhere the server can reach.
 func resolveUnder(root, rel string) (string, error) {
-	if rel == "" || filepath.IsAbs(rel) || strings.Contains(rel, "\\") {
+	// A bundle path is a relative, forward-slash path by definition. A leading
+	// slash is refused explicitly rather than left to filepath.IsAbs, which
+	// calls "/etc/passwd" relative on Windows and would quietly reinterpret it
+	// instead of rejecting a name that was already malformed.
+	if rel == "" || strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) || strings.Contains(rel, "\\") {
 		return "", fmt.Errorf("unsafe file path %q", rel)
 	}
 	target := filepath.Join(root, filepath.FromSlash(rel))
