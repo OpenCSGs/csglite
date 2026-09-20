@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/opencsgs/csglite/internal/httpjson"
 	"io"
 	"net"
 	"net/http"
@@ -17,7 +16,19 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/opencsgs/csglite/internal/httpjson"
 )
+
+// peerAPI serves /cluster/v1/*, the protocol nodes speak to each other over
+// mutual TLS. It is separate from the operator API and from the manager
+// itself: these handlers answer another machine, not a person, and the rules
+// differ, starting with the caller being identified by its pinned certificate
+// rather than by a key.
+type peerAPI struct{ m *Manager }
+
+// Peers returns this node's node-to-node API.
+func (m *Manager) Peers() *peerAPI { return &peerAPI{m: m} }
 
 // handshakeSkew bounds how old a join or invite request may be, to blunt
 // replay of a captured handshake.
@@ -34,17 +45,17 @@ func decodePeerJSON(r *http.Request, out any, limit int64) error {
 }
 
 // peerMux routes the node-to-node listener.
-func (m *Manager) peerMux() http.Handler {
+func (a *peerAPI) peerMux() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST "+peerPathJoin, m.handlePeerJoin)
-	mux.HandleFunc("POST "+peerPathInvite, m.handlePeerInvite)
-	mux.HandleFunc("GET "+peerPathStatus, m.handlePeerStatus)
-	mux.HandleFunc("POST "+peerPathGossip, m.requirePeer(m.handlePeerGossip))
-	mux.HandleFunc("POST "+peerPathLeave, m.requirePeer(m.handlePeerLeave))
-	mux.HandleFunc("POST "+peerPathPull, m.requirePeer(m.handlePeerPull))
-	mux.Handle(peerPathInference, m.requirePeer(m.handlePeerInference))
-	mux.HandleFunc("GET "+peerPathModelBundle, m.requirePeer(m.handlePeerModelBundle))
-	mux.HandleFunc("GET "+peerPathModelFile, m.requirePeer(m.handlePeerModelFile))
+	mux.HandleFunc("POST "+peerPathJoin, a.handlePeerJoin)
+	mux.HandleFunc("POST "+peerPathInvite, a.handlePeerInvite)
+	mux.HandleFunc("GET "+peerPathStatus, a.handlePeerStatus)
+	mux.HandleFunc("POST "+peerPathGossip, a.requirePeer(a.handlePeerGossip))
+	mux.HandleFunc("POST "+peerPathLeave, a.requirePeer(a.handlePeerLeave))
+	mux.HandleFunc("POST "+peerPathPull, a.requirePeer(a.handlePeerPull))
+	mux.Handle(peerPathInference, a.requirePeer(a.handlePeerInference))
+	mux.HandleFunc("GET "+peerPathModelBundle, a.requirePeer(a.handlePeerModelBundle))
+	mux.HandleFunc("GET "+peerPathModelFile, a.requirePeer(a.handlePeerModelFile))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusNotFound, "not a cluster endpoint", "not_found")
 	})
@@ -52,31 +63,31 @@ func (m *Manager) peerMux() http.Handler {
 }
 
 // peerPinned answers the transport's pin check from the member table.
-func (m *Manager) peerPinned(nodeUUID, fingerprint string) bool {
-	fp, ok := m.store.FingerprintFor(nodeUUID)
+func (a *peerAPI) peerPinned(nodeUUID, fingerprint string) bool {
+	fp, ok := a.m.store.FingerprintFor(nodeUUID)
 	return ok && fp == fingerprint
 }
 
 // requirePeer admits only pinned members and records the address they came
 // from; the client certificate is the authentication.
-func (m *Manager) requirePeer(next http.HandlerFunc) http.HandlerFunc {
+func (a *peerAPI) requirePeer(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		peer := peerFromRequest(r, m.peerPinned)
+		peer := peerFromRequest(r, a.peerPinned)
 		if peer == "" {
 			writeCodedError(w, http.StatusForbidden, "this node is not a paired member of the cluster", "not_a_member")
 			return
 		}
 		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-			m.dir.LearnAddress(peer, endpoint(host, m.memberClusterPort(peer)), time.Now())
-			m.dir.RequestSucceeded(peer)
+			a.m.dir.LearnAddress(peer, endpoint(host, a.memberClusterPort(peer)), time.Now())
+			a.m.dir.RequestSucceeded(peer)
 		}
 		r.Header.Set("X-CSGLite-Peer", peer)
 		next(w, r)
 	}
 }
 
-func (m *Manager) memberClusterPort(nodeUUID string) int {
-	if mem, ok := m.store.Member(nodeUUID); ok && mem.ClusterPort > 0 {
+func (a *peerAPI) memberClusterPort(nodeUUID string) int {
+	if mem, ok := a.m.store.Member(nodeUUID); ok && mem.ClusterPort > 0 {
 		return mem.ClusterPort
 	}
 	return portOf(DefaultListenAddr)
@@ -86,14 +97,14 @@ func (m *Manager) memberClusterPort(nodeUUID string) int {
 // Members get the full status. Anyone may ask with ?public=1 and receives the
 // identity fields only, which is what seed probing and the discovered-node
 // list need; hardware and model inventory are cluster data.
-func (m *Manager) handlePeerStatus(w http.ResponseWriter, r *http.Request) {
-	peer := peerFromRequest(r, m.peerPinned)
+func (a *peerAPI) handlePeerStatus(w http.ResponseWriter, r *http.Request) {
+	peer := peerFromRequest(r, a.peerPinned)
 	if peer == "" {
 		if r.URL.Query().Get("public") != "1" {
 			writeCodedError(w, http.StatusForbidden, "this node is not a paired member of the cluster", "not_a_member")
 			return
 		}
-		st := m.cachedLocalStatus(r.Context())
+		st := a.m.cachedLocalStatus(r.Context())
 		writeJSON(w, http.StatusOK, Status{
 			UUID: st.UUID, Name: st.Name, Version: st.Version, Protocol: st.Protocol, ClusterUUID: st.ClusterUUID,
 			Licensed: st.Licensed, NodeLimit: st.NodeLimit, APIPort: st.APIPort, ClusterPort: st.ClusterPort,
@@ -102,14 +113,14 @@ func (m *Manager) handlePeerStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		m.dir.LearnAddress(peer, endpoint(host, m.memberClusterPort(peer)), time.Now())
+		a.m.dir.LearnAddress(peer, endpoint(host, a.memberClusterPort(peer)), time.Now())
 	}
-	writeJSON(w, http.StatusOK, m.cachedLocalStatus(r.Context()))
+	writeJSON(w, http.StatusOK, a.m.cachedLocalStatus(r.Context()))
 }
 
 // POST /cluster/v1/join?cluster=<uuid>
-func (m *Manager) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
-	c := m.store.Cluster()
+func (a *peerAPI) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
+	c := a.m.store.Cluster()
 	if c == nil {
 		writeCodedError(w, http.StatusConflict, "this node is not in a cluster", "not_clustered")
 		return
@@ -131,28 +142,28 @@ func (m *Manager) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusForbidden, "join request is too old; check the clocks", "stale_handshake")
 		return
 	}
-	mem, err := m.memberFromCard(req.Node)
+	mem, err := a.m.memberFromCard(req.Node)
 	if err != nil || req.Node.CertPEM == "" {
 		writeCodedError(w, http.StatusBadRequest, "join request carries no valid certificate", "bad_certificate")
 		return
 	}
-	if mem.UUID == m.identity.UUID {
+	if mem.UUID == a.m.identity.UUID {
 		writeCodedError(w, http.StatusBadRequest, "a node cannot join itself", "bad_request")
 		return
 	}
 	// The MAC key is the token hash both sides can derive; the secret itself
 	// never crosses the network.
-	want := HandshakeMAC(m.store.JoinTokenHash(), mem.UUID, mem.CertFingerprint, req.Nonce, req.TS)
-	if m.store.JoinTokenHash() == "" || !hmacEqual(want, req.MAC) {
+	want := HandshakeMAC(a.m.store.JoinTokenHash(), mem.UUID, mem.CertFingerprint, req.Nonce, req.TS)
+	if a.m.store.JoinTokenHash() == "" || !hmacEqual(want, req.MAC) {
 		writeCodedError(w, http.StatusUnauthorized, "join token is not valid for this cluster", "bad_token")
 		return
 	}
-	if _, already := m.store.Member(mem.UUID); !already {
-		if !m.withinNodeLimit(len(m.store.Members()) + 2) {
+	if _, already := a.m.store.Member(mem.UUID); !already {
+		if !a.m.withinNodeLimit(len(a.m.store.Members()) + 2) {
 			writeJSON(w, http.StatusForbidden, errorResponse{
 				Error:     "the cluster has reached its licensed node limit",
 				ErrorCode: http.StatusForbidden, Code: "feature_not_licensed",
-				Limit: m.NodeLimit(), Current: len(m.store.Members()) + 1,
+				Limit: a.m.NodeLimit(), Current: len(a.m.store.Members()) + 1,
 			})
 			return
 		}
@@ -160,23 +171,23 @@ func (m *Manager) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		mem.LastAddresses = append([]string{endpoint(host, mem.ClusterPort)}, mem.LastAddresses...)
 	}
-	if _, err := m.store.Upsert(mem, true); err != nil {
+	if _, err := a.m.store.Upsert(mem, true); err != nil {
 		writeCodedError(w, http.StatusInternalServerError, err.Error(), "store_error")
 		return
 	}
-	m.dir.Track(mem.UUID, m.seedAddressesFor(mem))
+	a.m.dir.Track(mem.UUID, a.m.seedAddressesFor(mem))
 	for _, addr := range mem.LastAddresses {
-		m.dir.LearnAddress(mem.UUID, addr, time.Now())
+		a.m.dir.LearnAddress(mem.UUID, addr, time.Now())
 	}
-	m.dir.DropDiscovered(mem.UUID)
-	m.wakeGossip()
-	m.logf("cluster: node %s (%s) joined via this node", shortUUID(mem.UUID), mem.Name)
-	writeJSON(w, http.StatusOK, joinResponse{clusterView: m.view(), Responder: m.card()})
+	a.m.dir.DropDiscovered(mem.UUID)
+	a.m.wakeGossip()
+	a.m.logf("cluster: node %s (%s) joined via this node", shortUUID(mem.UUID), mem.Name)
+	writeJSON(w, http.StatusOK, joinResponse{clusterView: a.m.view(), Responder: a.m.card()})
 }
 
 // POST /cluster/v1/invite
-func (m *Manager) handlePeerInvite(w http.ResponseWriter, r *http.Request) {
-	if m.store.InCluster() {
+func (a *peerAPI) handlePeerInvite(w http.ResponseWriter, r *http.Request) {
+	if a.m.store.InCluster() {
 		writeCodedError(w, http.StatusConflict, "this node already belongs to a cluster", "already_clustered")
 		return
 	}
@@ -193,7 +204,7 @@ func (m *Manager) handlePeerInvite(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusForbidden, "invite is too old; check the clocks", "stale_handshake")
 		return
 	}
-	inviter, err := m.memberFromCard(req.Inviter)
+	inviter, err := a.m.memberFromCard(req.Inviter)
 	if err != nil || req.Inviter.CertPEM == "" {
 		writeCodedError(w, http.StatusBadRequest, "invite carries no valid certificate", "bad_certificate")
 		return
@@ -203,7 +214,7 @@ func (m *Manager) handlePeerInvite(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusForbidden, "invite must come from the inviting node itself", "bad_certificate")
 		return
 	}
-	code, expires := m.peekNodeCode()
+	code, expires := a.peekNodeCode()
 	if code == "" || time.Now().After(expires) {
 		writeCodedError(w, http.StatusForbidden, "no admission code is active on this node", "bad_code")
 		return
@@ -217,15 +228,15 @@ func (m *Manager) handlePeerInvite(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusBadRequest, "invite names no cluster", "bad_request")
 		return
 	}
-	if !m.withinNodeLimit(len(req.Members) + 1) {
+	if !a.m.withinNodeLimit(len(req.Members) + 1) {
 		writeJSON(w, http.StatusForbidden, errorResponse{
 			Error:     "this node's license does not allow a cluster of that size",
 			ErrorCode: http.StatusForbidden, Code: "feature_not_licensed",
-			Limit: m.NodeLimit(), Current: len(req.Members),
+			Limit: a.m.NodeLimit(), Current: len(req.Members),
 		})
 		return
 	}
-	if !m.store.VerifyNodeCode(code) {
+	if !a.m.store.VerifyNodeCode(code) {
 		writeCodedError(w, http.StatusUnauthorized, "admission code is no longer valid", "bad_code")
 		return
 	}
@@ -234,42 +245,42 @@ func (m *Manager) handlePeerInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	members := []Member{inviter}
 	for _, card := range req.Members {
-		if card.UUID == m.identity.UUID || card.UUID == inviter.UUID {
+		if card.UUID == a.m.identity.UUID || card.UUID == inviter.UUID {
 			continue
 		}
-		mem, err := m.memberFromCard(card)
+		mem, err := a.m.memberFromCard(card)
 		if err != nil {
 			continue
 		}
 		members = append(members, mem)
 	}
-	if err := m.store.Adopt(req.Cluster, req.JoinTokenHash, members, m.identity.UUID); err != nil {
+	if err := a.m.store.Adopt(req.Cluster, req.JoinTokenHash, members, a.m.identity.UUID); err != nil {
 		writeCodedError(w, http.StatusInternalServerError, err.Error(), "store_error")
 		return
 	}
-	m.dir.Reset()
+	a.m.dir.Reset()
 	for _, mem := range members {
-		m.dir.Track(mem.UUID, m.seedAddressesFor(mem))
-		m.dir.DropDiscovered(mem.UUID)
+		a.m.dir.Track(mem.UUID, a.m.seedAddressesFor(mem))
+		a.m.dir.DropDiscovered(mem.UUID)
 	}
-	m.reannounce()
-	m.wakeGossip()
-	m.logf("cluster: joined %q (%s) by invitation from %s", req.Cluster.Name, shortUUID(req.Cluster.UUID), inviter.Name)
-	writeJSON(w, http.StatusOK, inviteResponse{Node: m.card()})
+	a.m.reannounce()
+	a.m.wakeGossip()
+	a.m.logf("cluster: joined %q (%s) by invitation from %s", req.Cluster.Name, shortUUID(req.Cluster.UUID), inviter.Name)
+	writeJSON(w, http.StatusOK, inviteResponse{Node: a.m.card()})
 }
 
-func (m *Manager) peekNodeCode() (string, time.Time) {
-	m.store.mu.RLock()
-	defer m.store.mu.RUnlock()
-	if m.store.data.NodeCode == nil {
+func (a *peerAPI) peekNodeCode() (string, time.Time) {
+	a.m.store.mu.RLock()
+	defer a.m.store.mu.RUnlock()
+	if a.m.store.data.NodeCode == nil {
 		return "", time.Time{}
 	}
-	return m.store.data.NodeCode.Code, m.store.data.NodeCode.ExpiresAt
+	return a.m.store.data.NodeCode.Code, a.m.store.data.NodeCode.ExpiresAt
 }
 
 // POST /cluster/v1/gossip
-func (m *Manager) handlePeerGossip(w http.ResponseWriter, r *http.Request) {
-	c := m.store.Cluster()
+func (a *peerAPI) handlePeerGossip(w http.ResponseWriter, r *http.Request) {
+	c := a.m.store.Cluster()
 	if c == nil {
 		writeCodedError(w, http.StatusConflict, "this node is not in a cluster", "not_clustered")
 		return
@@ -290,18 +301,18 @@ func (m *Manager) handlePeerGossip(w http.ResponseWriter, r *http.Request) {
 	}
 	from := ""
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		from = endpoint(host, m.memberClusterPort(peer))
+		from = endpoint(host, a.memberClusterPort(peer))
 	}
-	m.mergeGossip(msg, from)
-	reply := gossipMessage{ClusterUUID: c.UUID, Sender: m.card(), Tombstones: m.store.Tombstones()}
-	for _, mem := range m.store.Members() {
-		reply.Members = append(reply.Members, m.cardFromMember(mem))
+	a.m.mergeGossip(msg, from)
+	reply := gossipMessage{ClusterUUID: c.UUID, Sender: a.m.card(), Tombstones: a.m.store.Tombstones()}
+	for _, mem := range a.m.store.Members() {
+		reply.Members = append(reply.Members, a.m.cardFromMember(mem))
 	}
 	writeJSON(w, http.StatusOK, reply)
 }
 
 // POST /cluster/v1/leave
-func (m *Manager) handlePeerLeave(w http.ResponseWriter, r *http.Request) {
+func (a *peerAPI) handlePeerLeave(w http.ResponseWriter, r *http.Request) {
 	var msg leaveMessage
 	if err := decodePeerJSON(r, &msg, 64<<10); err != nil {
 		writeCodedError(w, http.StatusBadRequest, "invalid leave message", "bad_request")
@@ -311,17 +322,17 @@ func (m *Manager) handlePeerLeave(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case msg.UUID == peer:
 		// The peer itself is leaving.
-		if _, err := m.store.Remove(peer); err != nil {
+		if _, err := a.m.store.Remove(peer); err != nil {
 			writeCodedError(w, http.StatusInternalServerError, err.Error(), "store_error")
 			return
 		}
-		m.forgetNode(peer)
-		m.wakeGossip()
-		m.logf("cluster: node %s left the cluster", shortUUID(peer))
-	case msg.UUID == m.identity.UUID:
+		a.m.forgetNode(peer)
+		a.m.wakeGossip()
+		a.m.logf("cluster: node %s left the cluster", shortUUID(peer))
+	case msg.UUID == a.m.identity.UUID:
 		// A member removed us.
-		m.logf("cluster: removed from the cluster by %s", shortUUID(peer))
-		_ = m.leaveLocally()
+		a.m.logf("cluster: removed from the cluster by %s", shortUUID(peer))
+		_ = a.m.leaveLocally()
 	default:
 		writeCodedError(w, http.StatusForbidden, "a node may only announce its own departure", "bad_request")
 		return
@@ -330,25 +341,25 @@ func (m *Manager) handlePeerLeave(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /cluster/v1/pull -- create a pull job on this node
-func (m *Manager) handlePeerPull(w http.ResponseWriter, r *http.Request) {
-	m.opts.Host.PullHandler().ServeHTTP(w, r)
+func (a *peerAPI) handlePeerPull(w http.ResponseWriter, r *http.Request) {
+	a.m.opts.Host.PullHandler().ServeHTTP(w, r)
 }
 
 // /cluster/v1/inference/... -- execute a forwarded request locally
-func (m *Manager) handlePeerInference(w http.ResponseWriter, r *http.Request) {
+func (a *peerAPI) handlePeerInference(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(r.Header.Get(RoutedHeader)) == "" {
 		writeCodedError(w, http.StatusBadRequest, "forwarded requests must carry "+RoutedHeader, "bad_request")
 		return
 	}
-	settings := m.store.Settings()
+	settings := a.m.store.Settings()
 	if !settings.AcceptWork || settings.State != NodeStateActive {
 		writeCodedError(w, http.StatusServiceUnavailable, "node is not accepting work ("+string(settings.State)+")", "not_accepting")
 		return
 	}
-	if !m.withinNodeLimit(len(m.store.Members()) + 1) {
+	if !a.m.withinNodeLimit(len(a.m.store.Members()) + 1) {
 		writeJSON(w, http.StatusForbidden, errorResponse{
 			Error: "this node's license does not cover a cluster of this size", ErrorCode: http.StatusForbidden,
-			Code: "feature_not_licensed", Limit: m.NodeLimit(), Current: len(m.store.Members()) + 1,
+			Code: "feature_not_licensed", Limit: a.m.NodeLimit(), Current: len(a.m.store.Members()) + 1,
 		})
 		return
 	}
@@ -360,9 +371,9 @@ func (m *Manager) handlePeerInference(w http.ResponseWriter, r *http.Request) {
 	r2.URL.Path = rest
 	r2.URL.RawPath = ""
 	r2.RequestURI = ""
-	w.Header().Set(NodeHeader, m.identity.UUID)
-	w.Header().Set(NodeNameHeader, m.identity.DisplayName())
-	m.opts.Host.InferenceHandler().ServeHTTP(w, r2)
+	w.Header().Set(NodeHeader, a.m.identity.UUID)
+	w.Header().Set(NodeNameHeader, a.m.identity.DisplayName())
+	a.m.opts.Host.InferenceHandler().ServeHTTP(w, r2)
 }
 
 func abs64(v int64) int64 {
@@ -385,13 +396,13 @@ func hmacEqual(a, b string) bool {
 
 // GET /cluster/v1/model-bundle?model=<id> -- manifest and file list of a
 // complete local model, for a member that wants to copy it.
-func (m *Manager) handlePeerModelBundle(w http.ResponseWriter, r *http.Request) {
+func (a *peerAPI) handlePeerModelBundle(w http.ResponseWriter, r *http.Request) {
 	modelID := strings.TrimSpace(r.URL.Query().Get("model"))
 	if modelID == "" {
 		writeCodedError(w, http.StatusBadRequest, "model is required", "bad_request")
 		return
 	}
-	bundle, err := m.opts.Host.ModelBundle(modelID)
+	bundle, err := a.m.opts.Host.ModelBundle(modelID)
 	if err != nil {
 		writeCodedError(w, http.StatusNotFound, err.Error(), "model_not_available")
 		return
@@ -402,14 +413,14 @@ func (m *Manager) handlePeerModelBundle(w http.ResponseWriter, r *http.Request) 
 // GET /cluster/v1/model-file?model=<id>&path=<rel> -- one file of a local
 // model, streamed with its SHA-256 in a trailer so the receiver can verify
 // it without a second pass here.
-func (m *Manager) handlePeerModelFile(w http.ResponseWriter, r *http.Request) {
+func (a *peerAPI) handlePeerModelFile(w http.ResponseWriter, r *http.Request) {
 	modelID := strings.TrimSpace(r.URL.Query().Get("model"))
 	rel := strings.TrimSpace(r.URL.Query().Get("path"))
 	if modelID == "" || rel == "" {
 		writeCodedError(w, http.StatusBadRequest, "model and path are required", "bad_request")
 		return
 	}
-	bundle, err := m.opts.Host.ModelBundle(modelID)
+	bundle, err := a.m.opts.Host.ModelBundle(modelID)
 	if err != nil {
 		writeCodedError(w, http.StatusNotFound, err.Error(), "model_not_available")
 		return

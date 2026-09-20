@@ -606,43 +606,43 @@ func TestHTTPHandlersViaRecorder(t *testing.T) {
 	bus := NewMemoryBus()
 	a := startNode(t, bus, "alpha", &fakeHost{licensed: true, models: []ModelStatus{{ID: "m", Size: gb, Loaded: true}}})
 	rec := httptest.NewRecorder()
-	a.m.HandleCode(rec, httptest.NewRequest(http.MethodGet, "/api/cluster/code", nil))
+	a.m.Admin().HandleCode(rec, httptest.NewRequest(http.MethodGet, "/api/cluster/code", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code: %d %s", rec.Code, rec.Body)
 	}
 	rec = httptest.NewRecorder()
-	a.m.HandleCreate(rec, httptest.NewRequest(http.MethodPost, "/api/cluster", strings.NewReader(`{"name":"Lab"}`)))
+	a.m.Admin().HandleCreate(rec, httptest.NewRequest(http.MethodPost, "/api/cluster", strings.NewReader(`{"name":"Lab"}`)))
 	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), "csgl1-") {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
 	rec = httptest.NewRecorder()
-	a.m.HandleCode(rec, httptest.NewRequest(http.MethodGet, "/api/cluster/code", nil))
+	a.m.Admin().HandleCode(rec, httptest.NewRequest(http.MethodGet, "/api/cluster/code", nil))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("code while clustered: %d", rec.Code)
 	}
 	rec = httptest.NewRecorder()
-	a.m.HandleSettingsUpdate(rec, httptest.NewRequest(http.MethodPut, "/api/cluster/settings", strings.NewReader(`{"routing_mode":"balanced","weight":50}`)))
+	a.m.Admin().HandleSettingsUpdate(rec, httptest.NewRequest(http.MethodPut, "/api/cluster/settings", strings.NewReader(`{"routing_mode":"balanced","weight":50}`)))
 	if rec.Code != http.StatusOK || a.m.store.Settings().RoutingMode != RoutingBalanced || a.m.store.Settings().Weight != 50 {
 		t.Fatalf("settings: %d %s", rec.Code, rec.Body)
 	}
 	rec = httptest.NewRecorder()
-	a.m.HandleSettingsUpdate(rec, httptest.NewRequest(http.MethodPut, "/api/cluster/settings", strings.NewReader(`{"routing_mode":"nope"}`)))
+	a.m.Admin().HandleSettingsUpdate(rec, httptest.NewRequest(http.MethodPut, "/api/cluster/settings", strings.NewReader(`{"routing_mode":"nope"}`)))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad routing mode accepted: %d", rec.Code)
 	}
 	rec = httptest.NewRecorder()
-	a.m.HandleModelSync(rec, httptest.NewRequest(http.MethodPost, "/api/cluster/models/sync", strings.NewReader(`{"model":"new-model","nodes":"all"}`)))
+	a.m.Admin().HandleModelSync(rec, httptest.NewRequest(http.MethodPost, "/api/cluster/models/sync", strings.NewReader(`{"model":"new-model","nodes":"all"}`)))
 	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"job-1"`) {
 		t.Fatalf("sync: %d %s", rec.Code, rec.Body)
 	}
 	rec = httptest.NewRecorder()
-	a.m.HandleExplain(rec, httptest.NewRequest(http.MethodGet, "/api/cluster/explain?model=m", nil))
+	a.m.Admin().HandleExplain(rec, httptest.NewRequest(http.MethodGet, "/api/cluster/explain?model=m", nil))
 	var ex Explain
 	if err := json.Unmarshal(rec.Body.Bytes(), &ex); err != nil || len(ex.Order) != 1 {
 		t.Fatalf("explain: %d %s", rec.Code, rec.Body)
 	}
 	rec = httptest.NewRecorder()
-	a.m.HandleLeave(rec, httptest.NewRequest(http.MethodDelete, "/api/cluster", nil))
+	a.m.Admin().HandleLeave(rec, httptest.NewRequest(http.MethodDelete, "/api/cluster", nil))
 	if rec.Code != http.StatusOK || a.m.store.InCluster() {
 		t.Fatalf("leave: %d %s", rec.Code, rec.Body)
 	}

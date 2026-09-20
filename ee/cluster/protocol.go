@@ -6,8 +6,9 @@ package cluster
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/opencsgs/csglite/internal/httpjson"
 	"time"
+
+	"github.com/opencsgs/csglite/internal/httpjson"
 )
 
 // ProtocolVersion is carried in discovery records and every handshake. Nodes

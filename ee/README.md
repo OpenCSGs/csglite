@@ -23,5 +23,46 @@ Every source file in this directory starts with:
 // See ee/LICENSE for details.
 ```
 
+## Adding a feature
+
+One feature, one directory: `ee/<feature>/`. Nothing is shared between them by
+default, and anything that turns out to be shared belongs under the Apache tree
+instead, because Enterprise code may depend on Apache code and never the other
+way round. `internal/httpjson` is the first of those: it holds the JSON error
+envelope every HTTP surface answers with, so a second feature does not grow its
+own copy the way the cluster did.
+
+## Adding to `ee/cluster`
+
+The package is flat on purpose, but the files are not a pile: each one holds a
+single job, and a new declaration goes to the file that already owns its
+subject rather than to whichever file is open.
+
+| File | Holds |
+| --- | --- |
+| `manager.go` | the `Host` seam, `Options`, the `Manager` type, and its lifecycle: start, activate, deactivate, stop |
+| `identity.go` | this node's UUID, private key and self-signed certificate |
+| `membership.go` | `cluster.json`: members, pinned fingerprints, join tokens, admission codes, tombstones |
+| `membership_ops.go` | what an operator does to membership: create, join, invite, leave, remove, rename |
+| `discovery.go`, `announce.go`, `hostname.go` | finding other nodes and publishing this one |
+| `directory.go` | the live view of each member: health, addresses, breakers, reservations |
+| `health.go` | the polling loop that keeps that view current |
+| `gossip.go` | folding a peer's member table into ours |
+| `status.go` | what this node reports about itself, and the candidate list the scheduler ranks |
+| `scheduler.go` | ranking candidates by predicted completion time |
+| `affinity.go` | keeping one conversation on one node |
+| `perf.go`, `engine_cluster.go` | measured throughput, and the engine that dispatches and fails over |
+| `engine_node.go` | one remote member seen as an `inference.Engine` |
+| `models.go` | the model inventory across the cluster, and copying one from a peer |
+| `source.go` | the `cluster` and `node:<uuid>` source vocabulary |
+| `transport.go`, `peerclient.go`, `peerrpc.go`, `addr.go` | mutual TLS, pooled clients, peer calls, address handling |
+| `protocol.go` | the types that go on the wire between nodes |
+| `api.go`, `api_views.go` | `/api/cluster/*` for operators, on the `adminAPI` receiver |
+| `peer_handlers.go` | `/cluster/v1/*` for other nodes, on the `peerAPI` receiver |
+
+The two HTTP surfaces hang off their own small types rather than off `Manager`,
+so adding an endpoint does not grow the type that also runs discovery, gossip
+and scheduling.
+
 See `docs/agent-guidelines/ee-features.md` for the full rules and
 `docs/guides/ee-license-design.md` for the design.

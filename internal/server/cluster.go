@@ -507,7 +507,7 @@ func (s *Server) handleClusterSummary(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, cluster.Summary{Nodes: []cluster.SummaryNode{}, NodeLimit: license.QuotaMaxClusterNodes.CommunityValue})
 		return
 	}
-	s.cluster.HandleSummary(w, r)
+	s.cluster.Admin().HandleSummary(w, r)
 }
 
 func workerExpiry(lastUsed time.Time, keepAlive time.Duration) time.Time {
