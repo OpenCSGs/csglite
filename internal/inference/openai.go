@@ -591,7 +591,7 @@ func applyExplicitThinkingDisableControls(modelName string, reqBody map[string]i
 	}
 	out := cloneOpenAIRequestBody(reqBody)
 	changed := applyThinkingDisableControls(modelName, out)
-	if openAIModelRequiresTemperaturePointSixWhenThinkingDisabled(modelName) {
+	if openAIModelRequiresTemperaturePointSixWhenThinkingDisabled(modelName) && !openAIModelAlwaysThinks(modelName) {
 		out["temperature"] = 0.6
 		changed = true
 	}
@@ -606,7 +606,7 @@ func applyThinkingDisableControls(modelName string, reqBody map[string]interface
 		return false
 	}
 	changed := false
-	if openAIModelUsesThinkingTypeDisabled(modelName) && !hasThinkingTypeDisabled(reqBody) {
+	if openAIModelUsesThinkingTypeDisabled(modelName) && !openAIModelAlwaysThinks(modelName) && !hasThinkingTypeDisabled(reqBody) {
 		reqBody["thinking"] = map[string]interface{}{"type": "disabled"}
 		changed = true
 	}
@@ -632,6 +632,11 @@ func openAIModelUsesThinkingTypeDisabled(modelName string) bool {
 		strings.HasPrefix(modelName, "moonshot-") ||
 		strings.Contains(modelName, "deepseek-v4") ||
 		strings.HasPrefix(modelName, "mimo-")
+}
+
+func openAIModelAlwaysThinks(modelName string) bool {
+	modelName = strings.TrimSpace(strings.ToLower(modelName))
+	return strings.HasPrefix(modelName, "glm-5.3-flash")
 }
 
 // OpenAIModelUsesThinkingTypeDisabled reports whether the model family disables
