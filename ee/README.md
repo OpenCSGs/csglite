@@ -2,9 +2,18 @@
 
 Everything under this directory is licensed under the CSGLite Enterprise
 Edition License in [`LICENSE`](LICENSE), not under the Apache-2.0 license that
-covers the rest of the repository. In short: you may read, modify and run it
-for development and testing; production use requires a valid CSGLite Enterprise
-license issued by OpenCSG; redistribution is not permitted.
+covers the rest of the repository. The licence is published in Chinese and
+English; where the two differ, the Chinese text governs.
+
+In short, and without replacing anything the licence itself says: you may read
+the source and modify it for internal research, development and testing.
+Production use needs a valid CSGLite Enterprise Edition licence from OpenCSG
+matching your actual usage, and the licence defines production use broadly
+enough to include a pilot or a proof of concept that carries real business.
+Redistribution, sublicensing and offering the Software to third parties as a
+hosted service are not permitted. Replacing the logo or the UI appearance, or
+building anything commercial on the Software, requires written notice to
+OpenCSG first, whether or not you hold a licence.
 
 ## What belongs here
 
