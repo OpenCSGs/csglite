@@ -38,6 +38,49 @@ Every source file in this directory starts with:
 // See ee/LICENSE for details.
 ```
 
+## Measured: what the cluster is worth
+
+Three machines on one 5 GHz network, entry node the M5. Embedding with
+Qwen3-Embedding-0.6B, 32 inputs per request, wall-clock for the whole batch.
+"One machine" is `source: "local"`; two and three machines are `source:
+"cluster"` in balanced mode, with the third node drained for the two-machine
+column.
+
+| Concurrency | 1 machine | 2 machines | 3 machines | 2× | 3× | Placement across the three |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 4 | 3.64s | 2.79s | 2.74s | 1.31× | 1.33× | 4 / 0 / 0 |
+| 8 | 5.09s | 4.04s | 2.59s | 1.26× | 1.97× | 4 / 2 / 2 |
+| 16 | 10.20s | 5.85s | 3.87s | 1.74× | 2.64× | 6 / 5 / 5 |
+| 32 | 20.43s | 11.21s | 7.63s | 1.82× | 2.68× | 11 / 10 / 11 |
+
+One machine's throughput is flat whatever the concurrency, so extra requests
+only queue; each machine added roughly adds its own throughput, and the
+placement is even once there is enough work to spread. Below about four
+concurrent requests clustering costs more than it saves, because there is
+nothing to spread and a network hop to pay. That is why `local_first` is the
+default and `balanced` is opt-in.
+
+The nodes were not identical, an M5, an M4 and an M1 Pro, which is why the
+three-machine figure is 2.68× rather than 3×: the scheduler places by
+predicted completion time, so a slower node takes proportionally less.
+
+Text generation with Qwen3.5-2B, 128 tokens per request, on the first two of
+those machines:
+
+| Concurrency | 1 machine | 2 machines | Speedup | Time to first token, 1 → 2 |
+| ---: | ---: | ---: | ---: | --- |
+| 1 | 4.30s | 5.37s | 0.80× | 0.09s → 0.41s |
+| 2 | 8.62s | 5.23s | 1.65× | 2.29s → 0.29s |
+| 4 | 16.99s | 10.36s | 1.64× | 6.48s → 2.66s |
+| 8 | 34.43s | 20.72s | 1.66× | 15.13s → 7.51s |
+
+Time to first token improves more than throughput does, because the second
+machine halves the queue a request waits behind.
+
+Copying a model between nodes measured 1.2 GB in 44 seconds, 27.6 MB/s, from
+one node to another that had never held it.
+
+
 ## Adding a feature
 
 One feature, one directory: `ee/<feature>/`. Nothing is shared between them by
