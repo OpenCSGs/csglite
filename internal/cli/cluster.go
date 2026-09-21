@@ -70,6 +70,8 @@ func newClusterCmd() *cobra.Command {
 		newClusterStateCmd("drain", cluster.NodeStateDrain, "Finish in-flight requests on this node and take no new ones"),
 		newClusterStateCmd("activate", cluster.NodeStateActive, "Return this node to active duty"),
 		newClusterStateCmd("maintenance", cluster.NodeStateMaintenance, "Take this node out of routing and model sync"),
+		newClusterSpanCmd(),
+		newClusterUnspanCmd(),
 	)
 	return cmd
 }
@@ -742,4 +744,65 @@ func newClusterStateCmd(use string, state cluster.NodeState, short string) *cobr
 func urlQueryEscape(s string) string {
 	r := strings.NewReplacer("%", "%25", "&", "%26", "+", "%2B", " ", "%20", "#", "%23", "?", "%3F")
 	return r.Replace(s)
+}
+
+// newClusterSpanCmd runs one model across several machines because it fits on
+// none of them. This is the opposite trade to everything else here: it buys
+// capacity and gives up both speed and redundancy.
+func newClusterSpanCmd() *cobra.Command {
+	var nodes []string
+	cmd := &cobra.Command{
+		Use:   "span <model>",
+		Short: "Run one model across several machines because it does not fit on one",
+		Long: "Splits a model's weights across this machine and others, so a model too\n" +
+			"large for any single box can run at all. It is slower than one machine\n" +
+			"would be, and it has no redundancy: losing any participant unloads it.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClusterClient()
+			if err != nil {
+				return err
+			}
+			var out cluster.SpanView
+			body := map[string]any{"model": args[0]}
+			if len(nodes) > 0 {
+				body["nodes"] = nodes
+			}
+			if err := c.do(http.MethodPost, "/api/cluster/spans", body, &out); err != nil {
+				return err
+			}
+			fmt.Printf("%s is split across %d machines:\n", out.Model, len(out.Members))
+			for _, mem := range out.Members {
+				where := mem.Name
+				if mem.Local {
+					where += " (this machine)"
+				}
+				fmt.Printf("  %s\n", where)
+			}
+			fmt.Println("\nIt has no redundancy: if any of these machines goes away, the model unloads.")
+			return nil
+		},
+	}
+	cmd.Flags().StringSliceVar(&nodes, "node", nil, "node UUIDs to split onto (default: every healthy member with memory to spare)")
+	return cmd
+}
+
+// newClusterUnspanCmd puts a split model back.
+func newClusterUnspanCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unspan <model>",
+		Short: "Stop running a model across several machines",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClusterClient()
+			if err != nil {
+				return err
+			}
+			if err := c.do(http.MethodDelete, "/api/cluster/spans/"+args[0], nil, nil); err != nil {
+				return err
+			}
+			fmt.Printf("%s is no longer split across machines\n", args[0])
+			return nil
+		},
+	}
 }

@@ -3,6 +3,8 @@ package server
 import (
 	"net/http"
 
+	"github.com/opencsgs/csglite/internal/license"
+
 	"github.com/opencsgs/csglite/ee/cluster"
 )
 
@@ -171,6 +173,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/cluster/explain", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleExplain }))
 	mux.HandleFunc("GET /api/cluster/recommendations", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleRecommendations }))
 	mux.HandleFunc("PUT /api/cluster/settings", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleSettingsUpdate }))
+	// Splitting one model across machines is Enterprise: it exists for models
+	// that do not fit on a single box, which is not a two-node situation.
+	mux.HandleFunc("GET /api/cluster/spans", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleSpans }))
+	mux.HandleFunc("POST /api/cluster/spans", s.requireFeature(license.FeatureClusterModelSpan)(s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleSpanCreate })))
+	mux.HandleFunc("DELETE /api/cluster/spans/{model...}", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleSpanDelete }))
 	mux.HandleFunc("GET /api/license", s.handleLicenseGet)
 	mux.HandleFunc("PUT /api/license", s.handleLicenseImport)
 	mux.HandleFunc("DELETE /api/license", s.handleLicenseDelete)

@@ -97,6 +97,15 @@ var (
 	// QuotaMaxClusterNodes caps the members of a LAN cluster, this node
 	// included. The Community edition may run two machines; an Enterprise
 	// license lifts the cap (0 = unlimited) or sets a tier in Extra.limits.
+	// FeatureClusterModelSpan is running one model across several machines
+	// because it fits on none of them. Unlike the cluster itself it is gated:
+	// it exists for models a single box cannot hold, which is not a situation
+	// two community nodes are in, and it trades away both speed and
+	// redundancy for capacity.
+	FeatureClusterModelSpan = FeatureDefinition{
+		Key: featurePrefix + "cluster_model_span", Type: FeatureTypeBoolean, Gated: true, DefaultValue: true,
+		Since: "0.13.0",
+	}
 	QuotaMaxClusterNodes = FeatureDefinition{
 		Key: quotaPrefix + "max_cluster_nodes", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
 		CommunityValue: 2, Since: "0.13.0",
@@ -112,6 +121,7 @@ var catalog = []FeatureDefinition{
 	FeatureImageGeneration,
 	QuotaMaxProviderPools,
 	FeatureLANCluster,
+	FeatureClusterModelSpan,
 	QuotaMaxClusterNodes,
 }
 

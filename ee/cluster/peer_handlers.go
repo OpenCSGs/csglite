@@ -56,6 +56,8 @@ func (a *peerAPI) peerMux() http.Handler {
 	mux.Handle(peerPathInference, a.requirePeer(a.handlePeerInference))
 	mux.HandleFunc("GET "+peerPathModelBundle, a.requirePeer(a.handlePeerModelBundle))
 	mux.HandleFunc("GET "+peerPathModelFile, a.requirePeer(a.handlePeerModelFile))
+	mux.HandleFunc("POST "+peerPathRPCWorker, a.requirePeer(a.handlePeerRPCWorker))
+	mux.HandleFunc("POST "+peerPathRPCTunnel, a.requirePeer(a.handlePeerRPCTunnel))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusNotFound, "not a cluster endpoint", "not_found")
 	})
@@ -471,4 +473,16 @@ func safeRelPath(rel string) bool {
 		}
 	}
 	return true
+}
+
+// handlePeerRPCWorker brings this node's RPC worker up so a member can split a
+// model onto it. The worker binds to loopback and is reached only through
+// peerPathRPCTunnel, so answering this does not put anything on the network.
+func (a *peerAPI) handlePeerRPCWorker(w http.ResponseWriter, r *http.Request) {
+	port, err := a.m.startLocalRPCWorker(r.Context())
+	if err != nil {
+		writeCodedError(w, http.StatusNotImplemented, err.Error(), "no_rpc_worker")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"port": port})
 }

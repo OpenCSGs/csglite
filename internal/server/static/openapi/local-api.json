@@ -7935,6 +7935,113 @@
         }
       }
     },
+    "/api/cluster/spans": {
+      "get": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "List models split across machines",
+        "operationId": "listClusterSpans",
+        "responses": {
+          "200": {
+            "description": "Models this node runs across several machines.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "spans": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ClusterSpan"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Split a model across machines because it does not fit on one",
+        "description": "Enterprise only. Slower than a single machine and without redundancy: losing any participant unloads the model.",
+        "operationId": "createClusterSpan",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "nodes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Node UUIDs to split onto; every healthy member with memory to spare when omitted."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The model is now split across these machines.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterSpan"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "501": {
+            "description": "This build cannot split a model across machines."
+          }
+        }
+      }
+    },
+    "/api/cluster/spans/{model...}": {
+      "delete": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Stop running a model across several machines",
+        "operationId": "deleteClusterSpan",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The model is no longer split."
+          },
+          "404": {
+            "description": "That model is not split across machines."
+          }
+        }
+      }
+    },
     "/api/cluster/settings": {
       "put": {
         "tags": [
@@ -15252,7 +15359,44 @@
           }
         }
       },
-      "ClusterSummary": {
+      "ClusterSpan": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "redundant": {
+          "type": "boolean",
+          "description": "Always false: the weights exist once, spread across these machines."
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "uuid": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "local": {
+                "type": "boolean"
+              },
+              "vram_free": {
+                "type": "integer",
+                "format": "int64"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ClusterSummary": {
         "type": "object",
         "description": "Compact per-machine cards for the dashboard. Available in every edition; an empty list when the node is not in a cluster.",
         "required": [

@@ -29,6 +29,11 @@ const (
 	// the model source over the internet.
 	peerPathModelBundle = "/cluster/v1/model-bundle"
 	peerPathModelFile   = "/cluster/v1/model-file"
+	// peerPathRPCWorker starts this node's RPC worker; peerPathRPCTunnel
+	// carries its traffic, which is why the worker itself never listens on
+	// anything but loopback.
+	peerPathRPCWorker = "/cluster/v1/rpc-worker"
+	peerPathRPCTunnel = "/cluster/v1/rpc-tunnel"
 	// SHA256Trailer carries the digest of a streamed model file.
 	SHA256Trailer = "X-CSGLite-SHA256"
 )

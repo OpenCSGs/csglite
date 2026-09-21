@@ -41,6 +41,14 @@ type Host interface {
 	// ModelBundle describes a complete local model for a peer to copy, or
 	// returns an error when the model is absent or still downloading.
 	ModelBundle(modelID string) (*ModelBundle, error)
+	// SpanModel loads modelID on this node with part of its weights held by
+	// the given RPC endpoints, which are loopback addresses this package has
+	// already tunnelled to other machines. An empty list unloads the split
+	// copy. A host that cannot do this returns ErrSpanNotSupported.
+	SpanModel(ctx context.Context, modelID string, rpcEndpoints []string) error
+	// RPCWorkerPath is the worker binary this build ships, or an error saying
+	// why a model cannot be split across machines here.
+	RPCWorkerPath() (string, error)
 	// PullSpec turns a cluster model id into the repository and artifact
 	// source a pull job needs: registry-prefixed ids such as
 	// "modelscope/Qwen/Qwen3.5-2B" split into ("Qwen/Qwen3.5-2B", "modelscope").
@@ -114,6 +122,8 @@ type Manager struct {
 	affinity *Affinity
 	perf     *perfStore
 	peers    *peerClientCache
+	spans    *spanState
+	worker   *rpcWorker
 
 	mu          sync.RWMutex
 	ctx         context.Context
@@ -178,6 +188,8 @@ func New(opts Options) (*Manager, error) {
 		affinity:    NewAffinity(),
 		perf:        newPerfStore(filepath.Join(opts.Dir, "perf.json")),
 		peers:       newPeerClientCache(id),
+		spans:       newSpanState(),
+		worker:      newRPCWorker(filepath.Join(opts.Dir, "rpc-cache"), logf),
 		gossipWake:  make(chan struct{}, 1),
 		discoverer:  opts.Discoverer,
 		observedIPs: map[string]time.Time{},
@@ -330,6 +342,9 @@ func (m *Manager) deactivate() {
 	_ = m.discoverer.Close()
 	m.dir.Reset()
 	m.peers.closeAll()
+	if m.worker != nil {
+		m.worker.stop()
+	}
 	m.invalidateLocalStatus()
 }
 

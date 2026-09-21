@@ -584,6 +584,16 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	if effectiveNGPULayers >= 0 {
 		args = append(args, "-ngl", strconv.Itoa(effectiveNGPULayers))
 	}
+	// A model too large for this machine has part of its weights held by other
+	// machines, reached through loopback addresses the cluster has already
+	// tunnelled. llama-server treats them as extra devices and splits the
+	// weights across all of them by free memory.
+	if RPCEndpointsForModel != nil {
+		if endpoints := RPCEndpointsForModel(modelName); len(endpoints) > 0 {
+			args = append(args, "--rpc", strings.Join(endpoints, ","))
+			log.Printf("LLAMA: %s is split across this machine and %d more", modelName, len(endpoints))
+		}
+	}
 
 	engine.cmd = exec.Command(binary, args...)
 	log.Printf("LLAMA: starting llama-server model=%q binary=%s port=%d embedding=%t num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q speculative=%q mmproj=%t", modelName, binary, port, embedding, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, speculative.Key(), len(mmproj) > 0 && mmproj[0] != "")
@@ -1263,3 +1273,13 @@ func appendEnvDefault(env []string, key, value string) []string {
 	}
 	return append(env, key+"="+value)
 }
+
+// LlamaBinaryPath reports the llama-server this build would launch, or the
+// empty string when none is installed.
+func LlamaBinaryPath() string { return findLlamaBinary() }
+
+// RPCEndpointsForModel, when set, contributes the --rpc endpoints that let one
+// model's weights be split across machines. It is a hook rather than another
+// parameter on every loader because only the cluster uses it, and threading it
+// through would grow half a dozen signatures that have nothing to do with it.
+var RPCEndpointsForModel func(modelName string) []string

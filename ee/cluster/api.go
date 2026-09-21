@@ -6,6 +6,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -518,3 +519,51 @@ func (a *adminAPI) HandleNodePull(w http.ResponseWriter, r *http.Request) {
 
 // ExplainString is a short human summary used in logs.
 func ExplainString(ex Explain) string { return fmt.Sprintf("%s: %s", ex.Model, summarizeExplain(ex)) }
+
+// HandleSpans is GET /api/cluster/spans: the models this node is running
+// across several machines.
+func (a *adminAPI) HandleSpans(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"spans": a.m.Spans()})
+}
+
+// HandleSpanCreate is POST /api/cluster/spans: split a model across machines
+// because it does not fit on one.
+func (a *adminAPI) HandleSpanCreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Model string   `json:"model"`
+		Nodes []string `json:"nodes,omitempty"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Model) == "" {
+		writeError(w, http.StatusBadRequest, "model is required")
+		return
+	}
+	view, err := a.m.SpanModel(r.Context(), strings.TrimSpace(req.Model), req.Nodes)
+	if err != nil {
+		if errors.Is(err, ErrSpanNotSupported) {
+			writeCodedError(w, http.StatusNotImplemented, err.Error(), "span_unsupported")
+			return
+		}
+		writeOpError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+// HandleSpanDelete is DELETE /api/cluster/spans/{model...}: put the model back
+// on one machine, or nowhere.
+func (a *adminAPI) HandleSpanDelete(w http.ResponseWriter, r *http.Request) {
+	model := strings.TrimSpace(r.PathValue("model"))
+	if model == "" {
+		writeError(w, http.StatusBadRequest, "model is required")
+		return
+	}
+	if err := a.m.UnspanModel(r.Context(), model); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"model": model, "status": "unspanned"})
+}

@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opencsgs/csglite/ee/cluster"
@@ -586,4 +587,65 @@ func (s *Server) checkClusterRouteSource(source string) error {
 		return inference.NewHTTPStatusError(http.StatusNotFound, "node is not a member of this cluster")
 	}
 	return nil
+}
+
+// ---- splitting one model across machines ----
+
+// spanEndpoints records, per model, the loopback addresses that stand in for
+// the other machines holding part of its weights. The engine loader reads it
+// through inference.RPCEndpointsForModel when it builds the llama-server
+// command line.
+var spanEndpoints sync.Map // modelID -> []string
+
+func init() {
+	inference.RPCEndpointsForModel = func(modelName string) []string {
+		if v, ok := spanEndpoints.Load(modelName); ok {
+			return v.([]string)
+		}
+		return nil
+	}
+}
+
+// RPCWorkerPath reports the worker binary that lets this node hold part of
+// another machine's model, or says why it cannot.
+func (h *clusterHost) RPCWorkerPath() (string, error) {
+	return cluster.RPCWorkerBinaryPath(inference.LlamaBinaryPath())
+}
+
+// SpanModel loads modelID with part of its weights on other machines, or
+// unloads that copy when no endpoints are given.
+//
+// The engine is dropped first either way: a model already loaded on this
+// machine alone is a different process with different devices, and keeping it
+// would mean two copies competing for the same memory.
+func (h *clusterHost) SpanModel(ctx context.Context, modelID string, rpcEndpoints []string) error {
+	resolved := h.s.resolveLocalModelStorageID(modelID)
+	h.s.closeLoadedEngines(resolved)
+	if len(rpcEndpoints) == 0 {
+		spanEndpoints.Delete(resolved)
+		return nil
+	}
+	if _, err := cluster.RPCWorkerBinaryPath(inference.LlamaBinaryPath()); err != nil {
+		return err
+	}
+	spanEndpoints.Store(resolved, append([]string(nil), rpcEndpoints...))
+	if _, err := h.s.getOrLoadEngineWithOpts(resolved, 0, 0, -1, "", "", ""); err != nil {
+		spanEndpoints.Delete(resolved)
+		h.s.closeLoadedEngines(resolved)
+		return err
+	}
+	return nil
+}
+
+// closeLoadedEngines drops whatever is loaded for a model, in both chat and
+// embedding modes, so the next load starts a fresh process.
+func (s *Server) closeLoadedEngines(modelID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, key := range []string{engineCacheKey(modelID, engineModeChat), engineCacheKey(modelID, engineModeEmbed)} {
+		if me, ok := s.engines[key]; ok {
+			me.engine.Close()
+			delete(s.engines, key)
+		}
+	}
 }
