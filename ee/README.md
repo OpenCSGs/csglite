@@ -16,27 +16,86 @@ that runs without a licence may be used in production within the limit the
 software enforces for unlicensed users, which for the LAN cluster is two nodes.
 That is what makes the community node cap a real entitlement rather than
 something the licence forbids.
+
 Redistribution, sublicensing and offering the Software to third parties as a
 hosted service are not permitted. Replacing the logo or the UI appearance, or
 building anything commercial on the Software, requires written notice to
 OpenCSG first, whether or not you hold a licence.
 
-## What belongs here
+## The features that live here
 
-- Implementation code for features whose catalog entry in
-  `internal/license/features.go` is marked `Gated: true`.
-- Nothing else. The license verification framework itself
-  (`internal/license`, the `/api/license*` handlers, the CLI) stays under
-  Apache-2.0 so the Community edition can always verify a license.
+### LAN compute cluster (`ee/cluster`)
 
-## File header
+Several machines on one network become a single pool of compute. A request
+arriving at any of them is served by whichever will finish it soonest, and the
+API does not change: the same OpenAI, Ollama and Anthropic endpoints answer
+whether one machine or five are behind them.
 
-Every source file in this directory starts with:
+**Turning it on.** Give every machine the same secret and they find each other
+and form a cluster with no create or join step:
 
-```go
-// Copyright (c) OpenCSG. Licensed under the CSGLite Enterprise Edition License.
-// See ee/LICENSE for details.
+```bash
+csghub-lite config set cluster_secret "a-long-shared-secret"
+csghub-lite config set cluster_name   "lab"
 ```
+
+The equivalent environment variables are `CSGHUB_LITE_CLUSTER_SECRET` and
+`CSGHUB_LITE_CLUSTER_NAME`, which is the usual way to bake it into an install
+image. The cluster's identity is derived from the secret, and the secret itself
+never goes on the wire. Pairing by join token (`csghub-lite cluster token`) or
+by an eight-digit admission code works too, for anyone who would rather admit
+each machine by hand.
+
+**Without a secret nothing happens.** A machine that was never asked to cluster
+opens no listener, sends no multicast and starts no polling goroutine. The
+feature costs a single machine nothing.
+
+**What it does once formed.**
+
+- *Finds machines again after they move.* Nodes are identified by a UUID
+  pinned to a self-signed certificate, announced over mDNS, so an address that
+  changes on reboot is relearned on the next poll and no machine needs a fixed
+  IP.
+- *Places work by predicted completion time*, counting load time, queue depth
+  and measured speed, with penalties for thermal throttling, power caps, CPU
+  contention, RAM pressure and disk activity. A conversation sticks to the node
+  that answered it; a node that fails is taken out and retried with backoff.
+- *Copies models between nodes* rather than downloading them again, verified by
+  a SHA-256 the sender computes as it streams.
+- *Routes chat, embeddings, Anthropic messages, transcription and speech.*
+
+**Choosing where a request runs.** The `source` field decides: `cluster` places
+it anywhere, `node:<uuid>` pins it to one machine, `local` keeps it here, and
+naming nothing routes it only when this node cannot serve it. The default mode
+is `local_first`; `balanced` spreads everything and is worth it once several
+requests overlap, which the measurements below quantify.
+
+**The node cap.** Two nodes without a licence, unlimited with one. A machine
+beyond the cap is refused when it tries to join, with
+`the cluster has reached its licensed node limit`; the nodes already in the
+cluster are unaffected. If a member table somehow does exceed the cap, every
+node reports itself unlicensed and the scheduler excludes all of them, so the
+cluster stops placing work rather than running over its licence. Removing the
+extra members restores it.
+
+**Operating it.** `csghub-lite cluster` carries `status`, `create`, `join`,
+`leave`, `token`, `code`, `nodes`, `discovered`, `invite`, `remove`, `models`,
+`sync`, `explain`, `enable`, `disable`, `drain`, `activate` and `maintenance`.
+`explain` is the one to reach for when a request did not land where expected:
+it prints every candidate with its score and, for the ones that were skipped,
+the reason. A node's own state, such as `drain`, is set on that node, not from
+another one.
+
+**Two things that catch people out.** On macOS a node needs Local Network
+permission before it can reach its peers, and an unsigned build will not have
+it: the symptom is that `curl` works from a shell on that machine while the
+server itself reports `no route to host`. And the `/api/cluster/*` endpoints
+are refused to cross-origin callers and need an API key from the network; the
+join token and admission code are answered over loopback or to a caller holding
+a key, never on trust alone.
+
+The design, including the decisions behind the scheduler and the failover
+rules, is in [`docs/guides/lan-cluster-design.md`](../docs/guides/lan-cluster-design.md).
 
 ## Measured: what the cluster is worth
 
@@ -80,6 +139,22 @@ machine halves the queue a request waits behind.
 Copying a model between nodes measured 1.2 GB in 44 seconds, 27.6 MB/s, from
 one node to another that had never held it.
 
+## What belongs here
+
+- Implementation code for features whose catalog entry in
+  `internal/license/features.go` is marked `Gated: true`.
+- Nothing else. The license verification framework itself
+  (`internal/license`, the `/api/license*` handlers, the CLI) stays under
+  Apache-2.0 so the Community edition can always verify a license.
+
+## File header
+
+Every source file in this directory starts with:
+
+```go
+// Copyright (c) OpenCSG. Licensed under the CSGLite Enterprise Edition License.
+// See ee/LICENSE for details.
+```
 
 ## Adding a feature
 
