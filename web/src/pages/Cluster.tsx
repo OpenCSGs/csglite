@@ -956,6 +956,22 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
             <span class={`font-medium truncate max-w-[14rem] ${node.online ? "text-gray-900" : "text-gray-500"}`} title={node.name}>
               {node.name}
             </span>
+            {st?.spans && st.spans.length > 0 && (
+              <span
+                class="shrink-0 rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-700"
+                title={t("cluster.spanHostTitle", st.spans.map((sp) => sp.model).join(", "))}
+              >
+                {t("cluster.spanHost")}
+              </span>
+            )}
+            {st?.span_worker && (
+              <span
+                class="shrink-0 rounded bg-purple-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-600"
+                title={t("cluster.spanWorkerTitle")}
+              >
+                {t("cluster.spanWorker")}
+              </span>
+            )}
             {node.local && (
               <>
                 <span class="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">

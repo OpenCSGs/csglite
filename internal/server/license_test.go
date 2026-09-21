@@ -101,10 +101,11 @@ func TestRequireFeatureUngatedAlwaysPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range catalog {
-		if entry.Key == license.QuotaMaxClusterNodes.Key {
-			// The only shipped gated entry: an integer cap, never "enabled".
+		if entry.Key == license.QuotaMaxClusterNodes.Key || entry.Key == license.FeatureClusterModelSpan.Key {
+			// The shipped gated entries: the node cap, an integer that is
+			// never "enabled", and spanning one model across machines.
 			if !entry.Gated {
-				t.Fatalf("cluster node cap should be gated: %+v", entry)
+				t.Fatalf("%s should be gated: %+v", entry.Key, entry)
 			}
 			continue
 		}
@@ -199,7 +200,7 @@ func TestLicenseLifecycleOverHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if settings.Edition != license.EditionEnterprise || settings.LicenseStatus != "valid" || settings.License == nil ||
-		len(settings.Features) != 7 || len(settings.FeatureCatalog) != len(license.Catalog()) {
+		len(settings.Features) != 8 || len(settings.FeatureCatalog) != len(license.Catalog()) {
 		t.Fatalf("settings after import: edition=%s status=%s features=%v catalog=%d",
 			settings.Edition, settings.LicenseStatus, settings.Features, len(settings.FeatureCatalog))
 	}

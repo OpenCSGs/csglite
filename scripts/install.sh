@@ -746,6 +746,15 @@ install_llama_server() {
     fi
     chmod +x "$_llama_bin"
 
+    # ggml-rpc-server ships in the same archive. It is what lets one model run
+    # across several machines on a LAN, and its wire protocol only matches the
+    # llama-server from the same build, so it is installed from here rather
+    # than left to be found somewhere on PATH.
+    _rpc_bin="$(find "$_tmpdir" -name "ggml-rpc-server" -type f | head -1)"
+    if [ -n "$_rpc_bin" ]; then
+        chmod +x "$_rpc_bin"
+    fi
+
     _llama_dir="${CSGHUB_LITE_LLAMA_SERVER_INSTALL_DIR:-}"
     if [ -z "$_llama_dir" ]; then
         if [ "$OS" = "darwin" ] && [ -n "${INSTALL_DIR:-}" ]; then
@@ -773,6 +782,9 @@ install_llama_server() {
             mv "$_lib" "$_llama_dir/"
         done
         mv "$_llama_bin" "$_llama_dir/"
+        if [ -n "$_rpc_bin" ]; then
+            mv "$_rpc_bin" "$_llama_dir/"
+        fi
     else
         info "Requires root privileges to install llama-server."
         find "$_tmpdir" \( -type f -o -type l \) \( -name "*.dylib" -o -name "*.so" -o -name "*.so.*" \) | while read -r _lib; do
@@ -780,6 +792,9 @@ install_llama_server() {
             run_privileged mv "$_lib" "$_llama_dir/"
         done
         run_privileged mv "$_llama_bin" "$_llama_dir/"
+        if [ -n "$_rpc_bin" ]; then
+            run_privileged mv "$_rpc_bin" "$_llama_dir/"
+        fi
     fi
 
     # Fix @rpath on macOS so llama-server can find co-located dylibs

@@ -34,6 +34,10 @@ const (
 	// anything but loopback.
 	peerPathRPCWorker = "/cluster/v1/rpc-worker"
 	peerPathRPCTunnel = "/cluster/v1/rpc-tunnel"
+	// peerPathRPCWorkerRelease says a span that was using this node's worker
+	// has finished with it. Without it the worker would hold its share of the
+	// weights for as long as the node runs.
+	peerPathRPCWorkerRelease = "/cluster/v1/rpc-worker/release"
 	// SHA256Trailer carries the digest of a streamed model file.
 	SHA256Trailer = "X-CSGLite-SHA256"
 )
@@ -167,8 +171,17 @@ type Status struct {
 	ModelSource ModelSource   `json:"model_source"`
 	Models      []ModelStatus `json:"models"`
 	Inflight    int           `json:"inflight"`
-	UptimeSec   int64         `json:"uptime_sec"`
-	Time        time.Time     `json:"time"`
+	// SpanWorker is set while this node is lending its GPU to a model that
+	// another node is running across several machines. The memory that worker
+	// holds is real but belongs to no model in this node's inventory, so the
+	// scheduler is told about it rather than left to infer it.
+	SpanWorker bool `json:"span_worker,omitempty"`
+	// Spans are the models this node is itself running across several
+	// machines. They are reported so an operator can see, from any node, where
+	// a split model lives.
+	Spans     []SpanView `json:"spans,omitempty"`
+	UptimeSec int64      `json:"uptime_sec"`
+	Time      time.Time  `json:"time"`
 }
 
 // Model finds a model on the node.

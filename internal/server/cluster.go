@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -595,14 +596,24 @@ func (s *Server) checkClusterRouteSource(source string) error {
 // the other machines holding part of its weights. The engine loader reads it
 // through inference.RPCEndpointsForModel when it builds the llama-server
 // command line.
-var spanEndpoints sync.Map // modelID -> []string
+var spanEndpoints sync.Map // modelID -> spanPlacement
+
+// spanPlacement is how one model's weights are laid out across machines.
+type spanPlacement struct {
+	endpoints []string
+	// hostDevices is true when this machine holds a share as well. It is false
+	// for a model that does not fit here, which is the usual reason to split
+	// one at all.
+	hostDevices bool
+}
 
 func init() {
-	inference.RPCEndpointsForModel = func(modelName string) []string {
+	inference.RPCEndpointsForModel = func(modelName string) ([]string, bool) {
 		if v, ok := spanEndpoints.Load(modelName); ok {
-			return v.([]string)
+			p := v.(spanPlacement)
+			return p.endpoints, p.hostDevices
 		}
-		return nil
+		return nil, false
 	}
 }
 
@@ -618,7 +629,7 @@ func (h *clusterHost) RPCWorkerPath() (string, error) {
 // The engine is dropped first either way: a model already loaded on this
 // machine alone is a different process with different devices, and keeping it
 // would mean two copies competing for the same memory.
-func (h *clusterHost) SpanModel(ctx context.Context, modelID string, rpcEndpoints []string) error {
+func (h *clusterHost) SpanModel(ctx context.Context, modelID string, rpcEndpoints []string, hostDevices bool, numCtx int) error {
 	resolved := h.s.resolveLocalModelStorageID(modelID)
 	h.s.closeLoadedEngines(resolved)
 	if len(rpcEndpoints) == 0 {
@@ -628,11 +639,52 @@ func (h *clusterHost) SpanModel(ctx context.Context, modelID string, rpcEndpoint
 	if _, err := cluster.RPCWorkerBinaryPath(inference.LlamaBinaryPath()); err != nil {
 		return err
 	}
-	spanEndpoints.Store(resolved, append([]string(nil), rpcEndpoints...))
-	if _, err := h.s.getOrLoadEngineWithOpts(resolved, 0, 0, -1, "", "", ""); err != nil {
+	spanEndpoints.Store(resolved, spanPlacement{endpoints: append([]string(nil), rpcEndpoints...), hostDevices: hostDevices})
+	// One slot, and the context the caller asked for. Both bound the KV cache,
+	// which is allocated on top of the weights: a model split because it
+	// barely fits has no room for the several parallel slots a model that fits
+	// comfortably is given by default.
+	engine, err := h.s.getOrLoadEngineWithOpts(resolved, numCtx, 1, -1, "", "", "")
+	if err != nil {
 		spanEndpoints.Delete(resolved)
 		h.s.closeLoadedEngines(resolved)
 		return err
+	}
+	// A split model that loaded is not yet a split model that works. When the
+	// weights do not fit the devices they were given, llama.cpp reports the
+	// load as successful and then fails every request with a compute error, so
+	// one question is asked here. Building a span costs minutes; finding out
+	// this way costs seconds and turns a model that is loaded and broken into
+	// a refusal that says so.
+	if err := spanAnswersOnce(ctx, engine); err != nil {
+		spanEndpoints.Delete(resolved)
+		h.s.closeLoadedEngines(resolved)
+		return err
+	}
+	// A split model is pinned. Building one means streaming its weights to
+	// other machines, which for a 27B took eight minutes over a wireless
+	// network; letting the ordinary idle timer unload it would hand that bill
+	// to whoever asked the next question. It is unloaded when the span is torn
+	// down, and not before.
+	h.s.applyModelKeepAlive(resolved, api.KeepAliveForever)
+	return nil
+}
+
+// spanSmokeTimeout bounds the one question a new span is asked. Generation
+// across machines is slow, and this is the first request of all, so it is
+// generous; what it is really there for is the case that answers immediately
+// with an error.
+const spanSmokeTimeout = 90 * time.Second
+
+// spanAnswersOnce asks a freshly split model for a single token.
+func spanAnswersOnce(ctx context.Context, engine inference.Engine) error {
+	attempt, cancel := context.WithTimeout(ctx, spanSmokeTimeout)
+	defer cancel()
+	opts := inference.DefaultOptions()
+	opts.MaxTokens = 1
+	opts.Temperature = 0
+	if _, err := engine.Generate(attempt, "1", opts, nil); err != nil {
+		return fmt.Errorf("the model loaded across these machines but could not answer, which is what happens when the weights do not fit the devices they were given: %w", err)
 	}
 	return nil
 }

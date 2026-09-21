@@ -487,6 +487,20 @@ func (d *Directory) ModelBroken(nodeUUID, modelID string) bool {
 	return true
 }
 
+// ReservedCount is how many requests this node has dispatched to nodeUUID and
+// not yet seen finish. It is what the scheduler means by a queue it has added
+// to since the last status sample, and it goes down again as those requests
+// complete.
+func (d *Directory) ReservedCount(nodeUUID string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n, ok := d.nodes[nodeUUID]
+	if !ok {
+		return 0
+	}
+	return n.Reserved(d.now())
+}
+
 // Reserve counts a request dispatched to a node; the returned func releases it.
 func (d *Directory) Reserve(nodeUUID string) func() {
 	d.mu.Lock()

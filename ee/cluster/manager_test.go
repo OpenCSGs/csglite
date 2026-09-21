@@ -996,6 +996,8 @@ func TestPerfRatesMeasuresARequestThatGeneratesNoTokens(t *testing.T) {
 // would only hide the error a real one gives when the worker is missing.
 func (h *fakeHost) RPCWorkerPath() (string, error) { return "", ErrSpanNotSupported }
 
-func (h *fakeHost) SpanModel(context.Context, string, []string) error { return ErrSpanNotSupported }
+func (h *fakeHost) SpanModel(context.Context, string, []string, bool, int) error {
+	return ErrSpanNotSupported
+}
 
 func (h *fakeHost) LlamaBuildID() string { return "test" }

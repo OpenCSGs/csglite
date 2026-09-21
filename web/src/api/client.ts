@@ -3367,6 +3367,27 @@ export interface ClusterSummaryNode {
   loaded_models: string[];
   model_count: number;
   inflight: number;
+  /** Models this node runs across several machines because they fit on none. */
+  spans?: ClusterSpan[];
+  /** Set while this node lends its memory to another node's split model. */
+  span_worker?: boolean;
+}
+
+export interface ClusterSpanMember {
+  uuid: string;
+  name: string;
+  local: boolean;
+  vram_free: number;
+}
+
+export interface ClusterSpan {
+  model: string;
+  members: ClusterSpanMember[];
+  started_at: string;
+  /** Whether the node serving the model holds a share of the weights too. */
+  host_devices: boolean;
+  /** Always false: the weights exist once, spread across the machines. */
+  redundant: boolean;
 }
 
 export interface ClusterSummary {
@@ -3455,6 +3476,10 @@ export interface ClusterNodeStatus {
   model_source: { server_url: string; hf_endpoint?: string; modelscope_endpoint?: string };
   models: ClusterNodeModelStatus[];
   inflight: number;
+  /** Models this node runs across several machines because they fit on none. */
+  spans?: ClusterSpan[];
+  /** Set while this node lends its memory to another node's split model. */
+  span_worker?: boolean;
   uptime_sec: number;
   time: string;
 }

@@ -172,3 +172,32 @@ func TestDirectoryRecoversFromAStuckPollAndProofOfLife(t *testing.T) {
 		t.Fatal("the stuck poll was not abandoned")
 	}
 }
+
+func TestReservedCountFallsBackAsRequestsFinish(t *testing.T) {
+	// The scheduler adds this to a node's queue depth, so it has to mean
+	// "requests in flight now". A running total of everything ever dispatched
+	// would never come down, and on a cluster that has just started it reads
+	// zero for every node, which is how a burst of identical requests ends up
+	// on whichever node the tie-break happens to name.
+	d := NewDirectory()
+	d.Track("n1", nil)
+	if got := d.ReservedCount("n1"); got != 0 {
+		t.Fatalf("a node with nothing in flight reported %d", got)
+	}
+	first := d.Reserve("n1")
+	second := d.Reserve("n1")
+	if got := d.ReservedCount("n1"); got != 2 {
+		t.Fatalf("two requests in flight reported %d", got)
+	}
+	first()
+	if got := d.ReservedCount("n1"); got != 1 {
+		t.Fatalf("after one finished, reported %d", got)
+	}
+	second()
+	if got := d.ReservedCount("n1"); got != 0 {
+		t.Fatalf("after both finished, reported %d", got)
+	}
+	if got := d.ReservedCount("never-heard-of"); got != 0 {
+		t.Fatalf("an unknown node reported %d", got)
+	}
+}

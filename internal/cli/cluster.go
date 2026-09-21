@@ -71,6 +71,7 @@ func newClusterCmd() *cobra.Command {
 		newClusterStateCmd("activate", cluster.NodeStateActive, "Return this node to active duty"),
 		newClusterStateCmd("maintenance", cluster.NodeStateMaintenance, "Take this node out of routing and model sync"),
 		newClusterSpanCmd(),
+		newClusterSpansCmd(),
 		newClusterUnspanCmd(),
 	)
 	return cmd
@@ -247,6 +248,14 @@ func printClusterMembers(members []cluster.NodeView) {
 			state = string(st.State)
 			if !st.Licensed {
 				state += " (unlicensed)"
+			}
+			// A machine holding part of a model split across several is not
+			// available for cold loads, so the state column is where an
+			// operator would look to find out why.
+			if len(st.Spans) > 0 {
+				state += " (splitting a model)"
+			} else if st.SpanWorker {
+				state += " (lending memory)"
 			}
 			if len(st.GPUs) > 0 {
 				gpu = st.GPUs[0].Name
@@ -751,12 +760,17 @@ func urlQueryEscape(s string) string {
 // capacity and gives up both speed and redundancy.
 func newClusterSpanCmd() *cobra.Command {
 	var nodes []string
+	var numCtx int
+	var hostDevices bool
 	cmd := &cobra.Command{
 		Use:   "span <model>",
 		Short: "Run one model across several machines because it does not fit on one",
-		Long: "Splits a model's weights across this machine and others, so a model too\n" +
-			"large for any single box can run at all. It is slower than one machine\n" +
-			"would be, and it has no redundancy: losing any participant unloads it.",
+		Long: "Splits a model's weights across other machines on the network, so a model\n" +
+			"too large for any single box can run at all. It is slower than one machine\n" +
+			"would be, and it has no redundancy: losing any participant unloads it.\n\n" +
+			"This machine reads the weights and drives the others but holds no share of\n" +
+			"them, because a model is normally split for the very reason that it does\n" +
+			"not fit here; --host-devices gives it a share on a machine with room.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := newClusterClient()
@@ -767,6 +781,12 @@ func newClusterSpanCmd() *cobra.Command {
 			body := map[string]any{"model": args[0]}
 			if len(nodes) > 0 {
 				body["nodes"] = nodes
+			}
+			if numCtx > 0 {
+				body["num_ctx"] = numCtx
+			}
+			if hostDevices {
+				body["host_devices"] = true
 			}
 			if err := c.do(http.MethodPost, "/api/cluster/spans", body, &out); err != nil {
 				return err
@@ -784,7 +804,47 @@ func newClusterSpanCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringSliceVar(&nodes, "node", nil, "node UUIDs to split onto (default: every healthy member with memory to spare)")
+	cmd.Flags().IntVar(&numCtx, "num-ctx", 0, "context size; the KV cache is allocated on top of the weights, so a split model usually wants this set")
+	cmd.Flags().BoolVar(&hostDevices, "host-devices", false, "also hold a share of the weights on this machine")
 	return cmd
+}
+
+// newClusterSpansCmd lists what is split, and where.
+func newClusterSpansCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "spans",
+		Short: "List the models this node runs across several machines",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClusterClient()
+			if err != nil {
+				return err
+			}
+			var out struct {
+				Spans []cluster.SpanView `json:"spans"`
+			}
+			if err := c.do(http.MethodGet, "/api/cluster/spans", nil, &out); err != nil {
+				return err
+			}
+			if len(out.Spans) == 0 {
+				fmt.Println("No model is split across machines on this node.")
+				return nil
+			}
+			for _, sp := range out.Spans {
+				names := make([]string, 0, len(sp.Members))
+				for _, mem := range sp.Members {
+					name := mem.Name
+					if mem.Local {
+						name += " (this machine)"
+					}
+					names = append(names, name)
+				}
+				fmt.Printf("%s\n  across: %s\n  since:  %s\n  no redundancy: losing any of these machines unloads it\n",
+					sp.Model, strings.Join(names, ", "), sp.Started.Format(time.RFC3339))
+			}
+			return nil
+		},
+	}
 }
 
 // newClusterUnspanCmd puts a split model back.

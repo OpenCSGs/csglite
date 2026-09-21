@@ -532,6 +532,14 @@ func (a *adminAPI) HandleSpanCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Model string   `json:"model"`
 		Nodes []string `json:"nodes,omitempty"`
+		// HostDevices asks this machine to hold a share of the weights too.
+		// It is off by default: a model is normally split because it does not
+		// fit here, and giving this machine a share is what makes it fail.
+		HostDevices bool `json:"host_devices,omitempty"`
+		// NumCtx caps the context. The KV cache is allocated on top of the
+		// weights, so the default a single machine would use can be what
+		// makes a split model fail even when its weights fit.
+		NumCtx int `json:"num_ctx,omitempty"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -541,7 +549,7 @@ func (a *adminAPI) HandleSpanCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "model is required")
 		return
 	}
-	view, err := a.m.SpanModel(r.Context(), strings.TrimSpace(req.Model), req.Nodes)
+	view, err := a.m.SpanModel(r.Context(), strings.TrimSpace(req.Model), req.Nodes, req.HostDevices, req.NumCtx)
 	if err != nil {
 		if errors.Is(err, ErrSpanNotSupported) {
 			writeCodedError(w, http.StatusNotImplemented, err.Error(), "span_unsupported")

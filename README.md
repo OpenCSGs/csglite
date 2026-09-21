@@ -30,7 +30,8 @@ by another machine on your network, or by a provider.
   secret and they form a pool of compute: requests land on whichever node will
   finish soonest, models are copied between nodes instead of downloaded again,
   and an address that changes on reboot is relearned. Two nodes without a
-  licence, unlimited with one.
+  licence, unlimited with one. With a licence, a model too large for any single
+  machine can also be split across several and run as one.
 
 ### Web UI
 

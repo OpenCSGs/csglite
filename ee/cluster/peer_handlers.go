@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -58,6 +59,7 @@ func (a *peerAPI) peerMux() http.Handler {
 	mux.HandleFunc("GET "+peerPathModelFile, a.requirePeer(a.handlePeerModelFile))
 	mux.HandleFunc("POST "+peerPathRPCWorker, a.requirePeer(a.handlePeerRPCWorker))
 	mux.HandleFunc("POST "+peerPathRPCTunnel, a.requirePeer(a.handlePeerRPCTunnel))
+	mux.HandleFunc("POST "+peerPathRPCWorkerRelease, a.requirePeer(a.handlePeerRPCWorkerRelease))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusNotFound, "not a cluster endpoint", "not_found")
 	})
@@ -479,10 +481,37 @@ func safeRelPath(rel string) bool {
 // model onto it. The worker binds to loopback and is reached only through
 // peerPathRPCTunnel, so answering this does not put anything on the network.
 func (a *peerAPI) handlePeerRPCWorker(w http.ResponseWriter, r *http.Request) {
-	port, err := a.m.startLocalRPCWorker(r.Context())
+	// A node that is draining or in maintenance says so itself. The member
+	// asking has its own view of this node's state, but that view is as old as
+	// the last poll, and lending memory for a model that takes minutes to load
+	// is not something to start on stale information.
+	if settings := a.m.store.Settings(); !settings.AcceptWork || settings.State != NodeStateActive {
+		writeCodedError(w, http.StatusConflict,
+			fmt.Sprintf("%s is %s and is not taking work, so it cannot hold part of a model", a.m.identity.DisplayName(), settings.State),
+			"not_accepting_work")
+		return
+	}
+	peer := r.Header.Get("X-CSGLite-Peer")
+	if other, busy := a.m.rpcWorkerHeldByOther(peer); busy {
+		writeCodedError(w, http.StatusConflict,
+			fmt.Sprintf("%s already holds part of a model split by %s; one machine can hold one split model at a time",
+				a.m.identity.DisplayName(), a.m.memberName(other)),
+			"already_lending")
+		return
+	}
+	port, err := a.m.startLocalRPCWorker(r.Context(), peer)
 	if err != nil {
 		writeCodedError(w, http.StatusNotImplemented, err.Error(), "no_rpc_worker")
 		return
 	}
 	writeJSON(w, http.StatusOK, rpcWorkerReply{Port: port, Build: a.m.opts.Host.LlamaBuildID()})
+}
+
+// handlePeerRPCWorkerRelease records that a member has finished with this
+// node's worker, which stops once nothing is split onto this node any more.
+// The release is what frees the machine's memory promptly; without it the
+// worker would hold its share until the traffic backstop noticed the silence.
+func (a *peerAPI) handlePeerRPCWorkerRelease(w http.ResponseWriter, r *http.Request) {
+	a.m.releaseLocalRPCWorker(r.Header.Get("X-CSGLite-Peer"))
+	writeJSON(w, http.StatusOK, map[string]bool{"released": true})
 }

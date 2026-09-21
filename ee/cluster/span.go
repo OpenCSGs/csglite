@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -43,6 +44,9 @@ type Span struct {
 	Model   string       `json:"model"`
 	Members []SpanMember `json:"members"`
 	Started time.Time    `json:"started_at"`
+	// HostDevices says whether the node serving requests holds a share of the
+	// weights as well as driving the others.
+	HostDevices bool `json:"host_devices"`
 
 	tunnels []*rpcTunnel
 	release []func()
@@ -53,6 +57,9 @@ type SpanView struct {
 	Model   string       `json:"model"`
 	Members []SpanMember `json:"members"`
 	Started time.Time    `json:"started_at"`
+	// HostDevices says whether the node serving requests holds a share of the
+	// weights too, or only drives the machines that do.
+	HostDevices bool `json:"host_devices"`
 	// Redundant is always false and is reported so a client cannot forget:
 	// the weights exist once, spread across these machines, so losing any one
 	// of them loses the model until it is loaded again.
@@ -60,16 +67,42 @@ type SpanView struct {
 }
 
 func (s *Span) view() SpanView {
-	return SpanView{Model: s.Model, Members: append([]SpanMember(nil), s.Members...), Started: s.Started}
+	return SpanView{Model: s.Model, Members: append([]SpanMember(nil), s.Members...), Started: s.Started, HostDevices: s.HostDevices}
 }
 
-// spanState holds the spans this node is serving.
+// spanState holds the spans this node is serving, and the ones being built.
 type spanState struct {
 	mu    sync.Mutex
 	spans map[string]*Span
+	// starting are the models a split is being built for right now. Building
+	// one takes minutes, which is long enough for a second request to arrive
+	// for the same model and start a second set of workers on the same
+	// machines.
+	starting map[string]bool
 }
 
-func newSpanState() *spanState { return &spanState{spans: map[string]*Span{}} }
+func newSpanState() *spanState {
+	return &spanState{spans: map[string]*Span{}, starting: map[string]bool{}}
+}
+
+// begin claims a model for one caller. It reports false when the model is
+// already split or another caller is splitting it.
+func (s *spanState) begin(model string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.spans[model] != nil || s.starting[model] {
+		return false
+	}
+	s.starting[model] = true
+	return true
+}
+
+// done releases the claim begin took, whether the split was built or not.
+func (s *spanState) done(model string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.starting, model)
+}
 
 func (s *spanState) get(model string) (*Span, bool) {
 	s.mu.Lock()
@@ -114,13 +147,14 @@ func (m *Manager) Spans() []SpanView { return m.spans.list() }
 // The model file is read by this node only: the RPC backend sends tensors to
 // the workers rather than expecting them to hold a copy, which is why a span
 // does not require the model to be synchronised first.
-func (m *Manager) SpanModel(ctx context.Context, modelID string, nodeUUIDs []string) (SpanView, error) {
+func (m *Manager) SpanModel(ctx context.Context, modelID string, nodeUUIDs []string, hostDevices bool, numCtx int) (SpanView, error) {
 	if !m.store.InCluster() {
 		return SpanView{}, ErrNotClustered
 	}
-	if _, running := m.spans.get(modelID); running {
-		return SpanView{}, fmt.Errorf("%s is already split across machines; tear it down first", modelID)
+	if !m.spans.begin(modelID) {
+		return SpanView{}, fmt.Errorf("%s is already split across machines, or is being split right now; tear it down first", modelID)
 	}
+	defer m.spans.done(modelID)
 
 	participants, err := m.spanParticipants(ctx, nodeUUIDs)
 	if err != nil {
@@ -130,11 +164,16 @@ func (m *Manager) SpanModel(ctx context.Context, modelID string, nodeUUIDs []str
 		return SpanView{}, errors.New("no other member has memory to spare, so there is nothing to split onto")
 	}
 
-	span := &Span{Model: modelID, Started: time.Now()}
-	// The local machine always takes part: it reads the weights and drives the
-	// others, so it holds a share as well.
-	local := m.localSpanMember(ctx)
-	span.Members = append(span.Members, local)
+	span := &Span{Model: modelID, Started: time.Now(), HostDevices: hostDevices}
+	// This machine always reads the weights and drives the others. Whether it
+	// also holds a share of them is a separate question: a model split because
+	// it does not fit here must not be given one, since llama.cpp would hand
+	// this machine a share by free memory and then put the whole KV cache on
+	// top of it. A 27B loaded that way reported success and then failed every
+	// request with a compute error.
+	if hostDevices {
+		span.Members = append(span.Members, m.localSpanMember(ctx))
+	}
 
 	cleanup := func() {
 		for _, t := range span.tunnels {
@@ -156,6 +195,9 @@ func (m *Manager) SpanModel(ctx context.Context, modelID string, nodeUUIDs []str
 			cleanup()
 			return SpanView{}, fmt.Errorf("%s could not start its RPC worker: %w", mem.Name, err)
 		}
+		// Record the release before anything else can fail, so a span that
+		// breaks half way through still hands back the workers it started.
+		span.release = append(span.release, m.releaseRemoteWorkerFunc(mem, addr))
 		tunnel, err := m.openRPCTunnel(mem, addr)
 		if err != nil {
 			cleanup()
@@ -174,7 +216,7 @@ func (m *Manager) SpanModel(ctx context.Context, modelID string, nodeUUIDs []str
 		span.Members = append(span.Members, p)
 	}
 
-	if err := m.opts.Host.SpanModel(ctx, modelID, endpoints); err != nil {
+	if err := m.opts.Host.SpanModel(ctx, modelID, endpoints, hostDevices, numCtx); err != nil {
 		cleanup()
 		return SpanView{}, fmt.Errorf("loading %s across %d machines: %w", modelID, len(span.Members), err)
 	}
@@ -191,7 +233,7 @@ func (m *Manager) UnspanModel(ctx context.Context, modelID string) error {
 	if !ok {
 		return fmt.Errorf("%s is not split across machines", modelID)
 	}
-	if err := m.opts.Host.SpanModel(ctx, modelID, nil); err != nil {
+	if err := m.opts.Host.SpanModel(ctx, modelID, nil, false, 0); err != nil {
 		m.logf("cluster: unloading the split copy of %s: %v", modelID, err)
 	}
 	for _, t := range span.tunnels {
@@ -325,6 +367,14 @@ func (m *Manager) startRemoteWorker(ctx context.Context, mem Member) (string, er
 		err := m.peerJSON(attempt, mem, addr, "POST", peerPathRPCWorker, struct{}{}, &reply)
 		cancel()
 		if err != nil {
+			// An answer, as opposed to silence, means this address reached the
+			// member and the member said no. Trying its other addresses would
+			// only ask the same machine the same question and bury the reason
+			// it gave under a list of repetitions.
+			var pe *peerError
+			if errors.As(err, &pe) && pe.Status == http.StatusConflict {
+				return "", fmt.Errorf("%s", pe.Body.Error)
+			}
 			problems = append(problems, addr+": "+err.Error())
 			continue
 		}
@@ -333,6 +383,10 @@ func (m *Manager) startRemoteWorker(ctx context.Context, mem Member) (string, er
 			continue
 		}
 		if mine != "" && reply.Build != "" && mine != reply.Build {
+			// The member started its worker before it answered, and this span
+			// will not use it; hand it back rather than leave it held until
+			// the grace period expires.
+			m.releaseRemoteWorkerFunc(mem, addr)()
 			return "", fmt.Errorf("%s runs llama.cpp build %s and this node runs %s; a model can only be split between machines on the same build",
 				mem.Name, reply.Build, mine)
 		}
@@ -354,7 +408,7 @@ func (m *Manager) rpcWorkerPort() int {
 
 // startLocalRPCWorker brings this node's worker up for a member that is
 // splitting a model onto it.
-func (m *Manager) startLocalRPCWorker(ctx context.Context) (int, error) {
+func (m *Manager) startLocalRPCWorker(ctx context.Context, holder string) (int, error) {
 	if m.worker == nil {
 		return 0, ErrSpanNotSupported
 	}
@@ -362,5 +416,165 @@ func (m *Manager) startLocalRPCWorker(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return m.worker.start(m.context(), binary)
+	return m.worker.start(m.context(), binary, holder)
+}
+
+// releaseRemoteWorkerFunc tells a member its worker is no longer needed. It is
+// best effort: a member that has gone away has already stopped its worker with
+// itself, and one that is merely slow to answer will time its worker out.
+func (m *Manager) releaseRemoteWorkerFunc(mem Member, addr string) func() {
+	return func() {
+		ctx, cancel := context.WithTimeout(m.context(), 10*time.Second)
+		defer cancel()
+		if err := m.peerJSON(ctx, mem, addr, "POST", peerPathRPCWorkerRelease, struct{}{}, nil); err != nil {
+			m.logf("cluster: telling %s its RPC worker is free: %v", mem.Name, err)
+		}
+	}
+}
+
+// rpcWorkerHeldByOther reports whether another member already has a model
+// split onto this node.
+func (m *Manager) rpcWorkerHeldByOther(holder string) (string, bool) {
+	if m.worker == nil {
+		return "", false
+	}
+	return m.worker.heldByOther(holder)
+}
+
+// releaseLocalRPCWorker marks one of a member's spans as finished with this
+// node's worker.
+func (m *Manager) releaseLocalRPCWorker(holder string) {
+	if m.worker != nil {
+		m.worker.release(holder)
+	}
+}
+
+// spanWatchInterval is how often spans and idle workers are looked at. A span
+// has no redundancy, so noticing a lost member in under a minute is the
+// difference between one clear log line and a queue of requests timing out.
+const spanWatchInterval = 20 * time.Second
+
+// spanWatchLoop does two jobs that both belong to spanning and both only
+// matter between requests: it stops a worker nobody is using any more, and it
+// tears down a span whose machine has gone.
+//
+// A span cannot survive losing a member: the weights exist once, spread across
+// the machines, so a member that disappears takes its layers with it and every
+// request would block on tensors that will never arrive. Unloading is the
+// honest answer, and it frees this node to load whatever it can hold alone.
+func (m *Manager) spanWatchLoop() {
+	ctx := m.context()
+	ticker := time.NewTicker(spanWatchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if m.worker != nil {
+			for _, holder := range m.worker.releaseGone(m.memberStillPaired) {
+				m.logf("cluster: %s was using this node's RPC worker and has left the cluster; the memory it held is free again", m.memberName(holder))
+			}
+			for _, holder := range m.worker.releaseStale(time.Now()) {
+				m.logf("cluster: nothing has been served for %s on behalf of %s, so this node is no longer holding memory for it",
+					rpcWorkerHoldGrace, m.memberName(holder))
+			}
+		}
+		for _, lost := range m.lostSpans() {
+			m.logf("cluster: %s was split across machines and %s %s; unloading it, as a split model has no redundancy",
+				lost.model, lost.member, lost.why)
+			if err := m.UnspanModel(ctx, lost.model); err != nil {
+				m.logf("cluster: unloading the split copy of %s: %v", lost.model, err)
+			}
+		}
+	}
+}
+
+// lostSpan names a span, the member whose loss ended it, and what happened.
+type lostSpan struct {
+	model  string
+	member string
+	why    string
+}
+
+// lostSpans lists the spans that have lost a machine, and why.
+//
+// Two things end a span. The machine can go: it took its share of the weights
+// with it and no request can be finished again. Or the machine can stay while
+// the worker inside it goes, which llama.cpp's worker does by aborting when a
+// load asks for more memory than the machine has. The second is reported by
+// the member itself, and is only believed once the member has said something
+// newer than the span is old, since a status from before the split naturally
+// says no model is split onto it.
+func (m *Manager) lostSpans() []lostSpan {
+	var out []lostSpan
+	for _, sp := range m.spans.list() {
+		for _, mem := range sp.Members {
+			if mem.Local {
+				continue
+			}
+			rt, ok := m.dir.Get(mem.UUID)
+			if !ok || !rt.Online() {
+				out = append(out, lostSpan{model: sp.Model, member: mem.Name, why: "is no longer reachable"})
+				break
+			}
+			if st := rt.Status; st != nil && !st.SpanWorker && rt.LastSeen.After(sp.Started) {
+				out = append(out, lostSpan{model: sp.Model, member: mem.Name, why: "is no longer holding its share of the weights"})
+				break
+			}
+		}
+	}
+	return out
+}
+
+// memberStillPaired says whether a member is still in this node's member
+// table, which is what decides whether its hold on the RPC worker stands.
+//
+// Health deliberately plays no part. A member is not online to this node until
+// it has been polled, so a node that has just restarted sees every peer as not
+// yet reachable for a few seconds, and holding memory for a machine is not
+// something to give up on a signal that says "not asked yet". A member that is
+// really gone is caught either here, when it leaves or is removed, or by the
+// traffic backstop in releaseStale, which is this node's own evidence rather
+// than an opinion about someone else's health.
+func (m *Manager) memberStillPaired(nodeUUID string) bool {
+	_, ok := m.store.Member(nodeUUID)
+	return ok
+}
+
+// memberName is a member's display name, falling back to its UUID.
+func (m *Manager) memberName(nodeUUID string) string {
+	if mem, ok := m.store.Member(nodeUUID); ok && mem.Name != "" {
+		return mem.Name
+	}
+	return nodeUUID
+}
+
+// trackWorkerConn and untrackWorkerConn bracket a tunnel connection into the
+// local worker, which is how this node knows a split model is still live.
+func (m *Manager) trackWorkerConn() {
+	if m.worker != nil {
+		m.worker.connOpened()
+	}
+}
+
+func (m *Manager) untrackWorkerConn() {
+	if m.worker != nil {
+		m.worker.connClosed()
+	}
+}
+
+// releaseAllSpans tears down every span this node is serving. It runs at
+// shutdown: the members lending their memory have no other way to learn that
+// the model they were holding is gone, short of the silence eventually timing
+// the hold out.
+func (m *Manager) releaseAllSpans() {
+	for _, view := range m.spans.list() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := m.UnspanModel(ctx, view.Model); err != nil {
+			m.logf("cluster: releasing the split copy of %s at shutdown: %v", view.Model, err)
+		}
+		cancel()
+	}
 }

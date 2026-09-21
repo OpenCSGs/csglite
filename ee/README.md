@@ -101,6 +101,105 @@ a key, never on trust alone.
 The design, including the decisions behind the scheduler and the failover
 rules, is in [`docs/guides/lan-cluster-design.md`](../docs/guides/lan-cluster-design.md).
 
+### One model across several machines (`ee/cluster/span.go`)
+
+The cluster above runs one copy of a model per machine and spreads requests
+between them. This is the opposite trade, for the case that has no other
+answer: **a model too large for any single machine**. Its weights are split
+across several, and the machines work on one request together.
+
+It buys capacity and nothing else. Splitting a model that does fit measured
+0.55x of single-machine generation speed on two machines and 0.39x on three, so
+a split is never the faster choice — it is the only choice, for a model that
+would otherwise page from disk at seconds per token. Two 16 GB Macs hold a 27B
+at Q4 that neither can load alone; on one machine the same model answers every
+request with a compute error.
+
+```bash
+# split it across the machines that have room, with a 4k context
+csghub-lite cluster span unsloth/Qwen3.8-27B-GGUF --num-ctx 4096
+csghub-lite cluster spans                  # what is split, and where
+csghub-lite cluster unspan unsloth/Qwen3.8-27B-GGUF
+
+# the same over HTTP
+curl -X POST localhost:11435/api/cluster/spans \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"unsloth/Qwen3.8-27B-GGUF","num_ctx":4096}'
+
+# then ask it anything, through the ordinary API
+curl localhost:11435/v1/chat/completions -d '{"model":"unsloth/Qwen3.8-27B-GGUF", ...}'
+```
+
+**How it works.** Each participating machine runs `ggml-rpc-server`, llama.cpp's
+tensor worker, and the machine serving the request reads the weights and hands
+tensor operations to the others. The workers need no copy of the model: the
+weights travel over the network on the first load and are kept in each worker's
+own cache after that.
+
+**The worker never listens on the network.** Upstream ships it with no
+authentication at all and says plainly never to run it on an open network, so
+it is bound to loopback and every byte between machines travels inside the
+cluster's existing mutual-TLS connection, pinned to each member's certificate.
+Reaching a worker at all requires being a paired member.
+
+**Things that were learned the hard way, and are now enforced.**
+
+- *The serving machine holds no share of the weights by default.* llama.cpp
+  would otherwise give it a share sized by free memory and then put the whole
+  KV cache on top, which is exactly what a machine too small for the model
+  cannot take: the load reports success and every request then fails with a
+  compute error. Pass `"host_devices": true` to opt in on a machine with room.
+- *Context is capped explicitly* with `num_ctx`, because the KV cache is
+  allocated on top of the weights and the single-machine default is enough to
+  sink a split that would otherwise fit.
+- *A new span is asked one question before it is called ready.* A split that
+  loaded is not yet a split that works: when the weights do not fit the devices
+  they were given, llama.cpp reports success and then fails every request with
+  a compute error. Building a span costs minutes, so it answers one token
+  first, and a span that cannot is torn down and reported instead of handed
+  over broken.
+- *Both machines must run the same llama.cpp build.* The RPC protocol has no
+  version negotiation, and llama-server does not fail on a worker it cannot
+  talk to — it logs a line and loads the whole model locally instead. The build
+  is compared before the load, and the connection is proved end to end, so the
+  answer is a refusal rather than a machine thrashing on disk while the API
+  reports success.
+- *A split model is pinned in memory.* Building one means streaming weights
+  between machines; the ordinary idle timer would hand that bill to whoever
+  asked the next question. It is unloaded when the span is torn down.
+- *One machine holds one split model at a time.* A second one would ask its
+  worker for memory the machine does not have, and the worker answers that by
+  aborting, which would take the first model down with it. The machine says so
+  itself when asked, rather than the asker guessing from a status that may be
+  a poll behind.
+- *A machine lending its memory is passed over for cold loads.* The memory its
+  worker holds belongs to no model in its own inventory, and on some machines
+  the GPU accounting does not see it at all, so the scheduler is told directly.
+  It keeps serving every model it has already loaded, and `explain` gives the
+  reason for anything it was skipped for.
+- *A split has no redundancy and says so.* The weights exist once, spread
+  across the machines, so losing one of them loses the model. That is reported
+  as `"redundant": false`, and the span is torn down rather than left for
+  requests to hang on tensors that will never arrive — whether the machine goes
+  away, which took a measured sixty seconds from killing it, or stays while the
+  worker inside it dies, which it reports of itself and which is acted on as
+  soon as it is heard.
+- *Memory is handed back promptly.* The machine that split the model releases
+  each worker when it unloads, at shutdown, and when the model fails to load,
+  and the worker stops the moment no model is split onto it — its tensor cache
+  is on disk, so the next split reloads from there rather than over the network
+  anyway. A worker whose holder is removed from the cluster, or which has
+  served nothing at all for five minutes, releases itself; and one that dies on
+  its own, which llama.cpp's worker does by aborting when a load asks for more
+  memory than the machine has, is noticed and replaced rather than handed out
+  again as a port that no longer answers. A node killed outright cannot stop
+  its own worker, so it notes which process it started and stops the orphan
+  when it comes back up.
+
+**Enterprise only.** Unlike the cluster itself, splitting a model is gated:
+it exists for models a single machine cannot hold, which is not a situation two
+community nodes are in.
+
 ## Measured: what the cluster is worth
 
 Three machines on one 5 GHz network, entry node the M5. Embedding with
@@ -146,7 +245,8 @@ one node to another that had never held it.
 ## Verified: what was exercised on three machines
 
 An M5, an M4 and an M1 Pro on one network, driven from the M5. Fifteen
-scenarios, all passing.
+scenarios for the cluster itself, and thirteen more for splitting one model
+across machines, all passing.
 
 | Scenario | Result |
 | --- | --- |
@@ -173,6 +273,30 @@ served faster by a warm node, so a cold one is passed over until the queue
 makes loading worth paying for. It follows that a node can sit out a long
 run of small requests after a restart, and that pinning one request to it,
 or sending it enough work at once, is what brings it back into rotation.
+
+Splitting one model across machines was exercised on the same three, with
+`unsloth/Qwen3.8-27B-GGUF` (Q4_K_M, 16.5 GB), which no single one of them can
+load:
+
+| Scenario | Result |
+| --- | --- |
+| The same model on one machine | HTTP 500, a compute error: this is not a model a 16 GB machine runs |
+| Split across the two remote machines | loaded; 8 minutes cold, 81 to 84 seconds once the workers' tensor caches were warm |
+| Asking it a question | 200, 64 tokens in 23.9s, 2.68 tok/s |
+| A 7,700-token prompt | 200, and the right answer, in 180s: prompt processing runs at about 47 tok/s across machines |
+| Streaming | tokens arrived in eight chunks, first at 5.5s |
+| Three requests at once | all 200, served one after another, since a split model is given one slot |
+| Asking the serving machine to hold a share it has no room for | refused in 53s, saying the model loaded but could not answer — before the check that catches it, this loaded and then failed every request with a compute error |
+| Where it lives | the serving node lists the span, both participants report lending memory |
+| Left idle past the lending grace period | still loaded, still answers |
+| A machine lending memory | refused a cold load, with the reason in `explain`; embedding requests still spread 32 / 11 / 5 across all three |
+| Splitting the same model twice | refused, saying it is already split |
+| Splitting a model nobody has | refused, naming the model |
+| Targeting a machine that is draining | refused, saying that machine is not taking work |
+| Tearing the span down | both machines stopped lending at once and were usable again |
+| A participating machine killed outright | the span was torn down within 40 to 60 seconds, with the reason logged |
+| That machine coming back | rejoined by itself; the model was split again and answered |
+| The fifteen scenarios above, re-run | unchanged, 15 of 15 |
 
 ## What belongs here
 
@@ -223,6 +347,9 @@ subject rather than to whichever file is open.
 | `engine_node.go` | one remote member seen as an `inference.Engine` |
 | `models.go` | the model inventory across the cluster, and copying one from a peer |
 | `source.go` | the `cluster` and `node:<uuid>` source vocabulary |
+| `span.go` | running one model across several machines: building a span, watching it, and giving the memory back |
+| `rpcworker.go` | this node's `ggml-rpc-server` process: starting it, who holds it, and stopping it |
+| `rpctunnel.go` | carrying that worker's traffic inside the cluster's own mutual-TLS connection |
 | `transport.go`, `peerclient.go`, `peerrpc.go`, `addr.go` | mutual TLS, pooled clients, peer calls, address handling |
 | `protocol.go` | the types that go on the wire between nodes |
 | `api.go`, `api_views.go` | `/api/cluster/*` for operators, on the `adminAPI` receiver |

@@ -57,6 +57,8 @@ func (a *peerAPI) handlePeerRPCTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	defer upstream.Close()
+	a.m.trackWorkerConn()
+	defer a.m.untrackWorkerConn()
 
 	if _, err := buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: " + tunnelHandshake + "\r\nConnection: Upgrade\r\n\r\n"); err != nil {
 		return

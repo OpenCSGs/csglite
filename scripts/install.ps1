@@ -366,6 +366,13 @@ function Install-LlamaServer {
         Copy-Item -Path $_.FullName -Destination (Join-Path $llamaInstallDir $_.Name) -Force
     }
     Copy-Item -Path $server.FullName -Destination (Join-Path $llamaInstallDir "llama-server.exe") -Force
+    # ggml-rpc-server ships in the same archive and lets one model run across
+    # several machines on a LAN. Its wire protocol only matches the
+    # llama-server from the same build, so it is taken from here.
+    $rpc = Get-ChildItem -Path $tmpDir -Recurse -Filter "ggml-rpc-server.exe" | Select-Object -First 1
+    if ($rpc) {
+        Copy-Item -Path $rpc.FullName -Destination (Join-Path $llamaInstallDir "ggml-rpc-server.exe") -Force
+    }
     Ensure-PathContains -dir $llamaInstallDir
     Info "Installed llama-server to $llamaInstallDir"
 }

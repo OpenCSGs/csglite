@@ -41,11 +41,13 @@ type Host interface {
 	// ModelBundle describes a complete local model for a peer to copy, or
 	// returns an error when the model is absent or still downloading.
 	ModelBundle(modelID string) (*ModelBundle, error)
-	// SpanModel loads modelID on this node with part of its weights held by
-	// the given RPC endpoints, which are loopback addresses this package has
-	// already tunnelled to other machines. An empty list unloads the split
-	// copy. A host that cannot do this returns ErrSpanNotSupported.
-	SpanModel(ctx context.Context, modelID string, rpcEndpoints []string) error
+	// SpanModel loads modelID on this node with its weights held by the given
+	// RPC endpoints, which are loopback addresses this package has already
+	// tunnelled to other machines. hostDevices says whether this machine holds
+	// a share too; it is false for a model that does not fit here, which is
+	// the usual reason to split one. An empty list unloads the split copy. A
+	// host that cannot do this returns ErrSpanNotSupported.
+	SpanModel(ctx context.Context, modelID string, rpcEndpoints []string, hostDevices bool, numCtx int) error
 	// RPCWorkerPath is the worker binary this build ships, or an error saying
 	// why a model cannot be split across machines here.
 	RPCWorkerPath() (string, error)
@@ -194,7 +196,7 @@ func New(opts Options) (*Manager, error) {
 		perf:        newPerfStore(filepath.Join(opts.Dir, "perf.json")),
 		peers:       newPeerClientCache(id),
 		spans:       newSpanState(),
-		worker:      newRPCWorker(filepath.Join(opts.Dir, "rpc-cache"), logf),
+		worker:      newRPCWorker(filepath.Join(opts.Dir, "rpc-cache"), filepath.Join(opts.Dir, "rpc-worker.pid"), logf),
 		gossipWake:  make(chan struct{}, 1),
 		discoverer:  opts.Discoverer,
 		observedIPs: map[string]time.Time{},
@@ -202,6 +204,10 @@ func New(opts Options) (*Manager, error) {
 	for _, mem := range store.Members() {
 		m.dir.Track(mem.UUID, m.seedAddressesFor(mem))
 	}
+	// A previous run of this node may have been killed outright while another
+	// machine had a model split onto it, leaving its tensor worker holding
+	// memory for a model nothing remembers.
+	m.worker.stopOrphan()
 	return m, nil
 }
 
@@ -307,6 +313,7 @@ func (m *Manager) Activate() error {
 	go m.pollLoop()
 	go m.gossipLoop()
 	go m.discoveredRefreshLoop()
+	go m.spanWatchLoop()
 	if token := strings.TrimSpace(m.opts.JoinToken); token != "" && !m.store.InCluster() {
 		go m.autoJoin(token)
 	}
@@ -355,6 +362,9 @@ func (m *Manager) deactivate() {
 
 // Stop shuts the manager down for process exit.
 func (m *Manager) Stop() {
+	// A split model is torn down before anything else, so the machines lending
+	// their memory are told rather than left to work it out from the silence.
+	m.releaseAllSpans()
 	m.deactivate()
 	m.mu.Lock()
 	cancel := m.cancel
@@ -364,6 +374,9 @@ func (m *Manager) Stop() {
 		cancel()
 	}
 	m.perf.flush()
+	if m.worker != nil {
+		m.worker.stop()
+	}
 }
 
 // context is the lifetime of the current activation (or the manager when

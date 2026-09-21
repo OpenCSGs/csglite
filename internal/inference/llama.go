@@ -590,9 +590,22 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	// tunnelled. llama-server treats them as extra devices and splits the
 	// weights across all of them by free memory.
 	if RPCEndpointsForModel != nil {
-		if endpoints := RPCEndpointsForModel(modelName); len(endpoints) > 0 {
+		if endpoints, hostDevices := RPCEndpointsForModel(modelName); len(endpoints) > 0 {
 			args = append(args, "--rpc", strings.Join(endpoints, ","))
-			log.Printf("LLAMA: %s is split across this machine and %d more", modelName, len(endpoints))
+			if !hostDevices {
+				// The weights go on the other machines only. A model is split
+				// because it does not fit here, and llama.cpp otherwise gives
+				// this machine a share by free memory and then adds the whole
+				// KV cache on top of it, which is what runs it out of GPU
+				// memory: a 27B loaded that way reported success and then
+				// failed every request with a compute error.
+				devices := make([]string, len(endpoints))
+				for i := range endpoints {
+					devices[i] = fmt.Sprintf("RPC%d", i)
+				}
+				args = append(args, "--device", strings.Join(devices, ","))
+			}
+			log.Printf("LLAMA: %s is split across %d machines, host devices used: %t", modelName, len(endpoints), hostDevices)
 		}
 	}
 
@@ -1280,10 +1293,11 @@ func appendEnvDefault(env []string, key, value string) []string {
 func LlamaBinaryPath() string { return findLlamaBinary() }
 
 // RPCEndpointsForModel, when set, contributes the --rpc endpoints that let one
-// model's weights be split across machines. It is a hook rather than another
+// model's weights be split across machines, and says whether this machine's
+// own devices should hold a share as well. It is a hook rather than another
 // parameter on every loader because only the cluster uses it, and threading it
 // through would grow half a dozen signatures that have nothing to do with it.
-var RPCEndpointsForModel func(modelName string) []string
+var RPCEndpointsForModel func(modelName string) (endpoints []string, hostDevices bool)
 
 // llamaBuildOnce caches the build identifier, which costs a subprocess.
 var (

@@ -20,6 +20,11 @@ func TestNewUninstallCmdExposesAllFlag(t *testing.T) {
 
 func TestRunUninstallPreservesDataByDefault(t *testing.T) {
 	appHome, dataFile, csghubBin, llamaBin, llamaLibs := setupUninstallTestEnv(t)
+	// Stopping the service is stubbed out even though this case is about the
+	// files: the real one asks whatever is listening on the default port to
+	// shut down, and on a developer's machine that is their own running
+	// server, stopped by running the test suite.
+	defer stubStopBackgroundServiceForUninstall(func() error { return nil })()
 
 	if err := runUninstall(true, false); err != nil {
 		t.Fatalf("runUninstall returned error: %v", err)
@@ -76,6 +81,7 @@ func TestRunUninstallDoesNotRemoveFilesWhenStopFails(t *testing.T) {
 
 func TestRunUninstallAllRemovesData(t *testing.T) {
 	appHome, _, csghubBin, llamaBin, llamaLibs := setupUninstallTestEnv(t)
+	defer stubStopBackgroundServiceForUninstall(func() error { return nil })()
 
 	if err := runUninstall(true, true); err != nil {
 		t.Fatalf("runUninstall returned error: %v", err)
