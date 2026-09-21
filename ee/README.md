@@ -10,6 +10,12 @@ the source and modify it for internal research, development and testing.
 Production use needs a valid CSGLite Enterprise Edition licence from OpenCSG
 matching your actual usage, and the licence defines production use broadly
 enough to include a pilot or a proof of concept that carries real business.
+
+The one exception is the community grant at the top of the licence: a feature
+that runs without a licence may be used in production within the limit the
+software enforces for unlicensed users, which for the LAN cluster is two nodes.
+That is what makes the community node cap a real entitlement rather than
+something the licence forbids.
 Redistribution, sublicensing and offering the Software to third parties as a
 hosted service are not permitted. Replacing the logo or the UI appearance, or
 building anything commercial on the Software, requires written notice to

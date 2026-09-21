@@ -401,5 +401,6 @@ Full documentation is available in the [`docs/`](docs/) directory:
 Apache-2.0, with one exception: everything under the `ee/` directory is
 licensed under the [CSGLite Enterprise Edition License](ee/LICENSE). EE code
 may be used freely for development and testing; production use requires a
-valid CSGLite Enterprise license issued by OpenCSG. See
+valid CSGLite Enterprise license issued by OpenCSG, except within the community
+limits the software enforces without one. See
 [`docs/guides/ee-license-design.md`](docs/guides/ee-license-design.md).
