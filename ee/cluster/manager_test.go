@@ -964,3 +964,29 @@ func memberCard(t *testing.T, uuid, name string) nodeCard {
 	t.Helper()
 	return nodeCard{UUID: uuid, Name: name, Fingerprint: "sha256:" + uuid, ClusterPort: 11438, APIPort: 11435}
 }
+
+// An embeddings request generates no tokens. Measuring it by decode speed
+// records nothing, which left the scheduler with a default guess for every
+// node and no way to tell a fast machine from a slow one for any embedding
+// model. The prompt it read is the work it actually did, so that is the rate
+// worth keeping.
+func TestPerfRatesMeasuresARequestThatGeneratesNoTokens(t *testing.T) {
+	start := time.Now()
+	sample := perfSample{ok: true, firstByte: start.Add(time.Second), end: start.Add(2 * time.Second), promptTokens: 400}
+	decode, prompt := perfRates(start, sample)
+	if decode != 0 {
+		t.Fatalf("decode = %v, want 0: nothing was generated", decode)
+	}
+	if prompt < 199 || prompt > 201 {
+		t.Fatalf("prompt = %v, want 400 tokens over 2s", prompt)
+	}
+
+	// Too small to measure, and a request that reported nothing at all, both
+	// stay unrecorded rather than poisoning the average.
+	if _, p := perfRates(start, perfSample{ok: true, firstByte: start, end: start.Add(time.Second), promptTokens: 8}); p != 0 {
+		t.Fatalf("a tiny prompt was recorded: %v", p)
+	}
+	if _, p := perfRates(start, perfSample{ok: true, firstByte: start.Add(time.Second), end: start.Add(2 * time.Second)}); p != 0 {
+		t.Fatalf("a request with no tokens at all was recorded: %v", p)
+	}
+}

@@ -400,7 +400,20 @@ func (m *Manager) recordPerf(nodeUUID, model string, started time.Time, s perfSa
 }
 
 func perfRates(started time.Time, s perfSample) (decodeTPS, promptTPS float64) {
-	if !s.ok || s.firstByte.IsZero() || s.end.IsZero() || s.completionTokens <= 0 {
+	if !s.ok || s.firstByte.IsZero() || s.end.IsZero() {
+		return 0, 0
+	}
+	// An embeddings request generates no tokens, so measuring it by decode
+	// speed records nothing at all: every node stayed on the default guess and
+	// the scheduler could not tell a fast machine from a slow one for any
+	// embedding model. What such a request does show is how quickly a node
+	// reads a prompt, which is the phase that decides the answer, so it is
+	// recorded as prompt throughput instead.
+	if s.completionTokens <= 0 {
+		total := s.end.Sub(started).Seconds()
+		if s.promptTokens >= 32 && total > 0.02 {
+			return 0, float64(s.promptTokens) / total
+		}
 		return 0, 0
 	}
 	total := s.end.Sub(started).Seconds()
