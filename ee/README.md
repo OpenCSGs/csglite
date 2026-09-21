@@ -26,6 +26,10 @@ OpenCSG first, whether or not you hold a licence.
 
 ### LAN compute cluster (`ee/cluster`)
 
+<p align="center">
+  <img src="../docs/images/architecture.svg" alt="CSGLite on one machine and across a LAN cluster" width="100%">
+</p>
+
 Several machines on one network become a single pool of compute. A request
 arriving at any of them is served by whichever will finish it soonest, and the
 API does not change: the same OpenAI, Ollama and Anthropic endpoints answer
