@@ -94,6 +94,27 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 		promptTokens = 512
 	}
 
+	// A node with no sample for this model must not be judged against one that
+	// has been measured, or a single sample would decide everything: the
+	// measured node looks fast, every other node is stuck on a conservative
+	// built-in guess, and all the work goes to the one that happened to be
+	// measured first. The entry node is never measured at all, because work it
+	// keeps for itself is not forwarded, so the bias is systematic rather than
+	// occasional. An unmeasured node is therefore assumed to be as quick as the
+	// quickest that has been measured, and never slower than the built-in
+	// guess: a node measured to be slow is still penalised, but one that has
+	// simply not been measured is not.
+	bestDecode, bestPrompt := 0.0, 0.0
+	for _, c := range cands {
+		if c.Status == nil {
+			continue
+		}
+		if m, ok := c.Status.Model(req.Model); ok && m.Perf != nil {
+			bestDecode = max(bestDecode, m.Perf.DecodeTPS)
+			bestPrompt = max(bestPrompt, m.Perf.PromptTPS)
+		}
+	}
+
 	out := make([]Ranked, 0, len(cands))
 	needsEviction := 0
 	for _, c := range cands {
@@ -133,14 +154,14 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 		}
 		decodeTPS := perf.DecodeTPS
 		if decodeTPS <= 0 {
-			decodeTPS = defaultDecodeTPS(m.Size)
+			decodeTPS = max(defaultDecodeTPS(m.Size), bestDecode)
 			r.Factors = append(r.Factors, fmt.Sprintf("decode speed estimated %.0f tok/s (no samples)", decodeTPS))
 		} else {
 			r.Factors = append(r.Factors, fmt.Sprintf("decode %.1f tok/s measured", decodeTPS))
 		}
 		promptTPS := perf.PromptTPS
 		if promptTPS <= 0 {
-			promptTPS = defaultPromptTPS
+			promptTPS = max(defaultPromptTPS, bestPrompt)
 		}
 		perRequest := float64(promptTokens)/promptTPS + float64(estTokens)/decodeTPS
 

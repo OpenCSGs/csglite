@@ -191,3 +191,39 @@ func TestRetryAfterUntilReadsBothHeaderForms(t *testing.T) {
 		t.Fatalf("unparsable header gave %v, want the default cooldown", got)
 	}
 }
+
+// One sample must not decide everything. Work a node keeps for itself is never
+// forwarded and so never measured, which means the entry node has no samples by
+// construction; judging it against a peer that has been measured would send it
+// nothing. A node with no sample is assumed to be as quick as the quickest
+// measured one, so only a node measured to be slow is actually penalised.
+func TestRankDoesNotPunishANodeMerelyForHavingNoSamples(t *testing.T) {
+	measured := nodeWithModel("measured", ModelStatus{
+		ID: "m", Size: 1 * gb, Loaded: true, Slots: 4,
+		Perf: &ModelPerf{DecodeTPS: 900, PromptTPS: 9000},
+	}, nil)
+	unmeasured := nodeWithModel("unmeasured", ModelStatus{ID: "m", Size: 1 * gb, Loaded: true, Slots: 4}, nil)
+
+	ranked, ex := Rank(RankRequest{Model: "m", PromptTokens: 512, MaxTokens: 128}, []Candidate{measured, unmeasured})
+	if len(ranked) != 2 {
+		t.Fatalf("ranked %d candidates", len(ranked))
+	}
+	a, b := ranked[0].Seconds, ranked[1].Seconds
+	if a <= 0 || b <= 0 {
+		t.Fatalf("estimates %v and %v (%s)", a, b, summarizeExplain(ex))
+	}
+	if b > a*1.5 {
+		t.Fatalf("the unmeasured node was judged %.2fx slower purely for lacking samples (%v vs %v)", b/a, b, a)
+	}
+
+	// A node measured to be genuinely slow is still ranked behind one that has
+	// not been measured, because the assumption is a ceiling, not a free pass.
+	slow := nodeWithModel("slow", ModelStatus{
+		ID: "m", Size: 1 * gb, Loaded: true, Slots: 4,
+		Perf: &ModelPerf{DecodeTPS: 3, PromptTPS: 30},
+	}, nil)
+	ranked, ex = Rank(RankRequest{Model: "m", PromptTokens: 512, MaxTokens: 128}, []Candidate{slow, unmeasured})
+	if ranked[0].Name != "unmeasured" {
+		t.Fatalf("a node measured at 3 tok/s outranked an unmeasured one (%s)", summarizeExplain(ex))
+	}
+}
