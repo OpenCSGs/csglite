@@ -101,10 +101,11 @@ func TestRefreshWithoutFileIsCommunity(t *testing.T) {
 
 func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 	key := licensetest.NewKey(t)
-	// Shipped catalog: nothing gated.
+	// Shipped catalog: only the cluster node cap is gated.
 	m, _ := newManager(t, key, func(o *license.Options) { o.Catalog = license.Catalog() })
-	if len(license.GatedCatalog()) != 0 {
-		t.Fatalf("shipped catalog unexpectedly gates %v; update this test and the docs deliberately", license.GatedCatalog())
+	gated := license.GatedCatalog()
+	if len(gated) != 1 || gated[0].Key != license.QuotaMaxClusterNodes.Key {
+		t.Fatalf("shipped catalog gates %v; only %s is expected. Update this test and the docs deliberately", gated, license.QuotaMaxClusterNodes.Key)
 	}
 	st := m.Refresh()
 	if st.Status != license.StatusNone {
@@ -117,13 +118,25 @@ func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 				t.Errorf("%s must be enabled without a license", def.Key)
 			}
 		case license.FeatureTypeInt:
-			if st.Limit(def) != 0 {
-				t.Errorf("%s must be unlimited without a license", def.Key)
+			want := 0
+			if def.Gated {
+				want = def.CommunityValue
+			}
+			if st.Limit(def) != want {
+				t.Errorf("%s = %d without a license, want %d", def.Key, st.Limit(def), want)
 			}
 		}
 	}
-	if got := len(st.EnabledKeys()); got != 6 {
-		t.Fatalf("EnabledKeys = %d, want all 6 ungated booleans", got)
+	if got := len(st.EnabledKeys()); got != 7 {
+		t.Fatalf("EnabledKeys = %d, want all 7 ungated booleans", got)
+	}
+	// The Community edition may cluster two machines; an Enterprise license
+	// with no explicit tier lifts the cap entirely.
+	if st.Limit(license.QuotaMaxClusterNodes) != 2 {
+		t.Fatalf("community cluster cap = %d, want 2", st.Limit(license.QuotaMaxClusterNodes))
+	}
+	if ent := m.Verify(licensetest.Encode(t, key, licensetest.Payload(testNow))); ent.Status != license.StatusValid || ent.Limit(license.QuotaMaxClusterNodes) != 0 {
+		t.Fatalf("enterprise cluster cap = %d (%s), want unlimited", ent.Limit(license.QuotaMaxClusterNodes), ent.Status)
 	}
 
 	// A license that explicitly disables an ungated feature has no effect on it.
@@ -413,7 +426,7 @@ func TestAPIViewsMirrorState(t *testing.T) {
 		}
 	}
 	full := st.APIState("")
-	if full.GraceUntil == nil || len(full.Features) != 5 {
+	if full.GraceUntil == nil || len(full.Features) != 6 {
 		t.Fatalf("state view %+v", full)
 	}
 	verify.Limits["quota.lite.max_provider_pools"] = 99

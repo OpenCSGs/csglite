@@ -1,12 +1,16 @@
 [![engineering momentum](https://signals.gitdealflow.com/api/badge/opencsgs)](https://signals.gitdealflow.com/startup/opencsgs)
 # CSGLite
 <p align="center">
-  <img src="docs/images/apps.png" alt="AI Apps" width="80%">
+  <img src="docs/images/system.svg" alt="CSGLite system architecture: clients, API, router, where a request runs, and the model store" width="95%">
 </p>
 
 A lightweight tool for running large language models locally, powered by models from the [CSGHub](https://opencsg.com) platform.
 
 Inspired by [Ollama](https://ollama.com), CSGLite provides model download, local inference, interactive chat, and an OpenAI-compatible REST API — all from a single binary.
+
+A request arrives at one of the compatible APIs, the router decides where it
+runs, and the answer comes back in the same shape whether it was served here,
+by another machine on your network, or by a provider.
 
 ## Features
 
@@ -22,6 +26,11 @@ Inspired by [Ollama](https://ollama.com), CSGLite provides model download, local
 - **Cross-platform** — macOS, Linux, Windows
 - **Resume downloads** — interrupted downloads resume where they left off
 - **Pause/Resume** — pause ongoing downloads and resume later
+- **LAN cluster** — install the same binary on several machines with one shared
+  secret and they form a pool of compute: requests land on whichever node will
+  finish soonest, models are copied between nodes instead of downloaded again,
+  and an address that changes on reboot is relearned. Two nodes without a
+  licence, unlimited with one.
 
 ### Web UI
 
@@ -396,5 +405,6 @@ Full documentation is available in the [`docs/`](docs/) directory:
 Apache-2.0, with one exception: everything under the `ee/` directory is
 licensed under the [CSGLite Enterprise Edition License](ee/LICENSE). EE code
 may be used freely for development and testing; production use requires a
-valid CSGLite Enterprise license issued by OpenCSG. See
+valid CSGLite Enterprise license issued by OpenCSG, except within the community
+limits the software enforces without one. See
 [`docs/guides/ee-license-design.md`](docs/guides/ee-license-design.md).

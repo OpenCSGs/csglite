@@ -1,43 +1,190 @@
-The CSGLite Enterprise Edition (EE) License (the "EE License")
+社区版附加授权（Community Edition Additional Grant）
 
-Copyright (c) 2023-present OpenCSG. All rights reserved.
+在下述正式许可证正文之外，OpenCSG 另行授予如下附加许可：对于本软件中无需有效 CSGLite Enterprise Edition 许可证即可运行的功能，您可以在软件自身对未授权用户强制执行的用量限额之内，将其用于生产环境，无需另行取得许可证。该限额由软件内置的许可证校验机制决定，可能随版本调整；截至本文本发布之日，局域网算力集群功能的社区限额为每个集群最多两个节点。
 
-With regard to the CSGLite Software:
+本附加授权不改变正式许可证正文的其余任何条款。超出上述限额的使用，以及复制、发布、分发、再许可、出售、出租、转让、以 SaaS 或托管方式向第三方提供、修改或替换 Logo 与 UI 门面、规避许可证校验机制等行为，仍须遵守正式许可证正文与商业协议的约定。OpenCSG 可在后续版本中修改或撤回本附加授权，但不影响您在既有版本下已经取得的权利。
 
-This software and associated documentation files (the "Software") may only be
-used in production if you (and any entity that you represent) have agreed to,
-and are in compliance with, the commercial terms under which OpenCSG issued
-your license, or another agreement governing the use of the Software as agreed
-between you and OpenCSG, and otherwise hold a valid CSGLite
-Enterprise Edition license issued by OpenCSG for the correct number of user
-seats. Subject to the foregoing sentence, you are free to modify this Software
-and publish patches to the Software. You agree that OpenCSG and/or its
-licensors (as applicable) retain all right, title and interest in and to all
-such modifications and/or patches, and all such modifications and/or patches
-may only be used, copied, modified, displayed, distributed, or otherwise
-exploited with a valid CSGLite Enterprise Edition license for the correct
-number of user seats. Notwithstanding the foregoing, you may copy and modify
-the Software for development and testing purposes, without requiring a
-license. You agree that OpenCSG and/or its licensors (as applicable) retain all
-right, title and interest in and to all such modifications. You are not
-granted any other rights beyond what is expressly stated herein. Subject to the
-foregoing, it is forbidden to copy, merge, publish, distribute, sublicense,
-and/or sell the Software.
+Community Edition Additional Grant
 
-Removing, disabling or circumventing the license verification built into the
-Software does not grant any right to use the Software in production.
+In addition to the license text set out below, OpenCSG grants the following additional permission: for those features of the Software that run without a valid CSGLite Enterprise Edition license, you may use them in a production environment, without obtaining a license, within the usage limits that the Software itself enforces for unlicensed users. Those limits are determined by the license verification mechanism built into the Software and may change between versions; as at the date of this text, the community limit for the LAN compute cluster feature is a maximum of two nodes per cluster.
 
-The full text of this EE License shall be included in all copies or substantial
-portions of the Software.
+This additional grant does not alter any other term of the license text below. Use beyond those limits, and copying, publishing, distributing, sublicensing, selling, renting, transferring, providing the Software to third parties as SaaS or a hosted service, modifying or replacing the logo or UI appearance, and circumventing the license verification mechanism, all remain governed by the license text below and by the Commercial Agreement. OpenCSG may modify or withdraw this additional grant in later versions, without affecting rights you have already obtained under an existing version.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+以下为 OpenCSG 签发的许可证全文。
+The full text of the license as issued by OpenCSG follows.
 
-For all third party components incorporated into the CSGLite Software, those
-components are licensed under the original license provided by the owner of the
-applicable component.
+==============================================================================
+
+CSGLite Enterprise Edition（EE）许可证
+（OpenCSG 商业版软件许可证）
+版权所有 © 2023年至今 上海开放传神智能科技有限公司及其关联公司（以下统称“OpenCSG”）保留全部版权、商标及其他知识产权权利。本软件及其中全部商标、标识、版权作品的知识产权均归属于OpenCSG，未经OpenCSG书面许可，不得擅自使用、篡改其商标、Logo及标识。
+
+一、软件及许可证
+
+本许可证适用于 CSGLite Enterprise Edition（以下简称“CSGLite EE”）软件、源代码、配套文档文件（以下统称“软件”）。软件代码对您可见，您有权阅读、查看软件源代码用于研究用途，但查看代码不等于授予商业化、分发、对外服务等权利。
+
+本软件仅可在满足下述条件时用于生产环境：您已同意并持续遵守 OpenCSG 向您授予许可证时适用的商业条款，或您与 OpenCSG 就软件使用另行达成的有效协议，并持有由 OpenCSG 授予的、与您的实际使用情况相匹配的有效 CSGLite Enterprise Edition 许可证。除此之外，您仅可将软件用于内部研究目的和内部开发测试目的，不得将软件用于生产环境、商业化场景。
+
+二、生产环境用途
+
+“生产环境”或“生产使用”，是指将本软件用于实际业务运营、商业运营或其他非单纯开发、测试、研究目的的环境或用途，包括但不限于：（1）向最终用户或其他第三方提供服务； （2）处理真实业务数据、客户数据或其他实际运营数据； （3）支持或参与实际业务流程、生产经营活动或内部业务运营； （4）用于商业化产品、服务或项目； （5）在预生产、试运行、灰度发布、试点（Pilot）、概念验证（PoC）、演示、评估或其他测试环境中，实际承载、支持或产生真实业务运营、商业服务或生产经营活动。
+
+“用户席位（User Seat）”是指根据商业协议获授权使用软件的用户数量。具体计量方式、授权用户数及超额使用规则以商业协议约定为准。
+
+三、开发、测试、研究用途
+
+“研究用途”：仅限定于个人/机构内部技术研究、技术学习、学术实验，不得对外提供服务、不得用于任何商业收益相关活动。研究用途下仍然需要遵守本许可证全部知识产权、保密、标识约束。
+
+“开发及测试用途”，仅限于软件开发、功能开发、代码调试、兼容性测试、性能测试、安全测试及其他类似技术目的，且不得用于实际业务运营、商业服务或生产经营活动。开发及测试用途下仍然需要遵守本许可证全部知识产权、保密、标识约束。
+
+仅因软件部署于测试环境、预生产环境、试运行环境、PoC 环境或其他非正式环境，并不当然构成开发或测试用途；如该等环境实际用于支持或开展真实业务运营、商业服务或生产经营活动，仍属于生产使用。
+
+四、使用限制
+
+商业化改造告知义务。无论是否取得许可，无论何种用途，若您拟实施以下行为：对软件Logo、品牌标识、UI门面（“换门帘”）进行修改替换，或基于本软件开展任何商业化行为、对外提供产品/服务，均必须事先向OpenCSG履行书面告知义务；未完成书面告知即实施前述行为的，构成对本许可证的重大违约，OpenCSG有权采取包括知识产权维权、终止许可、主张损失赔偿在内的全部合法措施。
+
+修改和补丁。在您持有有效许可证并遵守本许可证及商业协议的前提下，您可以修改软件并向软件发布补丁（Patches）。若您仅取得研究用途许可，仅允许为开发、测试、内部研究目的进行修改、打补丁，但该等复制和修改不得被用于生产使用或其他未经授权的商业用途，修改后的版本不得对外分发、不得用于生产用途及商业化。
+
+权利范围。除本许可证或商业协议明确授予的权利外，您不享有任何其他权利。除非获得 OpenCSG 事先书面授权，您不得：
+
+（1）复制、发布、分发、再许可、出售、出租、出借、转让或以其他方式向任何第三方提供软件； （2）将软件作为 SaaS、托管服务、服务外包、服务局（Service Bureau）或其他类似方式向第三方提供； （3）超出用户席位数、许可数量、许可范围或许可证期限使用软件； （4）删除、遮盖或修改软件中的版权、商标、许可证或其他权利声明、Logo及品牌标识； （5）删除、禁用、规避、绕过或以其他方式破坏软件中的许可证验证、授权控制或技术保护措施； （6）未经书面告知OpenCSG，擅自修改、替换软件Logo、UI门面，或将软件及衍生版本用于商业化、对外服务场景。
+
+移除、禁用或规避软件内置的许可证验证机制本身不会赋予您任何生产使用权，并可能构成对本许可证或商业协议的重大违约。
+
+五、知识产权
+
+在适用法律允许的最大范围内，OpenCSG 及/或其许可方保留对软件本身以及直接基于、源自或构成对软件的修改、衍生或补丁所享有的全部权利、所有权及利益。软件中全部版权、商标、服务标识均归属于OpenCSG，未经OpenCSG书面许可，不得删除、替换、篡改软件中原有的商标、Logo、版权标识。任何此类修改、衍生或补丁仅可在持有与实际授权用户席位及其他许可条件相匹配的有效许可证的情况下使用、复制、修改、展示、分发或以其他方式利用。
+
+为避免疑义，您为自身业务独立开发的、未构成对软件的修改或衍生作品的应用程序、插件、脚本、配置文件、数据及其他独立成果，其知识产权原则上仍归您或相关权利人所有；但其中如包含、复制、修改或基于软件受保护部分形成的内容，仍应遵守本许可证及适用的第三方许可条款。
+
+六、许可证期限及终止
+
+本许可证自您取得有效 CSGLite Enterprise Edition 许可证之日起生效，并持续至商业协议约定的许可证期限届满，或依本条约定提前终止。
+
+出现下列任一情形的，OpenCSG 有权立即终止本许可证：
+
+（1）您违反本许可证或商业协议中的实质性义务，且在收到 OpenCSG 书面通知后三（3）日内未予纠正； （2）您未经授权超出许可范围进行生产使用，包括但不限于超过授权用户数、许可数量、许可范围、许可期限或其他授权条件，且在 OpenCSG 通知后五（5）日内未停止超范围使用并完成相应许可补购； （3）您未经授权复制、分发、转让、出租、出借、再许可、出售软件，或向第三方提供 SaaS、托管服务或其他类似服务； （4）您删除、禁用、绕过、规避或以其他方式破坏软件中的许可证验证、授权控制或技术保护措施； （5）未履行书面告知义务，擅自修改替换Logo/UI门面或开展商业化使用； （6）您存在其他严重违反本许可证或商业协议约定，并对 OpenCSG 的知识产权、许可权益或商业利益造成重大损害的行为； （7）适用法律规定或商业协议约定的其他许可证终止情形。
+
+许可证期限届满或终止后，您应立即：
+
+（1）停止在生产环境中使用软件； （2）停止复制、分发、再许可、出售、出租、出借、托管或以其他方式向第三方提供软件； （3）按照 OpenCSG 的要求，在法律允许的范围内删除或销毁您持有或控制的软件及其复制件，并向 OpenCSG 提供合理的书面确认； （4）立即支付截至许可证终止或届满之日已经产生但尚未支付的全部许可费用及其他应付款项。
+
+许可证的届满或终止不影响终止或届满前已经产生的付款义务、赔偿责任、知识产权及其他依其性质应在许可证终止后继续有效的条款。
+
+七、无保证及责任限制
+
+在适用法律允许的最大范围内，本软件按“现状（AS IS）”及“现有状态（AS AVAILABLE）”提供。OpenCSG 不就软件作出任何明示或默示的保证，包括但不限于适销性、特定用途适用性、不侵权、连续运行、无错误、无中断、信息安全、兼容性或满足特定业务需求的保证。
+
+OpenCSG 不保证软件能够持续、稳定或无错误运行，亦不保证软件能够满足您的特定业务需求、技术指标、业务目标或与特定硬件、操作系统、云服务、数据集、第三方软件或其他系统持续兼容。
+
+对于软件所产生、调用、处理或输出的 AI 模型、算法、自动化处理结果或其他内容，OpenCSG 不保证其准确性、完整性、可靠性、合法性、适用性或满足特定业务目的。您应根据自身业务需求对相关输出进行独立核验，并自行承担因使用相关输出而产生的风险。
+
+在适用法律允许的最大范围内，OpenCSG 及其作者、著作权人、许可方不对因本软件、软件的使用或与软件相关的任何行为所产生的任何间接损失、附带损失、特殊损失、惩罚性损失、利润损失、收入损失、数据损失、商誉损失或业务中断损失承担责任，无论该等责任基于合同、侵权、严格责任或其他法律理论。
+
+八、第三方组件
+
+CSGLite 软件中可能包含由第三方权利人提供的组件、软件或代码。该等第三方组件受其相应权利人提供的原始许可证约束。
+
+对于第三方组件，OpenCSG 不向您授予超出相关第三方许可证所允许范围的权利。除适用法律另有规定外，OpenCSG 不就第三方组件的持续可用性、功能、准确性、安全性、兼容性或适用于特定目的作出保证。您应遵守适用于相关第三方组件的原始许可证条款。
+
+九、许可证文本及优先适用
+
+本许可证的完整文本应包含在软件的所有副本或软件实质性部分的副本中。
+
+如本许可证与您与 OpenCSG 签署的商业协议存在冲突，则：
+
+（1）涉及价格、付款、许可证期限、授权用户数、许可数量、服务范围、续费等商业事项的，以商业协议约定为准； （2）涉及软件的知识产权归属、商标版权保护、代码查看权限、商业化改造告知义务、使用限制、复制、分发、再许可、技术保护措施、第三方组件及其他软件使用规则的，以本许可证约定为准，但商业协议对相关事项作出更严格或更具体约定的，从其约定。
+
+十、语言、适用协议及争议解决
+
+本许可证以中文和英文两种语言签署或发布。两种语言版本如存在任何不一致或歧义，除OpenCSG定义外，以中文版本为准。
+
+因本许可证产生或与本许可证有关的任何争议，如双方已签署商业协议，则按照该商业协议约定的适用法律及争议解决机制处理。如双方未签署商业协议，且适用法律允许，因本许可证产生或与本许可证有关的任何争议，提交上海国际经济贸易仲裁委员会（上海国际仲裁中心）按照其届时有效的仲裁规则进行仲裁。仲裁地为上海，仲裁语言为中文。仲裁裁决为终局的，对双方均具有约束力。
+
+------------------------------------------------------------------------------
+
+CSGLite Enterprise Edition (EE) License
+(OpenCSG Commercial Software License)
+Copyright © 2023-present OpenCSG pte.ltd and its affiliates (collectively, “OpenCSG”). All rights including copyright, trademark and other intellectual property rights are reserved. The intellectual property rights in the Software and in all trademarks, logos and copyright works contained therein belong to OpenCSG. Without OpenCSG’s prior written consent, you shall not use or tamper with its trademarks, logos or identifiers.
+
+1. Software and License
+
+This License applies to the CSGLite Enterprise Edition (“CSGLite EE”) software, source code and associated documentation files (collectively, the “Software”). The Software code is visible to you; you have the right to read and view the Software source code for research purposes, but viewing the code does not grant any right for commercialization, distribution or provision of services to third parties.
+
+The Software may be used in a production environment only if: (i) you have accepted and continue to comply with the commercial terms applicable at the time OpenCSG grants you the License, or a valid agreement separately entered into between you and OpenCSG regarding the use of the Software; and (ii) you hold a valid CSGLite Enterprise Edition license granted by OpenCSG that matches your actual usage. Otherwise, you may use the Software only for internal research purposes and internal development and testing purposes, and shall not use the Software in production environments or commercial scenarios.
+
+2. Production Environment Use
+
+“Production Environment” or “Production Use” means an environment or use in which the Software is used for actual business operations, commercial operations or other purposes that are not purely for development, testing or research, including but not limited to: (1) providing services to end users or other third parties; (2) processing real business data, customer data or other actual operational data; (3) supporting or participating in actual business processes, production and business activities or internal business operations; (4) use in commercialized products, services or projects; (5) in pre-production, trial-run, gray-release, Pilot, PoC, demo, evaluation or other test environments, actually carrying, supporting or generating real business operations, commercial services or production and business activities.
+
+“User Seat” means the number of users authorized to use the Software under the Commercial Agreement. The specific measurement method, authorized number of users and over-use rules shall be as agreed in the Commercial Agreement.
+
+3. Development, Testing and Research Use
+
+“Research Use” means use strictly limited to internal technical research, technical learning and academic experiments by an individual/organization, without providing services to third parties or engaging in any activities related to commercial gains. Research Use remains subject to all intellectual property, confidentiality and identification constraints under this License.
+
+“Development and Testing Use” means use limited to software development, feature development, code debugging, compatibility testing, performance testing, security testing and other similar technical purposes, and shall not be used for actual business operations, commercial services or production and business activities. Development and Testing Use remains subject to all intellectual property, confidentiality and identification constraints under this License.
+
+The mere deployment of the Software in a test environment, pre-production environment, trial-run environment, PoC environment or other non-formal environment shall not by itself constitute Development or Testing Use; if such environments are actually used to support or carry out real business operations, commercial services or production and business activities, such use shall still constitute Production Use.
+
+4. Use Restrictions
+
+Obligation of prior written notification for commercial adaptation. Regardless of whether a license has been obtained and regardless of the purpose of use, if you intend to modify or replace the Software’s logo, brand identifiers or UI appearance (“changing the outer facade”), or to conduct any commercial activities based on the Software or provide products/services to third parties, you must first fulfill the obligation of written notification to OpenCSG; implementing any of the foregoing acts without completing the written notification constitutes a material breach of this License, and OpenCSG has the right to take all lawful measures, including enforcing intellectual property rights, terminating the License and claiming damages.
+
+Modifications and patches. Provided that you hold a valid license and comply with this License and the Commercial Agreement, you may modify the Software and release Patches to the Software. If you have only obtained a research-use license, modification and patching are permitted only for development, testing and internal research purposes; however, such copies and modifications shall not be used for production use or other unauthorized commercial purposes, and the modified versions shall not be distributed externally or used for production purposes or commercialization.
+
+Scope of rights. Except for the rights expressly granted under this License or the Commercial Agreement, you shall not enjoy any other rights. Unless you have obtained OpenCSG’s prior written authorization, you shall not:
+
+(1) copy, publish, distribute, sublicense, sell, rent, lend, transfer or otherwise make the Software available to any third party; (2) provide the Software to third parties as SaaS, hosted service, service outsourcing, Service Bureau or in other similar manners; (3) use the Software beyond the number of user seats, license quantity, license scope or license term; (4) delete, obscure or modify the copyright, trademark, license or other rights notices, logos and brand identifiers in the Software; (5) delete, disable, circumvent, bypass or otherwise undermine the license verification, authorization control or technical protection measures in the Software; (6) without written notification to OpenCSG, modify or replace the Software’s logo or UI appearance without authorization, or use the Software and its derivative versions for commercialization or external service scenarios.
+
+Removing, disabling or circumventing the built-in license verification mechanism of the Software does not by itself confer on you any right to production use, and may constitute a material breach of this License or the Commercial Agreement.
+
+5. Intellectual Property
+
+To the maximum extent permitted by applicable law, OpenCSG and/or its licensors retain all rights, title and interests in the Software itself and in any modifications, derivatives or patches directly based on, derived from or constituting modifications to the Software. All copyrights, trademarks and service marks in the Software belong to OpenCSG. Without OpenCSG’s prior written consent, you shall not delete, replace or alter the original trademarks, logos or copyright notices in the Software. Any such modifications, derivatives or patches may only be used, copied, modified, displayed, distributed or otherwise exploited if you hold a valid license that matches the actually authorized user seats and other license conditions.
+
+For the avoidance of doubt, the intellectual property rights in applications, plug-ins, scripts, configuration files, data and other independent results independently developed by you for your own business that do not constitute modifications to or derivative works of the Software shall, in principle, remain vested in you or the relevant right holders; provided that, to the extent such results contain, copy, modify or are formed based on the protected parts of the Software, they shall still comply with this License and the applicable third-party license terms.
+
+6. Term and Termination
+
+This License shall take effect from the date you obtain a valid CSGLite Enterprise Edition license, and shall continue until the expiry of the license term agreed in the Commercial Agreement, or earlier termination in accordance with this clause.
+
+OpenCSG shall have the right to terminate this License immediately upon the occurrence of any of the following circumstances:
+
+(1) you breach a material obligation under this License or the Commercial Agreement and fail to cure it within three (3) days after receiving OpenCSG’s written notice; (2) you engage in unauthorized production use beyond the licensed scope, including but not limited to exceeding the authorized number of users, license quantity, license scope, license term or other authorization conditions, and fail to stop the out-of-scope use and complete the corresponding license re-purchase within five (5) days after OpenCSG’s notice; (3) you copy, distribute, transfer, rent, lend, sublicense or sell the Software without authorization, or provide SaaS, hosted services or other similar services to third parties; (4) you delete, disable, circumvent, bypass or otherwise undermine the license verification, authorization control or technical protection measures in the Software; (5) you modify or replace the logo/UI appearance or engage in commercial use without authorization, in breach of the written notification obligation; (6) you commit any other act that seriously breaches this License or the Commercial Agreement and causes material harm to OpenCSG’s intellectual property rights, licensing interests or commercial interests; (7) other circumstances for termination of the License provided by applicable law or agreed in the Commercial Agreement.
+
+Upon expiry or termination of the License, you shall immediately:
+
+(1) cease using the Software in production environments; (2) cease copying, distributing, sublicensing, selling, renting, lending, hosting or otherwise making the Software available to third parties; (3) delete or destroy the Software and its copies held or controlled by you within the scope permitted by law and as required by OpenCSG, and provide OpenCSG with reasonable written confirmation; (4) immediately pay all license fees and other amounts payable that have been incurred but not yet paid as of the date of termination or expiry of the License.
+
+The expiry or termination of the License shall not affect the payment obligations, liability for damages, intellectual property rights that have already arisen before such termination or expiry, or any other clauses that by their nature shall remain effective after the termination of the License.
+
+7. No Warranty and Limitation of Liability
+
+To the maximum extent permitted by applicable law, the Software is provided “AS IS” and “AS AVAILABLE”. OpenCSG makes no express or implied warranties with respect to the Software, including but not limited to warranties of merchantability, fitness for a particular purpose, non-infringement, continuous operation, error-free operation, uninterrupted operation, information security, compatibility or fitness for specific business needs.
+
+OpenCSG does not warrant that the Software will operate continuously, stably or without errors, nor does it warrant that the Software will satisfy your specific business needs, technical indicators or business objectives, or remain continuously compatible with specific hardware, operating systems, cloud services, datasets, third-party software or other systems.
+
+With respect to AI models, algorithms, automated processing results or other content generated, invoked, processed or output by the Software, OpenCSG does not warrant their accuracy, completeness, reliability, legality, fitness for use or fitness for specific business purposes. You shall independently verify the relevant outputs based on your own business needs, and bear all risks arising from the use of such outputs.
+
+To the maximum extent permitted by applicable law, OpenCSG and its authors, copyright holders and licensors shall not be liable for any indirect, incidental, special or punitive damages, loss of profits, loss of revenue, loss of data, loss of goodwill or business interruption arising from the Software, the use of the Software or any conduct related to the Software, regardless of whether such liability is based on contract, tort, strict liability or other legal theories.
+
+8. Third-Party Components
+
+The CSGLite Software may contain components, software or code provided by third-party right holders. Such third-party components are governed by the original licenses provided by their respective right holders.
+
+With respect to third-party components, OpenCSG does not grant you rights beyond the scope permitted by the applicable third-party licenses. Except as otherwise provided by applicable law, OpenCSG makes no warranties with respect to the continued availability, functionality, accuracy, security, compatibility or fitness for a particular purpose of third-party components. You shall comply with the original license terms applicable to the relevant third-party components.
+
+9. License Text and Precedence
+
+The full text of this License shall be included in all copies of the Software or copies of substantial portions of the Software.
+
+In the event of any conflict between this License and the Commercial Agreement executed between you and OpenCSG:
+
+(1) commercial matters including price, payment, license term, number of authorized user seats, license quantity, scope of services, renewal and other commercial matters shall be governed by the Commercial Agreement; (2) matters involving the ownership of intellectual property rights in the Software, trademark and copyright protection, source-code viewing rights, the notification obligation for commercial adaptation, use restrictions, copying, distribution, sublicensing, technical protection measures, third-party components and other rules on the use of the Software shall be governed by this License; provided that, if the Commercial Agreement contains stricter or more specific provisions on the relevant matters, such provisions shall prevail.
+
+10. Language, Governing Agreement and Dispute Resolution
+
+This License is executed or published in both Chinese and English. In the event of any inconsistency or ambiguity between the two language versions, except for the definition of OpenCSG, the Chinese version shall prevail.
+
+Any dispute arising out of or in connection with this License shall be handled in accordance with the applicable law and dispute resolution mechanism agreed in the Commercial Agreement if both parties have executed a Commercial Agreement. If no Commercial Agreement has been executed between the parties and applicable law so permits, any dispute arising out of or in connection with this License shall be submitted to the Shanghai International Economic and Trade Arbitration Commission (Shanghai International Arbitration Center) for arbitration in accordance with its arbitration rules in effect at the time. The seat of arbitration shall be Shanghai, and the language of arbitration shall be Chinese. The arbitral award shall be final and binding on both parties.

@@ -34,6 +34,21 @@ CSGLite 提供 Ollama 兼容的 REST API，通过 `csghub-lite serve` 启动。
 | `GET` | `/api/ps` | 列出运行中的模型 | [详情](models.md#ps) |
 | `POST` | `/api/stop` | 停止运行中的模型 | [详情](models.md#stop) |
 
+### 局域网算力集群
+
+| 方法 | 路径 | 说明 | 文档 |
+|------|------|------|------|
+| `GET` | `/api/cluster` | 本节点、集群与成员实时状态 | [OpenAPI](../../openapi/local-api.json)、[`cluster` 命令](../cli/cluster.md) |
+| `GET` | `/api/cluster/summary` | Dashboard 用的每台机器摘要（所有版本可用） | 同上 |
+| `POST` / `DELETE` | `/api/cluster` | 创建 / 离开集群 | 同上 |
+| `POST` | `/api/cluster/join`、`/api/cluster/invite` | 用令牌加入、用准入码邀请 | 同上 |
+| `GET` | `/api/cluster/models`、`/api/cluster/explain` | 模型分布、调度解释 | 同上 |
+| `POST` | `/api/cluster/models/sync` | 让成员从各自模型源下载模型 | 同上 |
+
+推理接口不变：`/v1/*`、`/api/chat` 的 `source` 可以填 `cluster` 或
+`node:<uuid>`；本机没有的模型会自动交给持有它的成员执行，响应头
+`X-CSGLite-Node` / `X-CSGLite-Node-Name` 给出执行节点。
+
 ## 流式响应
 
 默认情况下，`/api/chat` 和 `/api/generate` 使用 SSE（Server-Sent Events）流式返回。每个事件格式为：

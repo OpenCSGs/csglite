@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" width="1200" height="620" role="img" aria-labelledby="title desc">
+  <title id="title">CSGLite system architecture</title>
+  <desc id="desc">Clients reach one binary over OpenAI, Ollama and Anthropic compatible APIs. A router decides where each request runs: local engines, the LAN cluster, or a provider or the cloud. Models come from CSGHub, ModelScope or HuggingFace and are kept on disk.</desc>
+
+  <style>
+    .t   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .h1  { font-size: 26px; font-weight: 600; fill: #1f2328; }
+    .lbl { font-size: 16px; font-weight: 600; fill: #1f2328; }
+    .sub { font-size: 13.5px; fill: #59636e; }
+    .dim { font-size: 13px; fill: #8c959f; }
+    .mono{ font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; fill: #59636e; }
+  </style>
+
+  <rect width="1200" height="620" fill="#ffffff"/>
+  <text x="60" y="52" class="t h1">CSGLite</text>
+  <text x="178" y="52" class="t dim">one binary</text>
+
+  <!-- clients -->
+  <rect x="60" y="80" width="1080" height="62" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="84" y="110" class="t lbl">Clients</text>
+  <text x="84" y="132" class="t sub">terminal · web UI · coding agents · anything that speaks the OpenAI API</text>
+
+  <path d="M600 142 L600 176" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- api -->
+  <rect x="60" y="176" width="1080" height="62" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="84" y="206" class="t lbl">API</text>
+  <text x="84" y="228" class="t sub">chat · embeddings · speech · images · management, behind an API-key and same-origin guard</text>
+
+  <path d="M600 238 L600 272" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- router -->
+  <rect x="60" y="272" width="1080" height="62" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="84" y="302" class="t lbl">Router</text>
+  <text x="84" y="324" class="t mono">source:  local · cloud · provider:&lt;id&gt; · pool:&lt;id&gt; · cluster · node:&lt;uuid&gt;</text>
+
+  <path d="M195 334 L195 372" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <path d="M465 334 L465 372" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <path d="M735 334 L735 372" stroke="#7c3aed" stroke-width="1.5" fill="none" marker-end="url(#p)"/>
+  <path d="M1005 334 L1005 372" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- where it runs -->
+  <rect x="60" y="372" width="252" height="96" rx="10" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="84" y="404" class="t lbl">llama.cpp</text>
+  <text x="84" y="428" class="t sub">chat and embeddings</text>
+  <text x="84" y="448" class="t dim">on this machine</text>
+
+  <rect x="336" y="372" width="252" height="96" rx="10" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="360" y="404" class="t lbl">Python runtimes</text>
+  <text x="360" y="428" class="t sub">speech and images</text>
+  <text x="360" y="448" class="t dim">on this machine</text>
+
+  <rect x="612" y="372" width="252" height="96" rx="10" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="636" y="404" class="t lbl">LAN cluster</text>
+  <text x="636" y="428" class="t sub">other machines here</text>
+  <text x="636" y="448" class="t mono" fill="#7c3aed">ee/ · 2 nodes free</text>
+
+  <rect x="888" y="372" width="252" height="96" rx="10" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="912" y="404" class="t lbl">Cloud</text>
+  <text x="912" y="428" class="t sub">providers, pools, CSGHub</text>
+  <text x="912" y="448" class="t dim">off this network</text>
+
+  <path d="M195 468 L195 504" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- models -->
+  <rect x="60" y="504" width="1080" height="62" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="84" y="534" class="t lbl">Models</text>
+  <text x="84" y="556" class="t sub">CSGHub, ModelScope or HuggingFace, converted once, kept in <tspan class="mono">~/.csghub-lite</tspan></text>
+
+  <text x="60" y="598" class="t dim">Apache-2.0 throughout, except the purple box.</text>
+
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8c959f"/>
+    </marker>
+    <marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+</svg>

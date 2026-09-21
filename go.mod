@@ -4,9 +4,11 @@ go 1.24.2
 
 require (
 	github.com/charmbracelet/x/xpty v0.1.3
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/opencsgs/llama-cpp-assets v0.5.0
 	github.com/opencsgs/semantic-router v0.4.0
+	github.com/pion/mdns/v2 v2.2.0
 	github.com/pion/opus v0.1.1-0.20260914225119-00c5c6e17c7e
 	github.com/pion/webrtc/v4 v4.2.20
 	github.com/spf13/cobra v1.10.2
@@ -24,7 +26,6 @@ require (
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
@@ -33,7 +34,6 @@ require (
 	github.com/pion/ice/v4 v4.4.2 // indirect
 	github.com/pion/interceptor v0.1.48 // indirect
 	github.com/pion/logging v0.2.4 // indirect
-	github.com/pion/mdns/v2 v2.2.0 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/rtcp v1.2.17 // indirect
 	github.com/pion/rtp v1.10.5 // indirect

@@ -7,7 +7,9 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -75,6 +77,12 @@ func (s *Server) withProviderRouteSource(next http.HandlerFunc) http.HandlerFunc
 				return
 			}
 		}
+		if cluster.IsClusterSource(source) {
+			if err := s.checkClusterRouteSource(source); err != nil {
+				writeError(w, inference.HTTPStatusCode(err), inference.HTTPErrorMessage(err))
+				return
+			}
+		}
 		ctx := context.WithValue(r.Context(), providerRouteSourceContextKey{}, source)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
@@ -105,12 +113,20 @@ func providerRouteSource(providerID string) (string, error) {
 		return "cloud", nil
 	case "":
 		return "", fmt.Errorf("provider ID is required")
+	case cluster.SourceCluster:
+		return cluster.SourceCluster, nil
 	default:
 		if _, ok := getThirdPartyProvider(providerID); ok {
 			return providerSource(providerID), nil
 		}
 		if _, ok := providerPoolByID(providerID); ok {
 			return poolSource(providerID), nil
+		}
+		// A node route keeps the same "node:<uuid>" spelling the request
+		// body uses, so an app pinned to one machine is written the same way
+		// wherever the pin appears.
+		if uuid := cluster.NodeUUIDFromSource(providerID); uuid != "" {
+			return cluster.SourceNodePrefix + uuid, nil
 		}
 		return "", fmt.Errorf("provider or provider pool not found")
 	}
@@ -163,6 +179,12 @@ func providerRouteIDForSource(source string) (string, error) {
 				return "", fmt.Errorf("provider %q not found", providerID)
 			}
 			return providerID, nil
+		}
+		// The cluster and a pinned node are routable sources like any other.
+		// Leaving them out here is what stopped an AI app from being bound to
+		// the cluster: every app integration scopes its base URL through this.
+		if cluster.IsClusterSource(source) {
+			return source, nil
 		}
 		return "", fmt.Errorf("unsupported model source %q", source)
 	}

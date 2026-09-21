@@ -95,7 +95,8 @@ func (s *Server) apiAuthMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !requiresRemoteAPIAuth(r) || isLoopbackRequest(r) {
+		secret := isClusterSecretPath(r.URL.Path) && !isLoopbackRequest(r)
+		if !secret && (!requiresRemoteAPIAuth(r) || isLoopbackRequest(r)) {
 			next.ServeHTTP(w, s.requestWithIdentifiedAPIKey(r))
 			return
 		}
@@ -106,6 +107,14 @@ func (s *Server) apiAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if !state.AuthEnabled {
+			// Reading the join token or the admission code is the whole of the
+			// admission check, so it is never answered to the network on trust
+			// alone. With authentication off there is no key to present, so
+			// the caller is told where it can be read instead.
+			if secret {
+				writeError(w, http.StatusForbidden, "the cluster join token and admission code are readable on this machine only; enable API key authentication to read them over the network")
+				return
+			}
 			next.ServeHTTP(w, s.requestWithIdentifiedAPIKey(r))
 			return
 		}
@@ -159,6 +168,13 @@ func requiresRemoteAPIAuth(r *http.Request) bool {
 	}
 	path := providerRouteLegacyPath(r.URL.Path)
 	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && isReadOnlyArtifactPath(path) {
+		return true
+	}
+	// Administering the cluster from another machine is an operator action:
+	// it admits and removes nodes, moves where work runs, and reads the token
+	// that lets a machine join. It was reachable from anywhere on the network
+	// with no key at all because only the inference paths were listed here.
+	if isClusterManagementPath(path) {
 		return true
 	}
 	switch path {

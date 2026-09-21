@@ -91,7 +91,16 @@ func (s *Server) listAvailableModelsForProvider(ctx context.Context, provider st
 		if err != nil {
 			return nil, err
 		}
+		clusterModels, presence := s.clusterModelInfos(ctx)
 		for _, item := range localModels {
+			if nodes := presence[strings.TrimSpace(item.Model)]; len(nodes) > 0 {
+				item.Nodes = nodes
+			}
+			appendUnique(item)
+		}
+		// Models that only peers hold are served through the cluster router
+		// and listed so callers can request them from this node.
+		for _, item := range clusterModels {
 			appendUnique(item)
 		}
 	}

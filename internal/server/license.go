@@ -53,6 +53,33 @@ func isLicenseManagementPath(path string) bool {
 	return path == "/api/license" || strings.HasPrefix(path, "/api/license/")
 }
 
+// isClusterManagementPath reports whether a path administers the cluster:
+// forming or leaving one, admitting or removing a node, or changing how work
+// is placed. None of it belongs to a page from another origin.
+func isClusterManagementPath(path string) bool {
+	return path == "/api/cluster" || strings.HasPrefix(path, "/api/cluster/")
+}
+
+// isClusterSecretPath reports whether a path hands out the credential that
+// lets a machine join this cluster. The join token and the admission code are
+// the whole of the admission check, so reading one is equivalent to being
+// admitted.
+func isClusterSecretPath(path string) bool {
+	switch path {
+	case "/api/cluster/token", "/api/cluster/token/rotate", "/api/cluster/code":
+		return true
+	}
+	return false
+}
+
+// isSensitiveLocalPath reports whether a path must never be readable by a page
+// the user happens to have open. Those pages reach the local API through the
+// browser, which is why the wildcard CORS header is withheld here and the
+// origin is checked.
+func isSensitiveLocalPath(path string) bool {
+	return isLicenseManagementPath(path) || isClusterManagementPath(path)
+}
+
 // requestIsCrossOrigin reports whether a browser sent this request from
 // another origin. Non-browser callers (the CLI, curl) send no Origin at all.
 func requestIsCrossOrigin(r *http.Request) bool {
@@ -67,14 +94,21 @@ func requestIsCrossOrigin(r *http.Request) bool {
 	return !strings.EqualFold(parsed.Host, r.Host)
 }
 
-// licenseOriginGuard refuses license routes to pages served from another
-// origin, so a site the user happens to visit cannot read the customer name
-// and license ID out of the local API or delete the installed license.
-func licenseOriginGuard(next http.Handler) http.Handler {
+// sensitiveOriginGuard refuses the license and cluster routes to pages served
+// from another origin, so a site the user happens to visit cannot read the
+// customer name and license ID out of the local API, delete the installed
+// license, or read the token that admits a machine to the cluster.
+func sensitiveOriginGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isLicenseManagementPath(r.URL.Path) && requestIsCrossOrigin(r) {
-			writeError(w, http.StatusForbidden, "license endpoints are not available to cross-origin callers")
-			return
+		if requestIsCrossOrigin(r) {
+			switch {
+			case isLicenseManagementPath(r.URL.Path):
+				writeError(w, http.StatusForbidden, "license endpoints are not available to cross-origin callers")
+				return
+			case isClusterManagementPath(r.URL.Path):
+				writeError(w, http.StatusForbidden, "cluster endpoints are not available to cross-origin callers")
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/pkg/api"
 )
@@ -246,5 +247,44 @@ func TestProviderNamesAreUniqueCaseInsensitively(t *testing.T) {
 	}
 	if providerNameExists(providers, "DeepSeek", "one") {
 		t.Fatal("provider update should exclude its own stable ID")
+	}
+}
+
+// An AI app can be pinned to a provider, a pool, the local node or the cloud.
+// The cluster and a single node are routable sources too, and leaving them out
+// of the route vocabulary is what made every app integration reject them:
+// providerScopedBaseURL backs all of them.
+func TestProviderScopedBaseURLAcceptsClusterSources(t *testing.T) {
+	const uuid = "8a27c5f0-1c2b-4a77-9f1e-0c3b8d2f4a61"
+	for _, tc := range []struct{ source, want string }{
+		{cluster.SourceCluster, "http://localhost:11435/providers/cluster"},
+		{cluster.SourceNodePrefix + uuid, "http://localhost:11435/providers/node:" + uuid},
+	} {
+		got, err := providerScopedBaseURL("http://localhost:11435/", tc.source)
+		if err != nil {
+			t.Fatalf("providerScopedBaseURL(%q): %v", tc.source, err)
+		}
+		if got != tc.want {
+			t.Fatalf("providerScopedBaseURL(%q) = %q, want %q", tc.source, got, tc.want)
+		}
+	}
+}
+
+// The scoped URL has to round-trip: whatever providerScopedBaseURL puts in the
+// path, the route middleware must turn back into the same source.
+func TestClusterProviderRouteRoundTrips(t *testing.T) {
+	const uuid = "8a27c5f0-1c2b-4a77-9f1e-0c3b8d2f4a61"
+	for _, source := range []string{cluster.SourceCluster, cluster.SourceNodePrefix + uuid} {
+		id, err := providerRouteIDForSource(source)
+		if err != nil {
+			t.Fatalf("providerRouteIDForSource(%q): %v", source, err)
+		}
+		back, err := providerRouteSource(id)
+		if err != nil {
+			t.Fatalf("providerRouteSource(%q): %v", id, err)
+		}
+		if back != source {
+			t.Fatalf("round trip of %q gave %q", source, back)
+		}
 	}
 }

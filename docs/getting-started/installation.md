@@ -37,6 +37,7 @@ curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh | CSGHUB_LITE_VERSION=
 | `CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER` | 设为 `0` 可跳过自动安装/升级 `llama-server`。 |
 | `CSGHUB_LITE_AUTO_INSTALL_CUDA_LIBS` | Linux NVIDIA 环境安装 CUDA 版 `llama-server` 后，若缺少 `libcudart` / `libcublas`，默认通过 NVIDIA 官方 APT 源安装 `cuda-libraries-*`；设为 `0` 可关闭。 |
 | `CSGHUB_LITE_AUTO_INSTALL_PATCHELF` | Linux 上设为 `0` 可禁止自动 `apt/dnf/yum install patchelf`（用于为 `llama-server` 设置 `$ORIGIN`，使同目录 `.so` 可被直接加载）。 |
+| `CSGHUB_LITE_CLUSTER_SECRET` | 局域网算力集群的共享密钥（至少 4 位，建议 12 位以上）。用同一密钥安装的多台机器会自动发现并组成一个集群，无需任何手工配对；脚本把它写入 `config.json`。可选 `CSGHUB_LITE_CLUSTER_NAME` 指定集群显示名。详见 [`cluster` 命令](../cli/cluster.md)。 |
 | `CSGHUB_LITE_LLAMA_ROCM_VERSION` | Linux 上可显式指定优先尝试的 ROCm 资产版本（例如 `7.2`）。未设置时，安装脚本会尝试从本机 ROCm 环境自动识别版本，再回退到发布页中可用的其他 ROCm/Vulkan/CPU 包。 |
 
 说明：若远程 llama.cpp 与本地 **build 号一致**，脚本会跳过重新下载；此前若因缺少 `libmtmd.so.0` 等导致 `llama-server --version` 失败，会被误判为需要升级——新版本已用 `LD_LIBRARY_PATH` 检测版本，并从压缩包 **递归** 安装所有 `.so`。

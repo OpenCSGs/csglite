@@ -5,6 +5,7 @@ import type { RunningModel, ModelInfo, SystemInfo } from "../api/client";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { t, locale } from "../i18n";
 import { formatLoadStep } from "../utils/loadSteps";
+import { fmtGB } from "../cluster";
 
 const runningModels = signal<RunningModel[]>([]);
 const allModels = signal<ModelInfo[]>([]);
@@ -284,8 +285,4 @@ function LogLine({ line }: { line: string }) {
   else if (line.includes("ERROR:")) color = "text-red-400";
   else if (line.includes("REQUEST:")) color = "text-blue-400";
   return <div class={color}>{line}</div>;
-}
-
-function fmtGB(bytes: number): string {
-  return (bytes / (1024 * 1024 * 1024)).toFixed(1);
 }
