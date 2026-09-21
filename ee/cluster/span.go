@@ -162,6 +162,13 @@ func (m *Manager) SpanModel(ctx context.Context, modelID string, nodeUUIDs []str
 			return SpanView{}, err
 		}
 		span.tunnels = append(span.tunnels, tunnel)
+		// Prove the path end to end before llama-server depends on it. A
+		// tunnel that cannot reach the worker would otherwise surface as a
+		// line in a log and a model quietly loaded on one machine.
+		if err := probeTunnel(tunnel.Endpoint()); err != nil {
+			cleanup()
+			return SpanView{}, fmt.Errorf("the connection to %s does not reach its RPC worker: %w", mem.Name, err)
+		}
 		p.Endpoint = tunnel.Endpoint()
 		endpoints = append(endpoints, p.Endpoint)
 		span.Members = append(span.Members, p)
@@ -271,33 +278,70 @@ func (m *Manager) spanParticipants(ctx context.Context, nodeUUIDs []string) ([]S
 	return out, nil
 }
 
+// rpcWorkerDialBudget bounds one attempt at one address, so a stale address
+// costs seconds rather than a minute before the next is tried.
+// The worker initialises its GPU backend before it listens, which on a busy
+// machine takes several seconds, so the budget is generous. A member that is
+// reachable answers on the first address tried, and the dead addresses a
+// moved node leaves behind are only reached when that one has already failed.
+const rpcWorkerDialBudget = 45 * time.Second
+
+// rpcWorkerReply is what a member answers when asked to bring its worker up.
+type rpcWorkerReply struct {
+	Port int `json:"port"`
+	// Build is the member's llama.cpp build. It must equal this node's, or the
+	// two cannot exchange tensors at all.
+	Build string `json:"build"`
+}
+
 // startRemoteWorker asks a member to bring its RPC worker up and returns the
 // cluster address to tunnel to. The worker itself stays on that machine's
 // loopback; only this address, already protected by mutual TLS, is used.
+//
+// The build is checked here rather than left to fail later, because
+// llama-server does not fail on a worker it cannot talk to: it logs a line and
+// loads the whole model locally instead. For a model that does not fit, that
+// is the difference between a clear refusal and a machine thrashing on disk
+// while the API reports success.
 func (m *Manager) startRemoteWorker(ctx context.Context, mem Member) (string, error) {
 	addrs := m.dir.Candidates(mem.UUID)
 	if len(addrs) == 0 {
 		return "", errors.New("no known address")
 	}
-	var lastErr error
-	for _, addr := range addrs[:min(2, len(addrs))] {
-		var reply struct {
-			Port int `json:"port"`
-		}
-		attempt, cancel := context.WithTimeout(ctx, 60*time.Second)
+	mine := m.opts.Host.LlamaBuildID()
+	// Every address is reported, not only the last one tried. A member that
+	// has changed network keeps its old addresses, so the final error is
+	// usually a timeout on a dead one while the real reason, which the member
+	// itself answered with, came from an address that did work.
+	var problems []string
+	// Every known address is tried, not the first one or two: a member keeps
+	// the addresses it has ever been reached on, and after it moves networks
+	// the stale ones are still in the list. Polling copes by trying them all,
+	// and so must this, or a node that has changed address since it joined
+	// cannot take part in a split.
+	for _, addr := range addrs {
+		var reply rpcWorkerReply
+		attempt, cancel := context.WithTimeout(ctx, rpcWorkerDialBudget)
 		err := m.peerJSON(attempt, mem, addr, "POST", peerPathRPCWorker, struct{}{}, &reply)
 		cancel()
 		if err != nil {
-			lastErr = err
+			problems = append(problems, addr+": "+err.Error())
 			continue
 		}
 		if reply.Port <= 0 {
-			lastErr = errors.New("the member reported no worker port")
+			problems = append(problems, addr+": the member reported no worker port")
 			continue
+		}
+		if mine != "" && reply.Build != "" && mine != reply.Build {
+			return "", fmt.Errorf("%s runs llama.cpp build %s and this node runs %s; a model can only be split between machines on the same build",
+				mem.Name, reply.Build, mine)
 		}
 		return addr, nil
 	}
-	return "", lastErr
+	if len(problems) == 0 {
+		return "", errors.New("no known address")
+	}
+	return "", errors.New(joinComma(problems))
 }
 
 // rpcWorkerPort reports the local worker's port, starting nothing.

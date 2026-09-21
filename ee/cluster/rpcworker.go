@@ -8,10 +8,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,8 +75,6 @@ func RPCWorkerBinaryPath(llamaServerPath string) (string, error) {
 	return candidate, nil
 }
 
-var rpcPortPattern = regexp.MustCompile(`127\.0\.0\.1:(\d+)`)
-
 // start launches the worker if it is not already running and returns the
 // loopback port it listens on. The port is ephemeral and read back from the
 // worker's own output rather than chosen here, so two nodes on one machine
@@ -95,14 +93,27 @@ func (w *rpcWorker) start(ctx context.Context, binary string) (int, error) {
 			return 0, fmt.Errorf("creating the RPC tensor cache directory: %w", err)
 		}
 	}
-	args := []string{"-H", "127.0.0.1", "-p", "0"}
+	// The worker will not take port 0 and pick its own, so a free one is
+	// found here and handed to it. The gap between closing the probe listener
+	// and the worker binding is small, and a failure to bind is reported
+	// rather than retried silently.
+	port, err := freeLoopbackPort()
+	if err != nil {
+		return 0, err
+	}
+	args := []string{"-H", "127.0.0.1", "-p", strconv.Itoa(port)}
 	if w.cacheDir != "" {
 		// Without a cache every load pushes the whole shard over the network
 		// again: a 19 GB model means about 13 GB to two workers, which is
 		// minutes on a wireless link. With it, only the first load pays.
-		args = append(args, "-c", w.cacheDir)
+		// The flag switches the cache on and takes no value; where it lives is
+		// set through the environment.
+		args = append(args, "-c")
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
+	if w.cacheDir != "" {
+		cmd.Env = append(os.Environ(), "LLAMA_CACHE="+w.cacheDir)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return 0, err
@@ -112,39 +123,75 @@ func (w *rpcWorker) start(ctx context.Context, binary string) (int, error) {
 		return 0, fmt.Errorf("starting %s: %w", rpcWorkerBinary, err)
 	}
 
-	portCh := make(chan int, 1)
+	// Keep the worker's own output in the node log: when a split fails, what
+	// it said is usually the whole explanation.
+	var tail lastLines
 	go func() {
 		scanner := bufio.NewScanner(stdout)
-		reported := false
 		for scanner.Scan() {
 			line := scanner.Text()
-			if !reported {
-				if m := rpcPortPattern.FindStringSubmatch(line); len(m) == 2 {
-					if p, err := strconv.Atoi(m[1]); err == nil && p > 0 {
-						reported = true
-						portCh <- p
-					}
-				}
-			}
+			tail.add(line)
 			w.logf("cluster: rpc worker: %s", line)
 		}
 	}()
 
-	select {
-	case port := <-portCh:
-		w.cmd = cmd
-		w.port = port
-		w.lastUsed = time.Now()
-		w.users++
-		w.logf("cluster: RPC worker listening on 127.0.0.1:%d, reachable only through the cluster channel", port)
-		return port, nil
-	case <-time.After(rpcWorkerStartTimeout):
-		_ = cmd.Process.Kill()
-		return 0, fmt.Errorf("%s did not report a port within %s", rpcWorkerBinary, rpcWorkerStartTimeout)
-	case <-ctx.Done():
-		_ = cmd.Process.Kill()
-		return 0, ctx.Err()
+	deadline := time.Now().Add(rpcWorkerStartTimeout)
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			_ = cmd.Process.Kill()
+			return 0, ctx.Err()
+		}
+		if conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second); err == nil {
+			_ = conn.Close()
+			w.cmd = cmd
+			w.port = port
+			w.lastUsed = time.Now()
+			w.users++
+			w.logf("cluster: RPC worker listening on 127.0.0.1:%d, reachable only through the cluster channel", port)
+			return port, nil
+		}
+		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
+	_ = cmd.Process.Kill()
+	return 0, fmt.Errorf("%s did not start listening on 127.0.0.1:%d within %s: %s",
+		rpcWorkerBinary, port, rpcWorkerStartTimeout, tail.String())
+}
+
+// freeLoopbackPort asks the kernel for a port nothing is using.
+func freeLoopbackPort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("finding a free port for the RPC worker: %w", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port, nil
+}
+
+// lastLines keeps the tail of a process's output so a failure can quote it.
+type lastLines struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *lastLines) add(s string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, s)
+	if len(l.lines) > 5 {
+		l.lines = l.lines[len(l.lines)-5:]
+	}
+}
+
+func (l *lastLines) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.lines) == 0 {
+		return "it said nothing"
+	}
+	return strings.Join(l.lines, "; ")
 }
 
 // release marks one user of the worker as finished. The process stays up: a

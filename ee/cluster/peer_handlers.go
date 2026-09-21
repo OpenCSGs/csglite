@@ -484,5 +484,5 @@ func (a *peerAPI) handlePeerRPCWorker(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusNotImplemented, err.Error(), "no_rpc_worker")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"port": port})
+	writeJSON(w, http.StatusOK, rpcWorkerReply{Port: port, Build: a.m.opts.Host.LlamaBuildID()})
 }

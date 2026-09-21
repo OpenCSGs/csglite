@@ -97,3 +97,55 @@ func TestRPCWorkerBinaryPathRefusesWhatItCannotVerify(t *testing.T) {
 		t.Fatal("a missing worker was accepted")
 	}
 }
+
+// A worker that is not there must be caught before llama-server is told about
+// it: llama-server does not fail on an endpoint it cannot reach, it logs a
+// line and loads the whole model locally, which for a model that does not fit
+// on one machine means thrashing rather than a clear refusal.
+func TestProbeTunnelTellsALiveEndpointFromADeadOne(t *testing.T) {
+	live, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	go func() {
+		for {
+			c, err := live.Accept()
+			if err != nil {
+				return
+			}
+			// A real worker says nothing until it is spoken to.
+			_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+		}
+	}()
+	if err := probeTunnel(live.Addr().String()); err != nil {
+		t.Fatalf("a listening endpoint was reported dead: %v", err)
+	}
+
+	dead, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := dead.Addr().String()
+	_ = dead.Close()
+	if err := probeTunnel(addr); err == nil {
+		t.Fatal("a closed endpoint was reported live")
+	}
+
+	// A far side that accepts and hangs up at once is the shape of a worker
+	// whose process died between being started and being used.
+	hangup, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hangup.Close()
+	go func() {
+		c, err := hangup.Accept()
+		if err == nil {
+			_ = c.Close()
+		}
+	}()
+	if err := probeTunnel(hangup.Addr().String()); err == nil {
+		t.Fatal("an endpoint that hung up immediately was reported live")
+	}
+}

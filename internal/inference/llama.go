@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1283,3 +1284,33 @@ func LlamaBinaryPath() string { return findLlamaBinary() }
 // parameter on every loader because only the cluster uses it, and threading it
 // through would grow half a dozen signatures that have nothing to do with it.
 var RPCEndpointsForModel func(modelName string) []string
+
+// llamaBuildOnce caches the build identifier, which costs a subprocess.
+var (
+	llamaBuildOnce sync.Once
+	llamaBuildID   string
+)
+
+var llamaBuildPattern = regexp.MustCompile(`build (\d+)`)
+
+// LlamaBuildID reports the llama.cpp build this machine runs, as the number
+// llama-server prints for itself. Two machines can only share one model's
+// weights when they run the same build: the RPC protocol carries no version
+// negotiation, and a mismatched pair fails to connect, after which
+// llama-server quietly loads the whole model locally instead of saying so.
+func LlamaBuildID() string {
+	llamaBuildOnce.Do(func() {
+		binary := findLlamaBinary()
+		if binary == "" {
+			return
+		}
+		out, err := exec.Command(binary, "--version").CombinedOutput()
+		if err != nil && len(out) == 0 {
+			return
+		}
+		if m := llamaBuildPattern.FindSubmatch(out); len(m) == 2 {
+			llamaBuildID = string(m[1])
+		}
+	})
+	return llamaBuildID
+}

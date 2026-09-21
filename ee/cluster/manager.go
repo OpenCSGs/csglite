@@ -49,6 +49,11 @@ type Host interface {
 	// RPCWorkerPath is the worker binary this build ships, or an error saying
 	// why a model cannot be split across machines here.
 	RPCWorkerPath() (string, error)
+	// LlamaBuildID identifies the llama.cpp build this machine runs. Two
+	// machines can only share one model's weights when it matches: the RPC
+	// protocol carries no version negotiation, and a mismatched pair fails to
+	// connect and then loads the whole model locally without saying so.
+	LlamaBuildID() string
 	// PullSpec turns a cluster model id into the repository and artifact
 	// source a pull job needs: registry-prefixed ids such as
 	// "modelscope/Qwen/Qwen3.5-2B" split into ("Qwen/Qwen3.5-2B", "modelscope").

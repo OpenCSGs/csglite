@@ -649,3 +649,7 @@ func (s *Server) closeLoadedEngines(modelID string) {
 		}
 	}
 }
+
+// LlamaBuildID identifies the llama.cpp build this machine runs, so two nodes
+// can refuse to split a model between mismatched versions.
+func (h *clusterHost) LlamaBuildID() string { return inference.LlamaBuildID() }

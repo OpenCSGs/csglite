@@ -997,3 +997,5 @@ func TestPerfRatesMeasuresARequestThatGeneratesNoTokens(t *testing.T) {
 func (h *fakeHost) RPCWorkerPath() (string, error) { return "", ErrSpanNotSupported }
 
 func (h *fakeHost) SpanModel(context.Context, string, []string) error { return ErrSpanNotSupported }
+
+func (h *fakeHost) LlamaBuildID() string { return "test" }

@@ -6,6 +6,7 @@ package cluster
 import (
 	"bufio"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -214,4 +215,30 @@ func (c *prefixedConn) Read(p []byte) (int, error) {
 		return n, nil
 	}
 	return c.Conn.Read(p)
+}
+
+// probeTunnel checks that a tunnel endpoint reaches a live worker. Opening the
+// connection is enough: the member dials its own worker before handing the
+// stream over, so a refusal here means the worker is not there.
+func probeTunnel(endpoint string) error {
+	conn, err := net.DialTimeout("tcp", endpoint, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return err
+	}
+	// A live worker says nothing until spoken to, so a read that times out is
+	// the healthy answer; end of file means the far side hung up.
+	var one [1]byte
+	_, err = conn.Read(one[:])
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return nil
+	}
+	if err == io.EOF {
+		return errors.New("the worker closed the connection immediately")
+	}
+	return nil
 }
