@@ -143,6 +143,37 @@ machine halves the queue a request waits behind.
 Copying a model between nodes measured 1.2 GB in 44 seconds, 27.6 MB/s, from
 one node to another that had never held it.
 
+## Verified: what was exercised on three machines
+
+An M5, an M4 and an M1 Pro on one network, driven from the M5. Fifteen
+scenarios, all passing.
+
+| Scenario | Result |
+| --- | --- |
+| Three warm nodes share a balanced load | 8 / 7 / 9 of 24 |
+| A peer under its own load is given less | the loaded node took 4 of 24 |
+| The entry node under load hands work out | the entry node kept 5 of 24 |
+| `local_first` keeps a model this node has | 8 of 8 stayed local |
+| A model only some nodes hold | never placed on the node without it |
+| One conversation | 8 of 8 on the same node |
+| `drain` | took nothing new, the other two carried on |
+| `maintenance` | excluded from routing |
+| A node killed outright | skipped, no failed request |
+| A request pinned to the dead node | 503 naming the model, not a hang |
+| The node restarted | rejoined by itself and took work again |
+| A model nobody holds | 503, not a hang |
+| `explain` | gave a verdict and a reason for every candidate |
+| 90 seconds of sustained load | 1224 requests, no errors, all nodes healthy |
+| A cold node | skipped for short work, used once the load justifies loading |
+
+Two things worth knowing from that last row, because they are behaviour
+rather than bugs. A node that has just joined or just restarted holds no
+loaded model, and loading one costs a couple of seconds: short requests are
+served faster by a warm node, so a cold one is passed over until the queue
+makes loading worth paying for. It follows that a node can sit out a long
+run of small requests after a restart, and that pinning one request to it,
+or sending it enough work at once, is what brings it back into rotation.
+
 ## What belongs here
 
 - Implementation code for features whose catalog entry in
