@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 880" width="1440" height="880" role="img" aria-labelledby="title desc">
+  <title id="title">CSGLite system architecture</title>
+  <desc id="desc">One binary serving clients over OpenAI, Ollama and Anthropic compatible APIs. Requests pass through the guard and the router, which decides whether they run on local engines, on another node of the LAN cluster, on a third-party provider, on a pool, or in the CSGHub cloud. Models come from CSGHub, ModelScope or HuggingFace, are converted when needed, and are stored on disk. Enterprise code lives in a separate directory behind a licence check.</desc>
+
+  <style>
+    .t   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .h1  { font-size: 25px; font-weight: 600; fill: #1f2328; }
+    .band{ font-size: 12px; font-weight: 600; fill: #6e7781; letter-spacing: .06em; }
+    .lbl { font-size: 13.5px; font-weight: 600; fill: #1f2328; }
+    .txt { font-size: 12px; fill: #424a53; }
+    .dim { font-size: 12px; fill: #6e7781; }
+    .cap { font-size: 12px; fill: #6e7781; font-style: italic; }
+    .mono{ font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; fill: #6e7781; }
+  </style>
+
+  <rect width="1440" height="880" fill="#ffffff"/>
+  <text x="40" y="46" class="t h1">CSGLite</text>
+  <text x="148" y="46" class="t dim">one binary: the API, the engines, the model store and the web UI</text>
+
+  <!-- ─────────────── clients ─────────────── -->
+  <text x="40" y="84" class="t band">CLIENTS</text>
+  <rect x="40" y="94" width="1360" height="62" rx="9" fill="#f6f8fa" stroke="#d0d7de"/>
+  <rect x="58" y="108" width="252" height="34" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="72" y="130" class="t txt">terminal · <tspan class="mono">csghub-lite run</tspan></text>
+  <rect x="322" y="108" width="252" height="34" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="336" y="130" class="t txt">web UI, served by the binary</text>
+  <rect x="586" y="108" width="380" height="34" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="600" y="130" class="t txt">coding agents · Claude Code, Codex, OpenCode, Pi</text>
+  <rect x="978" y="108" width="404" height="34" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="992" y="130" class="t txt">any client that speaks the OpenAI API</text>
+
+  <path d="M720 156 L720 182" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- ─────────────── surface ─────────────── -->
+  <text x="40" y="200" class="t band">HTTP SURFACE</text>
+  <rect x="40" y="210" width="1360" height="96" rx="9" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+  <rect x="58" y="226" width="430" height="64" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="74" y="247" class="t lbl">Compatible APIs</text>
+  <text x="74" y="266" class="t mono">/v1/chat/completions · /v1/embeddings</text>
+  <text x="74" y="282" class="t mono">/v1/messages · /v1/audio/* · /api/chat</text>
+
+  <rect x="500" y="226" width="430" height="64" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="516" y="247" class="t lbl">Management</text>
+  <text x="516" y="266" class="t mono">/api/models · /api/pull/jobs · /api/apps</text>
+  <text x="516" y="282" class="t mono">/api/cluster · /api/license · /api/settings</text>
+
+  <rect x="942" y="226" width="440" height="64" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="958" y="247" class="t lbl">Guard</text>
+  <text x="958" y="266" class="t txt">API keys for callers off this machine, same-origin</text>
+  <text x="958" y="282" class="t txt">on the sensitive routes, request tracing throughout</text>
+
+  <path d="M720 306 L720 332" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- ─────────────── router ─────────────── -->
+  <text x="40" y="350" class="t band">ROUTER</text>
+  <rect x="40" y="360" width="1360" height="86" rx="9" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="58" y="386" class="t lbl">Where does this request run?</text>
+  <text x="330" y="386" class="t txt">the request may say, or say nothing and be placed</text>
+  <text x="58" y="410" class="t mono">source:  local  ·  cloud  ·  provider:&lt;id&gt;  ·  pool:&lt;id&gt;  ·  cluster  ·  node:&lt;uuid&gt;</text>
+  <text x="58" y="432" class="t txt">One order of precedence, shared by chat, embeddings and speech; a failed local load falls back to a member that holds the model.</text>
+
+  <path d="M240 446 L240 486" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <path d="M628 446 L628 486" stroke="#7c3aed" stroke-width="1.5" fill="none" marker-end="url(#p)"/>
+  <path d="M1016 446 L1016 486" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- ─────────────── execution ─────────────── -->
+  <text x="40" y="474" class="t band">WHERE IT RUNS</text>
+
+  <rect x="40" y="486" width="400" height="188" rx="9" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="58" y="512" class="t lbl">This machine</text>
+  <rect x="58" y="524" width="364" height="60" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="74" y="545" class="t lbl">llama.cpp</text>
+  <text x="74" y="564" class="t txt">chat and embeddings, one process per</text>
+  <text x="74" y="578" class="t txt">model and mode, kept warm</text>
+  <rect x="58" y="594" width="364" height="60" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="74" y="615" class="t lbl">Python runtimes</text>
+  <text x="74" y="634" class="t txt">speech recognition, speech synthesis,</text>
+  <text x="74" y="648" class="t txt">image generation, each its own venv</text>
+
+  <rect x="460" y="486" width="336" height="188" rx="9" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5"/>
+  <rect x="460" y="486" width="336" height="30" rx="9" fill="#7c3aed"/>
+  <rect x="460" y="506" width="336" height="10" fill="#7c3aed"/>
+  <text x="476" y="507" class="t lbl" fill="#ffffff">LAN cluster</text>
+  <text x="700" y="507" class="t mono" fill="#ffffff">ee/</text>
+  <text x="476" y="542" class="t txt">other machines on the same network,</text>
+  <text x="476" y="560" class="t txt">found over mDNS, trusted by pinned</text>
+  <text x="476" y="578" class="t txt">certificate, reached over mutual TLS</text>
+  <text x="476" y="604" class="t txt">the one that will finish soonest takes</text>
+  <text x="476" y="622" class="t txt">the request; models are copied between</text>
+  <text x="476" y="640" class="t txt">nodes instead of downloaded again</text>
+  <text x="476" y="662" class="t mono">2 nodes free · more with a licence</text>
+
+  <rect x="816" y="486" width="584" height="188" rx="9" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="834" y="512" class="t lbl">Somewhere else</text>
+  <rect x="834" y="524" width="270" height="60" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="850" y="545" class="t lbl">Third-party providers</text>
+  <text x="850" y="564" class="t txt">OpenAI, DeepSeek, Kimi, GLM,</text>
+  <text x="850" y="578" class="t txt">Qianfan and any compatible API</text>
+  <rect x="1116" y="524" width="266" height="60" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="1132" y="545" class="t lbl">Provider pools</text>
+  <text x="1132" y="564" class="t txt">several providers behind one</text>
+  <text x="1132" y="578" class="t txt">name, with failover</text>
+  <rect x="834" y="594" width="548" height="60" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="850" y="615" class="t lbl">CSGHub cloud</text>
+  <text x="850" y="634" class="t txt">hosted models, and the fallback when a model is not here and no</text>
+  <text x="850" y="648" class="t txt">member of the cluster holds it either</text>
+
+  <path d="M420 674 L420 714" stroke="#8c959f" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- ─────────────── models & state ─────────────── -->
+  <text x="40" y="702" class="t band">MODELS AND STATE ON DISK</text>
+  <rect x="40" y="714" width="1360" height="128" rx="9" fill="#f6f8fa" stroke="#d0d7de"/>
+
+  <rect x="58" y="730" width="330" height="96" rx="7" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="74" y="751" class="t lbl">Where models come from</text>
+  <text x="74" y="770" class="t txt">CSGHub, including a private one</text>
+  <text x="74" y="788" class="t txt">on your own network, plus</text>
+  <text x="74" y="806" class="t txt">ModelScope and HuggingFace</text>
+
+  <rect x="400" y="730" width="330" height="96" rx="7" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="416" y="751" class="t lbl">Getting them here</text>
+  <text x="416" y="770" class="t txt">resumable pull jobs, and</text>
+  <text x="416" y="788" class="t txt">SafeTensors converted to GGUF</text>
+  <text x="416" y="806" class="t txt">once, on first use</text>
+
+  <rect x="742" y="730" width="330" height="96" rx="7" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="758" y="751" class="t lbl">Kept on disk</text>
+  <text x="758" y="770" class="t txt">models and datasets, settings,</text>
+  <text x="758" y="788" class="t txt">conversations, API keys</text>
+  <text x="758" y="806" class="t mono">~/.csghub-lite</text>
+
+  <rect x="1084" y="730" width="298" height="96" rx="7" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="1100" y="751" class="t lbl">Observability</text>
+  <text x="1100" y="770" class="t txt">every request traced, with</text>
+  <text x="1100" y="788" class="t txt">tokens, latency and which</text>
+  <text x="1100" y="806" class="t txt">backend answered</text>
+
+  <text x="40" y="866" class="t cap">Apache-2.0 throughout, except the purple box: enterprise code lives in ee/ under its own licence, free for two cluster nodes.</text>
+
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8c959f"/>
+    </marker>
+    <marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+</svg>

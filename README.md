@@ -1,12 +1,21 @@
 [![engineering momentum](https://signals.gitdealflow.com/api/badge/opencsgs)](https://signals.gitdealflow.com/startup/opencsgs)
 # CSGLite
 <p align="center">
-  <img src="docs/images/architecture.svg" alt="CSGLite on one machine and across a LAN cluster" width="95%">
+  <img src="docs/images/system.svg" alt="CSGLite system architecture: clients, HTTP surface, router, where requests run, and the model store" width="95%">
 </p>
 
 A lightweight tool for running large language models locally, powered by models from the [CSGHub](https://opencsg.com) platform.
 
 Inspired by [Ollama](https://ollama.com), CSGLite provides model download, local inference, interactive chat, and an OpenAI-compatible REST API — all from a single binary.
+
+A request arrives at one of the compatible APIs, the router decides where it
+runs, and the answer comes back in the same shape whether it was served here,
+by another machine on your network, or by a provider. The deployment side of
+that, one machine against several, is below.
+
+<p align="center">
+  <img src="docs/images/architecture.svg" alt="CSGLite on one machine and across a LAN cluster" width="95%">
+</p>
 
 ## Features
 
