@@ -108,12 +108,39 @@ between them. This is the opposite trade, for the case that has no other
 answer: **a model too large for any single machine**. Its weights are split
 across several, and the machines work on one request together.
 
-It buys capacity and nothing else. Splitting a model that does fit measured
-0.55x of single-machine generation speed on two machines and 0.39x on three, so
-a split is never the faster choice — it is the only choice, for a model that
-would otherwise page from disk at seconds per token. Two 16 GB Macs hold a 27B
-at Q4 that neither can load alone; on one machine the same model answers every
-request with a compute error.
+**It buys capacity and nothing else, and it cannot be made to buy speed.** Two
+16 GB Macs hold a 27B at Q4 that neither can load alone; on one machine the
+same model answers every request with a compute error. What it costs, measured
+on the machines described below:
+
+| | tok/s | ms per token |
+| --- | ---: | ---: |
+| A 2B served natively on one machine | 26.1 | 38 |
+| The same 2B on the same machine, driven over RPC | 6.5 | 154 |
+| A 27B across one remote machine | 2.1 | 476 |
+| A 27B across two remote machines | 1.9 – 2.7 | 370 – 526 |
+
+Read the first two rows together: the same model on the same machine is four
+times slower once it is driven over RPC, with nothing split at all. **The cost
+is the transport, not the splitting** — a round trip per token on a network
+whose round-trip time measured 23.5 ms, plus the logits (a 150k vocabulary, so
+about 600 KB) coming back each time. Rows three and four say the same thing
+from the other side: adding a second machine changed almost nothing.
+
+That also sets a ceiling no amount of tuning moves. The layers run in sequence,
+so machine B cannot start until machine A is done and the weight reads add up
+rather than overlap: **a split model can approach the speed of one machine that
+could hold it, and never beat it.** Beating it would take tensor parallelism,
+an all-reduce per layer, which is what NVLink and InfiniBand exist for and what
+a LAN cannot do. A faster link (Thunderbolt between two Macs, or 10 GbE with a
+switch) removes the transport cost and is worth doing; it does not remove the
+ceiling.
+
+So before splitting a model, the cheaper answers are usually the right ones: a
+smaller quantisation, a mixture-of-experts model of similar quality that
+activates a fraction of its weights per token, one machine with more memory, or
+routing that model to a provider. Splitting is for when none of those apply —
+this model, this hardware, on this network, at single-digit tokens per second.
 
 ```bash
 # split it across the machines that have room, with a 4k context
@@ -282,7 +309,8 @@ load:
 | --- | --- |
 | The same model on one machine | HTTP 500, a compute error: this is not a model a 16 GB machine runs |
 | Split across the two remote machines | loaded; 8 minutes cold, 81 to 84 seconds once the workers' tensor caches were warm |
-| Asking it a question | 200, 64 tokens in 23.9s, 2.68 tok/s |
+| Asking it a question | 200, 64 tokens in 23.9s, 2.68 tok/s; 1.9 – 2.7 tok/s across runs |
+| The same 27B on one remote machine instead of two | 2.09 and 2.16 tok/s — within noise of the split, which is how the cost was traced to the transport |
 | A 7,700-token prompt | 200, and the right answer, in 180s: prompt processing runs at about 47 tok/s across machines |
 | Streaming | tokens arrived in eight chunks, first at 5.5s |
 | Three requests at once | all 200, served one after another, since a split model is given one slot |
