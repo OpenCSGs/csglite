@@ -447,6 +447,8 @@ export interface ImageRuntimeStatus {
   missing_packages?: string[];
   install_command?: string[];
   error?: string;
+  diffusers_version?: string;
+  diffusers_latest_version?: string;
 }
 
 export type ASRRuntimeStatus = ImageRuntimeStatus;
@@ -1433,7 +1435,9 @@ export async function openExternalURL(url: string): Promise<boolean> {
 }
 
 export async function getImageRuntimeStatus(): Promise<ImageRuntimeStatus> {
-  return fetchJSON<ImageRuntimeStatus>("/api/image-runtime");
+  return fetchJSON<ImageRuntimeStatus>("/api/image-runtime", {
+    cache: "no-store",
+  });
 }
 
 export async function installImageRuntime(options?: { upgrade_packages?: boolean }): Promise<ImageRuntimeStatus> {
