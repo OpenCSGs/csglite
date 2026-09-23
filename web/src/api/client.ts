@@ -310,6 +310,7 @@ export interface SystemInfo {
 
 export interface AppSettings {
   version: string;
+  llama_server_version?: string;
   storage_dir: string;
   model_dir: string;
   dataset_dir: string;

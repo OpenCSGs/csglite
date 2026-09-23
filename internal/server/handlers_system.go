@@ -322,6 +322,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 	}
 	return api.SettingsResponse{
 		Version:                  version,
+		LlamaServerVersion:       inference.LlamaServerVersion(),
 		StorageDir:               cfg.StorageDir(),
 		ModelDir:                 cfg.ModelDir,
 		DatasetDir:               cfg.DatasetDir,

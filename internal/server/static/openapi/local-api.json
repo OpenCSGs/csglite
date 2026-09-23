@@ -9129,6 +9129,10 @@
           "version": {
             "type": "string"
           },
+          "llama_server_version": {
+            "type": "string",
+            "description": "Version reported by the installed llama-server binary, empty when llama-server is not installed."
+          },
           "storage_dir": {
             "type": "string"
           },

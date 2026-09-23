@@ -46,6 +46,7 @@ const storageLocation = signal("");
 const modelDirectory = signal("");
 const datasetDirectory = signal("");
 const appVersion = signal("");
+const llamaServerVersion = signal("");
 const desktopMode = signal(false);
 const localAPIURL = signal("");
 const autostartEnabled = signal(false);
@@ -266,6 +267,7 @@ function applySettings(data: AppSettings) {
   modelScopeEndpointInput.value = data.modelscope_endpoint || "https://modelscope.cn";
   modelScopeTokenConfigured.value = data.modelscope_token_configured ?? false;
   appVersion.value = data.version || "";
+  llamaServerVersion.value = data.llama_server_version || "";
   desktopMode.value = data.desktop_mode ?? false;
   localAPIURL.value = data.local_api_url || "";
   upgradeProgress.value = {
@@ -1741,6 +1743,9 @@ export function Settings() {
                   ? t("upgrade.available", displayVersion(upgradeProgress.value.latestVersion))
                   : t("upgrade.upToDate")}
               </p>
+              {llamaServerVersion.value && (
+                <p class="mt-1 text-sm text-gray-500">{t("settings.llamaServerVersion", llamaServerVersion.value)}</p>
+              )}
             </div>
             {!desktopMode.value && (
               <button

@@ -525,6 +525,7 @@ type DatasetPullResponse struct {
 
 type SettingsResponse struct {
 	Version                  string                `json:"version"`
+	LlamaServerVersion       string                `json:"llama_server_version,omitempty"`
 	StorageDir               string                `json:"storage_dir"`
 	ModelDir                 string                `json:"model_dir"`
 	DatasetDir               string                `json:"dataset_dir"`
