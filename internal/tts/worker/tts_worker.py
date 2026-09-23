@@ -25,8 +25,9 @@ app = FastAPI()
 ENGINE = None
 # Generation is not safe to run twice at once and a second concurrent call
 # would only contend for the same cores. Every entry point runs the model off
-# the event loop but under this lock, so /health and /speak_stream stay
-# answerable while a long synthesis is in flight.
+# the event loop but under this lock; /health never takes it, so it stays
+# answerable while a long synthesis runs, while concurrent synthesis requests
+# queue behind it.
 ENGINE_LOCK = threading.Lock()
 
 DEFAULT_SAMPLE_RATE = 24000
@@ -599,22 +600,23 @@ def _env_bool(name, default=False):
 
 
 def _iter_segment_pcm(segments, voice, speed, instruct):
-    """Synthesise each segment in turn, holding the model lock per segment.
+    """Synthesise each segment in turn and stream the chunks out.
 
-    Releasing between segments lets /health and a second request interleave
-    rather than waiting out the whole text."""
-    for segment in segments:
-        chunks = ENGINE.iter_pcm(segment, voice, speed, instruct)
-        while True:
-            # The lock covers generating a chunk, not handing it on: holding it
-            # across the yield would let a slow reader keep the model, and
-            # /health with it, for as long as it took to drain the response.
-            with ENGINE_LOCK:
+    The request holds the model lock for its entire synthesis. The streaming
+    backends -- the MLX Qwen3-TTS runtime in particular -- generate from state
+    kept on the shared model object, so two requests interleaving their next()
+    calls corrupt each other and each ends truncated. /health never takes this
+    lock, so it stays answerable while a long synthesis runs, and the
+    non-streaming path already holds the lock for the whole synthesis."""
+    with ENGINE_LOCK:
+        for segment in segments:
+            chunks = ENGINE.iter_pcm(segment, voice, speed, instruct)
+            while True:
                 try:
                     chunk = next(chunks)
                 except StopIteration:
                     break
-            yield chunk
+                yield chunk
 
 
 def _log_ttfb(route, segments, started):
