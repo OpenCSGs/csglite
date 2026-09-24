@@ -1781,24 +1781,30 @@ export function Settings() {
           <span class="font-semibold text-gray-900">{t("settings.versionInfo")}</span>
         </div>
         <div class="ml-7 mt-3 rounded-xl border border-gray-200 bg-white p-4">
-          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p class="text-sm font-semibold text-gray-900">{displayVersion(upgradeProgress.value.currentVersion || appVersion.value)}</p>
-              <p class="mt-1 text-sm text-gray-500">
+          <table class="w-full text-sm">
+            <tbody class="divide-y divide-gray-200 border-b border-gray-200">
+              <tr>
+                <th scope="row" class="py-2 text-left font-medium text-gray-700">{t("settings.csglite")}</th>
+                <td class="py-2 text-right font-mono text-gray-900">{upgradeProgress.value.currentVersion || appVersion.value || "..."}</td>
+              </tr>
+              <tr>
+                <th scope="row" class="py-2 text-left font-medium text-gray-700">{t("settings.llamaServer")}</th>
+                <td class="py-2 text-right font-mono text-gray-900">{llamaServerVersion.value || "..."}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-sm text-gray-500">
                 {upgradeProgress.value.hasUpdate && upgradeProgress.value.latestVersion
                   ? t("upgrade.available", displayVersion(upgradeProgress.value.latestVersion))
                   : t("upgrade.upToDate")}
-              </p>
-              {llamaServerVersion.value && (
-                <p class="mt-1 text-sm text-gray-500">{t("settings.llamaServerVersion", llamaServerVersion.value)}</p>
-              )}
-            </div>
+            </p>
             {!desktopMode.value && (
               <button
                 type="button"
                 onClick={openUpgradeDialog}
                 disabled={!upgradeProgress.value.hasUpdate}
-                class="px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:border-gray-200 disabled:text-gray-400 disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
+                class="self-start px-4 py-2 border border-indigo-200 rounded-lg text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:border-gray-200 disabled:text-gray-400 disabled:opacity-70 disabled:cursor-not-allowed transition-colors sm:self-auto"
               >
                 {t("upgrade.upgrade")}
               </button>
