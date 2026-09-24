@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -147,17 +149,19 @@ const (
 
 // RuntimeStatus describes whether the Diffusers runtime is ready.
 type RuntimeStatus struct {
-	Ready           bool         `json:"ready"`
-	RuntimeDir      string       `json:"runtime_dir"`
-	VenvDir         string       `json:"venv_dir"`
-	Python          string       `json:"python,omitempty"`
-	Platform        string       `json:"platform"`
-	Arch            string       `json:"arch"`
-	Hardware        HardwareKind `json:"hardware"`
-	TorchIndexURL   string       `json:"torch_index_url,omitempty"`
-	MissingPackages []string     `json:"missing_packages,omitempty"`
-	InstallCommand  []string     `json:"install_command,omitempty"`
-	Error           string       `json:"error,omitempty"`
+	Ready                  bool         `json:"ready"`
+	RuntimeDir             string       `json:"runtime_dir"`
+	VenvDir                string       `json:"venv_dir"`
+	Python                 string       `json:"python,omitempty"`
+	Platform               string       `json:"platform"`
+	Arch                   string       `json:"arch"`
+	Hardware               HardwareKind `json:"hardware"`
+	TorchIndexURL          string       `json:"torch_index_url,omitempty"`
+	MissingPackages        []string     `json:"missing_packages,omitempty"`
+	InstallCommand         []string     `json:"install_command,omitempty"`
+	Error                  string       `json:"error,omitempty"`
+	DiffusersVersion       string       `json:"diffusers_version,omitempty"`
+	DiffusersLatestVersion string       `json:"diffusers_latest_version,omitempty"`
 }
 
 type RuntimeManifest struct {
@@ -409,6 +413,22 @@ func (m *RuntimeManager) Status(ctx context.Context) RuntimeStatus {
 	if !status.Ready {
 		status.Error = "Diffusers runtime is missing Python packages"
 	}
+	return status
+}
+
+// StatusWithVersions returns Status enriched with the installed diffusers
+// package version and the latest version available from the configured package
+// index. The version lookup uses a short timeout so an unreachable index never
+// blocks the caller; the installed-version probe is a fast local Python call.
+// Both fields are left empty when the runtime is not ready.
+func (m *RuntimeManager) StatusWithVersions(ctx context.Context) RuntimeStatus {
+	status := m.Status(ctx)
+	if !status.Ready {
+		return status
+	}
+	status.DiffusersVersion = installedPackageVersion(ctx, status.Python, "diffusers")
+	indexes := ResolvePackageIndexes(status.Hardware)
+	status.DiffusersLatestVersion = latestPyPIPackageVersion("diffusers", indexes.PyPIIndexURL)
 	return status
 }
 
@@ -763,6 +783,9 @@ func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progres
 		return m.Status(ctx), fmt.Errorf("installing PyTorch: %w", err)
 	}
 	diffusersDeps := []string{"diffusers>=0.34.0", "transformers>=4.48.0,<5.0", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow"}
+	if upgradePackages {
+		diffusersDeps = stripVersionSpecs(diffusersDeps)
+	}
 	if indexes.PyPIIndexURL != "" {
 		if upgradePackages {
 			progress("upgrade Diffusers dependencies from "+indexes.PyPIIndexURL, 6, 6)
@@ -795,7 +818,7 @@ func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progres
 	if err := writeManifest(filepath.Join(m.rootDir, manifestFileName), manifest); err != nil {
 		return m.Status(ctx), err
 	}
-	return m.Status(ctx), nil
+	return m.StatusWithVersions(ctx), nil
 }
 
 func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, progress ProgressFunc, upgradePackages bool) (RuntimeStatus, error) {
@@ -1470,6 +1493,130 @@ print(json.dumps(missing))
 		return nil, fmt.Errorf("decoding runtime package check: %w", err)
 	}
 	return missing, nil
+}
+
+// installedPackageVersion returns the version string of an installed pip
+// package by probing the venv's Python interpreter. Returns "" when the
+// package is not installed or the probe fails.
+func installedPackageVersion(ctx context.Context, python, pkg string) string {
+	script := fmt.Sprintf(`import importlib.metadata; print(importlib.metadata.version("%s"))`, pkg)
+	out, err := exec.CommandContext(ctx, python, "-c", script).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// stripVersionSpecs removes version constraints from package specs so that
+// --upgrade picks up the latest version. uv pip install --upgrade treats a
+// spec like "diffusers>=0.34.0" as "ensure the installed version satisfies
+// >=0.34.0" rather than "upgrade to the latest version", so an installed
+// 0.39.0 that already satisfies the constraint is left untouched.
+func stripVersionSpecs(packages []string) []string {
+	out := make([]string, len(packages))
+	for i, spec := range packages {
+		name := spec
+		for _, sep := range []string{">=", "<=", "==", "!=", "~=", ">", "<"} {
+			if idx := strings.Index(spec, sep); idx >= 0 {
+				name = strings.TrimSpace(spec[:idx])
+				break
+			}
+		}
+		out[i] = name
+	}
+	return out
+}
+
+// latestPyPIPackageVersion queries for the latest released version of a package.
+// When a mirror index URL is configured (e.g. Aliyun), it parses the mirror's
+// simple index page so the "latest version" reflects what the installer can
+// actually install from that mirror. Falls back to the official PyPI JSON API
+// when no mirror is configured or the mirror lookup fails.
+func latestPyPIPackageVersion(pkg, pypiIndexURL string) string {
+	if pypiIndexURL != "" {
+		simpleURL := strings.TrimSuffix(pypiIndexURL, "/") + "/" + pkg + "/"
+		if v := latestVersionFromSimplePage(simpleURL); v != "" {
+			return v
+		}
+	}
+	return fetchPyPIVersion(fmt.Sprintf("https://pypi.org/pypi/%s/json", pkg))
+}
+
+func fetchPyPIVersion(url string) string {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var data struct {
+		Info struct {
+			Version string `json:"version"`
+		} `json:"info"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return ""
+	}
+	return data.Info.Version
+}
+
+// latestVersionFromSimplePage fetches a PEP 503 simple index page and returns
+// the highest version number found. The page lists files as
+// <a href="...">pkg-1.2.3-py3-none-any.whl</a>; we extract version numbers and
+// pick the maximum by semantic ordering.
+func latestVersionFromSimplePage(url string) string {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return ""
+	}
+	// Match version-like strings in href text: pkg-1.2.3[-...]
+	re := regexp.MustCompile(`-(\d+\.\d+\.\d+(?:\.\d+)*)`)
+	matches := re.FindAllStringSubmatch(string(body), -1)
+	var best string
+	for _, m := range matches {
+		v := m[1]
+		if compareVersions(v, best) > 0 {
+			best = v
+		}
+	}
+	return best
+}
+
+// compareVersions returns 1 if a > b, -1 if a < b, 0 if equal.
+func compareVersions(a, b string) int {
+	if b == "" {
+		return 1
+	}
+	pa := strings.Split(a, ".")
+	pb := strings.Split(b, ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var na, nb int
+		if i < len(pa) {
+			na, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			nb, _ = strconv.Atoi(pb[i])
+		}
+		if na > nb {
+			return 1
+		}
+		if na < nb {
+			return -1
+		}
+	}
+	return 0
 }
 
 // missingPackagesWithPath probes for packages with an overlay directory placed

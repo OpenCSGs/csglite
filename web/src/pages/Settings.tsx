@@ -11,6 +11,7 @@ import {
   clearObservabilityData,
   clearCloudToken,
   deleteLicense,
+  getImageRuntimeStatus,
   getCloudAuthStatus,
   importLicense,
   verifyLicense,
@@ -94,6 +95,10 @@ const isResettingDefaults = signal(false);
 const resetDefaultsMessage = signal("");
 const resetDefaultsError = signal("");
 const isUpgradingDiffuser = signal(false);
+const diffuserRuntimeReady = signal(false);
+const diffuserJustUpgraded = signal(false);
+const diffuserVersion = signal("");
+const diffuserLatestVersion = signal("");
 const diffuserUpgradeMessage = signal("");
 const diffuserUpgradeError = signal("");
 const observabilityRetentionPresets = [7, 30, 90, 365, 0] as const;
@@ -640,14 +645,34 @@ async function refreshCloudModels() {
   }
 }
 
+async function fetchDiffuserRuntimeStatus() {
+  try {
+    const status = await getImageRuntimeStatus();
+    diffuserRuntimeReady.value = !!status.ready;
+    diffuserVersion.value = status.diffusers_version || "";
+    diffuserLatestVersion.value = status.diffusers_latest_version || "";
+  } catch {
+    diffuserRuntimeReady.value = false;
+    diffuserVersion.value = "";
+    diffuserLatestVersion.value = "";
+  }
+}
+
 async function upgradeDiffuser() {
   if (isUpgradingDiffuser.value) return;
   isUpgradingDiffuser.value = true;
   diffuserUpgradeMessage.value = "";
   diffuserUpgradeError.value = "";
+  const prevVersion = diffuserVersion.value;
   try {
     await installImageRuntime({ upgrade_packages: true });
-    diffuserUpgradeMessage.value = t("settings.diffuserUpgradeSuccess");
+    await fetchDiffuserRuntimeStatus();
+    diffuserJustUpgraded.value = true;
+    if (diffuserVersion.value && diffuserVersion.value !== prevVersion) {
+      diffuserUpgradeMessage.value = t("settings.diffuserUpgradeSuccess");
+    } else {
+      diffuserUpgradeMessage.value = t("settings.diffuserAlreadyLatest");
+    }
   } catch (err: any) {
     diffuserUpgradeError.value = err?.message || t("settings.diffuserUpgradeFailed");
   } finally {
@@ -1211,6 +1236,7 @@ export function Settings() {
     fetchCloudAuth();
     void loadLicense();
     void fetchUpgradeInfo();
+    void fetchDiffuserRuntimeStatus();
     contextIndex.value = loadContextIndex();
     contextMode.value = loadContextMode();
   }, []);
@@ -1711,14 +1737,34 @@ export function Settings() {
             <div>
               <p class="text-sm font-semibold text-gray-900">{t("settings.diffuserUpgradeTitle")}</p>
               <p class="mt-1 text-sm text-gray-500">{t("settings.diffuserUpgradeHint")}</p>
+              {(diffuserVersion.value || diffuserLatestVersion.value) && (
+                <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                  {diffuserVersion.value && (
+                    <span class="text-gray-500">
+                      {t("settings.diffuserCurrentVersion")}{" "}
+                      <span class="font-mono text-gray-700">{diffuserVersion.value}</span>
+                    </span>
+                  )}
+                  {diffuserLatestVersion.value && diffuserLatestVersion.value !== diffuserVersion.value && (
+                    <span class="text-gray-500">
+                      {t("settings.diffuserLatestVersion")}{" "}
+                      <span class="font-mono text-indigo-600">{diffuserLatestVersion.value}</span>
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             <button
               type="button"
               onClick={() => void upgradeDiffuser()}
-              disabled={isUpgradingDiffuser.value}
+              disabled={isUpgradingDiffuser.value || diffuserJustUpgraded.value || (diffuserRuntimeReady.value && (!diffuserLatestVersion.value || diffuserVersion.value === diffuserLatestVersion.value))}
               class="inline-flex items-center justify-center px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
-              {isUpgradingDiffuser.value ? t("settings.diffuserUpgrading") : t("settings.diffuserUpgrade")}
+              {isUpgradingDiffuser.value
+                ? t("settings.diffuserUpgrading")
+                : diffuserJustUpgraded.value || (diffuserRuntimeReady.value && (!diffuserLatestVersion.value || diffuserVersion.value === diffuserLatestVersion.value))
+                  ? t("settings.diffuserAlreadyUpgraded")
+                  : t("settings.diffuserUpgrade")}
             </button>
           </div>
           {diffuserUpgradeMessage.value && <p class="mt-3 text-sm text-green-600">{diffuserUpgradeMessage.value}</p>}

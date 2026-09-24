@@ -13013,6 +13013,14 @@
           },
           "error": {
             "type": "string"
+          },
+          "diffusers_version": {
+            "type": "string",
+            "description": "Installed diffusers package version. Present only when the runtime is ready."
+          },
+          "diffusers_latest_version": {
+            "type": "string",
+            "description": "Latest diffusers version available from the configured package index. Present only when the runtime is ready and the version lookup succeeded."
           }
         }
       },
