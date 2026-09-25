@@ -1313,6 +1313,13 @@ func (s *Server) getOrLoadImageEngineWithProgress(ctx context.Context, modelID s
 	if !isImageGenerationPipelineTag(pipelineTag) {
 		return nil, fmt.Errorf("model %q is not a text-to-image model", modelID)
 	}
+	imageBackend, err := imagegen.ResolveImageBackend(modelDir, lm.FullName())
+	if err != nil {
+		return nil, err
+	}
+	if imageBackend == model.ImageBackendMLXQwen21 && (runtime.GOOS != "darwin" || runtime.GOARCH != "arm64") {
+		return nil, fmt.Errorf("model %q uses MLX Qwen-Image-2.1 weights and requires macOS on Apple Silicon", modelID)
+	}
 
 	for {
 		s.mu.Lock()

@@ -286,6 +286,7 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 			architecture,
 			details.Metadata.ClassName,
 			details.Path,
+			marketplaceLibraryName(details),
 			pipelineTag,
 		),
 		LocalModel: s.marketplaceLocalModelStatus(details, requestedModelID, artifactSource, revision),
@@ -753,6 +754,30 @@ func marketplaceEnsureTag(tags []csghub.Tag, name, category, showName string) []
 		Category: normalizedCategory,
 		ShowName: showName,
 	})
+}
+
+func marketplaceLibraryName(details *csghub.Model) string {
+	if details == nil {
+		return ""
+	}
+	if details.Provider != nil {
+		if hf := details.Provider.HuggingFace; hf != nil && strings.TrimSpace(hf.LibraryName) != "" {
+			return hf.LibraryName
+		}
+		if ms := details.Provider.ModelScope; ms != nil {
+			for _, library := range ms.Libraries {
+				if strings.EqualFold(strings.TrimSpace(library), "mlx") {
+					return library
+				}
+			}
+		}
+	}
+	for _, tag := range details.Tags {
+		if strings.EqualFold(tag.Category, "runtime_framework") && strings.EqualFold(tag.Name, "mlx") {
+			return tag.Name
+		}
+	}
+	return ""
 }
 
 func marketplaceModelTaskTag(tags []csghub.Tag) string {

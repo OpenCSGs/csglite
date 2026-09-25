@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/opencsgs/csglite/internal/convert"
@@ -24,6 +25,13 @@ func FromLocalModel(lm *model.LocalModel, modelDir string) api.LocalInferenceSup
 		if detected := strings.TrimSpace(model.DetectPipelineTag(modelDir)); detected != "" {
 			pipelineTag = detected
 		}
+	}
+
+	switch model.ImageBackendFor(modelDir, lm.FullName()) {
+	case model.ImageBackendMLXQwen21:
+		return mlxQwenImageSupport("")
+	case model.ImageBackendMLXUnsupported:
+		return unsupported("")
 	}
 
 	if support := diffusersSupportFromPipelineTag(pipelineTag); support.Supported {
@@ -78,7 +86,14 @@ func FromMarketplace(format, architecture, className string) api.LocalInferenceS
 
 // FromMarketplaceModel reports likely support for a marketplace model when the
 // model id/name or task tag provides stronger routing hints than config metadata.
-func FromMarketplaceModel(format, architecture, className, modelName, pipelineTag string) api.LocalInferenceSupport {
+func FromMarketplaceModel(format, architecture, className, modelName, libraryName, pipelineTag string) api.LocalInferenceSupport {
+	switch model.ImageBackendForMetadata(modelName, className, libraryName, pipelineTag) {
+	case model.ImageBackendMLXQwen21:
+		return mlxQwenImageSupport(architecture)
+	case model.ImageBackendMLXUnsupported:
+		return unsupported(architecture)
+	}
+
 	switch normalizePipelineTag(pipelineTag) {
 	case "text-to-image", "image-to-image":
 		return diffusersSupportForImageTask(architecture, className)
@@ -157,6 +172,26 @@ func diffusersSupportFromPipelineTag(pipelineTag string) api.LocalInferenceSuppo
 	default:
 		return api.LocalInferenceSupport{Mode: "none"}
 	}
+}
+
+func mlxImageSupported() bool {
+	return mlxImageSupportedFor(runtime.GOOS, runtime.GOARCH)
+}
+
+func mlxQwenImageSupport(architecture string) api.LocalInferenceSupport {
+	if !mlxImageSupported() {
+		return unsupported(architecture)
+	}
+	return api.LocalInferenceSupport{
+		Supported:    true,
+		Runtime:      "mlx-image",
+		Mode:         "image",
+		Architecture: strings.TrimSpace(architecture),
+	}
+}
+
+func mlxImageSupportedFor(goos, goarch string) bool {
+	return goos == "darwin" && goarch == "arm64"
 }
 
 func diffusersSupportForImageTask(architecture, className string) api.LocalInferenceSupport {

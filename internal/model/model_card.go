@@ -12,7 +12,10 @@ import (
 
 const maxModelCardMetadataBytes = 1 << 20
 
-func detectModelCardPipelineTag(modelDir string) string {
+// modelCardMetadataValue reads a top-level string field from a model card's
+// YAML front matter. It deliberately shares the bounded front-matter reader
+// with pipeline detection: model cards are untrusted downloaded content.
+func modelCardMetadataValue(modelDir string, keys ...string) string {
 	readmePath := findModelCardPath(modelDir)
 	if readmePath == "" {
 		return ""
@@ -34,10 +37,38 @@ func detectModelCardPipelineTag(modelDir string) string {
 	if yaml.Unmarshal(frontMatter, &metadata) != nil {
 		return ""
 	}
-	for _, key := range []string{"pipeline_tag", "pipeline-tag", "task"} {
-		if tag := normalizeLocalPipelineTag(stringMetadataValue(metadata[key])); tag != "" {
-			return tag
+	for _, key := range keys {
+		if value := strings.TrimSpace(stringMetadataValue(metadata[key])); value != "" {
+			return value
 		}
+	}
+	return ""
+}
+
+func detectModelCardPipelineTag(modelDir string) string {
+	if tag := normalizeLocalPipelineTag(modelCardMetadataValue(modelDir, "pipeline_tag", "pipeline-tag", "task")); tag != "" {
+		return tag
+	}
+	readmePath := findModelCardPath(modelDir)
+	if readmePath == "" {
+		return ""
+	}
+	file, err := os.Open(readmePath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxModelCardMetadataBytes+1))
+	if err != nil || len(data) == 0 || len(data) > maxModelCardMetadataBytes {
+		return ""
+	}
+	frontMatter := modelCardFrontMatter(data)
+	if len(frontMatter) == 0 {
+		return ""
+	}
+	var metadata map[string]any
+	if yaml.Unmarshal(frontMatter, &metadata) != nil {
+		return ""
 	}
 	if pipeline, ok := metadata["pipeline"].(map[string]any); ok {
 		if tag := normalizeLocalPipelineTag(stringMetadataValue(pipeline["type"])); tag != "" {

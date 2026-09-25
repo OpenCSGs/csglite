@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 func TestTorchIndexURL(t *testing.T) {
@@ -21,10 +22,10 @@ func TestTorchIndexURL(t *testing.T) {
 		hw   HardwareKind
 		want string
 	}{
-		{HardwareCUDA, "https://download.pytorch.org/whl/cu128"},
-		{HardwareROCm, "https://download.pytorch.org/whl/rocm7.1"},
+		{HardwareCUDA, aliyunTorchRoot + "/cu128"},
+		{HardwareROCm, aliyunTorchRoot + "/rocm7.1"},
 		{HardwareMPS, ""},
-		{HardwareCPU, "https://download.pytorch.org/whl/cpu"},
+		{HardwareCPU, aliyunTorchRoot + "/cpu"},
 	}
 	for _, tt := range tests {
 		if got := TorchIndexURL(tt.hw); got != tt.want {
@@ -59,7 +60,7 @@ func TestResolvePackageIndexesAliyun(t *testing.T) {
 	}
 }
 
-func TestResolvePackageIndexesDefaultsToAliyun(t *testing.T) {
+func TestResolvePackageIndexesDefaultsToOfficialOutsideChina(t *testing.T) {
 	t.Setenv(mirrorModeEnv, "")
 	t.Setenv(regionEnv, "")
 	t.Setenv("LC_ALL", "C")
@@ -71,17 +72,56 @@ func TestResolvePackageIndexesDefaultsToAliyun(t *testing.T) {
 	t.Setenv(pypiIndexOverrideEnv, "")
 
 	got := ResolvePackageIndexes(HardwareCUDA)
-	if got.Mirror != PackageMirrorAliyun {
-		t.Fatalf("default package mirror = %q, want %q", got.Mirror, PackageMirrorAliyun)
+	if got.Mirror != PackageMirrorOfficial {
+		t.Fatalf("default package mirror = %q, want %q", got.Mirror, PackageMirrorOfficial)
 	}
-	if got.TorchFindLinksURL != "https://mirrors.aliyun.com/pytorch-wheels/cu128" {
-		t.Fatalf("default CUDA torch find-links = %q", got.TorchFindLinksURL)
+	if got.TorchIndexURL != "https://download.pytorch.org/whl/cu128" {
+		t.Fatalf("default CUDA torch index = %q", got.TorchIndexURL)
 	}
-	if got.TorchIndexURL != "" {
-		t.Fatalf("default CUDA torch index = %q, want empty", got.TorchIndexURL)
+	if got.TorchFindLinksURL != "" {
+		t.Fatalf("default CUDA torch find-links = %q, want empty", got.TorchFindLinksURL)
 	}
-	if got.PyPIIndexURL != "https://mirrors.aliyun.com/pypi/simple" {
-		t.Fatalf("default PyPI index = %q", got.PyPIIndexURL)
+	if got.PyPIIndexURL != "" {
+		t.Fatalf("default PyPI index = %q, want empty", got.PyPIIndexURL)
+	}
+}
+
+func TestResolvePackageIndexesUsesTsinghuaInChina(t *testing.T) {
+	t.Setenv(mirrorModeEnv, "")
+	t.Setenv(regionEnv, "cn")
+	t.Setenv(torchIndexOverrideEnv, "")
+	t.Setenv(pypiIndexOverrideEnv, "")
+
+	got := ResolvePackageIndexes(HardwareCUDA)
+	if got.Mirror != PackageMirrorTsinghua {
+		t.Fatalf("package mirror = %q, want %q", got.Mirror, PackageMirrorTsinghua)
+	}
+	if got.PyPIIndexURL != tsinghuaPyPIIndex {
+		t.Fatalf("Tsinghua PyPI index = %q, want %q", got.PyPIIndexURL, tsinghuaPyPIIndex)
+	}
+	torchIndexes := torchInstallIndexes(HardwareCUDA)
+	if torchIndexes.Mirror != PackageMirrorAliyun || torchIndexes.PyPIIndexURL != aliyunPyPIIndex || torchIndexes.TorchFindLinksURL != aliyunTorchRoot+"/cu128" {
+		t.Fatalf("torch indexes = %#v, want Aliyun CUDA wheels", torchIndexes)
+	}
+	if mlxPackageIndexes().PyPIIndexURL != tsinghuaPyPIIndex {
+		t.Fatalf("MLX index = %q, want %q", mlxPackageIndexes().PyPIIndexURL, tsinghuaPyPIIndex)
+	}
+}
+
+func TestTorchInstallIgnoresGeneralMirror(t *testing.T) {
+	t.Setenv(mirrorModeEnv, "official")
+	t.Setenv(pypiIndexOverrideEnv, tsinghuaPyPIIndex)
+	t.Setenv(torchIndexOverrideEnv, "")
+
+	got := torchInstallIndexes(HardwareROCm)
+	if got.PyPIIndexURL != aliyunPyPIIndex || got.TorchFindLinksURL != aliyunTorchRoot+"/rocm7.1" || got.TorchIndexURL != "" {
+		t.Fatalf("torch indexes = %#v, want Aliyun ROCm wheels", got)
+	}
+
+	t.Setenv(torchIndexOverrideEnv, "https://example.test/torch")
+	got = torchInstallIndexes(HardwareCUDA)
+	if got.TorchIndexURL != "https://example.test/torch" || got.TorchFindLinksURL != "" || got.PyPIIndexURL != "" {
+		t.Fatalf("torch override indexes = %#v", got)
 	}
 }
 
@@ -887,9 +927,28 @@ func TestTTSOverlayPackagesForPlatform(t *testing.T) {
 	}
 }
 
+func TestImageOverlayPackagesForPlatform(t *testing.T) {
+	got := imageOverlayPackagesFor(model.ImageBackendMLXQwen21, "darwin", "arm64")
+	want := map[string]bool{"mflux>=0.20.0": true, "mlx": true, "mlx-metal": true}
+	for _, pkg := range got {
+		delete(want, pkg)
+	}
+	if len(want) != 0 {
+		t.Fatalf("darwin/arm64 image overlay = %v, missing %v", got, want)
+	}
+	for _, platform := range [][2]string{{"darwin", "amd64"}, {"linux", "amd64"}, {"linux", "arm64"}, {"windows", "amd64"}} {
+		if got := imageOverlayPackagesFor(model.ImageBackendMLXQwen21, platform[0], platform[1]); got != nil {
+			t.Fatalf("%s/%s image overlay = %v, want none", platform[0], platform[1], got)
+		}
+	}
+	if got := imageOverlayPackagesFor(model.ImageBackendDiffusers, "darwin", "arm64"); got != nil {
+		t.Fatalf("diffusers image overlay = %v, want none", got)
+	}
+}
+
 func TestImportNamesFor(t *testing.T) {
-	got := importNamesFor([]string{"kokoro", "misaki[zh]"})
-	want := map[string]bool{"kokoro": true, "misaki": true, "ordered_set": true}
+	got := importNamesFor([]string{"kokoro", "misaki[zh]", "mflux>=0.20.0"})
+	want := map[string]bool{"kokoro": true, "misaki": true, "ordered_set": true, "mflux": true}
 	for _, name := range got {
 		delete(want, name)
 	}

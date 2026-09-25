@@ -5,6 +5,9 @@ import inspect
 import io
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
+import platform
+import tempfile
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -70,14 +73,23 @@ def detect_device(model_dir: str, model_name: str) -> tuple[str, torch.dtype]:
 
 
 class Worker:
-    def __init__(self, model_dir: str, model_name: str) -> None:
+    def __init__(self, model_dir: str, model_name: str, backend: str) -> None:
         self.model_dir = model_dir
         self.model_name = model_name
+        self.backend = backend
         self.device, self.dtype = detect_device(model_dir, model_name)
+        if backend == "mlx-qwen-image-2.1":
+            self.device = "mlx"
+            self.dtype = None
         self.pipeline = None
         self.lock = threading.Lock()
 
     def load(self) -> None:
+        if self.backend == "mlx-qwen-image-2.1":
+            self._load_mlx_qwen21()
+            return
+        if self.backend != "diffusers":
+            raise ValueError(f"unsupported image backend: {self.backend}")
         kwargs: Dict[str, Any] = {"torch_dtype": self.dtype, "local_files_only": True}
         self.pipeline = DiffusionPipeline.from_pretrained(self.model_dir, **kwargs)
         if self.device == "cuda":
@@ -92,6 +104,17 @@ class Worker:
             self.pipeline.enable_attention_slicing()
         if hasattr(self.pipeline, "enable_vae_tiling"):
             self.pipeline.enable_vae_tiling()
+
+    def _load_mlx_qwen21(self) -> None:
+        if platform.system() != "Darwin" or platform.machine() != "arm64":
+            raise RuntimeError("the MLX Qwen-Image-2.1 backend requires Apple Silicon")
+        from mflux.models.common.config import ModelConfig
+        from mflux.models.qwen21.variants.txt2img.qwen_image_21 import QwenImage21
+
+        self.pipeline = QwenImage21(
+            model_path=self.model_dir,
+            model_config=ModelConfig.qwen_image_21(),
+        )
 
     def _input_images(self, req: Dict[str, Any]) -> List[str]:
         images: List[str] = []
@@ -154,6 +177,8 @@ class Worker:
         return kwargs
 
     def generate(self, req: Dict[str, Any]) -> Dict[str, Any]:
+        if self.backend == "mlx-qwen-image-2.1":
+            return self._generate_mlx_qwen21(req)
         kwargs = self.build_call_kwargs(req)
         with self.lock:
             result = self.pipeline(**kwargs)
@@ -164,6 +189,49 @@ class Worker:
             encoded = base64.b64encode(buf.getvalue()).decode("ascii")
             data.append({"b64_json": encoded})
         return {"created": int(time.time()), "data": data}
+
+    def _generate_mlx_qwen21(self, req: Dict[str, Any]) -> Dict[str, Any]:
+        input_images = self._input_images(req)
+        if len(input_images) > 1:
+            raise ValueError("the MLX Qwen-Image-2.1 backend supports one input image only")
+        if req.get("n") not in (None, 1):
+            raise ValueError("the MLX Qwen-Image-2.1 backend supports n=1 only")
+
+        width, height = parse_size(req.get("size"))
+        image_path = None
+        try:
+            if input_images:
+                image = decode_image(input_images[0])
+                fd, image_path = tempfile.mkstemp(dir=self.model_dir, prefix=".csglite-qwen21-", suffix=".png")
+                os.close(fd)
+                image.save(image_path, format="PNG")
+            kwargs: Dict[str, Any] = {
+                "seed": int(req.get("seed") or 0),
+                "prompt": str(req.get("prompt") or ""),
+                "width": width,
+                "height": height,
+                "num_inference_steps": int(req.get("steps") or 40),
+                "image_path": image_path,
+            }
+            if req.get("cfg_scale") is not None:
+                kwargs["guidance"] = float(req["cfg_scale"])
+            if req.get("negative_prompt"):
+                kwargs["negative_prompt"] = str(req["negative_prompt"])
+            with self.lock:
+                result = self.pipeline.generate_image(**kwargs)
+            image = getattr(result, "image", result)
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            return {
+                "created": int(time.time()),
+                "data": [{"b64_json": base64.b64encode(buf.getvalue()).decode("ascii")}],
+            }
+        finally:
+            if image_path:
+                try:
+                    os.unlink(image_path)
+                except OSError:
+                    pass
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -189,8 +257,9 @@ class Handler(BaseHTTPRequestHandler):
             {
                 "status": "ok",
                 "device": self.worker.device,
-                "dtype": str(self.worker.dtype).removeprefix("torch."),
+                "dtype": "mlx" if self.worker.dtype is None else str(self.worker.dtype).removeprefix("torch."),
                 "model": self.worker.model_name,
+                "backend": self.worker.backend,
             },
         )
 
@@ -215,10 +284,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--model-name", required=True)
+    parser.add_argument("--backend", default="diffusers")
     parser.add_argument("--port", type=int, required=True)
     args = parser.parse_args()
 
-    worker = Worker(args.model_dir, args.model_name)
+    worker = Worker(args.model_dir, args.model_name, args.backend)
     worker.load()
     Handler.worker = worker
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)

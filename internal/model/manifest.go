@@ -308,6 +308,119 @@ func TTSBackendForMetadata(architecture, modelName string) string {
 	return ttsBackendFrom("", architectures, modelName)
 }
 
+const (
+	// ImageBackendDiffusers is the portable PyTorch/Diffusers image runtime.
+	ImageBackendDiffusers = "diffusers"
+	// ImageBackendMLXQwen21 serves MLX-converted Qwen-Image-2.1 checkpoints
+	// through MFLUX on Apple Silicon.
+	ImageBackendMLXQwen21 = "mlx-qwen-image-2.1"
+	// ImageBackendMLXUnsupported marks an MLX image checkpoint that must not
+	// be sent to Diffusers. Only Qwen-Image-2.1 has an MLX image backend.
+	ImageBackendMLXUnsupported = "mlx-image-unsupported"
+)
+
+// ImageBackendFor identifies image checkpoints which require a runtime other
+// than Diffusers. It intentionally requires both Qwen-Image-2.1 metadata and
+// an MLX signal so the official Diffusers checkpoint keeps its existing path.
+// Other MLX image checkpoints are reported separately so they are not loaded
+// as Diffusers models.
+func ImageBackendFor(modelDir, modelName string) string {
+	if !isMLXImageCandidate(modelDir, modelName) {
+		return ImageBackendDiffusers
+	}
+	if isMLXQwenImage21(modelDir, modelName) {
+		return ImageBackendMLXQwen21
+	}
+	return ImageBackendMLXUnsupported
+}
+
+// ImageBackendForMetadata makes the same choice from hub metadata, before the
+// checkpoint is downloaded. An empty class name is normal: the model card
+// usually carries library_name and pipeline_tag, not model_index.json.
+func ImageBackendForMetadata(modelName, className, libraryName, pipelineTag string) string {
+	if !isMLXNameOrLibrary(modelName, libraryName) || !metadataLooksLikeImage(modelName, className, pipelineTag) {
+		return ImageBackendDiffusers
+	}
+	if isQwenImage21Metadata(modelName, className) {
+		return ImageBackendMLXQwen21
+	}
+	return ImageBackendMLXUnsupported
+}
+
+func isMLXImageCandidate(modelDir, modelName string) bool {
+	if !isMLXNameOrLibrary(modelName, modelCardMetadataValue(modelDir, "library_name", "library-name")) {
+		return false
+	}
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	if strings.Contains(name, "qwen-image") {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(modelDir, "model_index.json")); err == nil {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(modelCardMetadataValue(modelDir, "pipeline_tag", "pipeline-tag", "task"))) {
+	case "text-to-image", "image-to-image":
+		return true
+	default:
+		return false
+	}
+}
+
+func isMLXQwenImage21(modelDir, modelName string) bool {
+	if !isMLXNameOrLibrary(modelName, modelCardMetadataValue(modelDir, "library_name", "library-name")) {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(modelDir, "model_index.json"))
+	if err != nil {
+		return isQwenImage21Metadata(modelName, "")
+	}
+	var index struct {
+		ClassName string `json:"_class_name"`
+	}
+	if json.Unmarshal(data, &index) != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(index.ClassName), "QwenImage21Pipeline")
+}
+
+func isMLXNameOrLibrary(modelName, libraryName string) bool {
+	if strings.EqualFold(strings.TrimSpace(libraryName), "mlx") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "mlx-community/")
+}
+
+func metadataLooksLikeImage(modelName, className, pipelineTag string) bool {
+	switch strings.ToLower(strings.TrimSpace(pipelineTag)) {
+	case "text-to-image", "image-to-image":
+		return true
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "qwen-image") {
+		return true
+	}
+	className = strings.ToLower(strings.TrimSpace(className))
+	if className == "" {
+		return false
+	}
+	for _, token := range []string{
+		"qwenimage", "flux", "stablediffusion", "stablecascade", "pixart", "sana",
+		"cogview", "zimage", "kolors", "hunyuan", "kandinsky", "lumina", "auraflow",
+		"glmimage", "ovisimage", "img2img", "image2image", "inpaint", "kontext",
+	} {
+		if strings.Contains(className, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func isQwenImage21Metadata(modelName, className string) bool {
+	if strings.EqualFold(strings.TrimSpace(className), "QwenImage21Pipeline") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "qwen-image-2.1")
+}
+
 func ttsBackendFrom(modelType string, architectures []string, name string) string {
 	if strings.EqualFold(strings.TrimSpace(modelType), "qwen3_tts") {
 		return TTSBackendQwen3

@@ -65,8 +65,8 @@ Web UI 和未显式传入 `num_ctx` 的外部 API 请求；环境变量
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `CSGHUB_LITE_PACKAGE_MIRROR` | `aliyun` | Python 包镜像策略。`aliyun`/`cn` 使用阿里云；`official`/`global` 使用官方源。 |
-| `CSGHUB_LITE_TORCH_INDEX_URL` | 按硬件和镜像选择 | 完整覆盖 PyTorch pip index URL，同时停用自动配置的 find-links。 |
+| `CSGHUB_LITE_PACKAGE_MIRROR` | 国内为 `tsinghua`，其他地区为 `official` | 普通 Python 包镜像策略。`tsinghua`/`tuna` 使用清华 PyPI；`official`/`global` 使用官方源；`aliyun` 可显式用于普通包。PyTorch 默认始终使用阿里云 PyPI 和对应硬件 wheel。MLX 图像 overlay 和 Qwen3-TTS 的 MLX overlay 默认使用清华 PyPI。显式 `CSGHUB_LITE_TORCH_INDEX_URL` 或 `CSGHUB_LITE_PYPI_INDEX_URL` 会覆盖对应安装。 |
+| `CSGHUB_LITE_TORCH_INDEX_URL` | 阿里云对应硬件 wheel | 完整覆盖 PyTorch pip index URL，同时停用自动配置的 find-links。未设置时 CUDA、ROCm 和 CPU 使用阿里云 wheel。 |
 | `CSGHUB_LITE_PYPI_INDEX_URL` | 按镜像选择 | 完整覆盖普通 Python 包的 pip index URL。 |
 
 ASR worker 还支持以下高级调优变量：
@@ -76,6 +76,7 @@ ASR worker 还支持以下高级调优变量：
 | `CSGHUB_ASR_CHUNK_SECONDS` | `30` | FunASR 长音频分块秒数。 |
 | `CSGHUB_ASR_LONG_AUDIO_THRESHOLD_SECONDS` | 与分块秒数相同 | 超过该时长后启用长音频分块。 |
 | `CSGHUB_TTS_QWEN3_RUNTIME` | `auto` | Qwen3-TTS 用哪个运行时：`auto`（Apple Silicon 上装好了 mlx-audio 就用 MLX，否则 PyTorch）、`mlx`、`torch`。同一份权重在 M 系列芯片上 MLX 首包 0.12s、RTF 0.5，PyTorch-MPS 首包 1.65s、RTF 2.6。auto 下 MLX 起不来会回退 PyTorch。 |
+| `CSGHUB_IMAGE_QWEN21_RUNTIME` | `auto` | Qwen-Image-2.1 图像后端选择：`auto` 会让 `mlx-community/Qwen-Image-2.1-MLX-4bit` 在 Apple Silicon 上使用 MFLUX/MLX；`mlx` 只接受该 MLX 格式模型；`diffusers` 只接受标准 Diffusers 权重。MLX 模型不支持在 Linux/Windows 上回退到 Diffusers。MFLUX 需要 Python 3.10+，并且当前仅支持文生图和单图 img2img。 |
 | `CSGHUB_TTS_STREAM_FIRST_CHUNK_CHARS` | `6` | 流式合成时开头一段的字数上限。首包延迟基本与这个字数成正比（实测 Apple MPS 上 Qwen3-TTS 约 0.25s/字），机器慢就调小，机器快可调大以保留更完整的语调。 |
 | `CSGHUB_ASR_USE_VAD` | `false` | 是否为 FunASR 启用 VAD。 |
 | `CSGHUB_ASR_VAD_MODEL` | `fsmn-vad` | VAD 模型名称。 |

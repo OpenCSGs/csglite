@@ -301,6 +301,60 @@ func TestDetectPipelineTagDiffusersModelIndexDefaultsToTextToImage(t *testing.T)
 	}
 }
 
+func TestImageBackendForMLXQwenImage21(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("---\nlibrary_name: mlx\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"QwenImage21Pipeline"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ImageBackendFor(dir, "mlx-community/Qwen-Image-2.1-MLX-4bit"); got != ImageBackendMLXQwen21 {
+		t.Fatalf("ImageBackendFor() = %q, want %q", got, ImageBackendMLXQwen21)
+	}
+	if got := ImageBackendFor(dir, "Qwen/Qwen-Image-2.1"); got != ImageBackendMLXQwen21 {
+		t.Fatalf("ImageBackendFor() = %q, want model card MLX detection", got)
+	}
+}
+
+func TestImageBackendForOfficialQwenImage21UsesDiffusers(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"QwenImage21Pipeline"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ImageBackendFor(dir, "Qwen/Qwen-Image-2.1"); got != ImageBackendDiffusers {
+		t.Fatalf("ImageBackendFor() = %q, want %q", got, ImageBackendDiffusers)
+	}
+}
+
+func TestImageBackendForOtherMLXImageUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("---\nlibrary_name: mlx\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"FluxPipeline"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ImageBackendFor(dir, "mlx-community/FLUX.1-schnell-4bit"); got != ImageBackendMLXUnsupported {
+		t.Fatalf("ImageBackendFor() = %q, want %q", got, ImageBackendMLXUnsupported)
+	}
+}
+
+func TestImageBackendForMetadata(t *testing.T) {
+	if got := ImageBackendForMetadata("mlx-community/Qwen-Image-2.1-MLX-4bit", "", "mlx", "text-to-image"); got != ImageBackendMLXQwen21 {
+		t.Fatalf("ImageBackendForMetadata() = %q, want %q", got, ImageBackendMLXQwen21)
+	}
+	if got := ImageBackendForMetadata("mlx-community/FLUX.1-schnell-4bit", "FluxPipeline", "mlx", "text-to-image"); got != ImageBackendMLXUnsupported {
+		t.Fatalf("ImageBackendForMetadata() = %q, want %q", got, ImageBackendMLXUnsupported)
+	}
+	if got := ImageBackendForMetadata("Qwen/Qwen-Image", "QwenImagePipeline", "diffusers", "text-to-image"); got != ImageBackendDiffusers {
+		t.Fatalf("ImageBackendForMetadata() = %q, want %q", got, ImageBackendDiffusers)
+	}
+	if got := ImageBackendForMetadata("mlx-community/Qwen3-4bit", "", "mlx", "text-generation"); got != ImageBackendDiffusers {
+		t.Fatalf("ImageBackendForMetadata() = %q, want MLX text models left alone", got)
+	}
+}
+
 func TestDetectPipelineTagDiffusersFamilies(t *testing.T) {
 	for _, className := range []string{
 		"FluxPipeline",

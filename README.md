@@ -126,13 +126,29 @@ currently supported for local inference.
 | Text generation / chat | Supported | llama.cpp | Qwen/Qwen3, GLM, Llama, Mistral, DeepSeek distilled GGUF models |
 | Embeddings | Supported | llama.cpp | BGE, GTE, E5, Sentence Transformers-compatible embedding models |
 | Vision-language chat | Supported | llama.cpp multimodal | Qwen2.5-VL, Gemma 3 / 4 vision, Idefics-style multimodal models |
-| Text-to-image | Supported | Diffusers runtime | Qwen-Image, FLUX, Stable Diffusion, PixArt, Sana, CogView, Z-Image |
-| Image-to-image | Supported | Diffusers runtime | Qwen-Image-Edit, inpaint, img2img, editing pipelines |
+| Text-to-image | Supported | Diffusers runtime; MLX on Apple Silicon | Qwen-Image, Qwen-Image-2.1 MLX, FLUX, Stable Diffusion, PixArt, Sana, CogView, Z-Image, Kolors, Hunyuan |
+| Image-to-image | Supported | Diffusers runtime; MLX on Apple Silicon for one reference image | Qwen-Image-Edit, FLUX Kontext, inpaint, img2img, editing pipelines |
 | Automatic speech recognition | Supported | Python ASR runtime | FunASR, Whisper, Wav2Vec2-family ASR models |
 | Text-to-speech | Supported | Python TTS runtime | VoxCPM, Qwen3-TTS, Kokoro, MMS-TTS and other transformers-native TTS models |
 | Realtime voice | Supported | Python ASR + TTS runtimes | Full-duplex over WebRTC or WebSocket, OpenAI Realtime-compatible |
 | Image-to-video | Coming soon | - | Stable Video Diffusion, SV3D |
 | Text-to-video | Coming soon | - | Video generation Diffusers models |
+
+### Image models
+
+Image requests use `POST /v1/images/generations` and `POST /v1/images/edits`.
+NVIDIA, AMD, and CPU machines run Diffusers checkpoints. Apple Silicon uses
+MFLUX for `mlx-community/Qwen-Image-2.1-MLX-4bit` and Diffusers for the other
+image families. Other MLX image checkpoints are unsupported on every platform,
+including before download.
+
+| Model | Runtime | Notes |
+| --- | --- | --- |
+| `Qwen/Qwen-Image`, `Qwen/Qwen-Image-2512` | Diffusers | Text-to-image |
+| `Qwen/Qwen-Image-Edit`, `Qwen/Qwen-Image-Edit-2511` | Diffusers | Image editing, including multi-image edits |
+| `mlx-community/Qwen-Image-2.1-MLX-4bit` | MFLUX on Apple Silicon | Text-to-image and one reference image. Python 3.10 or newer. 64 GB unified memory is a comfortable size. `n=1` only |
+| FLUX, Stable Diffusion, Stable Cascade, PixArt, Sana, CogView, Z-Image, Kolors, Hunyuan, Kandinsky, Lumina, AuraFlow, GLM-Image, Ovis-Image | Diffusers | Text-to-image when `model_index.json` names that pipeline |
+| FLUX Kontext, Stable Diffusion img2img and inpaint | Diffusers | Image-to-image and editing |
 
 ### Text-to-speech models
 

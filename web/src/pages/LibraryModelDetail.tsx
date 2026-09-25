@@ -106,77 +106,132 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
       </div>
 
       {error && (
-        <div class="mt-4 flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">
-          <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <span class="whitespace-pre-line flex-1">{error}</span>
+        <div class="mt-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 whitespace-pre-line">
+          {error}
         </div>
       )}
 
       {loading ? (
-        <div class="bg-white rounded-xl border border-gray-200 mt-6 px-6 py-12 text-center text-gray-400">
+        <div class="mt-6 rounded-2xl bg-white py-16 text-center text-sm text-gray-400">
           {t("lib.loadingDetail")}
         </div>
       ) : manifest ? (
-        <div class="space-y-6 mt-6">
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-            <SummaryTile label={t("lib.format")} value={manifest.details.format?.toUpperCase() || t("lib.notAvailable")} />
-            <SummaryTile label={t("lib.origin")} value={modelOriginLabel(manifest.details.origin)} />
-            <SummaryTile
-              label={t(localInferenceLabelKey("lib"))}
-              value={t(localInferenceValueKey(localInferenceMode, "lib"))}
-              tone={localInferenceMode === "none" ? "danger" : "default"}
-            />
-            <SummaryTile label={t("lib.fileSize")} value={fmtSize(manifest.details.size)} />
-            <SummaryTile label={t("lib.fileCount")} value={String(manifest.files.length)} />
-            <SummaryTile label={t("lib.updated")} value={fmtDate(manifest.details.modified_at)} />
-            <SummaryTile label={t("lib.pipeline")} value={manifest.details.pipeline_tag || t("lib.notAvailable")} />
-          </div>
+        <div class="mt-6 overflow-hidden rounded-2xl bg-white">
+          <DetailFacts
+            items={[
+              fact(t("lib.fileSize"), fmtSize(manifest.details.size)),
+              fact(t("lib.fileCount"), String(manifest.files.length)),
+              fact(t("lib.updated"), fmtDate(manifest.details.modified_at)),
+              fact(t("lib.format"), manifest.details.format?.toUpperCase() || ""),
+              fact(t("lib.origin"), modelOriginLabel(manifest.details.origin)),
+              fact(t("lib.pipeline"), manifest.details.pipeline_tag || ""),
+              fact(
+                t(localInferenceLabelKey("lib")),
+                t(localInferenceValueKey(localInferenceMode, "lib")),
+                localInferenceMode === "none" ? "danger" : "default",
+              ),
+            ]}
+          />
 
           {(manifest.details.description || manifest.details.license) && (
-            <section class="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
+            <div class="space-y-2 border-t border-gray-100 px-6 py-5">
               {manifest.details.description && (
-                <div>
-                  <h2 class="text-sm font-semibold text-gray-900 mb-1">{t("lib.description")}</h2>
-                  <p class="text-sm text-gray-600 whitespace-pre-wrap">{manifest.details.description}</p>
-                </div>
+                <p class="max-w-3xl text-sm leading-6 text-gray-600 whitespace-pre-wrap">{manifest.details.description}</p>
               )}
               {manifest.details.license && (
-                <div class="text-sm text-gray-600">
-                  <span class="font-semibold text-gray-900 mr-2">{t("lib.licenseLabel")}</span>
-                  <span>{manifest.details.license}</span>
-                </div>
+                <p class="text-sm text-gray-500">
+                  <span class="mr-2 text-gray-400">{t("lib.licenseLabel")}</span>
+                  {manifest.details.license}
+                </p>
               )}
-            </section>
+            </div>
           )}
 
-          <section class="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-            <div class="flex items-center justify-between gap-3 flex-wrap">
-              <div>
-                <h2 class="text-lg font-semibold text-gray-900">{t("lib.downloadMethods")}</h2>
-                <p class="text-sm text-gray-500 mt-1">{t("lib.downloadHint")}</p>
-              </div>
-            </div>
+          <div class="overflow-x-auto border-t border-gray-100">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-xs text-gray-400">
+                  <th class="px-6 py-3 font-medium">{t("lib.files")}</th>
+                  <th class="px-4 py-3 font-medium">{t("lib.fileSize")}</th>
+                  <th class="px-4 py-3 font-medium">{t("lib.sha256")}</th>
+                  <th class="px-6 py-3 text-right font-medium">{t("lib.operation")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {manifest.files.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} class="px-6 py-12 text-center text-gray-400">
+                      {t("lib.noFiles")}
+                    </td>
+                  </tr>
+                ) : (
+                  manifest.files.map((file) => {
+                    const fileURL = absoluteURL(file.download_url, runtimeAPIOrigin);
+                    return (
+                      <tr key={file.path} class="border-t border-gray-100 align-middle">
+                        <td class="px-6 py-3">
+                          <div class="flex items-center gap-2">
+                            <span class="break-all font-mono text-[13px] text-gray-900">{file.path}</span>
+                            {file.lfs && (
+                              <span class="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                                LFS
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td class="whitespace-nowrap px-4 py-3 text-gray-600">{fmtSizeDetailed(file.size)}</td>
+                        <td class="px-4 py-3">
+                          <span class="font-mono text-xs text-gray-400" title={file.sha256 || undefined}>
+                            {file.sha256 ? shortHash(file.sha256) : t("lib.notAvailable")}
+                          </span>
+                        </td>
+                        <td class="px-6 py-3">
+                          <div class="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => void handleCopy(`url:${file.path}`, fileURL)}
+                              class={`inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                                copiedKey === `url:${file.path}`
+                                  ? "text-green-600"
+                                  : "text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                              }`}
+                              aria-label={copiedKey === `url:${file.path}` ? t("dash.copied") : t("lib.copyUrl")}
+                              title={copiedKey === `url:${file.path}` ? t("dash.copied") : t("lib.copyUrl")}
+                            >
+                              {copiedKey === `url:${file.path}` ? <CheckIcon /> : <LinkIcon />}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
 
+          <section class="space-y-4 border-t border-gray-100 px-6 py-5">
             <div>
-              <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
-                <span class="text-sm font-medium text-gray-700">{t("lib.manifestUrl")}</span>
+              <h2 class="text-sm font-semibold text-gray-900">{t("lib.downloadMethods")}</h2>
+              <p class="mt-1 text-sm text-gray-500">{t("lib.downloadHint")}</p>
+            </div>
+            <div>
+              <div class="mb-2 flex items-center justify-between gap-3">
+                <span class="text-xs text-gray-400">{t("lib.manifestUrl")}</span>
                 <button
                   onClick={() => void handleCopy("manifest-url", manifestURL)}
-                  class={`text-xs transition-colors flex items-center gap-1 ${
+                  class={`text-xs transition-colors ${
                     copiedKey === "manifest-url" ? "text-green-600" : "text-gray-500 hover:text-indigo-600"
                   }`}
                 >
                   {copiedKey === "manifest-url" ? t("dash.copied") : t("lib.copyUrl")}
                 </button>
               </div>
-              <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 font-mono break-all">
+              <div class="break-all rounded-lg bg-gray-50 px-4 py-3 font-mono text-xs text-gray-700">
                 {manifestURL}
               </div>
             </div>
-
-            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <CodeBlock
                 title={t("lib.manifestCurl")}
                 code={manifestCurl}
@@ -193,79 +248,26 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
               )}
             </div>
           </section>
-
-          <section class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div class="px-5 py-4 border-b border-gray-100">
-              <h2 class="text-lg font-semibold text-gray-900">{t("lib.files")}</h2>
-            </div>
-            <div class="overflow-x-auto">
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="border-b border-gray-100 text-left text-gray-500 bg-gray-50">
-                    <th class="px-4 py-3 font-medium">{t("lib.path")}</th>
-                    <th class="px-4 py-3 font-medium">{t("lib.fileSize")}</th>
-                    <th class="px-4 py-3 font-medium">{t("lib.sha256")}</th>
-                    <th class="px-4 py-3 font-medium text-right">{t("lib.operation")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {manifest.files.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} class="text-center py-12 text-gray-400">
-                        {t("lib.noFiles")}
-                      </td>
-                    </tr>
-                  ) : (
-                    manifest.files.map((file) => {
-                      const fileURL = absoluteURL(file.download_url, runtimeAPIOrigin);
-                      const curlCommand = buildFileCurlCommand(file, runtimeAPIOrigin);
-                      return (
-                        <tr key={file.path} class="border-b border-gray-50 hover:bg-gray-50/50 align-top">
-                          <td class="px-4 py-3">
-                            <div class="font-mono text-gray-900 break-all">{file.path}</div>
-                            {file.lfs && (
-                              <span class="inline-flex mt-2 items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700">
-                                LFS
-                              </span>
-                            )}
-                          </td>
-                          <td class="px-4 py-3 text-gray-600 whitespace-nowrap">{fmtSizeDetailed(file.size)}</td>
-                          <td class="px-4 py-3">
-                            <div class="font-mono text-xs text-gray-500 break-all">
-                              {file.sha256 || t("lib.notAvailable")}
-                            </div>
-                          </td>
-                          <td class="px-4 py-3">
-                            <div class="flex items-center justify-end gap-3 flex-wrap">
-                              <button
-                                onClick={() => void handleCopy(`url:${file.path}`, fileURL)}
-                                class={`text-sm transition-colors ${
-                                  copiedKey === `url:${file.path}` ? "text-green-600" : "text-gray-500 hover:text-indigo-600"
-                                }`}
-                              >
-                                {copiedKey === `url:${file.path}` ? t("dash.copied") : t("lib.copyUrl")}
-                              </button>
-                              <button
-                                onClick={() => void handleCopy(`curl:${file.path}`, curlCommand)}
-                                class={`text-sm transition-colors ${
-                                  copiedKey === `curl:${file.path}` ? "text-green-600" : "text-gray-500 hover:text-indigo-600"
-                                }`}
-                              >
-                                {copiedKey === `curl:${file.path}` ? t("dash.copied") : t("lib.copyCurl")}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
         </div>
       ) : null}
     </div>
+  );
+}
+
+function LinkIcon() {
+  return (
+    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5" />
+      <path stroke-linecap="round" stroke-linejoin="round" d="M10.172 13.828a4 4 0 010-5.656l3-3a4 4 0 015.656 5.656l-1.5 1.5" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+    </svg>
   );
 }
 
@@ -283,7 +285,7 @@ function CodeBlock({
   return (
     <div>
       <div class="flex items-center justify-between mb-2">
-        <span class="text-sm font-medium text-gray-700">{title}</span>
+        <span class="text-xs text-gray-400">{title}</span>
         <button
           onClick={onCopy}
           class={`text-xs transition-colors flex items-center gap-1 ${copied ? "text-green-600" : "text-gray-500 hover:text-indigo-600"}`}
@@ -291,21 +293,47 @@ function CodeBlock({
           {copied ? t("dash.copied") : t("lib.copyCommand")}
         </button>
       </div>
-      <pre class="bg-gray-900 text-gray-100 rounded-lg p-4 text-xs leading-5 overflow-x-auto font-mono whitespace-pre-wrap break-all">
+      <pre class="overflow-x-auto whitespace-pre-wrap break-all rounded-lg bg-gray-50 px-4 py-3 font-mono text-xs leading-5 text-gray-700">
         {code}
       </pre>
     </div>
   );
 }
 
-function SummaryTile({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "danger" }) {
-  const danger = tone === "danger";
+type DetailFact = {
+  label: string;
+  value: string;
+  tone?: "default" | "danger";
+};
+
+function fact(label: string, value: string, tone: "default" | "danger" = "default"): DetailFact {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === t("lib.notAvailable")) {
+    return { label, value: "" };
+  }
+  return { label, value: trimmed, tone };
+}
+
+function DetailFacts({ items }: { items: DetailFact[] }) {
+  const visible = items.filter((item) => item.value);
+  if (visible.length === 0) return null;
   return (
-    <div class={`rounded-xl border px-4 py-3 ${danger ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"}`}>
-      <div class={`text-xs font-medium uppercase tracking-wide ${danger ? "text-red-500" : "text-gray-400"}`}>{label}</div>
-      <div class={`mt-1 text-sm font-semibold break-words ${danger ? "text-red-700" : "text-gray-900"}`}>{value}</div>
-    </div>
+    <dl class="grid grid-cols-2 gap-x-8 gap-y-4 px-6 py-5 sm:grid-cols-4">
+      {visible.map((item) => (
+        <div key={item.label}>
+          <dt class="text-xs text-gray-400">{item.label}</dt>
+          <dd class={`mt-1 text-sm font-medium break-words ${item.tone === "danger" ? "text-red-600" : "text-gray-900"}`}>
+            {item.value}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
+}
+
+function shortHash(value: string): string {
+  if (value.length <= 18) return value;
+  return `${value.slice(0, 10)}…${value.slice(-6)}`;
 }
 
 function decodeModelParam(model: string): string {

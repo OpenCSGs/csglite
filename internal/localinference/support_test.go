@@ -74,42 +74,42 @@ func TestFromMarketplaceDiffusersClassNameFamilies(t *testing.T) {
 }
 
 func TestFromMarketplaceModelASRFamily(t *testing.T) {
-	support := FromMarketplaceModel("pytorch", "", "", "AIWizards/Fun-ASR-Nano-2512", "")
+	support := FromMarketplaceModel("pytorch", "", "", "AIWizards/Fun-ASR-Nano-2512", "", "")
 	if !support.Supported || support.Runtime != "python-asr" || support.Mode != "asr" {
 		t.Fatalf("support = %#v, want python-asr asr", support)
 	}
 }
 
 func TestFromMarketplaceModelASRTaskTag(t *testing.T) {
-	support := FromMarketplaceModel("", "", "", "AIWizards/unknown", "automatic-speech-recognition")
+	support := FromMarketplaceModel("", "", "", "AIWizards/unknown", "", "automatic-speech-recognition")
 	if !support.Supported || support.Runtime != "python-asr" || support.Mode != "asr" {
 		t.Fatalf("support = %#v, want python-asr asr", support)
 	}
 }
 
 func TestFromMarketplaceModelImageToVideoTaskUnsupported(t *testing.T) {
-	support := FromMarketplaceModel("safetensors", "", "StableVideoDiffusionPipeline", "AIWizards/sv3d-diffusers", "image-to-video")
+	support := FromMarketplaceModel("safetensors", "", "StableVideoDiffusionPipeline", "AIWizards/sv3d-diffusers", "", "image-to-video")
 	if support.Supported || support.Mode != "none" {
 		t.Fatalf("support = %#v, want unsupported", support)
 	}
 }
 
 func TestFromMarketplaceModelTaskGatesConflictingClassName(t *testing.T) {
-	support := FromMarketplaceModel("safetensors", "", "StableDiffusionXLPipeline", "AIWizards/sv3d-diffusers", "image-to-video")
+	support := FromMarketplaceModel("safetensors", "", "StableDiffusionXLPipeline", "AIWizards/sv3d-diffusers", "", "image-to-video")
 	if support.Supported || support.Mode != "none" {
 		t.Fatalf("support = %#v, want unsupported", support)
 	}
 }
 
 func TestFromMarketplaceModelTextToImageRejectsNonImageClassName(t *testing.T) {
-	support := FromMarketplaceModel("safetensors", "LlamaForCausalLM", "LlamaForCausalLM", "owner/not-image", "text-to-image")
+	support := FromMarketplaceModel("safetensors", "LlamaForCausalLM", "LlamaForCausalLM", "owner/not-image", "", "text-to-image")
 	if support.Supported || support.Mode != "none" {
 		t.Fatalf("support = %#v, want unsupported", support)
 	}
 }
 
 func TestFromMarketplaceModelTextToImageAllowsMissingClassName(t *testing.T) {
-	support := FromMarketplaceModel("safetensors", "", "", "owner/image-model", "text-to-image")
+	support := FromMarketplaceModel("safetensors", "", "", "owner/image-model", "", "text-to-image")
 	if !support.Supported || support.Runtime != "diffusers" || support.Mode != "image" {
 		t.Fatalf("support = %#v, want diffusers image", support)
 	}
@@ -133,6 +133,86 @@ func TestFromLocalModelDiffusers(t *testing.T) {
 	}, dir)
 	if !support.Supported || support.Runtime != "diffusers" || support.Mode != "image" {
 		t.Fatalf("support = %#v, want diffusers image", support)
+	}
+}
+
+func TestMLXImageSupportedFor(t *testing.T) {
+	if !mlxImageSupportedFor("darwin", "arm64") {
+		t.Fatal("darwin/arm64 should support MLX image models")
+	}
+	for _, platform := range [][2]string{{"darwin", "amd64"}, {"linux", "amd64"}, {"linux", "arm64"}, {"windows", "amd64"}} {
+		if mlxImageSupportedFor(platform[0], platform[1]) {
+			t.Fatalf("%s/%s should not support MLX image models", platform[0], platform[1])
+		}
+	}
+}
+
+func TestFromLocalModelMLXQwenImage21(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("---\nlibrary_name: mlx\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"QwenImage21Pipeline"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	support := FromLocalModel(&model.LocalModel{
+		Format:    model.FormatSafeTensors,
+		Name:      "Qwen-Image-2.1-MLX-4bit",
+		Namespace: "mlx-community",
+	}, dir)
+	if mlxImageSupported() {
+		if !support.Supported || support.Runtime != "mlx-image" || support.Mode != "image" {
+			t.Fatalf("support = %#v, want mlx-image", support)
+		}
+		return
+	}
+	if support.Supported {
+		t.Fatalf("support = %#v, want unsupported outside darwin/arm64", support)
+	}
+}
+
+func TestFromMarketplaceModelMLXQwenImage21(t *testing.T) {
+	support := FromMarketplaceModel("safetensors", "", "", "mlx-community/Qwen-Image-2.1-MLX-4bit", "mlx", "text-to-image")
+	if mlxImageSupported() {
+		if !support.Supported || support.Runtime != "mlx-image" || support.Mode != "image" {
+			t.Fatalf("support = %#v, want mlx-image", support)
+		}
+		return
+	}
+	if support.Supported || support.Runtime == "diffusers" {
+		t.Fatalf("support = %#v, want unsupported outside darwin/arm64", support)
+	}
+}
+
+func TestFromMarketplaceModelOtherMLXImageUnsupported(t *testing.T) {
+	support := FromMarketplaceModel("safetensors", "", "FluxPipeline", "mlx-community/FLUX.1-schnell-4bit", "mlx", "text-to-image")
+	if support.Supported || support.Runtime == "diffusers" || support.Mode != "none" {
+		t.Fatalf("support = %#v, want unsupported MLX image", support)
+	}
+}
+
+func TestFromMarketplaceModelDiffusersImageIgnoresMLXRoute(t *testing.T) {
+	support := FromMarketplaceModel("safetensors", "", "QwenImagePipeline", "Qwen/Qwen-Image", "diffusers", "text-to-image")
+	if !support.Supported || support.Runtime != "diffusers" || support.Mode != "image" {
+		t.Fatalf("support = %#v, want diffusers image", support)
+	}
+}
+
+func TestFromLocalModelOtherMLXImageUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("---\nlibrary_name: mlx\npipeline_tag: text-to-image\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"FluxPipeline"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	support := FromLocalModel(&model.LocalModel{
+		Format:    model.FormatSafeTensors,
+		Name:      "FLUX.1-schnell-4bit",
+		Namespace: "mlx-community",
+	}, dir)
+	if support.Supported || support.Runtime == "diffusers" {
+		t.Fatalf("support = %#v, want unsupported MLX image", support)
 	}
 }
 
@@ -190,11 +270,11 @@ func TestTextToSpeechNeverTakesTheLlamaConvertPath(t *testing.T) {
 		// CosyVoice has no backend yet, so it is off the llama path but not
 		// advertised as runnable.
 		"marketplace pipeline tag": FromMarketplaceModel(
-			"safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", "text-to-speech"),
+			"safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", "", "text-to-speech"),
 		"marketplace model family without a pipeline tag": FromMarketplaceModel(
-			"safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", ""),
+			"safetensors", "Qwen3ForCausalLM", "", "FunAudioLLM/CosyVoice2-0.5B", "", ""),
 		"codec-token model named in #147": FromMarketplaceModel(
-			"safetensors", "Qwen3ForCausalLM", "", "modelscope/Vikhrmodels/Qwen3-0.6B-TTS", ""),
+			"safetensors", "Qwen3ForCausalLM", "", "modelscope/Vikhrmodels/Qwen3-0.6B-TTS", "", ""),
 	}
 	for name, support := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -215,7 +295,7 @@ func TestTextToSpeechNeverTakesTheLlamaConvertPath(t *testing.T) {
 	})
 
 	t.Run("a plain text model stays convertible", func(t *testing.T) {
-		support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "Qwen/Qwen3-0.6B", "")
+		support := FromMarketplaceModel("safetensors", "Qwen3ForCausalLM", "", "Qwen/Qwen3-0.6B", "", "")
 		if !support.Supported || support.Mode != "convert" {
 			t.Fatalf("support = %#v, want llama convert", support)
 		}
