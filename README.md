@@ -115,6 +115,30 @@ csghub-lite login
 
 > **Note:** The install script automatically installs [llama-server](https://github.com/ggml-org/llama.cpp) (required for inference). If you installed from source, install it separately: `brew install llama.cpp` (macOS) or download from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases).
 
+## LAN cluster
+
+Machines on the same network can share one pool of compute. Give every machine
+the same secret and they find each other; there is no separate create or join
+step:
+
+```bash
+csghub-lite config set cluster_secret "a-long-shared-secret"
+csghub-lite config set cluster_name "lab"
+csghub-lite restart
+```
+
+The same values can be set at install time with `CSGHUB_LITE_CLUSTER_SECRET`
+and `CSGHUB_LITE_CLUSTER_NAME`. The first machine to start creates the cluster;
+later ones join when they see it. A request this machine cannot serve is
+forwarded to a member that can, models are copied over the LAN instead of
+downloaded again, and an address that changes on reboot is picked up
+automatically. Two nodes work without a licence; more need a CSGLite Enterprise
+licence. A machine with no secret stays a single node and opens no cluster
+port.
+
+Routing, model sync, join tokens, and admission codes are in the
+[cluster command reference](docs/cli/cluster.md).
+
 ## Local Inference Capabilities
 
 CSGLite can run several model families locally today, with more runtime
@@ -414,7 +438,7 @@ Full documentation is available in the [`docs/`](docs/) directory:
 - **Getting Started**: [Installation](docs/getting-started/installation.md) | [Quick Start](docs/getting-started/quickstart.md)
 - **CLI Reference**: [All Commands](docs/cli/overview.md)
 - **REST API**: [API Reference](docs/api/overview.md)
-- **Guides**: [Configuration](docs/guides/configuration.md) | [Environment Variables](docs/guides/environment-variables.md) | [Model Formats](docs/guides/model-formats.md) | [Packaging](docs/guides/packaging.md) | [Architecture](docs/guides/architecture.md)
+- **Guides**: [Configuration](docs/guides/configuration.md) | [Environment Variables](docs/guides/environment-variables.md) | [LAN Cluster](docs/cli/cluster.md) | [Model Formats](docs/guides/model-formats.md) | [Packaging](docs/guides/packaging.md) | [Architecture](docs/guides/architecture.md)
 
 ## License
 
