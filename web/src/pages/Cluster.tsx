@@ -15,7 +15,6 @@ import {
   isFeatureNotLicensedError,
   joinCluster,
   leaveCluster,
-  removeClusterNode,
   rotateClusterToken,
   setClusterNodeState,
   syncClusterModel,
@@ -85,8 +84,6 @@ const nameSaving = signal(false);
 const staticEditUUID = signal("");
 const staticDraft = signal("");
 const staticSaving = signal(false);
-const removeTarget = signal<ClusterNodeView | null>(null);
-const removing = signal(false);
 const stateSaving = signal(false);
 const overviewError = signal("");
 
@@ -332,20 +329,6 @@ async function saveStaticAddress() {
     overviewError.value = errorMessage(err);
   } finally {
     staticSaving.value = false;
-  }
-}
-
-async function confirmRemove() {
-  const target = removeTarget.value;
-  if (!target) return;
-  removing.value = true;
-  try {
-    view.value = await removeClusterNode(target.uuid);
-    removeTarget.value = null;
-  } catch (err) {
-    overviewError.value = errorMessage(err);
-  } finally {
-    removing.value = false;
   }
 }
 
@@ -817,18 +800,6 @@ function InCluster({ view }: { view: ClusterView }) {
 
       <InviteDialog />
       <ConfirmDialog
-        open={removeTarget.value !== null}
-        title={t("cluster.removeTitle")}
-        name={removeTarget.value?.name}
-        description={t("cluster.removeDesc")}
-        confirmLabel={t("cluster.removeConfirm")}
-        busy={removing.value}
-        onConfirm={() => void confirmRemove()}
-        onCancel={() => {
-          if (!removing.value) removeTarget.value = null;
-        }}
-      />
-      <ConfirmDialog
         open={leaveOpen.value}
         title={t("cluster.leaveTitle")}
         name={view.cluster?.name}
@@ -1095,18 +1066,9 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
             <option value="maintenance">{t("cluster.stateMaintenance")}</option>
           </select>
         ) : (
-          <div class="flex justify-end gap-2">
-            <button type="button" class="text-xs text-indigo-600 hover:underline" onClick={() => startStaticEdit(node)}>
-              {t("cluster.setStaticAddress")}
-            </button>
-            <button
-              type="button"
-              onClick={() => (removeTarget.value = node)}
-              class="rounded border border-red-300 px-2.5 py-1 text-xs text-red-600 transition-colors hover:bg-red-50"
-            >
-              {t("cluster.remove")}
-            </button>
-          </div>
+          <button type="button" class="text-xs text-indigo-600 hover:underline" onClick={() => startStaticEdit(node)}>
+            {t("cluster.setStaticAddress")}
+          </button>
         )}
       </td>
     </tr>

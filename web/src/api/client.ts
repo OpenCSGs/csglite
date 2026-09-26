@@ -3663,10 +3663,6 @@ export function updateClusterNode(uuid: string, patch: { name?: string; static_a
   });
 }
 
-export function removeClusterNode(uuid: string): Promise<ClusterView> {
-  return fetchClusterJSON<ClusterView>(`/api/cluster/nodes/${encodeURIComponent(uuid)}`, { method: "DELETE" });
-}
-
 export function setClusterNodeState(uuid: string, state: ClusterNodeState): Promise<ClusterSettings> {
   return fetchClusterJSON<ClusterSettings>(`/api/cluster/nodes/${encodeURIComponent(uuid)}/state`, {
     method: "POST",

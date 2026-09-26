@@ -1909,11 +1909,6 @@ export const en: Record<string, string> = {
   "cluster.staticAddressPlaceholder": "host:port or empty to clear",
   "cluster.staticAddressSet": "Static address: {0}",
   "cluster.staticBadge": "static",
-  "cluster.remove": "Remove",
-  "cluster.removeTitle": "Remove node from cluster",
-  "cluster.removeDesc": "The node stops receiving forwarded requests and must be invited or join again to come back.",
-  "cluster.removeConfirm": "Remove",
-
   "cluster.discoveredTitle": "Discovered nodes",
   "cluster.discoveredDesc": "Unpaired CSGLite nodes seen on this LAN. Invite one with the admission code shown on its own cluster page.",
   "cluster.discoveredDescReadOnly": "Unpaired CSGLite nodes seen on this LAN. Create or join a cluster first to invite them.",
@@ -3884,11 +3879,6 @@ export const zh: Record<string, string> = {
   "cluster.staticAddressPlaceholder": "host:port，留空则清除",
   "cluster.staticAddressSet": "静态地址：{0}",
   "cluster.staticBadge": "静态",
-  "cluster.remove": "移除",
-  "cluster.removeTitle": "从集群移除节点",
-  "cluster.removeDesc": "该节点将不再接收转发请求，需要重新邀请或加入才能回到集群。",
-  "cluster.removeConfirm": "移除",
-
   "cluster.discoveredTitle": "发现的节点",
   "cluster.discoveredDesc": "局域网内尚未配对的 CSGLite 节点。输入对方集群页面上显示的准入码即可邀请加入。",
   "cluster.discoveredDescReadOnly": "局域网内尚未配对的 CSGLite 节点。先创建或加入集群，然后才能邀请它们。",
