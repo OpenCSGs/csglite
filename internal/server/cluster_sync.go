@@ -202,6 +202,10 @@ func (s *Server) pullModelFromPeer(ctx context.Context, job *pullJob) (handled b
 		return false, nil
 	}
 	manifest["downloaded_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	// The files land in this node's registry directory. The library lists a
+	// registry model only when the manifest names that same source, so stamp
+	// the install location onto the peer's manifest before it is saved.
+	stampClusterManifest(manifest, string(source), namespace, name)
 	raw, _ := json.MarshalIndent(manifest, "", "  ")
 	if err := os.WriteFile(filepath.Join(tmpDir, "manifest.json"), raw, 0o644); err != nil {
 		cleanup()
@@ -234,6 +238,22 @@ func (s *Server) pullModelFromPeer(ctx context.Context, job *pullJob) (handled b
 		}
 	}
 	return true, nil
+}
+
+// stampClusterManifest records the directory this copy was installed into.
+// The model library lists a registry model only when the manifest's artifact
+// source matches that directory.
+func stampClusterManifest(manifest map[string]any, source, namespace, name string) {
+	repo := strings.Trim(namespace, "/") + "/" + strings.Trim(name, "/")
+	if existing, ok := manifest["repository"].(string); ok && strings.Trim(existing, "/") != "" {
+		repo = strings.Trim(existing, "/")
+	}
+	manifest["namespace"] = namespace
+	manifest["name"] = name
+	manifest["repository"] = repo
+	if strings.TrimSpace(source) != "" {
+		manifest["artifact_source"] = source
+	}
 }
 
 // copyPeerExtras fetches derived artifacts into an installed model directory,

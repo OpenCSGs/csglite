@@ -3536,13 +3536,24 @@ export interface ClusterModelNode {
   local: boolean;
 }
 
+export interface ClusterModelSync {
+  uuid: string;
+  name: string;
+  status: string;
+  completed_bytes?: number;
+  total_bytes?: number;
+  detail?: string;
+}
+
 export interface ClusterModelDistribution {
   id: string;
+  repository?: string;
   size: number;
   format?: string;
   pipeline_tag?: string;
   category?: string;
   nodes: ClusterModelNode[];
+  syncs?: ClusterModelSync[];
 }
 
 export interface ClusterSyncResult {

@@ -17,6 +17,22 @@ import (
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
+func TestActiveModelPullsReportsByteProgress(t *testing.T) {
+	store := newPullJobStore()
+	store.add(&pullJob{
+		id: "job-1", kind: "model", name: "Qwen/Qwen3-ASR-0.6B", source: "modelscope",
+		status:   pullJobRunning,
+		progress: api.PullResponse{Status: "copying model.safetensors", CompletedBytes: 12, TotalBytes: 40},
+	})
+	names, pulls := store.activeModelPulls()
+	if len(names) != 1 || names[0] != "Qwen/Qwen3-ASR-0.6B" || len(pulls) != 1 {
+		t.Fatalf("names=%v pulls=%+v", names, pulls)
+	}
+	if pulls[0].CompletedBytes != 12 || pulls[0].TotalBytes != 40 || pulls[0].Detail != "copying model.safetensors" {
+		t.Fatalf("pull = %+v", pulls[0])
+	}
+}
+
 func TestPullJobCreateRequiresModel(t *testing.T) {
 	s := newTestServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/pull/jobs", strings.NewReader(`{"model":""}`))

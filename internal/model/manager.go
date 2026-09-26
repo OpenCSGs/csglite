@@ -249,10 +249,20 @@ func (m *Manager) List() ([]*LocalModel, error) {
 				if loadErr != nil {
 					continue
 				}
+				// The directory is the registry this copy was installed into. A
+				// cluster sync can leave a manifest whose artifact source
+				// still names the peer's registry; keep the files visible in
+				// the model library and record the directory's source so later
+				// lookups open this copy.
 				manifestSource, manifestErr := modelregistry.NormalizeSource(lm.ArtifactSource)
-				if manifestErr == nil && manifestSource == source {
-					models = append(models, lm)
+				if manifestErr != nil || manifestSource != source {
+					lm.ArtifactSource = string(source)
+					if strings.TrimSpace(lm.Repository) == "" {
+						lm.Repository = strings.TrimSpace(lm.Namespace) + "/" + strings.TrimSpace(lm.Name)
+					}
+					_ = SaveManifestInDir(modelDir, lm)
 				}
+				models = append(models, lm)
 			}
 		}
 	}

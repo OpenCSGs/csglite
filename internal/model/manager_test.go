@@ -11,6 +11,40 @@ import (
 	"github.com/opencsgs/csglite/internal/config"
 )
 
+func TestManagerListsSyncedCopyWhoseManifestNamesAnotherSource(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(&config.Config{ModelDir: dir})
+	modelDir := RegistryModelDir(dir, "modelscope", "Qwen", "Qwen3-ASR-0.6B")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A cluster copy can leave the peer's OpenCSG manifest in the ModelScope
+	// directory. The files are installed; the library has to show them.
+	if err := SaveManifestInDir(modelDir, &LocalModel{
+		Namespace:      "Qwen",
+		Name:           "Qwen3-ASR-0.6B",
+		Repository:     "Qwen/Qwen3-ASR-0.6B",
+		ArtifactSource: "opencsg",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := mgr.List()
+	if err != nil || len(models) != 1 {
+		t.Fatalf("List() = %#v, %v", models, err)
+	}
+	if models[0].ArtifactSource != "modelscope" || models[0].Repository != "Qwen/Qwen3-ASR-0.6B" {
+		t.Fatalf("listed model = %+v", models[0])
+	}
+	got, err := mgr.Get("modelscope/Qwen/Qwen3-ASR-0.6B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ArtifactSource != "modelscope" {
+		t.Fatalf("saved source = %q", got.ArtifactSource)
+	}
+}
+
 func TestManagerListsSameRepositoryAcrossSources(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(&config.Config{ModelDir: dir})

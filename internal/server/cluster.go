@@ -351,7 +351,7 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 		}
 	}
 	if s.pullJobs != nil {
-		st.Jobs.Pulling = s.pullJobs.activeModelNames()
+		st.Jobs.Pulling, st.Jobs.Pulls = s.pullJobs.activeModelPulls()
 	}
 	if st.Jobs.Pulling == nil {
 		st.Jobs.Pulling = []string{}
@@ -539,9 +539,17 @@ func (s *Server) recordModelLoadDuration(storageID string, d time.Duration) {
 
 // activeModelNames lists models with a running or queued pull job.
 func (st *pullJobStore) activeModelNames() []string {
+	names, _ := st.activeModelPulls()
+	return names
+}
+
+// activeModelPulls lists model downloads still queued or running, with the
+// byte progress the cluster distribution shows.
+func (st *pullJobStore) activeModelPulls() ([]string, []cluster.PullStatus) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	var out []string
+	var names []string
+	var pulls []cluster.PullStatus
 	for _, id := range st.activeKey {
 		job := st.jobs[id]
 		if job == nil {
@@ -549,11 +557,19 @@ func (st *pullJobStore) activeModelNames() []string {
 		}
 		job.mu.Lock()
 		if job.kind == "model" && (job.status == pullJobRunning || job.status == pullJobQueued) {
-			out = append(out, job.name)
+			names = append(names, job.name)
+			pulls = append(pulls, cluster.PullStatus{
+				Model:          job.name,
+				Source:         job.source,
+				Status:         job.status,
+				CompletedBytes: job.progress.CompletedBytes,
+				TotalBytes:     job.progress.TotalBytes,
+				Detail:         job.progress.Status,
+			})
 		}
 		job.mu.Unlock()
 	}
-	return out
+	return names, pulls
 }
 
 // clusterErrorResponse renders a routing failure in the local API's shape.

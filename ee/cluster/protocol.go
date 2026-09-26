@@ -92,10 +92,21 @@ type NetStatus struct {
 	Addrs    []string `json:"addrs,omitempty"`
 }
 
+// PullStatus is one model download in progress on a node.
+type PullStatus struct {
+	Model          string `json:"model"`
+	Source         string `json:"source,omitempty"`
+	Status         string `json:"status"`
+	CompletedBytes int64  `json:"completed_bytes,omitempty"`
+	TotalBytes     int64  `json:"total_bytes,omitempty"`
+	Detail         string `json:"detail,omitempty"`
+}
+
 // JobsStatus lists background work that competes for disk and GPU.
 type JobsStatus struct {
-	Pulling    []string `json:"pulling"`
-	Converting []string `json:"converting"`
+	Pulling    []string     `json:"pulling"`
+	Pulls      []PullStatus `json:"pulls,omitempty"`
+	Converting []string     `json:"converting"`
 }
 
 // ModelPerf is the node's measured performance for one model.
@@ -166,7 +177,7 @@ type Status struct {
 	Time        time.Time     `json:"time"`
 }
 
-// Model finds a model on the node.
+// Model finds a model on the node by its public inference id.
 func (s *Status) Model(id string) (ModelStatus, bool) {
 	if s == nil {
 		return ModelStatus{}, false
@@ -177,6 +188,20 @@ func (s *Status) Model(id string) (ModelStatus, bool) {
 		}
 	}
 	return ModelStatus{}, false
+}
+
+// HoldsModel reports whether this node has the model, including a copy from
+// another registry of the same repository.
+func (s *Status) HoldsModel(id string) bool {
+	if s == nil {
+		return false
+	}
+	for _, m := range s.Models {
+		if modelStatusMatches(m, id) {
+			return true
+		}
+	}
+	return false
 }
 
 // VRAMFree sums free memory across GPUs.

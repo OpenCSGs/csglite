@@ -401,33 +401,24 @@ func (a *adminAPI) HandleModelSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "members use different model sources; the same model id may not mean the same files. Point every node at the same CSGHub before syncing")
 		return
 	}
-	models := a.m.Models(r.Context())
-	holders := map[string]bool{}
-	for _, cm := range models {
-		if cm.ID == req.Model {
-			for _, n := range cm.Nodes {
-				holders[n.UUID] = true
-			}
-		}
-	}
 	members := a.m.memberViews(r.Context(), true)
 	if all {
 		for _, v := range members {
 			targets = append(targets, v.UUID)
 		}
 	}
-	// Whichever node holds the model knows exactly how to fetch it; fall
-	// back to parsing the id when none of them reports it.
-	repo, artifactSource := "", ""
+	// A node already has the model when it holds this id or another registry
+	// copy of the same repository. Those copies show up in its model library
+	// under the same namespace/name.
+	holders := map[string]bool{}
 	for _, mv := range members {
-		if mv.Status == nil {
-			continue
-		}
-		if ms, ok := mv.Status.Model(req.Model); ok && ms.Repo != "" {
-			repo, artifactSource = ms.Repo, ms.Source
-			break
+		if mv.Status != nil && mv.Status.HoldsModel(req.Model) {
+			holders[mv.UUID] = true
 		}
 	}
+	// Whichever node holds the model knows exactly how to fetch it; fall
+	// back to parsing the id when none of them reports it.
+	repo, artifactSource := pullSpecForModel(members, req.Model)
 	if repo == "" {
 		repo, artifactSource = a.m.opts.Host.PullSpec(req.Model)
 	}

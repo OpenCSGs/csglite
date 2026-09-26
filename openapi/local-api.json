@@ -7705,7 +7705,7 @@
           "Cluster"
         ],
         "summary": "List models across the cluster",
-        "description": "Union of every member's models with the nodes holding each one and whether it is loaded there.",
+        "description": "Union of every member's models with the nodes holding each one and whether it is loaded there. Copies of the same repository from different registries are one row, and a node that holds any copy is shown as having the model. A node that is still downloading a model reports that progress on the same row.",
         "operationId": "listClusterModels",
         "responses": {
           "200": {
@@ -7748,7 +7748,7 @@
           "Cluster"
         ],
         "summary": "Sync a model to nodes",
-        "description": "Asks each target node to pull the model from its own model source (the on-prem CSGHub in the intended deployment). Nodes that already hold it are skipped. Refused while members use different model sources.",
+        "description": "Asks each target node to pull the model from its own model source (the on-prem CSGHub in the intended deployment). Nodes that already hold the same repository, including under another registry id, are skipped. Refused while members use different model sources.",
         "operationId": "syncClusterModel",
         "requestBody": {
           "required": true,
@@ -15396,7 +15396,12 @@
         ],
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Public inference id used to route and sync this model. When several registries hold the repository, this is the id most members advertise."
+          },
+          "repository": {
+            "type": "string",
+            "description": "Library name, namespace/name. Copies from different registries share it."
           },
           "size": {
             "type": "integer"
@@ -15415,7 +15420,26 @@
             "items": {
               "$ref": "#/components/schemas/ClusterModelNode"
             }
+          },
+          "syncs": {
+            "type": "array",
+            "description": "Nodes that are downloading this model and do not have it yet.",
+            "items": {
+              "$ref": "#/components/schemas/ClusterModelSync"
+            }
           }
+        }
+      },
+      "ClusterModelSync": {
+        "type": "object",
+        "required": ["uuid", "name", "status"],
+        "properties": {
+          "uuid": { "type": "string" },
+          "name": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued", "running"] },
+          "completed_bytes": { "type": "integer" },
+          "total_bytes": { "type": "integer" },
+          "detail": { "type": "string" }
         }
       },
       "ClusterExplain": {
