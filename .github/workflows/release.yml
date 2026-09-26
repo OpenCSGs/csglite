@@ -13,10 +13,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  package:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v4
@@ -64,9 +64,88 @@ jobs:
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
+          name: release-dist-unsigned
+          path: dist/
+          if-no-files-found: error
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  sign-macos:
+    needs: package
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    environment:
+      name: release
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+
+      - name: Download unsigned release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dist-unsigned
+          path: dist
+
+      - name: Check Apple signing secrets
+        run: |
+          missing=()
+          if [[ -z "${APPLE_CERTIFICATE:-}" ]]; then
+            missing+=("APPLE_CERTIFICATE")
+          fi
+          if [[ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]]; then
+            missing+=("APPLE_CERTIFICATE_PASSWORD")
+          fi
+          if ((${#missing[@]} > 0)); then
+            echo "::error::Add ${missing[*]} to the release environment on OpenCSGs/csglite."
+            exit 1
+          fi
+
+      - name: Import Apple signing certificate
+        run: bash scripts/ci-import-apple-certificate.sh
+
+      - name: Sign macOS release binaries
+        run: bash scripts/sign-darwin-archives.sh dist
+
+      - name: Upload signed release artifacts
+        uses: actions/upload-artifact@v4
+        with:
           name: release-dist
           path: dist/
           if-no-files-found: error
+
+  publish:
+    needs: sign-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: .
+
+      - name: Verify release checksums
+        working-directory: dist
+        run: sha256sum --check checksums.txt
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -82,7 +161,7 @@ jobs:
             dist/checksums.txt
 
   sync-gitlab:
-    needs: release
+    needs: publish
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

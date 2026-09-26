@@ -24,8 +24,9 @@
 
 - Pushing a `v*` tag to GitHub triggers `.github/workflows/release.yml`.
 - The workflow tests the tagged commit, builds the Web UI and all supported
-  release archives with `make package`, verifies `dist/checksums.txt`, and
-  creates the GitHub release.
+  release archives with `make package`, Developer ID-signs the macOS binaries
+  with the certificate in the GitHub `release` environment, verifies
+  `dist/checksums.txt`, and creates the GitHub release.
 - After GitHub publication, the `sync-gitlab` job uses the `gitlab-sync`
   environment to push the tag and publish the same archives and notes to the
   GitLab release. Daily `main` commits sync separately through
@@ -48,7 +49,8 @@
 - Do not manually build archives, create a GitHub Release, upload assets, or
   push the release tag to GitLab during the normal flow.
 - For a manual fallback, build packages from the target tag in a clean checkout
-  or temporary worktree with `make package`, then use `gh release create`,
+  or temporary worktree with `make package`, Developer ID-sign the macOS
+  archives with `scripts/sign-darwin-archives.sh`, then use `gh release create`,
   `gh release upload`, or `scripts/push.sh --skip-build` only when the automated
   workflow cannot be repaired or rerun.
 - Follow repository network rules during release work:

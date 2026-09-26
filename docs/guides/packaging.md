@@ -54,7 +54,7 @@ git push origin v0.1.0
 
 说明：
 
-- `.github/workflows/release.yml` 会测试 tag 对应提交、执行 `make package`、校验 checksums，并上传 macOS、Linux、Windows 资产。
+- `.github/workflows/release.yml` 会测试 tag 对应提交、执行 `make package`，再用 GitHub `release` environment 里的 Developer ID 证书给 macOS 二进制签名，校验 checksums，并上传 macOS、Linux、Windows 资产。GitHub 和 GitLab 收到的是同一份已签名压缩包。
 - Workflow 会根据上一个 tag 之后的非 merge commit 生成初始 bullet；发布后应检查并按用户可见变更整理。
 - 推送到 GitHub `main` 后，`.github/workflows/sync-gitlab.yml` 会用 `gitlab-sync` environment 同步 GitLab `main`。
 - `sync-gitlab` job 使用 GitHub Actions 的 `gitlab-sync` environment 及其 `GITLAB_TOKEN` secret，自动同步 tag、Release 和资产。
@@ -63,6 +63,24 @@ git push origin v0.1.0
 - 新建 release 必须传入 `--notes-file`，且文件需要包含明确的用户可见变更 bullet，不能只写 `Full Changelog`。
 - GitLab 上传会自动从 `local/secrets.env` 读取 `GITLAB_TOKEN`（如果环境变量未设置）。
 - 如果你希望仓库中的 `Formula/csghub-lite.rb` 始终指向“最新正式版”，请在发布完成后提交该文件的更新。
+
+macOS 命令行包必须带 Developer ID 签名。未签名的二进制在 macOS 上访问局域网会被系统拒绝。证书放在 GitHub 仓库 `OpenCSGs/csglite` 的 Environment `release` 里，不进仓库。值与 `OpenCSGs/csglite-client` 的 `release` environment 相同。
+
+Environment secrets：
+
+| 名称 | 内容 |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Developer ID Application `.p12` 的 base64 |
+| `APPLE_CERTIFICATE_PASSWORD` | 该 `.p12` 的密码 |
+
+Environment variables：
+
+| 名称 | 内容 |
+| --- | --- |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Beijing OpenCSG Technology Co., Ltd. (3S93B6Z434)` |
+| `APPLE_TEAM_ID` | `3S93B6Z434` |
+
+`sign-macos` job 在 macOS runner 上对 `darwin-arm64` 和 `darwin-amd64` 压缩包内的 `csghub-lite` 执行 `codesign`（hardened runtime、timestamp），然后才创建 GitHub Release 并同步到 GitLab。不要给这个 Environment 加 required reviewers，否则 tag 发布会停在等待审批。
 
 ## AI App OSS 镜像
 
@@ -177,5 +195,5 @@ brew install opencsgs/csglite/csghub-lite
 
 - `.goreleaser.yml` 继续定义 archive、checksum、nfpm 和 GitHub release 相关配置
 - `make release-snapshot` 可在本地验证 GoReleaser 输出
-- `.github/workflows/release.yml` 是正式 GitHub 发布入口；推送 `v*` tag 后自动执行 `make package` 并创建 Release
+- `.github/workflows/release.yml` 是正式 GitHub 发布入口；推送 `v*` tag 后自动执行 `make package`、签名 macOS 二进制并创建 Release
 - `sync-gitlab` job 在 GitHub Release 成功后自动调用 `scripts/push.sh` 同步 GitLab

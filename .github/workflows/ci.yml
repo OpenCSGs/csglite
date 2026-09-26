@@ -51,6 +51,11 @@ jobs:
         shell: bash
         run: ./bin/csghub-lite --version
 
+      - name: Test macOS archive signing script
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/sign-darwin-archives_test.sh
+
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
