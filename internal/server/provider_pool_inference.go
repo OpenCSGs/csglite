@@ -120,6 +120,9 @@ func providerPoolUsageMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capture := &providerPoolUsageCapture{affinity: providerPoolRequestAffinityKey(r)}
 		ctx := context.WithValue(r.Context(), providerPoolUsageContextKey{}, capture)
+		// The same conversation key keeps a local llama-server conversation
+		// in one slot, so its prompt cache survives other conversations.
+		ctx = inference.WithSlotAffinity(ctx, capture.affinity)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -147,37 +150,62 @@ func providerPoolRequestAffinityKey(r *http.Request) string {
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	var payload struct {
-		Model    string            `json:"model"`
-		Messages []json.RawMessage `json:"messages"`
+		Model        string            `json:"model"`
+		Messages     []json.RawMessage `json:"messages"`
+		System       json.RawMessage   `json:"system"`
+		Instructions string            `json:"instructions"`
+		Input        json.RawMessage   `json:"input"`
 	}
-	if json.Unmarshal(body, &payload) != nil || len(payload.Messages) == 0 {
+	if json.Unmarshal(body, &payload) != nil {
 		return ""
 	}
-	leading := make([]map[string]any, 0, 2)
-	for _, raw := range payload.Messages {
+	items := payload.Messages
+	if len(items) == 0 && len(payload.Input) > 0 {
+		// The Responses API carries the conversation in input: a list of
+		// items, or a bare string for a one-shot prompt.
+		var text string
+		if json.Unmarshal(payload.Input, &text) == nil {
+			first, _ := json.Marshal(map[string]any{"role": "user", "content": text})
+			items = []json.RawMessage{first}
+		} else if json.Unmarshal(payload.Input, &items) != nil {
+			return ""
+		}
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	// The conversation is identified by its whole first turn: everything
+	// before the first assistant reply or tool call. Agent clients open every
+	// session with the same system prompt and the same injected reminder
+	// messages, so stopping at the first user message gave every session of
+	// one agent the same key; the task the user typed comes after those.
+	leading := make([]map[string]any, 0, 4)
+	for _, raw := range items {
 		var message map[string]any
 		if json.Unmarshal(raw, &message) != nil {
 			return ""
 		}
 		role, _ := message["role"].(string)
-		if role == "assistant" || role == "tool" {
+		if role == "assistant" || role == "tool" || (role == "" && message["type"] != "message") {
 			break
 		}
 		leading = append(leading, message)
-		if role == "user" {
-			break
-		}
 	}
 	if len(leading) == 0 {
 		return ""
 	}
+	// System and Instructions are omitted when absent, so the key of a chat
+	// request is the same as before they were considered.
 	canonical, err := json.Marshal(struct {
-		Identity  string           `json:"identity"`
-		UserAgent string           `json:"user_agent"`
-		Model     string           `json:"model"`
-		Messages  []map[string]any `json:"messages"`
+		Identity     string           `json:"identity"`
+		UserAgent    string           `json:"user_agent"`
+		Model        string           `json:"model"`
+		System       json.RawMessage  `json:"system,omitempty"`
+		Instructions string           `json:"instructions,omitempty"`
+		Messages     []map[string]any `json:"messages"`
 	}{
-		Identity: identity, UserAgent: r.UserAgent(), Model: payload.Model, Messages: leading,
+		Identity: identity, UserAgent: r.UserAgent(), Model: payload.Model,
+		System: payload.System, Instructions: payload.Instructions, Messages: leading,
 	})
 	if err != nil {
 		return ""

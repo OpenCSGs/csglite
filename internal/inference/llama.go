@@ -104,6 +104,8 @@ type llamaEngine struct {
 	logFile             *os.File
 	hasMultimodal       bool
 	nativeToolStreaming bool
+	// slots pins conversations to llama-server slots; nil with one slot.
+	slots *llamaSlotScheduler
 }
 
 type inferenceHTTPError struct {
@@ -533,6 +535,9 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		effectiveNumCtx = CapNumCtxToEmbeddingModelMax(filepath.Dir(modelPath), effectiveNumCtx)
 	}
 	effectiveNumParallel := ResolveNumParallel(numParallel)
+	if !embedding {
+		engine.slots = newLlamaSlotScheduler(effectiveNumParallel)
+	}
 	effectiveNGPULayers := ResolveNGPULayers(nGPULayers)
 	normalizedCacheTypeK, err := NormalizeCacheType(cacheTypeK)
 	if err != nil {
@@ -723,6 +728,42 @@ func (e *llamaEngine) baseURL() string {
 }
 
 func (e *llamaEngine) ChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
+	release := func() {}
+	if _, explicit := reqBody["id_slot"]; !explicit {
+		var slot int
+		slot, release = e.slots.acquire(SlotAffinity(ctx))
+		if slot >= 0 {
+			pinned := make(map[string]interface{}, len(reqBody)+1)
+			for k, v := range reqBody {
+				pinned[k] = v
+			}
+			pinned["id_slot"] = slot
+			reqBody = pinned
+		}
+	}
+	resp, err := e.postChatCompletion(ctx, reqBody)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	resp.Body = &releasingBody{ReadCloser: resp.Body, release: release}
+	return resp, nil
+}
+
+// releasingBody frees the request's slot once the caller has finished with
+// the response, streamed or not.
+type releasingBody struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b *releasingBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.release()
+	return err
+}
+
+func (e *llamaEngine) postChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
