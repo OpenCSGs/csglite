@@ -21,7 +21,7 @@ import {
   saveSettings,
   upgradeWithProgress,
 } from "../api/client";
-import type { AppSettings, ArtifactSource, CloudAuthStatus, LocalDirectoryBrowseResponse } from "../api/client";
+import type { AppSettings, ArtifactSource, CloudAuthStatus, ContextCompressionMode, LocalDirectoryBrowseResponse } from "../api/client";
 import {
   editionOf,
   formatLicenseDate,
@@ -55,6 +55,7 @@ const isSavingAutostart = signal(false);
 const contextIndex = signal(1);
 const contextMode = signal<ContextLengthMode>("global");
 const parallelIndex = signal(0);
+const contextCompression = signal<ContextCompressionMode>("off");
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudAuthError = signal("");
 const isClearingCloudToken = signal(false);
@@ -222,6 +223,19 @@ async function saveParallelIndex(idx: number) {
   }
 }
 
+// Like the slot count, only this setting's own value is taken from the
+// response, so unsaved text elsewhere on the page survives.
+async function saveContextCompression(mode: ContextCompressionMode) {
+  const previous = contextCompression.value;
+  contextCompression.value = mode;
+  try {
+    const data = await saveSettings({ context_compression: mode });
+    contextCompression.value = data.context_compression || "off";
+  } catch {
+    contextCompression.value = previous;
+  }
+}
+
 async function resetDefaults() {
   isResettingDefaults.value = true;
   resetDefaultsMessage.value = "";
@@ -230,6 +244,7 @@ async function resetDefaults() {
   saveContextIndex(1);
   setContextModeLocal("global");
   parallelIndex.value = parallelIndexFor(1);
+  contextCompression.value = "off";
   setCloudServiceFeedback("", "");
   try {
     const data = await saveSettings({
@@ -238,6 +253,7 @@ async function resetDefaults() {
       cloud_provider_name: "",
       llama_use_model_max_ctx: false,
       llama_num_parallel: 1,
+      context_compression: "off",
     });
     applySettings(data);
     notifyProvidersChanged();
@@ -257,6 +273,7 @@ async function resetDefaults() {
 function applySettings(data: AppSettings) {
   setContextModeLocal(data.llama_use_model_max_ctx ? "model_max" : "global");
   parallelIndex.value = parallelIndexFor(data.llama_num_parallel);
+  contextCompression.value = data.context_compression || "off";
   storageLocation.value = data.storage_dir || "";
   storageDirInput.value = data.storage_dir || "";
   modelDirectory.value = data.model_dir || "";
@@ -1439,6 +1456,43 @@ export function Settings() {
               <span key={label} class="text-xs text-gray-400">{label}</span>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Context compression */}
+      <div class="mb-10">
+        <div class="flex items-center gap-2 mb-1">
+          <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
+          </svg>
+          <span class="font-semibold text-gray-900">{t("settings.contextCompression")}</span>
+        </div>
+        <p class="text-sm text-gray-500 mb-4 ml-7">{t("settings.contextCompressionDesc")}</p>
+        <div class="ml-7 grid gap-3 sm:grid-cols-3">
+          {([
+            ["off", "settings.contextCompressionOff", "settings.contextCompressionOffDesc"],
+            ["safe", "settings.contextCompressionSafe", "settings.contextCompressionSafeDesc"],
+            ["aggressive", "settings.contextCompressionAggressive", "settings.contextCompressionAggressiveDesc"],
+          ] as const).map(([mode, labelKey, descriptionKey]) => {
+            const selected = contextCompression.value === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => void saveContextCompression(mode)}
+                class={`rounded-xl border p-4 text-left transition ${
+                  selected
+                    ? "border-indigo-300 bg-indigo-50 ring-1 ring-indigo-200"
+                    : "border-gray-200 bg-white hover:border-gray-300"
+                }`}
+              >
+                <span class={`block text-sm font-medium ${selected ? "text-indigo-800" : "text-gray-800"}`}>
+                  {t(labelKey)}
+                </span>
+                <span class="mt-1 block text-xs leading-5 text-gray-500">{t(descriptionKey)}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 

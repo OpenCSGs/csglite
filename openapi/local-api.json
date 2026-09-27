@@ -9115,6 +9115,7 @@
           "autostart",
           "desktop_mode",
           "llama_use_model_max_ctx",
+          "context_compression",
           "web_search",
           "observability",
           "hidden_nav_items",
@@ -9196,6 +9197,11 @@
           "llama_use_model_max_ctx": {
             "type": "boolean",
             "description": "Whether local models use their native maximum context when a request does not explicitly set num_ctx. CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX takes precedence when set."
+          },
+          "context_compression": {
+            "type": "string",
+            "enum": ["off", "safe", "aggressive"],
+            "description": "How the gateway shrinks tool output (tool_result blocks, role=tool messages, function_call_output items) in /v1/messages, /v1/chat/completions and /v1/responses requests before a model sees them. off leaves requests untouched. safe removes only redundancy and keeps every distinct line: JSON is minified and arrays of records become a header plus rows, search results are grouped by file, runs of identical lines are counted, terminal escapes are dropped, lines over 2000 bytes are cut, and a log, search or JSON result identical to an earlier one points back to it. aggressive also drops content: long JSON arrays, command output over 150 lines and search results over 12 matches per file are sampled, and lines differing only in their numbers are folded; every error line, boundaries and outliers are kept. File reads and source code are never changed. Affected responses carry an X-CSGLite-Context-Compression header."
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"
@@ -9309,6 +9315,11 @@
           "llama_use_model_max_ctx": {
             "type": "boolean",
             "description": "Use each local model's native maximum context when requests omit num_ctx."
+          },
+          "context_compression": {
+            "type": "string",
+            "enum": ["off", "safe", "aggressive"],
+            "description": "Context compression mode for agent requests; see SettingsResponse.context_compression."
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"
@@ -9830,7 +9841,21 @@
           "request_body": {"type": "string"},
           "response_body": {"type": "string"},
           "request_body_truncated": {"type": "boolean"},
-          "response_body_truncated": {"type": "boolean"}
+          "response_body_truncated": {"type": "boolean"},
+          "context_compression": {"$ref": "#/components/schemas/ObservabilityContextCompression"}
+        }
+      },
+      "ObservabilityContextCompression": {
+        "type": "object",
+        "description": "What context compression did to the request's tool results. Present only when compression was on and the request carried tool results. request_body keeps the body as the client sent it.",
+        "required": ["mode", "blocks", "compressed", "bytes_before", "bytes_after", "tokens_saved"],
+        "properties": {
+          "mode": {"type": "string", "enum": ["safe", "aggressive"]},
+          "blocks": {"type": "integer", "format": "int64", "description": "Tool results in the request."},
+          "compressed": {"type": "integer", "format": "int64", "description": "Tool results that were rewritten."},
+          "bytes_before": {"type": "integer", "format": "int64"},
+          "bytes_after": {"type": "integer", "format": "int64"},
+          "tokens_saved": {"type": "integer", "format": "int64", "description": "Estimated input tokens removed."}
         }
       },
       "ObservabilityRequestSummary": {
@@ -9840,7 +9865,8 @@
           "succeeded": {"type": "integer", "format": "int64"},
           "failed": {"type": "integer", "format": "int64"},
           "total_tokens": {"type": "integer", "format": "int64"},
-          "average_latency_ms": {"type": "number", "format": "double"}
+          "average_latency_ms": {"type": "number", "format": "double"},
+          "context_tokens_saved": {"type": "integer", "format": "int64", "description": "Estimated input tokens context compression removed across the matching requests."}
         }
       },
       "ObservabilityTrace": {

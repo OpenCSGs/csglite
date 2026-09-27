@@ -548,7 +548,9 @@ type SettingsResponse struct {
 	Observability            ObservabilitySettings `json:"observability"`
 	LlamaUseModelMaxCtx      bool                  `json:"llama_use_model_max_ctx"`
 	LlamaNumParallel         int                   `json:"llama_num_parallel"`
-	HiddenNavItems           []string              `json:"hidden_nav_items"`
+	// ContextCompression is "off", "safe" or "aggressive".
+	ContextCompression string   `json:"context_compression"`
+	HiddenNavItems     []string `json:"hidden_nav_items"`
 	// Edition is "Enterprise" while a license is in effect, otherwise "Community".
 	Edition string `json:"edition"`
 	// LicenseStatus is the license.Status string; "none" when no license is installed.
@@ -640,6 +642,7 @@ type SettingsUpdateRequest struct {
 	Observability            *ObservabilitySettings `json:"observability,omitempty"`
 	LlamaUseModelMaxCtx      *bool                  `json:"llama_use_model_max_ctx,omitempty"`
 	LlamaNumParallel         *int                   `json:"llama_num_parallel,omitempty"`
+	ContextCompression       *string                `json:"context_compression,omitempty"`
 }
 
 type ObservabilitySettings struct {
@@ -709,6 +712,20 @@ type ObservabilityRequest struct {
 	ResponseBody               string    `json:"response_body,omitempty"`
 	RequestBodyTruncated       bool      `json:"request_body_truncated"`
 	ResponseBodyTruncated      bool      `json:"response_body_truncated"`
+	// ContextCompression is set when context compression was on for the
+	// request and it carried tool results.
+	ContextCompression *ObservabilityContextCompression `json:"context_compression,omitempty"`
+}
+
+// ObservabilityContextCompression is what context compression did to one
+// request's tool results. TokensSaved is an estimate.
+type ObservabilityContextCompression struct {
+	Mode        string `json:"mode"`
+	Blocks      int64  `json:"blocks"`
+	Compressed  int64  `json:"compressed"`
+	BytesBefore int64  `json:"bytes_before"`
+	BytesAfter  int64  `json:"bytes_after"`
+	TokensSaved int64  `json:"tokens_saved"`
 }
 
 type ObservabilityRequestSummary struct {
@@ -717,6 +734,9 @@ type ObservabilityRequestSummary struct {
 	Failed         int64   `json:"failed"`
 	TotalTokens    int64   `json:"total_tokens"`
 	AverageLatency float64 `json:"average_latency_ms"`
+	// ContextTokensSaved estimates the input tokens context compression
+	// removed across the matching requests.
+	ContextTokensSaved int64 `json:"context_tokens_saved"`
 }
 
 type ObservabilityRequestListResponse struct {

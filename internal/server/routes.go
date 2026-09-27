@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/opencsgs/csglite/ee/cluster"
+	"github.com/opencsgs/csglite/internal/ctxcompress"
 )
 
 func (s *Server) routes() http.Handler {
@@ -59,7 +60,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/datasets/pull/partial", s.handlePartialDatasetPullDelete)
 	mux.HandleFunc("DELETE /api/datasets/delete", s.handleDatasetDelete)
 
-	mux.HandleFunc("POST /v1/chat/completions", s.handleOpenAIChatCompletions)
+	mux.HandleFunc("POST /v1/chat/completions", s.withContextCompression(ctxcompress.ProtocolOpenAIChat, s.handleOpenAIChatCompletions))
 	mux.HandleFunc("POST /v1/embeddings", s.handleOpenAIEmbeddings)
 	mux.HandleFunc("POST /v1/images/generations", s.handleOpenAIImagesGenerations)
 	mux.HandleFunc("POST /v1/images/edits", s.handleOpenAIImagesEdits)
@@ -77,12 +78,12 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/images/jobs/{jobID}", s.handleImageGenerationJobCancel)
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("GET /v1/responses", s.handleOpenAIResponsesUnsupported)
-	mux.HandleFunc("POST /v1/responses", s.handleOpenAIResponses)
-	mux.HandleFunc("POST /v1/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /v1/responses", s.withContextCompression(ctxcompress.ProtocolResponses, s.handleOpenAIResponses))
+	mux.HandleFunc("POST /v1/messages", s.withContextCompression(ctxcompress.ProtocolAnthropic, s.handleAnthropicMessages))
 	mux.HandleFunc("POST /v1/messages/count_tokens", s.handleAnthropicCountTokens)
-	mux.HandleFunc("POST /anthropic/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /anthropic/messages", s.withContextCompression(ctxcompress.ProtocolAnthropic, s.handleAnthropicMessages))
 	mux.HandleFunc("POST /anthropic/messages/count_tokens", s.handleAnthropicCountTokens)
-	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /anthropic/v1/messages", s.withContextCompression(ctxcompress.ProtocolAnthropic, s.handleAnthropicMessages))
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
 	s.registerProviderInferenceRoutes(mux)
 
@@ -244,17 +245,17 @@ func (s *Server) externalAPIRoutes() http.Handler {
 
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("GET /v1/responses", s.handleOpenAIResponsesUnsupported)
-	mux.HandleFunc("POST /v1/chat/completions", s.handleOpenAIChatCompletions)
+	mux.HandleFunc("POST /v1/chat/completions", s.withContextCompression(ctxcompress.ProtocolOpenAIChat, s.handleOpenAIChatCompletions))
 	mux.HandleFunc("POST /v1/embeddings", s.handleOpenAIEmbeddings)
 	mux.HandleFunc("POST /v1/images/generations", s.handleOpenAIImagesGenerations)
 	mux.HandleFunc("POST /v1/images/edits", s.handleOpenAIImagesEdits)
 	mux.HandleFunc("POST /v1/audio/transcriptions", s.handleOpenAIAudioTranscriptions)
-	mux.HandleFunc("POST /v1/responses", s.handleOpenAIResponses)
-	mux.HandleFunc("POST /v1/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /v1/responses", s.withContextCompression(ctxcompress.ProtocolResponses, s.handleOpenAIResponses))
+	mux.HandleFunc("POST /v1/messages", s.withContextCompression(ctxcompress.ProtocolAnthropic, s.handleAnthropicMessages))
 	mux.HandleFunc("POST /v1/messages/count_tokens", s.handleAnthropicCountTokens)
-	mux.HandleFunc("POST /anthropic/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /anthropic/messages", s.withContextCompression(ctxcompress.ProtocolAnthropic, s.handleAnthropicMessages))
 	mux.HandleFunc("POST /anthropic/messages/count_tokens", s.handleAnthropicCountTokens)
-	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropicMessages)
+	mux.HandleFunc("POST /anthropic/v1/messages", s.withContextCompression(ctxcompress.ProtocolAnthropic, s.handleAnthropicMessages))
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
 	s.registerProviderInferenceRoutes(mux)
 

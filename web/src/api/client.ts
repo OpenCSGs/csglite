@@ -308,6 +308,9 @@ export interface SystemInfo {
   gpu_shared_memory: boolean;
 }
 
+/** How the gateway shrinks tool output in agent requests. */
+export type ContextCompressionMode = "off" | "safe" | "aggressive";
+
 export interface AppSettings {
   version: string;
   llama_server_version?: string;
@@ -331,6 +334,7 @@ export interface AppSettings {
   autostart: boolean;
   llama_use_model_max_ctx: boolean;
   llama_num_parallel: number;
+  context_compression: ContextCompressionMode;
   web_search: WebSearchSettings;
   observability: ObservabilitySettings;
   hidden_nav_items: string[];
@@ -755,6 +759,18 @@ export interface ObservabilityRequest {
   response_body?: string;
   request_body_truncated: boolean;
   response_body_truncated: boolean;
+  context_compression?: ObservabilityContextCompression;
+}
+
+/** What context compression did to one request's tool results. */
+export interface ObservabilityContextCompression {
+  mode: ContextCompressionMode;
+  blocks: number;
+  compressed: number;
+  bytes_before: number;
+  bytes_after: number;
+  /** Estimated input tokens removed. */
+  tokens_saved: number;
 }
 
 export interface ObservabilityRequestSummary {
@@ -763,6 +779,7 @@ export interface ObservabilityRequestSummary {
   failed: number;
   total_tokens: number;
   average_latency_ms: number;
+  context_tokens_saved: number;
 }
 
 export interface ObservabilityRequestListResponse {
@@ -1717,6 +1734,7 @@ export async function saveSettings(patch: {
   autostart?: boolean;
   llama_use_model_max_ctx?: boolean;
   llama_num_parallel?: number;
+  context_compression?: ContextCompressionMode;
   web_search?: WebSearchSettings;
   observability?: ObservabilitySettings;
 }): Promise<AppSettings> {

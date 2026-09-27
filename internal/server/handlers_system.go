@@ -169,6 +169,18 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Inference.LlamaNumParallel = numParallel
 		configUpdated = true
 	}
+	if req.ContextCompression != nil {
+		if !config.IsContextCompressionMode(*req.ContextCompression) {
+			writeError(w, http.StatusBadRequest, `context_compression must be "off", "safe" or "aggressive"`)
+			return
+		}
+		mode := config.NormalizeContextCompression(*req.ContextCompression)
+		if mode == config.ContextCompressionOff {
+			mode = "" // off is the default, so it is not written out
+		}
+		s.cfg.Inference.ContextCompression = mode
+		configUpdated = true
+	}
 	if req.ServerURL != nil {
 		serverURL := strings.TrimSpace(*req.ServerURL)
 		if serverURL == "" {
@@ -347,6 +359,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		},
 		LlamaUseModelMaxCtx: inference.UseModelMaxCtxByDefault(cfg.Inference.LlamaUseModelMaxCtx),
 		LlamaNumParallel:    inference.ResolveNumParallel(cfg.Inference.LlamaNumParallel),
+		ContextCompression:  config.NormalizeContextCompression(cfg.Inference.ContextCompression),
 		HiddenNavItems:      append([]string{}, cfg.HiddenNavItems...),
 	}
 }
