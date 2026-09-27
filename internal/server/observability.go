@@ -18,6 +18,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/correlation"
+	"github.com/opencsgs/csglite/internal/ctxcompress"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/observability"
 	routerprofile "github.com/opencsgs/semantic-router"
@@ -42,6 +43,7 @@ type observationMetadata struct {
 	pool         *apiUsagePoolMetadata
 	inputTokens  int64
 	outputTokens int64
+	compression  observationCompression
 }
 
 type observationMetadataSnapshot struct {
@@ -52,6 +54,33 @@ type observationMetadataSnapshot struct {
 	pool         *apiUsagePoolMetadata
 	inputTokens  int64
 	outputTokens int64
+	compression  observationCompression
+}
+
+// observationCompression is what context compression did to the request.
+type observationCompression struct {
+	mode        string
+	blocks      int64
+	compressed  int64
+	bytesBefore int64
+	bytesAfter  int64
+	tokensSaved int64
+}
+
+func (m *observationMetadata) setContextCompression(mode string, stats ctxcompress.Stats) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.compression = observationCompression{
+		mode:        mode,
+		blocks:      int64(stats.Blocks),
+		compressed:  int64(stats.Compressed),
+		bytesBefore: int64(stats.BytesBefore),
+		bytesAfter:  int64(stats.BytesAfter),
+		tokensSaved: int64(stats.TokensSaved),
+	}
 }
 
 func observationFromContext(ctx context.Context) *observationMetadata {
@@ -90,6 +119,7 @@ func (m *observationMetadata) snapshot() observationMetadataSnapshot {
 		sourceName:   m.sourceName,
 		inputTokens:  m.inputTokens,
 		outputTokens: m.outputTokens,
+		compression:  m.compression,
 	}
 	if m.pool != nil {
 		pool := *m.pool
@@ -283,6 +313,13 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			ResponseBody:          string(responseBody),
 			RequestBodyTruncated:  requestTruncated,
 			ResponseBodyTruncated: ow.truncated,
+
+			ContextCompressionMode:  snapshot.compression.mode,
+			ContextBlocks:           snapshot.compression.blocks,
+			ContextCompressedBlocks: snapshot.compression.compressed,
+			ContextBytesBefore:      snapshot.compression.bytesBefore,
+			ContextBytesAfter:       snapshot.compression.bytesAfter,
+			ContextTokensSaved:      snapshot.compression.tokensSaved,
 		}
 		if !ow.firstWrite.IsZero() {
 			record.FirstTokenLatencyMS = ow.firstWrite.Sub(startedAt).Milliseconds()

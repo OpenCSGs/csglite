@@ -42,6 +42,8 @@ func (s *Server) handleObservabilityRequests(w http.ResponseWriter, r *http.Requ
 			Failed:         page.Summary.Failed,
 			TotalTokens:    page.Summary.TotalTokens,
 			AverageLatency: page.Summary.AverageLatency,
+
+			ContextTokensSaved: page.Summary.ContextTokensSaved,
 		},
 	}
 	for _, record := range page.Items {
@@ -284,6 +286,21 @@ func observabilityRequestResponse(record observability.RequestRecord) api.Observ
 		ResponseBody:               record.ResponseBody,
 		RequestBodyTruncated:       record.RequestBodyTruncated,
 		ResponseBodyTruncated:      record.ResponseBodyTruncated,
+		ContextCompression:         observabilityContextCompression(record),
+	}
+}
+
+func observabilityContextCompression(record observability.RequestRecord) *api.ObservabilityContextCompression {
+	if record.ContextCompressionMode == "" {
+		return nil
+	}
+	return &api.ObservabilityContextCompression{
+		Mode:        record.ContextCompressionMode,
+		Blocks:      record.ContextBlocks,
+		Compressed:  record.ContextCompressedBlocks,
+		BytesBefore: record.ContextBytesBefore,
+		BytesAfter:  record.ContextBytesAfter,
+		TokensSaved: record.ContextTokensSaved,
 	}
 }
 

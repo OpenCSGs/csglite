@@ -16,6 +16,7 @@ import type {
   DatasetExportPreview,
   DatasetExportTraceFilter,
   DatasetRedactionPolicy,
+  ObservabilityContextCompression,
   ObservabilityFacetValue,
   ObservabilityFacets,
   ObservabilityQuery,
@@ -314,11 +315,14 @@ export function Observability() {
       </div>
 
       {tab === "requests" && (
-        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div class={`grid gap-4 sm:grid-cols-2 ${requests?.summary.context_tokens_saved ? "xl:grid-cols-5" : "xl:grid-cols-4"}`}>
           <MetricCard label={t("observability.metricRequests")} value={formatNumber(requests?.summary.requests || 0)} tone="bg-indigo-500" />
           <MetricCard label={t("observability.metricSuccessRate")} value={`${successRate.toFixed(1)}%`} tone="bg-emerald-500" />
           <MetricCard label={t("observability.metricAverageLatency")} value={formatObservabilityDuration(requests?.summary.average_latency_ms || 0)} tone="bg-amber-500" />
           <MetricCard label={t("observability.metricTokens")} value={formatNumber(requests?.summary.total_tokens || 0)} tone="bg-violet-500" />
+          {!!requests?.summary.context_tokens_saved && (
+            <MetricCard label={t("observability.metricContextTokensSaved")} value={`≈${formatNumber(requests.summary.context_tokens_saved)}`} tone="bg-cyan-500" />
+          )}
         </div>
       )}
 
@@ -954,6 +958,7 @@ function RequestDetail({ request, onOpenTrace }: { request: ObservabilityRequest
     [t("observability.columnCacheRead"), formatCacheTokens(request, request.cache_read_input_tokens)],
     [t("observability.columnTokens"), formatNumber(request.total_tokens)],
     [t("observability.columnCacheHitRate"), formatCacheHitRate(request)],
+    ...(request.context_compression ? [[t("observability.contextCompression"), formatContextCompression(request.context_compression)]] : []),
     [t("observability.caller"), request.api_key_name || "—"],
     [t("observability.columnTime"), formatObservabilityDateTime(request.started_at)],
   ];
@@ -979,6 +984,16 @@ function RequestDetail({ request, onOpenTrace }: { request: ObservabilityRequest
       <PayloadPanel title={t("observability.requestPayload")} value={request.request_body} truncated={request.request_body_truncated} />
       <PayloadPanel title={t("observability.responsePayload")} value={request.response_body} truncated={request.response_body_truncated} />
     </div>
+  );
+}
+
+function formatContextCompression(value: ObservabilityContextCompression): string {
+  return t(
+    "observability.contextCompressionValue",
+    formatNumber(value.tokens_saved),
+    value.compressed,
+    value.blocks,
+    t(`settings.contextCompression${value.mode === "aggressive" ? "Aggressive" : "Safe"}`),
   );
 }
 

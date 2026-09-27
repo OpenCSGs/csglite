@@ -82,6 +82,15 @@ type RequestRecord struct {
 	ResponseBody               string
 	RequestBodyTruncated       bool
 	ResponseBodyTruncated      bool
+	// Context compression: the mode that applied, the tool results the
+	// request carried and how many were rewritten, their size before and
+	// after, and an estimate of the input tokens that saved.
+	ContextCompressionMode  string
+	ContextBlocks           int64
+	ContextCompressedBlocks int64
+	ContextBytesBefore      int64
+	ContextBytesAfter       int64
+	ContextTokensSaved      int64
 }
 
 type RequestFilter struct {
@@ -102,6 +111,9 @@ type RequestSummary struct {
 	Failed         int64
 	TotalTokens    int64
 	AverageLatency float64
+	// ContextTokensSaved is the estimated input tokens context compression
+	// removed across the matching requests.
+	ContextTokensSaved int64
 }
 
 type RequestPage struct {
@@ -227,7 +239,13 @@ CREATE TABLE IF NOT EXISTS requests (
 	response_body BLOB,
 	request_body_truncated INTEGER NOT NULL DEFAULT 0,
 	response_body_truncated INTEGER NOT NULL DEFAULT 0,
-	usage_reconciled INTEGER NOT NULL DEFAULT 0
+	usage_reconciled INTEGER NOT NULL DEFAULT 0,
+	context_compression_mode TEXT NOT NULL DEFAULT '',
+	context_blocks INTEGER NOT NULL DEFAULT 0,
+	context_compressed_blocks INTEGER NOT NULL DEFAULT 0,
+	context_bytes_before INTEGER NOT NULL DEFAULT 0,
+	context_bytes_after INTEGER NOT NULL DEFAULT 0,
+	context_tokens_saved INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_requests_started_at ON requests(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_requests_trace_id ON requests(trace_id, started_at);
@@ -272,6 +290,12 @@ CREATE INDEX IF NOT EXISTS idx_requests_pool_id ON requests(pool_id, pool_name);
 		{"estimated_cost", "REAL NOT NULL DEFAULT 0"},
 		{"cost_currency", "TEXT NOT NULL DEFAULT ''"},
 		{"cost_known", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_compression_mode", "TEXT NOT NULL DEFAULT ''"},
+		{"context_blocks", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_compressed_blocks", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_bytes_before", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_bytes_after", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_tokens_saved", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.addColumnIfMissing("requests", migration.name, migration.definition); err != nil {
 			return err
@@ -345,6 +369,8 @@ func (s *Store) Add(ctx context.Context, record RequestRecord) error {
 		record.CacheReadInputTokens, record.CacheCreationTokens, record.CacheEligibleTokens,
 		record.FirstTokenLatencyMS, record.ErrorMessage, requestBody, responseBody,
 		boolInt(record.RequestBodyTruncated), boolInt(record.ResponseBodyTruncated), 1,
+		record.ContextCompressionMode, record.ContextBlocks, record.ContextCompressedBlocks,
+		record.ContextBytesBefore, record.ContextBytesAfter, record.ContextTokensSaved,
 	}
 	query := `
 INSERT OR REPLACE INTO requests (
@@ -358,7 +384,9 @@ INSERT OR REPLACE INTO requests (
 	fallback_count, limited_count, input_tokens, output_tokens, duration_ms,
 	cache_read_input_tokens, cache_creation_input_tokens, cache_eligible_input_tokens,
 	first_token_latency_ms, error_message, request_body, response_body,
-	request_body_truncated, response_body_truncated, usage_reconciled
+	request_body_truncated, response_body_truncated, usage_reconciled,
+	context_compression_mode, context_blocks, context_compressed_blocks,
+	context_bytes_before, context_bytes_after, context_tokens_saved
 ) VALUES (` + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + `)`
 	_, err = s.db.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -452,10 +480,11 @@ SELECT COUNT(*),
 	COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
 	COALESCE(SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END), 0),
 	COALESCE(SUM(MAX(input_tokens, cache_eligible_input_tokens) + output_tokens), 0),
-	COALESCE(AVG(duration_ms), 0)
+	COALESCE(AVG(duration_ms), 0),
+	COALESCE(SUM(context_tokens_saved), 0)
 FROM requests`+where, args...).Scan(
 		&page.Summary.Requests, &page.Summary.Succeeded, &page.Summary.Failed,
-		&page.Summary.TotalTokens, &page.Summary.AverageLatency,
+		&page.Summary.TotalTokens, &page.Summary.AverageLatency, &page.Summary.ContextTokensSaved,
 	); err != nil {
 		return page, fmt.Errorf("summarizing observability requests: %w", err)
 	}
@@ -919,7 +948,9 @@ semantic_fallback, semantic_fallback_reason, price_input_per_million, price_outp
 estimated_cost, cost_currency, cost_known, fallback_count, limited_count, input_tokens,
 output_tokens, duration_ms, cache_read_input_tokens, cache_creation_input_tokens,
 cache_eligible_input_tokens, first_token_latency_ms, error_message,
-request_body_truncated, response_body_truncated` + bodyColumns + ` FROM requests`
+request_body_truncated, response_body_truncated, context_compression_mode, context_blocks,
+context_compressed_blocks, context_bytes_before, context_bytes_after,
+context_tokens_saved` + bodyColumns + ` FROM requests`
 }
 
 type scanner interface {
@@ -945,6 +976,8 @@ func scanRequest(row scanner, includeBodies bool) (RequestRecord, error) {
 		&record.LimitedCount, &record.InputTokens, &record.OutputTokens, &record.DurationMS,
 		&record.CacheReadInputTokens, &record.CacheCreationTokens, &record.CacheEligibleTokens,
 		&record.FirstTokenLatencyMS, &record.ErrorMessage, &requestTruncated, &responseTruncated,
+		&record.ContextCompressionMode, &record.ContextBlocks, &record.ContextCompressedBlocks,
+		&record.ContextBytesBefore, &record.ContextBytesAfter, &record.ContextTokensSaved,
 	}
 	var requestBody, responseBody []byte
 	if includeBodies {
