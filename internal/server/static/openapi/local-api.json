@@ -8159,6 +8159,10 @@
             "type": "integer",
             "minimum": 0
           },
+          "estimated_requests": {
+            "type": "integer",
+            "minimum": 0
+          },
           "input_tokens": {
             "type": "integer",
             "minimum": 0

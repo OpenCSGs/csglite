@@ -141,16 +141,21 @@ func (w *observationResponseWriter) capture(p []byte) {
 }
 
 func (w *observationResponseWriter) captureUsageTail(p []byte) {
+	w.usageTail = appendUsageTail(w.usageTail, p)
+}
+
+// appendUsageTail keeps only the newest observabilityUsageTailLimit bytes, the
+// region where a streamed response advertises its token usage.
+func appendUsageTail(tail []byte, p []byte) []byte {
 	if len(p) >= observabilityUsageTailLimit {
-		w.usageTail = append(w.usageTail[:0], p[len(p)-observabilityUsageTailLimit:]...)
-		return
+		return append(tail[:0], p[len(p)-observabilityUsageTailLimit:]...)
 	}
-	overflow := len(w.usageTail) + len(p) - observabilityUsageTailLimit
+	overflow := len(tail) + len(p) - observabilityUsageTailLimit
 	if overflow > 0 {
-		copy(w.usageTail, w.usageTail[overflow:])
-		w.usageTail = w.usageTail[:len(w.usageTail)-overflow]
+		copy(tail, tail[overflow:])
+		tail = tail[:len(tail)-overflow]
 	}
-	w.usageTail = append(w.usageTail, p...)
+	return append(tail, p...)
 }
 
 func (w *observationResponseWriter) Flush() {
@@ -487,11 +492,11 @@ func updateObservationResponseUsage(value map[string]any, result *observationRes
 	switch {
 	case hasAnthropicRead:
 		result.eligibleTokens = max(result.eligibleTokens, inputTokens+readTokens+creationTokens)
-case hasTopLevelRead:
-			switch {
-			case readTokens > 0 && inputTokens < readTokens:
-				inputTokens += readTokens
-			}
+	case hasTopLevelRead:
+		switch {
+		case readTokens > 0 && inputTokens < readTokens:
+			inputTokens += readTokens
+		}
 		result.eligibleTokens = max(result.eligibleTokens, inputTokens)
 	case hasNestedRead || hasCreation:
 		result.eligibleTokens = max(result.eligibleTokens, inputTokens)
@@ -514,7 +519,6 @@ func observationJSONInt(value map[string]any, keys ...string) (int64, bool) {
 	}
 	return 0, false
 }
-
 
 func observationNestedJSONInt(value map[string]any, target string, parents ...string) (int64, bool) {
 	for _, parent := range parents {

@@ -516,6 +516,7 @@ export interface LocalAPIUsageRow {
   fallback_count?: number;
   limited_count?: number;
   requests: number;
+  estimated_requests?: number;
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;

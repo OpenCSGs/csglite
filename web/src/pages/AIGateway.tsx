@@ -2193,7 +2193,12 @@ function UsageStatisticsSection() {
                     <td class="truncate whitespace-nowrap px-4 py-3 text-gray-600" title={row.member_model ? `${row.model} → ${row.member_model}` : row.model}>
                       {row.member_model ? `${row.model} → ${row.member_model}` : row.model}
                     </td>
-                    <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.requests)}</td>
+                    <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">
+                      {formatNumber(row.requests)}
+                      {row.estimated_requests ? (
+                        <span class="ml-1 text-xs text-amber-500">{t("settings.apiUsageEstimated")}</span>
+                      ) : null}
+                    </td>
                     <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.input_tokens)}</td>
                     <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.output_tokens)}</td>
                     <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.total_tokens)}</td>
@@ -2266,7 +2271,12 @@ function UsageKeyBreakdown({ usage }: { usage: LocalAPIUsageResponse | null }) {
                           {row.member_model ? `${row.model} → ${row.member_model}` : row.model}
                           <span class="ml-2 text-gray-400">{apiUsageSourceRowLabel(row.source_type, row.source_name, row.pool_name)}</span>
                         </td>
-                        <td class="whitespace-nowrap px-4 py-2 text-xs tabular-nums text-gray-500">{formatNumber(row.requests)}</td>
+                        <td class="whitespace-nowrap px-4 py-2 text-xs tabular-nums text-gray-500">
+                          {formatNumber(row.requests)}
+                          {row.estimated_requests ? (
+                            <span class="ml-1 text-xs text-amber-500">{t("settings.apiUsageEstimated")}</span>
+                          ) : null}
+                        </td>
                         <td class="whitespace-nowrap px-4 py-2 text-xs text-gray-300">—</td>
                         <td class="whitespace-nowrap px-4 py-2 text-xs tabular-nums text-gray-500">{formatNumber(row.input_tokens)}</td>
                         <td class="whitespace-nowrap px-4 py-2 text-xs tabular-nums text-gray-500">{formatNumber(row.output_tokens)}</td>

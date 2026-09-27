@@ -23,8 +23,9 @@ import (
 )
 
 type fakeChatCompletionEngine struct {
-	resp    api.OpenAIChatResponse
-	lastReq map[string]interface{}
+	resp       api.OpenAIChatResponse
+	lastReq    map[string]interface{}
+	streamBody string
 }
 
 type fakeNativeToolStreamingEngine struct {
@@ -73,6 +74,13 @@ func (e *fakeChatCompletionEngine) ModelName() string { return "test/model" }
 func (e *fakeChatCompletionEngine) ChatCompletion(_ context.Context, reqBody map[string]interface{}) (*http.Response, error) {
 	e.lastReq = reqBody
 	if stream, _ := reqBody["stream"].(bool); stream {
+		if e.streamBody != "" {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(e.streamBody)),
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			}, nil
+		}
 		var body strings.Builder
 		for _, choice := range e.resp.Choices {
 			delta := choice.Message
@@ -1500,4 +1508,190 @@ func TestProviderConfiguredHeadersAreAutomaticallyAddedToClientChatRequest(t *te
 	}
 
 	assertProviderHeaders(t, <-received)
+}
+
+func TestHandleOpenAIChatCompletionsProxyStreamRecordsUpstreamUsage(t *testing.T) {
+	useIsolatedStorageHome(t)
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:    "test",
+		Name:         "model",
+		Format:       model.FormatGGUF,
+		Size:         1,
+		Files:        []string{"model.gguf", "config.json"},
+		DownloadedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("save model manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "test", "model")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-usage",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index:   0,
+				Message: &api.Message{Role: "assistant", Content: "the answer is 42"},
+			}},
+			Usage: api.OpenAIUsage{PromptTokens: 120, CompletionTokens: 8, TotalTokens: 128},
+		},
+	}
+	s := newTestServerWithConfig(t, cfg)
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 16384, numParallel: 4}
+
+	body := `{"model":"test/model","messages":[{"role":"user","content":"what is the answer to everything"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if engine.lastReq == nil {
+		t.Fatal("proxy request was not made")
+	}
+	if opts, ok := engine.lastReq["stream_options"].(map[string]interface{}); !ok || opts["include_usage"] != true {
+		t.Fatalf("stream_options.include_usage not set in proxy request: %#v", engine.lastReq["stream_options"])
+	}
+	if !strings.Contains(w.Body.String(), `"prompt_tokens":120`) {
+		t.Fatalf("streamed usage chunk was not forwarded: %s", w.Body.String())
+	}
+	state, err := s.apiUsage.List(config.APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("usage records = %#v", state.Records)
+	}
+	record := state.Records[0]
+	if record.InputTokens != 120 || record.OutputTokens != 8 || record.TotalTokens != 128 {
+		t.Fatalf("usage tokens = input %d output %d total %d, want 120/8/128",
+			record.InputTokens, record.OutputTokens, record.TotalTokens)
+	}
+	if record.EstimatedRequests != 0 {
+		t.Fatalf("estimated requests = %d, want 0 (real usage should not be marked estimated)", record.EstimatedRequests)
+	}
+}
+
+func TestHandleOpenAIChatCompletionsProxyStreamFallsBackWithoutUpstreamUsage(t *testing.T) {
+	useIsolatedStorageHome(t)
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:    "test",
+		Name:         "model",
+		Format:       model.FormatGGUF,
+		Size:         1,
+		Files:        []string{"model.gguf", "config.json"},
+		DownloadedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("save model manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "test", "model")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-no-usage",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index:   0,
+				Message: &api.Message{Role: "assistant", Content: "answer"},
+			}},
+		},
+	}
+	s := newTestServerWithConfig(t, cfg)
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 16384, numParallel: 4}
+
+	body := `{"model":"test/model","messages":[{"role":"user","content":"what is the answer to everything"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	state, err := s.apiUsage.List(config.APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("usage records = %#v", state.Records)
+	}
+	record := state.Records[0]
+	if want := countMessageTokens([]api.Message{{Role: "user", Content: "what is the answer to everything"}}); record.InputTokens != int64(want) {
+		t.Fatalf("input tokens = %d, want fallback estimate %d", record.InputTokens, want)
+	}
+	if record.OutputTokens != 1 {
+		t.Fatalf("output tokens = %d, want 1 (estimated from stream content)", record.OutputTokens)
+	}
+	if record.EstimatedRequests != 1 {
+		t.Fatalf("estimated requests = %d, want 1", record.EstimatedRequests)
+	}
+}
+
+func TestHandleOpenAIChatCompletionsProxyStreamRecordsOnMidStreamError(t *testing.T) {
+	useIsolatedStorageHome(t)
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:    "test",
+		Name:         "model",
+		Format:       model.FormatGGUF,
+		Size:         1,
+		Files:        []string{"model.gguf", "config.json"},
+		DownloadedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("save model manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "test", "model")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	streamBody := "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"model\":\"test/model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"partial answer here\"}}]}\n\n"
+	engine := &fakeChatCompletionEngine{
+		streamBody: streamBody + "data: [BROKEN",
+	}
+	s := newTestServerWithConfig(t, cfg)
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 16384, numParallel: 4}
+
+	body := `{"model":"test/model","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	state, err := s.apiUsage.List(config.APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("usage records = %#v (want 1 record even on stream error)", state.Records)
+	}
+	record := state.Records[0]
+	if record.EstimatedRequests != 1 {
+		t.Fatalf("estimated requests = %d, want 1 (mid-stream error should be marked estimated)", record.EstimatedRequests)
+	}
+	if record.OutputTokens == 0 {
+		t.Fatalf("output tokens = 0, want >0 (should estimate from partial stream content)")
+	}
 }

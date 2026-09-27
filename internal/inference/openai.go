@@ -330,16 +330,16 @@ func (e *openAIEngine) Chat(ctx context.Context, messages []Message, opts Option
 
 	collector := cacheUsageCollectorFromContext(ctx)
 	if stream {
-		return e.handleStreamWithCacheUsage(resp.Body, onToken, collector)
+		return e.handleStreamWithCacheUsage(resp.Body, onToken, collector, opts.OnUsage)
 	}
-	return e.handleJSONResponseWithCacheUsage(resp.Body, collector)
+	return e.handleJSONResponseWithCacheUsage(resp.Body, collector, opts.OnUsage)
 }
 
 func (e *openAIEngine) handleStream(body io.Reader, onToken TokenCallback) (string, error) {
-	return e.handleStreamWithCacheUsage(body, onToken, nil)
+	return e.handleStreamWithCacheUsage(body, onToken, nil, nil)
 }
 
-func (e *openAIEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenCallback, collector *CacheUsageCollector) (string, error) {
+func (e *openAIEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenCallback, collector *CacheUsageCollector, onUsage func(int64, int64)) (string, error) {
 	scanner := bufio.NewScanner(body)
 	var full strings.Builder
 	reasoningOpen := false
@@ -366,6 +366,7 @@ func (e *openAIEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenC
 			continue
 		}
 		recordOpenAICacheUsage(collector, chatResp.Usage)
+		reportOpenAIGenerationUsage(onUsage, chatResp.Usage)
 		if len(chatResp.Choices) == 0 || chatResp.Choices[0].Delta == nil {
 			continue
 		}
@@ -396,15 +397,16 @@ func (e *openAIEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenC
 }
 
 func (e *openAIEngine) handleJSONResponse(body io.Reader) (string, error) {
-	return e.handleJSONResponseWithCacheUsage(body, nil)
+	return e.handleJSONResponseWithCacheUsage(body, nil, nil)
 }
 
-func (e *openAIEngine) handleJSONResponseWithCacheUsage(body io.Reader, collector *CacheUsageCollector) (string, error) {
+func (e *openAIEngine) handleJSONResponseWithCacheUsage(body io.Reader, collector *CacheUsageCollector, onUsage func(int64, int64)) (string, error) {
 	var chatResp api.OpenAIChatResponse
 	if err := json.NewDecoder(body).Decode(&chatResp); err != nil {
 		return "", fmt.Errorf("decoding response: %w", err)
 	}
 	recordOpenAICacheUsage(collector, chatResp.Usage)
+	reportOpenAIGenerationUsage(onUsage, chatResp.Usage)
 	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message == nil {
 		return "", fmt.Errorf("no message in response")
 	}
@@ -433,6 +435,19 @@ func recordOpenAICacheUsage(collector *CacheUsageCollector, usage api.OpenAIUsag
 		prompt += read
 	}
 	collector.add(read, write, prompt)
+}
+
+// reportOpenAIGenerationUsage forwards the prompt/completion token counts a
+// backend advertised to the caller's OnUsage callback. It is a no-op when the
+// caller did not request usage reporting or the backend reported nothing.
+func reportOpenAIGenerationUsage(onUsage func(int64, int64), usage api.OpenAIUsage) {
+	if onUsage == nil {
+		return
+	}
+	if usage.PromptTokens <= 0 && usage.CompletionTokens <= 0 {
+		return
+	}
+	onUsage(int64(usage.PromptTokens), int64(usage.CompletionTokens))
 }
 
 // SupportsNativeToolStreaming reports that cloud and third-party
