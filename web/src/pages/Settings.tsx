@@ -1372,31 +1372,16 @@ export function Settings() {
         </div>
         <p class="text-sm text-gray-500 mb-4 ml-7">{t("settings.contextLengthDesc")}</p>
         <div class="ml-7 space-y-4">
-          <div class="grid gap-3 sm:grid-cols-2">
-            {([
-              ["global", "settings.contextLengthGlobal", "settings.contextLengthGlobalDesc"],
-              ["model_max", "settings.contextLengthModelMax", "settings.contextLengthModelMaxDesc"],
-            ] as const).map(([mode, labelKey, descriptionKey]) => {
-              const selected = contextMode.value === mode;
-              return (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => void saveContextMode(mode)}
-                  class={`rounded-xl border p-4 text-left transition ${
-                    selected
-                      ? "border-indigo-300 bg-indigo-50 ring-1 ring-indigo-200"
-                      : "border-gray-200 bg-white hover:border-gray-300"
-                  }`}
-                >
-                  <span class={`block text-sm font-medium ${selected ? "text-indigo-800" : "text-gray-800"}`}>
-                    {t(labelKey)}
-                  </span>
-                  <span class="mt-1 block text-xs leading-5 text-gray-500">{t(descriptionKey)}</span>
-                </button>
-              );
-            })}
-          </div>
+          <SettingRadios
+            name="context-length-mode"
+            label={t("settings.contextLength")}
+            value={contextMode.value}
+            onChange={(mode) => void saveContextMode(mode)}
+            options={[
+              { value: "global", label: t("settings.contextLengthGlobal"), description: t("settings.contextLengthGlobalDesc") },
+              { value: "model_max", label: t("settings.contextLengthModelMax"), description: t("settings.contextLengthModelMaxDesc") },
+            ]}
+          />
           {contextMode.value === "global" && (
             <div>
               <input
@@ -1468,31 +1453,18 @@ export function Settings() {
           <span class="font-semibold text-gray-900">{t("settings.contextCompression")}</span>
         </div>
         <p class="text-sm text-gray-500 mb-4 ml-7">{t("settings.contextCompressionDesc")}</p>
-        <div class="ml-7 grid gap-3 sm:grid-cols-3">
-          {([
-            ["off", "settings.contextCompressionOff", "settings.contextCompressionOffDesc"],
-            ["safe", "settings.contextCompressionSafe", "settings.contextCompressionSafeDesc"],
-            ["aggressive", "settings.contextCompressionAggressive", "settings.contextCompressionAggressiveDesc"],
-          ] as const).map(([mode, labelKey, descriptionKey]) => {
-            const selected = contextCompression.value === mode;
-            return (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => void saveContextCompression(mode)}
-                class={`rounded-xl border p-4 text-left transition ${
-                  selected
-                    ? "border-indigo-300 bg-indigo-50 ring-1 ring-indigo-200"
-                    : "border-gray-200 bg-white hover:border-gray-300"
-                }`}
-              >
-                <span class={`block text-sm font-medium ${selected ? "text-indigo-800" : "text-gray-800"}`}>
-                  {t(labelKey)}
-                </span>
-                <span class="mt-1 block text-xs leading-5 text-gray-500">{t(descriptionKey)}</span>
-              </button>
-            );
-          })}
+        <div class="ml-7">
+          <SettingRadios
+            name="context-compression"
+            label={t("settings.contextCompression")}
+            value={contextCompression.value}
+            onChange={(mode) => void saveContextCompression(mode)}
+            options={[
+              { value: "off", label: t("settings.contextCompressionOff"), description: t("settings.contextCompressionOffDesc") },
+              { value: "safe", label: t("settings.contextCompressionSafe"), description: t("settings.contextCompressionSafeDesc") },
+              { value: "aggressive", label: t("settings.contextCompressionAggressive"), description: t("settings.contextCompressionAggressiveDesc") },
+            ]}
+          />
         </div>
       </div>
 
@@ -1902,6 +1874,52 @@ export function Settings() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function SettingRadios<T extends string>({
+  name,
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  name: string;
+  label: string;
+  value: T;
+  options: readonly { value: T; label: string; description: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-2" role="radiogroup" aria-label={label}>
+      {options.map((option) => {
+        const selected = value === option.value;
+        const tipId = `${name}-${option.value}-tip`;
+        return (
+          <label key={option.value} class="group relative inline-flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name={name}
+              value={option.value}
+              checked={selected}
+              aria-describedby={tipId}
+              onChange={() => onChange(option.value)}
+              class="h-4 w-4 accent-indigo-600"
+            />
+            <span class={`text-sm ${selected ? "font-medium text-gray-900" : "text-gray-700"}`}>{option.label}</span>
+            <span class="pointer-events-none absolute left-0 top-full z-30 mt-1.5 hidden w-80 group-hover:block">
+              <span
+                id={tipId}
+                role="tooltip"
+                class="block rounded-lg bg-gray-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white shadow-lg"
+              >
+                {option.description}
+              </span>
+            </span>
+          </label>
+        );
+      })}
     </div>
   );
 }
