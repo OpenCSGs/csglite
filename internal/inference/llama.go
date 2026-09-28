@@ -1067,6 +1067,7 @@ func trimOldestNonSystemMessage(messages []Message) ([]Message, bool) {
 
 type llamaChatUsage struct {
 	PromptTokens        int64 `json:"prompt_tokens"`
+	CompletionTokens    int64 `json:"completion_tokens"`
 	PromptTokensDetails struct {
 		CachedTokens int64 `json:"cached_tokens"`
 	} `json:"prompt_tokens_details"`
@@ -1096,6 +1097,19 @@ func recordLlamaCacheUsage(collector *CacheUsageCollector, usage llamaChatUsage,
 	if eligible > 0 {
 		collector.add(read, creation, eligible)
 	}
+}
+
+// reportLlamaGenerationUsage forwards the prompt/completion token counts a
+// backend advertised to the caller's OnUsage callback. It is a no-op when the
+// caller did not request usage reporting or the backend reported nothing.
+func reportLlamaGenerationUsage(onUsage func(int64, int64), usage llamaChatUsage) {
+	if onUsage == nil {
+		return
+	}
+	if usage.PromptTokens <= 0 && usage.CompletionTokens <= 0 {
+		return
+	}
+	onUsage(usage.PromptTokens, usage.CompletionTokens)
 }
 
 func (e *llamaEngine) handleStream(body io.Reader, onToken TokenCallback, opts Options) (string, error) {
@@ -1133,6 +1147,7 @@ func (e *llamaEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenCa
 			continue
 		}
 		recordLlamaCacheUsage(collector, chunk.Usage, chunk.Timings)
+		reportLlamaGenerationUsage(opts.OnUsage, chunk.Usage)
 		if len(chunk.Choices) > 0 {
 			d := chunk.Choices[0].Delta
 			// Use at most one delta text per chunk. Some llama-server builds populate both
@@ -1187,6 +1202,7 @@ func (e *llamaEngine) handleNonStreamWithCacheUsage(body io.Reader, opts Options
 		return "", fmt.Errorf("decoding response: %w", err)
 	}
 	recordLlamaCacheUsage(collector, resp.Usage, resp.Timings)
+	reportLlamaGenerationUsage(opts.OnUsage, resp.Usage)
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("no choices in response")
 	}

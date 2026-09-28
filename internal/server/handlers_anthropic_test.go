@@ -765,6 +765,58 @@ func TestTryNativeAnthropicMessagesRelaysSuccessfulResponse(t *testing.T) {
 	}
 }
 
+func TestTryNativeAnthropicMessagesStreamRecordsUpstreamUsage(t *testing.T) {
+	s := newTestServer(t)
+	stream := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":120,"output_tokens":0}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","usage":{"output_tokens":9}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+	proxy := &nativeAnthropicTestProxy{
+		status:  http.StatusOK,
+		body:    stream,
+		headers: http.Header{"Content-Type": {"text/event-stream"}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	w := httptest.NewRecorder()
+
+	handled, err := s.tryNativeAnthropicMessages(
+		w,
+		req,
+		api.AnthropicMessageRequest{Model: "test/model", Source: "provider:test", Stream: true},
+		map[string]interface{}{"model": "test/model"},
+		proxy,
+		4,
+	)
+	if err != nil || !handled {
+		t.Fatalf("handled=%v err=%v, want native stream relayed", handled, err)
+	}
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"text_delta"`) {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	state, err := s.apiUsage.List(config.APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("usage records = %#v", state.Records)
+	}
+	record := state.Records[0]
+	if record.InputTokens != 120 || record.OutputTokens != 9 || record.TotalTokens != 129 {
+		t.Fatalf("usage tokens = input %d output %d total %d, want 120/9/129",
+			record.InputTokens, record.OutputTokens, record.TotalTokens)
+	}
+}
+
 func TestTryNativeAnthropicMessagesFallsBackOnlyForUnsupportedEndpoint(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
@@ -805,5 +857,125 @@ func TestTryNativeAnthropicMessagesFallsBackOnlyForUnsupportedEndpoint(t *testin
 	)
 	if err != nil || !handled || w.Code != http.StatusUnauthorized {
 		t.Fatalf("handled=%v status=%d err=%v, want native authentication error relayed", handled, w.Code, err)
+	}
+}
+
+func TestHandleAnthropicMessagesProxyStreamRecordsUpstreamUsage(t *testing.T) {
+	useIsolatedStorageHome(t)
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-anthropic-usage",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index:   0,
+				Message: &api.Message{Role: "assistant", Content: "the answer is 42"},
+			}},
+			Usage: api.OpenAIUsage{PromptTokens: 120, CompletionTokens: 8, TotalTokens: 128},
+		},
+	}
+	s := newAnthropicProxyTestServer(t, engine)
+
+	body := `{"model":"test/model","messages":[{"role":"user","content":"what is the answer to everything"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	w := httptest.NewRecorder()
+
+	s.handleAnthropicMessages(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if engine.lastReq == nil {
+		t.Fatal("proxy request was not made")
+	}
+	if opts, ok := engine.lastReq["stream_options"].(map[string]interface{}); !ok || opts["include_usage"] != true {
+		t.Fatalf("stream_options.include_usage not set in proxy request: %#v", engine.lastReq["stream_options"])
+	}
+	state, err := s.apiUsage.List(config.APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("usage records = %#v", state.Records)
+	}
+	record := state.Records[0]
+	if record.InputTokens != 120 || record.OutputTokens != 8 {
+		t.Fatalf("usage tokens = input %d output %d, want 120/8", record.InputTokens, record.OutputTokens)
+	}
+	if record.EstimatedRequests != 0 {
+		t.Fatalf("estimated requests = %d, want 0 (real usage should not be marked estimated)", record.EstimatedRequests)
+	}
+}
+
+func TestHandleAnthropicMessagesProxyStreamFallsBackWithoutUpstreamUsage(t *testing.T) {
+	useIsolatedStorageHome(t)
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-anthropic-no-usage",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index:   0,
+				Message: &api.Message{Role: "assistant", Content: "answer"},
+			}},
+		},
+	}
+	s := newAnthropicProxyTestServer(t, engine)
+
+	body := `{"model":"test/model","messages":[{"role":"user","content":"what is the answer to everything"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	w := httptest.NewRecorder()
+
+	s.handleAnthropicMessages(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	state, err := s.apiUsage.List(config.APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("usage records = %#v", state.Records)
+	}
+	record := state.Records[0]
+	if record.EstimatedRequests != 1 {
+		t.Fatalf("estimated requests = %d, want 1 (no upstream usage should be marked estimated)", record.EstimatedRequests)
+	}
+}
+
+func TestHandleAnthropicMessagesProxyStreamRecordsOnMidStreamError(t *testing.T) {
+	useIsolatedStorageHome(t)
+	// Simulate a stream that sends one content chunk, then breaks.
+	streamBody := "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"model\":\"test/model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"partial answer here\"}}]}\n\n"
+	engine := &fakeChatCompletionEngine{
+		streamBody: streamBody + "data: [BROKEN",
+	}
+	s := newAnthropicProxyTestServer(t, engine)
+
+	body := `{"model":"test/model","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	w := httptest.NewRecorder()
+
+	s.handleAnthropicMessages(w, req)
+
+	state, err := s.apiUsage.List(config.APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("usage records = %#v (want 1 record even on stream error)", state.Records)
+	}
+	record := state.Records[0]
+	if record.EstimatedRequests != 1 {
+		t.Fatalf("estimated requests = %d, want 1 (mid-stream error should be marked estimated)", record.EstimatedRequests)
+	}
+	if record.OutputTokens == 0 {
+		t.Fatalf("output tokens = 0, want >0 (should estimate from partial stream content)")
 	}
 }

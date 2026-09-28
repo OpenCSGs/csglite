@@ -208,55 +208,58 @@ type APIUsageEvent struct {
 	LimitedCount   int64
 	InputTokens    int64
 	OutputTokens   int64
+	Estimated      bool
 	CreatedAt      time.Time
 }
 
 type APIUsageRecord struct {
-	APIKeyID       string    `json:"api_key_id"`
-	APIKeyName     string    `json:"api_key_name"`
-	Model          string    `json:"model"`
-	Source         string    `json:"source,omitempty"`
-	SourceType     string    `json:"source_type,omitempty"`
-	SourceName     string    `json:"source_name,omitempty"`
-	PoolID         string    `json:"pool_id,omitempty"`
-	PoolName       string    `json:"pool_name,omitempty"`
-	PoolModel      string    `json:"pool_model,omitempty"`
-	ActualMemberID string    `json:"actual_member_id,omitempty"`
-	MemberModel    string    `json:"member_model,omitempty"`
-	EstimatedCost  float64   `json:"estimated_cost,omitempty"`
-	CostCurrency   string    `json:"cost_currency,omitempty"`
-	CostKnown      bool      `json:"cost_known"`
-	FallbackCount  int64     `json:"fallback_count,omitempty"`
-	LimitedCount   int64     `json:"limited_count,omitempty"`
-	Requests       int64     `json:"requests"`
-	InputTokens    int64     `json:"input_tokens"`
-	OutputTokens   int64     `json:"output_tokens"`
-	TotalTokens    int64     `json:"total_tokens"`
-	LastUsedAt     time.Time `json:"last_used_at"`
+	APIKeyID          string    `json:"api_key_id"`
+	APIKeyName        string    `json:"api_key_name"`
+	Model             string    `json:"model"`
+	Source            string    `json:"source,omitempty"`
+	SourceType        string    `json:"source_type,omitempty"`
+	SourceName        string    `json:"source_name,omitempty"`
+	PoolID            string    `json:"pool_id,omitempty"`
+	PoolName          string    `json:"pool_name,omitempty"`
+	PoolModel         string    `json:"pool_model,omitempty"`
+	ActualMemberID    string    `json:"actual_member_id,omitempty"`
+	MemberModel       string    `json:"member_model,omitempty"`
+	EstimatedCost     float64   `json:"estimated_cost,omitempty"`
+	CostCurrency      string    `json:"cost_currency,omitempty"`
+	CostKnown         bool      `json:"cost_known"`
+	FallbackCount     int64     `json:"fallback_count,omitempty"`
+	LimitedCount      int64     `json:"limited_count,omitempty"`
+	Requests          int64     `json:"requests"`
+	EstimatedRequests int64     `json:"estimated_requests,omitempty"`
+	InputTokens       int64     `json:"input_tokens"`
+	OutputTokens      int64     `json:"output_tokens"`
+	TotalTokens       int64     `json:"total_tokens"`
+	LastUsedAt        time.Time `json:"last_used_at"`
 }
 
 type APIUsageEventRecord struct {
-	APIKeyID       string    `json:"api_key_id"`
-	APIKeyName     string    `json:"api_key_name"`
-	Model          string    `json:"model"`
-	Source         string    `json:"source,omitempty"`
-	SourceType     string    `json:"source_type,omitempty"`
-	SourceName     string    `json:"source_name,omitempty"`
-	PoolID         string    `json:"pool_id,omitempty"`
-	PoolName       string    `json:"pool_name,omitempty"`
-	PoolModel      string    `json:"pool_model,omitempty"`
-	ActualMemberID string    `json:"actual_member_id,omitempty"`
-	MemberModel    string    `json:"member_model,omitempty"`
-	EstimatedCost  float64   `json:"estimated_cost,omitempty"`
-	CostCurrency   string    `json:"cost_currency,omitempty"`
-	CostKnown      bool      `json:"cost_known"`
-	FallbackCount  int64     `json:"fallback_count,omitempty"`
-	LimitedCount   int64     `json:"limited_count,omitempty"`
-	Requests       int64     `json:"requests,omitempty"`
-	InputTokens    int64     `json:"input_tokens"`
-	OutputTokens   int64     `json:"output_tokens"`
-	TotalTokens    int64     `json:"total_tokens"`
-	CreatedAt      time.Time `json:"created_at"`
+	APIKeyID          string    `json:"api_key_id"`
+	APIKeyName        string    `json:"api_key_name"`
+	Model             string    `json:"model"`
+	Source            string    `json:"source,omitempty"`
+	SourceType        string    `json:"source_type,omitempty"`
+	SourceName        string    `json:"source_name,omitempty"`
+	PoolID            string    `json:"pool_id,omitempty"`
+	PoolName          string    `json:"pool_name,omitempty"`
+	PoolModel         string    `json:"pool_model,omitempty"`
+	ActualMemberID    string    `json:"actual_member_id,omitempty"`
+	MemberModel       string    `json:"member_model,omitempty"`
+	EstimatedCost     float64   `json:"estimated_cost,omitempty"`
+	CostCurrency      string    `json:"cost_currency,omitempty"`
+	CostKnown         bool      `json:"cost_known"`
+	FallbackCount     int64     `json:"fallback_count,omitempty"`
+	LimitedCount      int64     `json:"limited_count,omitempty"`
+	Requests          int64     `json:"requests,omitempty"`
+	EstimatedRequests int64     `json:"estimated_requests,omitempty"`
+	InputTokens       int64     `json:"input_tokens"`
+	OutputTokens      int64     `json:"output_tokens"`
+	TotalTokens       int64     `json:"total_tokens"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type APIUsageState struct {
@@ -349,6 +352,7 @@ func compactAPIUsageEvents(events []APIUsageEventRecord) []APIUsageEventRecord {
 			out[i].SourceName = latestNonEmpty(out[i].SourceName, event.SourceName)
 			out[i].PoolName = latestNonEmpty(out[i].PoolName, event.PoolName)
 			out[i].Requests += event.Requests
+			out[i].EstimatedRequests += event.EstimatedRequests
 			out[i].FallbackCount += event.FallbackCount
 			out[i].LimitedCount += event.LimitedCount
 			out[i].EstimatedCost += event.EstimatedCost
@@ -384,6 +388,7 @@ func upsertAPIUsageRecord(state *APIUsageState, event APIUsageEventRecord) {
 			state.Records[i].SourceName = event.SourceName
 			state.Records[i].PoolName = latestNonEmpty(state.Records[i].PoolName, event.PoolName)
 			state.Records[i].Requests += requests
+			state.Records[i].EstimatedRequests += event.EstimatedRequests
 			state.Records[i].FallbackCount += event.FallbackCount
 			state.Records[i].LimitedCount += event.LimitedCount
 			state.Records[i].EstimatedCost += event.EstimatedCost
@@ -395,27 +400,28 @@ func upsertAPIUsageRecord(state *APIUsageState, event APIUsageEventRecord) {
 		}
 	}
 	state.Records = append(state.Records, APIUsageRecord{
-		APIKeyID:       event.APIKeyID,
-		APIKeyName:     event.APIKeyName,
-		Model:          event.Model,
-		Source:         event.Source,
-		SourceType:     event.SourceType,
-		SourceName:     event.SourceName,
-		PoolID:         event.PoolID,
-		PoolName:       event.PoolName,
-		PoolModel:      event.PoolModel,
-		ActualMemberID: event.ActualMemberID,
-		MemberModel:    event.MemberModel,
-		EstimatedCost:  event.EstimatedCost,
-		CostCurrency:   event.CostCurrency,
-		CostKnown:      event.CostKnown,
-		FallbackCount:  event.FallbackCount,
-		LimitedCount:   event.LimitedCount,
-		Requests:       requests,
-		InputTokens:    event.InputTokens,
-		OutputTokens:   event.OutputTokens,
-		TotalTokens:    apiUsageEventTotalTokens(event),
-		LastUsedAt:     event.CreatedAt,
+		APIKeyID:          event.APIKeyID,
+		APIKeyName:        event.APIKeyName,
+		Model:             event.Model,
+		Source:            event.Source,
+		SourceType:        event.SourceType,
+		SourceName:        event.SourceName,
+		PoolID:            event.PoolID,
+		PoolName:          event.PoolName,
+		PoolModel:         event.PoolModel,
+		ActualMemberID:    event.ActualMemberID,
+		MemberModel:       event.MemberModel,
+		EstimatedCost:     event.EstimatedCost,
+		CostCurrency:      event.CostCurrency,
+		CostKnown:         event.CostKnown,
+		FallbackCount:     event.FallbackCount,
+		LimitedCount:      event.LimitedCount,
+		Requests:          requests,
+		EstimatedRequests: event.EstimatedRequests,
+		InputTokens:       event.InputTokens,
+		OutputTokens:      event.OutputTokens,
+		TotalTokens:       apiUsageEventTotalTokens(event),
+		LastUsedAt:        event.CreatedAt,
 	})
 }
 
@@ -461,6 +467,13 @@ func apiUsageEventRequests(event APIUsageEventRecord) int64 {
 		return event.Requests
 	}
 	return 1
+}
+
+func apiUsageEventEstimatedRequests(event APIUsageEventRecord) int64 {
+	if event.EstimatedRequests > 0 {
+		return event.EstimatedRequests
+	}
+	return 0
 }
 
 func apiUsageEventTotalTokens(event APIUsageEventRecord) int64 {

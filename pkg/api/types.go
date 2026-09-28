@@ -900,27 +900,28 @@ type APIUsageTotals struct {
 }
 
 type APIUsageRow struct {
-	APIKeyID       string    `json:"api_key_id"`
-	APIKeyName     string    `json:"api_key_name"`
-	Model          string    `json:"model"`
-	Source         string    `json:"source"`
-	SourceType     string    `json:"source_type"`
-	SourceName     string    `json:"source_name,omitempty"`
-	PoolID         string    `json:"pool_id,omitempty"`
-	PoolName       string    `json:"pool_name,omitempty"`
-	PoolModel      string    `json:"pool_model,omitempty"`
-	ActualMemberID string    `json:"actual_member_id,omitempty"`
-	MemberModel    string    `json:"member_model,omitempty"`
-	EstimatedCost  float64   `json:"estimated_cost,omitempty"`
-	CostCurrency   string    `json:"cost_currency,omitempty"`
-	CostKnown      bool      `json:"cost_known"`
-	FallbackCount  int64     `json:"fallback_count,omitempty"`
-	LimitedCount   int64     `json:"limited_count,omitempty"`
-	Requests       int64     `json:"requests"`
-	InputTokens    int64     `json:"input_tokens"`
-	OutputTokens   int64     `json:"output_tokens"`
-	TotalTokens    int64     `json:"total_tokens"`
-	LastUsedAt     time.Time `json:"last_used_at"`
+	APIKeyID          string    `json:"api_key_id"`
+	APIKeyName        string    `json:"api_key_name"`
+	Model             string    `json:"model"`
+	Source            string    `json:"source"`
+	SourceType        string    `json:"source_type"`
+	SourceName        string    `json:"source_name,omitempty"`
+	PoolID            string    `json:"pool_id,omitempty"`
+	PoolName          string    `json:"pool_name,omitempty"`
+	PoolModel         string    `json:"pool_model,omitempty"`
+	ActualMemberID    string    `json:"actual_member_id,omitempty"`
+	MemberModel       string    `json:"member_model,omitempty"`
+	EstimatedCost     float64   `json:"estimated_cost,omitempty"`
+	CostCurrency      string    `json:"cost_currency,omitempty"`
+	CostKnown         bool      `json:"cost_known"`
+	FallbackCount     int64     `json:"fallback_count,omitempty"`
+	LimitedCount      int64     `json:"limited_count,omitempty"`
+	Requests          int64     `json:"requests"`
+	EstimatedRequests int64     `json:"estimated_requests,omitempty"`
+	InputTokens       int64     `json:"input_tokens"`
+	OutputTokens      int64     `json:"output_tokens"`
+	TotalTokens       int64     `json:"total_tokens"`
+	LastUsedAt        time.Time `json:"last_used_at"`
 }
 
 type APIUsageSourceTotal struct {

@@ -867,6 +867,16 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		inputTokens = 1
 	}
 
+	var reportedIn, reportedOut int64
+	opts.OnUsage = func(promptTokens, completionTokens int64) {
+		if promptTokens > 0 {
+			reportedIn = promptTokens
+		}
+		if completionTokens > 0 {
+			reportedOut = completionTokens
+		}
+	}
+
 	if stream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -893,7 +903,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		s.recordAPIUsage(r, req.Model, "", inputTokens, estimateAnthropicTokens(full.String()))
+		s.recordResolvedUsage(r, req.Model, "", reportedIn, reportedOut, inputTokens, estimateAnthropicTokens(full.String()))
 		writeSSE(w, api.GenerateResponse{
 			Model:     req.Model,
 			Done:      true,
@@ -912,7 +922,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		s.recordAPIUsage(r, req.Model, "", inputTokens, estimateAnthropicTokens(response))
+		s.recordResolvedUsage(r, req.Model, "", reportedIn, reportedOut, inputTokens, estimateAnthropicTokens(response))
 		writeJSON(w, http.StatusOK, api.GenerateResponse{
 			Model:     req.Model,
 			Response:  response,
@@ -1022,6 +1032,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var reportedIn, reportedOut int64
+	opts.OnUsage = func(promptTokens, completionTokens int64) {
+		if promptTokens > 0 {
+			reportedIn = promptTokens
+		}
+		if completionTokens > 0 {
+			reportedOut = completionTokens
+		}
+	}
+
 	if stream {
 		if requestWantsSSE(r) {
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -1077,7 +1097,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			_ = fullResp
-			s.recordAPIUsage(r, req.Model, req.Source, inputTokens, estimateAnthropicTokens(full.String()))
+			s.recordResolvedUsage(r, req.Model, req.Source, reportedIn, reportedOut, inputTokens, estimateAnthropicTokens(full.String()))
 			writeSSE(w, api.ChatResponse{
 				Model:     req.Model,
 				Done:      true,
@@ -1138,7 +1158,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		s.recordAPIUsage(r, req.Model, req.Source, inputTokens, estimateAnthropicTokens(full.String()))
+		s.recordResolvedUsage(r, req.Model, req.Source, reportedIn, reportedOut, inputTokens, estimateAnthropicTokens(full.String()))
 		writeNDJSON(w, api.ChatResponse{
 			Model: req.Model,
 			Message: &api.Message{
@@ -1163,7 +1183,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			writeInferenceError(w, err)
 			return
 		}
-		s.recordAPIUsage(r, req.Model, req.Source, inputTokens, estimateAnthropicTokens(response))
+		s.recordResolvedUsage(r, req.Model, req.Source, reportedIn, reportedOut, inputTokens, estimateAnthropicTokens(response))
 		writeJSON(w, http.StatusOK, api.ChatResponse{
 			Model: req.Model,
 			Message: &api.Message{

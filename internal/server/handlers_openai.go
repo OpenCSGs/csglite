@@ -97,6 +97,19 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Fallback for engines that do not implement ChatCompletionProxier.
+	// All real engines (llama, openai, remote, providerPool) currently
+	// implement it, so this branch is only reached by non-proxier fakes.
+	var reportedIn, reportedOut int64
+	opts.OnUsage = func(promptTokens, completionTokens int64) {
+		if promptTokens > 0 {
+			reportedIn = promptTokens
+		}
+		if completionTokens > 0 {
+			reportedOut = completionTokens
+		}
+	}
+
 	var messages []inference.Message
 	for _, m := range req.Messages {
 		messages = append(messages, inference.Message{Role: m.Role, Content: m.Content, ReasoningContent: m.ReasoningContent})
@@ -132,7 +145,7 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 			writeSSE(w, apiErrorResponse{Error: err.Error(), ErrorCode: openAIInferenceStatus(err)})
 			return
 		}
-		s.recordAPIUsage(r, req.Model, req.Source, inputTokens, estimateAnthropicTokens(full.String()))
+		s.recordResolvedUsage(r, req.Model, req.Source, reportedIn, reportedOut, inputTokens, estimateAnthropicTokens(full.String()))
 
 		stop := "stop"
 		writeSSE(w, api.OpenAIChatResponse{
@@ -163,7 +176,7 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 			writeOpenAIInferenceError(w, err)
 			return
 		}
-		s.recordAPIUsage(r, req.Model, req.Source, inputTokens, estimateAnthropicTokens(response))
+		s.recordResolvedUsage(r, req.Model, req.Source, reportedIn, reportedOut, inputTokens, estimateAnthropicTokens(response))
 
 		stop := "stop"
 		writeJSON(w, http.StatusOK, api.OpenAIChatResponse{
@@ -244,8 +257,26 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	}
 	w.WriteHeader(http.StatusOK)
 	if stream {
-		_, _ = io.Copy(openAIStreamWriter{ResponseWriter: w}, resp.Body)
-		s.recordAPIUsageWithPool(r, req.Model, usageSource, countMessageTokens(req.Messages), 0, usagePool)
+		capture := &streamUsageCapture{}
+		_, _ = io.Copy(openAIStreamWriter{ResponseWriter: w}, io.TeeReader(resp.Body, capture))
+		inputTokens, outputTokens := countMessageTokens(req.Messages), 0
+		if capturedInput, capturedOutput, ok := capture.usage(); ok {
+			if capturedInput > 0 {
+				inputTokens = capturedInput
+			}
+			if capturedOutput > 0 {
+				outputTokens = capturedOutput
+			} else {
+				outputTokens = estimateAnthropicTokens(extractOpenAIStreamContent(capture.tail))
+			}
+			if capturedInput <= 0 || capturedOutput <= 0 {
+				r = markUsageEstimated(r)
+			}
+		} else {
+			outputTokens = estimateAnthropicTokens(extractOpenAIStreamContent(capture.tail))
+			r = markUsageEstimated(r)
+		}
+		s.recordAPIUsageWithPool(r, req.Model, usageSource, inputTokens, outputTokens, usagePool)
 	} else {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -256,9 +287,15 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 			inputTokens, outputTokens := openAIUsageTokens(openAIResp)
 			if inputTokens == 0 {
 				inputTokens = countMessageTokens(req.Messages)
+				r = markUsageEstimated(r)
+			}
+			if outputTokens == 0 && openAIResp.Usage.CompletionTokens == 0 {
+				outputTokens = estimateOpenAIOutputTokens(openAIResp)
+				r = markUsageEstimated(r)
 			}
 			s.recordAPIUsageWithPool(r, req.Model, usageSource, inputTokens, outputTokens, usagePool)
 		} else {
+			r = markUsageEstimated(r)
 			s.recordAPIUsageWithPool(r, req.Model, usageSource, countMessageTokens(req.Messages), 0, usagePool)
 		}
 		_, _ = w.Write(body)
@@ -380,6 +417,11 @@ func (s *Server) handleOpenAIChatCompletionsWithTools(
 	inputTokens, outputTokens := openAIUsageTokens(openAIResp)
 	if inputTokens == 0 {
 		inputTokens = countMessageTokens(req.Messages)
+		r = markUsageEstimated(r)
+	}
+	if outputTokens == 0 && openAIResp.Usage.CompletionTokens == 0 {
+		outputTokens = estimateOpenAIOutputTokens(openAIResp)
+		r = markUsageEstimated(r)
 	}
 	s.recordAPIUsage(r, req.Model, req.Source, inputTokens, outputTokens)
 

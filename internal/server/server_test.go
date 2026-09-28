@@ -107,6 +107,15 @@ func newTestServerWithConfig(t *testing.T, cfg *config.Config) *Server {
 	return s
 }
 
+// useIsolatedStorageHome points the storage root at a per-test directory so
+// persisted state such as API usage does not leak between tests.
+func useIsolatedStorageHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func TestDisplayServerAddr(t *testing.T) {
 	tests := map[string]string{
 		":11435":             "localhost:11435",
