@@ -3,6 +3,7 @@ package autostart
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -78,7 +79,11 @@ func Enable() error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(plistContent(binary)), 0o644)
+	if err := os.WriteFile(path, []byte(plistContent(binary)), 0o644); err != nil {
+		return err
+	}
+	removeQuarantine(path)
+	return loadLaunchAgent(path)
 }
 
 // Disable removes the LaunchAgent plist.
@@ -87,6 +92,7 @@ func Disable() error {
 	if err != nil {
 		return err
 	}
+	unloadLaunchAgent(path, plistLabel)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -110,4 +116,40 @@ func PlistContainsBinary() (bool, error) {
 	}
 	binary, _ = filepath.EvalSymlinks(binary)
 	return strings.Contains(string(data), binary), nil
+}
+
+// removeQuarantine strips the com.apple.quarantine extended attribute from
+// the plist. macOS 27's launchd refuses to load quarantined plists, and a
+// plist created by a downloaded binary can inherit the attribute.
+func removeQuarantine(path string) {
+	_ = exec.Command("xattr", "-d", "com.apple.quarantine", path).Run()
+}
+
+// loadLaunchAgent registers the LaunchAgent with launchd. It prefers the
+// classic `launchctl load -w` (the -w flag persists across logins) because
+// `launchctl bootstrap` returns spurious EIO errors on macOS 26+. If the
+// agent is already loaded, it is unloaded first and then reloaded.
+func loadLaunchAgent(path string) error {
+	if err := exec.Command("launchctl", "load", "-w", path).Run(); err == nil {
+		return nil
+	}
+	// Already loaded — unload then reload.
+	_ = exec.Command("launchctl", "unload", path).Run()
+	if err := exec.Command("launchctl", "load", "-w", path).Run(); err == nil {
+		return nil
+	}
+	// Last-resort fallback to the modern API.
+	uid := os.Getuid()
+	return exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", uid), path).Run()
+}
+
+// unloadLaunchAgent deregisters the LaunchAgent from launchd. It prefers
+// `launchctl unload -w` and falls back to `launchctl bootout`. Errors are
+// ignored when the agent is not currently loaded.
+func unloadLaunchAgent(path, label string) {
+	if err := exec.Command("launchctl", "unload", "-w", path).Run(); err == nil {
+		return
+	}
+	uid := os.Getuid()
+	_ = exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", uid, label)).Run()
 }
