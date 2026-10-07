@@ -411,6 +411,7 @@ export const en: Record<string, string> = {
   "downloads.removePartial": "Remove partial files",
   "downloads.removePartialConfirm": "Remove incomplete files for {0}? Downloaded progress will be lost.",
   "confirm.cancel": "Cancel",
+  "confirm.save": "Save",
   "confirm.delete": "Delete",
   "confirm.deleting": "Deleting...",
 
@@ -2397,6 +2398,7 @@ export const zh: Record<string, string> = {
   "downloads.removePartial": "清理未完成文件",
   "downloads.removePartialConfirm": "确定清理 {0} 的未完成文件吗？已下载进度将丢失。",
   "confirm.cancel": "取消",
+  "confirm.save": "保存",
   "confirm.delete": "删除",
   "confirm.deleting": "删除中...",
 

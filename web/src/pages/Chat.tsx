@@ -14,6 +14,8 @@ import type {
 } from "../api/client";
 import { t, locale } from "../i18n";
 import { RealtimeVoiceDialog } from "../components/RealtimeVoiceDialog";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PromptDialog } from "../components/PromptDialog";
 import { parseReasoningText } from "../reasoning";
 import { isImageGenerationModel, isImageToImageModel, stripDataURL } from "../utils/imageModels";
 import {
@@ -102,6 +104,9 @@ const selectedVoice = signal("");
 // where both halves of the pipeline are already in front of the user.
 const showRealtimeVoice = signal(false);
 const ttsVoicesModel = signal("");
+const renameDialogMeta = signal<ConversationMeta | null>(null);
+const deleteDialogId = signal<string | null>(null);
+const clearHistoryOpen = signal(false);
 const contextStorageKey = "csghub.chat.num_ctx";
 const contextModeStorageKey = "csghub.chat.num_ctx_mode";
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
@@ -1641,10 +1646,50 @@ export function Chat() {
     await loadConversation(id);
   };
 
-  const handleDeleteConversation = async (id: string, e: Event) => {
+  const handleDeleteConversation = (id: string, e: Event) => {
     e.stopPropagation();
     openConversationMenuId.value = "";
-    if (!confirm(t("chat.deleteChatConfirm"))) return;
+    deleteDialogId.value = id;
+  };
+
+  const handleRenameConversation = (meta: ConversationMeta, e: Event) => {
+    e.stopPropagation();
+    openConversationMenuId.value = "";
+    renameDialogMeta.value = meta;
+  };
+
+  const handleClearHistory = () => {
+    const conv = activeConversation.value;
+    if (!conv || conv.messages.length === 0) return;
+    clearHistoryOpen.value = true;
+  };
+
+  const confirmRename = async (title: string) => {
+    const meta = renameDialogMeta.value;
+    const nextTitle = title.trim();
+    if (!meta || !nextTitle || nextTitle === meta.title) {
+      renameDialogMeta.value = null;
+      return;
+    }
+    try {
+      const updated = await updateConversation(meta.id, { title: nextTitle });
+      if (meta.id === activeSessionId.value && activeConversation.value) {
+        activeConversation.value = {
+          ...activeConversation.value,
+          title: updated.title || nextTitle,
+        };
+      }
+      await refreshConversationList();
+    } catch {
+      chatError.value = t("chat.renameChatFailed");
+    } finally {
+      renameDialogMeta.value = null;
+    }
+  };
+
+  const confirmDelete = async () => {
+    const id = deleteDialogId.value;
+    if (!id) return;
     try {
       await deleteConversation(id);
       await refreshConversationList();
@@ -1661,32 +1706,15 @@ export function Chat() {
       }
     } catch {
       /* ignore */
+    } finally {
+      deleteDialogId.value = null;
     }
   };
 
-  const handleRenameConversation = async (meta: ConversationMeta, e: Event) => {
-    e.stopPropagation();
-    openConversationMenuId.value = "";
-    const nextTitle = prompt(t("chat.renameChatPrompt"), meta.title)?.trim();
-    if (!nextTitle || nextTitle === meta.title) return;
-    try {
-      const updated = await updateConversation(meta.id, { title: nextTitle });
-      if (meta.id === activeSessionId.value && activeConversation.value) {
-        activeConversation.value = {
-          ...activeConversation.value,
-          title: updated.title || nextTitle,
-        };
-      }
-      await refreshConversationList();
-    } catch {
-      chatError.value = t("chat.renameChatFailed");
-    }
-  };
-
-  const handleClearHistory = () => {
+  const confirmClearHistory = () => {
+    clearHistoryOpen.value = false;
     const conv = activeConversation.value;
     if (!conv || conv.messages.length === 0) return;
-    if (!confirm(t("chat.clearConfirm"))) return;
     conv.messages = [];
     conv.title = "New Chat";
     clearModelContextBoundary(conv.id);
@@ -2301,6 +2329,37 @@ export function Chat() {
           </div>
         </div>
       )}
+      <PromptDialog
+        open={renameDialogMeta.value !== null}
+        title={t("chat.renameChatPrompt")}
+        initialValue={renameDialogMeta.value?.title || ""}
+        confirmLabel={t("chat.renameChat")}
+        onConfirm={(value) => void confirmRename(value)}
+        onCancel={() => {
+          renameDialogMeta.value = null;
+        }}
+      />
+      <ConfirmDialog
+        open={deleteDialogId.value !== null}
+        title={t("chat.deleteChat")}
+        name={conversationMetas.value.find((meta) => meta.id === deleteDialogId.value)?.title}
+        description={t("chat.deleteChatConfirm")}
+        confirmLabel={t("chat.deleteChat")}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => {
+          deleteDialogId.value = null;
+        }}
+      />
+      <ConfirmDialog
+        open={clearHistoryOpen.value}
+        title={t("chat.clearHistory")}
+        description={t("chat.clearConfirm")}
+        confirmLabel={t("chat.clearHistory")}
+        onConfirm={confirmClearHistory}
+        onCancel={() => {
+          clearHistoryOpen.value = false;
+        }}
+      />
     </div>
   );
 }
