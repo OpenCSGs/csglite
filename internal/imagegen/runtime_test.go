@@ -1031,3 +1031,38 @@ func TestFindHostPythonPrefersTheHighestVersion(t *testing.T) {
 		}
 	})
 }
+
+func TestCleanCommandOutputNoHTML(t *testing.T) {
+	in := "error: No matching distribution found for diffusers==0.41.0"
+	got := cleanCommandOutput(in)
+	if got != in {
+		t.Fatalf("cleanCommandOutput = %q, want input unchanged", got)
+	}
+}
+
+func TestCleanCommandOutputHTMLOnly(t *testing.T) {
+	in := "<!DOCTYPE html>\n<html class=\"no-js ie6 oldie\" lang=\"en-US\">\n<head><meta charset=\"utf-8\"></head>\n<body>blocked</body>\n</html>"
+	got := cleanCommandOutput(in)
+	if strings.Contains(strings.ToLower(got), "<html") || strings.Contains(got, "<!DOCTYPE") {
+		t.Fatalf("cleanCommandOutput still contains HTML: %q", got)
+	}
+	if !strings.Contains(got, "HTML page") {
+		t.Fatalf("cleanCommandOutput = %q, want the network/mirror hint", got)
+	}
+}
+
+func TestCleanCommandOutputHTMLMixed(t *testing.T) {
+	in := "Looking in indexes: https://pypi.org/simple\n" +
+		"error: Could not find a version that satisfies the requirement diffusers\n" +
+		"<!DOCTYPE html>\n<html class=\"no-js ie6 oldie\" lang=\"en-US\">\n<head></head>\n<body>blocked</body>\n</html>"
+	got := cleanCommandOutput(in)
+	if strings.Contains(strings.ToLower(got), "<html") || strings.Contains(got, "<!DOCTYPE") {
+		t.Fatalf("cleanCommandOutput still contains HTML: %q", got)
+	}
+	if !strings.Contains(got, "Could not find a version") {
+		t.Fatalf("cleanCommandOutput = %q, want to keep the pip error line", got)
+	}
+	if strings.Contains(got, "blocked") {
+		t.Fatalf("cleanCommandOutput = %q, want HTML body text removed", got)
+	}
+}
