@@ -1940,7 +1940,7 @@ func runCommandEnv(ctx context.Context, extraEnv []string, name string, args ...
 	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(output.String())
+		msg := cleanCommandOutput(output.String())
 		if len(msg) > 4096 {
 			msg = msg[len(msg)-4096:]
 		}
@@ -1950,6 +1950,70 @@ func runCommandEnv(ctx context.Context, extraEnv []string, name string, args ...
 		return err
 	}
 	return nil
+}
+
+// cleanCommandOutput strips HTML error pages from captured command output so a
+// network or mirror failure surfaces a readable message instead of a full HTML
+// document. pip and uv sometimes print the body of an HTML response (a block or
+// landing page from an intercepting proxy, or a misconfigured index URL) when a
+// request to the package index fails; without filtering that markup becomes the
+// user-facing error. The full output still reaches os.Stdout/os.Stderr (logs).
+func cleanCommandOutput(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if !containsHTMLMarker(raw) {
+		return raw
+	}
+	var keep []string
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if isHTMLLine(trimmed) {
+			continue
+		}
+		if trimmed != "" {
+			keep = append(keep, trimmed)
+		}
+	}
+	cleaned := strings.TrimSpace(strings.Join(keep, "\n"))
+	if cleaned == "" {
+		return "package index returned an HTML page instead of a package index; check network/proxy and CSGHUB_LITE_PYPI_INDEX_URL / CSGHUB_LITE_PACKAGE_MIRROR settings"
+	}
+	return cleaned
+}
+
+// containsHTMLMarker reports whether captured output embeds an HTML document
+// (a DOCTYPE or <html> tag), used to decide whether to filter markup out.
+func containsHTMLMarker(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "<!doctype html") || strings.Contains(lower, "<html")
+}
+
+// isHTMLLine reports whether a line is HTML markup rather than pip/uv text. It
+// matches opening and closing tags of the elements that make up an error/landing
+// page, while leaving lines such as "<frozen importlib>" in Python tracebacks
+// untouched.
+func isHTMLLine(line string) bool {
+	if line == "" {
+		return false
+	}
+	lower := strings.ToLower(line)
+	body := lower
+	switch {
+	case strings.HasPrefix(body, "</"):
+		body = body[2:]
+	case strings.HasPrefix(body, "<"):
+		body = body[1:]
+	default:
+		return false
+	}
+	for _, tag := range []string{"!doctype", "!--", "html", "head", "body", "meta", "link", "title", "style", "script", "div", "p>", "p "} {
+		if strings.HasPrefix(body, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 func commandExists(name string) bool {
