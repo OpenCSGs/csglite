@@ -14,23 +14,6 @@ import (
 	routerprofile "github.com/opencsgs/semantic-router"
 )
 
-func TestRouterCurationQueueCoalescesByPool(t *testing.T) {
-	server := &Server{
-		routerProfiles:      &routerprofile.Store{},
-		routerCurationState: make(map[string]uint8),
-		routerCurationQueue: make(chan string, 1),
-	}
-	server.enqueueRouterCuration("pool-a")
-	server.enqueueRouterCuration("pool-a")
-	if len(server.routerCurationQueue) != 1 || server.routerCurationState["pool-a"] != 2 {
-		t.Fatalf("queue len=%d state=%d", len(server.routerCurationQueue), server.routerCurationState["pool-a"])
-	}
-	server.enqueueRouterCuration("pool-b")
-	if _, exists := server.routerCurationState["pool-b"]; exists {
-		t.Fatal("full bounded queue retained an unqueued pool")
-	}
-}
-
 func TestProviderPoolSemanticInputUsesMultiTurnRoutingText(t *testing.T) {
 	messages := []inference.Message{
 		{Role: "user", Content: "first"},

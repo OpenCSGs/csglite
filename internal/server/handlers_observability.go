@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/observability"
-	routerprofile "github.com/opencsgs/semantic-router"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -127,19 +126,6 @@ func (s *Server) handleObservabilityTrace(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleObservabilityClear(w http.ResponseWriter, r *http.Request) {
-	s.routerStoreMu.RLock()
-	if s.routerProfiles != nil {
-		if _, err := s.routerProfiles.PurgeTraceDataBefore(r.Context(), time.Now().UTC().Add(time.Millisecond)); err != nil {
-			s.routerStoreMu.RUnlock()
-			if errors.Is(err, routerprofile.ErrConflict) {
-				writeError(w, http.StatusConflict, err.Error())
-			} else {
-				writeError(w, http.StatusInternalServerError, "failed to clear router trace data")
-			}
-			return
-		}
-	}
-	s.routerStoreMu.RUnlock()
 	s.observabilityMu.RLock()
 	defer s.observabilityMu.RUnlock()
 	if s.observability == nil {

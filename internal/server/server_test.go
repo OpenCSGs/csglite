@@ -65,7 +65,6 @@ func (e *scriptedChatEngine) Close() error {
 func (e *scriptedChatEngine) ModelName() string { return "scripted" }
 
 func TestMain(m *testing.M) {
-	providerPoolJudgeRetryBackoff = 0
 	_ = os.Setenv(config.DisableFileLoggingEnv, "1")
 	if home, err := os.MkdirTemp("", "csghub-lite-server-test-home-*"); err == nil {
 		_ = os.Setenv("HOME", home)

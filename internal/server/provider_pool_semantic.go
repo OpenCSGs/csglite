@@ -192,18 +192,6 @@ func nearestProviderPoolSemanticCluster(vector []float64, clusters []providerPoo
 	return best, bestDistance
 }
 
-func embeddingConfig(profile routerprofile.Profile) (model string, dimensions int) {
-	switch profile.ArtifactSchemaVersion() {
-	case routerprofile.SchemaVersionV2:
-		if profile.ProfileV2 != nil {
-			return profile.ProfileV2.Embedding.Model, profile.ProfileV2.Embedding.Dimensions
-		}
-		fallthrough
-	default:
-		return profile.Profile.Embedding.Model, profile.Profile.Embedding.Dimensions
-	}
-}
-
 func providerPoolSemanticContentText(value interface{}) string {
 	switch value := value.(type) {
 	case string:
@@ -233,4 +221,76 @@ func providerPoolSemanticContentText(value interface{}) string {
 		}
 	}
 	return ""
+}
+
+const semanticFallbackLegacyIncompatible = "legacy_profile_incompatible"
+
+type providerPoolSemanticInput struct {
+	messages []routerprofile.Message
+}
+
+func semanticInputFromInference(messages []inference.Message) providerPoolSemanticInput {
+	out := make([]routerprofile.Message, 0, len(messages))
+	for _, message := range messages {
+		if content := providerPoolSemanticContentText(message.Content); content != "" {
+			out = append(out, routerprofile.Message{Role: message.Role, Content: content})
+		}
+	}
+	return providerPoolSemanticInput{messages: out}
+}
+
+func semanticInputFromRequest(body map[string]interface{}) providerPoolSemanticInput {
+	out := make([]routerprofile.Message, 0)
+	appendMessage := func(message map[string]interface{}) {
+		role := strings.TrimSpace(fmt.Sprint(message["role"]))
+		if content := providerPoolSemanticContentText(message["content"]); role != "" && content != "" {
+			out = append(out, routerprofile.Message{Role: role, Content: content})
+		}
+	}
+	switch messages := body["messages"].(type) {
+	case []interface{}:
+		for _, value := range messages {
+			if message, ok := value.(map[string]interface{}); ok {
+				appendMessage(message)
+			}
+		}
+	case []map[string]interface{}:
+		for _, message := range messages {
+			appendMessage(message)
+		}
+	}
+	return providerPoolSemanticInput{messages: out}
+}
+
+func semanticInputFromPrompt(prompt string) providerPoolSemanticInput {
+	return providerPoolSemanticInput{messages: []routerprofile.Message{{Role: "user", Content: strings.TrimSpace(prompt)}}}
+}
+
+func (s *Server) providerPoolSemanticRouter(pool config.ProviderPool) func(context.Context, providerPoolSemanticInput) routerprofile.Decision {
+	if config.NormalizeProviderPoolPolicy(pool.Policy) != config.ProviderPoolPolicySemantic {
+		return nil
+	}
+	compatible, err := legacySemanticPoolCompatible(pool.Members)
+	if err != nil {
+		return func(context.Context, providerPoolSemanticInput) routerprofile.Decision {
+			return routerprofile.Decision{Fallback: true, FallbackReason: routerprofile.FallbackProfileInvalid}
+		}
+	}
+	if !compatible {
+		return func(context.Context, providerPoolSemanticInput) routerprofile.Decision {
+			return routerprofile.Decision{Fallback: true, FallbackReason: semanticFallbackLegacyIncompatible}
+		}
+	}
+	legacy := s.legacyProviderPoolSemanticRouter(pool)
+	return func(ctx context.Context, input providerPoolSemanticInput) routerprofile.Decision {
+		text, _, err := routerprofile.BuildRoutingText(input.messages, 8192)
+		if err != nil || text == "" {
+			return routerprofile.Decision{Fallback: true, FallbackReason: routerprofile.FallbackRoutingTextEmpty}
+		}
+		route, err := legacy(ctx, text)
+		if err != nil {
+			return routerprofile.Decision{Fallback: true, FallbackReason: routerprofile.FallbackEmbedding}
+		}
+		return route
+	}
 }

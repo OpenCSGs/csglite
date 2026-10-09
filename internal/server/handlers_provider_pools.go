@@ -48,7 +48,6 @@ func (s *Server) handleProviderPoolCreate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to save provider pool")
 		return
 	}
-	s.enqueueRouterCuration(pool.ID)
 	writeJSON(w, http.StatusCreated, providerPoolAPI(pool, s.providerPoolPolicyCapabilities(r.Context(), false)))
 }
 
@@ -90,7 +89,6 @@ func (s *Server) handleProviderPoolUpdate(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusInternalServerError, "failed to save provider pool")
 			return
 		}
-		s.enqueueRouterCuration(candidate.ID)
 		writeJSON(w, http.StatusOK, providerPoolAPI(candidate, s.providerPoolPolicyCapabilities(r.Context(), false)))
 		return
 	}

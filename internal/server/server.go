@@ -35,7 +35,6 @@ import (
 	"github.com/opencsgs/csglite/internal/observability"
 	"github.com/opencsgs/csglite/internal/tts"
 	"github.com/opencsgs/csglite/pkg/api"
-	routerprofile "github.com/opencsgs/semantic-router"
 )
 
 const (
@@ -225,23 +224,21 @@ type Server struct {
 	realtimeCalls map[string]*realtimeCall
 	// realtimeSockets counts live WebSocket realtime sessions, which have no
 	// registry of their own but share the session cap with WebRTC calls.
-	realtimeSockets    int
-	imageJobs          *imageGenerationJobStore
-	pullJobs           *pullJobStore
-	datasetExportJobs  *datasetExportJobStore
-	loadStepMu         sync.Mutex
-	loadSteps          map[string]loadStepState
-	prefsMu            sync.Mutex
-	openclawMu         sync.Mutex
-	csgclawMu          sync.Mutex
-	poolMu             sync.Mutex
-	poolCurrent        map[string]int
-	poolRuntime        map[string]*providerPoolMemberRuntime
-	poolAffinity       map[string]providerPoolAffinityEntry
-	routerProfileMu    sync.RWMutex
-	routerProfileCache map[string]*routerprofile.Profile
-	pricingMu          sync.RWMutex
-	pricingCache       map[string]requestCostSnapshot
+	realtimeSockets   int
+	imageJobs         *imageGenerationJobStore
+	pullJobs          *pullJobStore
+	datasetExportJobs *datasetExportJobStore
+	loadStepMu        sync.Mutex
+	loadSteps         map[string]loadStepState
+	prefsMu           sync.Mutex
+	openclawMu        sync.Mutex
+	csgclawMu         sync.Mutex
+	poolMu            sync.Mutex
+	poolCurrent       map[string]int
+	poolRuntime       map[string]*providerPoolMemberRuntime
+	poolAffinity      map[string]providerPoolAffinityEntry
+	pricingMu         sync.RWMutex
+	pricingCache      map[string]requestCostSnapshot
 
 	cloudRefreshMu   sync.Mutex
 	cloudRefreshAt   time.Time
@@ -253,32 +250,17 @@ type Server struct {
 	aiAppRuntimeMu    sync.Mutex
 	aiAppRuntimeCache map[string]aiAppRuntimeCacheEntry
 
-	conversations             *chathistory.Store
-	apiKeys                   *config.APIKeyStore
-	apiUsage                  *config.APIUsageStore
-	observabilityMu           sync.RWMutex
-	observability             *observability.Store
-	observabilityCleanupAt    atomic.Int64
-	modelMetadataMu           sync.RWMutex
-	modelMetadata             *modelmetadata.Store
-	routerProfiles            *routerprofile.Store
-	routerStoreMu             sync.RWMutex
-	retiredRouterProfiles     []*routerprofile.Store
-	routerCurationMu          sync.Mutex
-	routerCurationState       map[string]uint8
-	routerCurationQueue       chan string
-	routerCurationWG          sync.WaitGroup
-	routerCurationCancel      context.CancelFunc
-	routerEvaluationWG        sync.WaitGroup
-	routerEvaluationCancel    context.CancelFunc
-	routerEvaluationWake      chan struct{}
-	routerEvaluationMu        sync.Mutex
-	routerEvaluationPoolID    string
-	routerEvaluationJobID     string
-	routerEvaluationRunCancel context.CancelFunc
-	evaluationEngineFactory   func(context.Context, string, string) (inference.Engine, error)
-	evaluationCatalogLoader   func(context.Context) ([]api.ModelInfo, error)
-	desktopBootstrapped       atomic.Bool
+	conversations           *chathistory.Store
+	apiKeys                 *config.APIKeyStore
+	apiUsage                *config.APIUsageStore
+	observabilityMu         sync.RWMutex
+	observability           *observability.Store
+	observabilityCleanupAt  atomic.Int64
+	modelMetadataMu         sync.RWMutex
+	modelMetadata           *modelmetadata.Store
+	evaluationEngineFactory func(context.Context, string, string) (inference.Engine, error)
+	evaluationCatalogLoader func(context.Context) ([]api.ModelInfo, error)
+	desktopBootstrapped     atomic.Bool
 
 	// cluster is the LAN compute cluster manager, nil when disabled for this
 	// process. It is started in Run once the API port is bound.
@@ -320,39 +302,35 @@ func New(cfg *config.Config, version string) *Server {
 	}
 
 	s := &Server{
-		cfg:                  cfg,
-		version:              version,
-		license:              newLicenseManager(storageRoot, version),
-		manager:              mgr,
-		datasetManager:       dsMgr,
-		appManager:           apps.NewManager(cfg),
-		sourceSwitches:       apps.NewSourceSwitchManager(storageRoot),
-		cloud:                cloudSvc,
-		engines:              make(map[string]*managedEngine),
-		loading:              make(map[string]*engineLoadState),
-		poolCurrent:          make(map[string]int),
-		poolRuntime:          make(map[string]*providerPoolMemberRuntime),
-		poolAffinity:         make(map[string]providerPoolAffinityEntry),
-		routerProfileCache:   make(map[string]*routerprofile.Profile),
-		pricingCache:         make(map[string]requestCostSnapshot),
-		aiAppRuntimeCache:    make(map[string]aiAppRuntimeCacheEntry),
-		selfHeal:             make(map[string]selfHealBreakerState),
-		imageEngines:         make(map[string]*managedImageEngine),
-		imageLoading:         make(map[string]*imageEngineLoadState),
-		ttsVoices:            make(map[string]*api.SpeechVoicesResponse),
-		asrEngines:           make(map[string]*managedASREngine),
-		asrLoading:           make(map[string]*asrEngineLoadState),
-		ttsEngines:           make(map[string]*managedTTSEngine),
-		ttsLoading:           make(map[string]*ttsEngineLoadState),
-		realtimeCalls:        make(map[string]*realtimeCall),
-		imageJobs:            newImageGenerationJobStore(cfg.StorageDir()),
-		pullJobs:             newPullJobStore(),
-		datasetExportJobs:    newDatasetExportJobStore(),
-		loadSteps:            make(map[string]loadStepState),
-		logBuf:               logBuf,
-		routerCurationState:  make(map[string]uint8),
-		routerCurationQueue:  make(chan string, 16),
-		routerEvaluationWake: make(chan struct{}, 1),
+		cfg:               cfg,
+		version:           version,
+		license:           newLicenseManager(storageRoot, version),
+		manager:           mgr,
+		datasetManager:    dsMgr,
+		appManager:        apps.NewManager(cfg),
+		sourceSwitches:    apps.NewSourceSwitchManager(storageRoot),
+		cloud:             cloudSvc,
+		engines:           make(map[string]*managedEngine),
+		loading:           make(map[string]*engineLoadState),
+		poolCurrent:       make(map[string]int),
+		poolRuntime:       make(map[string]*providerPoolMemberRuntime),
+		poolAffinity:      make(map[string]providerPoolAffinityEntry),
+		pricingCache:      make(map[string]requestCostSnapshot),
+		aiAppRuntimeCache: make(map[string]aiAppRuntimeCacheEntry),
+		selfHeal:          make(map[string]selfHealBreakerState),
+		imageEngines:      make(map[string]*managedImageEngine),
+		imageLoading:      make(map[string]*imageEngineLoadState),
+		ttsVoices:         make(map[string]*api.SpeechVoicesResponse),
+		asrEngines:        make(map[string]*managedASREngine),
+		asrLoading:        make(map[string]*asrEngineLoadState),
+		ttsEngines:        make(map[string]*managedTTSEngine),
+		ttsLoading:        make(map[string]*ttsEngineLoadState),
+		realtimeCalls:     make(map[string]*realtimeCall),
+		imageJobs:         newImageGenerationJobStore(cfg.StorageDir()),
+		pullJobs:          newPullJobStore(),
+		datasetExportJobs: newDatasetExportJobStore(),
+		loadSteps:         make(map[string]loadStepState),
+		logBuf:            logBuf,
 	}
 	s.appShells = newAIAppShellManager()
 	if store, err := observability.Open(storageRoot); err != nil {
@@ -373,19 +351,6 @@ func New(cfg *config.Config, version string) *Server {
 		log.Printf("MODEL METADATA: cache unavailable: %v", err)
 	} else {
 		s.modelMetadata = store
-	}
-	if store, err := routerprofile.Open(storageRoot); err != nil {
-		log.Printf("SEMANTIC ROUTER: profile database unavailable: %v", err)
-	} else {
-		s.routerProfiles = store
-		cutoff := time.Now().UTC().Add(-time.Duration(config.ObservabilityRetentionDays(cfg.Observability)) * 24 * time.Hour)
-		if _, err := store.PurgeTraceDataBefore(context.Background(), cutoff); err != nil &&
-			!errors.Is(err, routerprofile.ErrConflict) {
-			log.Printf("SEMANTIC ROUTER: retention cleanup failed: %v", err)
-		}
-		if err := s.refreshAllRouterProfiles(context.Background()); err != nil {
-			log.Printf("SEMANTIC ROUTER: loading active profiles failed: %v", err)
-		}
 	}
 
 	if appHome, err := config.AppHome(); err == nil {
@@ -482,22 +447,6 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
 	go s.license.Run(ctx, license.DefaultRefreshInterval)
-	curationCtx, cancelCuration := context.WithCancel(ctx)
-	s.routerCurationCancel = cancelCuration
-	s.routerCurationWG.Add(1)
-	go func() {
-		defer s.routerCurationWG.Done()
-		s.startRouterCuration(curationCtx)
-	}()
-	if s.routerProfiles != nil {
-		evaluationCtx, cancelEvaluation := context.WithCancel(ctx)
-		s.routerEvaluationCancel = cancelEvaluation
-		s.routerEvaluationWG.Add(1)
-		go func() {
-			defer s.routerEvaluationWG.Done()
-			s.startRouterEvaluationWorker(evaluationCtx)
-		}()
-	}
 
 	errCh := make(chan error, 3)
 	if s.cfg.DesktopMode {
@@ -628,14 +577,6 @@ func validateDesktopConfig(cfg *config.Config) error {
 
 func (s *Server) shutdownRuntime() {
 	s.stopCluster()
-	if s.routerCurationCancel != nil {
-		s.routerCurationCancel()
-	}
-	if s.routerEvaluationCancel != nil {
-		s.routerEvaluationCancel()
-	}
-	s.routerCurationWG.Wait()
-	s.routerEvaluationWG.Wait()
 	if s.appShells != nil {
 		s.appShells.CloseAll()
 	}
@@ -656,19 +597,6 @@ func (s *Server) shutdownRuntime() {
 		s.modelMetadata = nil
 	}
 	s.modelMetadataMu.Unlock()
-	s.routerStoreMu.Lock()
-	defer s.routerStoreMu.Unlock()
-	s.routerProfileMu.Lock()
-	if s.routerProfiles != nil {
-		_ = s.routerProfiles.Close()
-		s.routerProfiles = nil
-	}
-	for _, store := range s.retiredRouterProfiles {
-		_ = store.Close()
-	}
-	s.retiredRouterProfiles = nil
-	s.routerProfileCache = make(map[string]*routerprofile.Profile)
-	s.routerProfileMu.Unlock()
 }
 
 // startEvictor periodically closes engines that have exceeded their keep-alive.
