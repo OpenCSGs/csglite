@@ -7866,24 +7866,6 @@
           "type": "string",
           "format": "password"
         }
-      },
-      "ProviderPoolID": {
-        "name": "id",
-        "in": "path",
-        "required": true,
-        "schema": {"type": "string"}
-      },
-      "RouterJobID": {
-        "name": "jobID",
-        "in": "path",
-        "required": true,
-        "schema": {"type": "string"}
-      },
-      "RouterProfileID": {
-        "name": "profileID",
-        "in": "path",
-        "required": true,
-        "schema": {"type": "string"}
       }
     },
     "responses": {

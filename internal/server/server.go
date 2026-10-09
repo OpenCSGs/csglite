@@ -250,17 +250,15 @@ type Server struct {
 	aiAppRuntimeMu    sync.Mutex
 	aiAppRuntimeCache map[string]aiAppRuntimeCacheEntry
 
-	conversations           *chathistory.Store
-	apiKeys                 *config.APIKeyStore
-	apiUsage                *config.APIUsageStore
-	observabilityMu         sync.RWMutex
-	observability           *observability.Store
-	observabilityCleanupAt  atomic.Int64
-	modelMetadataMu         sync.RWMutex
-	modelMetadata           *modelmetadata.Store
-	evaluationEngineFactory func(context.Context, string, string) (inference.Engine, error)
-	evaluationCatalogLoader func(context.Context) ([]api.ModelInfo, error)
-	desktopBootstrapped     atomic.Bool
+	conversations          *chathistory.Store
+	apiKeys                *config.APIKeyStore
+	apiUsage               *config.APIUsageStore
+	observabilityMu        sync.RWMutex
+	observability          *observability.Store
+	observabilityCleanupAt atomic.Int64
+	modelMetadataMu        sync.RWMutex
+	modelMetadata          *modelmetadata.Store
+	desktopBootstrapped    atomic.Bool
 
 	// cluster is the LAN compute cluster manager, nil when disabled for this
 	// process. It is started in Run once the API port is bound.
