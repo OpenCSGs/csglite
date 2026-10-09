@@ -128,7 +128,6 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/providers/{id}", s.handleProviderUpdate)
 	mux.HandleFunc("DELETE /api/providers/{id}", s.handleProviderDelete)
 	mux.HandleFunc("GET /api/provider-pools", s.handleProviderPoolsList)
-	mux.HandleFunc("GET /api/provider-pool-policies", s.handleProviderPoolPolicies)
 	mux.HandleFunc("POST /api/provider-pools", s.handleProviderPoolCreate)
 	mux.HandleFunc("PUT /api/provider-pools/{id}", s.handleProviderPoolUpdate)
 	mux.HandleFunc("DELETE /api/provider-pools/{id}", s.handleProviderPoolDelete)

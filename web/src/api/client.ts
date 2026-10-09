@@ -724,21 +724,6 @@ export interface ObservabilityRequest {
   actual_member_id?: string;
   member_model?: string;
   pool_policy?: string;
-  router_profile_id?: string;
-  router_profile_version?: number;
-  router_profile_schema_version?: number;
-  router_algorithm?: string;
-  routing_text_version?: string;
-  router_confidence?: number;
-  router_margin?: number;
-  router_similarity?: number;
-  semantic_routed?: boolean;
-  semantic_cluster?: number;
-  semantic_cluster_id?: string;
-  semantic_distance?: number;
-  semantic_ood?: boolean;
-  semantic_fallback?: boolean;
-  semantic_fallback_reason?: string;
   price_input_per_million: number;
   price_output_per_million: number;
   estimated_cost: number;
@@ -2847,24 +2832,12 @@ export interface ProviderPoolMember {
   max_concurrent?: number;
 }
 
-export type ProviderPoolPolicyType = "priority_weight" | "semantic";
-
-export interface ProviderPoolPolicy {
-  type: ProviderPoolPolicyType | string;
-  label?: string;
-  experimental: boolean;
-  available: boolean;
-  reason?: string;
-}
-
 export interface ProviderPool {
   id: string;
   name: string;
   model: string;
   enabled: boolean;
-  policy?: ProviderPoolPolicyType | string;
-  policy_available?: boolean;
-  policy_unavailable_reason?: string;
+  policy?: string;
   members: ProviderPoolMember[];
 }
 
@@ -2872,7 +2845,6 @@ export interface ProviderPoolCreateRequest {
   name: string;
   model: string;
   enabled?: boolean;
-  policy?: ProviderPoolPolicyType | string;
   members: ProviderPoolMember[];
 }
 
@@ -2880,13 +2852,7 @@ export interface ProviderPoolUpdateRequest {
   name?: string;
   model?: string;
   enabled?: boolean;
-  policy?: ProviderPoolPolicyType | string;
   members?: ProviderPoolMember[];
-}
-
-export async function getProviderPoolPolicies(): Promise<ProviderPoolPolicy[]> {
-  const resp = await fetchJSON<{ policies: ProviderPoolPolicy[] }>("/api/provider-pool-policies");
-  return resp.policies || [];
 }
 
 export async function getProviderPools(): Promise<ProviderPool[]> {

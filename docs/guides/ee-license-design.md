@@ -4,7 +4,7 @@
 
 CSGLite 目前是单一的开源版本：一个 Go 二进制内嵌前端，Apache-2.0 许可，
 公开托管在 GitHub 并同步到 GitLab。随着面向团队和企业的能力增多（多 provider
-池与语义路由、可观测性与审计导出、API Key 远程鉴权、企业 agent 集成等），需要
+池路由、可观测性与审计导出、API Key 远程鉴权、企业 agent 集成等），需要
 在**不拆仓库、不拆构建**的前提下区分社区版（CE）和企业版（EE）。
 
 本设计采用业界最主流的 open core 做法，即 GitLab、Mattermost、PostHog、

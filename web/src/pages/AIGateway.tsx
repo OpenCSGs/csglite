@@ -20,7 +20,6 @@ import {
   getLocalAPIKeys,
   getLocalAPIUsage,
   getProviderManageTags,
-  getProviderPoolPolicies,
   getProviderPools,
   getProviderSelectedTags,
   getProviders,
@@ -32,7 +31,7 @@ import {
   validateProvider,
   updateLocalAPIKeySettings,
 } from "../api/client";
-import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderPoolPolicy, ProviderPoolPolicyType, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
+import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
 
 type GatewayTab = "apiKeys" | "providers" | "pools" | "usage";
 type UsagePeriod = "week" | "month" | "year";
@@ -70,7 +69,6 @@ const editingProviderPool = signal<ProviderPool | null>(null);
 const providerPoolFormName = signal("");
 const providerPoolFormModel = signal("");
 const providerPoolFormEnabled = signal(true);
-const providerPoolFormPolicy = signal<ProviderPoolPolicyType | string>("priority_weight");
 const providerPoolFormMembers = signal<ProviderPoolMember[]>([]);
 const providerPoolFormError = signal("");
 const providerPoolFormSaving = signal(false);
@@ -79,9 +77,6 @@ const providerPoolSourceFilter = signal("local");
 const providerPoolModelSearch = signal("");
 const providerPoolMemberConfigIndex = signal<number | null>(null);
 const providerPoolMemberConfigDraft = signal<ProviderPoolMember | null>(null);
-const providerPoolPolicies = signal<ProviderPoolPolicy[]>([]);
-const providerPoolPoliciesLoading = signal(false);
-const providerPoolPoliciesError = signal("");
 const gatewayAPIInfoTarget = signal<GatewayAPIInfoTarget | null>(null);
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudAPIKeyInput = signal("");
@@ -231,18 +226,6 @@ async function fetchProviderOptions() {
     providersError.value = err?.message || t("settings.providersLoadFailed");
   } finally {
     providersLoading.value = false;
-  }
-}
-
-async function fetchProviderPoolPolicies() {
-  providerPoolPoliciesLoading.value = true;
-  providerPoolPoliciesError.value = "";
-  try {
-    providerPoolPolicies.value = await getProviderPoolPolicies();
-  } catch (err: any) {
-    providerPoolPoliciesError.value = err?.message || t("settings.providerPoolPoliciesLoadFailed");
-  } finally {
-    providerPoolPoliciesLoading.value = false;
   }
 }
 
@@ -764,49 +747,11 @@ function newProviderPoolMember(index = providerPoolFormMembers.value.length): Pr
   };
 }
 
-function providerPoolPolicyLabel(policy: string): string {
-  const capabilityLabel = providerPoolPolicies.value.find((item) => item.type === policy)?.label?.trim();
-  if (capabilityLabel) return capabilityLabel;
-  if (policy === "priority_weight") return t("settings.providerPoolPolicyPriority");
-  if (policy === "semantic") return t("settings.providerPoolPolicySemantic");
-  return policy;
-}
-
-function providerPoolPolicyReason(reason?: string): string {
-  switch (reason) {
-    case "opencsg_login_required":
-      return t("settings.providerPoolPolicyLoginRequired");
-    case "required_embedding_model_unavailable":
-      return t("settings.providerPoolPolicyEmbeddingUnavailable");
-    case "gateway_catalog_unavailable":
-      return t("settings.providerPoolPolicyCatalogUnavailable");
-    default:
-      return reason || t("settings.providerPoolPolicyUnavailable");
-  }
-}
-
-function providerPoolPolicyHardUnavailable(policy?: ProviderPoolPolicy): boolean {
-  return policy?.available === false && policy.reason !== "opencsg_login_required";
-}
-
-function providerPoolFormPolicyUnavailable(): boolean {
-  const policy = providerPoolFormPolicy.value;
-  if (
-    editingProviderPool.value?.policy === policy
-    && editingProviderPool.value.policy_available === false
-    && editingProviderPool.value.policy_unavailable_reason !== "opencsg_login_required"
-  ) {
-    return true;
-  }
-  return providerPoolPolicyHardUnavailable(providerPoolPolicies.value.find((item) => item.type === policy));
-}
-
 function openProviderPoolDialog(pool?: ProviderPool) {
   editingProviderPool.value = pool || null;
   providerPoolFormName.value = pool?.name || "";
   providerPoolFormModel.value = pool?.model || "";
   providerPoolFormEnabled.value = pool?.enabled ?? true;
-  providerPoolFormPolicy.value = pool?.policy || "priority_weight";
   providerPoolFormMembers.value = sortProviderPoolMembers(pool?.members.map((member) => ({ ...member })) || []);
   providerPoolFormError.value = "";
   providerPoolDialogStep.value = "basics";
@@ -828,18 +773,6 @@ function closeProviderPoolDialog() {
 function continueProviderPoolDialog() {
   if (!providerPoolFormName.value.trim() || !providerPoolFormModel.value.trim()) {
     providerPoolFormError.value = t("settings.providerPoolNameModelRequired");
-    return;
-  }
-  if (
-    providerPoolFormPolicy.value === "semantic"
-    && cloudAuth.value?.authenticated !== true
-    && cloudAuth.value?.has_api_key !== true
-  ) {
-    providerPoolFormError.value = t("settings.providerPoolPolicyLoginRequired");
-    return;
-  }
-  if (providerPoolFormPolicyUnavailable()) {
-    providerPoolFormError.value = t("settings.providerPoolPolicyUnavailable");
     return;
   }
   providerPoolFormError.value = "";
@@ -948,18 +881,6 @@ async function saveProviderPoolForm() {
     providerPoolFormError.value = t("settings.providerPoolMemberRequired");
     return;
   }
-  if (
-    providerPoolFormPolicy.value === "semantic"
-    && cloudAuth.value?.authenticated !== true
-    && cloudAuth.value?.has_api_key !== true
-  ) {
-    providerPoolFormError.value = t("settings.providerPoolPolicyLoginRequired");
-    return;
-  }
-  if (providerPoolFormPolicyUnavailable()) {
-    providerPoolFormError.value = t("settings.providerPoolPolicyUnavailable");
-    return;
-  }
 
   providerPoolFormSaving.value = true;
   providerPoolFormError.value = "";
@@ -968,7 +889,6 @@ async function saveProviderPoolForm() {
       name,
       model,
       enabled: providerPoolFormEnabled.value,
-      policy: providerPoolFormPolicy.value,
       members,
     };
     if (editingProviderPool.value) {
@@ -1054,7 +974,6 @@ export function AIGateway() {
     fetchCloudAuth();
     fetchCloudSettings();
     void fetchProviderOptions();
-    void fetchProviderPoolPolicies();
   }, []);
 
   return (
@@ -1154,23 +1073,17 @@ export function AIGateway() {
         step={providerPoolDialogStep.value}
         name={providerPoolFormName.value}
         model={providerPoolFormModel.value}
-        policy={providerPoolFormPolicy.value}
         enabled={providerPoolFormEnabled.value}
         members={providerPoolFormMembers.value}
         models={providerPoolModels.value}
         error={providerPoolFormError.value}
         saving={providerPoolFormSaving.value}
-        policies={providerPoolPolicies.value}
-        policiesLoading={providerPoolPoliciesLoading.value}
-        policiesError={providerPoolPoliciesError.value}
-        cloudCredentialAvailable={cloudAuth.value?.authenticated === true || cloudAuth.value?.has_api_key === true}
         onClose={closeProviderPoolDialog}
         onNext={continueProviderPoolDialog}
         onBack={backProviderPoolDialog}
         onSave={() => void saveProviderPoolForm()}
         onChangeName={(value) => (providerPoolFormName.value = value)}
         onChangeModel={(value) => (providerPoolFormModel.value = value)}
-        onChangePolicy={(value) => (providerPoolFormPolicy.value = value)}
         onChangeEnabled={(value) => (providerPoolFormEnabled.value = value)}
         onToggleSourceModel={toggleProviderPoolSourceModel}
       />
@@ -1757,21 +1670,8 @@ function ProviderPoolsSection() {
                     <span class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${pool.enabled ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
                       {pool.enabled ? t("settings.providerEnabled") : t("settings.providerDisabled")}
                     </span>
-                    <span class="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
-                      {providerPoolPolicyLabel(pool.policy || "priority_weight")}
-                    </span>
-                    {pool.policy === "semantic" && (
-                      <span class="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
-                        {t("settings.providerPoolPolicyExperimental")}
-                      </span>
-                    )}
                   </div>
                   <p class="mt-1 truncate font-mono text-xs text-gray-500">{pool.model}</p>
-                  {pool.policy_available === false && (
-                    <p class="mt-1 text-xs text-amber-700">
-                      {providerPoolPolicyReason(pool.policy_unavailable_reason)}
-                    </p>
-                  )}
                 </div>
                 <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
                   {t("settings.providerPoolMembers", pool.members.length)}
@@ -2440,23 +2340,17 @@ function ProviderPoolDialog({
   step,
   name,
   model,
-  policy,
   enabled,
   members,
   models,
   error,
   saving,
-  policies,
-  policiesLoading,
-  policiesError,
-  cloudCredentialAvailable,
   onClose,
   onNext,
   onBack,
   onSave,
   onChangeName,
   onChangeModel,
-  onChangePolicy,
   onChangeEnabled,
   onToggleSourceModel,
 }: {
@@ -2465,23 +2359,17 @@ function ProviderPoolDialog({
   step: "basics" | "members";
   name: string;
   model: string;
-  policy: string;
   enabled: boolean;
   members: ProviderPoolMember[];
   models: ModelInfo[];
   error: string;
   saving: boolean;
-  policies: ProviderPoolPolicy[];
-  policiesLoading: boolean;
-  policiesError: string;
-  cloudCredentialAvailable: boolean;
   onClose: () => void;
   onNext: () => void;
   onBack: () => void;
   onSave: () => void;
   onChangeName: (value: string) => void;
   onChangeModel: (value: string) => void;
-  onChangePolicy: (value: string) => void;
   onChangeEnabled: (value: boolean) => void;
   onToggleSourceModel: (source: string, model: string, checked: boolean) => void;
 }) {
@@ -2511,38 +2399,7 @@ function ProviderPoolDialog({
     }))
     .filter((item, index, items) => items.findIndex((candidate) => candidate.value === item.value) === index)
     .filter((item) => !search || item.value.toLocaleLowerCase().includes(search) || item.label.toLocaleLowerCase().includes(search));
-  const fallbackPolicies: ProviderPoolPolicy[] = [
-    { type: "priority_weight", experimental: false, available: true },
-    {
-      type: "semantic",
-      experimental: true,
-      available: false,
-      reason: policiesLoading ? "gateway_catalog_unavailable" : "gateway_catalog_unavailable",
-    },
-  ];
-  const policyOptions = [...(policies.length > 0 ? policies : fallbackPolicies)];
-  if (!policyOptions.some((item) => item.type === policy)) {
-    policyOptions.push({
-      type: policy,
-      experimental: policy === "semantic",
-      available: editingProviderPool.value?.policy_available !== false,
-      reason: editingProviderPool.value?.policy_unavailable_reason,
-    });
-  }
-  const persistedPolicyUnavailable = editingProviderPool.value?.policy === policy
-    && editingProviderPool.value.policy_available === false;
-  const selectedPolicyCapability = policyOptions.find((item) => item.type === policy);
-  const selectedPolicyUnavailable = (
-    persistedPolicyUnavailable
-    && editingProviderPool.value?.policy_unavailable_reason !== "opencsg_login_required"
-  ) || providerPoolPolicyHardUnavailable(selectedPolicyCapability);
-  const selectedPolicyUnavailableReason = editingProviderPool.value?.policy_unavailable_reason
-    || selectedPolicyCapability?.reason
-    || t("settings.providerPoolPolicyUnavailable");
-  const basicsValid = !!name.trim()
-    && !!model.trim()
-    && !selectedPolicyUnavailable
-    && (policy !== "semantic" || cloudCredentialAvailable);
+  const basicsValid = !!name.trim() && !!model.trim();
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 p-3 sm:p-6" onClick={onClose}>
       <div class="flex max-h-[calc(100vh-1.5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:max-h-[calc(100vh-3rem)]" onClick={(event) => event.stopPropagation()}>
@@ -2601,74 +2458,6 @@ function ProviderPoolDialog({
                   />
                   <p class="mt-1.5 text-xs text-gray-500">{t("settings.providerPoolModelHint")}</p>
                 </div>
-                <fieldset>
-                  <legend class="mb-1.5 text-sm font-medium text-gray-700">{t("settings.providerPoolPolicy")}</legend>
-                  <p class="mb-3 text-xs text-gray-500">{t("settings.providerPoolPolicyHint")}</p>
-                  <div class="grid gap-3 sm:grid-cols-2">
-                    {policyOptions.map((item) => {
-                      const unavailable = providerPoolPolicyHardUnavailable(item)
-                        || (
-                          editingProviderPool.value?.policy === item.type
-                          && editingProviderPool.value.policy_available === false
-                          && editingProviderPool.value.policy_unavailable_reason !== "opencsg_login_required"
-                        );
-                      return (
-                        <label key={item.type} class={`rounded-xl border p-4 transition-colors ${unavailable ? "cursor-not-allowed border-gray-100 bg-gray-50 opacity-70" : policy === item.type ? "cursor-pointer border-indigo-300 bg-indigo-50/70" : "cursor-pointer border-gray-200 hover:border-indigo-200"}`}>
-                          <span class="flex items-start gap-3">
-                            <input
-                              type="radio"
-                              name="provider-pool-policy"
-                              value={item.type}
-                              checked={policy === item.type}
-                              disabled={saving || unavailable}
-                              onChange={() => onChangePolicy(item.type)}
-                              class="mt-0.5 h-4 w-4 border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                            />
-                            <span class="min-w-0">
-                              <span class="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-900">
-                                {item.label?.trim() || providerPoolPolicyLabel(item.type)}
-                                {item.type === "semantic" && (
-                                  <span class="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
-                                    {t("settings.providerPoolPolicyExperimental")}
-                                  </span>
-                                )}
-                              </span>
-                              <span class="mt-1 block text-xs leading-5 text-gray-500">
-                                {item.type === "semantic"
-                                  ? t("settings.providerPoolPolicySemanticHint")
-                                  : item.type === "priority_weight"
-                                    ? t("settings.providerPoolPolicyPriorityHint")
-                                    : item.type}
-                              </span>
-                              {unavailable && (
-                                <span class="mt-1 block text-xs text-amber-700">
-                                  {editingProviderPool.value?.policy === item.type
-                                    ? providerPoolPolicyReason(editingProviderPool.value.policy_unavailable_reason || item.reason)
-                                    : providerPoolPolicyReason(item.reason)}
-                                </span>
-                              )}
-                            </span>
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {policiesLoading && <p class="mt-2 text-xs text-gray-500">{t("settings.providerPoolPoliciesLoading")}</p>}
-                  {policiesError && (
-                    <p class="mt-2 text-xs text-amber-700">
-                      {t("settings.providerPoolPoliciesLoadFailedFallback")}
-                      <button type="button" onClick={() => void fetchProviderPoolPolicies()} class="ml-2 font-medium underline" disabled={policiesLoading}>
-                        {t("settings.providerPoolPoliciesRetry")}
-                      </button>
-                    </p>
-                  )}
-                  {policy === "semantic" && !cloudCredentialAvailable && (
-                    <p class="mt-2 text-xs text-amber-700">{t("settings.providerPoolPolicyLoginRequired")}</p>
-                  )}
-                  {policy === "semantic" && selectedPolicyUnavailable && (
-                    <p class="mt-2 text-xs text-amber-700">{providerPoolPolicyReason(selectedPolicyUnavailableReason)}</p>
-                  )}
-                </fieldset>
                 <div class="flex items-center justify-between gap-4 rounded-xl border border-gray-200 px-4 py-3">
                   <div>
                     <p class="text-sm font-medium text-gray-800">{t("settings.providerPoolEnabledLabel")}</p>

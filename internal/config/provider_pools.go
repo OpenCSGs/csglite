@@ -12,10 +12,7 @@ import (
 // credentials so existing providers.json remains backward compatible.
 const ProviderPoolsFile = "provider_pools.json"
 
-const (
-	ProviderPoolPolicyPriorityWeight = "priority_weight"
-	ProviderPoolPolicySemantic       = "semantic"
-)
+const ProviderPoolPolicyPriorityWeight = "priority_weight"
 
 // ProviderPool exposes one public model ID and routes it to member models.
 type ProviderPool struct {
@@ -163,13 +160,10 @@ func normalizeProviderPools(pools []ProviderPool) []ProviderPool {
 	return out
 }
 
-func NormalizeProviderPoolPolicy(policy string) string {
-	switch strings.TrimSpace(strings.ToLower(policy)) {
-	case ProviderPoolPolicySemantic:
-		return ProviderPoolPolicySemantic
-	default:
-		return ProviderPoolPolicyPriorityWeight
-	}
+// NormalizeProviderPoolPolicy returns the only supported routing policy.
+// Pools saved with the removed "semantic" policy load as priority_weight.
+func NormalizeProviderPoolPolicy(string) string {
+	return ProviderPoolPolicyPriorityWeight
 }
 
 func normalizeProviderPoolMembers(members []ProviderPoolMember) []ProviderPoolMember {

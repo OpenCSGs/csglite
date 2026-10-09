@@ -76,29 +76,14 @@ const (
 )
 
 type apiUsagePoolMetadata struct {
-	PoolID                     string
-	PoolName                   string
-	PoolModel                  string
-	ActualMemberID             string
-	MemberModel                string
-	Policy                     string
-	RouterProfileID            string
-	RouterProfileVersion       int
-	RouterProfileSchemaVersion int
-	RouterAlgorithm            string
-	RoutingTextVersion         string
-	RouterConfidence           float64
-	RouterMargin               float64
-	RouterSimilarity           float64
-	SemanticRouted             bool
-	SemanticCluster            int
-	SemanticClusterID          string
-	SemanticDistance           float64
-	SemanticOOD                bool
-	SemanticFallback           bool
-	SemanticFallbackReason     string
-	FallbackCount              int64
-	LimitedCount               int64
+	PoolID         string
+	PoolName       string
+	PoolModel      string
+	ActualMemberID string
+	MemberModel    string
+	Policy         string
+	FallbackCount  int64
+	LimitedCount   int64
 }
 
 // streamUsageCapture keeps the tail of a proxied upstream stream so the usage

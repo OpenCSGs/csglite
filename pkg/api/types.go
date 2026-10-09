@@ -651,67 +651,52 @@ type ObservabilitySettings struct {
 }
 
 type ObservabilityRequest struct {
-	ID                         string    `json:"id"`
-	RequestID                  string    `json:"request_id,omitempty"`
-	TraceID                    string    `json:"trace_id"`
-	B3TraceID                  string    `json:"b3_trace_id,omitempty"`
-	ThreadID                   string    `json:"thread_id,omitempty"`
-	StartedAt                  time.Time `json:"started_at"`
-	CompletedAt                time.Time `json:"completed_at"`
-	Method                     string    `json:"method"`
-	Path                       string    `json:"path"`
-	Protocol                   string    `json:"protocol"`
-	Status                     string    `json:"status"`
-	StatusCode                 int       `json:"status_code"`
-	Stream                     bool      `json:"stream"`
-	Model                      string    `json:"model"`
-	Source                     string    `json:"source,omitempty"`
-	SourceType                 string    `json:"source_type,omitempty"`
-	SourceName                 string    `json:"source_name,omitempty"`
-	APIKeyID                   string    `json:"api_key_id,omitempty"`
-	APIKeyName                 string    `json:"api_key_name,omitempty"`
-	PoolID                     string    `json:"pool_id,omitempty"`
-	PoolName                   string    `json:"pool_name,omitempty"`
-	PoolModel                  string    `json:"pool_model,omitempty"`
-	ActualMemberID             string    `json:"actual_member_id,omitempty"`
-	MemberModel                string    `json:"member_model,omitempty"`
-	PoolPolicy                 string    `json:"pool_policy,omitempty"`
-	RouterProfileID            string    `json:"router_profile_id,omitempty"`
-	RouterProfileVersion       int       `json:"router_profile_version,omitempty"`
-	RouterProfileSchemaVersion int       `json:"router_profile_schema_version,omitempty"`
-	RouterAlgorithm            string    `json:"router_algorithm,omitempty"`
-	RoutingTextVersion         string    `json:"routing_text_version,omitempty"`
-	RouterConfidence           float64   `json:"router_confidence,omitempty"`
-	RouterMargin               float64   `json:"router_margin,omitempty"`
-	RouterSimilarity           float64   `json:"router_similarity,omitempty"`
-	SemanticRouted             bool      `json:"semantic_routed,omitempty"`
-	SemanticCluster            int       `json:"semantic_cluster"`
-	SemanticClusterID          string    `json:"semantic_cluster_id,omitempty"`
-	SemanticDistance           float64   `json:"semantic_distance,omitempty"`
-	SemanticOOD                bool      `json:"semantic_ood,omitempty"`
-	SemanticFallback           bool      `json:"semantic_fallback,omitempty"`
-	SemanticFallbackReason     string    `json:"semantic_fallback_reason,omitempty"`
-	PriceInputPerMillion       float64   `json:"price_input_per_million"`
-	PriceOutputPerMillion      float64   `json:"price_output_per_million"`
-	EstimatedCost              float64   `json:"estimated_cost"`
-	CostCurrency               string    `json:"cost_currency,omitempty"`
-	CostKnown                  bool      `json:"cost_known"`
-	FallbackCount              int64     `json:"fallback_count"`
-	LimitedCount               int64     `json:"limited_count"`
-	InputTokens                int64     `json:"input_tokens"`
-	OutputTokens               int64     `json:"output_tokens"`
-	TotalTokens                int64     `json:"total_tokens"`
-	CacheReadInputTokens       int64     `json:"cache_read_input_tokens"`
-	CacheCreationTokens        int64     `json:"cache_creation_input_tokens"`
-	CacheEligibleTokens        int64     `json:"cache_eligible_input_tokens"`
-	CacheHitRate               float64   `json:"cache_hit_rate"`
-	DurationMS                 int64     `json:"duration_ms"`
-	FirstTokenLatencyMS        int64     `json:"first_token_latency_ms"`
-	ErrorMessage               string    `json:"error_message,omitempty"`
-	RequestBody                string    `json:"request_body,omitempty"`
-	ResponseBody               string    `json:"response_body,omitempty"`
-	RequestBodyTruncated       bool      `json:"request_body_truncated"`
-	ResponseBodyTruncated      bool      `json:"response_body_truncated"`
+	ID                    string    `json:"id"`
+	RequestID             string    `json:"request_id,omitempty"`
+	TraceID               string    `json:"trace_id"`
+	B3TraceID             string    `json:"b3_trace_id,omitempty"`
+	ThreadID              string    `json:"thread_id,omitempty"`
+	StartedAt             time.Time `json:"started_at"`
+	CompletedAt           time.Time `json:"completed_at"`
+	Method                string    `json:"method"`
+	Path                  string    `json:"path"`
+	Protocol              string    `json:"protocol"`
+	Status                string    `json:"status"`
+	StatusCode            int       `json:"status_code"`
+	Stream                bool      `json:"stream"`
+	Model                 string    `json:"model"`
+	Source                string    `json:"source,omitempty"`
+	SourceType            string    `json:"source_type,omitempty"`
+	SourceName            string    `json:"source_name,omitempty"`
+	APIKeyID              string    `json:"api_key_id,omitempty"`
+	APIKeyName            string    `json:"api_key_name,omitempty"`
+	PoolID                string    `json:"pool_id,omitempty"`
+	PoolName              string    `json:"pool_name,omitempty"`
+	PoolModel             string    `json:"pool_model,omitempty"`
+	ActualMemberID        string    `json:"actual_member_id,omitempty"`
+	MemberModel           string    `json:"member_model,omitempty"`
+	PoolPolicy            string    `json:"pool_policy,omitempty"`
+	PriceInputPerMillion  float64   `json:"price_input_per_million"`
+	PriceOutputPerMillion float64   `json:"price_output_per_million"`
+	EstimatedCost         float64   `json:"estimated_cost"`
+	CostCurrency          string    `json:"cost_currency,omitempty"`
+	CostKnown             bool      `json:"cost_known"`
+	FallbackCount         int64     `json:"fallback_count"`
+	LimitedCount          int64     `json:"limited_count"`
+	InputTokens           int64     `json:"input_tokens"`
+	OutputTokens          int64     `json:"output_tokens"`
+	TotalTokens           int64     `json:"total_tokens"`
+	CacheReadInputTokens  int64     `json:"cache_read_input_tokens"`
+	CacheCreationTokens   int64     `json:"cache_creation_input_tokens"`
+	CacheEligibleTokens   int64     `json:"cache_eligible_input_tokens"`
+	CacheHitRate          float64   `json:"cache_hit_rate"`
+	DurationMS            int64     `json:"duration_ms"`
+	FirstTokenLatencyMS   int64     `json:"first_token_latency_ms"`
+	ErrorMessage          string    `json:"error_message,omitempty"`
+	RequestBody           string    `json:"request_body,omitempty"`
+	ResponseBody          string    `json:"response_body,omitempty"`
+	RequestBodyTruncated  bool      `json:"request_body_truncated"`
+	ResponseBodyTruncated bool      `json:"response_body_truncated"`
 	// ContextCompression is set when context compression was on for the
 	// request and it carried tool results.
 	ContextCompression *ObservabilityContextCompression `json:"context_compression,omitempty"`
@@ -1378,14 +1363,12 @@ type ThirdPartyProviderUpdateRequest struct {
 
 // ProviderPool exposes one public model ID and selects one of its members.
 type ProviderPool struct {
-	ID                      string               `json:"id"`
-	Name                    string               `json:"name"`
-	Model                   string               `json:"model"`
-	Enabled                 bool                 `json:"enabled"`
-	Policy                  string               `json:"policy"`
-	PolicyAvailable         bool                 `json:"policy_available"`
-	PolicyUnavailableReason string               `json:"policy_unavailable_reason,omitempty"`
-	Members                 []ProviderPoolMember `json:"members"`
+	ID      string               `json:"id"`
+	Name    string               `json:"name"`
+	Model   string               `json:"model"`
+	Enabled bool                 `json:"enabled"`
+	Policy  string               `json:"policy"`
+	Members []ProviderPoolMember `json:"members"`
 }
 
 type ProviderPoolMember struct {
@@ -1417,17 +1400,6 @@ type ProviderPoolUpdateRequest struct {
 	Enabled *bool                 `json:"enabled,omitempty"`
 	Policy  *string               `json:"policy,omitempty"`
 	Members *[]ProviderPoolMember `json:"members,omitempty"`
-}
-
-type ProviderPoolPolicyCapability struct {
-	Type         string `json:"type"`
-	Experimental bool   `json:"experimental"`
-	Available    bool   `json:"available"`
-	Reason       string `json:"reason,omitempty"`
-}
-
-type ProviderPoolPolicyCapabilitiesResponse struct {
-	Policies []ProviderPoolPolicyCapability `json:"policies"`
 }
 
 type ProviderTagModelRequest struct {
