@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -21,7 +20,6 @@ import (
 	"github.com/opencsgs/csglite/internal/ctxcompress"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/observability"
-	routerprofile "github.com/opencsgs/semantic-router"
 )
 
 const (
@@ -336,21 +334,6 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			record.ActualMemberID = snapshot.pool.ActualMemberID
 			record.MemberModel = snapshot.pool.MemberModel
 			record.PoolPolicy = snapshot.pool.Policy
-			record.RouterProfileID = snapshot.pool.RouterProfileID
-			record.RouterProfileVersion = snapshot.pool.RouterProfileVersion
-			record.RouterProfileSchemaVersion = snapshot.pool.RouterProfileSchemaVersion
-			record.RouterAlgorithm = snapshot.pool.RouterAlgorithm
-			record.RoutingTextVersion = snapshot.pool.RoutingTextVersion
-			record.RouterConfidence = snapshot.pool.RouterConfidence
-			record.RouterMargin = snapshot.pool.RouterMargin
-			record.RouterSimilarity = snapshot.pool.RouterSimilarity
-			record.SemanticRouted = snapshot.pool.SemanticRouted
-			record.SemanticCluster = snapshot.pool.SemanticCluster
-			record.SemanticClusterID = snapshot.pool.SemanticClusterID
-			record.SemanticDistance = snapshot.pool.SemanticDistance
-			record.SemanticOOD = snapshot.pool.SemanticOOD
-			record.SemanticFallback = snapshot.pool.SemanticFallback
-			record.SemanticFallbackReason = snapshot.pool.SemanticFallbackReason
 			record.FallbackCount = snapshot.pool.FallbackCount
 			record.LimitedCount = snapshot.pool.LimitedCount
 		}
@@ -380,12 +363,8 @@ func (s *Server) addObservation(record observability.RequestRecord) error {
 		if _, err := s.observability.Cleanup(context.Background(), retentionDays); err != nil {
 			log.Printf("OBSERVABILITY: retention cleanup failed: %v", err)
 		}
-		s.cleanupRouterTraceData(retentionDays)
 	}
 	s.observabilityMu.RUnlock()
-	if record.Status == "completed" && record.PoolID != "" {
-		s.enqueueRouterCuration(record.PoolID)
-	}
 	return nil
 }
 
@@ -714,20 +693,6 @@ func (s *Server) cleanupObservability() {
 	retentionDays := config.ObservabilityRetentionDays(s.cfg.Observability)
 	if _, err := s.observability.Cleanup(context.Background(), retentionDays); err != nil {
 		log.Printf("OBSERVABILITY: retention cleanup failed: %v", err)
-	}
-	s.cleanupRouterTraceData(retentionDays)
-}
-
-func (s *Server) cleanupRouterTraceData(retentionDays int) {
-	s.routerStoreMu.RLock()
-	defer s.routerStoreMu.RUnlock()
-	if s.routerProfiles == nil {
-		return
-	}
-	cutoff := time.Now().UTC().Add(-time.Duration(retentionDays) * 24 * time.Hour)
-	if _, err := s.routerProfiles.PurgeTraceDataBefore(context.Background(), cutoff); err != nil &&
-		!errors.Is(err, routerprofile.ErrConflict) {
-		log.Printf("SEMANTIC ROUTER: retention cleanup failed: %v", err)
 	}
 }
 

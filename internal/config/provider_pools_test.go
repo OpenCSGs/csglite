@@ -20,8 +20,8 @@ func TestNormalizeProviderPoolsDefaultsLegacyPolicy(t *testing.T) {
 }
 
 func TestNormalizeProviderPoolPolicy(t *testing.T) {
-	if got := NormalizeProviderPoolPolicy(" semantic "); got != ProviderPoolPolicySemantic {
-		t.Fatalf("semantic policy = %q", got)
+	if got := NormalizeProviderPoolPolicy(" semantic "); got != ProviderPoolPolicyPriorityWeight {
+		t.Fatalf("removed semantic policy = %q", got)
 	}
 	if got := NormalizeProviderPoolPolicy("unknown"); got != ProviderPoolPolicyPriorityWeight {
 		t.Fatalf("unknown policy = %q", got)

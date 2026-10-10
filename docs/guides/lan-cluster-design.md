@@ -32,7 +32,7 @@
 4. **安全**：只有配对过的节点之间才互相转发请求；节点间通信加密；不把节点
    的管理接口暴露给局域网里的任意设备。
 5. **不改变单机体验**：未加入集群的节点行为与今天完全一致；加入集群后现有客户端不改配置也能照常工作（第 8.3 节）。
-6. **复用现有能力**：调度、限流、故障切换、语义路由沿用已有的 provider
+6. **复用现有能力**：调度、限流、故障切换沿用已有的 provider
    pool 框架；跨节点追踪沿用已有的 `X-CSGLite-Trace-ID` 传播。
 
 ### 1.3 非目标（第一期）
@@ -102,7 +102,7 @@ provider pool。理由：
    模型拉取（`/api/pull`）、API Key 鉴权与请求追踪，缺的只是"身份 +
    发现 + 配对 + 调度"这一薄层。
 2. provider pool 已实现优先级、加权轮询、每成员 RPM / TPM / 并发上限、限流
-   冷却、会话亲和、失败切换、语义路由（`internal/server/provider_pool_inference.go`）。
+   冷却、会话亲和、失败切换（`internal/server/provider_pool_inference.go`）。
    把"节点"作为一种新的成员 `source`，这些能力对集群立即可用。
 3. `internal/inference/remote.go` 里已有一个把请求转发给另一台 csghub-lite
    的 `remoteEngine`（当前由 CLI `chat` / `run` 用来连本机服务），它已能携带
@@ -424,7 +424,7 @@ PAIR 采用 EAP-NOOB + 六位 PIN；本设计用"令牌 / 准入码做 HMAC 的 
 ### 7.3 与 provider pool 的关系
 
 - `ProviderPoolMember.Source` 允许 `cluster` 与 `node:<uuid>`。于是可以配置
-  "集群优先、云端兜底"、"集群 + 第三方 API 语义路由"这类池，而不需要在集群
+  "集群优先、云端兜底"、"集群 + 第三方 API 兜底"这类池，而不需要在集群
   组件里重复实现优先级和限流。
 - `source=cluster` 直接请求时，内部等价于一个由调度器动态生成的、成员为候选
   节点的临时池，走同一套 `admit` / 失败切换代码路径，只是成员顺序由调度器

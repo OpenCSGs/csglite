@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -10,24 +9,14 @@ import (
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
-const semanticEmbeddingModel = "text-embedding-3-small"
-
 // GET /api/provider-pools
 func (s *Server) handleProviderPoolsList(w http.ResponseWriter, r *http.Request) {
 	pools := config.GetProviderPools()
 	out := make([]api.ProviderPool, 0, len(pools))
-	capabilities := s.providerPoolPolicyCapabilities(r.Context(), false)
 	for _, pool := range pools {
-		out = append(out, providerPoolAPI(pool, capabilities))
+		out = append(out, providerPoolAPI(pool))
 	}
 	writeJSON(w, http.StatusOK, api.ProviderPoolsResponse{Pools: out})
-}
-
-// GET /api/provider-pool-policies
-func (s *Server) handleProviderPoolPolicies(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, api.ProviderPoolPolicyCapabilitiesResponse{
-		Policies: s.providerPoolPolicyCapabilities(r.Context(), requestWantsModelRefresh(r)),
-	})
 }
 
 // POST /api/provider-pools
@@ -48,8 +37,7 @@ func (s *Server) handleProviderPoolCreate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to save provider pool")
 		return
 	}
-	s.enqueueRouterCuration(pool.ID)
-	writeJSON(w, http.StatusCreated, providerPoolAPI(pool, s.providerPoolPolicyCapabilities(r.Context(), false)))
+	writeJSON(w, http.StatusCreated, providerPoolAPI(pool))
 }
 
 // PUT /api/provider-pools/{id}
@@ -90,8 +78,7 @@ func (s *Server) handleProviderPoolUpdate(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusInternalServerError, "failed to save provider pool")
 			return
 		}
-		s.enqueueRouterCuration(candidate.ID)
-		writeJSON(w, http.StatusOK, providerPoolAPI(candidate, s.providerPoolPolicyCapabilities(r.Context(), false)))
+		writeJSON(w, http.StatusOK, providerPoolAPI(candidate))
 		return
 	}
 	writeError(w, http.StatusNotFound, "provider pool not found")
@@ -150,12 +137,6 @@ func (s *Server) validateProviderPool(r *http.Request, pool config.ProviderPool,
 	}
 	switch pool.Policy {
 	case "", config.ProviderPoolPolicyPriorityWeight:
-		pool.Policy = config.ProviderPoolPolicyPriorityWeight
-	case config.ProviderPoolPolicySemantic:
-		capability := semanticPolicyCapability(s.providerPoolPolicyCapabilities(r.Context(), true))
-		if !capability.Available {
-			return errProviderPool("semantic policy is unavailable: " + capability.Reason)
-		}
 	default:
 		return errProviderPool("unsupported provider pool policy")
 	}
@@ -199,83 +180,20 @@ func (s *Server) validateProviderPool(r *http.Request, pool config.ProviderPool,
 	return nil
 }
 
-func (s *Server) providerPoolPolicyCapabilities(ctx context.Context, refresh bool) []api.ProviderPoolPolicyCapability {
-	auth := s.cloudAuthStatus(ctx)
-	if !hasProviderPoolSemanticCredential(auth) {
-		return providerPoolPolicyCapabilitiesFor(false, nil, nil)
-	}
-	models, err := s.listCloudModelCatalog(ctx, refresh)
-	return providerPoolPolicyCapabilitiesFor(true, models, err)
-}
-
-func hasProviderPoolSemanticCredential(auth cloudAuthStatus) bool {
-	return auth.Authenticated || auth.HasAPIKey
-}
-
-func providerPoolPolicyCapabilitiesFor(hasCloudCredential bool, models []api.ModelInfo, catalogErr error) []api.ProviderPoolPolicyCapability {
-	capabilities := []api.ProviderPoolPolicyCapability{{
-		Type:      config.ProviderPoolPolicyPriorityWeight,
-		Available: true,
-	}, {
-		Type:         config.ProviderPoolPolicySemantic,
-		Experimental: true,
-	}}
-	semantic := &capabilities[1]
-	if !hasCloudCredential {
-		semantic.Reason = "opencsg_login_required"
-		return capabilities
-	}
-	if catalogErr != nil {
-		semantic.Reason = "gateway_catalog_unavailable"
-		return capabilities
-	}
-	for _, model := range models {
-		if strings.TrimSpace(model.Model) == semanticEmbeddingModel &&
-			strings.TrimSpace(model.PipelineTag) == "feature-extraction" {
-			semantic.Available = true
-			return capabilities
-		}
-	}
-	semantic.Reason = "required_embedding_model_unavailable"
-	return capabilities
-}
-
-func semanticPolicyCapability(capabilities []api.ProviderPoolPolicyCapability) api.ProviderPoolPolicyCapability {
-	for _, capability := range capabilities {
-		if capability.Type == config.ProviderPoolPolicySemantic {
-			return capability
-		}
-	}
-	return api.ProviderPoolPolicyCapability{
-		Type:   config.ProviderPoolPolicySemantic,
-		Reason: "gateway_catalog_unavailable",
-	}
-}
-
 type providerPoolError string
 
 func (e providerPoolError) Error() string { return string(e) }
 
 func errProviderPool(message string) error { return providerPoolError(message) }
 
-func providerPoolAPI(pool config.ProviderPool, capabilities []api.ProviderPoolPolicyCapability) api.ProviderPool {
-	policy := config.NormalizeProviderPoolPolicy(pool.Policy)
-	available := true
-	reason := ""
-	if policy == config.ProviderPoolPolicySemantic {
-		capability := semanticPolicyCapability(capabilities)
-		available = capability.Available
-		reason = capability.Reason
-	}
+func providerPoolAPI(pool config.ProviderPool) api.ProviderPool {
 	return api.ProviderPool{
-		ID:                      pool.ID,
-		Name:                    pool.Name,
-		Model:                   pool.Model,
-		Enabled:                 pool.Enabled,
-		Policy:                  policy,
-		PolicyAvailable:         available,
-		PolicyUnavailableReason: reason,
-		Members:                 providerPoolMembersAPI(pool.Members),
+		ID:      pool.ID,
+		Name:    pool.Name,
+		Model:   pool.Model,
+		Enabled: pool.Enabled,
+		Policy:  config.NormalizeProviderPoolPolicy(pool.Policy),
+		Members: providerPoolMembersAPI(pool.Members),
 	}
 }
 
