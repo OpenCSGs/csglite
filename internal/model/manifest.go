@@ -15,8 +15,12 @@ import (
 // Vision-related HuggingFace architecture suffixes/names.
 var visionArchitectures = map[string]bool{
 	"AudioFlamingo3ForConditionalGeneration": true,
+	"BailingMoeV3VLForConditionalGeneration": true,
 	"ChameleonForConditionalGeneration":      true,
+	"ClefModel":                              true,
 	"CogVLMForCausalLM":                      true,
+	"Cohere2VisionForConditionalGeneration":  true,
+	"D1OmniModel":                            true,
 	"DeepseekOCRForCausalLM":                 true,
 	"Dots3NoteForConditionalGeneration":      true,
 	"DotsOCRForCausalLM":                     true,
@@ -24,6 +28,7 @@ var visionArchitectures = map[string]bool{
 	"Gemma3nForConditionalGeneration":        true,
 	"Glm4vForConditionalGeneration":          true,
 	"Glm4vMoeForConditionalGeneration":       true,
+	"Glm5NextForConditionalGeneration":       true,
 	"GlmOcrForConditionalGeneration":         true,
 	"HunYuanVLForConditionalGeneration":      true,
 	"Idefics3ForConditionalGeneration":       true,
@@ -160,6 +165,7 @@ var embeddingArchitectures = map[string]bool{
 	"DistilBertForMaskedLM":               true,
 	"DistilBertForSequenceClassification": true,
 	"DistilBertModel":                     true,
+	"EmbeddingGemma2Model":                true,
 	"EuroBertModel":                       true,
 	"JinaBertForMaskedLM":                 true,
 	"JinaBertModel":                       true,

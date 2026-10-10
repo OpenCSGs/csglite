@@ -96,7 +96,7 @@ irm https://hub.opencsg.com/csghub-lite/install.ps1 | iex
 
 ```text
 Select an inference engine to install:
-  1) llama.cpp   llama-server b10830 for GGUF / SafeTensors text, embedding and vision models (recommended)
+  1) llama.cpp   llama-server b11541 for GGUF / SafeTensors text, embedding and vision models (recommended)
                  detected accelerator: CUDA 12.x
   2) none        skip for now; remote and cloud models still work, install later with
                  `csghub-lite engine install llama.cpp`
@@ -242,7 +242,7 @@ type Status struct {
     DisplayName     string `json:"display_name"`
     Installed       bool   `json:"installed"`
     Path            string `json:"path,omitempty"`
-    Version         string `json:"version,omitempty"`         // 本机版本，如 b10830
+    Version         string `json:"version,omitempty"`         // 本机版本，如 b11541
     PinnedVersion   string `json:"pinned_version,omitempty"`  // 本二进制锁定的版本
     UpToDate        bool   `json:"up_to_date"`
     Managed         bool   `json:"managed"`                   // 是否由 csghub-lite 安装
@@ -277,7 +277,7 @@ type Status struct {
 ~/.csghub-lite/engines/<id>/manifest.json
 {
   "id": "llama.cpp",
-  "version": "b10830",
+  "version": "b11541",
   "accelerator": "cuda",
   "install_dir": "/usr/local/bin",
   "files": ["/usr/local/bin/llama-server", "/usr/local/bin/libggml-cuda.so", ...],

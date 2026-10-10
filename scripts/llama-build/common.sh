@@ -17,7 +17,7 @@ LLAMA_BUILD_GITLAB_PROJECT_ID="${LLAMA_BUILD_GITLAB_PROJECT_ID:-393}"
 LLAMA_BUILD_GITLAB_API="${LLAMA_BUILD_GITLAB_API:-https://git-devops.opencsg.com/api/v4}"
 
 llama_build_tag() {
-  printf '%s\n' "${LLAMA_TAG:-${1:-b10830}}"
+  printf '%s\n' "${LLAMA_TAG:-${1:-b11541}}"
 }
 
 llama_build_ensure_docker() {
@@ -64,8 +64,12 @@ llama_build_clone_source() {
     return 0
   fi
   mkdir -p "$(dirname "${dest}")"
-  # shellcheck source=/dev/null
-  source "${HOME}/.myshrc" 2>/dev/null || true
+  # Guard the file check: under `set -e`, bash 3.2 aborts on `source` of a missing
+  # file even with `|| true`.
+  if [ -f "${HOME}/.myshrc" ]; then
+    # shellcheck source=/dev/null
+    source "${HOME}/.myshrc"
+  fi
   git clone --depth 1 --branch "${tag}" https://github.com/ggml-org/llama.cpp.git "${dest}"
 }
 
@@ -87,9 +91,26 @@ llama_build_upload_tarball() {
   local name
   name="$(basename "${tarball}")"
   llama_build_load_gitlab_token
-  curl -fsS -o /tmp/gitlab-llama-upload.json -w "upload ${name}: HTTP %{http_code}\n" \
-    --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-    --upload-file "${tarball}" \
-    "${LLAMA_BUILD_GITLAB_API}/projects/${LLAMA_BUILD_GITLAB_PROJECT_ID}/packages/generic/llama-cpp/${tag}/${name}"
+  # A saturated uplink makes GitLab answer the slow body with 403 and close the
+  # connection. curl's own --retry-all-errors kept failing inside one process, so
+  # restart curl for each attempt instead.
+  local attempt=1
+  local max_attempts=5
+  while :; do
+    if curl -fsS \
+      -o /tmp/gitlab-llama-upload.json -w "upload ${name}: HTTP %{http_code}\n" \
+      --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+      --upload-file "${tarball}" \
+      "${LLAMA_BUILD_GITLAB_API}/projects/${LLAMA_BUILD_GITLAB_PROJECT_ID}/packages/generic/llama-cpp/${tag}/${name}"; then
+      break
+    fi
+    if [ "${attempt}" -ge "${max_attempts}" ]; then
+      echo "upload ${name}: giving up after ${max_attempts} attempts." >&2
+      return 1
+    fi
+    echo "upload ${name}: attempt ${attempt} failed, retrying in $((attempt * 10))s." >&2
+    sleep $((attempt * 10))
+    attempt=$((attempt + 1))
+  done
   shasum -a 256 "${tarball}"
 }

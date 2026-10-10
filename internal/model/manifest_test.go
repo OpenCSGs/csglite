@@ -218,6 +218,34 @@ func TestDetectPipelineTagNewVisionArchitectures(t *testing.T) {
 	}
 }
 
+func TestDetectPipelineTagLlamacppB11541Architectures(t *testing.T) {
+	vision := []string{
+		"BailingMoeV3VLForConditionalGeneration",
+		"ClefModel",
+		"Cohere2VisionForConditionalGeneration",
+		"D1OmniModel",
+		"Glm5NextForConditionalGeneration",
+	}
+	for _, arch := range vision {
+		dir := t.TempDir()
+		cfg := []byte(`{"architectures":["` + arch + `"]}`)
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := DetectPipelineTag(dir); got != "image-text-to-text" {
+			t.Fatalf("DetectPipelineTag(%q) = %q, want image-text-to-text", arch, got)
+		}
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["EmbeddingGemma2Model"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := DetectPipelineTag(dir); got != "feature-extraction" {
+		t.Fatalf("DetectPipelineTag(EmbeddingGemma2Model) = %q, want feature-extraction", got)
+	}
+}
+
 func TestDetectPipelineTagMMProjWithoutConfig(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "mmproj-model-f16.gguf"), []byte("mmproj"), 0o644); err != nil {

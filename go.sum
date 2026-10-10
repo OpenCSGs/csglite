@@ -29,8 +29,8 @@ github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWE
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/ncruces/go-strftime v0.1.9 h1:bY0MQC28UADQmHmaF5dgpLmImcShSi2kHU9XLdhx/f4=
 github.com/ncruces/go-strftime v0.1.9/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
-github.com/opencsgs/llama-cpp-assets v0.5.0 h1:sDttXh2EaQYIVsZROHyMu/LDxCZMCZno5V7BzjRv4yM=
-github.com/opencsgs/llama-cpp-assets v0.5.0/go.mod h1:d1LuHSYf9SmFKd1wYOvapbKCkxsGYXe1QVg5ax2+oBo=
+github.com/opencsgs/llama-cpp-assets v0.6.0 h1:sSoTGQJqbCiTQmHljnHCt4AfdB5o5VRS2VtLqvYbbNg=
+github.com/opencsgs/llama-cpp-assets v0.6.0/go.mod h1:d1LuHSYf9SmFKd1wYOvapbKCkxsGYXe1QVg5ax2+oBo=
 github.com/pion/datachannel v1.6.2 h1:7EXQ8TH3vTouBUdRWYbcX2edSx9Yj6k5zl5P+qyxEPc=
 github.com/pion/datachannel v1.6.2/go.mod h1:pzbdAZvyGtXbcHM1hBbsFaOTf40lZizU/dNlvVOak6E=
 github.com/pion/dtls/v3 v3.1.8 h1:aLcgjZqzrYn5AbjSds4LvK2WI5VzJc1PencExyDjYis=
