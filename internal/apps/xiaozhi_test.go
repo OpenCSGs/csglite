@@ -9,9 +9,105 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
 )
+
+func TestMain(m *testing.M) {
+	if os.Getenv("CSGLITE_FAKE_DOCKER") == "1" {
+		runFakeDockerProbe()
+	}
+	os.Exit(m.Run())
+}
+
+// runFakeDockerProbe stands in for the docker CLI. The app-list test points
+// CSGHUB_LITE_DOCKER_PATH at this test binary and re-executes it. The process
+// blocks until the test writes a release file, which is how the test proves
+// List returns while docker compose and docker info are still running.
+func runFakeDockerProbe() {
+	dir := os.Getenv("CSGLITE_FAKE_DOCKER_DIR")
+	if dir != "" {
+		_ = os.WriteFile(filepath.Join(dir, "started"), []byte("1"), 0o644)
+	}
+	release := filepath.Join(dir, "release")
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(release); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(os.Args) > 1 && os.Args[1] == "info" {
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func TestListReturnsBeforeXiaozhiDockerProbe(t *testing.T) {
+	if !xiaozhiHostCanRunAMD64() {
+		t.Skip("xiaozhi docker probe does not run on this architecture")
+	}
+
+	dir := t.TempDir()
+	release := filepath.Join(dir, "release")
+	t.Cleanup(func() {
+		_ = os.WriteFile(release, []byte("1"), 0o644)
+	})
+	t.Setenv("CSGLITE_FAKE_DOCKER", "1")
+	t.Setenv("CSGLITE_FAKE_DOCKER_DIR", dir)
+	t.Setenv("CSGHUB_LITE_DOCKER_PATH", os.Args[0])
+	t.Setenv("PATH", "")
+	setTempHome(t)
+
+	started := time.Now()
+	mgr := NewManager(nil)
+	apps, err := mgr.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 750*time.Millisecond {
+		t.Fatalf("list blocked for %s while the docker probe was still running", elapsed)
+	}
+	for _, info := range apps {
+		if info.ID == xiaozhiAppID && info.DisabledReason != "" {
+			t.Fatalf("DisabledReason = %q before the docker probe finished", info.DisabledReason)
+		}
+	}
+
+	probeStarted := filepath.Join(dir, "started")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(probeStarted); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("docker probe did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := os.WriteFile(release, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	var reason string
+	for time.Now().Before(deadline) {
+		info, err := mgr.Get(context.Background(), xiaozhiAppID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		reason = info.DisabledReason
+		if reason == "docker_daemon_unavailable" {
+			if !info.Disabled || !info.Supported {
+				t.Fatalf("xiaozhi state = disabled:%v supported:%v, want true/true", info.Disabled, info.Supported)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("DisabledReason = %q, want docker_daemon_unavailable", reason)
+}
 
 func TestXiaozhiAvailabilityExplainsMissingPrerequisite(t *testing.T) {
 	t.Setenv("PATH", "")

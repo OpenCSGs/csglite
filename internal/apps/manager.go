@@ -120,6 +120,10 @@ type Manager struct {
 
 	xiaozhiAvailability        xiaozhiAvailability
 	xiaozhiAvailabilityExpires time.Time
+	// xiaozhiAvailabilityProbing is true while a goroutine runs the Docker
+	// availability commands. Those commands are slow, so the app list must not
+	// wait on them. Caller must hold m.mu.
+	xiaozhiAvailabilityProbing bool
 }
 
 type installDetectionState struct {
@@ -541,7 +545,7 @@ func (m *Manager) RefreshAll(ctx context.Context) error {
 		}
 		if spec.id == xiaozhiAppID {
 			if !st.running {
-				m.refreshXiaozhiStateLocked(ctx, st)
+				m.refreshXiaozhiStateLocked(st)
 			}
 			continue
 		}

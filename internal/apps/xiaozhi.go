@@ -294,18 +294,65 @@ func xiaozhiDockerFallbackPathsForOS(goos string) []string {
 	}
 }
 
-func (m *Manager) cachedXiaozhiAvailability(ctx context.Context) xiaozhiAvailability {
-	if time.Now().Before(m.xiaozhiAvailabilityExpires) {
-		return m.xiaozhiAvailability
+const xiaozhiAvailabilityCacheTTL = 5 * time.Second
+
+// refreshXiaozhiStateLocked applies the cached Docker availability and, when
+// that cache is missing or stale, refreshes it in the background. Caller must
+// hold m.mu. `docker compose version` and `docker info` stay off this path so
+// listing apps can return before those commands finish.
+func (m *Manager) refreshXiaozhiStateLocked(st *appState) {
+	if st == nil {
+		return
 	}
-	availability := xiaozhiDockerAvailability(ctx)
+	if !time.Now().Before(m.xiaozhiAvailabilityExpires) {
+		m.startXiaozhiAvailabilityProbeLocked()
+	}
+	if m.xiaozhiAvailabilityExpires.IsZero() {
+		m.applyXiaozhiInstallSnapshotLocked(st)
+		return
+	}
+	m.applyXiaozhiAvailabilityLocked(st, m.xiaozhiAvailability)
+}
+
+func (m *Manager) startXiaozhiAvailabilityProbeLocked() {
+	if m.xiaozhiAvailabilityProbing {
+		return
+	}
+	m.xiaozhiAvailabilityProbing = true
+	go func() {
+		m.storeXiaozhiAvailability(xiaozhiDockerAvailability(context.Background()))
+	}()
+}
+
+func (m *Manager) storeXiaozhiAvailability(availability xiaozhiAvailability) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.xiaozhiAvailability = availability
-	m.xiaozhiAvailabilityExpires = time.Now().Add(5 * time.Second)
+	m.xiaozhiAvailabilityExpires = time.Now().Add(xiaozhiAvailabilityCacheTTL)
+	m.xiaozhiAvailabilityProbing = false
+	if st := m.states[xiaozhiAppID]; st != nil {
+		m.applyXiaozhiAvailabilityLocked(st, availability)
+	}
+}
+
+// xiaozhiAvailabilityForAction returns a fresh Docker availability result for
+// install and uninstall. Unlike the app list, those actions wait for the probe
+// so a missing Docker daemon is rejected before any compose command starts.
+func (m *Manager) xiaozhiAvailabilityForAction(ctx context.Context) xiaozhiAvailability {
+	m.mu.Lock()
+	if time.Now().Before(m.xiaozhiAvailabilityExpires) {
+		availability := m.xiaozhiAvailability
+		m.mu.Unlock()
+		return availability
+	}
+	m.mu.Unlock()
+
+	availability := xiaozhiDockerAvailability(ctx)
+	m.storeXiaozhiAvailability(availability)
 	return availability
 }
 
-func (m *Manager) refreshXiaozhiStateLocked(ctx context.Context, st *appState) {
-	availability := m.cachedXiaozhiAvailability(ctx)
+func (m *Manager) applyXiaozhiAvailabilityLocked(st *appState, availability xiaozhiAvailability) {
 	st.info.Supported = availability.supported
 	st.info.Disabled = availability.reason != ""
 	st.info.DisabledReason = availability.reason
@@ -314,21 +361,11 @@ func (m *Manager) refreshXiaozhiStateLocked(ctx context.Context, st *appState) {
 	if availability.reason != "" {
 		st.info.Status = "disabled"
 		st.info.Phase = availability.reason
-		st.info.Installed = m.xiaozhiInstalled()
-		st.info.Managed = st.info.Installed
-		if root, err := m.xiaozhiRoot(); err == nil && st.info.Installed {
-			st.info.InstallPath = root
-			st.info.Version = xiaozhiVersion
-		}
+		m.applyXiaozhiInstallFieldsLocked(st)
 		return
 	}
 	st.info.DisabledReason = ""
-	st.info.Installed = m.xiaozhiInstalled()
-	st.info.Managed = st.info.Installed
-	if root, err := m.xiaozhiRoot(); err == nil && st.info.Installed {
-		st.info.InstallPath = root
-		st.info.Version = xiaozhiVersion
-	}
+	m.applyXiaozhiInstallFieldsLocked(st)
 	if st.running {
 		return
 	}
@@ -343,6 +380,38 @@ func (m *Manager) refreshXiaozhiStateLocked(ctx context.Context, st *appState) {
 	st.info.Progress = 0
 	st.info.InstallPath = ""
 	st.info.Version = ""
+}
+
+func (m *Manager) applyXiaozhiInstallSnapshotLocked(st *appState) {
+	st.info.ProgressMode = progressModeIndeterminate
+	st.info.UpdatedAt = time.Now()
+	m.applyXiaozhiInstallFieldsLocked(st)
+	if st.running {
+		return
+	}
+	if st.info.Installed {
+		st.info.Status = "installed"
+		st.info.Phase = "installed"
+		st.info.Progress = 100
+		return
+	}
+	if st.info.Status == "" || st.info.Status == "idle" {
+		st.info.Status = "idle"
+		st.info.Phase = "ready"
+		st.info.Progress = 0
+	}
+}
+
+func (m *Manager) applyXiaozhiInstallFieldsLocked(st *appState) {
+	st.info.Installed = m.xiaozhiInstalled()
+	st.info.Managed = st.info.Installed
+	if !st.info.Installed {
+		return
+	}
+	if root, err := m.xiaozhiRoot(); err == nil {
+		st.info.InstallPath = root
+		st.info.Version = xiaozhiVersion
+	}
 }
 
 func (m *Manager) xiaozhiInstalled() bool {
@@ -368,7 +437,15 @@ func (m *Manager) startXiaozhiAction(action string) (api.AIAppInfo, error) {
 		m.mu.Unlock()
 		return api.AIAppInfo{}, fmt.Errorf("unknown app %q", xiaozhiAppID)
 	}
-	m.refreshXiaozhiStateLocked(context.Background(), st)
+	m.mu.Unlock()
+	availability := m.xiaozhiAvailabilityForAction(context.Background())
+	m.mu.Lock()
+	st = m.states[xiaozhiAppID]
+	if st == nil {
+		m.mu.Unlock()
+		return api.AIAppInfo{}, fmt.Errorf("unknown app %q", xiaozhiAppID)
+	}
+	m.applyXiaozhiAvailabilityLocked(st, availability)
 	if st.info.Disabled {
 		info := cloneInfo(st.info)
 		m.mu.Unlock()
