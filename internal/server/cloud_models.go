@@ -177,6 +177,37 @@ func (s *Server) listCloudModelCatalog(ctx context.Context, refresh bool) ([]api
 	return s.withConfiguredCloudProvider(models), err
 }
 
+func (s *Server) cachedCloudChatModels() ([]api.ModelInfo, bool) {
+	if s == nil || s.cloud == nil {
+		return nil, false
+	}
+	models, ok := s.cloud.CachedChatModels()
+	if !ok {
+		return nil, false
+	}
+	models = s.withConfiguredCloudProvider(models)
+	models = s.applyCloudProviderModelSelections(models)
+	s.rememberModelPricing(models)
+	return models, true
+}
+
+// refreshCloudCatalogAsync warms the cloud catalog off the app-list path.
+// refreshCloudChatModels already single-flights the HTTP call.
+func (s *Server) refreshCloudCatalogAsync() {
+	if s == nil || s.cloud == nil || strings.TrimSpace(s.cloud.BaseURL()) == "" {
+		return
+	}
+	s.cloudRefreshMu.Lock()
+	if s.cloudRefreshWait != nil {
+		s.cloudRefreshMu.Unlock()
+		return
+	}
+	s.cloudRefreshMu.Unlock()
+	go func() {
+		_, _ = s.refreshCloudChatModels(context.Background())
+	}()
+}
+
 func (s *Server) listCloudModels(ctx context.Context, refresh bool) ([]api.ModelInfo, error) {
 	models, err := s.listCloudModelCatalog(ctx, refresh)
 	if err != nil {

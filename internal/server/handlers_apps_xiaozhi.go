@@ -50,6 +50,24 @@ func (s *Server) enrichXiaozhiModelSlots(ctx context.Context, info *api.AIAppInf
 	if err != nil {
 		return
 	}
+	s.applyXiaozhiModelSlots(info, models)
+}
+
+// enrichXiaozhiListModelSlots fills slots from local models and a cached cloud
+// catalog. A missing catalog is refreshed in the background so the app list
+// can return before the AI Gateway responds.
+func (s *Server) enrichXiaozhiListModelSlots(ctx context.Context, info *api.AIAppInfo) {
+	if info == nil || info.ID != xiaozhiAppID {
+		return
+	}
+	models, err := s.listXiaozhiCachedModels(ctx)
+	if err != nil {
+		return
+	}
+	s.applyXiaozhiModelSlots(info, models)
+}
+
+func (s *Server) applyXiaozhiModelSlots(info *api.AIAppInfo, models []api.ModelInfo) {
 	saved := s.savedXiaozhiModelBindings()
 	slots := recommendXiaozhiModelSlots(models, saved)
 	info.ModelSlots = slots
@@ -130,15 +148,28 @@ func (s *Server) savedXiaozhiModelBindings() []api.AIAppModelBinding {
 }
 
 func (s *Server) listXiaozhiAvailableModels(ctx context.Context, refreshCloud bool) ([]api.ModelInfo, error) {
+	cloudModels, cloudErr := s.listCloudModels(ctx, refreshCloud)
+	if cloudErr != nil {
+		cloudModels = nil
+	}
+	return s.combineXiaozhiModels(ctx, cloudModels)
+}
+
+func (s *Server) listXiaozhiCachedModels(ctx context.Context) ([]api.ModelInfo, error) {
+	cloudModels, ok := s.cachedCloudChatModels()
+	if !ok {
+		s.refreshCloudCatalogAsync()
+	}
+	return s.combineXiaozhiModels(ctx, cloudModels)
+}
+
+func (s *Server) combineXiaozhiModels(ctx context.Context, cloudModels []api.ModelInfo) ([]api.ModelInfo, error) {
 	localModels, err := s.listLocalModelInfos()
 	if err != nil {
 		return nil, err
 	}
 	models := append([]api.ModelInfo(nil), localModels...)
-	cloudModels, cloudErr := s.listCloudModels(ctx, refreshCloud)
-	if cloudErr == nil {
-		models = append(models, cloudModels...)
-	}
+	models = append(models, cloudModels...)
 	models = append(models, s.listSelectedThirdPartyProviderModels(ctx)...)
 	sort.SliceStable(models, func(i, j int) bool {
 		iPriority := xiaozhiSourcePriority(models[i].Source)
