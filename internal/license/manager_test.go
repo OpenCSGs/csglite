@@ -403,7 +403,7 @@ func TestAPIViewsMirrorState(t *testing.T) {
 	key := licensetest.NewKey(t)
 	m, _ := newManager(t, key, nil)
 
-	none := m.Refresh().APIState(m.FilePath())
+	none := m.Refresh().APIState(m.FilePath(), m.DeviceID())
 	if none.Status != "none" || none.Edition != license.EditionCommunity || none.License != nil || none.Limits == nil || none.FilePath != m.FilePath() {
 		t.Fatalf("unlicensed view %+v", none)
 	}
@@ -425,7 +425,7 @@ func TestAPIViewsMirrorState(t *testing.T) {
 			t.Errorf("%s: enabled=%v gated=%v", entry.Key, entry.Enabled, entry.Gated)
 		}
 	}
-	full := st.APIState("")
+	full := st.APIState("", "")
 	if full.GraceUntil == nil || len(full.Features) != 6 {
 		t.Fatalf("state view %+v", full)
 	}

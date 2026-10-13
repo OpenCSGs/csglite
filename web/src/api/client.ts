@@ -373,6 +373,14 @@ export interface LicenseState {
   reason?: string;
   warnings?: string[];
   source?: string;
+  /** "auto" when fetched from CSGHub after a purchase, "manual" when imported. */
+  origin?: "auto" | "manual";
+  /** UUID of the CSGHub account the license is bound to. */
+  owner?: string;
+  /** This installation's ID; CSGHub counts devices by it. */
+  device_id?: string;
+  /** Devices the signed-in account has used its license on, as of the last sync. */
+  device_count?: number;
   file_path?: string;
   checked_at: string;
 }
@@ -421,6 +429,62 @@ export function importLicense(data: string): Promise<LicenseState> {
 
 export function deleteLicense(): Promise<LicenseState> {
   return fetchJSON<LicenseState>("/api/license", { method: "DELETE" });
+}
+
+/** Error code of the 401 asking the user to sign in to CSGHub first. */
+export const CLOUD_LOGIN_REQUIRED = "cloud_login_required";
+
+export type LicenseCheckoutStatus = "pending" | "paying" | "completed" | "expired";
+
+export interface LicenseCheckoutResponse {
+  sid: string;
+  checkout_url: string;
+  expire_at: string;
+}
+
+export interface LicenseCheckoutStatusResponse {
+  sid: string;
+  status: LicenseCheckoutStatus;
+  owner_name?: string;
+  order_no?: string;
+  expire_at: string;
+  /** Present once the purchase is completed and the license was fetched. */
+  license?: LicenseState;
+  /** Why a completed purchase is not installed yet; polling again retries. */
+  sync_error?: string;
+  /** Another CSGHub account paid, so the license belongs to it, not to this installation's account. */
+  paid_by_other?: boolean;
+  /** Masked name of the account that paid, when paid_by_other is true. */
+  buyer_name?: string;
+}
+
+export interface LicenseSyncResponse {
+  action: "installed" | "removed" | "unchanged" | "skipped";
+  reason?: string;
+  license: LicenseState;
+}
+
+// The checkout routes go through fetchClusterJSON for its structured errors:
+// a 401 carries `code: "cloud_login_required"` and the `login_url` to open.
+
+/** Starts an Enterprise purchase on CSGHub; open `checkout_url` to pay. */
+export function startLicenseUpgrade(): Promise<LicenseCheckoutResponse> {
+  return fetchClusterJSON<LicenseCheckoutResponse>("/api/license/upgrade", { method: "POST" });
+}
+
+/** Polls a purchase; once completed the server installs the license. */
+export function getLicenseUpgrade(sid: string): Promise<LicenseCheckoutStatusResponse> {
+  return fetchClusterJSON<LicenseCheckoutStatusResponse>(`/api/license/upgrade/${encodeURIComponent(sid)}`);
+}
+
+/** Fetches the signed-in account's license from CSGHub now. */
+export function syncLicense(): Promise<LicenseSyncResponse> {
+  return fetchClusterJSON<LicenseSyncResponse>("/api/license/sync", { method: "POST" });
+}
+
+/** True for the 401 asking the user to sign in to CSGHub before upgrading. */
+export function isCloudLoginRequiredError(err: unknown): err is ApiError {
+  return isApiError(err) && err.code === CLOUD_LOGIN_REQUIRED;
 }
 
 export function getLicenseFeatures(): Promise<LicenseFeatureDefinition[]> {
@@ -2933,8 +2997,14 @@ export class ApiError extends Error {
   errorCode?: string;
   limit?: number;
   current?: number;
+  /** Where to sign in, on a `cloud_login_required` 401. */
+  loginURL?: string;
 
-  constructor(message: string, status: number, details?: { code?: string; errorCode?: string; limit?: number; current?: number }) {
+  constructor(
+    message: string,
+    status: number,
+    details?: { code?: string; errorCode?: string; limit?: number; current?: number; loginURL?: string },
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
@@ -2942,6 +3012,7 @@ export class ApiError extends Error {
     this.errorCode = details?.errorCode;
     this.limit = details?.limit;
     this.current = details?.current;
+    this.loginURL = details?.loginURL;
   }
 }
 
@@ -2965,12 +3036,13 @@ function parseApiError(body: string, contentType: string, status: number, fallba
   const message = extractErrorMessage(body, contentType, fallback);
   if (contentType.includes("application/json")) {
     try {
-      const parsed = JSON.parse(body) as { code?: unknown; errorCode?: unknown; limit?: unknown; current?: unknown };
+      const parsed = JSON.parse(body) as { code?: unknown; errorCode?: unknown; limit?: unknown; current?: unknown; login_url?: unknown };
       return new ApiError(message, status, {
         code: typeof parsed.code === "string" ? parsed.code : undefined,
         errorCode: typeof parsed.errorCode === "string" ? parsed.errorCode : undefined,
         limit: typeof parsed.limit === "number" ? parsed.limit : undefined,
         current: typeof parsed.current === "number" ? parsed.current : undefined,
+        loginURL: typeof parsed.login_url === "string" ? parsed.login_url : undefined,
       });
     } catch {
       /* fall through */

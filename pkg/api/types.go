@@ -591,8 +591,55 @@ type LicenseState struct {
 	Reason     string          `json:"reason,omitempty"`
 	Warnings   []string        `json:"warnings,omitempty"`
 	Source     string          `json:"source,omitempty"`
-	FilePath   string          `json:"file_path,omitempty"`
-	CheckedAt  time.Time       `json:"checked_at"`
+	// Origin is "auto" for a license fetched from CSGHub after a purchase,
+	// "manual" for one imported by hand, and empty when none is installed
+	// or it comes from the environment.
+	Origin string `json:"origin,omitempty"`
+	// Owner is the CSGHub account UUID the license is bound to, if any.
+	Owner string `json:"owner,omitempty"`
+	// DeviceID identifies this installation to CSGHub, which counts the
+	// devices an account's license is used on. It restricts nothing.
+	DeviceID string `json:"device_id,omitempty"`
+	// DeviceCount is how many devices the signed-in account has used its
+	// license on, as of the last sync; omitted when unknown.
+	DeviceCount int       `json:"device_count,omitempty"`
+	FilePath    string    `json:"file_path,omitempty"`
+	CheckedAt   time.Time `json:"checked_at"`
+}
+
+// LicenseCheckoutResponse is returned by POST /api/license/upgrade: a
+// purchase started on CSGHub, completed on the portal page at CheckoutURL.
+type LicenseCheckoutResponse struct {
+	SID         string    `json:"sid"`
+	CheckoutURL string    `json:"checkout_url"`
+	ExpireAt    time.Time `json:"expire_at"`
+}
+
+// LicenseCheckoutStatusResponse is returned by GET /api/license/upgrade/{sid}.
+// Status is "pending", "paying", "completed" or "expired"; once completed the
+// license is fetched and License holds the resulting state.
+type LicenseCheckoutStatusResponse struct {
+	SID       string        `json:"sid"`
+	Status    string        `json:"status"`
+	OwnerName string        `json:"owner_name,omitempty"`
+	OrderNo   string        `json:"order_no,omitempty"`
+	ExpireAt  time.Time     `json:"expire_at"`
+	License   *LicenseState `json:"license,omitempty"`
+	// SyncError explains why a completed purchase did not install yet.
+	SyncError string `json:"sync_error,omitempty"`
+	// PaidByOther reports that another CSGHub account (BuyerName, masked)
+	// paid, so the license belongs to it and this installation, signed in to
+	// OwnerName, does not receive it by syncing.
+	PaidByOther bool   `json:"paid_by_other,omitempty"`
+	BuyerName   string `json:"buyer_name,omitempty"`
+}
+
+// LicenseSyncResponse is returned by POST /api/license/sync. Action is
+// "installed", "removed", "unchanged" or "skipped".
+type LicenseSyncResponse struct {
+	Action  string       `json:"action"`
+	Reason  string       `json:"reason,omitempty"`
+	License LicenseState `json:"license"`
 }
 
 // LicenseImportRequest carries the LICENSE KEY PEM text, as CSGHub's ImportLicenseReq does.

@@ -191,6 +191,7 @@ type Server struct {
 	appShells        *aiAppShellManager
 	cloud            *cloud.Service
 	license          *license.Manager
+	licenseSync      *license.Syncer
 	http             *http.Server
 	externalHTTP     *http.Server
 	authCallbackHTTP *http.Server
@@ -330,6 +331,7 @@ func New(cfg *config.Config, version string) *Server {
 		loadSteps:         make(map[string]loadStepState),
 		logBuf:            logBuf,
 	}
+	s.licenseSync = license.NewSyncer(s.license, s.fetchStoreLicense)
 	s.appShells = newAIAppShellManager()
 	if store, err := observability.Open(storageRoot); err != nil {
 		log.Printf("OBSERVABILITY: database unavailable: %v", err)
@@ -445,6 +447,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
 	go s.license.Run(ctx, license.DefaultRefreshInterval)
+	go s.licenseSync.Run(ctx, license.DefaultSyncInterval)
 
 	errCh := make(chan error, 3)
 	if s.cfg.DesktopMode {

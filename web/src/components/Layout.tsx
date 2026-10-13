@@ -3,7 +3,8 @@ import { useLocation } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
 import { getSettings, openExternalURL } from "../api/client";
 import { t, locale } from "../i18n";
-import { isLicensed, licenseState, loadLicense, productTitle } from "../license";
+import { isLicensed, licenseState, loadLicense, productTitle, upgradeActionOf } from "../license";
+import { LicenseCheckoutDialog } from "./LicenseCheckoutDialog";
 
 const helpURL = "https://opencsg.com/docs/csghub/101/function/csghub-lite/intro";
 
@@ -59,6 +60,8 @@ export function Layout({ children }: { children: ComponentChildren }) {
   const [hiddenNavItems, setHiddenNavItems] = useState<Set<string> | null>(null);
   void locale.value;
   const license = licenseState.value;
+  const upgradeAction = upgradeActionOf(license);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
 
   useEffect(() => {
     void loadLicense();
@@ -93,7 +96,18 @@ export function Layout({ children }: { children: ComponentChildren }) {
               </span>
             )}
           </span>
+          {upgradeAction && (
+            <button
+              type="button"
+              onClick={() => setCheckoutOpen(true)}
+              title={t(upgradeAction === "renew" ? "licenseCheckout.renewHint" : "licenseCheckout.upgradeHint")}
+              class="ml-auto whitespace-nowrap rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 transition-colors hover:bg-indigo-100"
+            >
+              {t(upgradeAction === "renew" ? "licenseCheckout.renew" : "licenseCheckout.upgrade")}
+            </button>
+          )}
         </div>
+        <LicenseCheckoutDialog open={checkoutOpen} onClose={() => setCheckoutOpen(false)} />
         <nav class="flex-1 px-3 space-y-1 mt-2">
           {navKeys.filter((item) => showNavItem(item.id)).map((item) => {
             const active = path === item.path || (item.path !== "/" && path.startsWith(item.path));

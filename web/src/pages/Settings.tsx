@@ -14,6 +14,8 @@ import {
   getImageRuntimeStatus,
   getCloudAuthStatus,
   importLicense,
+  isCloudLoginRequiredError,
+  syncLicense,
   verifyLicense,
   getTags,
   installImageRuntime,
@@ -23,10 +25,12 @@ import {
 } from "../api/client";
 import type { AppSettings, ArtifactSource, CloudAuthStatus, ContextCompressionMode, LocalDirectoryBrowseResponse } from "../api/client";
 import {
+  editionLabel,
   editionOf,
   formatLicenseDate,
   isLicensed,
   licenseLoadError,
+  licenseOriginKey,
   licenseState,
   licenseStatusKey,
   licenseTone,
@@ -118,6 +122,8 @@ const licenseError = signal("");
 const isVerifyingLicense = signal(false);
 const isInstallingLicense = signal(false);
 const isRemovingLicense = signal(false);
+const deviceIDCopied = signal(false);
+const isSyncingLicense = signal(false);
 const licenseRemoveDialogOpen = signal(false);
 
 function normalizeObservabilityRetentionDays(days: number | undefined | null): number {
@@ -330,6 +336,12 @@ async function clearSavedObservabilityData() {
   } finally {
     isClearingObservability.value = false;
   }
+}
+
+async function copyDeviceID(deviceID: string) {
+  await navigator.clipboard.writeText(deviceID);
+  deviceIDCopied.value = true;
+  setTimeout(() => (deviceIDCopied.value = false), 2000);
 }
 
 async function copyLocalAPIURL() {
@@ -908,12 +920,6 @@ function OpenCSGAccountPanel() {
   );
 }
 
-function editionLabel(edition: string): string {
-  if (edition === "Enterprise") return t("settings.licenseEditionEnterprise");
-  if (edition === "Community") return t("settings.licenseEditionCommunity");
-  return edition;
-}
-
 const licenseToneClasses: Record<LicenseTone, { badge: string; dot: string }> = {
   neutral: { badge: "bg-gray-100 text-gray-600", dot: "bg-gray-400" },
   ok: { badge: "bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
@@ -1019,6 +1025,34 @@ async function removeInstalledLicense() {
   }
 }
 
+async function syncLicenseFromCSGHub() {
+  isSyncingLicense.value = true;
+  licenseMessage.value = "";
+  licenseError.value = "";
+  try {
+    const result = await syncLicense();
+    licenseState.value = result.license;
+    switch (result.action) {
+      case "installed":
+        licenseMessage.value = t("settings.licenseSyncInstalled", editionLabel(editionOf(result.license)));
+        break;
+      case "removed":
+        licenseMessage.value = t("settings.licenseSyncRemoved");
+        break;
+      default:
+        licenseMessage.value = result.reason
+          ? t("settings.licenseSyncUnchangedReason", result.reason)
+          : t("settings.licenseSyncUnchanged");
+    }
+  } catch (err: any) {
+    licenseError.value = isCloudLoginRequiredError(err)
+      ? t("settings.licenseSyncLoginRequired")
+      : err?.message || t("settings.licenseSyncFailed");
+  } finally {
+    isSyncingLicense.value = false;
+  }
+}
+
 function LicenseSection() {
   const state = licenseState.value;
   const licensed = isLicensed(state);
@@ -1086,6 +1120,12 @@ function LicenseSection() {
                   <dt class="text-gray-500">{t("settings.licenseSeats")}</dt>
                   <dd class="text-gray-900 text-right sm:text-left">{summary.max_user}</dd>
                 </div>
+                {state.origin && (
+                  <div class="flex justify-between gap-4 sm:block">
+                    <dt class="text-gray-500">{t("settings.licenseOrigin")}</dt>
+                    <dd class="text-gray-900 text-right sm:text-left">{t(licenseOriginKey(state.origin))}</dd>
+                  </div>
+                )}
                 <div class="flex justify-between gap-4 sm:block">
                   <dt class="text-gray-500">{t("settings.licenseFeatures")}</dt>
                   <dd class="text-gray-900 text-right sm:text-left">
@@ -1117,6 +1157,32 @@ function LicenseSection() {
                 </ul>
               </div>
             )}
+            {state.device_id && (
+              <div class="mt-4 border-t border-gray-100 pt-4">
+                <p class="text-sm text-gray-500">{t("settings.licenseDeviceID")}</p>
+                <div class="mt-1 flex flex-col gap-2 sm:flex-row">
+                  <input
+                    readOnly
+                    value={state.device_id}
+                    class="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 font-mono text-xs text-gray-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void copyDeviceID(state.device_id!)}
+                    class="inline-flex items-center justify-center rounded-lg border border-indigo-200 px-3.5 py-1.5 text-sm text-indigo-700 transition-colors hover:bg-indigo-50"
+                  >
+                    {deviceIDCopied.value ? t("settings.copied") : t("settings.copy")}
+                  </button>
+                </div>
+                {!!state.device_count && (
+                  <p class="mt-1 text-xs text-gray-500">
+                    {state.device_count === 1
+                      ? t("settings.licenseDeviceCountOne")
+                      : t("settings.licenseDeviceCount", String(state.device_count))}
+                  </p>
+                )}
+              </div>
+            )}
             {fromEnv ? (
               <p class="mt-3 text-sm text-gray-500">{t("settings.licenseFromEnv", licenseEnvVar)}</p>
             ) : (
@@ -1140,6 +1206,15 @@ function LicenseSection() {
                         {isRemovingLicense.value ? t("settings.licenseRemoving") : t("settings.licenseRemove")}
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => void syncLicenseFromCSGHub()}
+                      disabled={isSyncingLicense.value}
+                      title={t("settings.licenseSyncHint")}
+                      class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isSyncingLicense.value ? t("settings.licenseSyncing") : t("settings.licenseSync")}
+                    </button>
                   </div>
                 )}
                 {showForm && (

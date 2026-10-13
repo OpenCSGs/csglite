@@ -142,7 +142,7 @@ func (c *licenseClient) state() (api.LicenseState, error) {
 	if err != nil {
 		return api.LicenseState{}, err
 	}
-	return m.State().APIState(m.FilePath()), nil
+	return m.State().APIState(m.FilePath(), m.DeviceID()), nil
 }
 
 func readLicenseArg(arg string) (string, error) {
@@ -269,7 +269,7 @@ func newLicenseInstallCmd(version string) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				st = installed.APIState(m.FilePath())
+				st = installed.APIState(m.FilePath(), m.DeviceID())
 			}
 			fmt.Println("License installed.")
 			printLicenseState(st, c.baseURL == "")

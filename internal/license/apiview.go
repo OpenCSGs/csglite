@@ -33,8 +33,9 @@ func (s State) LimitsCopy() map[string]int {
 }
 
 // APIState is the GET /api/license representation. filePath is where the
-// license file lives, or empty.
-func (s State) APIState(filePath string) api.LicenseState {
+// license file lives, or empty; deviceID identifies this installation, or is
+// empty when unknown.
+func (s State) APIState(filePath, deviceID string) api.LicenseState {
 	resp := api.LicenseState{
 		Status:    string(s.Status),
 		Edition:   s.Edition(),
@@ -44,6 +45,9 @@ func (s State) APIState(filePath string) api.LicenseState {
 		Reason:    s.Reason,
 		Warnings:  s.Warnings,
 		Source:    s.Source,
+		Origin:    s.Origin,
+		Owner:     s.Owner,
+		DeviceID:  deviceID,
 		FilePath:  filePath,
 		CheckedAt: s.CheckedAt,
 	}

@@ -32,6 +32,9 @@ const (
 	// lastCheckFileName records the newest wall-clock time at which a license
 	// was evaluated, to detect a clock that was turned back.
 	lastCheckFileName = "license.lastcheck"
+	// originFileName marks a license file that the syncer fetched from the
+	// issuer ("auto"). Without it an installed license counts as manual.
+	originFileName = "license.origin"
 
 	// DefaultGracePeriod keeps features enabled after ExpireTime while the UI
 	// warns about renewal.
@@ -88,7 +91,22 @@ type State struct {
 	CheckedAt  time.Time
 	// Source is "env", "file" or "" when nothing was loaded.
 	Source string
+	// Origin is OriginAuto for a license file the syncer fetched from the
+	// issuer, OriginManual for one installed any other way, and "" when
+	// nothing is installed or the license comes from the environment.
+	Origin string
+	// Owner is the CSGHub account the license is bound to, if any.
+	Owner string
+	// StoreIssued reports that the CSGHub license store issued the license:
+	// it is bound to the account that bought it.
+	StoreIssued bool
 }
+
+// Origins of an installed license file.
+const (
+	OriginAuto   = "auto"
+	OriginManual = "manual"
+)
 
 // Licensed reports whether features from the license are in effect.
 func (s State) Licensed() bool {
@@ -156,6 +174,12 @@ type Options struct {
 	GracePeriod time.Duration
 	// LastCheckPath stores the clock-rollback marker; empty disables it.
 	LastCheckPath string
+	// OriginPath stores whether the license file was fetched automatically;
+	// empty treats every installed file as manual.
+	OriginPath string
+	// DeviceID identifies this installation to the issuer, which counts the
+	// devices an account's license is used on. Verification ignores it.
+	DeviceID string
 }
 
 // DefaultOptions builds Options from the storage root and environment.
@@ -168,9 +192,15 @@ func DefaultOptions(storageRoot, version string) (Options, error) {
 	if filePath == "" {
 		filePath = filepath.Join(storageRoot, FileName)
 	}
-	lastCheck := ""
+	lastCheck, origin, deviceID := "", "", ""
 	if strings.TrimSpace(storageRoot) != "" {
 		lastCheck = filepath.Join(storageRoot, lastCheckFileName)
+		origin = filepath.Join(storageRoot, originFileName)
+		// The device ID only feeds the issuer's device count, so a failure
+		// here is reported but does not fail the options.
+		if deviceID, err = LoadOrCreateDeviceID(storageRoot); err != nil {
+			log.Printf("license: %v; this installation will not be counted as a device", err)
+		}
 	}
 	return Options{
 		FilePath:      filePath,
@@ -178,6 +208,8 @@ func DefaultOptions(storageRoot, version string) (Options, error) {
 		PublicKeys:    keys,
 		Version:       version,
 		LastCheckPath: lastCheck,
+		OriginPath:    origin,
+		DeviceID:      deviceID,
 	}, nil
 }
 
@@ -209,6 +241,20 @@ func (m *Manager) FilePath() string {
 		return ""
 	}
 	return m.opts.FilePath
+}
+
+// DeviceID returns this installation's device ID, or "" when unknown.
+func (m *Manager) DeviceID() string {
+	if m == nil {
+		return ""
+	}
+	return m.opts.DeviceID
+}
+
+// ManagedByEnv reports whether the license comes from EnvLicense, in which
+// case it can be neither installed nor removed through the file.
+func (m *Manager) ManagedByEnv() bool {
+	return m != nil && strings.TrimSpace(m.opts.Inline) != ""
 }
 
 // State returns the last evaluated state. A nil Manager reports Community.
@@ -246,6 +292,9 @@ func (m *Manager) Refresh() State {
 	}
 	state.Source = source
 	state.CheckedAt = now
+	if source == "file" && data != "" {
+		state.Origin = m.readOrigin()
+	}
 	m.fillUnlicensed(&state)
 
 	if state.Licensed() && m.clockTurnedBack(now) {
@@ -283,7 +332,23 @@ func (m *Manager) fillUnlicensed(state *State) {
 // Install verifies data, writes it to the license file and refreshes. Like
 // CSGHub's import it refuses a license that cannot become active: invalid
 // data, another product, or one whose term has already ended.
+//
+// A license bound to an account was issued by the CSGHub license store, for
+// example downloaded from the portal for an offline install. It is recorded
+// as OriginAuto so a later sync keeps it renewed or removes it once revoked,
+// exactly as if the syncer had fetched it.
 func (m *Manager) Install(data string) (State, error) {
+	return m.install(data, OriginManual)
+}
+
+// InstallAuto is Install for a license the syncer fetched from the issuer. It
+// records the origin so a later sync may replace or remove the license, which
+// it never does to one installed by hand.
+func (m *Manager) InstallAuto(data string) (State, error) {
+	return m.install(data, OriginAuto)
+}
+
+func (m *Manager) install(data, origin string) (State, error) {
 	if m == nil {
 		return State{}, errors.New("license manager is not initialised")
 	}
@@ -304,6 +369,14 @@ func (m *Manager) Install(data string) (State, error) {
 	if err := safefile.Write(m.opts.FilePath, []byte(normalized), 0o600); err != nil {
 		return candidate, fmt.Errorf("writing license file: %w", err)
 	}
+	if candidate.StoreIssued {
+		origin = OriginAuto
+	}
+	if err := m.writeOrigin(origin); err != nil {
+		// The license itself is installed; a missing marker only means a
+		// later sync treats it as manual and leaves it alone.
+		log.Printf("license: recording license origin: %v", err)
+	}
 	return m.Refresh(), nil
 }
 
@@ -319,6 +392,9 @@ func (m *Manager) Remove() (State, error) {
 		if err := os.Remove(m.opts.FilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return m.State(), fmt.Errorf("removing license file: %w", err)
 		}
+	}
+	if err := m.writeOrigin(""); err != nil {
+		log.Printf("license: clearing license origin: %v", err)
 	}
 	return m.Refresh(), nil
 }
@@ -393,6 +469,10 @@ func (m *Manager) evaluate(data string, now time.Time) State {
 		return state
 	}
 	state.Warnings = warnings
+	if extra.Binding != nil {
+		state.Owner = strings.TrimSpace(extra.Binding.Owner)
+		state.StoreIssued = state.Owner != ""
+	}
 	if payload.ExpireTime.Before(payload.StartTime) {
 		state.Status = StatusInvalid
 		state.Reason = "license expires before it starts"
@@ -496,4 +576,31 @@ func (m *Manager) recordCheck(now time.Time) {
 	if err := safefile.Write(m.opts.LastCheckPath, []byte(now.UTC().Format(time.RFC3339)+"\n"), 0o600); err != nil {
 		log.Printf("license: recording check time: %v", err)
 	}
+}
+
+// readOrigin reports how the installed license file got there.
+func (m *Manager) readOrigin() string {
+	if m.opts.OriginPath == "" {
+		return OriginManual
+	}
+	raw, err := os.ReadFile(m.opts.OriginPath)
+	if err == nil && strings.TrimSpace(string(raw)) == OriginAuto {
+		return OriginAuto
+	}
+	return OriginManual
+}
+
+// writeOrigin records origin for the license file; "" or OriginManual removes
+// the marker, since a file without one counts as manual.
+func (m *Manager) writeOrigin(origin string) error {
+	if m.opts.OriginPath == "" {
+		return nil
+	}
+	if origin != OriginAuto {
+		if err := os.Remove(m.opts.OriginPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return safefile.Write(m.opts.OriginPath, []byte(OriginAuto+"\n"), 0o600)
 }

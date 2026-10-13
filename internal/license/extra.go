@@ -6,11 +6,25 @@ import (
 	"sort"
 )
 
-// Extra is the parsed form of DataBody.Extra: {"features": {...}, "limits": {...}}.
+// Extra is the parsed form of DataBody.Extra:
+// {"features": {...}, "limits": {...}, "binding": {...}}.
 type Extra struct {
 	Features map[string]bool
 	Limits   map[string]int
+	// Binding is set when the issuer tied the license to an account, as the
+	// CSGHub license store does for every license it sells.
+	Binding *Binding
 }
+
+// Binding ties a license to the CSGHub account that bought it. It does not
+// restrict where the license is used, so a downloaded license works offline
+// on any installation. Unknown binding fields are ignored.
+type Binding struct {
+	Owner string `json:"owner"`
+}
+
+// extraBindingField is the top-level Extra field carrying the Binding.
+const extraBindingField = "binding"
 
 // ParseExtra follows starhub-server's ValidateLicenseExtraForImport: unknown
 // top-level fields and unknown keys are reported as warnings and ignored so a
@@ -34,7 +48,7 @@ func ParseExtra(extra string, defs []FeatureDefinition) (Extra, []string, error)
 
 	var warnings []string
 	for field := range raw {
-		if field != "features" && field != "limits" {
+		if field != "features" && field != "limits" && field != extraBindingField {
 			warnings = append(warnings, fmt.Sprintf("unknown top-level field %q in license extra", field))
 		}
 	}
@@ -45,6 +59,13 @@ func ParseExtra(extra string, defs []FeatureDefinition) (Extra, []string, error)
 	}
 	if err := json.Unmarshal([]byte(extra), &sections); err != nil {
 		return out, nil, fmt.Errorf("invalid license extra JSON: %w", err)
+	}
+	if rawBinding, ok := raw[extraBindingField]; ok && string(rawBinding) != "null" {
+		var binding Binding
+		if err := json.Unmarshal(rawBinding, &binding); err != nil {
+			return out, nil, fmt.Errorf("license extra binding is not an object: %w", err)
+		}
+		out.Binding = &binding
 	}
 
 	for key, value := range sections.Features {
