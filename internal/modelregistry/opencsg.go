@@ -28,8 +28,7 @@ func (r *openCSGRegistry) ListModels(ctx context.Context, options ListOptions) (
 		Page:           options.Page,
 		PerPage:        options.PerPage,
 		Source:         options.UpstreamSource,
-		TagCategory:    firstNonEmptyCategory(options.Framework, options.Task),
-		TagName:        firstNonEmpty(options.Task, options.Framework),
+		Tags:           openCSGListTags(options.Task, options.Framework),
 		ModelParamsMin: options.ModelParamsMin,
 		ModelParamsMax: options.ModelParamsMax,
 	})
@@ -100,12 +99,16 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func firstNonEmptyCategory(framework, task string) string {
-	if strings.TrimSpace(task) != "" {
-		return "task"
+// openCSGListTags filters by task and framework together. Sending only one of
+// them made a "text-generation" + "GGUF" listing scan task results for GGUF
+// locally, which stopped after a few pages of a much larger result set.
+func openCSGListTags(task, framework string) []csghub.TagFilter {
+	var tags []csghub.TagFilter
+	if task = strings.TrimSpace(task); task != "" {
+		tags = append(tags, csghub.TagFilter{Category: "task", Name: task})
 	}
-	if strings.TrimSpace(framework) != "" {
-		return "framework"
+	if framework = strings.TrimSpace(framework); framework != "" {
+		tags = append(tags, csghub.TagFilter{Category: "framework", Name: framework})
 	}
-	return ""
+	return tags
 }

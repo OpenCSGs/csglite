@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -211,5 +212,29 @@ func TestSearchModels(t *testing.T) {
 	}
 	if len(models) != 1 {
 		t.Fatalf("models len = %d, want 1", len(models))
+	}
+}
+
+func TestListModelsSendsEveryTagPair(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if got := q["tag_category"]; !reflect.DeepEqual(got, []string{"task", "framework"}) {
+			t.Errorf("tag_category = %q", got)
+		}
+		if got := q["tag_name"]; !reflect.DeepEqual(got, []string{"text-generation", "gguf"}) {
+			t.Errorf("tag_name = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"msg":"OK","data":[],"total":0}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "")
+	if _, _, err := client.ListModels(context.Background(), ModelListParams{Tags: []TagFilter{
+		{Category: "task", Name: "text-generation"},
+		{Category: "framework", Name: "gguf"},
+		{Category: "framework"}, // incomplete pairs are skipped
+	}}); err != nil {
+		t.Fatal(err)
 	}
 }
