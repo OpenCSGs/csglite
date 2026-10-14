@@ -22,6 +22,8 @@ import {
   upgradeWithProgress,
 } from "../api/client";
 import type { AppSettings, ArtifactSource, CloudAuthStatus, ContextCompressionMode, LocalDirectoryBrowseResponse } from "../api/client";
+import { COMMUNITY_SITES, CUSTOM_SITE_ID, matchCommunitySite } from "../data/communitySites";
+import type { CommunitySite } from "../data/communitySites";
 import {
   editionOf,
   formatLicenseDate,
@@ -77,6 +79,13 @@ const upgradeProgress = signal<UpgradeProgress>({
 let upgradeReloadTimer: number | undefined;
 const serverUrlInput = signal("");
 const aiGatewayUrlInput = signal("");
+const communitySiteChoice = signal<string | null>(null);
+const isSavingCommunitySite = signal(false);
+let communitySiteSaveID = 0;
+let communitySiteSaveChain: Promise<void> = Promise.resolve();
+const savedServerUrl = signal("");
+const savedAiGatewayUrl = signal("");
+const isOpeningCloudLogin = signal(false);
 const cloudProviderNameInput = signal("");
 const defaultServerUrl = signal("");
 const defaultAiGatewayUrl = signal("");
@@ -280,6 +289,9 @@ function applySettings(data: AppSettings) {
   datasetDirectory.value = data.dataset_dir || "";
   serverUrlInput.value = data.server_url || "";
   aiGatewayUrlInput.value = data.ai_gateway_url || "";
+  savedServerUrl.value = data.server_url || "";
+  savedAiGatewayUrl.value = data.ai_gateway_url || "";
+  communitySiteChoice.value = null;
   cloudProviderNameInput.value = data.cloud_provider_name || "";
   defaultServerUrl.value = data.default_server_url || "";
   defaultAiGatewayUrl.value = data.default_ai_gateway_url || "";
@@ -347,16 +359,14 @@ function fetchSettings() {
     .catch(() => {});
 }
 
-function fetchCloudAuth() {
-  getCloudAuthStatus()
-    .then((status) => {
-      cloudAuth.value = status;
-      cloudAuthError.value = "";
-    })
-    .catch((err: any) => {
-      cloudAuth.value = null;
-      cloudAuthError.value = err?.message || "";
-    });
+async function fetchCloudAuth() {
+  try {
+    cloudAuth.value = await getCloudAuthStatus();
+    cloudAuthError.value = "";
+  } catch (err: any) {
+    cloudAuth.value = null;
+    cloudAuthError.value = err?.message || "";
+  }
 }
 
 function pollCloudAuthAfterLogin() {
@@ -795,9 +805,173 @@ function RegistryCredentialFields({
   );
 }
 
-function openCloudLogin() {
-  openExternal(cloudAuth.value?.login_url);
-  pollCloudAuthAfterLogin();
+function selectedCommunitySite(): string {
+  if (communitySiteChoice.value === CUSTOM_SITE_ID) return CUSTOM_SITE_ID;
+  return matchCommunitySite(serverUrlInput.value, aiGatewayUrlInput.value, {
+    serverURL: defaultServerUrl.value,
+    gatewayURL: defaultAiGatewayUrl.value,
+  });
+}
+
+function selectCommunitySite(site: CommunitySite) {
+  communitySiteChoice.value = null;
+  serverUrlInput.value = site.id === "main"
+    ? (defaultServerUrl.value || site.serverURL)
+    : site.serverURL;
+  aiGatewayUrlInput.value = site.id === "main"
+    ? (defaultAiGatewayUrl.value || site.gatewayURL)
+    : site.gatewayURL;
+  persistCommunitySite();
+}
+
+// persistCommunitySite writes the selected community into config.json. The
+// dropdown is derived from those URLs on the next launch, so the choice
+// survives a refresh and a restart. Saves run one at a time; a newer choice
+// replaces an older one that has not been written yet.
+function persistCommunitySite() {
+  const requestID = ++communitySiteSaveID;
+  communitySiteSaveChain = communitySiteSaveChain
+    .then(() => persistCommunitySiteNow(requestID))
+    .catch(() => {});
+}
+
+async function persistCommunitySiteNow(requestID: number) {
+  if (requestID !== communitySiteSaveID) return;
+  if (!communitySiteChanged()) {
+    isSavingCommunitySite.value = false;
+    return;
+  }
+  const serverURL = serverUrlInput.value.trim();
+  const gatewayURL = aiGatewayUrlInput.value.trim();
+  isSavingCommunitySite.value = true;
+  cloudAuthError.value = "";
+  try {
+    const data = await saveSettings({
+      server_url: serverURL,
+      ai_gateway_url: gatewayURL,
+    });
+    if (requestID !== communitySiteSaveID) return;
+    if (serverUrlInput.value.trim() !== serverURL || aiGatewayUrlInput.value.trim() !== gatewayURL) return;
+    applySettings(data);
+    notifyProvidersChanged();
+    const status = await getCloudAuthStatus();
+    if (requestID !== communitySiteSaveID) return;
+    cloudAuth.value = status;
+  } catch (err: any) {
+    if (requestID !== communitySiteSaveID) return;
+    cloudAuthError.value = err?.message || t("settings.serviceUrlsSaveFailed");
+  } finally {
+    if (requestID === communitySiteSaveID) isSavingCommunitySite.value = false;
+  }
+}
+
+function CommunitySiteSelect({ locked }: { locked: boolean }) {
+  const selected = selectedCommunitySite();
+  return (
+    <div class="space-y-4">
+      <label class="block">
+        <span class="text-sm font-medium text-gray-700">{t("settings.sitePicker")}</span>
+        <select
+          value={selected}
+          disabled={locked || isOpeningCloudLogin.value || isSavingCommunitySite.value}
+          onChange={(event) => {
+            const id = (event.currentTarget as HTMLSelectElement).value;
+            const site = COMMUNITY_SITES.find((item) => item.id === id);
+            if (site) selectCommunitySite(site);
+            else {
+              communitySiteSaveID += 1;
+              isSavingCommunitySite.value = false;
+              communitySiteChoice.value = CUSTOM_SITE_ID;
+            }
+          }}
+          class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500"
+        >
+          {COMMUNITY_SITES.map((site) => (
+            <option key={site.id} value={site.id}>{t(site.nameKey)}</option>
+          ))}
+          <option value={CUSTOM_SITE_ID}>{t("settings.siteCustom")}</option>
+        </select>
+        <span class="mt-1 block text-xs text-gray-400">
+          {locked ? t("settings.siteSwitchSignedIn") : t("settings.sitePickerHint")}
+        </span>
+      </label>
+      {selected === CUSTOM_SITE_ID && !locked && (
+        <>
+          <label class="block">
+            <span class="text-sm font-medium text-gray-700">{t("settings.serverUrl")}</span>
+            <input
+              type="url"
+              value={serverUrlInput.value}
+              onInput={(event) => {
+                serverUrlInput.value = (event.currentTarget as HTMLInputElement).value;
+              }}
+              onBlur={() => void persistCommunitySite()}
+              placeholder={defaultServerUrl.value}
+              class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            />
+          </label>
+          <label class="block">
+            <span class="text-sm font-medium text-gray-700">{t("settings.aiGatewayUrl")}</span>
+            <input
+              type="url"
+              value={aiGatewayUrlInput.value}
+              onInput={(event) => {
+                aiGatewayUrlInput.value = (event.currentTarget as HTMLInputElement).value;
+              }}
+              onBlur={() => void persistCommunitySite()}
+              placeholder={defaultAiGatewayUrl.value}
+              class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            />
+          </label>
+        </>
+      )}
+    </div>
+  );
+}
+
+function communitySiteChanged(): boolean {
+  return serverUrlInput.value.trim() !== savedServerUrl.value.trim()
+    || aiGatewayUrlInput.value.trim() !== savedAiGatewayUrl.value.trim();
+}
+
+// openCloudLogin signs in to the community picked in the dropdown. A changed
+// community is saved first so the backend returns that site's login URL; the
+// tab is opened before the save because browsers block popups opened after an
+// await.
+async function openCloudLogin() {
+  if (!communitySiteChanged()) {
+    openExternal(cloudAuth.value?.login_url);
+    pollCloudAuthAfterLogin();
+    return;
+  }
+  if (isOpeningCloudLogin.value) return;
+  isOpeningCloudLogin.value = true;
+  cloudAuthError.value = "";
+  const loginWindow = window.open("", "_blank");
+  try {
+    const data = await saveSettings({
+      server_url: serverUrlInput.value,
+      ai_gateway_url: aiGatewayUrlInput.value,
+      cloud_provider_name: cloudProviderNameInput.value,
+    });
+    applySettings(data);
+    notifyProvidersChanged();
+    const status = await getCloudAuthStatus();
+    cloudAuth.value = status;
+    if (!status.login_url) throw new Error(t("chat.failedResp"));
+    if (loginWindow) {
+      loginWindow.opener = null;
+      loginWindow.location.href = status.login_url;
+    } else {
+      openExternal(status.login_url);
+    }
+    pollCloudAuthAfterLogin();
+  } catch (err: any) {
+    loginWindow?.close();
+    cloudAuthError.value = err?.message || t("settings.serviceUrlsSaveFailed");
+  } finally {
+    isOpeningCloudLogin.value = false;
+  }
 }
 
 async function logoutCloudAccount() {
@@ -825,6 +999,11 @@ function OpenCSGAccountPanel() {
           </span>
         )}
       </div>
+      {cloudAuth.value !== null && (
+        <div class="mb-4">
+          <CommunitySiteSelect locked={cloudAuth.value.has_token} />
+        </div>
+      )}
       {cloudAuth.value === null ? (
         <p class="text-sm text-gray-500">...</p>
       ) : cloudAuth.value.authenticated && cloudAuth.value.user ? (
@@ -869,8 +1048,9 @@ function OpenCSGAccountPanel() {
           <div class="flex gap-2">
             <button
               type="button"
-              onClick={openCloudLogin}
-              class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-100"
+              onClick={() => void openCloudLogin()}
+              disabled={isOpeningCloudLogin.value || isSavingCommunitySite.value}
+              class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {t("settings.login")}
             </button>
@@ -893,10 +1073,11 @@ function OpenCSGAccountPanel() {
           <div class="flex gap-2">
             <button
               type="button"
-              onClick={openCloudLogin}
-              class="rounded-lg bg-[#169F95] px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#128a81]"
+              onClick={() => void openCloudLogin()}
+              disabled={isOpeningCloudLogin.value || isSavingCommunitySite.value}
+              class="rounded-lg bg-[#169F95] px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#128a81] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {t("settings.login")}
+              {isOpeningCloudLogin.value ? "..." : t("settings.login")}
             </button>
           </div>
         </div>
@@ -1526,32 +1707,6 @@ export function Settings() {
                 <div class="space-y-5">
                   <OpenCSGAccountPanel />
                   <div class="space-y-4 border-t border-gray-100 pt-5">
-                    <label class="block">
-                      <span class="text-sm font-medium text-gray-700">{t("settings.serverUrl")}</span>
-                      <input
-                        type="url"
-                        value={serverUrlInput.value}
-                        onInput={(event) => {
-                          serverUrlInput.value = (event.currentTarget as HTMLInputElement).value;
-                        }}
-                        placeholder={defaultServerUrl.value}
-                        class="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                      />
-                      <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultServerUrl.value || "-")}</span>
-                    </label>
-                    <label class="block">
-                      <span class="text-sm font-medium text-gray-700">{t("settings.aiGatewayUrl")}</span>
-                      <input
-                        type="url"
-                        value={aiGatewayUrlInput.value}
-                        onInput={(event) => {
-                          aiGatewayUrlInput.value = (event.currentTarget as HTMLInputElement).value;
-                        }}
-                        placeholder={defaultAiGatewayUrl.value}
-                        class="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                      />
-                      <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultAiGatewayUrl.value || "-")}</span>
-                    </label>
                     <label class="block">
                       <span class="text-sm font-medium text-gray-700">{t("settings.cloudProviderName")}</span>
                       <input
