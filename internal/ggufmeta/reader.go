@@ -1,12 +1,18 @@
 package ggufmeta
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 )
+
+// readBufferBytes batches the many small header reads into few syscalls. A
+// tokenizer vocabulary is read as hundreds of thousands of tiny strings, and
+// reading them straight from the file took ~300-450ms per GGUF.
+const readBufferBytes = 1 << 20
 
 const (
 	maxHeaderBytes   = 64 << 20
@@ -50,7 +56,7 @@ func ReadFile(path string) (*Metadata, error) {
 		return nil, err
 	}
 	defer file.Close()
-	return Read(file)
+	return Read(bufio.NewReaderSize(file, readBufferBytes))
 }
 
 // Read reads bounded scalar metadata from a GGUF stream without reading tensors.
@@ -90,7 +96,7 @@ func IsVisionProjectorFile(path string) (bool, error) {
 		return false, err
 	}
 	defer file.Close()
-	limited := &io.LimitedReader{R: file, N: maxHeaderBytes}
+	limited := &io.LimitedReader{R: bufio.NewReaderSize(file, readBufferBytes), N: maxHeaderBytes}
 	metadataCount, err := readMetadataCount(limited)
 	if err != nil {
 		return false, err

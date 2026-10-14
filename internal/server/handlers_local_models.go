@@ -109,7 +109,7 @@ func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
 		metadata := s.localModelMetadata(storageID, dir, pipelineTag, item.Format)
 		pipelineTag = metadata.PipelineTag
 		hasMMProj = metadata.HasMMProj
-		contextWindow = s.localModelContextWindow(storageID, dir)
+		contextWindow = s.localModelContextWindowFromMax(storageID, metadata.ModelMaxContext)
 		maxModelLen = metadata.MaxModelLen
 	}
 	if pipelineTag == "" {
@@ -254,6 +254,15 @@ func (s *Server) localModelContextWindowWithFallback(modelID string, fallback in
 
 func (s *Server) localModelContextWindow(modelID, modelDir string) int64 {
 	resolved := inference.ResolveNumCtxWithModelSetting(modelDir, 0, s.modelNumCtxSetting(modelID), s.cfg.Inference.LlamaUseModelMaxCtx)
+	return s.localModelContextWindowWithFallback(modelID, int64(resolved))
+}
+
+// localModelContextWindowFromMax resolves the context window from a cached
+// model maximum. Model listings run it for every local model on every poll,
+// and reading the maximum from GGUF headers each time made the listing take
+// seconds per request with a dozen models installed.
+func (s *Server) localModelContextWindowFromMax(modelID string, modelMaxContext int64) int64 {
+	resolved := inference.ResolveNumCtxFromModelMax(int(modelMaxContext), 0, s.modelNumCtxSetting(modelID), s.cfg.Inference.LlamaUseModelMaxCtx)
 	return s.localModelContextWindowWithFallback(modelID, int64(resolved))
 }
 

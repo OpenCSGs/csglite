@@ -444,6 +444,7 @@ func (s *Server) Run(ctx context.Context) error {
 	s.startCluster(ctx)
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
+	go s.warmLocalModelMetadata()
 	go s.license.Run(ctx, license.DefaultRefreshInterval)
 
 	errCh := make(chan error, 3)

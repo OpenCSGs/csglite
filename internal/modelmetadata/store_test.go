@@ -3,6 +3,7 @@ package modelmetadata
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -17,10 +18,11 @@ func TestStorePersistsMetadataAcrossReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Metadata{
-		PipelineTag:   "text-generation",
-		HasMMProj:     true,
-		ContextWindow: 8192,
-		MaxModelLen:   32768,
+		PipelineTag:     "text-generation",
+		HasMMProj:       true,
+		ContextWindow:   8192,
+		MaxModelLen:     32768,
+		ModelMaxContext: 40960,
 	}
 	if err := store.Put(context.Background(), "huggingface/acme/demo", "fingerprint", want); err != nil {
 		t.Fatal(err)
@@ -40,6 +42,45 @@ func TestStorePersistsMetadataAcrossReopen(t *testing.T) {
 	}
 	if !ok || got != want {
 		t.Fatalf("Get() = %#v, %v, want %#v, true", got, ok, want)
+	}
+}
+
+func TestOpenUpgradesCacheWithoutModelMaxContext(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, DirName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, DirName, DatabaseFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE model_metadata (
+	storage_id TEXT PRIMARY KEY,
+	fingerprint TEXT NOT NULL,
+	pipeline_tag TEXT NOT NULL DEFAULT '',
+	has_mmproj INTEGER NOT NULL DEFAULT 0,
+	context_window INTEGER NOT NULL DEFAULT 0,
+	max_model_len INTEGER NOT NULL DEFAULT 0,
+	updated_at INTEGER NOT NULL
+)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(root)
+	if err != nil {
+		t.Fatalf("Open() on older cache: %v", err)
+	}
+	defer store.Close()
+	want := Metadata{PipelineTag: "text-generation", ModelMaxContext: 32768}
+	if err := store.Put(context.Background(), "acme/demo", "fingerprint", want); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := store.Get(context.Background(), "acme/demo", "fingerprint")
+	if err != nil || !ok || got != want {
+		t.Fatalf("Get() = %#v, %v, %v, want %#v", got, ok, err, want)
 	}
 }
 

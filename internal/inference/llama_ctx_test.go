@@ -37,6 +37,26 @@ func TestResolveNumCtxUsesEnvOverrideBeforeModelMax(t *testing.T) {
 	}
 }
 
+func TestResolveNumCtxFromModelMaxMatchesDirectoryResolution(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"max_position_embeddings":16384}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	for _, env := range []string{"", "8192", "65536"} {
+		t.Run("num_ctx_env="+env, func(t *testing.T) {
+			t.Setenv("CSGHUB_LITE_LLAMA_NUM_CTX", env)
+			for _, configured := range []bool{false, true} {
+				for _, setting := range []int{0, 12288} {
+					want := ResolveNumCtxWithModelSetting(dir, 0, setting, configured)
+					if got := ResolveNumCtxFromModelMax(16384, 0, setting, configured); got != want {
+						t.Fatalf("configured=%v setting=%d: got %d, want %d", configured, setting, got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestResolveNumCtxWithModelSettingPrefersRequest(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CSGHUB_LITE_LLAMA_NUM_CTX", "16384")

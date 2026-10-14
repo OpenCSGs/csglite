@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bufio"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -89,7 +90,10 @@ func maxModelLenFromGGUF(path string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	r := &ggufMetadataReader{file: f, size: info.Size()}
+	// Buffer the reads: the header holds the tokenizer vocabulary as hundreds
+	// of thousands of small strings, and reading each straight from the file
+	// took ~150-270ms per GGUF.
+	r := &ggufMetadataReader{reader: bufio.NewReaderSize(f, 1<<20), size: info.Size()}
 
 	magic, err := r.u32()
 	if err != nil {
@@ -160,16 +164,16 @@ func maxModelLenFromGGUF(path string) (int64, error) {
 }
 
 type ggufMetadataReader struct {
-	file *os.File
-	size int64
-	pos  int64
+	reader *bufio.Reader
+	size   int64
+	pos    int64
 }
 
 func (r *ggufMetadataReader) read(p []byte) error {
 	if int64(len(p)) > r.size-r.pos {
 		return io.ErrUnexpectedEOF
 	}
-	if _, err := io.ReadFull(r.file, p); err != nil {
+	if _, err := io.ReadFull(r.reader, p); err != nil {
 		return err
 	}
 	r.pos += int64(len(p))
@@ -180,7 +184,7 @@ func (r *ggufMetadataReader) skip(n uint64) error {
 	if n > math.MaxInt64 || int64(n) > r.size-r.pos {
 		return io.ErrUnexpectedEOF
 	}
-	if _, err := r.file.Seek(int64(n), io.SeekCurrent); err != nil {
+	if _, err := r.reader.Discard(int(n)); err != nil {
 		return err
 	}
 	r.pos += int64(n)

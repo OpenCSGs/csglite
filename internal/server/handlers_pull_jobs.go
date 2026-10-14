@@ -311,6 +311,9 @@ func (s *Server) runPullJob(job *pullJob) {
 	if err == nil {
 		job.setSucceeded()
 		log.Printf("PULL JOB %s: succeeded kind=%s name=%q", job.id, job.kind, job.name)
+		if job.kind == "model" {
+			go s.warmLocalModelMetadata()
+		}
 		return
 	}
 	if ctx.Err() != nil {
