@@ -853,23 +853,42 @@ check_python_optional() {
     fi
 }
 
-has_running_named_processes() {
+# cli_service_pids lists the PIDs of running processes named $1, leaving out
+# desktop sidecars ("serve --desktop"). The CSGLite desktop app owns and
+# respawns its own csghub-lite backend, so the installer must neither treat it
+# as the CLI service nor kill it.
+cli_service_pids() {
     _proc_name="$1"
     if ! command -v pgrep >/dev/null 2>&1; then
-        return 1
+        return 0
     fi
-    pgrep -x "$_proc_name" >/dev/null 2>&1
+    for _pid in $(pgrep -x "$_proc_name" 2>/dev/null); do
+        case " $(ps -o args= -p "$_pid" 2>/dev/null) " in
+            *" --desktop "*|*" --desktop="*) ;;
+            *) printf '%s\n' "$_pid" ;;
+        esac
+    done
+}
+
+has_running_named_processes() {
+    [ -n "$(cli_service_pids "$1")" ]
 }
 
 force_stop_named_processes() {
     _proc_name="$1"
-    if ! command -v pkill >/dev/null 2>&1; then
-        return 1
+    _pids="$(cli_service_pids "$_proc_name")"
+    if [ -z "$_pids" ]; then
+        return 0
     fi
-    pkill -x "$_proc_name" 2>/dev/null || true
+    # shellcheck disable=SC2086
+    kill $_pids 2>/dev/null || true
     sleep 1
-    pkill -9 -x "$_proc_name" 2>/dev/null || true
-    sleep 1
+    _pids="$(cli_service_pids "$_proc_name")"
+    if [ -n "$_pids" ]; then
+        # shellcheck disable=SC2086
+        kill -9 $_pids 2>/dev/null || true
+        sleep 1
+    fi
     ! has_running_named_processes "$_proc_name"
 }
 

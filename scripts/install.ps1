@@ -370,6 +370,22 @@ function Install-LlamaServer {
     Info "Installed llama-server to $llamaInstallDir"
 }
 
+# Get-CsghubLiteCliProcesses returns running csghub-lite processes, leaving out
+# desktop sidecars ("serve --desktop"). The CSGLite desktop app owns and
+# respawns its own csghub-lite backend, so the installer must neither treat it
+# as the CLI service nor kill it.
+function Get-CsghubLiteCliProcesses {
+    $procs = @(Get-Process -Name "csghub-lite" -ErrorAction SilentlyContinue)
+    if ($procs.Count -eq 0) { return @() }
+    $desktopIds = @()
+    try {
+        $desktopIds = @(Get-CimInstance Win32_Process -Filter "Name = 'csghub-lite.exe'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -match '(^|\s)--desktop(\s|=|$)' } |
+            ForEach-Object { $_.ProcessId })
+    } catch {}
+    return @($procs | Where-Object { $desktopIds -notcontains $_.Id })
+}
+
 function Check-Existing {
     $existing = Get-Command "csghub-lite.exe" -ErrorAction SilentlyContinue
     if (-not $existing) {
@@ -388,9 +404,9 @@ function Check-Existing {
     Write-Host "  Binary:  $($existing.Source)"
     Write-Host "  Version: $oldVersion"
 
-    $procs = Get-Process -Name "csghub-lite" -ErrorAction SilentlyContinue
+    $procs = @(Get-CsghubLiteCliProcesses)
     $hasRunning = $false
-    if ($procs) {
+    if ($procs.Count -gt 0) {
         $hasRunning = $true
         $script:WasServerRunning = $true
         Warn "Running csghub-lite process(es) detected."
