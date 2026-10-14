@@ -196,6 +196,21 @@ func TestLocalModelInfoFlagsTypedDecisionModels(t *testing.T) {
 	}
 }
 
+func TestLocalModelInfoSkipsTaggedModelsWithoutSystem1(t *testing.T) {
+	// Tagged, but neither the model nor a downloaded base_model ships the
+	// System 1 block (e.g. another runtime's typed-decisions checkpoint).
+	s := newDecisionTestServer(t, false)
+	infos, err := s.listLocalModelInfos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range infos {
+		if info.TypedDecisions {
+			t.Fatalf("%s flagged for typed decisions without a System 1 block", info.ID)
+		}
+	}
+}
+
 func TestHandleDecisionsServesOpenAIDecisionsAPI(t *testing.T) {
 	s := newDecisionTestServer(t, true)
 	engine := &fakeDecisionEngine{adapter: true}

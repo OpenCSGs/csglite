@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/opencsgs/csglite/internal/decision"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelregistry"
@@ -120,7 +121,13 @@ func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string
 		metadata := s.localModelMetadata(storageID, dir, pipelineTag, item.Format)
 		pipelineTag = metadata.PipelineTag
 		hasMMProj = metadata.HasMMProj
-		typedDecisions = metadata.TypedDecisions
+		// The tag is cached; whether the System 1 block can be found is checked
+		// live, so a tagged model without one (another runtime's checkpoint,
+		// or a GGUF whose base repo is not downloaded yet) is not offered.
+		if metadata.TypedDecisions {
+			_, err := decision.FindProfile(dir, s.locateLocalRepo)
+			typedDecisions = err == nil
+		}
 		contextWindow = s.localModelContextWindowFromMax(storageID, metadata.ModelMaxContext)
 		maxModelLen = metadata.MaxModelLen
 	}
