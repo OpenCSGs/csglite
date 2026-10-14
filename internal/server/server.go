@@ -1356,6 +1356,11 @@ func (s *Server) getOrLoadASREngine(ctx context.Context, modelID string) (asr.En
 		}
 		s.mu.Unlock()
 
+		// Checked before the select: when the load has already finished, select
+		// would pick between the two ready cases at random.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		select {
 		case <-state.done:
 		case <-ctx.Done():

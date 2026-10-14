@@ -3,6 +3,7 @@ package license_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/opencsgs/csglite/internal/license"
@@ -28,7 +29,8 @@ func TestLoadOrCreateDeviceIDPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows does not carry Unix permission bits.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("device ID file mode %v", info.Mode().Perm())
 	}
 }
