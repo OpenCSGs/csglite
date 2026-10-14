@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/csghub"
 	"github.com/opencsgs/csglite/internal/inference"
@@ -160,10 +159,7 @@ func (s *Server) handleCloudAPIKeyDelete(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) cloudAuthStatus(ctx context.Context) cloudAuthStatus {
 	displayURL := strings.TrimRight(s.cfg.DisplayURL(), "/")
-	loginURL := displayURL + "/login"
-	if s.cfg.ServerURL == config.DefaultServerURL || s.cfg.ServerURL == "" {
-		loginURL = cloud.DefaultLoginURL
-	}
+	loginURL := s.communityLoginURL(ctx)
 
 	status := cloudAuthStatus{
 		AuthMode:       "token",

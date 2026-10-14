@@ -4,6 +4,8 @@ import { locale } from "../i18n";
 export interface ModelInfo {
   name: string;
   model: string;
+  /** Unique on-disk storage ID of a local model ([source/]namespace/name). */
+  id?: string;
   size: number;
   format: string;
   modified_at: string;
@@ -1899,11 +1901,11 @@ export async function stopModel(model: string): Promise<void> {
   });
 }
 
-export async function deleteModel(model: string): Promise<void> {
+export async function deleteModel(model: string, id?: string): Promise<void> {
   await fetchJSON("/api/delete", {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model }),
+    body: JSON.stringify(id ? { model, id } : { model }),
   });
 }
 

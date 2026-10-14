@@ -537,7 +537,18 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	modelID := s.resolveLocalModelStorageID(req.Model)
+	var modelID string
+	if id := strings.TrimSpace(req.ID); id != "" {
+		// A storage ID names exactly one directory; resolving it as a public
+		// ID could pick another model that shares the short name.
+		modelID = id
+	} else {
+		modelID = s.resolveLocalModelStorageID(req.Model)
+	}
+	if modelID == "" {
+		writeError(w, http.StatusBadRequest, "model or id is required")
+		return
+	}
 
 	// Close engine if running
 	s.mu.Lock()

@@ -270,6 +270,20 @@ func ResolveNumCtxWithModelMax(modelDir string, requested int, configured bool) 
 	if requested >= 1024 {
 		return requested
 	}
+	return ResolveNumCtxFromModelMax(ModelMaxPositionEmbeddings(modelDir), 0, 0, configured)
+}
+
+// ResolveNumCtxFromModelMax applies the same precedence as
+// ResolveNumCtxWithModelSetting to an already known model maximum (0 when
+// unknown), so callers that cache the maximum resolve the context window
+// without reading the model files again.
+func ResolveNumCtxFromModelMax(maxPos, requested, modelSetting int, configured bool) int {
+	if requested >= 1024 {
+		return requested
+	}
+	if modelSetting >= 1024 {
+		return modelSetting
+	}
 	if v := strings.TrimSpace(os.Getenv("CSGHUB_LITE_LLAMA_NUM_CTX")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 1024 {
 			// CSGHUB_LITE_LLAMA_NUM_CTX is a global setting that applies to
@@ -277,11 +291,13 @@ func ResolveNumCtxWithModelMax(modelDir string, requested int, configured bool) 
 			// KV cache for the whole context up front, so a value beyond what
 			// the model itself supports buys nothing and costs memory linearly:
 			// a 0.6B embedding model asked for 128K reserves tens of GB.
-			return capNumCtxToModelMax(modelDir, n)
+			if maxPos >= 1024 && n > maxPos {
+				return maxPos
+			}
+			return n
 		}
 	}
 
-	maxPos := ModelMaxPositionEmbeddings(modelDir)
 	if UseModelMaxCtxByDefault(configured) && maxPos >= 1024 {
 		return maxPos
 	}
@@ -290,17 +306,6 @@ func ResolveNumCtxWithModelMax(modelDir string, requested int, configured bool) 
 	}
 
 	return defaultLlamaCtxSize
-}
-
-// capNumCtxToModelMax limits numCtx to the model's own maximum context length.
-// The model maximum is unknown for some models (it reports 0), and in that case
-// numCtx is kept as requested rather than guessed down.
-func capNumCtxToModelMax(modelDir string, numCtx int) int {
-	maxPos := ModelMaxPositionEmbeddings(modelDir)
-	if maxPos >= 1024 && numCtx > maxPos {
-		return maxPos
-	}
-	return numCtx
 }
 
 // CapNumCtxToEmbeddingModelMax caps the context to what an embedding model can

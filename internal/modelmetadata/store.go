@@ -26,6 +26,10 @@ type Metadata struct {
 	HasMMProj     bool
 	ContextWindow int64
 	MaxModelLen   int64
+	// ModelMaxContext is the context length the model files declare (0 when
+	// unknown). Unlike ContextWindow it does not depend on settings, so
+	// callers resolve the effective window from it without reading the files.
+	ModelMaxContext int64
 }
 
 type Store struct {
@@ -67,10 +71,38 @@ CREATE TABLE IF NOT EXISTS model_metadata (
 	has_mmproj INTEGER NOT NULL DEFAULT 0,
 	context_window INTEGER NOT NULL DEFAULT 0,
 	max_model_len INTEGER NOT NULL DEFAULT 0,
+	model_max_context INTEGER NOT NULL DEFAULT 0,
 	updated_at INTEGER NOT NULL
 );`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("initializing model metadata cache: %w", err)
+	}
+	return s.addColumnIfMissing("model_max_context", "INTEGER NOT NULL DEFAULT 0")
+}
+
+// addColumnIfMissing upgrades a cache created by an older build. Rows written
+// before the column existed carry an older DerivationVersion in their
+// fingerprint, so they miss and are re-derived rather than read as 0.
+func (s *Store) addColumnIfMissing(name, definition string) error {
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info('model_metadata')`)
+	if err != nil {
+		return fmt.Errorf("inspecting model metadata cache: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var column string
+		if err := rows.Scan(&column); err != nil {
+			return fmt.Errorf("inspecting model metadata cache: %w", err)
+		}
+		if column == name {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inspecting model metadata cache: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE model_metadata ADD COLUMN ` + name + ` ` + definition); err != nil {
+		return fmt.Errorf("upgrading model metadata cache: %w", err)
 	}
 	return nil
 }
@@ -86,7 +118,7 @@ func (s *Store) Get(ctx context.Context, storageID, fingerprint string) (Metadat
 	var metadata Metadata
 	var hasMMProj int
 	err := s.db.QueryRowContext(ctx, `
-SELECT pipeline_tag, has_mmproj, context_window, max_model_len
+SELECT pipeline_tag, has_mmproj, context_window, max_model_len, model_max_context
 FROM model_metadata
 WHERE storage_id = ? AND fingerprint = ?
 `, storageID, fingerprint).Scan(
@@ -94,6 +126,7 @@ WHERE storage_id = ? AND fingerprint = ?
 		&hasMMProj,
 		&metadata.ContextWindow,
 		&metadata.MaxModelLen,
+		&metadata.ModelMaxContext,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Metadata{}, false, nil
@@ -109,14 +142,15 @@ func (s *Store) Put(ctx context.Context, storageID, fingerprint string, metadata
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO model_metadata (
 	storage_id, fingerprint, pipeline_tag, has_mmproj,
-	context_window, max_model_len, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?)
+	context_window, max_model_len, model_max_context, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(storage_id) DO UPDATE SET
 	fingerprint = excluded.fingerprint,
 	pipeline_tag = excluded.pipeline_tag,
 	has_mmproj = excluded.has_mmproj,
 	context_window = excluded.context_window,
 	max_model_len = excluded.max_model_len,
+	model_max_context = excluded.model_max_context,
 	updated_at = excluded.updated_at
 `,
 		storageID,
@@ -125,6 +159,7 @@ ON CONFLICT(storage_id) DO UPDATE SET
 		metadata.HasMMProj,
 		metadata.ContextWindow,
 		metadata.MaxModelLen,
+		metadata.ModelMaxContext,
 		time.Now().Unix(),
 	)
 	if err != nil {
@@ -147,7 +182,7 @@ func (s *Store) Close() error {
 // "text-generation" before DetectPipelineTag learned to recognise codec-token
 // TTS models would stay misclassified after an upgrade. Bump this whenever
 // DetectPipelineTag or any other cached derivation changes.
-const DerivationVersion = 2
+const DerivationVersion = 3
 
 // Fingerprint hashes file identity metadata without reading model contents.
 // Any add, remove, resize, or modification invalidates the cached derivations,

@@ -64,13 +64,11 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 		ModelParamsMin: q.Get("model_params_min"),
 		ModelParamsMax: q.Get("model_params_max"),
 	}
-	if requestedFramework != "" {
-		listParams.TagCategory = "framework"
-		listParams.TagName = requestedFramework
-	}
 	if requestedTask != "" {
-		listParams.TagCategory = "task"
-		listParams.TagName = requestedTask
+		listParams.Tags = append(listParams.Tags, csghub.TagFilter{Category: "task", Name: requestedTask})
+	}
+	if requestedFramework != "" {
+		listParams.Tags = append(listParams.Tags, csghub.TagFilter{Category: "framework", Name: requestedFramework})
 	}
 	cacheKey := marketplaceCacheKey("models", r.URL.RawQuery)
 	if body, ok := getFreshMarketplaceCache(cacheKey, time.Now()); ok {
@@ -103,8 +101,9 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 		writeError(w, marketplaceErrorStatus(err), err.Error())
 		return
 	}
+	totalExact := true
 	if artifactSource == modelregistry.SourceOpenCSG && requestedFramework != "" && !marketplaceModelsMatchFramework(models, requestedFramework) {
-		models, total, err = listMarketplaceModelsWithFrameworkFallback(r.Context(), client, listParams, requestedFramework)
+		models, total, totalExact, err = listMarketplaceModelsWithFrameworkFallback(r.Context(), client, listParams, requestedFramework)
 		if err != nil {
 			if body, ok := getAnyMarketplaceCache(cacheKey); ok {
 				writeCachedMarketplaceResponse(w, body, "stale")
@@ -114,7 +113,14 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	writeMarketplaceListResponse(w, cacheKey, marketplaceListPayload(models, total, string(artifactSource), page, per, len(models)))
+	payload := marketplaceListPayload(models, total, string(artifactSource), page, per, len(models))
+	if !totalExact {
+		// The fallback scanned only part of the upstream list, so its total is
+		// a lower bound: offer a next page only while this one came back full.
+		payload["has_more"] = len(models) == per
+		payload["total_exact"] = false
+	}
+	writeMarketplaceListResponse(w, cacheKey, payload)
 }
 
 type marketplaceModelExtrasRequest struct {
@@ -891,7 +897,7 @@ func listMarketplaceModelsWithFrameworkFallback(
 	client *csghub.Client,
 	params csghub.ModelListParams,
 	framework string,
-) ([]csghub.Model, int, error) {
+) ([]csghub.Model, int, bool, error) {
 	const maxFallbackPages = 3
 
 	if params.Page <= 0 {
@@ -922,14 +928,15 @@ func listMarketplaceModelsWithFrameworkFallback(
 			Source:         params.Source,
 			TagCategory:    params.TagCategory,
 			TagName:        params.TagName,
+			Tags:           params.Tags,
 			ModelParamsMin: params.ModelParamsMin,
 			ModelParamsMax: params.ModelParamsMax,
 		})
 		if err != nil {
 			if len(items) > 0 || matchedCount > 0 {
-				return items, approximateMarketplaceFilteredTotal(offset, len(items), matchedCount), nil
+				return items, approximateMarketplaceFilteredTotal(offset, len(items), matchedCount), false, nil
 			}
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 
 		for _, model := range batch {
@@ -945,18 +952,18 @@ func listMarketplaceModelsWithFrameworkFallback(
 		exhausted := len(batch) == 0 || upstreamPage*upstreamPerPage >= upstreamTotal
 		if len(items) >= params.PerPage {
 			if exhausted {
-				return items, matchedCount, nil
+				return items, matchedCount, true, nil
 			}
 			// Upstream doesn't honor the filter reliably, so expose the current page
 			// and keep the next page navigable without claiming a fake exact total.
-			return items, offset + len(items) + 1, nil
+			return items, offset + len(items) + 1, false, nil
 		}
 		if exhausted {
-			return items, matchedCount, nil
+			return items, matchedCount, true, nil
 		}
 	}
 
-	return items, approximateMarketplaceFilteredTotal(offset, len(items), matchedCount), nil
+	return items, approximateMarketplaceFilteredTotal(offset, len(items), matchedCount), false, nil
 }
 
 func approximateMarketplaceFilteredTotal(offset, itemCount, matchedCount int) int {

@@ -22,7 +22,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DownloadProgressCell } from "../components/DownloadProgressPanel";
 import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../components/Pagination";
 import type { PageSize } from "../components/Pagination";
-import { getDownloadTask, getDownloadTasks, clearDownloadTask, downloadCompletionVersion } from "../downloads";
+import { getDownloadTask, getDownloadTasks, clearDownloadTask, downloadRowTime, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
 import { datasetArtifactSource, displayLocalDatasetID, localDatasetID } from "../datasetIds";
@@ -105,7 +105,7 @@ function datasetRows(datasets: DatasetInfo[]): DatasetTableRow[] {
         dataset: task.name,
         size: task.totalBytes || task.completedBytes,
         files: 0,
-        modified_at: task.updatedAt,
+        modified_at: downloadRowTime(task),
         origin: "marketplace",
         artifact_source: task.artifactSource,
         repository: task.name,

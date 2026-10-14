@@ -98,6 +98,9 @@ func (m *Manager) Import(opts ImportOptions) (*LocalModel, error) {
 		return nil, fmt.Errorf("writing manifest: %w", err)
 	}
 
+	if err := m.checkImportIDUnique(namespace, name); err != nil {
+		return nil, err
+	}
 	destDir := ModelDir(m.cfg.ModelDir, namespace, name)
 	if err := installPreparedModel(preparedDir, destDir, opts.Overwrite); err != nil {
 		return nil, err
@@ -147,11 +150,37 @@ func (m *Manager) ImportPreparedDirectory(opts ImportOptions) (*LocalModel, erro
 		return nil, fmt.Errorf("writing manifest: %w", err)
 	}
 
+	if err := m.checkImportIDUnique(namespace, name); err != nil {
+		return nil, err
+	}
 	destDir := ModelDir(m.cfg.ModelDir, namespace, name)
 	if err := installPreparedModel(preparedDir, destDir, opts.Overwrite); err != nil {
 		return nil, err
 	}
 	return LoadManifest(m.cfg.ModelDir, namespace, name)
+}
+
+// checkImportIDUnique rejects an import whose ID differs from an existing
+// model's only by letter case. Case-insensitive filesystems (macOS, Windows)
+// would merge the two into one directory while Linux keeps both, so the same
+// IDs would name one model on some machines and two on others. An exact match
+// is left to the overwrite check in installPreparedModel.
+func (m *Manager) checkImportIDUnique(namespace, name string) error {
+	models, err := m.List()
+	if err != nil {
+		return err
+	}
+	modelID := namespace + "/" + name
+	for _, lm := range models {
+		if lm == nil {
+			continue
+		}
+		existing := lm.FullName()
+		if existing != modelID && strings.EqualFold(existing, modelID) {
+			return fmt.Errorf("model ID %q conflicts with existing model %q; IDs must differ by more than letter case", modelID, existing)
+		}
+	}
+	return nil
 }
 
 func parseSafeLocalModelID(modelID string) (string, string, error) {

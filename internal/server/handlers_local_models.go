@@ -87,19 +87,29 @@ func (s *Server) listLocalModelInfos() ([]api.ModelInfo, error) {
 		return localModels[i].DownloadedAt.After(localModels[j].DownloadedAt)
 	})
 
+	// List each model under the same public ID that ResolveLocalModel accepts.
+	// Two models sharing a short name otherwise both list under that name, and
+	// deleting or running either row acts on whichever model owns the name.
+	publicIDs := model.PublicModelIDs(localModels)
 	infos := make([]api.ModelInfo, 0, len(localModels))
 	for _, item := range localModels {
 		if item == nil {
 			continue
 		}
-		infos = append(infos, s.localModelInfo(item))
+		infos = append(infos, s.localModelInfoWithID(item, publicIDs[item.FullName()]))
 	}
 	return infos, nil
 }
 
 func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
+	return s.localModelInfoWithID(item, s.localInferenceModelID(item.FullName()))
+}
+
+func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string) api.ModelInfo {
 	storageID := strings.TrimSpace(item.FullName())
-	inferenceID := model.InferenceModelID(item)
+	if strings.TrimSpace(inferenceID) == "" {
+		inferenceID = model.InferenceModelID(item)
+	}
 	pipelineTag := strings.TrimSpace(item.PipelineTag)
 	hasMMProj := false
 	var contextWindow int64
@@ -109,7 +119,7 @@ func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
 		metadata := s.localModelMetadata(storageID, dir, pipelineTag, item.Format)
 		pipelineTag = metadata.PipelineTag
 		hasMMProj = metadata.HasMMProj
-		contextWindow = s.localModelContextWindow(storageID, dir)
+		contextWindow = s.localModelContextWindowFromMax(storageID, metadata.ModelMaxContext)
 		maxModelLen = metadata.MaxModelLen
 	}
 	if pipelineTag == "" {
@@ -125,6 +135,7 @@ func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
 	return api.ModelInfo{
 		Name:              inferenceID,
 		Model:             inferenceID,
+		ID:                storageID,
 		Size:              item.Size,
 		Format:            string(item.Format),
 		ModifiedAt:        item.DownloadedAt,
@@ -254,6 +265,15 @@ func (s *Server) localModelContextWindowWithFallback(modelID string, fallback in
 
 func (s *Server) localModelContextWindow(modelID, modelDir string) int64 {
 	resolved := inference.ResolveNumCtxWithModelSetting(modelDir, 0, s.modelNumCtxSetting(modelID), s.cfg.Inference.LlamaUseModelMaxCtx)
+	return s.localModelContextWindowWithFallback(modelID, int64(resolved))
+}
+
+// localModelContextWindowFromMax resolves the context window from a cached
+// model maximum. Model listings run it for every local model on every poll,
+// and reading the maximum from GGUF headers each time made the listing take
+// seconds per request with a dozen models installed.
+func (s *Server) localModelContextWindowFromMax(modelID string, modelMaxContext int64) int64 {
+	resolved := inference.ResolveNumCtxFromModelMax(int(modelMaxContext), 0, s.modelNumCtxSetting(modelID), s.cfg.Inference.LlamaUseModelMaxCtx)
 	return s.localModelContextWindowWithFallback(modelID, int64(resolved))
 }
 

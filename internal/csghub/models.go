@@ -34,6 +34,14 @@ func (c *Client) ListModels(ctx context.Context, params ModelListParams) ([]Mode
 	if params.TagName != "" {
 		q.Set("tag_name", params.TagName)
 	}
+	for _, tag := range params.Tags {
+		if tag.Category == "" || tag.Name == "" {
+			continue
+		}
+		// CSGHub pairs the i-th tag_category with the i-th tag_name.
+		q.Add("tag_category", tag.Category)
+		q.Add("tag_name", tag.Name)
+	}
 	if params.ModelParamsMin != "" {
 		q.Set("model_params_min", params.ModelParamsMin)
 	}

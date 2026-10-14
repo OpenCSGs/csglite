@@ -3,8 +3,10 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -569,13 +571,14 @@ func TestHandleMarketplaceModelsFiltersFrameworkWithinTaskResults(t *testing.T) 
 		if r.URL.Path != "/api/v1/models" {
 			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
 		}
-		if got := r.URL.Query().Get("tag_category"); got != "task" {
-			t.Fatalf("tag_category = %q, want %q", got, "task")
+		if got := r.URL.Query()["tag_category"]; !reflect.DeepEqual(got, []string{"task", "framework"}) {
+			t.Fatalf("tag_category = %q, want [task framework]", got)
 		}
-		if got := r.URL.Query().Get("tag_name"); got != "text-generation" {
-			t.Fatalf("tag_name = %q, want %q", got, "text-generation")
+		if got := r.URL.Query()["tag_name"]; !reflect.DeepEqual(got, []string{"text-generation", "gguf"}) {
+			t.Fatalf("tag_name = %q, want [text-generation gguf]", got)
 		}
 
+		// An upstream that ignores the framework pair still gets filtered locally.
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(csghub.ListResponse[csghub.Model]{
 			Msg:   "OK",
@@ -612,6 +615,103 @@ func TestHandleMarketplaceModelsFiltersFrameworkWithinTaskResults(t *testing.T) 
 	}
 	if resp.Total != 1 {
 		t.Fatalf("total = %d, want 1", resp.Total)
+	}
+}
+
+// CSGHub filters by task and framework together when both pairs are sent, so
+// the combined listing pages through the upstream total instead of the few
+// pages a local scan of task results used to reach (issue: GGUF + text
+// generation stopped after 3 pages of 1256 models).
+func TestHandleMarketplaceModelsPagesTaskAndFrameworkUpstream(t *testing.T) {
+	const upstreamTotal = 1256
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if !reflect.DeepEqual(q["tag_category"], []string{"task", "framework"}) || !reflect.DeepEqual(q["tag_name"], []string{"text-generation", "gguf"}) {
+			t.Fatalf("tags = %q / %q, want task+framework pairs", q["tag_category"], q["tag_name"])
+		}
+		if got := q.Get("page"); got != "5" {
+			t.Fatalf("upstream page = %q, want 5", got)
+		}
+		models := make([]csghub.Model, 16)
+		for i := range models {
+			models[i] = csghub.Model{
+				ID:   i + 1,
+				Path: fmt.Sprintf("ns/gguf-%d", i),
+				Tags: []csghub.Tag{
+					{Name: "gguf", Category: "framework"},
+					{Name: "text-generation", Category: "task"},
+				},
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(csghub.ListResponse[csghub.Model]{Msg: "OK", Data: models, Total: upstreamTotal})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?framework=gguf&task=text-generation&page=5&per=16", nil)
+	w := httptest.NewRecorder()
+	s.handleMarketplaceModels(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data       []csghub.Model `json:"data"`
+		Total      int            `json:"total"`
+		HasMore    bool           `json:"has_more"`
+		TotalExact bool           `json:"total_exact"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 16 || resp.Total != upstreamTotal || !resp.HasMore || !resp.TotalExact {
+		t.Fatalf("response = %d items, total %d, has_more %v, exact %v; want 16, %d, true, true", len(resp.Data), resp.Total, resp.HasMore, resp.TotalExact, upstreamTotal)
+	}
+}
+
+// When the upstream ignores the framework filter, the local fallback scans a
+// bounded number of upstream pages. Past what it scanned it must not report an
+// exact total or a next page that will come back empty.
+func TestHandleMarketplaceModelsFallbackPastScannedPagesIsNotExact(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		per, _ := strconv.Atoi(r.URL.Query().Get("per"))
+		models := make([]csghub.Model, per)
+		for i := range models {
+			// One GGUF model per upstream page; the rest only match the task.
+			framework := "safetensors"
+			if i == 0 {
+				framework = "gguf"
+			}
+			models[i] = csghub.Model{
+				ID:   i + 1,
+				Path: fmt.Sprintf("ns/m-%s-%d", r.URL.Query().Get("page"), i),
+				Tags: []csghub.Tag{{Name: framework, Category: "framework"}, {Name: "text-generation", Category: "task"}},
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(csghub.ListResponse[csghub.Model]{Msg: "OK", Data: models, Total: 100000})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?framework=gguf&task=text-generation&page=4&per=16", nil)
+	w := httptest.NewRecorder()
+	s.handleMarketplaceModels(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data       []csghub.Model `json:"data"`
+		HasMore    bool           `json:"has_more"`
+		TotalExact bool           `json:"total_exact"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.TotalExact || resp.HasMore || len(resp.Data) != 0 {
+		t.Fatalf("response = %d items, has_more %v, exact %v; want 0, false, false", len(resp.Data), resp.HasMore, resp.TotalExact)
 	}
 }
 
