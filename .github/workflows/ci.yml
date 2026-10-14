@@ -95,3 +95,6 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: v1.64.8
+          # Skip the online JSON-schema check; fetching it from golangci-lint.run
+          # intermittently times out on CI runners.
+          verify: false
