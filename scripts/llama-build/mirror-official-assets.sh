@@ -84,11 +84,18 @@ for name in sorted(skipped):
 PY
 
 MIRROR_LIST="${OUT}/mirror-list-${TAG}.txt"
-MIRROR_COUNT="$(grep -c . "${MIRROR_LIST}")"
+# grep exits 1 when nothing matches, which would abort the script under set -e
+# before the count below is checked; keep the count and report the empty list.
+MIRROR_COUNT="$(grep -c . "${MIRROR_LIST}" || true)"
 UPSTREAM_COUNT="$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["assets"]))' "${RELEASE_JSON}")"
 
 echo "=== ${TAG}: upstream ${UPSTREAM_COUNT} assets, mirroring ${MIRROR_COUNT} ==="
 cat "${MIRROR_LIST}"
+
+if [ "${MIRROR_COUNT}" = "0" ]; then
+  echo "${TAG}: upstream release has no assets to mirror." >&2
+  exit 1
+fi
 
 if [ -n "${LLAMA_MIRROR_EXPECTED:-}" ] && [ "${MIRROR_COUNT}" != "${LLAMA_MIRROR_EXPECTED}" ]; then
   echo "expected ${LLAMA_MIRROR_EXPECTED} mirrored assets, found ${MIRROR_COUNT}." >&2

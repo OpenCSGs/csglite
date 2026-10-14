@@ -225,6 +225,7 @@ func TestDetectPipelineTagLlamacppB11541Architectures(t *testing.T) {
 		"Cohere2VisionForConditionalGeneration",
 		"D1OmniModel",
 		"Glm5NextForConditionalGeneration",
+		"PplxDeciderModel",
 	}
 	for _, arch := range vision {
 		dir := t.TempDir()

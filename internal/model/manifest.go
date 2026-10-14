@@ -50,6 +50,7 @@ var visionArchitectures = map[string]bool{
 	"PaddleOCRVLForConditionalGeneration":    true,
 	"Phi3VForCausalLM":                       true,
 	"Phi4ForCausalLMV":                       true,
+	"PplxDeciderModel":                       true,
 	"Qwen2VLForConditionalGeneration":        true,
 	"Qwen2VLModel":                           true,
 	"Qwen2_5OmniModel":                       true,
