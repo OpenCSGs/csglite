@@ -30,6 +30,9 @@ type Metadata struct {
 	// unknown). Unlike ContextWindow it does not depend on settings, so
 	// callers resolve the effective window from it without reading the files.
 	ModelMaxContext int64
+	// TypedDecisions marks a model whose card tags it for JEV-style typed
+	// decisions (POST /v1/decide).
+	TypedDecisions bool
 }
 
 type Store struct {
@@ -77,7 +80,10 @@ CREATE TABLE IF NOT EXISTS model_metadata (
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("initializing model metadata cache: %w", err)
 	}
-	return s.addColumnIfMissing("model_max_context", "INTEGER NOT NULL DEFAULT 0")
+	if err := s.addColumnIfMissing("model_max_context", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	return s.addColumnIfMissing("typed_decisions", "INTEGER NOT NULL DEFAULT 0")
 }
 
 // addColumnIfMissing upgrades a cache created by an older build. Rows written
@@ -116,9 +122,9 @@ func (s *Store) Path() string {
 
 func (s *Store) Get(ctx context.Context, storageID, fingerprint string) (Metadata, bool, error) {
 	var metadata Metadata
-	var hasMMProj int
+	var hasMMProj, typedDecisions int
 	err := s.db.QueryRowContext(ctx, `
-SELECT pipeline_tag, has_mmproj, context_window, max_model_len, model_max_context
+SELECT pipeline_tag, has_mmproj, context_window, max_model_len, model_max_context, typed_decisions
 FROM model_metadata
 WHERE storage_id = ? AND fingerprint = ?
 `, storageID, fingerprint).Scan(
@@ -127,6 +133,7 @@ WHERE storage_id = ? AND fingerprint = ?
 		&metadata.ContextWindow,
 		&metadata.MaxModelLen,
 		&metadata.ModelMaxContext,
+		&typedDecisions,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Metadata{}, false, nil
@@ -135,6 +142,7 @@ WHERE storage_id = ? AND fingerprint = ?
 		return Metadata{}, false, fmt.Errorf("reading model metadata cache: %w", err)
 	}
 	metadata.HasMMProj = hasMMProj != 0
+	metadata.TypedDecisions = typedDecisions != 0
 	return metadata, true, nil
 }
 
@@ -142,8 +150,8 @@ func (s *Store) Put(ctx context.Context, storageID, fingerprint string, metadata
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO model_metadata (
 	storage_id, fingerprint, pipeline_tag, has_mmproj,
-	context_window, max_model_len, model_max_context, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	context_window, max_model_len, model_max_context, typed_decisions, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(storage_id) DO UPDATE SET
 	fingerprint = excluded.fingerprint,
 	pipeline_tag = excluded.pipeline_tag,
@@ -151,6 +159,7 @@ ON CONFLICT(storage_id) DO UPDATE SET
 	context_window = excluded.context_window,
 	max_model_len = excluded.max_model_len,
 	model_max_context = excluded.model_max_context,
+	typed_decisions = excluded.typed_decisions,
 	updated_at = excluded.updated_at
 `,
 		storageID,
@@ -160,6 +169,7 @@ ON CONFLICT(storage_id) DO UPDATE SET
 		metadata.ContextWindow,
 		metadata.MaxModelLen,
 		metadata.ModelMaxContext,
+		metadata.TypedDecisions,
 		time.Now().Unix(),
 	)
 	if err != nil {
@@ -182,7 +192,7 @@ func (s *Store) Close() error {
 // "text-generation" before DetectPipelineTag learned to recognise codec-token
 // TTS models would stay misclassified after an upgrade. Bump this whenever
 // DetectPipelineTag or any other cached derivation changes.
-const DerivationVersion = 3
+const DerivationVersion = 4
 
 // Fingerprint hashes file identity metadata without reading model contents.
 // Any add, remove, resize, or modification invalidates the cached derivations,

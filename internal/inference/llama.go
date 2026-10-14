@@ -104,6 +104,9 @@ type llamaEngine struct {
 	logFile             *os.File
 	hasMultimodal       bool
 	nativeToolStreaming bool
+	// decisionLoRA is set when a typed-decision adapter is loaded (scale 0
+	// by default, enabled per decision request).
+	decisionLoRA bool
 	// slots pins conversations to llama-server slots; nil with one slot.
 	slots *llamaSlotScheduler
 }
@@ -572,6 +575,11 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		"--parallel", strconv.Itoa(effectiveNumParallel),
 		"--jinja",
 	}
+	// Without an alias llama-server reports the GGUF file path as the
+	// response "model"; OpenAI clients expect the requested model ID.
+	if modelName != "" {
+		args = append(args, "--alias", modelName)
+	}
 	if embedding {
 		args = append(args, "--embedding")
 		if pooling := ResolveEmbeddingPooling(modelName); pooling != "" {
@@ -585,6 +593,13 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		args = append(args, "--cache-type-v", normalizedCacheTypeV)
 	}
 	args = append(args, speculative.llamaArgs()...)
+	decisionLoRA := ""
+	if !embedding {
+		decisionLoRA = resolveDecisionLoRA(modelName)
+	}
+	if decisionLoRA != "" {
+		args = append(args, decisionLoRAArgs(decisionLoRA)...)
+	}
 	if len(mmproj) > 0 && mmproj[0] != "" {
 		args = append(args, "--mmproj", mmproj[0])
 		engine.hasMultimodal = true
@@ -669,8 +684,17 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		return nil, fmt.Errorf("llama-server failed to start: %w", err)
 	}
 
+	if decisionLoRA != "" {
+		if err := engine.disableDecisionLoRA(); err != nil {
+			// Leaving the adapter at its default scale would change every
+			// chat answer, so refuse to serve rather than degrade silently.
+			engine.Close()
+			return nil, fmt.Errorf("llama-server could not park the typed-decision adapter: %w", err)
+		}
+		engine.decisionLoRA = true
+	}
 	engine.detectNativeToolStreaming()
-	log.Printf("LLAMA: llama-server ready model=%q port=%d native_tool_streaming=%t", modelName, port, engine.nativeToolStreaming)
+	log.Printf("LLAMA: llama-server ready model=%q port=%d native_tool_streaming=%t typed_decisions=%t", modelName, port, engine.nativeToolStreaming, engine.decisionLoRA)
 	return engine, nil
 }
 

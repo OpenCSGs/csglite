@@ -375,6 +375,7 @@ func New(cfg *config.Config, version string) *Server {
 		}
 	}
 	s.cluster = newClusterManager(s, storageRoot)
+	inference.SetDecisionLoRAResolver(s.resolveDecisionLoRA)
 	return s
 }
 

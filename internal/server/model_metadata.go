@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/opencsgs/csglite/internal/decision"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelmetadata"
@@ -31,6 +32,7 @@ func (s *Server) localModelMetadata(storageID, modelDir, manifestPipelineTag str
 		HasMMProj:       model.FindMMProj(modelDir) != "",
 		ContextWindow:   int64(inference.ResolveNumCtxFromModelMax(modelMaxContext, 0, s.modelNumCtxSetting(storageID), s.cfg.Inference.LlamaUseModelMaxCtx)),
 		ModelMaxContext: int64(modelMaxContext),
+		TypedDecisions:  decision.IsDecisionModel(modelDir),
 	}
 	metadata.MaxModelLen, _ = model.MaxModelLen(modelDir, format)
 

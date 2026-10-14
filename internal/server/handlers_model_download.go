@@ -59,6 +59,7 @@ func (s *Server) handleModelManifestForID(w http.ResponseWriter, modelID string)
 		Details:        s.localModelInfo(lm),
 		Files:          files,
 		LocalInference: localinference.FromLocalModel(lm, modelDir),
+		Tags:           modelCardTags(modelDir),
 	})
 }
 
@@ -186,4 +187,14 @@ func findLocalModelFile(entries []model.LocalModelFile, relPath string) (model.L
 		}
 	}
 	return model.LocalModelFile{}, false
+}
+
+// modelCardTags returns the model card's tags, never nil so the JSON field is
+// always an array.
+func modelCardTags(modelDir string) []string {
+	tags := model.ModelCardTags(modelDir)
+	if tags == nil {
+		return []string{}
+	}
+	return tags
 }

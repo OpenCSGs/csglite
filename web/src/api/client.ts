@@ -23,6 +23,8 @@ export interface ModelInfo {
   input_modalities?: string[];
   output_modalities?: string[];
   has_mmproj?: boolean;
+  /** Local model that answers the OpenAI Decisions API (POST /v1/decisions). */
+  typed_decisions?: boolean;
   context_window?: number;
   max_model_len?: number;
   description?: string;
@@ -78,6 +80,8 @@ export interface ModelManifestResponse {
   details: ModelInfo;
   files: ModelFileEntry[];
   local_inference: LocalInferenceSupport;
+  /** Tags from the model card's front matter. */
+  tags?: string[];
 }
 
 export interface ModelConfigResponse {
@@ -1498,6 +1502,56 @@ export async function synthesizeSpeech(req: AudioSpeechRequest, signal?: AbortSi
   }
   const blob = await resp.blob();
   return { url: URL.createObjectURL(blob), mime: contentType.split(";")[0] || "audio/mpeg" };
+}
+
+export type DecisionQuestionType = "predicate" | "choice" | "score";
+
+/** OpenAI Decisions API question. */
+export interface DecisionQuestion {
+  type: DecisionQuestionType;
+  name?: string;
+  instructions: string;
+  choices?: { value: string | boolean; description?: string }[];
+  levels?: { label: string; description?: string }[];
+}
+
+export interface CreateDecisionRequest {
+  model: string;
+  source?: string;
+  input: string;
+  questions: DecisionQuestion[];
+}
+
+export interface DecisionAnswer {
+  type: DecisionQuestionType | "refusal";
+  name: string | null;
+  probability?: number;
+  choice?: string | boolean;
+  score?: number;
+  probabilities?: { value: string | boolean | number; label?: string; probability: number }[];
+  confidence?: number;
+}
+
+export interface Decision {
+  answers: DecisionAnswer[];
+  model: string;
+  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
+}
+
+/** POST /v1/decisions (OpenAI Decisions API). */
+export async function createDecision(req: CreateDecisionRequest, signal?: AbortSignal): Promise<Decision> {
+  const resp = await fetch("/v1/decisions", withLocaleHeader({
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  }));
+  const contentType = resp.headers.get("content-type") || "";
+  const body = await resp.text();
+  if (!resp.ok) {
+    throw new Error(extractErrorMessage(body, contentType, resp.statusText || "decision failed"));
+  }
+  return JSON.parse(body) as Decision;
 }
 
 export interface RealtimeSessionOptions {
