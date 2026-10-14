@@ -797,12 +797,52 @@ func convertModelWithAutoRepair(python, script, modelDir, outputPath, dtype stri
 }
 
 func runModelConverter(python, script, modelDir, outputPath, dtype string) (string, error) {
-	cmd := exec.Command(python, script, modelDir,
-		"--outfile", outputPath,
-		"--outtype", dtype,
-	)
+	args := []string{script, modelDir, "--outfile", outputPath, "--outtype", dtype}
+	if declaresMissingMTPLayers(modelDir) {
+		log.Printf("CONVERT: config declares MTP layers the checkpoint does not ship; converting without them")
+		args = append(args, "--no-mtp")
+	}
+	cmd := exec.Command(python, args...)
 	cmd.Env = converterPythonEnv()
 	return runLoggedCommand(cmd)
+}
+
+// declaresMissingMTPLayers reports a checkpoint whose config.json declares
+// multi-token-prediction layers (mtp_num_hidden_layers) but whose weights
+// carry no mtp.* tensors, as fine-tunes that save only the text model do.
+// The converter would otherwise count the MTP block and write a GGUF whose
+// last block llama.cpp cannot find.
+func declaresMissingMTPLayers(modelDir string) bool {
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
+	if err != nil {
+		return false
+	}
+	var cfg struct {
+		MTPLayers  int `json:"mtp_num_hidden_layers"`
+		TextConfig *struct {
+			MTPLayers int `json:"mtp_num_hidden_layers"`
+		} `json:"text_config"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return false
+	}
+	declared := cfg.MTPLayers
+	if declared == 0 && cfg.TextConfig != nil {
+		declared = cfg.TextConfig.MTPLayers
+	}
+	if declared <= 0 {
+		return false
+	}
+	files, err := scanSafeTensorsFiles(modelDir)
+	if err != nil || len(files) == 0 {
+		return false
+	}
+	for _, src := range collectTensors(files) {
+		if strings.HasPrefix(src.name, "mtp.") || strings.Contains(src.name, ".mtp.") {
+			return false
+		}
+	}
+	return true
 }
 
 func runMMProjConverter(python, script, modelDir, dtype string) (string, error) {

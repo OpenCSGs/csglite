@@ -12,31 +12,38 @@ import (
 
 const maxModelCardMetadataBytes = 1 << 20
 
-// modelCardMetadataValue reads a top-level string field from a model card's
-// YAML front matter. It deliberately shares the bounded front-matter reader
-// with pipeline detection: model cards are untrusted downloaded content.
-func modelCardMetadataValue(modelDir string, keys ...string) string {
+// modelCardMetadata parses a model card's YAML front matter. Model cards are
+// untrusted downloaded content, so reading is bounded and any parse failure
+// yields nil.
+func modelCardMetadata(modelDir string) map[string]any {
 	readmePath := findModelCardPath(modelDir)
 	if readmePath == "" {
-		return ""
+		return nil
 	}
 	file, err := os.Open(readmePath)
 	if err != nil {
-		return ""
+		return nil
 	}
 	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, maxModelCardMetadataBytes+1))
 	if err != nil || len(data) == 0 || len(data) > maxModelCardMetadataBytes {
-		return ""
+		return nil
 	}
 	frontMatter := modelCardFrontMatter(data)
 	if len(frontMatter) == 0 {
-		return ""
+		return nil
 	}
 	var metadata map[string]any
 	if yaml.Unmarshal(frontMatter, &metadata) != nil {
-		return ""
+		return nil
 	}
+	return metadata
+}
+
+// modelCardMetadataValue reads a top-level string field from a model card's
+// YAML front matter.
+func modelCardMetadataValue(modelDir string, keys ...string) string {
+	metadata := modelCardMetadata(modelDir)
 	for _, key := range keys {
 		if value := strings.TrimSpace(stringMetadataValue(metadata[key])); value != "" {
 			return value
@@ -45,31 +52,26 @@ func modelCardMetadataValue(modelDir string, keys ...string) string {
 	return ""
 }
 
+// ModelCardTags returns the tags declared in a model card's front matter.
+func ModelCardTags(modelDir string) []string {
+	return stringSliceMetadataValue(modelCardMetadata(modelDir)["tags"])
+}
+
+// ModelCardBaseModels returns the base_model repositories declared in a model
+// card's front matter; the field may be a single string or a list.
+func ModelCardBaseModels(modelDir string) []string {
+	value := modelCardMetadata(modelDir)["base_model"]
+	if single := stringMetadataValue(value); single != "" {
+		return []string{single}
+	}
+	return stringSliceMetadataValue(value)
+}
+
 func detectModelCardPipelineTag(modelDir string) string {
 	if tag := normalizeLocalPipelineTag(modelCardMetadataValue(modelDir, "pipeline_tag", "pipeline-tag", "task")); tag != "" {
 		return tag
 	}
-	readmePath := findModelCardPath(modelDir)
-	if readmePath == "" {
-		return ""
-	}
-	file, err := os.Open(readmePath)
-	if err != nil {
-		return ""
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxModelCardMetadataBytes+1))
-	if err != nil || len(data) == 0 || len(data) > maxModelCardMetadataBytes {
-		return ""
-	}
-	frontMatter := modelCardFrontMatter(data)
-	if len(frontMatter) == 0 {
-		return ""
-	}
-	var metadata map[string]any
-	if yaml.Unmarshal(frontMatter, &metadata) != nil {
-		return ""
-	}
+	metadata := modelCardMetadata(modelDir)
 	if pipeline, ok := metadata["pipeline"].(map[string]any); ok {
 		if tag := normalizeLocalPipelineTag(stringMetadataValue(pipeline["type"])); tag != "" {
 			return tag

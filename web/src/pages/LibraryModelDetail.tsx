@@ -4,6 +4,7 @@ import { getModelManifest } from "../api/client";
 import type { ModelManifestResponse, ModelFileEntry } from "../api/client";
 import { locale, t } from "../i18n";
 import { LocalInferenceBadge } from "../components/LocalInferenceBadge";
+import { ModelTags } from "../components/ModelTags";
 import {
   localInferenceLabelKey,
   localInferenceModeFromSupport,
@@ -57,6 +58,9 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
   const exampleFile = manifest?.files?.[0];
   const exampleCurl = exampleFile ? buildFileCurlCommand(exampleFile, runtimeAPIOrigin) : "";
   const localInferenceMode = localInferenceModeFromSupport(manifest?.local_inference);
+  // The ID API requests send as "model", which can differ from the heading
+  // (it keeps the hub prefix, e.g. huggingface/mradermacher/JEV-9B-GGUF).
+  const apiModelID = manifest?.details?.model || manifest?.details?.name || modelID;
 
   const handleCopy = async (key: string, value: string) => {
     try {
@@ -101,6 +105,30 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
             )}
             {manifest && localInferenceMode !== "none" && <LocalInferenceBadge mode={localInferenceMode} prefix="lib" />}
           </div>
+          <div class="mt-1.5 flex min-w-0 items-center gap-2 text-sm">
+            <span class="shrink-0 text-gray-500">{t("lib.modelID")}</span>
+            <code class="min-w-0 break-all rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-800">{apiModelID}</code>
+            <button
+              type="button"
+              onClick={() => void handleCopy("model-id", apiModelID)}
+              class={`inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium transition-colors ${
+                copiedKey === "model-id"
+                  ? "border-green-200 bg-green-50 text-green-700"
+                  : "border-gray-200 bg-white text-gray-600 hover:border-indigo-200 hover:text-indigo-600"
+              }`}
+              aria-label={t("lib.copyModelIDHint")}
+              title={t("lib.copyModelIDHint")}
+            >
+              {copiedKey === "model-id" ? (
+                <CheckIcon />
+              ) : (
+                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              )}
+              {copiedKey === "model-id" ? t("dash.copied") : t("lib.copyModelID")}
+            </button>
+          </div>
           <p class="text-gray-500 text-sm mt-1">{t("lib.detailSubtitle")}</p>
         </div>
       </div>
@@ -133,7 +161,7 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
             ]}
           />
 
-          {(manifest.details.description || manifest.details.license) && (
+          {(manifest.details.description || manifest.details.license || (manifest.tags?.length ?? 0) > 0) && (
             <div class="space-y-2 border-t border-gray-100 px-6 py-5">
               {manifest.details.description && (
                 <p class="max-w-3xl text-sm leading-6 text-gray-600 whitespace-pre-wrap">{manifest.details.description}</p>
@@ -144,6 +172,7 @@ export function LibraryModelDetail({ model }: LibraryModelDetailProps) {
                   {manifest.details.license}
                 </p>
               )}
+              {(manifest.tags?.length ?? 0) > 0 && <ModelTags tags={manifest.tags!} />}
             </div>
           )}
 

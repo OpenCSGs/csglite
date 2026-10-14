@@ -23,6 +23,7 @@ by another machine on your network, or by a provider.
 - **Local inference** via llama.cpp (GGUF models, SafeTensors auto-converted)
 - **Interactive chat** with streaming output
 - **REST API** compatible with Ollama's API format
+- **OpenAI-compatible API** — Chat Completions (including `logprobs`, `top_logprobs`, `logit_bias`, and `response_format`), Responses, Embeddings, Images, Audio, Realtime, and the Decisions API (`POST /v1/decisions`); the official OpenAI SDKs work with `base_url` pointed at CSGLite
 - **Cross-platform** — macOS, Linux, Windows
 - **Resume downloads** — interrupted downloads resume where they left off
 - **Pause/Resume** — pause ongoing downloads and resume later
@@ -156,6 +157,7 @@ currently supported for local inference.
 | Automatic speech recognition | Supported | Python ASR runtime | FunASR, Whisper, Wav2Vec2-family ASR models |
 | Text-to-speech | Supported | Python TTS runtime | VoxCPM, Qwen3-TTS, Kokoro, MMS-TTS and other transformers-native TTS models |
 | Realtime voice | Supported | Python ASR + TTS runtimes | Full-duplex over WebRTC or WebSocket, OpenAI Realtime-compatible |
+| Decisions | Supported | llama.cpp + decision LoRA | Models tagged `jev` / `typed-decisions`, such as `autotrust/JEV-9B` and its GGUF quantizations; OpenAI Decisions API-compatible |
 | Image-to-video | Coming soon | - | Stable Video Diffusion, SV3D |
 | Text-to-video | Coming soon | - | Video generation Diffusers models |
 
@@ -211,6 +213,42 @@ defaults and limits in the `realtime` section of `config.json`
 for a deployment that has to pin its media ports). The protocol and the
 measured latencies are in
 [docs/guides/realtime-audio-api.md](docs/guides/realtime-audio-api.md).
+
+### Decisions
+
+CSGLite implements the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions),
+`POST /v1/decisions`, for local models tagged `jev` or `typed-decisions` (for
+example `autotrust/JEV-9B` and its GGUF quantizations). A request shares one
+`input` across up to 200 questions and returns calibrated probabilities instead
+of generated text:
+
+| Question type | Use it to | Main result |
+| --- | --- | --- |
+| `predicate` | check whether a condition is true | `probability` |
+| `choice` | pick one of 2-255 string or boolean values | `choice`, `probabilities`, `confidence` |
+| `score` | rate against ordered `levels` | `score` (probability-weighted level index), `probabilities`, `confidence` |
+
+```bash
+curl http://localhost:11435/v1/decisions -H "Content-Type: application/json" -d '{
+  "model": "huggingface/mradermacher/JEV-9B-GGUF",
+  "input": "I was charged twice for my order.",
+  "questions": [{
+    "type": "choice",
+    "name": "department",
+    "instructions": "Which department should handle this complaint?",
+    "choices": [{"value": "billing"}, {"value": "technical"}, {"value": "shipping"}, {"value": "other"}]
+  }]
+}'
+```
+
+The OpenAI SDKs' `client.decisions.create(...)` works unchanged with
+`base_url="http://localhost:11435/v1"`. GGUF quantizations ship only the base
+weights, so also pull the original repository (`autotrust/JEV-9B`) that holds
+the decision adapter; CSGLite converts and loads it automatically, and the same
+model keeps answering ordinary chat. In the Web UI, pick the model in Chat and
+switch the composer to **Decide**. Text input only: `input_image` parts are
+refused. `POST /v1/decide` remains available for clients written against the
+JEV API. Details: [docs/guides/typed-decisions.md](docs/guides/typed-decisions.md).
 
 ## Integrations
 
@@ -372,6 +410,20 @@ End a line with `\` for multiline input. Press Ctrl+D to exit.
 ## REST API
 
 The server listens on `localhost:11435` by default.
+
+OpenAI-compatible endpoints (point any OpenAI SDK at `http://localhost:11435/v1`):
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /v1/chat/completions` | Chat completions, streaming, tools, `logprobs` / `top_logprobs`, `logit_bias`, `response_format` |
+| `POST /v1/responses` | Responses API |
+| `POST /v1/messages` | Anthropic Messages API |
+| `POST /v1/embeddings` | Embeddings |
+| `POST /v1/images/generations`, `POST /v1/images/edits` | Image generation and editing |
+| `POST /v1/audio/transcriptions`, `POST /v1/audio/speech` | Speech recognition and synthesis |
+| `POST /v1/realtime/calls`, `GET /v1/realtime` | Realtime voice over WebRTC or WebSocket |
+| `POST /v1/decisions` | Decisions API: predicate, choice, and score questions |
+| `GET /v1/models` | List models |
 
 For full endpoint details and examples, see the [REST API Reference](docs/api/overview.md).
 

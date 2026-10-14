@@ -471,6 +471,9 @@ func (s *Server) handleOpenAIChatCompletionsWithTools(
 	}
 }
 
+// maxOpenAITopLogprobs matches the OpenAI Chat Completions limit.
+const maxOpenAITopLogprobs = 20
+
 func openAIChatRequestToProxyBody(req api.OpenAIChatRequest, opts inference.Options, stream bool) (map[string]interface{}, error) {
 	messages, err := ollamaMessagesToOpenAI(req.Messages, req.Tools)
 	if err != nil {
@@ -511,6 +514,24 @@ func openAIChatRequestToProxyBody(req api.OpenAIChatRequest, opts inference.Opti
 	}
 	if len(req.ChatTemplateKwargs) > 0 {
 		body["chat_template_kwargs"] = req.ChatTemplateKwargs
+	}
+	if req.TopLogprobs != nil {
+		if *req.TopLogprobs < 0 || *req.TopLogprobs > maxOpenAITopLogprobs {
+			return nil, fmt.Errorf("top_logprobs must be between 0 and %d", maxOpenAITopLogprobs)
+		}
+		if req.Logprobs == nil || !*req.Logprobs {
+			return nil, fmt.Errorf("logprobs must be true when top_logprobs is set")
+		}
+		body["top_logprobs"] = *req.TopLogprobs
+	}
+	if req.Logprobs != nil {
+		body["logprobs"] = *req.Logprobs
+	}
+	if len(req.LogitBias) > 0 {
+		body["logit_bias"] = req.LogitBias
+	}
+	if len(req.ResponseFormat) > 0 {
+		body["response_format"] = req.ResponseFormat
 	}
 	if opts.DisableThinking {
 		kwargs, _ := body["chat_template_kwargs"].(map[string]interface{})

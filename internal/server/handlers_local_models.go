@@ -112,6 +112,7 @@ func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string
 	}
 	pipelineTag := strings.TrimSpace(item.PipelineTag)
 	hasMMProj := false
+	typedDecisions := false
 	var contextWindow int64
 	var maxModelLen int64
 
@@ -119,6 +120,7 @@ func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string
 		metadata := s.localModelMetadata(storageID, dir, pipelineTag, item.Format)
 		pipelineTag = metadata.PipelineTag
 		hasMMProj = metadata.HasMMProj
+		typedDecisions = metadata.TypedDecisions
 		contextWindow = s.localModelContextWindowFromMax(storageID, metadata.ModelMaxContext)
 		maxModelLen = metadata.MaxModelLen
 	}
@@ -151,6 +153,7 @@ func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string
 		Category:          categoryForPipelineTag(pipelineTag),
 		PipelineTag:       pipelineTag,
 		HasMMProj:         hasMMProj,
+		TypedDecisions:    typedDecisions,
 		ContextWindow:     contextWindow,
 		MaxModelLen:       maxModelLen,
 		Description:       strings.TrimSpace(item.Description),

@@ -5107,6 +5107,201 @@
         }
       }
     },
+    "/v1/decisions": {
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible decisions",
+        "description": "OpenAI Decisions API: answers predicate, choice and score questions about shared input with calibrated probabilities. Served by local models tagged jev or typed-decisions through their System 1 head: predicate uses the yes/no head, choice and score use the choice head (more than 16 options run as a tournament), and score is the probability-weighted level index. Confidence is the gap between the two most likely options. Input images are not supported.",
+        "operationId": "createDecision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionCreateRequest"
+              },
+              "example": {
+                "model": "huggingface/mradermacher/JEV-9B-GGUF",
+                "input": "I was charged twice for my order.",
+                "questions": [
+                  {
+                    "type": "choice",
+                    "name": "department",
+                    "instructions": "Which department should handle this complaint?",
+                    "choices": [
+                      {
+                        "value": "billing",
+                        "description": "Payments, invoices, and refunds."
+                      },
+                      {
+                        "value": "technical",
+                        "description": "Problems using the product."
+                      },
+                      {
+                        "value": "shipping",
+                        "description": "Delivery and tracking."
+                      },
+                      {
+                        "value": "other",
+                        "description": "Requests outside these categories."
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Answers in question order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/v1/decide": {
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "JEV-style typed decision",
+        "description": "Answers a typed question (noul yes/no, score 0-5, or choice over 2-256 options) with a calibrated probability distribution in one prefill pass, in the response shape of the hosted JEV API. Available for local models whose model card is tagged jev or typed-decisions and whose System 1 block (adapter_vllm/ with decision_head.json, plus calibration.json) is in the model directory or in a downloaded base_model repository. Choices with more options than the head has slots use a tournament. Thinking (System 2 escalation) and image state are not supported.",
+        "operationId": "decide",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideRequest"
+              },
+              "example": {
+                "model": "huggingface/mradermacher/JEV-9B-GGUF",
+                "kind": "choice",
+                "state": "SKU AX-330 stock at 8% of safety level; supplier late twice this quarter.",
+                "question": "Supplier response for this scenario.",
+                "options": [
+                  "issue_warning",
+                  "renegotiate",
+                  "dual_source",
+                  "maintain"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision distribution aligned with options.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/v1/decide/info": {
+      "get": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "Typed-decision capabilities of a model",
+        "operationId": "decideInfo",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Local model ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Protocol, option limits, and calibration temperatures.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
     "/providers/{providerID}/v1/models": {
       "parameters": [
         {
@@ -10495,6 +10690,10 @@
           "has_mmproj": {
             "type": "boolean"
           },
+          "typed_decisions": {
+            "type": "boolean",
+            "description": "Local model whose card is tagged jev or typed-decisions; it answers POST /v1/decide."
+          },
           "context_window": {
             "type": "integer"
           },
@@ -10891,7 +11090,8 @@
         "required": [
           "details",
           "files",
-          "local_inference"
+          "local_inference",
+          "tags"
         ],
         "properties": {
           "details": {
@@ -10905,6 +11105,13 @@
           },
           "local_inference": {
             "$ref": "#/components/schemas/LocalInferenceSupport"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags from the model card's front matter; empty when there are none."
           }
         }
       },
@@ -12476,6 +12683,11 @@
           "delta": {
             "$ref": "#/components/schemas/Message"
           },
+          "logprobs": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "OpenAI-style token log probabilities, relayed from the backend when the request sets logprobs."
+          },
           "finish_reason": {
             "oneOf": [
               {
@@ -12829,6 +13041,463 @@
           }
         }
       },
+      "DecisionCreateRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "input",
+          "questions"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Model source; decisions run on local llama.cpp models only."
+          },
+          "input": {
+            "description": "Shared evidence: a string, or user messages whose content is a string or input_text parts.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "role",
+                    "content"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "message"
+                      ]
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "user"
+                      ]
+                    },
+                    "content": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "input_text",
+                                  "input_image"
+                                ]
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "image_url": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "questions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/DecisionQuestion"
+            }
+          },
+          "safety_identifier": {
+            "type": "string",
+            "description": "Accepted for compatibility and ignored."
+          }
+        }
+      },
+      "DecisionQuestion": {
+        "type": "object",
+        "required": [
+          "type",
+          "instructions"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "predicate",
+              "choice",
+              "score"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Echoed in the answer."
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "choices": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 255,
+            "description": "choice only; values must be unique.",
+            "items": {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "description": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "levels": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 255,
+            "description": "score only; ordered from lowest to highest.",
+            "items": {
+              "type": "object",
+              "required": [
+                "label"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Decision": {
+        "type": "object",
+        "required": [
+          "answers",
+          "model",
+          "usage"
+        ],
+        "properties": {
+          "answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionAnswer"
+            }
+          },
+          "model": {
+            "type": "string"
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "input_tokens": {
+                "type": "integer"
+              },
+              "input_tokens_details": {
+                "type": "object",
+                "properties": {
+                  "cache_write_tokens": {
+                    "type": "integer"
+                  },
+                  "cached_tokens": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "output_tokens": {
+                "type": "integer"
+              },
+              "output_tokens_details": {
+                "type": "object",
+                "properties": {
+                  "reasoning_tokens": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "total_tokens": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "DecisionAnswer": {
+        "type": "object",
+        "required": [
+          "type",
+          "name"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "predicate",
+              "choice",
+              "score",
+              "refusal"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "probability": {
+            "type": "number",
+            "description": "predicate: probability that the condition is true."
+          },
+          "choice": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "description": "choice: the selected value."
+          },
+          "score": {
+            "type": "number",
+            "description": "score: probability-weighted average of the level indices."
+          },
+          "probabilities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "probability": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "description": "choice and score: gap between the two most likely options."
+          }
+        }
+      },
+      "DecideRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "kind",
+          "question"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Model source such as local; typed decisions run on local llama.cpp models only."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "noul",
+              "score",
+              "choice"
+            ]
+          },
+          "state": {
+            "description": "Context for the question: a string, a JSON object (rendered as Python json.dumps), or a list of strings and {\"type\":\"text\",\"text\":...} parts.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ]
+          },
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 2,
+            "maxItems": 256,
+            "description": "Choice options; noul and score use fixed options."
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "single",
+              "tournament",
+              "permute"
+            ],
+            "description": "How to answer more options than the head has slots; this model family supports tournament."
+          },
+          "thinking": {
+            "type": "string",
+            "enum": [
+              "default",
+              "off",
+              "auto",
+              "on"
+            ],
+            "description": "Only off (the default) is supported."
+          }
+        }
+      },
+      "DecideResponse": {
+        "type": "object",
+        "required": [
+          "kind",
+          "options",
+          "probabilities",
+          "choice_index",
+          "choice",
+          "model"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "effective_kind": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "probabilities": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "Calibrated probabilities aligned with options."
+          },
+          "choice_index": {
+            "type": "integer"
+          },
+          "choice": {
+            "type": "string"
+          },
+          "adaptation": {
+            "type": "string",
+            "description": "native, or tournament for more options than head slots."
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "prompt_tokens": {
+                "type": "integer"
+              },
+              "completion_tokens": {
+                "type": "integer"
+              },
+              "total_tokens": {
+                "type": "integer"
+              }
+            }
+          },
+          "elapsed_seconds": {
+            "type": "number"
+          },
+          "num_model_requests": {
+            "type": "integer"
+          }
+        }
+      },
+      "DecideInfo": {
+        "type": "object",
+        "properties": {
+          "protocol": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "max_options": {
+            "type": "integer"
+          },
+          "native_choice_options": {
+            "type": "integer"
+          },
+          "temperatures": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "defaults": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "system2_available": {
+            "type": "boolean"
+          }
+        }
+      },
       "OpenAIEmbeddingsRequest": {
         "type": "object",
         "required": [
@@ -13047,6 +13716,28 @@
             "items": {
               "type": "string"
             }
+          },
+          "logprobs": {
+            "type": "boolean",
+            "description": "Return log probabilities of the output tokens in choices[].logprobs."
+          },
+          "top_logprobs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "description": "Number of most likely tokens to return at each position. Requires logprobs to be true."
+          },
+          "logit_bias": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Map of token ID to a bias added to its logit before sampling."
+          },
+          "response_format": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "OpenAI response format, such as {\"type\":\"json_object\"} or {\"type\":\"json_schema\",\"json_schema\":{...}}. Local llama.cpp models enforce it with a grammar."
           }
         }
       },

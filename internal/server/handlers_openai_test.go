@@ -855,6 +855,125 @@ func TestHandleOpenAIChatCompletionsForwardsChatTemplateKwargs(t *testing.T) {
 	}
 }
 
+func TestHandleOpenAIChatCompletionsForwardsLogprobsAndResponseFormat(t *testing.T) {
+	logprobs := json.RawMessage(`{"content":[{"token":"A","logprob":-0.1,"top_logprobs":[{"token":"A","logprob":-0.1},{"token":"B","logprob":-2.3}]}]}`)
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-test",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index:    0,
+				Message:  &api.Message{Role: "assistant", Content: "A"},
+				Logprobs: logprobs,
+			}},
+		},
+	}
+	s := newTestServerWithConfig(t, &config.Config{ModelDir: t.TempDir()})
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 8192, numParallel: 1}
+
+	body := `{
+	  "model": "test/model",
+	  "messages": [{"role":"user","content":"A or B?"}],
+	  "stream": false,
+	  "logprobs": true,
+	  "top_logprobs": 2,
+	  "logit_bias": {"32": 5, "33": 5},
+	  "response_format": {"type":"json_schema","json_schema":{"name":"pick","schema":{"enum":["A","B"]}}}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	if got := engine.lastReq["logprobs"]; got != true {
+		t.Fatalf("logprobs = %#v, want true", got)
+	}
+	if got := engine.lastReq["top_logprobs"]; got != 2 {
+		t.Fatalf("top_logprobs = %#v, want 2", got)
+	}
+	if bias, ok := engine.lastReq["logit_bias"].(map[string]float64); !ok || bias["32"] != 5 || bias["33"] != 5 {
+		t.Fatalf("logit_bias = %#v", engine.lastReq["logit_bias"])
+	}
+	format, ok := engine.lastReq["response_format"].(map[string]interface{})
+	if !ok || format["type"] != "json_schema" {
+		t.Fatalf("response_format = %#v", engine.lastReq["response_format"])
+	}
+
+	var resp api.OpenAIChatResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Choices) != 1 || !bytes.Contains(resp.Choices[0].Logprobs, []byte(`"top_logprobs"`)) {
+		t.Fatalf("logprobs not relayed: %s", w.Body.String())
+	}
+}
+
+func TestHandleOpenAIChatCompletionsWithToolsKeepsLogprobs(t *testing.T) {
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-test",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index:    0,
+				Message:  &api.Message{Role: "assistant", Content: "no tool needed"},
+				Logprobs: json.RawMessage(`{"content":[{"token":"no","logprob":-0.5}]}`),
+			}},
+		},
+	}
+	s := newTestServerWithConfig(t, &config.Config{ModelDir: t.TempDir()})
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 8192, numParallel: 1}
+
+	body := `{
+	  "model": "test/model",
+	  "messages": [{"role":"user","content":"hi"}],
+	  "tools": [{"type":"function","function":{"name":"get_time","parameters":{"type":"object","properties":{}}}}],
+	  "stream": false,
+	  "logprobs": true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	var resp api.OpenAIChatResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Choices) != 1 || !bytes.Contains(resp.Choices[0].Logprobs, []byte(`"logprob":-0.5`)) {
+		t.Fatalf("logprobs not kept on tool path: %s", w.Body.String())
+	}
+}
+
+func TestOpenAIChatRequestToProxyBodyValidatesTopLogprobs(t *testing.T) {
+	enabled, disabled := true, false
+	tooMany, two := maxOpenAITopLogprobs+1, 2
+	tests := []struct {
+		name string
+		req  api.OpenAIChatRequest
+	}{
+		{name: "without logprobs", req: api.OpenAIChatRequest{TopLogprobs: &two}},
+		{name: "logprobs false", req: api.OpenAIChatRequest{Logprobs: &disabled, TopLogprobs: &two}},
+		{name: "above limit", req: api.OpenAIChatRequest{Logprobs: &enabled, TopLogprobs: &tooMany}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := openAIChatRequestToProxyBody(tt.req, inference.DefaultOptions(), false); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
 func TestHandleOpenAIChatCompletionsDisableThinkingHeaderSetsTemplateKwargs(t *testing.T) {
 	engine := &fakeChatCompletionEngine{
 		resp: api.OpenAIChatResponse{

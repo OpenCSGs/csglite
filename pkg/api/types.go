@@ -191,6 +191,9 @@ type ModelManifestResponse struct {
 	Details        ModelInfo             `json:"details"`
 	Files          []ModelFileEntry      `json:"files"`
 	LocalInference LocalInferenceSupport `json:"local_inference"`
+	// Tags are the model card's tags (README front matter); empty when the
+	// model has no card or the card declares none.
+	Tags []string `json:"tags"`
 }
 
 // ModelConfigResponse reports the per-model runtime settings alongside the
@@ -362,31 +365,34 @@ type ModelInfo struct {
 	Model string `json:"model"`
 	// ID is the unique on-disk storage ID ([source/]namespace/name) of a local
 	// model. Unlike Name it never changes when another model shares the name.
-	ID                string        `json:"id,omitempty"`
-	Size              int64         `json:"size"`
-	Format            string        `json:"format"`
-	ModifiedAt        time.Time     `json:"modified_at"`
-	Label             string        `json:"label,omitempty"`
-	DisplayName       string        `json:"display_name,omitempty"`
-	Source            string        `json:"source,omitempty"`
-	Origin            string        `json:"origin,omitempty"`
-	Provider          string        `json:"provider,omitempty"`
-	ArtifactSource    string        `json:"artifact_source,omitempty"`
-	Repository        string        `json:"repository,omitempty"`
-	RequestedRevision string        `json:"requested_revision,omitempty"`
-	ResolvedRevision  string        `json:"resolved_revision,omitempty"`
-	Category          string        `json:"category,omitempty"`
-	PipelineTag       string        `json:"pipeline_tag,omitempty"`
-	InputModalities   []string      `json:"input_modalities,omitempty"`
-	OutputModalities  []string      `json:"output_modalities,omitempty"`
-	HasMMProj         bool          `json:"has_mmproj,omitempty"`
-	ContextWindow     int64         `json:"context_window,omitempty"`
-	MaxModelLen       int64         `json:"max_model_len,omitempty"`
-	Description       string        `json:"description,omitempty"`
-	License           string        `json:"license,omitempty"`
-	LLMType           string        `json:"llm_type,omitempty"`
-	OwnedBy           string        `json:"owned_by,omitempty"`
-	Pricing           *ModelPricing `json:"pricing,omitempty"`
+	ID                string    `json:"id,omitempty"`
+	Size              int64     `json:"size"`
+	Format            string    `json:"format"`
+	ModifiedAt        time.Time `json:"modified_at"`
+	Label             string    `json:"label,omitempty"`
+	DisplayName       string    `json:"display_name,omitempty"`
+	Source            string    `json:"source,omitempty"`
+	Origin            string    `json:"origin,omitempty"`
+	Provider          string    `json:"provider,omitempty"`
+	ArtifactSource    string    `json:"artifact_source,omitempty"`
+	Repository        string    `json:"repository,omitempty"`
+	RequestedRevision string    `json:"requested_revision,omitempty"`
+	ResolvedRevision  string    `json:"resolved_revision,omitempty"`
+	Category          string    `json:"category,omitempty"`
+	PipelineTag       string    `json:"pipeline_tag,omitempty"`
+	InputModalities   []string  `json:"input_modalities,omitempty"`
+	OutputModalities  []string  `json:"output_modalities,omitempty"`
+	HasMMProj         bool      `json:"has_mmproj,omitempty"`
+	// TypedDecisions marks a local model that answers JEV-style typed
+	// decisions through POST /v1/decide.
+	TypedDecisions bool          `json:"typed_decisions,omitempty"`
+	ContextWindow  int64         `json:"context_window,omitempty"`
+	MaxModelLen    int64         `json:"max_model_len,omitempty"`
+	Description    string        `json:"description,omitempty"`
+	License        string        `json:"license,omitempty"`
+	LLMType        string        `json:"llm_type,omitempty"`
+	OwnedBy        string        `json:"owned_by,omitempty"`
+	Pricing        *ModelPricing `json:"pricing,omitempty"`
 	// Nodes lists the cluster members holding this model. Only present while
 	// the node belongs to a LAN cluster.
 	Nodes []ModelNodePresence `json:"nodes,omitempty"`
@@ -1107,6 +1113,10 @@ type OpenAIChatRequest struct {
 	DType              *string                `json:"dtype,omitempty"`
 	Seed               *int                   `json:"seed,omitempty"`
 	Stop               []string               `json:"stop,omitempty"`
+	Logprobs           *bool                  `json:"logprobs,omitempty"`
+	TopLogprobs        *int                   `json:"top_logprobs,omitempty"`
+	LogitBias          map[string]float64     `json:"logit_bias,omitempty"`
+	ResponseFormat     map[string]interface{} `json:"response_format,omitempty"`
 }
 
 type OpenAIEmbeddingsRequest struct {
@@ -1253,10 +1263,13 @@ type OpenAIEmbeddingObject struct {
 }
 
 type OpenAIChoice struct {
-	Index        int      `json:"index"`
-	Message      *Message `json:"message,omitempty"`
-	Delta        *Message `json:"delta,omitempty"`
-	FinishReason *string  `json:"finish_reason"`
+	Index   int      `json:"index"`
+	Message *Message `json:"message,omitempty"`
+	Delta   *Message `json:"delta,omitempty"`
+	// Logprobs is relayed verbatim from the backend so OpenAI-style
+	// token log probabilities survive response normalization.
+	Logprobs     json.RawMessage `json:"logprobs,omitempty"`
+	FinishReason *string         `json:"finish_reason"`
 }
 
 type OpenAIUsage struct {
