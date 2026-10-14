@@ -87,19 +87,29 @@ func (s *Server) listLocalModelInfos() ([]api.ModelInfo, error) {
 		return localModels[i].DownloadedAt.After(localModels[j].DownloadedAt)
 	})
 
+	// List each model under the same public ID that ResolveLocalModel accepts.
+	// Two models sharing a short name otherwise both list under that name, and
+	// deleting or running either row acts on whichever model owns the name.
+	publicIDs := model.PublicModelIDs(localModels)
 	infos := make([]api.ModelInfo, 0, len(localModels))
 	for _, item := range localModels {
 		if item == nil {
 			continue
 		}
-		infos = append(infos, s.localModelInfo(item))
+		infos = append(infos, s.localModelInfoWithID(item, publicIDs[item.FullName()]))
 	}
 	return infos, nil
 }
 
 func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
+	return s.localModelInfoWithID(item, s.localInferenceModelID(item.FullName()))
+}
+
+func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string) api.ModelInfo {
 	storageID := strings.TrimSpace(item.FullName())
-	inferenceID := model.InferenceModelID(item)
+	if strings.TrimSpace(inferenceID) == "" {
+		inferenceID = model.InferenceModelID(item)
+	}
 	pipelineTag := strings.TrimSpace(item.PipelineTag)
 	hasMMProj := false
 	var contextWindow int64
@@ -125,6 +135,7 @@ func (s *Server) localModelInfo(item *model.LocalModel) api.ModelInfo {
 	return api.ModelInfo{
 		Name:              inferenceID,
 		Model:             inferenceID,
+		ID:                storageID,
 		Size:              item.Size,
 		Format:            string(item.Format),
 		ModifiedAt:        item.DownloadedAt,

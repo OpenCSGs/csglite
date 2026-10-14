@@ -10259,6 +10259,10 @@
           "model": {
             "type": "string",
             "description": "Model ID to delete. Local models accept the short public ID returned by model list APIs; legacy `namespace/name` IDs are also accepted."
+          },
+          "id": {
+            "type": "string",
+            "description": "Storage ID from `ModelInfo.id`. When set it is used as-is instead of resolving `model`, so the request cannot delete a different model that shares a short name."
           }
         }
       },
@@ -10415,6 +10419,10 @@
           "model": {
             "type": "string",
             "description": "Client-visible model ID. Local models use a short public ID without `namespace/`; when local names collide, later models receive a stable hash suffix."
+          },
+          "id": {
+            "type": "string",
+            "description": "Unique on-disk storage ID of a local model (`[source/]namespace/name`). Unlike `model`, it does not change when another local model shares the same name; pass it as `id` to `DELETE /api/delete` to delete exactly this model."
           },
           "size": {
             "type": "integer"

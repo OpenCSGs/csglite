@@ -94,7 +94,7 @@ const stoppingModel = signal<string>("");
 type LoadStepProgress = { step?: string; status?: string; current?: number; total?: number };
 const loadProgress = signal<LoadStepProgress | null>(null);
 const libraryError = signal<string>("");
-type PendingDelete = { name: string; displayName: string; task?: DownloadTask; downloadOnly: boolean };
+type PendingDelete = { name: string; id?: string; displayName: string; task?: DownloadTask; downloadOnly: boolean };
 const pendingDelete = signal<PendingDelete | null>(null);
 const deleteBusy = signal(false);
 const runDialogModel = signal<ModelInfo | null>(null);
@@ -615,8 +615,8 @@ export function Library() {
     return () => window.clearTimeout(timeout);
   }, [searchQuery.value, formatFilter.value]);
 
-  const requestDelete = (name: string, displayName: string, task?: DownloadTask, downloadOnly = false) => {
-    pendingDelete.value = { name, displayName, task, downloadOnly };
+  const requestDelete = (name: string, id: string | undefined, displayName: string, task?: DownloadTask, downloadOnly = false) => {
+    pendingDelete.value = { name, id, displayName, task, downloadOnly };
   };
 
   const confirmDelete = async () => {
@@ -629,7 +629,7 @@ export function Library() {
         await loadModels();
         return;
       }
-      await deleteModel(pending.name);
+      await deleteModel(pending.name, pending.id);
       for (const task of getDownloadTasks("model")) {
         const sourceQualifiedTaskName = task.artifactSource && task.artifactSource !== "opencsg"
           ? `${task.artifactSource}/${task.name}`
@@ -640,6 +640,8 @@ export function Library() {
       }
       await loadModels();
       loadRunningModels();
+    } catch (e: any) {
+      libraryError.value = e?.message || t("lib.failedDelete");
     } finally {
       deleteBusy.value = false;
       pendingDelete.value = null;
@@ -991,7 +993,7 @@ export function Library() {
                     <div class="flex min-w-0 max-w-full items-center justify-end gap-3 whitespace-nowrap">
                       <button
                         disabled={!downloadOnly && (task?.status === "downloading" || task?.status === "queued")}
-                        onClick={() => requestDelete(m.name, displayLocalModelID(m), task, downloadOnly)}
+                        onClick={() => requestDelete(m.name, m.id, displayLocalModelID(m), task, downloadOnly)}
                         class="shrink-0 text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {t("lib.delete")}

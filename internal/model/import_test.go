@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/opencsgs/csglite/internal/config"
@@ -155,6 +156,28 @@ func TestManagerImport_OverwriteConflict(t *testing.T) {
 	}
 	if _, err := mgr.Import(ImportOptions{ModelID: "local/demo", Source: source, Kind: ImportSourceDirectory, Overwrite: true}); err != nil {
 		t.Fatalf("overwrite Import: %v", err)
+	}
+}
+
+func TestManagerImport_RejectsCaseOnlyIDConflict(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "model.gguf"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	modelDir := t.TempDir()
+	mgr := NewManager(&config.Config{ModelDir: modelDir})
+	if err := SaveManifest(modelDir, &LocalModel{Namespace: "Local", Name: "demo", Format: FormatGGUF}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, overwrite := range []bool{false, true} {
+		_, err := mgr.Import(ImportOptions{ModelID: "local/Demo", Source: source, Kind: ImportSourceDirectory, Overwrite: overwrite})
+		if err == nil || !strings.Contains(err.Error(), "letter case") {
+			t.Fatalf("Import(overwrite=%v) error = %v, want case conflict", overwrite, err)
+		}
+	}
+	if _, err := mgr.Import(ImportOptions{ModelID: "local/other", Source: source, Kind: ImportSourceDirectory}); err != nil {
+		t.Fatalf("Import of a distinct ID: %v", err)
 	}
 }
 

@@ -39,6 +39,9 @@ type PullRequest struct {
 
 type DeleteRequest struct {
 	Model string `json:"model"`
+	// ID is the local model's storage ID (ModelInfo.ID). When set it is used
+	// as-is, so the delete cannot land on another model sharing a short name.
+	ID string `json:"id,omitempty"`
 }
 
 type ShowRequest struct {
@@ -355,8 +358,11 @@ type ToolFunction struct {
 }
 
 type ModelInfo struct {
-	Name              string        `json:"name"`
-	Model             string        `json:"model"`
+	Name  string `json:"name"`
+	Model string `json:"model"`
+	// ID is the unique on-disk storage ID ([source/]namespace/name) of a local
+	// model. Unlike Name it never changes when another model shares the name.
+	ID                string        `json:"id,omitempty"`
 	Size              int64         `json:"size"`
 	Format            string        `json:"format"`
 	ModifiedAt        time.Time     `json:"modified_at"`
