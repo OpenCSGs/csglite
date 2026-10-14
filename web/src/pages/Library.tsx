@@ -10,7 +10,7 @@ import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../component
 import type { PageSize } from "../components/Pagination";
 import { isImageGenerationModel } from "../utils/imageModels";
 import { formatLoadStep } from "../utils/loadSteps";
-import { getDownloadTask, getDownloadTasks, clearDownloadTask, pauseDownload, startDownload, downloadCompletionVersion } from "../downloads";
+import { getDownloadTask, getDownloadTasks, clearDownloadTask, pauseDownload, startDownload, compareDownloadTasks, downloadRowTime, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
 import { downloadRowOriginKey, modelOriginKey } from "../artifactOrigin";
 import { displayLocalModelID } from "../modelIds";
@@ -422,10 +422,7 @@ function modelRows(models: ModelInfo[]): ModelTableRow[] {
     }),
     downloadOnly: false,
   }));
-  const downloadTasks = [...getDownloadTasks("model")].sort((a, b) => {
-    const createdAtDiff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    return createdAtDiff || a.name.localeCompare(b.name);
-  });
+  const downloadTasks = [...getDownloadTasks("model")].sort(compareDownloadTasks);
   for (const task of downloadTasks) {
     if (models.some((model) => localModelMatchesDownloadTask(model, task))) continue;
     rows.push({
@@ -434,7 +431,7 @@ function modelRows(models: ModelInfo[]): ModelTableRow[] {
         model: task.name,
         size: task.totalBytes || task.completedBytes,
         format: "",
-        modified_at: task.updatedAt,
+        modified_at: downloadRowTime(task),
         origin: "marketplace",
         artifact_source: task.artifactSource || "opencsg",
         repository: task.name,

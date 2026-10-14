@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 let downloadTaskKey: typeof import("./downloads").downloadTaskKey;
+let compareDownloadTasks: typeof import("./downloads").compareDownloadTasks;
+let downloadRowTime: typeof import("./downloads").downloadRowTime;
 
 beforeAll(async () => {
   const values = new Map<string, string>();
@@ -9,7 +11,29 @@ beforeAll(async () => {
     setItem: (key: string, value: string) => values.set(key, value),
     removeItem: (key: string) => values.delete(key),
   });
-  ({ downloadTaskKey } = await import("./downloads"));
+  ({ downloadTaskKey, compareDownloadTasks, downloadRowTime } = await import("./downloads"));
+});
+
+describe("download row order", () => {
+  it("keeps concurrent downloads in start order when progress timestamps move", () => {
+    const older = {
+      key: "model:older:opencsg@",
+      name: "older",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-03T00:00:02.000Z",
+    };
+    const newer = {
+      key: "model:newer:opencsg@",
+      name: "newer",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      updatedAt: "2026-01-03T00:00:01.000Z",
+    };
+    const progressed = { ...older, updatedAt: "2026-01-03T00:00:03.000Z" };
+
+    expect([older, newer].sort(compareDownloadTasks).map((task) => task.name)).toEqual(["newer", "older"]);
+    expect([progressed, newer].sort(compareDownloadTasks).map((task) => task.name)).toEqual(["newer", "older"]);
+    expect(downloadRowTime(progressed)).toBe(progressed.createdAt);
+  });
 });
 
 describe("downloadTaskKey", () => {
