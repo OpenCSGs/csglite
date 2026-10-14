@@ -16,7 +16,7 @@ import (
 const (
 	aiAppRuntimeStatusRunning = "running"
 	aiAppRuntimeStatusStopped = "stopped"
-	aiAppRuntimeStatusTimeout  = 2 * time.Second
+	aiAppRuntimeStatusTimeout = 2 * time.Second
 
 	// aiAppRuntimeCacheTTL bounds how often the AI Apps poll re-probes runtime
 	// liveness (TCP dial for csgclaw/dsh, dashboard fetch for openclaw,
@@ -365,7 +365,9 @@ func (s *Server) enrichAIAppListItem(ctx context.Context, info *api.AIAppInfo) {
 		return
 	}
 	if info.ID == xiaozhiAppID {
-		s.enrichXiaozhiModelSlots(ctx, info)
+		// The list poll must not wait on a cold AI Gateway catalog. Detail and
+		// launch still fetch synchronously.
+		s.enrichXiaozhiListModelSlots(ctx, info)
 		return
 	}
 	info.ModelID = s.preferredAIAppModel(info.ID)

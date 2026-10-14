@@ -178,6 +178,15 @@ func (s *Service) ListChatModels(ctx context.Context) ([]api.ModelInfo, error) {
 	return s.refresh(ctx)
 }
 
+// CachedChatModels returns the in-memory catalog when it is still fresh.
+// It never contacts the network.
+func (s *Service) CachedChatModels() ([]api.ModelInfo, bool) {
+	if s == nil {
+		return nil, false
+	}
+	return s.cachedModels()
+}
+
 func (s *Service) RefreshChatModels(ctx context.Context) ([]api.ModelInfo, error) {
 	if s == nil || s.BaseURL() == "" {
 		return nil, nil

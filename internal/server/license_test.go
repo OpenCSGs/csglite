@@ -28,10 +28,16 @@ func installTestLicenseKeys(t *testing.T, s *Server) *rsa.PrivateKey {
 		Version:       s.version,
 		Catalog:       gatedTestCatalog(),
 		LastCheckPath: filepath.Join(root, "license.lastcheck"),
+		OriginPath:    filepath.Join(root, "license.origin"),
+		DeviceID:      testLicenseDeviceID,
 	})
+	s.licenseSync = license.NewSyncer(s.license, s.fetchStoreLicense)
 	s.license.Refresh()
 	return key
 }
+
+// testLicenseDeviceID is the device ID installTestLicenseKeys gives the server.
+const testLicenseDeviceID = "feedfacefeedfacefeedfacefeedface"
 
 // gatedTestCatalog gates every shipped entry so the tests exercise the
 // licensed path; the shipped catalog itself gates nothing yet.

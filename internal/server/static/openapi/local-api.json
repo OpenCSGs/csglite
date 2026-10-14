@@ -4356,6 +4356,141 @@
         }
       }
     },
+    "/api/license/upgrade": {
+      "post": {
+        "tags": ["License"],
+        "summary": "Start an Enterprise purchase on CSGHub",
+        "description": "Creates a checkout session on the CSGHub license issuer for the signed-in account and this installation's device ID. Open `checkout_url` in the system browser to pay, then poll `GET /api/license/upgrade/{sid}`.",
+        "operationId": "startLicenseUpgrade",
+        "responses": {
+          "200": {
+            "description": "Checkout session created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseCheckoutResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No CSGHub account is signed in, or its sign-in has expired. `code` is `cloud_login_required` and `login_url` is where to sign in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudLoginRequiredError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSGHub refused the purchase for this account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          }
+        }
+      }
+    },
+    "/api/license/upgrade/{sid}": {
+      "get": {
+        "tags": ["License"],
+        "summary": "Poll an Enterprise purchase",
+        "description": "Returns the checkout session status. Once it is `completed` the server fetches the purchased license, installs it and returns the resulting state in `license`.",
+        "operationId": "getLicenseUpgrade",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Checkout session status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseCheckoutStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No CSGHub account is signed in, or its sign-in has expired. `code` is `cloud_login_required` and `login_url` is where to sign in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudLoginRequiredError"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          }
+        }
+      }
+    },
+    "/api/license/sync": {
+      "post": {
+        "tags": ["License"],
+        "summary": "Fetch the signed-in account's license now",
+        "description": "Asks the CSGHub license issuer for the signed-in account's license on this device. A license from CSGHub replaces only a missing, invalid or expired license, or one fetched automatically for the same account; a manually imported license is left alone. A revoked license is removed only if it was fetched automatically. The server also syncs at startup, after sign-in and every 6 hours.",
+        "operationId": "syncLicense",
+        "responses": {
+          "200": {
+            "description": "What the sync did and the license state afterwards.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseSyncResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No CSGHub account is signed in, or its sign-in has expired. `code` is `cloud_login_required` and `login_url` is where to sign in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudLoginRequiredError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSGHub refused the request; `error` carries its message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          }
+        }
+      }
+    },
     "/api/shutdown": {
       "post": {
         "tags": [
@@ -11547,6 +11682,23 @@
             "enum": ["env", "file", ""],
             "description": "Where the license was read from."
           },
+          "origin": {
+            "type": "string",
+            "enum": ["auto", "manual"],
+            "description": "`auto` for a license fetched from CSGHub after a purchase, `manual` for one imported by hand. Absent when none is installed or it comes from the environment."
+          },
+          "owner": {
+            "type": "string",
+            "description": "UUID of the CSGHub account the license is bound to, if any."
+          },
+          "device_id": {
+            "type": "string",
+            "description": "Identifies this installation to CSGHub, which counts the devices an account's license is used on. It does not restrict where a license works."
+          },
+          "device_count": {
+            "type": "integer",
+            "description": "How many devices the signed-in CSGHub account has used its license on, as of the last sync. Omitted when unknown."
+          },
           "file_path": {
             "type": "string",
             "description": "Path the license file is read from and written to."
@@ -11554,6 +11706,103 @@
           "checked_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "LicenseCheckoutResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sid", "checkout_url", "expire_at"],
+        "properties": {
+          "sid": {
+            "type": "string",
+            "description": "Checkout session ID."
+          },
+          "checkout_url": {
+            "type": "string",
+            "description": "CSGHub portal page that completes the payment; open it in the system browser."
+          },
+          "expire_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LicenseCheckoutStatusResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sid", "status", "expire_at"],
+        "properties": {
+          "sid": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "paying", "completed", "expired"]
+          },
+          "owner_name": {
+            "type": "string",
+            "description": "CSGHub account the purchase is for."
+          },
+          "order_no": {
+            "type": "string"
+          },
+          "expire_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "license": {
+            "$ref": "#/components/schemas/LicenseState"
+          },
+          "sync_error": {
+            "type": "string",
+            "description": "Why a completed purchase has not been installed yet; polling again retries."
+          },
+          "paid_by_other": {
+            "type": "boolean",
+            "description": "Another CSGHub account paid, so the license belongs to it (buyer_name) and syncing this installation does not install it."
+          },
+          "buyer_name": {
+            "type": "string",
+            "description": "Masked name of the account that paid, when paid_by_other is true."
+          }
+        }
+      },
+      "LicenseSyncResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "license"],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["installed", "removed", "unchanged", "skipped"]
+          },
+          "reason": {
+            "type": "string",
+            "description": "Explains `unchanged` and `skipped`."
+          },
+          "license": {
+            "$ref": "#/components/schemas/LicenseState"
+          }
+        }
+      },
+      "CloudLoginRequiredError": {
+        "type": "object",
+        "required": ["error", "errorCode", "code", "login_url"],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "integer"
+          },
+          "code": {
+            "type": "string",
+            "enum": ["cloud_login_required"]
+          },
+          "login_url": {
+            "type": "string",
+            "description": "Where to sign in to CSGHub."
           }
         }
       },

@@ -78,6 +78,11 @@ func (s *Server) saveCloudAccessToken(token string) error {
 	if s.cloud != nil {
 		s.cloud.SetAccessToken(token)
 	}
+	if token != "" {
+		// A license bought on CSGHub becomes available as soon as the
+		// account signs in here.
+		s.triggerLicenseSync()
+	}
 	return nil
 }
 

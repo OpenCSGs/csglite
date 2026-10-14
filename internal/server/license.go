@@ -179,9 +179,17 @@ func (s *Server) settingsResponse() api.SettingsResponse {
 	return resp
 }
 
+// licenseAPIState is the API view of state with this installation's device ID
+// and the device count from the last sync.
+func (s *Server) licenseAPIState(state license.State) api.LicenseState {
+	resp := state.APIState(s.license.FilePath(), s.license.DeviceID())
+	resp.DeviceCount = s.licenseSync.DeviceCount()
+	return resp
+}
+
 // GET /api/license -- current license status
 func (s *Server) handleLicenseGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.license.State().APIState(s.license.FilePath()))
+	writeJSON(w, http.StatusOK, s.licenseAPIState(s.license.State()))
 }
 
 // GET /api/license/features -- the catalog with each feature's current state
@@ -239,7 +247,7 @@ func (s *Server) handleLicenseImport(w http.ResponseWriter, r *http.Request) {
 		company = state.Payload.Company
 	}
 	log.Printf("license: installed %s license for %s (status %s)", state.Edition(), company, state.Status)
-	writeJSON(w, http.StatusOK, state.APIState(s.license.FilePath()))
+	writeJSON(w, http.StatusOK, s.licenseAPIState(state))
 }
 
 // DELETE /api/license -- remove the license file
@@ -250,5 +258,5 @@ func (s *Server) handleLicenseDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("license: removed; running as %s edition", state.Edition())
-	writeJSON(w, http.StatusOK, state.APIState(s.license.FilePath()))
+	writeJSON(w, http.StatusOK, s.licenseAPIState(state))
 }

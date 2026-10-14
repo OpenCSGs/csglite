@@ -150,7 +150,12 @@ func TestHandleAppsReturnsBeforeLatestVersionLookup(t *testing.T) {
 		<-releaseLatest
 		_, _ = w.Write([]byte("9.9.9\n"))
 	}))
+	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-releaseLatest
+		http.Error(w, "unavailable", http.StatusGatewayTimeout)
+	}))
 	defer latestServer.Close()
+	defer cloudServer.Close()
 	defer release()
 	t.Setenv("CSGHUB_LITE_CLAUDE_DIST_BASE_URL", latestServer.URL)
 
@@ -158,6 +163,7 @@ func TestHandleAppsReturnsBeforeLatestVersionLookup(t *testing.T) {
 		ModelDir:             t.TempDir(),
 		ListenAddr:           ":11435",
 		AIAppPreferredModels: map[string]string{},
+		AIGatewayURL:         cloudServer.URL,
 	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/apps", nil)

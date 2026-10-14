@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -61,9 +62,30 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 	return resp, nil
+}
+
+// APIError is a non-2xx answer from the CSGHub API.
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("API error %d: %s", e.StatusCode, e.Body)
+}
+
+// Message returns the "msg" of a CSGHub error envelope, or the raw body.
+func (e *APIError) Message() string {
+	var envelope struct {
+		Msg string `json:"msg"`
+	}
+	if err := json.Unmarshal([]byte(e.Body), &envelope); err == nil && strings.TrimSpace(envelope.Msg) != "" {
+		return strings.TrimSpace(envelope.Msg)
+	}
+	return strings.TrimSpace(e.Body)
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, out interface{}) error {
