@@ -75,6 +75,25 @@ def detect_device(model_dir: str, model_name: str) -> tuple[str, torch.dtype]:
 
 MLX_NATIVE_COMPONENTS = ("transformer", "text_encoder", "vae")
 
+# The direct loader below relies on MFLUX 0.20's Qwen-Image-2.1 internals
+# (Qwen21Initializer._init_config, module names such as .conv and norm .weight).
+# Keep in step with mfluxQwen21Version in internal/imagegen/runtime.go.
+MFLUX_QWEN21_VERSION = "0.20.0"
+
+
+def check_mflux_version() -> None:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        installed = version("mflux")
+    except PackageNotFoundError as exc:
+        raise RuntimeError("MFLUX is not installed in the MLX image runtime") from exc
+    if installed != MFLUX_QWEN21_VERSION:
+        raise RuntimeError(
+            f"MFLUX {installed} is installed, but the MLX Qwen-Image-2.1 backend requires "
+            f"MFLUX {MFLUX_QWEN21_VERSION}; reinstall the image runtime"
+        )
+
 
 def _safetensors_header(path: Path) -> Dict[str, Any]:
     try:
@@ -227,8 +246,10 @@ def load_mlx_native_qwen21(model_dir: str) -> Any:
                 class_predicate=lambda path, layer: hasattr(layer, "to_quantized") and f"{path}.scales" in mapped,
             )
             bits = quantization["bits"]
+        # Parameters stay lazy: each is read when a forward pass first needs it,
+        # so weights a run never touches (the VAE encoder for text-to-image)
+        # are never resident.
         module.update(tree_unflatten(list(mapped.items())), strict=False)
-        mx.eval(module.parameters())
     pipeline.bits = bits
     return pipeline
 
@@ -329,6 +350,7 @@ class Worker:
     def _load_mlx_qwen21(self) -> None:
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             raise RuntimeError("the MLX Qwen-Image-2.1 backend requires Apple Silicon")
+        check_mflux_version()
         from mflux.models.common.config import ModelConfig
         from mflux.models.qwen21.variants.txt2img.qwen_image_21 import QwenImage21
 
@@ -442,13 +464,18 @@ class Worker:
                 "image_path": image_path,
             }
             if self.mlx_scheduler is not None:
-                # The grid fixes the step count; a requested step count cannot apply.
+                # A distilled checkpoint with a fixed grid (Qwen-Image-2.1-Turbo)
+                # runs its own step count at CFG 1: a requested cfg_scale or
+                # negative prompt would add a second transformer pass it was
+                # not trained for.
                 kwargs["scheduler"] = self.mlx_scheduler
                 kwargs["num_inference_steps"] = self.mlx_fixed_steps
-            if req.get("cfg_scale") is not None:
-                kwargs["guidance"] = float(req["cfg_scale"])
-            if req.get("negative_prompt"):
-                kwargs["negative_prompt"] = str(req["negative_prompt"])
+                kwargs["guidance"] = 1.0
+            else:
+                if req.get("cfg_scale") is not None:
+                    kwargs["guidance"] = float(req["cfg_scale"])
+                if req.get("negative_prompt"):
+                    kwargs["negative_prompt"] = str(req["negative_prompt"])
             with self.lock:
                 result = self.pipeline.generate_image(**kwargs)
             image = getattr(result, "image", result)

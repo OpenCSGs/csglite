@@ -621,11 +621,16 @@ func (m *RuntimeManager) EnsureTTSOverlay(ctx context.Context, backend string) (
 // imageOverlayPackagesFor lists dependencies which are private to image
 // backends. MFLUX is deliberately isolated from the Diffusers environment:
 // it owns the MLX implementation and is only usable on Apple Silicon.
+// mfluxQwen21Version is the only MFLUX release the MLX Qwen-Image-2.1 worker
+// supports; keep it in step with MFLUX_QWEN21_VERSION in diffusers_worker.py.
+const mfluxQwen21Version = "0.20.0"
+
 func imageOverlayPackagesFor(backend, goos, goarch string) []string {
 	if backend == model.ImageBackendMLXQwen21 && goos == "darwin" && goarch == "arm64" {
-		// Qwen-Image-2.1 was added in MFLUX 0.20. Earlier releases install
-		// successfully but fail while the worker imports mflux.models.qwen21.
-		return []string{"mflux>=0.20.0", "mlx", "mlx-metal"}
+		// Pinned: the worker loads pre-converted MLX checkpoints through
+		// MFLUX 0.20's Qwen-Image-2.1 internals. 0.21 renamed them and moved
+		// to a video VAE layout, and its own loader rejects these checkpoints.
+		return []string{"mflux==" + mfluxQwen21Version, "mlx", "mlx-metal"}
 	}
 	return nil
 }
@@ -656,10 +661,10 @@ func (m *RuntimeManager) EnsureImageOverlay(ctx context.Context, backend string)
 		return "", err
 	}
 	mfluxVersion, versionErr := installedPackageVersionWithPath(ctx, python, dir, "mflux")
-	if len(missing) == 0 && versionErr == nil && compareVersions(mfluxVersion, "0.20.0") >= 0 {
+	if len(missing) == 0 && versionErr == nil && compareVersions(mfluxVersion, mfluxQwen21Version) == 0 {
 		return dir, writeOverlayProjectRoot(dir)
 	}
-	// A prior unpinned install can leave an old MFLUX release in the overlay.
+	// A prior unpinned install can leave another MFLUX release in the overlay.
 	// Remove it before installing so Python cannot mix modules from releases.
 	if err := os.RemoveAll(dir); err != nil {
 		return "", fmt.Errorf("removing outdated %s overlay: %w", backend, err)
