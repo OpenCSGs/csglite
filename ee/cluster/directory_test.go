@@ -172,3 +172,18 @@ func TestDirectoryRecoversFromAStuckPollAndProofOfLife(t *testing.T) {
 		t.Fatal("the stuck poll was not abandoned")
 	}
 }
+
+func TestSettledHealthTreatsProbingAsDown(t *testing.T) {
+	d := NewDirectory()
+	d.Track("n1", []string{"10.0.0.5:11438"})
+	for i := 0; i < downAfterFailures; i++ {
+		d.MarkFailure("n1", errors.New("timeout"))
+	}
+	d.BeginPoll("n1")
+	before, _ := d.Get("n1")
+	d.MarkFailure("n1", errors.New("timeout"))
+	after, _ := d.Get("n1")
+	if settledHealth(before.Health) != after.Health {
+		t.Fatalf("a failed retry of a down member is not a change: %s -> %s", before.Health, after.Health)
+	}
+}

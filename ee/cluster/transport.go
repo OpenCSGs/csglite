@@ -9,8 +9,11 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -103,8 +106,22 @@ func listenPeer(addr string, id *Identity, handler http.Handler) (net.Listener, 
 		TLSConfig:         serverTLSConfig(id),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		ErrorLog:          log.New(handshakeErrorFilter{w: log.Writer()}, "", log.LstdFlags),
 	}
 	return ln, srv, nil
+}
+
+// handshakeErrorFilter drops net/http's per-connection "TLS handshake error"
+// lines. On the peer port they are routine (a member polling with a stale
+// pin, a port scanner) and repeat on every retry; the dialing side already
+// logs the failure with the reason.
+type handshakeErrorFilter struct{ w io.Writer }
+
+func (f handshakeErrorFilter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "http: TLS handshake error") {
+		return len(p), nil
+	}
+	return f.w.Write(p)
 }
 
 // serveTLS runs the peer listener until ctx ends.
