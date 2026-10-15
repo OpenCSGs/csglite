@@ -71,7 +71,7 @@ func TestLoadEngine_UnsupportedSafeTensorsArchitectureDoesNotConvert(t *testing.
 func TestReadHFArchitectureRecognizesDecisionCheckpoint(t *testing.T) {
 	dir := t.TempDir()
 	for rel, content := range map[string]string{
-		"config.json":          `{"model_type":"laya","architectures":["SomeFutureLayaName"]}`,
+		"config.json":          `{"model_type":"laya","architectures":["LayaTypedDecisions"]}`,
 		"encoder/config.json":  `{"architectures":["ModernBertModel"]}`,
 		"rl_agent_config.json": `{"head_layers":2}`,
 	} {
@@ -89,6 +89,14 @@ func TestReadHFArchitectureRecognizesDecisionCheckpoint(t *testing.T) {
 	}
 	if err := ensureConvertibleHFArchitecture(dir); err != nil {
 		t.Fatalf("decision checkpoint refused: %v", err)
+	}
+
+	// Without the head config the converter cannot load it: refuse cleanly.
+	if err := os.Remove(filepath.Join(dir, "rl_agent_config.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureConvertibleHFArchitecture(dir); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("incomplete decision checkpoint: err = %v, want ErrUnsupportedFormat", err)
 	}
 }
 

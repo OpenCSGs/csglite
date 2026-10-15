@@ -114,13 +114,19 @@ func TestNativeType(t *testing.T) {
 	write(gguf, "mmproj-openjev.gguf", testGGUF(t, "clip", ""))
 	write(gguf, "Laya-Q8_0.gguf", testGGUF(t, "modern-bert", "laya"))
 
+	// Only the first weight GGUF is read; MTP modules are skipped.
+	firstOnly := t.TempDir()
+	write(firstOnly, "Laya-BF16.gguf", testGGUF(t, "modern-bert", "laya"))
+	write(firstOnly, "Laya-Q8_0.gguf", []byte("not a gguf"))
+	write(firstOnly, "Laya-0-mtp-Q8_0.gguf", testGGUF(t, "qwen35-mtp", "openjev"))
+
 	nested := t.TempDir()
 	write(nested, "Q4_K_M/OpenJev-Q4_K_M.gguf", testGGUF(t, "qwen35", "openjev"))
 
 	plain := t.TempDir()
 	write(plain, "model.gguf", testGGUF(t, "qwen3", ""))
 
-	for dir, want := range map[string]string{checkpoint: "laya", gguf: "laya", nested: "openjev", plain: "", t.TempDir(): ""} {
+	for dir, want := range map[string]string{checkpoint: "laya", gguf: "laya", firstOnly: "laya", nested: "openjev", plain: "", t.TempDir(): ""} {
 		if got := NativeType(dir); got != want {
 			t.Errorf("NativeType(%s) = %q, want %q", dir, got, want)
 		}

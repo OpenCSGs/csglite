@@ -40,6 +40,10 @@ func DecisionOnlyType(decisionType string) bool {
 // decisionOnlyBatchArgs sizes the batch for an embedding-mode decision model.
 // llama-server evaluates such a prompt in one ubatch and caps n_batch at
 // n_ubatch, so the default 512-token ubatch would refuse any longer input.
+// llama.cpp also sizes the output buffers to n_batch (n_outputs_max), so this
+// costs hidden_size * numCtx floats: ~10 MB for Laya, a few hundred MB for
+// Qwen-sized heads at a 16K context. Capping it would refuse long inputs
+// again, so the model's context setting is the knob.
 func decisionOnlyBatchArgs(numCtx int) []string {
 	n := fmt.Sprintf("%d", numCtx)
 	return []string{"--batch-size", n, "--ubatch-size", n}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/convert"
 	"github.com/opencsgs/csglite/internal/ggufmeta"
+	"github.com/opencsgs/csglite/internal/ggufpick"
 )
 
 // TypeSafe System One limits for native decision models. llama-server
@@ -18,30 +19,36 @@ const maxNativeScoreLevels = 10
 // NativeType returns the native decision type of the model in dir: the
 // "<arch>.decision.type" of its GGUF, or "laya" for a ModernBERT decision
 // checkpoint that is not converted yet. It returns "" for other models.
+//
+// One directory holds one model, so only the first weight GGUF is read:
+// reading a header walks the whole tokenizer vocabulary (tens of ms), and a
+// repo of several quantizations would otherwise pay that for every file.
+// Projector and MTP companion files carry their own architecture and are
+// skipped.
 func NativeType(dir string) string {
 	if convert.IsDecisionCheckpoint(dir) {
 		return "laya"
 	}
 	found := ""
 	_ = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
-		if found != "" {
-			return fs.SkipAll
-		}
-		if err != nil || entry.IsDir() {
-			if err == nil && path == dir {
-				return nil
-			}
-			rel, _ := filepath.Rel(dir, path)
-			if err != nil || strings.HasPrefix(entry.Name(), ".") || strings.Count(rel, string(filepath.Separator)) >= 1 {
+		if err != nil {
+			if entry != nil && entry.IsDir() && path != dir {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		name := strings.ToLower(entry.Name())
-		if strings.HasSuffix(name, ".gguf") && !strings.Contains(name, "mmproj") {
-			found = ggufmeta.DecisionType(path)
+		rel, _ := filepath.Rel(dir, path)
+		if entry.IsDir() {
+			if path != dir && (strings.HasPrefix(entry.Name(), ".") || strings.Contains(rel, string(filepath.Separator))) {
+				return filepath.SkipDir
+			}
+			return nil
 		}
-		return nil
+		if !ggufpick.IsWeightGGUF(rel) {
+			return nil
+		}
+		found = ggufmeta.DecisionType(path)
+		return fs.SkipAll
 	})
 	return found
 }

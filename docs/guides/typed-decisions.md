@@ -125,7 +125,11 @@ curl http://localhost:11435/v1/decisions -H 'Content-Type: application/json' -d 
 On first use csghub-lite converts the SafeTensors checkpoint to GGUF with the
 bundled llama.cpp converter (a few seconds for Laya) and starts llama-server
 with the whole context as one batch, since these heads read the full prompt
-in one pass. csghub-lite translates each request to `/v1/systemone`:
+in one pass. llama.cpp sizes its output buffers to that batch, so memory grows
+with hidden size times context: about 10 MB for Laya (1,024 hidden, 8,192
+context), but Kev and Clef have Qwen-sized hidden states and can need a few
+hundred MB more at a 16K context. Lower the model's context length in its
+settings if that matters; inputs longer than it are then refused. csghub-lite translates each request to `/v1/systemone`:
 `predicate` becomes `noul`, `choice` keeps its values as option keys with their
 descriptions, and `score` passes the levels as `label: description`. The
 probabilities are the model's own, scaled by the temperatures stored in the

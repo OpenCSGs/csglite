@@ -35,6 +35,10 @@ export function ApiInfoDialog({
       : apiExampleModeFromPipelineTag(pipelineTag, isVision);
   const examples = buildApiExamples(resolvedBaseUrl, model, mode);
   const decisionExamples = isDecision ? buildApiExamples(resolvedBaseUrl, model, "decision") : null;
+  // A decision-only model cannot chat. The chat heading only separates the
+  // two sections, so it shows when decision examples come first.
+  const showChatExamples = !(decisionExamples && isDecisionOnly);
+  const showChatHeading = Boolean(decisionExamples) && showChatExamples;
   const isTextToImage = mode === "text-to-image";
   const isImageToImage = mode === "image-to-image";
 
@@ -65,12 +69,12 @@ export function ApiInfoDialog({
               <CodeBlock title={t("dash.apiCurl")} code={decisionExamples.curl} />
               <CodeBlock title={t("dash.apiPython")} code={decisionExamples.python} />
               <CodeBlock title={t("dash.apiJs")} code={decisionExamples.javascript} />
-              {!isDecisionOnly && (
-                <h4 class="border-t border-gray-100 pt-4 text-sm font-semibold text-gray-900">{t("dash.apiChatSection")}</h4>
-              )}
             </>
           )}
-          {!(decisionExamples && isDecisionOnly) && (
+          {showChatHeading && (
+            <h4 class="border-t border-gray-100 pt-4 text-sm font-semibold text-gray-900">{t("dash.apiChatSection")}</h4>
+          )}
+          {showChatExamples && (
             <>
               <CodeBlock title={t("dash.apiCurl")} code={examples.curl} />
               <CodeBlock title={t("dash.apiPython")} code={examples.python} />

@@ -19,7 +19,10 @@ func SupportedHFArchitecture(hfArch string) (string, bool) {
 	if ggufArch, ok := archMapping[arch]; ok {
 		return ggufArch, true
 	}
-	ggufArch, ok := pythonConverterArchitectureMapping[arch]
+	if ggufArch, ok := pythonConverterArchitectureMapping[arch]; ok {
+		return ggufArch, true
+	}
+	ggufArch, ok := decisionCheckpointRootArchitectures[arch]
 	return ggufArch, ok
 }
 
@@ -141,7 +144,6 @@ var pythonConverterArchitectureMapping = map[string]string{
 	"LevModel":                               "qwen35",
 	"MapleForCausalLM":                       "maple",
 	"ModernBertDecisionModel":                "modern-bert",
-	"LayaTypedDecisions":                     "modern-bert",
 	"NimbleModel":                            "qwen35",
 	"OpenJevModel":                           "qwen35",
 	"PplxDeciderModel":                       "qwen35",
