@@ -338,7 +338,7 @@ func Export(ctx context.Context, store TraceStore, storageRoot, datasetDir strin
 		FileEntries:  localFiles,
 		DownloadedAt: createdAt,
 		Origin:       dataset.LocalDatasetOriginExport,
-		Description:  "Training dataset exported from CSGHub Lite observability traces.",
+		Description:  "Training dataset exported from CSGLite observability traces.",
 		License:      "other",
 	}
 	if err := dataset.SaveManifest(datasetDir, local); err != nil {
@@ -888,15 +888,15 @@ func redactValue(value any) any {
 
 func datasetCard(options Options, preview Preview) string {
 	return fmt.Sprintf(`---
-pretty_name: CSGHub Lite Trace Export
+pretty_name: CSGLite Trace Export
 license: other
 task_categories:
 - text-generation
 ---
 
-# CSGHub Lite Trace Export
+# CSGLite Trace Export
 
-This dataset was manually exported from local CSGHub Lite observability traces.
+This dataset was manually exported from local CSGLite observability traces.
 
 - Format: %s
 - Schema version: %s

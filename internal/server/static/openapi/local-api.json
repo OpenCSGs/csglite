@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "CSGHub Lite Local API",
+    "title": "CSGLite Local API",
     "version": "0.1.0",
     "description": "Structured documentation for the local `/api/*` and `/v1/*` endpoints served by `csghub-lite`.\n\nRequest correlation: every API response includes `X-Request-ID` and `X-B3-TraceId`. Callers may provide `X-Request-ID` using up to 128 alphanumeric or `-_.:` characters and may provide a non-zero 16- or 32-hex-character `X-B3-TraceId`; invalid values are replaced. Text-generation requests also accept `X-CSGLite-Trace-ID` and `X-CSGLite-Thread-ID`. A valid CSGLite trace ID remains the logical Observability grouping key, while B3 identifies the distributed path through trusted inference services.\n\nMaintenance note: whenever you add, remove, or rename an `/api/*` or `/v1/*` route in `internal/server/routes.go`, update this file and run the OpenAPI sync test before merging."
   },

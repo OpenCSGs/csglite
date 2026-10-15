@@ -97,12 +97,12 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     installMode: "builtin",
     progressMode: "indeterminate",
     installHint: {
-      en: "Built into CSGHub-Lite. Open it directly—no separate install is required.",
-      zh: "已内置于 CSGHub-Lite，可直接打开，无需单独安装。",
+      en: "Built into CSGLite. Open it directly—no separate install is required.",
+      zh: "已内置于 CSGLite，可直接打开，无需单独安装。",
     },
     cnInstallHint: {
-      en: "Built into CSGHub-Lite. Open it directly—no separate install is required.",
-      zh: "已内置于 CSGHub-Lite，可直接打开，无需单独安装。",
+      en: "Built into CSGLite. Open it directly—no separate install is required.",
+      zh: "已内置于 CSGLite，可直接打开，无需单独安装。",
     },
     commandPreview: "",
     liveLogsReady: false,
@@ -605,8 +605,8 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
         zh: "下载并校验 macOS DMG 或 Windows 安装程序，然后安装桌面应用。",
       },
       {
-        en: "Launch CSGClaw Desktop, which discovers and connects to csghub-lite automatically.",
-        zh: "启动 CSGClaw Desktop，由其自动发现并连接 csghub-lite。",
+        en: "Launch CSGClaw Desktop, which discovers and connects to CSGLite automatically.",
+        zh: "启动 CSGClaw Desktop，由其自动发现并连接 CSGLite。",
       },
     ],
     status: "idle",
