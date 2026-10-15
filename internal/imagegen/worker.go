@@ -28,6 +28,13 @@ var diffusersWorkerScript []byte
 
 const qwen21RuntimeEnv = "CSGHUB_IMAGE_QWEN21_RUNTIME"
 
+const (
+	// A 1024x1024, 40-step Qwen-Image-2.1 run takes about four minutes on a
+	// 16 GB M-series Mac, so the old five-minute cap failed slower machines.
+	diffusersGenerateTimeout = 30 * time.Minute
+	diffusersErrorLogLines   = 20
+)
+
 // ResolveImageBackend chooses the worker backend for a downloaded image model.
 // The override is intentionally narrow: MLX weights cannot be loaded by
 // Diffusers, and ordinary Diffusers weights cannot be loaded by MFLUX.
@@ -132,7 +139,7 @@ func NewDiffusersEngine(ctx context.Context, modelName, modelDir string, runtime
 		cmd:       cmd,
 		exitCh:    exitCh,
 		port:      port,
-		client:    &http.Client{Timeout: 5 * time.Minute},
+		client:    &http.Client{Timeout: diffusersGenerateTimeout},
 		logBuf:    logBuf,
 		logFile:   logFile,
 	}
@@ -155,12 +162,12 @@ func (e *DiffusersEngine) Generate(ctx context.Context, req api.OpenAIImagesGene
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, e.generateError(ctx, err)
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, e.generateError(ctx, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("Diffusers worker error %d: %s", resp.StatusCode, string(respBody))
@@ -221,6 +228,44 @@ func (e *DiffusersEngine) waitReady(ctx context.Context) error {
 
 func (e *DiffusersEngine) url(path string) string {
 	return fmt.Sprintf("http://127.0.0.1:%d%s", e.port, path)
+}
+
+// generateError explains a failed /generate call. A worker that crashes
+// mid-request (for example a native abort inside MLX) surfaces only as EOF, so
+// when the process has exited, report that together with its last output.
+func (e *DiffusersEngine) generateError(ctx context.Context, err error) error {
+	if e.exitCh == nil || ctx.Err() != nil {
+		return err
+	}
+	select {
+	case exitErr, ok := <-e.exitCh:
+		msg := "Diffusers worker exited during generation"
+		if ok && exitErr != nil {
+			msg += ": " + exitErr.Error()
+		}
+		if e.logBuf != nil {
+			if tail := lastLines(e.logBuf.String(), diffusersErrorLogLines); tail != "" {
+				msg += "\n\nDiffusers worker output:\n" + tail
+			}
+		}
+		return fmt.Errorf("%s (%w)", msg, err)
+	case <-time.After(2 * time.Second):
+		return err
+	}
+}
+
+func lastLines(text string, n int) string {
+	// Progress bars redraw with \r; treat each redraw as a line and skip blanks.
+	var lines []string
+	for _, line := range strings.FieldsFunc(text, func(r rune) bool { return r == '\n' || r == '\r' }) {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func (e *DiffusersEngine) workerStartError(msg string) string {

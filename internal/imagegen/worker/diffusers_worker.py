@@ -1,5 +1,6 @@
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import inspect
 import io
@@ -72,6 +73,135 @@ def detect_device(model_dir: str, model_name: str) -> tuple[str, torch.dtype]:
     return "cpu", torch.float32
 
 
+MLX_NATIVE_COMPONENTS = ("transformer", "text_encoder", "vae")
+
+
+def _safetensors_metadata(path: Path) -> Dict[str, Any]:
+    try:
+        with path.open("rb") as handle:
+            size = int.from_bytes(handle.read(8), "little")
+            header = json.loads(handle.read(size))
+    except (OSError, ValueError):
+        return {}
+    metadata = header.get("__metadata__")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def is_mlx_native_checkpoint(model_dir: str) -> bool:
+    """Reports whether model_dir is a pre-converted MLX checkpoint such as
+    mlx-community/Qwen-Image-2.1-MLX-4bit: diffusers folder layout, but weights
+    already in MLX layout (optionally quantized, described by each component's
+    config.json) rather than torch layout or mflux's own saved format."""
+    for name in MLX_NATIVE_COMPONENTS:
+        files = sorted((Path(model_dir) / name).glob("*.safetensors"))
+        if not files:
+            return False
+        metadata = _safetensors_metadata(files[0])
+        if metadata.get("format") != "mlx" or "quantization_level" in metadata:
+            return False
+    return True
+
+
+def _rename_qwen21_transformer_key(key: str) -> Optional[str]:
+    if key.startswith("modulation."):
+        # The converter dropped the SiLU from diffusers' Sequential(SiLU, Linear).
+        index, _, rest = key[len("modulation."):].partition(".")
+        return f"modulation.layers.{int(index) + 1}.{rest}"
+    if key.startswith("time_text_embed.linear_"):
+        return "time_text_embed.timestep_embedder." + key[len("time_text_embed."):]
+    return key
+
+
+def _rename_qwen21_text_encoder_key(key: str) -> Optional[str]:
+    prefix = "language_model.model."
+    if not key.startswith(prefix):
+        # lm_head and vision_tower are unused by the text-to-image encoder.
+        return None
+    return key[len(prefix):]
+
+
+def _rename_qwen21_vae_key(key: str) -> Optional[str]:
+    if ".time_conv." in key:
+        # Video-only temporal convolutions; the image VAE has no counterpart.
+        return None
+    key = key.replace(".resample.1.", ".conv.")
+    if key.endswith(".gamma"):
+        key = key[: -len(".gamma")] + ".weight"
+    return key
+
+
+def _map_mlx_native_weights(module: Any, weights: Dict[str, Any], rename: Any, component: str) -> Dict[str, Any]:
+    from mlx.utils import tree_flatten
+
+    expected = {key for key, _ in tree_flatten(module.parameters())}
+    mapped: Dict[str, Any] = {}
+    for key, value in weights.items():
+        target = rename(key)
+        if target is None:
+            continue
+        base, _, leaf = target.rpartition(".")
+        if leaf in ("weight", "bias") and target not in expected and f"{base}.conv.{leaf}" in expected:
+            # mflux wraps convolutions in a module holding a .conv child.
+            target = f"{base}.conv.{leaf}"
+        mapped[target] = value
+    wanted = {key for key in expected if key.rpartition(".")[2] in ("weight", "bias")}
+    missing = sorted(wanted - set(mapped))
+    if missing:
+        raise RuntimeError(
+            f"MLX checkpoint {component} is missing {len(missing)} weights, for example {missing[:3]}"
+        )
+    return mapped
+
+
+def load_mlx_native_qwen21(model_dir: str) -> Any:
+    import mlx.core as mx
+    from mlx import nn
+    from mlx.utils import tree_unflatten
+    from mflux.models.common.config import ModelConfig
+    from mflux.models.qwen21.qwen21_initializer import Qwen21Initializer
+    from mflux.models.qwen21.variants.txt2img.qwen_image_21 import QwenImage21
+
+    pipeline = QwenImage21.__new__(QwenImage21)
+    nn.Module.__init__(pipeline)
+    Qwen21Initializer._init_config(pipeline, ModelConfig.qwen_image_21())
+    Qwen21Initializer._init_tokenizers(pipeline, model_dir)
+    Qwen21Initializer._init_models(pipeline)
+
+    renames = {
+        "transformer": _rename_qwen21_transformer_key,
+        "text_encoder": _rename_qwen21_text_encoder_key,
+        "vae": _rename_qwen21_vae_key,
+    }
+    bits: Optional[int] = None
+    for name in MLX_NATIVE_COMPONENTS:
+        component_dir = Path(model_dir) / name
+        module = getattr(pipeline, name)
+        raw: Dict[str, Any] = {}
+        for shard in sorted(component_dir.glob("*.safetensors")):
+            raw.update(mx.load(str(shard)))
+        mapped = _map_mlx_native_weights(module, raw, renames[name], name)
+
+        try:
+            config = json.loads((component_dir / "config.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            config = {}
+        quantization = config.get("quantization")
+        if isinstance(quantization, dict):
+            # Quantize exactly the layers the checkpoint stores packed, before
+            # loading, so packed weights land in QuantizedLinear/Embedding.
+            nn.quantize(
+                module,
+                group_size=int(quantization.get("group_size", 64)),
+                bits=int(quantization.get("bits", 4)),
+                class_predicate=lambda path, layer: hasattr(layer, "to_quantized") and f"{path}.scales" in mapped,
+            )
+            bits = int(quantization.get("bits", 4))
+        module.update(tree_unflatten(list(mapped.items())), strict=False)
+        mx.eval(module.parameters())
+    pipeline.bits = bits
+    return pipeline
+
+
 class Worker:
     def __init__(self, model_dir: str, model_name: str, backend: str) -> None:
         self.model_dir = model_dir
@@ -83,10 +213,17 @@ class Worker:
             self.dtype = None
         self.pipeline = None
         self.lock = threading.Lock()
+        # MLX streams are per-thread, and mx.load returns lazy arrays bound to
+        # the loading thread's stream. Evaluating them from an HTTP handler
+        # thread aborts the process ("There is no Stream(gpu, N) in current
+        # thread"), so MLX load and generate share one dedicated thread.
+        self.mlx_executor: Optional[ThreadPoolExecutor] = None
+        if backend == "mlx-qwen-image-2.1":
+            self.mlx_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
 
     def load(self) -> None:
-        if self.backend == "mlx-qwen-image-2.1":
-            self._load_mlx_qwen21()
+        if self.mlx_executor is not None:
+            self.mlx_executor.submit(self._load_mlx_qwen21).result()
             return
         if self.backend != "diffusers":
             raise ValueError(f"unsupported image backend: {self.backend}")
@@ -111,6 +248,9 @@ class Worker:
         from mflux.models.common.config import ModelConfig
         from mflux.models.qwen21.variants.txt2img.qwen_image_21 import QwenImage21
 
+        if is_mlx_native_checkpoint(self.model_dir):
+            self.pipeline = load_mlx_native_qwen21(self.model_dir)
+            return
         self.pipeline = QwenImage21(
             model_path=self.model_dir,
             model_config=ModelConfig.qwen_image_21(),
@@ -177,8 +317,8 @@ class Worker:
         return kwargs
 
     def generate(self, req: Dict[str, Any]) -> Dict[str, Any]:
-        if self.backend == "mlx-qwen-image-2.1":
-            return self._generate_mlx_qwen21(req)
+        if self.mlx_executor is not None:
+            return self.mlx_executor.submit(self._generate_mlx_qwen21, req).result()
         kwargs = self.build_call_kwargs(req)
         with self.lock:
             result = self.pipeline(**kwargs)
