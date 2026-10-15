@@ -33,7 +33,7 @@ func TestFromMarketplaceConvertibleSafeTensors(t *testing.T) {
 
 func TestFromMarketplaceConvertibleSafeTensorsUsesLlamaCppRegistry(t *testing.T) {
 	cases := map[string]string{
-		"ModernBertModel":                  "modernbert",
+		"ModernBertModel":                  "modern-bert",
 		"Idefics3ForConditionalGeneration": "mmp",
 		"Gemma4ForConditionalGeneration":   "gemma4",
 	}

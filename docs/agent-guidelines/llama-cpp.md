@@ -68,20 +68,33 @@ Use the official GitHub release tag for everything upstream publishes:
   `scripts/sync-llama-converter.sh --tag <tag> --assets-version <version>`.
 - **Installer prebuilts** that exist on the official release page — macOS CPU,
   Ubuntu CPU x64/arm64, Windows CPU/CUDA where `ggml-org` ships tarballs/zip,
-  etc. Download from
-  `https://github.com/ggml-org/llama.cpp/releases/download/<tag>/…`, verify, then
-  mirror the same filenames to GitLab generic packages (`llama-cpp/<tag>/`) and
-  release assets when needed.
+  etc. Mirror them with
+  `scripts/llama-build/mirror-official-assets.sh <tag>`, which lists the release
+  assets, downloads from
+  `https://github.com/ggml-org/llama.cpp/releases/download/<tag>/…`, verifies
+  each archive, and uploads the same filenames to GitLab generic packages
+  (`llama-cpp/<tag>/`). Keep GitLab filenames aligned with official release
+  names, and assert the mirrored count with `LLAMA_MIRROR_EXPECTED=<n>`.
+- **Never** mirror the versioned Linux CUDA names
+  (`llama-<tag>-bin-ubuntu-cuda-<version>-<arch>.tar.gz`,
+  `cudart-llama-<tag>-bin-ubuntu-cuda-<version>-<arch>.tar.gz`): upstream has
+  published them since b11541 and builds them on Ubuntu 24.04. The mirror script
+  skips them, and `scripts/install.sh` must not scan the release metadata for
+  them: if one of those upstream names ever becomes a candidate it installs a
+  `llama-server` that cannot start on 22.04. (The fixed legacy alias
+  `llama-<tag>-bin-ubuntu-cuda-12.4-<arch>.tar.gz` is separate — that name is
+  this repository's own 22.04 mirror for tags before b9158.)
 
 `scripts/install.sh` / `scripts/install.ps1` already prefer GitLab mirrors but
 fall back to GitHub; keep GitLab filenames aligned with official release names.
 
 ### Ubuntu Linux CUDA — local Docker build only
 
-Upstream **does not** publish Linux CUDA tarballs. **Do not** treat
+Upstream has published Linux CUDA tarballs since b11541, but builds them on
+Ubuntu 24.04. **Do not** mirror them, and **do not** treat
 `hybridgroup/llama-cpp-builder` (or any third-party CI image) as the sync source
-for GitLab mirrors: those builds often target Ubuntu 24.04 and break on 22.04
-(`GLIBC_2.38`, `GLIBCXX_3.4.32`).
+for GitLab mirrors either: those builds often target Ubuntu 24.04 and break on
+22.04 (`GLIBC_2.38`, `GLIBCXX_3.4.32`).
 
 For each new tag, after version lockstep is updated:
 
@@ -103,11 +116,12 @@ them.** Treat ROCm exactly like CUDA: build it locally on 22.04.
 
 The ROCm series in the filename is not cosmetic. `scripts/install.sh` derives it
 from the host (`CSGHUB_LITE_LLAMA_ROCM_VERSION`, `/opt/rocm/.info/version`,
-`hipcc`) and asks for that exact series first. If the series-specific package is
-missing, the installer falls back to any published ROCm asset for the tag —
-which is how a 24.04 / ROCm 10.0 build reached a 22.04 / ROCm 7.2 host. Mirror
-the series that `docker/rocm/Dockerfile` actually runs (currently 7.2) for every
-tag, or that fallback fires again.
+`hipcc`) and asks for that exact series first. If that package is missing it
+falls back to a series scan, but the scan reads **only our own GitLab release
+metadata**, so it can only ever surface a package we mirrored — it cannot reach
+upstream's 24.04 builds. Mirror the series that `docker/rocm/Dockerfile` actually
+runs (currently 7.2) for every tag, or ROCm hosts silently lose the ROCm build
+and drop to the Vulkan/generic asset instead.
 
 For each new tag, after version lockstep is updated:
 
@@ -130,8 +144,8 @@ download them on Ubuntu 22.04 hosts.
 **Use the checked-in scripts:** [`scripts/llama-build/README.md`](../../scripts/llama-build/README.md)
 
 ```sh
-make llama-cuda-rebuild-all LLAMA_TAG=b10830   # or ./scripts/llama-build/rebuild-upload-all.sh
-make llama-rocm-rebuild-x64 LLAMA_TAG=b10830   # ROCm is a separate target
+make llama-cuda-rebuild-all LLAMA_TAG=b11541   # or ./scripts/llama-build/rebuild-upload-all.sh
+make llama-rocm-rebuild-x64 LLAMA_TAG=b11541   # ROCm is a separate target
 ```
 
 ### Why Ubuntu 22.04 in Docker
@@ -160,7 +174,7 @@ is already present.
 
 Workdirs (`scripts/llama-build/work/`) are gitignored; only scripts are committed.
 
-### GitLab packages (b10830 reference)
+### GitLab packages (b11541 reference)
 
 | Arch | Filename | Tar layout |
 |------|----------|------------|

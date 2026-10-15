@@ -10,12 +10,18 @@ Canonical rules: [`docs/agent-guidelines/llama-cpp.md`](../../docs/agent-guideli
 
 | Artifact | Source |
 |----------|--------|
-| Converter, CPU/macOS/Windows assets upstream publishes | **Official** `ggml-org/llama.cpp` GitHub releases → mirror to GitLab |
+| Converter, CPU/macOS/Windows assets upstream publishes | **Official** `ggml-org/llama.cpp` GitHub releases → mirror with `mirror-official-assets.sh` |
 | **Ubuntu Linux CUDA** (`*-ubuntu-cuda-x64.tar.gz`, `*-ubuntu-cuda-arm64.tar.gz`) | **This directory** — Docker build on 22.04, then upload to GitLab |
 | **Ubuntu Linux ROCm** (`*-ubuntu-rocm-<series>-x64.tar.gz`) | **This directory** — Docker build on 22.04, then upload to GitLab |
 
 Do **not** sync Ubuntu CUDA binaries from `hybridgroup/llama-cpp-builder`; use it
 only to compare tar layout if needed.
+
+Do **not** mirror upstream's versioned Linux CUDA assets
+(`llama-<tag>-bin-ubuntu-cuda-<version>-<arch>.tar.gz`,
+`cudart-llama-<tag>-bin-ubuntu-cuda-<version>-<arch>.tar.gz`) either. Upstream
+started publishing them at b11541 and builds that job on `ubuntu-24.04`;
+`mirror-official-assets.sh` skips them.
 
 Do **not** mirror upstream's `llama-<tag>-bin-ubuntu-rocm-*.tar.gz` either.
 Upstream started publishing a Linux ROCm asset at b10830, but its release
@@ -41,32 +47,47 @@ you intend to re-pull images.
 ## Quick start
 
 ```sh
-# From repo root; default tag b10830
+# From repo root; default tag b11541
 make llama-cuda-rebuild-all
 
 # Or explicitly:
-./scripts/llama-build/rebuild-upload-all.sh b10830
+./scripts/llama-build/rebuild-upload-all.sh b11541
 
 # One architecture only:
-./scripts/llama-build/rebuild-upload-x64.sh b10830
-./scripts/llama-build/rebuild-upload-arm64.sh b10830
+./scripts/llama-build/rebuild-upload-x64.sh b11541
+./scripts/llama-build/rebuild-upload-arm64.sh b11541
 
 # ROCm x64 (separate target; not part of rebuild-upload-all.sh)
 make llama-rocm-rebuild-x64
-./scripts/llama-build/rebuild-upload-rocm-x64.sh b10830
+./scripts/llama-build/rebuild-upload-rocm-x64.sh b11541
 
-# Build and verify without publishing
-LLAMA_BUILD_SKIP_UPLOAD=1 ./scripts/llama-build/rebuild-upload-rocm-x64.sh b10830
+# Build and verify without publishing (works for any rebuild-upload-*.sh and mirror-official-assets.sh)
+LLAMA_BUILD_SKIP_UPLOAD=1 ./scripts/llama-build/rebuild-upload-x64.sh b11541
 ```
+
+Mirror the official release assets (everything upstream publishes except the
+Linux CUDA/ROCm/cudart names this directory builds or omits). Check the list
+first, then upload:
+
+```sh
+./scripts/llama-build/mirror-official-assets.sh b11541 --dry-run
+LLAMA_MIRROR_EXPECTED=29 ./scripts/llama-build/mirror-official-assets.sh b11541
+
+# Download and verify without publishing
+LLAMA_BUILD_SKIP_UPLOAD=1 ./scripts/llama-build/mirror-official-assets.sh b11541
+```
+
+GitHub throttles long direct transfers, so export `https_proxy` (or
+`source ~/.myshrc`) when the proxy is faster than the direct route.
 
 Artifacts: `scripts/llama-build/work/out/*.tar.gz` (gitignored).
 
 Compare with GitLab before/after upload:
 
 ```sh
-./scripts/llama-build/compare-with-gitlab.sh x64 b10830
-./scripts/llama-build/compare-with-gitlab.sh arm64 b10830
-./scripts/llama-build/compare-with-gitlab.sh rocm-x64 b10830
+./scripts/llama-build/compare-with-gitlab.sh x64 b11541
+./scripts/llama-build/compare-with-gitlab.sh arm64 b11541
+./scripts/llama-build/compare-with-gitlab.sh rocm-x64 b11541
 ```
 
 ## Pinned Docker images
@@ -84,7 +105,7 @@ Keep `LLAMA_BUILD_ROCM_IMAGE` and `LLAMA_BUILD_ROCM_SERIES` in lockstep with the
 base image in `docker/rocm/Dockerfile`; the series string ends up in the package
 filename that `scripts/install.sh` looks for.
 
-## Package layout (b10830 reference)
+## Package layout (b11541 reference)
 
 | Arch | Tarball | Root layout |
 |------|---------|-------------|
@@ -128,7 +149,7 @@ package (b9158, rocm-7.2). Build time scales with this list, so narrow it when
 you only need one card:
 
 ```sh
-GPU_TARGETS="gfx1100" ./scripts/llama-build/rebuild-upload-rocm-x64.sh b10830
+GPU_TARGETS="gfx1100" ./scripts/llama-build/rebuild-upload-rocm-x64.sh b11541
 ```
 
 Read the target off the host with `rocminfo | grep gfx`.
@@ -156,4 +177,5 @@ Read the target off the host with `rocminfo | grep gfx`.
 | `build-ubuntu22-cuda-*.sh` | In-container CUDA compile + pack |
 | `build-ubuntu22-rocm-x64.sh` | In-container ROCm compile + pack |
 | `rebuild-upload-*.sh` | Host driver: clone, docker run, verify, upload |
+| `mirror-official-assets.sh` | Mirror upstream release assets to GitLab, skipping Linux CUDA/ROCm/cudart |
 | `compare-with-gitlab.sh` | Diff layout + runtime vs remote package |

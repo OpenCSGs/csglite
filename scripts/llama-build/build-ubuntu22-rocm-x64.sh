@@ -8,7 +8,7 @@
 # llama-<tag>-bin-ubuntu-rocm-<series>-x64.tar.gz.
 set -euo pipefail
 
-TAG="${LLAMA_TAG:-b10830}"
+TAG="${LLAMA_TAG:-b11541}"
 ROCM_SERIES="${ROCM_SERIES:-7.2}"
 WORKDIR="${WORKDIR:-/work}"
 OUTDIR="${OUTDIR:-/out}"

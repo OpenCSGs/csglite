@@ -8,7 +8,7 @@ INSTALL_DIR="${INSTALL_DIR:-}"
 INSTALL_DIR_DEFAULT="/usr/local/bin"
 BINARY_NAME="${BINARY_NAME:-csghub-lite}"
 LLAMA_CPP_REPO="ggml-org/llama.cpp"
-LLAMA_CPP_DEFAULT_TAG="${CSGHUB_LITE_LLAMA_CPP_TAG:-b10830}"
+LLAMA_CPP_DEFAULT_TAG="${CSGHUB_LITE_LLAMA_CPP_TAG:-b11541}"
 INSTALL_PATH_PROFILE=""
 INSTALL_PATH_DIR=""
 
@@ -182,33 +182,6 @@ add_release_candidates() {
         add_candidate "$_match"
     done
     IFS="$_old_ifs"
-}
-
-add_release_cuda_candidates() {
-    _arch_token="$1"
-    _versioned_pattern="llama-${_llama_tag}-bin-ubuntu-cuda-[0-9]+(\\.[0-9]+(\\.[0-9]+)?)?-${_arch_token}\\.tar\\.gz"
-    _versioned_matches="$(extract_release_asset_names "$_versioned_pattern" 2>/dev/null | while IFS= read -r _match; do
-        [ -n "$_match" ] || continue
-        _ver="$(printf "%s\n" "$_match" | sed -n "s/.*-cuda-\\([0-9][0-9]*\\)\\(\\.\\([0-9][0-9]*\\)\\)\\{0,1\\}\\(\\.\\([0-9][0-9]*\\)\\)\\{0,1\\}-${_arch_token}\\.tar\\.gz/\\1 \\3 \\5/p")"
-        [ -n "$_ver" ] || continue
-        # shellcheck disable=SC2086
-        set -- $_ver
-        printf "%06d %06d %06d %s\n" "${1:-0}" "${2:-0}" "${3:-0}" "$_match"
-    done | sort -r | sed 's/^[0-9][0-9]* [0-9][0-9]* [0-9][0-9]* //')"
-    if [ -n "$_versioned_matches" ]; then
-        _old_ifs="$IFS"
-        IFS='
-'
-        for _match in $_versioned_matches; do
-            add_candidate "$_match"
-        done
-        IFS="$_old_ifs"
-    fi
-
-    # Some mirrored CUDA builds intentionally omit the CUDA minor version in the
-    # filename. Prefer the release metadata name before trying hard-coded legacy
-    # aliases, so installers do not stall on missing versioned URLs.
-    add_release_candidates "llama-${_llama_tag}-bin-ubuntu-cuda-${_arch_token}\\.tar\\.gz"
 }
 
 normalize_minor_version() {
@@ -619,9 +592,12 @@ install_llama_server() {
     ARCH="$(detect_arch)"
 
     _llama_tag="${LLAMA_CPP_DEFAULT_TAG}"
-    _gh_url="${GITHUB_API}/${LLAMA_CPP_REPO}/releases/tags/${_llama_tag}"
     _gl_url="${GITLAB_API}/${GITLAB_LLAMA_ID}/releases/${_llama_tag}"
-    _llama_json="$(region_download_text "$_gh_url" "$_gl_url" 2>/dev/null || true)"
+    # Only our own GitLab release metadata may feed the ROCm series scan below.
+    # Upstream publishes its Linux ROCm assets from ubuntu-24.04 (they need
+    # GLIBC_2.38 and die on the 22.04 hosts this installer targets), so reading
+    # GitHub metadata here is how a 24.04 build once reached a 22.04 host.
+    _llama_json="$(try_download_text "$_gl_url" 2>/dev/null || true)"
     if [ -z "$_llama_json" ]; then
         warn "Failed to query llama.cpp release metadata for ${_llama_tag}; continuing with the pinned tag."
     fi
@@ -688,8 +664,16 @@ install_llama_server() {
             if [ -n "${_arch_token:-}" ]; then
                 if command -v nvidia-smi >/dev/null 2>&1; then
                     info "NVIDIA GPU detected, trying CUDA build first."
-                    add_release_cuda_candidates "$_arch_token"
+                    # Deliberately no metadata scan for versioned Linux CUDA
+                    # names: upstream has published them since b11541 but builds
+                    # that job on Ubuntu 24.04, so they need GLIBC_2.38 and die on
+                    # the 22.04 hosts this installer targets, and nothing here
+                    # verifies the binary afterwards. The local 22.04 mirror
+                    # (scripts/llama-build/) is the only Linux CUDA source to trust.
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-cuda-${_arch_token}.tar.gz"
+                    # Legacy alias of the pre-b9158 local mirrors (b8429 and
+                    # earlier). Harmless for current tags, which publish no such
+                    # asset, but kept so an old pinned tag still resolves.
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-cuda-12.4-${_arch_token}.tar.gz"
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-vulkan-${_arch_token}.tar.gz"
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-${_arch_token}.tar.gz"
@@ -701,6 +685,10 @@ install_llama_server() {
                     else
                         info "ROCm runtime detected, trying published ROCm builds first."
                     fi
+                    # Unlike CUDA, the series is part of our ROCm asset name, so a
+                    # fixed-name candidate cannot cover it. Scan only our own
+                    # GitLab release metadata (see the fetch above); upstream's
+                    # 24.04 ROCm builds must never become candidates.
                     add_release_candidates "llama-${_llama_tag}-bin-ubuntu-rocm-[0-9]+\\.[0-9]+-${_arch_token}\\.tar\\.gz"
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-vulkan-${_arch_token}.tar.gz"
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-${_arch_token}.tar.gz"
