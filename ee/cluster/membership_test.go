@@ -173,3 +173,26 @@ func TestSettingsNormalize(t *testing.T) {
 		t.Fatalf("normalized %+v", s)
 	}
 }
+
+func TestStoreDedupesAndForgetsAddresses(t *testing.T) {
+	st, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Create("Lab"); err != nil {
+		t.Fatal(err)
+	}
+	mem := Member{UUID: "be1af115-125b-4dae-bfe8-3870d2f1fbb4", Name: "n1", CertFingerprint: "sha256:aa",
+		LastAddresses: []string{"192.168.1.9:11438", "192.168.1.9:11438"}}
+	if _, err := st.Upsert(mem, false); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.Member(mem.UUID)
+	if len(got.LastAddresses) != 1 {
+		t.Fatalf("addresses not deduped: %v", got.LastAddresses)
+	}
+	st.ForgetAddress(mem.UUID, "192.168.1.9:11438")
+	if got, _ := st.Member(mem.UUID); len(got.LastAddresses) != 0 {
+		t.Fatalf("address not forgotten: %v", got.LastAddresses)
+	}
+}

@@ -17,6 +17,10 @@ import (
 	"time"
 )
 
+// errSelfAddress means a member's endpoint answered with this node's own
+// certificate: the member moved and this node now holds its old address.
+var errSelfAddress = errors.New("address now belongs to this node")
+
 // pinCheck answers whether a certificate fingerprint is pinned for a UUID.
 type pinCheck func(nodeUUID, fingerprint string) bool
 
@@ -65,7 +69,11 @@ func clientTLSConfig(id *Identity, wantUUID, wantFingerprint string) *tls.Config
 			if wantFingerprint == "" {
 				return nil
 			}
-			if got := CertFingerprint(leaf); got != wantFingerprint {
+			got := CertFingerprint(leaf)
+			if got == id.Fingerprint() && got != wantFingerprint {
+				return errSelfAddress
+			}
+			if got != wantFingerprint {
 				return fmt.Errorf("peer certificate %s is not the pinned certificate for %s", got, wantUUID)
 			}
 			if wantUUID != "" && uuidFromCert(leaf) != wantUUID {

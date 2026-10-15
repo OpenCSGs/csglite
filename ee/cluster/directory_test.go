@@ -187,3 +187,12 @@ func TestSettledHealthTreatsProbingAsDown(t *testing.T) {
 		t.Fatalf("a failed retry of a down member is not a change: %s -> %s", before.Health, after.Health)
 	}
 }
+
+func TestDirectoryForgetAddress(t *testing.T) {
+	d := NewDirectory()
+	d.Track("n1", []string{"10.0.0.5:11438", "10.0.0.6:11438"})
+	d.ForgetAddress("n1", "10.0.0.5:11438")
+	if got := d.Candidates("n1"); len(got) != 1 || got[0] != "10.0.0.6:11438" {
+		t.Fatalf("candidates after forget: %v", got)
+	}
+}
