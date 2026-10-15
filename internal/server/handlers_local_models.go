@@ -114,6 +114,7 @@ func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string
 	pipelineTag := strings.TrimSpace(item.PipelineTag)
 	hasMMProj := false
 	typedDecisions := false
+	decisionOnly := false
 	var contextWindow int64
 	var maxModelLen int64
 
@@ -124,7 +125,10 @@ func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string
 		// The tag is cached; whether the System 1 block can be found is checked
 		// live, so a tagged model without one (another runtime's checkpoint,
 		// or a GGUF whose base repo is not downloaded yet) is not offered.
-		if metadata.TypedDecisions {
+		if metadata.DecisionType != "" {
+			typedDecisions = true
+			decisionOnly = inference.DecisionOnlyType(metadata.DecisionType)
+		} else if metadata.TypedDecisions {
 			_, err := decision.FindProfile(dir, s.locateLocalRepo)
 			typedDecisions = err == nil
 		}
@@ -161,6 +165,7 @@ func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string
 		PipelineTag:       pipelineTag,
 		HasMMProj:         hasMMProj,
 		TypedDecisions:    typedDecisions,
+		DecisionOnly:      decisionOnly,
 		ContextWindow:     contextWindow,
 		MaxModelLen:       maxModelLen,
 		Description:       strings.TrimSpace(item.Description),

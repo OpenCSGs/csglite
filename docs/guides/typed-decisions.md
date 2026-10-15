@@ -1,10 +1,16 @@
 # Decisions (OpenAI `/v1/decisions`)
 
 csghub-lite serves the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions)
-from local models whose model card is tagged `jev` or `typed-decisions`, such as
-`autotrust/JEV-9B` and its GGUF quantizations. A decision answers typed
-questions about shared input in one prefill pass per question and returns
-calibrated probabilities instead of generated text:
+from two kinds of local models:
+
+- JEV models whose model card is tagged `jev` or `typed-decisions`, such as
+  `autotrust/JEV-9B` and its GGUF quantizations, read through a decision LoRA
+  (see [Setup](#setup)).
+- Native decision models whose decision head llama.cpp runs itself, such as
+  `convaiinnovations/laya` (see [Native decision models](#native-decision-models)).
+
+A decision answers typed questions about shared input in one forward pass and
+returns calibrated probabilities instead of generated text:
 
 | type | question | main result |
 | --- | --- | --- |
@@ -12,7 +18,7 @@ calibrated probabilities instead of generated text:
 | `choice` | pick one of 2-255 typed values (string or boolean) | `choice`, `probabilities`, `confidence` |
 | `score` | rate against ordered `levels` | `score` (probability-weighted level index), `probabilities`, `confidence` |
 
-The same model keeps serving ordinary chat through `/v1/chat/completions`.
+A JEV model keeps serving ordinary chat through `/v1/chat/completions`.
 
 ## Setup
 
@@ -90,9 +96,56 @@ question's `name` (or `null`).
 - `confidence` is the gap between the two most likely options.
 - csghub-lite never returns `refusal` answers.
 
+## Native decision models
+
+llama.cpp runs some decision models natively and answers them at its
+TypeSafe-compatible `/v1/systemone` endpoint: Laya and Julia (ModernBERT
+encoders with a decision head), OpenJev, Lev, Kev, Nimble, Clef, Perplexity
+Decider and LFM2-D1. csghub-lite recognizes them by the
+`<arch>.decision.type` metadata of their GGUF, or for a Laya-style checkpoint
+that is not converted yet, by its layout (`encoder/config.json` next to
+`rl_agent_config.json` or `julia_config.json`). They need no tag and no
+separate adapter.
+
+```sh
+csghub-lite pull convaiinnovations/laya
+curl http://localhost:11435/v1/decisions -H 'Content-Type: application/json' -d '{
+  "model": "huggingface/convaiinnovations/laya",
+  "input": "Customer message: I was charged twice and nobody has replied.",
+  "questions": [
+    {"type": "choice", "name": "route", "instructions": "Which team should handle this?",
+     "choices": [{"value": "billing"}, {"value": "shipping"}, {"value": "technical"}]},
+    {"type": "predicate", "name": "angry", "instructions": "Is the customer angry?"},
+    {"type": "score", "name": "urgency", "instructions": "How urgent is this?",
+     "levels": [{"label": "can wait"}, {"label": "this week"}, {"label": "today"}, {"label": "right now"}]}
+  ]
+}'
+```
+
+On first use csghub-lite converts the SafeTensors checkpoint to GGUF with the
+bundled llama.cpp converter (a few seconds for Laya) and starts llama-server
+with the whole context as one batch, since these heads read the full prompt
+in one pass. csghub-lite translates each request to `/v1/systemone`:
+`predicate` becomes `noul`, `choice` keeps its values as option keys with their
+descriptions, and `score` passes the levels as `label: description`. The
+probabilities are the model's own, scaled by the temperatures stored in the
+GGUF; `confidence` is again the gap between the two most likely options.
+
+Laya, Kev, Clef and LFM2-D1-Omni read hidden states rather than logits, so
+they cannot generate text: chat requests are refused with a pointer to
+`/v1/decisions`, the model listing marks them `decision_only`, and the Web UI
+opens them in **Decide** mode without a Chat option. OpenJev, Lev, Nimble,
+Perplexity Decider and LFM2-D1 still chat.
+
+Limits of native models: a score question takes 2-10 levels; the number of
+choice options depends on the model (255 for Laya); and Laya cuts long
+questions and options to the token budget it was trained with. The state is
+not cut: Laya English was trained on 512-token inputs, and accuracy on much
+longer inputs is not guaranteed.
+
 ## JEV-compatible endpoint
 
-`POST /v1/decide` keeps the hosted JEV API shape (`kind` noul / score 0-5 /
+`POST /v1/decide` (JEV models only) keeps the hosted JEV API shape (`kind` noul / score 0-5 /
 choice, `state`, `question`, `options`; response `probabilities`, `choice`,
 `choice_index`) for clients written against JEV, and `GET
 /v1/decide/info?model=...` reports the head's protocol, slot counts and
@@ -100,7 +153,8 @@ calibration temperatures.
 
 ## Limits
 
-- `input_image` parts are refused: JEV-9B's decision head reads text.
+- `input_image` parts are refused: JEV-9B's decision head reads text, and
+  csghub-lite does not yet pass images to native decision models.
 - Decisions run on local llama.cpp models only.
 - On JEV-9B Q4_K_M the probabilities stay within about 0.05 of the model
   card's bf16 reference values.

@@ -17,6 +17,18 @@ export interface DecisionLabels {
   refused: string;
 }
 
+/**
+ * Whether the composer is in decision mode: always for a decision-only model
+ * (it cannot chat), otherwise when the user picked Decide.
+ */
+export function isDecisionModeActive(
+  model: { typed_decisions?: boolean; decision_only?: boolean } | null | undefined,
+  decisionEnabled: boolean,
+): boolean {
+  if (!model?.typed_decisions) return false;
+  return Boolean(model.decision_only) || decisionEnabled;
+}
+
 /** Splits a textarea into one trimmed, non-empty entry per line. */
 export function parseDecisionLines(text: string): string[] {
   return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);

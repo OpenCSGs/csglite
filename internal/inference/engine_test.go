@@ -68,6 +68,44 @@ func TestLoadEngine_UnsupportedSafeTensorsArchitectureDoesNotConvert(t *testing.
 	}
 }
 
+func TestReadHFArchitectureRecognizesDecisionCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	for rel, content := range map[string]string{
+		"config.json":          `{"model_type":"laya","architectures":["SomeFutureLayaName"]}`,
+		"encoder/config.json":  `{"architectures":["ModernBertModel"]}`,
+		"rl_agent_config.json": `{"head_layers":2}`,
+	} {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	arch, ok, err := readHFArchitecture(dir)
+	if err != nil || !ok || arch != convert.DecisionCheckpointArchitecture {
+		t.Fatalf("readHFArchitecture = %q, %t, %v", arch, ok, err)
+	}
+	if err := ensureConvertibleHFArchitecture(dir); err != nil {
+		t.Fatalf("decision checkpoint refused: %v", err)
+	}
+}
+
+func TestDecisionOnlyEngineRefusesTextGeneration(t *testing.T) {
+	engine := &llamaEngine{modelName: "org/laya", decisionType: "laya"}
+	_, err := engine.postChatCompletion(t.Context(), map[string]interface{}{})
+	if HTTPStatusCode(err) != 400 || !strings.Contains(HTTPErrorMessage(err), "/v1/decisions") {
+		t.Fatalf("chat on a laya engine: %v", err)
+	}
+	if (&llamaEngine{decisionType: "openjev"}).errDecisionOnly() != nil {
+		t.Fatal("openjev generates text and must not be refused")
+	}
+	if args := decisionOnlyBatchArgs(8192); strings.Join(args, " ") != "--batch-size 8192 --ubatch-size 8192" {
+		t.Fatalf("batch args = %v", args)
+	}
+}
+
 func TestLoadEngine_NoModelFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}"), 0o644); err != nil {

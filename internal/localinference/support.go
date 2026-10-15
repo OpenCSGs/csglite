@@ -373,6 +373,9 @@ func readArchitectureFromDir(modelDir string) string {
 	if strings.TrimSpace(modelDir) == "" {
 		return ""
 	}
+	if convert.IsDecisionCheckpoint(modelDir) {
+		return convert.DecisionCheckpointArchitecture
+	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
 		return ""

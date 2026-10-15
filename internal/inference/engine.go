@@ -250,6 +250,9 @@ func ensureConvertibleHFArchitecture(modelDir string) error {
 }
 
 func readHFArchitecture(modelDir string) (string, bool, error) {
+	if convert.IsDecisionCheckpoint(modelDir) {
+		return convert.DecisionCheckpointArchitecture, true, nil
+	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

@@ -19,6 +19,7 @@ func TestIsSupportedHFArchitecture(t *testing.T) {
 		"GraniteMoeSWAForCausalLM":            "granite_swa",
 		"GraniteSwitchForCausalLM":            "graniteswitch",
 		"ModernBertDecisionModel":             "modern-bert",
+		"LayaTypedDecisions":                  "modern-bert",
 		"PplxDeciderModel":                    "qwen35",
 		"ClefModel":                           "clef",
 		"HrmTextForCausalLM":                  "hrm_text",

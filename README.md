@@ -157,7 +157,7 @@ currently supported for local inference.
 | Automatic speech recognition | Supported | Python ASR runtime | FunASR, Whisper, Wav2Vec2-family ASR models |
 | Text-to-speech | Supported | Python TTS runtime | VoxCPM, Qwen3-TTS, Kokoro, MMS-TTS and other transformers-native TTS models |
 | Realtime voice | Supported | Python ASR + TTS runtimes | Full-duplex over WebRTC or WebSocket, OpenAI Realtime-compatible |
-| Decisions | Supported | llama.cpp + decision LoRA | Models tagged `jev` / `typed-decisions`, such as `autotrust/JEV-9B` and its GGUF quantizations; OpenAI Decisions API-compatible |
+| Decisions | Supported | llama.cpp (decision LoRA or native head) | JEV models such as `autotrust/JEV-9B` and its GGUF quantizations; native decision models such as `convaiinnovations/laya`; OpenAI Decisions API-compatible |
 | Image-to-video | Coming soon | - | Stable Video Diffusion, SV3D |
 | Text-to-video | Coming soon | - | Video generation Diffusers models |
 
@@ -217,8 +217,10 @@ measured latencies are in
 ### Decisions
 
 CSGLite implements the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions),
-`POST /v1/decisions`, for local models tagged `jev` or `typed-decisions` (for
-example `autotrust/JEV-9B` and its GGUF quantizations). A request shares one
+`POST /v1/decisions`, for local decision models: JEV models tagged `jev` or
+`typed-decisions` (for example `autotrust/JEV-9B` and its GGUF quantizations)
+and native decision models whose head llama.cpp runs directly (for example
+`convaiinnovations/laya` and `laya-typed-decisions`). A request shares one
 `input` across up to 200 questions and returns calibrated probabilities instead
 of generated text:
 
@@ -227,6 +229,17 @@ of generated text:
 | `predicate` | check whether a condition is true | `probability` |
 | `choice` | pick one of 2-255 string or boolean values | `choice`, `probabilities`, `confidence` |
 | `score` | rate against ordered `levels` | `score` (probability-weighted level index), `probabilities`, `confidence` |
+
+| Model | Size | Chat | Notes |
+| --- | --- | --- | --- |
+| `autotrust/JEV-9B` | 17 GB (BF16) | Yes | Qwen3.5-9B with a System 1 decision adapter; converted to GGUF on first use, `q8_0` fits a 16 GB Mac |
+| `mradermacher/JEV-9B-GGUF` | 5.2 GB (Q4_K_M) | Yes | Base weights only: also pull `autotrust/JEV-9B` for the decision adapter |
+| `convaiinnovations/laya` | 842 MB | No | ModernBERT-large encoder with a decision head; English, trained on 512-token inputs |
+| `convaiinnovations/laya-typed-decisions` | 842 MB | No | Laya fine-tuned on the typed-decisions workflows (agent traces, customer service, invoices, security incidents); 1,024-token inputs |
+
+Other GGUF models that llama.cpp runs as native decision models (Julia,
+OpenJev, Lev, Kev, Nimble, Clef, Perplexity Decider, LFM2-D1) are recognized
+from their GGUF metadata and served the same way.
 
 ```bash
 curl http://localhost:11435/v1/decisions -H "Content-Type: application/json" -d '{
@@ -245,8 +258,10 @@ The OpenAI SDKs' `client.decisions.create(...)` works unchanged with
 `base_url="http://localhost:11435/v1"`. GGUF quantizations ship only the base
 weights, so also pull the original repository (`autotrust/JEV-9B`) that holds
 the decision adapter; CSGLite converts and loads it automatically, and the same
-model keeps answering ordinary chat. In the Web UI, pick the model in Chat and
-switch the composer to **Decide**. Text input only: `input_image` parts are
+model keeps answering ordinary chat. Laya is a ModernBERT encoder with a
+decision head: CSGLite converts it to GGUF on first use, it answers decisions
+only, and Chat opens it straight in **Decide** mode. For other models, pick the
+model in Chat and switch the composer to **Decide**. Text input only: `input_image` parts are
 refused. `POST /v1/decide` remains available for clients written against the
 JEV API. Details: [docs/guides/typed-decisions.md](docs/guides/typed-decisions.md).
 

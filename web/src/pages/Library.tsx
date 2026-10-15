@@ -1125,6 +1125,7 @@ export function Library() {
           isEmbedding={isEmbeddingModel(apiDialogModel.value)}
           isASR={isASRModel(apiDialogModel.value)}
           isDecision={Boolean(apiDialogModel.value.typed_decisions)}
+          isDecisionOnly={Boolean(apiDialogModel.value.decision_only)}
           onClose={() => (apiDialogModel.value = null)}
         />
       )}

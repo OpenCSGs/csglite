@@ -141,6 +141,7 @@ var pythonConverterArchitectureMapping = map[string]string{
 	"LevModel":                               "qwen35",
 	"MapleForCausalLM":                       "maple",
 	"ModernBertDecisionModel":                "modern-bert",
+	"LayaTypedDecisions":                     "modern-bert",
 	"NimbleModel":                            "qwen35",
 	"OpenJevModel":                           "qwen35",
 	"PplxDeciderModel":                       "qwen35",

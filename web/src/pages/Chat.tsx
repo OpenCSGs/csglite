@@ -18,7 +18,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PromptDialog } from "../components/PromptDialog";
 import { parseReasoningText } from "../reasoning";
 import { isImageGenerationModel, isImageToImageModel, stripDataURL } from "../utils/imageModels";
-import { buildDecisionRequest, canSendDecision, decisionUserSummary, formatDecisionAnswer } from "../utils/decision";
+import { buildDecisionRequest, canSendDecision, decisionUserSummary, formatDecisionAnswer, isDecisionModeActive } from "../utils/decision";
 import type { DecisionLabels } from "../utils/decision";
 import {
   formatModelOptionLabel as modelLabel,
@@ -720,7 +720,7 @@ function setAvailableModels(models: ModelInfo[]) {
 }
 
 const selectedModelMode = computed(() => getChatModelMode(selectedModelInfo.value));
-const decisionActive = computed(() => Boolean(selectedModelInfo.value?.typed_decisions) && decisionEnabled.value);
+const decisionActive = computed(() => isDecisionModeActive(selectedModelInfo.value, decisionEnabled.value));
 
 function normalizeImage(file: File): Promise<{ full: string; thumb: string }> {
   return new Promise((resolve, reject) => {
@@ -1342,7 +1342,7 @@ export function Chat() {
     const asrMode = mode === "asr";
     const ttsMode = mode === "tts";
     const visionMode = mode === "vision";
-    const decisionMode = Boolean(currentModel?.typed_decisions) && decisionEnabled.value;
+    const decisionMode = isDecisionModeActive(currentModel, decisionEnabled.value);
     const audio = pendingAudio.value;
     if (!currentModel || isGenerating.value) return;
     if (decisionMode) {
@@ -2318,17 +2318,19 @@ export function Chat() {
                   </select>
                   {typedDecisionModel && (
                     <div class="flex h-9 items-center rounded-full border border-gray-200 bg-gray-50 p-0.5 text-xs font-medium" role="group" aria-label={t("chat.decisionModeToggle")}>
-                      <button
-                        type="button"
-                        onClick={() => { decisionEnabled.value = false; }}
-                        class={`rounded-full px-3 py-1.5 transition-colors ${!decisionMode ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
-                      >
-                        {t("chat.decisionModeChat")}
-                      </button>
+                      {!selectedModelInfo.value?.decision_only && (
+                        <button
+                          type="button"
+                          onClick={() => { decisionEnabled.value = false; }}
+                          class={`rounded-full px-3 py-1.5 transition-colors ${!decisionMode ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                        >
+                          {t("chat.decisionModeChat")}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => { decisionEnabled.value = true; }}
-                        title={t("chat.decisionModeHint")}
+                        title={selectedModelInfo.value?.decision_only ? t("chat.decisionOnlyHint") : t("chat.decisionModeHint")}
                         class={`rounded-full px-3 py-1.5 transition-colors ${decisionMode ? "bg-white text-amber-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
                       >
                         {t("chat.decisionModeDecide")}

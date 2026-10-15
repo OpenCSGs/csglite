@@ -11,6 +11,7 @@ export function ApiInfoDialog({
   isEmbedding,
   isASR,
   isDecision,
+  isDecisionOnly,
   onClose,
 }: {
   model: string;
@@ -21,6 +22,8 @@ export function ApiInfoDialog({
   isASR?: boolean;
   /** Typed-decision (JEV) model: show /v1/decide examples before the chat ones. */
   isDecision?: boolean;
+  /** Native decision model that cannot chat: show the decision examples only. */
+  isDecisionOnly?: boolean;
   onClose: () => void;
 }) {
   const runtimeBaseUrl = useRuntimeAPIOrigin();
@@ -62,12 +65,18 @@ export function ApiInfoDialog({
               <CodeBlock title={t("dash.apiCurl")} code={decisionExamples.curl} />
               <CodeBlock title={t("dash.apiPython")} code={decisionExamples.python} />
               <CodeBlock title={t("dash.apiJs")} code={decisionExamples.javascript} />
-              <h4 class="border-t border-gray-100 pt-4 text-sm font-semibold text-gray-900">{t("dash.apiChatSection")}</h4>
+              {!isDecisionOnly && (
+                <h4 class="border-t border-gray-100 pt-4 text-sm font-semibold text-gray-900">{t("dash.apiChatSection")}</h4>
+              )}
             </>
           )}
-          <CodeBlock title={t("dash.apiCurl")} code={examples.curl} />
-          <CodeBlock title={t("dash.apiPython")} code={examples.python} />
-          <CodeBlock title={t("dash.apiJs")} code={examples.javascript} />
+          {!(decisionExamples && isDecisionOnly) && (
+            <>
+              <CodeBlock title={t("dash.apiCurl")} code={examples.curl} />
+              <CodeBlock title={t("dash.apiPython")} code={examples.python} />
+              <CodeBlock title={t("dash.apiJs")} code={examples.javascript} />
+            </>
+          )}
         </div>
       </div>
     </div>

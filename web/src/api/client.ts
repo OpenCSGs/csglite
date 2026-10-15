@@ -25,6 +25,8 @@ export interface ModelInfo {
   has_mmproj?: boolean;
   /** Local model that answers the OpenAI Decisions API (POST /v1/decisions). */
   typed_decisions?: boolean;
+  /** Native decision model (e.g. Laya) that answers decisions only and cannot chat. */
+  decision_only?: boolean;
   context_window?: number;
   max_model_len?: number;
   description?: string;
