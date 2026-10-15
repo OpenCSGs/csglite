@@ -706,14 +706,14 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 	if defaultModel == "" {
 		if !hasLocalModels {
 			if !s.hasCloudCredential() {
-				return "", nil, fmt.Errorf("no local models were found. Pull a model first, or open csghub-lite Settings to sign in to OpenCSG or save an API Key")
+				return "", nil, fmt.Errorf("no local models were found. Pull a model first, or open CSGLite Settings to sign in to OpenCSG or save an API Key")
 			}
-			return "", nil, fmt.Errorf("no local or OpenCSG models were found. Pull a model first, or check OpenCSG model access in csghub-lite Settings")
+			return "", nil, fmt.Errorf("no local or OpenCSG models were found. Pull a model first, or check OpenCSG model access in CSGLite Settings")
 		}
 		return "", nil, fmt.Errorf("no models were found. Pull a model first, then open the app")
 	}
 	if defaultInfo, ok := firstModelInfoByID(availableModels, defaultModel); ok && isCloudModelInfo(defaultInfo) && !s.hasCloudCredential() {
-		return "", nil, fmt.Errorf("no local models were found. Pull a model first, or open csghub-lite Settings to sign in to OpenCSG or save an API Key")
+		return "", nil, fmt.Errorf("no local models were found. Pull a model first, or open CSGLite Settings to sign in to OpenCSG or save an API Key")
 	}
 
 	requestedModel = strings.TrimSpace(requestedModel)
@@ -725,18 +725,18 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 			if (normalizedSource == "local" || normalizedSource == "cloud" || providerIDFromSource(requestedSource) != "") &&
 				modelInfoListContainsSource(availableModels, requestedModel, requestedSource) {
 				if normalizedSource == "cloud" && !s.hasCloudCredential() {
-					return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
+					return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open CSGLite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
 				}
 				return requestedModel, modelIDs, nil
 			}
 			if normalizedSource == "cloud" && refreshRequestedCloudModel(ctx, s, requestedModel, seen, &modelIDs) {
 				if !s.hasCloudCredential() {
-					return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
+					return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open CSGLite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
 				}
 				return requestedModel, modelIDs, nil
 			}
 			if normalizedSource == "cloud" && !s.hasCloudCredential() {
-				return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
+				return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open CSGLite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
 			}
 			if normalizedSource == "local" || normalizedSource == "cloud" || providerIDFromSource(requestedSource) != "" {
 				return "", nil, fmt.Errorf("model %q is not available for AI Apps", requestedModel)
@@ -744,17 +744,17 @@ func (s *Server) resolveAIAppLaunchModels(ctx context.Context, requestedModel, r
 		}
 		if _, ok := seen[requestedModel]; !ok {
 			if refreshRequestedCloudModel(ctx, s, requestedModel, seen, &modelIDs) && !s.hasCloudCredential() {
-				return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
+				return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open CSGLite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
 			}
 		}
 		if _, ok := seen[requestedModel]; !ok {
 			if !s.hasCloudCredential() {
-				return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
+				return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open CSGLite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
 			}
 			return "", nil, fmt.Errorf("model %q is not available for AI Apps", requestedModel)
 		}
 		if requestedInfo, ok := firstModelInfoByID(availableModels, requestedModel); ok && isCloudModelInfo(requestedInfo) && !s.hasCloudCredential() {
-			return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
+			return "", nil, fmt.Errorf("model %q is not available for AI Apps. If you are trying to use an OpenCSG model, please open CSGLite Settings to sign in to OpenCSG or save an API Key first", requestedModel)
 		}
 		return requestedModel, modelIDs, nil
 	}

@@ -31,7 +31,7 @@ func executablePath() (string, error) {
 func desktopEntry(binary string) string {
 	return fmt.Sprintf(`[Desktop Entry]
 Type=Application
-Name=CSGHub Lite
+Name=CSGLite
 Exec=%s serve
 Hidden=false
 NoDisplay=true

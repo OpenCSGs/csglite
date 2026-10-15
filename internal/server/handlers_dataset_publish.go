@@ -133,7 +133,7 @@ func (s *Server) handleLocalDatasetPublish(w http.ResponseWriter, r *http.Reques
 		}
 		if err := client.UploadDatasetFile(
 			r.Context(), namespace, request.Name, localPath, filepath.ToSlash(file.Path), "main",
-			"Upload CSGHub Lite local dataset",
+			"Upload CSGLite local dataset",
 		); err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
