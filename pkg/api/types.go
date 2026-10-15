@@ -397,6 +397,9 @@ type ModelInfo struct {
 	LLMType       string        `json:"llm_type,omitempty"`
 	OwnedBy       string        `json:"owned_by,omitempty"`
 	Pricing       *ModelPricing `json:"pricing,omitempty"`
+	// LocalInference says whether and how a local model runs on this machine.
+	// Only present for downloaded local models.
+	LocalInference *LocalInferenceSupport `json:"local_inference,omitempty"`
 	// Nodes lists the cluster members holding this model. Only present while
 	// the node belongs to a LAN cluster.
 	Nodes []ModelNodePresence `json:"nodes,omitempty"`

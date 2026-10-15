@@ -929,7 +929,7 @@ func TestTTSOverlayPackagesForPlatform(t *testing.T) {
 
 func TestImageOverlayPackagesForPlatform(t *testing.T) {
 	got := imageOverlayPackagesFor(model.ImageBackendMLXQwen21, "darwin", "arm64")
-	want := map[string]bool{"mflux>=0.20.0": true, "mlx": true, "mlx-metal": true}
+	want := map[string]bool{"mflux==0.20.0": true, "mlx": true, "mlx-metal": true}
 	for _, pkg := range got {
 		delete(want, pkg)
 	}
@@ -947,7 +947,7 @@ func TestImageOverlayPackagesForPlatform(t *testing.T) {
 }
 
 func TestImportNamesFor(t *testing.T) {
-	got := importNamesFor([]string{"kokoro", "misaki[zh]", "mflux>=0.20.0"})
+	got := importNamesFor([]string{"kokoro", "misaki[zh]", "mflux==0.20.0"})
 	want := map[string]bool{"kokoro": true, "misaki": true, "ordered_set": true, "mflux": true}
 	for _, name := range got {
 		delete(want, name)

@@ -27,6 +27,8 @@ export interface ModelInfo {
   typed_decisions?: boolean;
   /** Native decision model (e.g. Laya) that answers decisions only and cannot chat. */
   decision_only?: boolean;
+  /** Whether and how a downloaded local model runs on this machine. */
+  local_inference?: LocalInferenceSupport;
   context_window?: number;
   max_model_len?: number;
   description?: string;

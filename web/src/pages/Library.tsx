@@ -1051,6 +1051,16 @@ export function Library() {
                           </span>
                           <span class="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin" />
                         </div>
+                      ) : m.local_inference && !m.local_inference.supported ? (
+                        <button
+                          type="button"
+                          disabled
+                          title={t("lib.runUnsupportedHint")}
+                          aria-label={t("lib.runUnsupportedHint")}
+                          class="inline-flex shrink-0 items-center justify-center w-16 px-3 py-1 text-xs rounded bg-gray-100 text-gray-400 cursor-not-allowed font-medium"
+                        >
+                          {t("lib.runUnsupported")}
+                        </button>
                       ) : (
                         <button
                           onClick={() => openRunDialog(m)}

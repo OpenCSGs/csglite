@@ -324,7 +324,28 @@ const (
 	// ImageBackendMLXUnsupported marks an MLX image checkpoint that must not
 	// be sent to Diffusers. Only Qwen-Image-2.1 has an MLX image backend.
 	ImageBackendMLXUnsupported = "mlx-image-unsupported"
+	// ImageBackendGGUFUnsupported marks a diffusion model shipped as GGUF. Such
+	// a file holds only the denoiser; it needs a separate VAE and text encoder
+	// and a GGUF-capable runtime such as stable-diffusion.cpp, which
+	// csghub-lite does not ship. Diffusers cannot load it and llama.cpp does
+	// not know the architecture.
+	ImageBackendGGUFUnsupported = "gguf-image-unsupported"
 )
+
+// diffusionGGUFArchitectures lists general.architecture values written by
+// diffusion GGUF converters (stable-diffusion.cpp, ComfyUI-GGUF). None of them
+// is a llama.cpp text architecture.
+var diffusionGGUFArchitectures = map[string]bool{
+	"flux":       true,
+	"sd1":        true,
+	"sdxl":       true,
+	"sd3":        true,
+	"aura":       true,
+	"hidream":    true,
+	"lumina2":    true,
+	"chroma":     true,
+	"qwen_image": true,
+}
 
 // ImageBackendFor identifies image checkpoints which require a runtime other
 // than Diffusers. It intentionally requires both Qwen-Image-2.1 metadata and
@@ -332,6 +353,9 @@ const (
 // Other MLX image checkpoints are reported separately so they are not loaded
 // as Diffusers models.
 func ImageBackendFor(modelDir, modelName string) string {
+	if IsDiffusionGGUF(modelDir) {
+		return ImageBackendGGUFUnsupported
+	}
 	if !isMLXImageCandidate(modelDir, modelName) {
 		return ImageBackendDiffusers
 	}
@@ -354,8 +378,58 @@ func ImageBackendForMetadata(modelName, className, libraryName, pipelineTag stri
 	return ImageBackendMLXUnsupported
 }
 
+// IsDiffusionGGUF reports whether modelDir holds a text-to-image or
+// image-to-image model as GGUF weights rather than a Diffusers pipeline: the
+// model card declares an image task, or the GGUF names a diffusion
+// architecture.
+func IsDiffusionGGUF(modelDir string) bool {
+	if _, err := os.Stat(filepath.Join(modelDir, "model_index.json")); err == nil {
+		return false
+	}
+	weights := diffusionGGUFCandidates(modelDir)
+	if len(weights) == 0 {
+		return false
+	}
+	switch detectModelCardPipelineTag(modelDir) {
+	case "text-to-image", "image-to-image":
+		return true
+	}
+	return hasDiffusionGGUFArchitecture(weights)
+}
+
+func diffusionGGUFCandidates(modelDir string) []string {
+	var paths []string
+	_ = filepath.WalkDir(modelDir, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".gguf") || ggufpick.IsMMProjGGUF(entry.Name()) {
+			return nil
+		}
+		paths = append(paths, current)
+		return nil
+	})
+	sort.Strings(paths)
+	return paths
+}
+
+// IsDiffusionGGUFArchitecture reports whether a GGUF general.architecture
+// value belongs to a diffusion model rather than a llama.cpp text model.
+func IsDiffusionGGUFArchitecture(architecture string) bool {
+	return diffusionGGUFArchitectures[strings.ToLower(strings.TrimSpace(architecture))]
+}
+
+func hasDiffusionGGUFArchitecture(paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	// Quantizations of one model share an architecture; the first is enough.
+	arch, err := ggufmeta.ReadArchitecture(paths[0])
+	return err == nil && IsDiffusionGGUFArchitecture(arch)
+}
+
 func isMLXImageCandidate(modelDir, modelName string) bool {
-	if !isMLXNameOrLibrary(modelName, modelCardMetadataValue(modelDir, "library_name", "library-name")) {
+	if !isMLXNameOrLibrary(modelName, modelCardMLXLibrary(modelDir)) {
 		return false
 	}
 	name := strings.ToLower(strings.TrimSpace(modelName))
@@ -374,7 +448,7 @@ func isMLXImageCandidate(modelDir, modelName string) bool {
 }
 
 func isMLXQwenImage21(modelDir, modelName string) bool {
-	if !isMLXNameOrLibrary(modelName, modelCardMetadataValue(modelDir, "library_name", "library-name")) {
+	if !isMLXNameOrLibrary(modelName, modelCardMLXLibrary(modelDir)) {
 		return false
 	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "model_index.json"))
@@ -390,8 +464,29 @@ func isMLXQwenImage21(modelDir, modelName string) bool {
 	return strings.EqualFold(strings.TrimSpace(index.ClassName), "QwenImage21Pipeline")
 }
 
+// modelCardMLXLibrary returns the card's library_name, falling back to an
+// "mlx" or "mflux" tag: some cards (OsaurusAI's mflux bundles) declare the
+// library only as a tag, which the hub turns into library_name on its side.
+func modelCardMLXLibrary(modelDir string) string {
+	if library := modelCardMetadataValue(modelDir, "library_name", "library-name"); library != "" {
+		return library
+	}
+	for _, tag := range stringSliceMetadataValue(modelCardMetadata(modelDir)["tags"]) {
+		switch tag = strings.ToLower(strings.TrimSpace(tag)); tag {
+		case "mlx", "mflux":
+			return tag
+		}
+	}
+	return ""
+}
+
 func isMLXNameOrLibrary(modelName, libraryName string) bool {
-	if strings.EqualFold(strings.TrimSpace(libraryName), "mlx") {
+	// mflux checkpoints are MLX weights saved by MFLUX.
+	switch strings.ToLower(strings.TrimSpace(libraryName)) {
+	case "mlx", "mflux":
+		return true
+	}
+	if strings.Contains(strings.ToLower(modelName), "-mflux") {
 		return true
 	}
 	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "mlx-community/")
@@ -552,6 +647,9 @@ func DetectPipelineTag(modelDir string) string {
 	}
 	if tag := detectModelScopePipelineTag(modelDir); tag != "" {
 		return tag
+	}
+	if hasDiffusionGGUFArchitecture(diffusionGGUFCandidates(modelDir)) {
+		return "text-to-image"
 	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {

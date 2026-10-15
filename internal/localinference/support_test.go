@@ -415,3 +415,38 @@ func TestGGUFEmbeddingModelRunsOnLlama(t *testing.T) {
 		t.Fatalf("support = %#v, want llama direct", support)
 	}
 }
+
+func TestFromLocalModelGGUFImageUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("---\nlibrary_name: gguf\npipeline_tag: text-to-image\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "qwen-image-2.1-turbo-Q4_K_M.gguf"), []byte("GGUF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	support := FromLocalModel(&model.LocalModel{
+		Format:      model.FormatGGUF,
+		Name:        "Qwen-Image-2.1-Turbo-GGUF",
+		Namespace:   "unsloth",
+		PipelineTag: "text-to-image",
+	}, dir)
+	if support.Supported || support.Mode != "none" {
+		t.Fatalf("support = %#v, want unsupported GGUF image model", support)
+	}
+}
+
+func TestFromMarketplaceModelGGUFImageUnsupported(t *testing.T) {
+	for _, tc := range []struct {
+		name, architecture, pipelineTag string
+	}{
+		{name: "image task", pipelineTag: "text-to-image"},
+		{name: "diffusion architecture", architecture: "qwen_image"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			support := FromMarketplaceModel("gguf", tc.architecture, "", "unsloth/Qwen-Image-2.1-Turbo-GGUF", "gguf", tc.pipelineTag)
+			if support.Supported {
+				t.Fatalf("support = %#v, want unsupported GGUF image model", support)
+			}
+		})
+	}
+}

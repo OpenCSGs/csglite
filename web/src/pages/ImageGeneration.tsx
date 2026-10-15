@@ -397,7 +397,12 @@ function localizeImageErrorMessage(message: string, model?: ModelInfo): string {
 
 async function refreshImageModels() {
   const allModels = await loadModelOptions({ refresh: true });
-  const imageModels = allModels.filter((model) => model.pipeline_tag === "text-to-image" || model.pipeline_tag === "image-to-image");
+  const imageModels = allModels.filter(
+    (model) =>
+      (model.pipeline_tag === "text-to-image" || model.pipeline_tag === "image-to-image") &&
+      // Downloaded models that cannot run locally (e.g. GGUF image models) would only fail on generate.
+      model.local_inference?.supported !== false,
+  );
   models.value = imageModels;
   if (!selectedModel.value || !imageModels.some((model) => imageModelKey(model) === selectedModel.value)) {
     selectedModel.value = imageModels[0] ? imageModelKey(imageModels[0]) : "";

@@ -152,7 +152,7 @@ currently supported for local inference.
 | Text generation / chat | Supported | llama.cpp | Qwen/Qwen3, GLM, Llama, Mistral, DeepSeek distilled GGUF models |
 | Embeddings | Supported | llama.cpp | BGE, GTE, E5, Sentence Transformers-compatible embedding models |
 | Vision-language chat | Supported | llama.cpp multimodal | Qwen2.5-VL, Gemma 3 / 4 vision, Idefics-style multimodal models |
-| Text-to-image | Supported | Diffusers runtime; MLX on Apple Silicon | Qwen-Image, Qwen-Image-2.1 MLX, FLUX, Stable Diffusion, PixArt, Sana, CogView, Z-Image, Kolors, Hunyuan |
+| Text-to-image | Supported | Diffusers runtime; MLX on Apple Silicon | Qwen-Image, Qwen-Image-2.1 MLX (including Turbo), FLUX, Stable Diffusion, PixArt, Sana, CogView, Z-Image, Kolors, Hunyuan |
 | Image-to-image | Supported | Diffusers runtime; MLX on Apple Silicon for one reference image | Qwen-Image-Edit, FLUX Kontext, inpaint, img2img, editing pipelines |
 | Automatic speech recognition | Supported | Python ASR runtime | FunASR, Whisper, Wav2Vec2-family ASR models |
 | Text-to-speech | Supported | Python TTS runtime | VoxCPM, Qwen3-TTS, Kokoro, MMS-TTS and other transformers-native TTS models |
@@ -165,17 +165,20 @@ currently supported for local inference.
 
 Image requests use `POST /v1/images/generations` and `POST /v1/images/edits`.
 NVIDIA, AMD, and CPU machines run Diffusers checkpoints. Apple Silicon uses
-MFLUX for `mlx-community/Qwen-Image-2.1-MLX-4bit` and Diffusers for the other
-image families. Other MLX image checkpoints are unsupported on every platform,
-including before download.
+MFLUX for MLX Qwen-Image-2.1 checkpoints and Diffusers for the other image
+families. Other MLX image checkpoints are unsupported on every platform,
+including before download. The model library disables **Run** for any
+downloaded model that cannot run locally.
 
 | Model | Runtime | Notes |
 | --- | --- | --- |
 | `Qwen/Qwen-Image`, `Qwen/Qwen-Image-2512` | Diffusers | Text-to-image |
 | `Qwen/Qwen-Image-Edit`, `Qwen/Qwen-Image-Edit-2511` | Diffusers | Image editing, including multi-image edits |
-| `mlx-community/Qwen-Image-2.1-MLX-4bit` | MFLUX on Apple Silicon | Text-to-image and one reference image. Python 3.10 or newer. 64 GB unified memory is a comfortable size. `n=1` only |
+| `mlx-community/Qwen-Image-2.1-MLX-4bit` | MFLUX on Apple Silicon | Text-to-image and one reference image, 40 steps by default. Runs on a 16 GB Mac: about 4 minutes for 1024x1024. Python 3.10 or newer. `n=1` only |
+| `OsaurusAI/Qwen-Image-2.1-Turbo-mflux-4bit` and other mflux-saved Qwen-Image-2.1 bundles | MFLUX on Apple Silicon | Turbo is the 8-step distilled checkpoint, sampled on the fixed sigma grid in its `model_index.json`; the `steps` request field is ignored. About 70 seconds for 1024x1024 on a 16 GB Mac. Weights are under the Qwen Research License (non-commercial) |
 | FLUX, Stable Diffusion, Stable Cascade, PixArt, Sana, CogView, Z-Image, Kolors, Hunyuan, Kandinsky, Lumina, AuraFlow, GLM-Image, Ovis-Image | Diffusers | Text-to-image when `model_index.json` names that pipeline |
 | FLUX Kontext, Stable Diffusion img2img and inpaint | Diffusers | Image-to-image and editing |
+| GGUF image models such as `unsloth/Qwen-Image-2.1-Turbo-GGUF` | Not supported | A GGUF image file holds only the denoiser and needs a separate VAE and text encoder. Download a Diffusers or MLX version of the model instead |
 
 ### Text-to-speech models
 
