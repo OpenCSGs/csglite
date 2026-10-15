@@ -76,48 +76,56 @@ def detect_device(model_dir: str, model_name: str) -> tuple[str, torch.dtype]:
 MLX_NATIVE_COMPONENTS = ("transformer", "text_encoder", "vae")
 
 
-def _safetensors_metadata(path: Path) -> Dict[str, Any]:
+def _safetensors_header(path: Path) -> Dict[str, Any]:
     try:
         with path.open("rb") as handle:
             size = int.from_bytes(handle.read(8), "little")
             header = json.loads(handle.read(size))
     except (OSError, ValueError):
         return {}
-    metadata = header.get("__metadata__")
-    return metadata if isinstance(metadata, dict) else {}
+    return header if isinstance(header, dict) else {}
 
 
-def is_mlx_native_checkpoint(model_dir: str) -> bool:
-    """Reports whether model_dir is a pre-converted MLX checkpoint such as
-    mlx-community/Qwen-Image-2.1-MLX-4bit: diffusers folder layout, but weights
-    already in MLX layout (optionally quantized, described by each component's
-    config.json) rather than torch layout or mflux's own saved format."""
+def uses_direct_qwen21_loader(model_dir: str) -> bool:
+    """Reports whether model_dir needs load_mlx_native_qwen21 rather than
+    mflux's own loader. Both layouts it covers keep the text encoder under a
+    language_model prefix, which mflux's text-to-image loader silently fails to
+    match (leaving an unloaded, unquantized ~32 GB encoder):
+
+    - pre-converted MLX checkpoints such as mlx-community/Qwen-Image-2.1-MLX-4bit
+      (diffusers folder layout, mlx-lm style keys, quantization in config.json);
+    - mflux bundles saved through the edit variant, such as
+      OsaurusAI/Qwen-Image-2.1-Turbo-mflux-4bit (text encoder plus vision tower).
+    """
+    root = Path(model_dir)
     for name in MLX_NATIVE_COMPONENTS:
-        files = sorted((Path(model_dir) / name).glob("*.safetensors"))
-        if not files:
+        if not any((root / name).glob("*.safetensors")):
             return False
-        metadata = _safetensors_metadata(files[0])
-        if metadata.get("format") != "mlx" or "quantization_level" in metadata:
-            return False
-    return True
+    for shard in sorted((root / "text_encoder").glob("*.safetensors")):
+        if any(key.startswith("language_model.") for key in _safetensors_header(shard)):
+            return True
+    return False
 
 
 def _rename_qwen21_transformer_key(key: str) -> Optional[str]:
     if key.startswith("modulation."):
         # The converter dropped the SiLU from diffusers' Sequential(SiLU, Linear).
         index, _, rest = key[len("modulation."):].partition(".")
-        return f"modulation.layers.{int(index) + 1}.{rest}"
+        if index.isdigit():
+            return f"modulation.layers.{int(index) + 1}.{rest}"
     if key.startswith("time_text_embed.linear_"):
         return "time_text_embed.timestep_embedder." + key[len("time_text_embed."):]
     return key
 
 
 def _rename_qwen21_text_encoder_key(key: str) -> Optional[str]:
-    prefix = "language_model.model."
-    if not key.startswith(prefix):
-        # lm_head and vision_tower are unused by the text-to-image encoder.
-        return None
-    return key[len(prefix):]
+    # mlx-lm layout nests the decoder under language_model.model; mflux's edit
+    # bundles under language_model. lm_head and the vision tower are unused by
+    # the text-to-image encoder.
+    for prefix in ("language_model.model.", "language_model."):
+        if key.startswith(prefix):
+            return key[len(prefix):]
+    return None
 
 
 def _rename_qwen21_vae_key(key: str) -> Optional[str]:
@@ -134,16 +142,24 @@ def _map_mlx_native_weights(module: Any, weights: Dict[str, Any], rename: Any, c
     from mlx.utils import tree_flatten
 
     expected = {key for key, _ in tree_flatten(module.parameters())}
+
+    def known(key: str) -> bool:
+        base, _, leaf = key.rpartition(".")
+        return key in expected or (leaf in ("scales", "biases") and f"{base}.weight" in expected)
+
     mapped: Dict[str, Any] = {}
     for key, value in weights.items():
-        target = rename(key)
+        # Keys already named like the mflux module (mflux-saved bundles) load
+        # as they are; others go through the layout-specific rename.
+        target = key if known(key) else rename(key)
         if target is None:
             continue
         base, _, leaf = target.rpartition(".")
-        if leaf in ("weight", "bias") and target not in expected and f"{base}.conv.{leaf}" in expected:
+        if not known(target) and known(f"{base}.conv.{leaf}"):
             # mflux wraps convolutions in a module holding a .conv child.
             target = f"{base}.conv.{leaf}"
-        mapped[target] = value
+        if known(target):
+            mapped[target] = value
     wanted = {key for key in expected if key.rpartition(".")[2] in ("weight", "bias")}
     missing = sorted(wanted - set(mapped))
     if missing:
@@ -151,6 +167,24 @@ def _map_mlx_native_weights(module: Any, weights: Dict[str, Any], rename: Any, c
             f"MLX checkpoint {component} is missing {len(missing)} weights, for example {missing[:3]}"
         )
     return mapped
+
+
+def _component_quantization(component_dir: Path) -> Optional[Dict[str, int]]:
+    """Returns the bits and group size the component's packed layers use:
+    config.json "quantization" (mlx-community) or the mflux save metadata."""
+    try:
+        config = json.loads((component_dir / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        config = {}
+    quantization = config.get("quantization") if isinstance(config, dict) else None
+    if isinstance(quantization, dict):
+        return {"bits": int(quantization.get("bits", 4)), "group_size": int(quantization.get("group_size", 64))}
+    for shard in sorted(component_dir.glob("*.safetensors")):
+        metadata = _safetensors_header(shard).get("__metadata__") or {}
+        level = str(metadata.get("quantization_level") or "")
+        if level.isdigit():
+            return {"bits": int(level), "group_size": 64}
+    return None
 
 
 def load_mlx_native_qwen21(model_dir: str) -> Any:
@@ -180,26 +214,74 @@ def load_mlx_native_qwen21(model_dir: str) -> Any:
         for shard in sorted(component_dir.glob("*.safetensors")):
             raw.update(mx.load(str(shard)))
         mapped = _map_mlx_native_weights(module, raw, renames[name], name)
+        del raw
 
-        try:
-            config = json.loads((component_dir / "config.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            config = {}
-        quantization = config.get("quantization")
-        if isinstance(quantization, dict):
+        quantization = _component_quantization(component_dir)
+        if quantization is not None and any(key.endswith(".scales") for key in mapped):
             # Quantize exactly the layers the checkpoint stores packed, before
             # loading, so packed weights land in QuantizedLinear/Embedding.
             nn.quantize(
                 module,
-                group_size=int(quantization.get("group_size", 64)),
-                bits=int(quantization.get("bits", 4)),
+                group_size=quantization["group_size"],
+                bits=quantization["bits"],
                 class_predicate=lambda path, layer: hasattr(layer, "to_quantized") and f"{path}.scales" in mapped,
             )
-            bits = int(quantization.get("bits", 4))
+            bits = quantization["bits"]
         module.update(tree_unflatten(list(mapped.items())), strict=False)
         mx.eval(module.parameters())
     pipeline.bits = bits
     return pipeline
+
+
+FIXED_SIGMA_SCHEDULER = "csglite-fixed-sigmas"
+
+
+def read_sample_sigmas(model_dir: str) -> Optional[List[float]]:
+    """Returns the fixed sampling grid a distilled checkpoint such as
+    Qwen-Image-2.1-Turbo ships in model_index.json, or None. Such a model must
+    be sampled on exactly these sigmas; mflux's default shifted schedule
+    degrades it."""
+    try:
+        index = json.loads((Path(model_dir) / "model_index.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    raw = index.get("sample_sigmas") if isinstance(index, dict) else None
+    if not isinstance(raw, list) or len(raw) < 2:
+        return None
+    try:
+        sigmas = [float(value) for value in raw]
+    except (TypeError, ValueError):
+        return None
+    if sigmas[-1] != 0.0:
+        sigmas.append(0.0)
+    return sigmas
+
+
+def register_fixed_sigma_scheduler(sigmas: List[float]) -> str:
+    """Registers an Euler scheduler on a fixed sigma grid with mflux and returns
+    its name for generate_image(scheduler=...). Stock mflux has no option for a
+    model-provided grid."""
+    import mlx.core as mx
+    from mflux.models.common.schedulers import SCHEDULER_REGISTRY
+    from mflux.models.common.schedulers.base_scheduler import BaseScheduler
+
+    grid = list(sigmas)
+
+    class FixedSigmaScheduler(BaseScheduler):
+        def __init__(self, config: Any) -> None:
+            self.config = config
+            self._sigmas = mx.array(grid, dtype=mx.float32)
+
+        @property
+        def sigmas(self) -> Any:
+            return self._sigmas
+
+        def step(self, noise: Any, timestep: int, latents: Any, **kwargs: Any) -> Any:
+            dt = (self._sigmas[timestep + 1] - self._sigmas[timestep]).astype(latents.dtype)
+            return latents + noise.astype(latents.dtype) * dt
+
+    SCHEDULER_REGISTRY[FIXED_SIGMA_SCHEDULER] = FixedSigmaScheduler
+    return FIXED_SIGMA_SCHEDULER
 
 
 class Worker:
@@ -212,6 +294,8 @@ class Worker:
             self.device = "mlx"
             self.dtype = None
         self.pipeline = None
+        self.mlx_scheduler: Optional[str] = None
+        self.mlx_fixed_steps: Optional[int] = None
         self.lock = threading.Lock()
         # MLX streams are per-thread, and mx.load returns lazy arrays bound to
         # the loading thread's stream. Evaluating them from an HTTP handler
@@ -248,7 +332,11 @@ class Worker:
         from mflux.models.common.config import ModelConfig
         from mflux.models.qwen21.variants.txt2img.qwen_image_21 import QwenImage21
 
-        if is_mlx_native_checkpoint(self.model_dir):
+        sigmas = read_sample_sigmas(self.model_dir)
+        if sigmas is not None:
+            self.mlx_scheduler = register_fixed_sigma_scheduler(sigmas)
+            self.mlx_fixed_steps = len(sigmas) - 1
+        if uses_direct_qwen21_loader(self.model_dir):
             self.pipeline = load_mlx_native_qwen21(self.model_dir)
             return
         self.pipeline = QwenImage21(
@@ -353,6 +441,10 @@ class Worker:
                 "num_inference_steps": int(req.get("steps") or 40),
                 "image_path": image_path,
             }
+            if self.mlx_scheduler is not None:
+                # The grid fixes the step count; a requested step count cannot apply.
+                kwargs["scheduler"] = self.mlx_scheduler
+                kwargs["num_inference_steps"] = self.mlx_fixed_steps
             if req.get("cfg_scale") is not None:
                 kwargs["guidance"] = float(req["cfg_scale"])
             if req.get("negative_prompt"):

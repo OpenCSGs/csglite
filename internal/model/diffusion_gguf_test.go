@@ -67,3 +67,20 @@ func TestIsDiffusionGGUF(t *testing.T) {
 		}
 	})
 }
+
+func TestImageBackendForMFluxBundleTaggedOnly(t *testing.T) {
+	// OsaurusAI's mflux bundles declare the library only as a card tag.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("---\npipeline_tag: text-to-image\ntags: [text-to-image, mflux, turbo]\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"QwenImage21Pipeline"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ImageBackendFor(dir, "OsaurusAI/Qwen-Image-2.1-Turbo-mflux-4bit"); got != ImageBackendMLXQwen21 {
+		t.Fatalf("ImageBackendFor() = %q, want %q", got, ImageBackendMLXQwen21)
+	}
+	if got := ImageBackendForMetadata("OsaurusAI/Qwen-Image-2.1-Turbo-mflux-4bit", "", "", "text-to-image"); got != ImageBackendMLXQwen21 {
+		t.Fatalf("ImageBackendForMetadata() = %q, want %q", got, ImageBackendMLXQwen21)
+	}
+}

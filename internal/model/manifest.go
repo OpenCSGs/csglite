@@ -429,7 +429,7 @@ func hasDiffusionGGUFArchitecture(paths []string) bool {
 }
 
 func isMLXImageCandidate(modelDir, modelName string) bool {
-	if !isMLXNameOrLibrary(modelName, modelCardMetadataValue(modelDir, "library_name", "library-name")) {
+	if !isMLXNameOrLibrary(modelName, modelCardMLXLibrary(modelDir)) {
 		return false
 	}
 	name := strings.ToLower(strings.TrimSpace(modelName))
@@ -448,7 +448,7 @@ func isMLXImageCandidate(modelDir, modelName string) bool {
 }
 
 func isMLXQwenImage21(modelDir, modelName string) bool {
-	if !isMLXNameOrLibrary(modelName, modelCardMetadataValue(modelDir, "library_name", "library-name")) {
+	if !isMLXNameOrLibrary(modelName, modelCardMLXLibrary(modelDir)) {
 		return false
 	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "model_index.json"))
@@ -464,8 +464,29 @@ func isMLXQwenImage21(modelDir, modelName string) bool {
 	return strings.EqualFold(strings.TrimSpace(index.ClassName), "QwenImage21Pipeline")
 }
 
+// modelCardMLXLibrary returns the card's library_name, falling back to an
+// "mlx" or "mflux" tag: some cards (OsaurusAI's mflux bundles) declare the
+// library only as a tag, which the hub turns into library_name on its side.
+func modelCardMLXLibrary(modelDir string) string {
+	if library := modelCardMetadataValue(modelDir, "library_name", "library-name"); library != "" {
+		return library
+	}
+	for _, tag := range stringSliceMetadataValue(modelCardMetadata(modelDir)["tags"]) {
+		switch tag = strings.ToLower(strings.TrimSpace(tag)); tag {
+		case "mlx", "mflux":
+			return tag
+		}
+	}
+	return ""
+}
+
 func isMLXNameOrLibrary(modelName, libraryName string) bool {
-	if strings.EqualFold(strings.TrimSpace(libraryName), "mlx") {
+	// mflux checkpoints are MLX weights saved by MFLUX.
+	switch strings.ToLower(strings.TrimSpace(libraryName)) {
+	case "mlx", "mflux":
+		return true
+	}
+	if strings.Contains(strings.ToLower(modelName), "-mflux") {
 		return true
 	}
 	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "mlx-community/")
