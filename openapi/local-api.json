@@ -10721,6 +10721,9 @@
           "pricing": {
             "$ref": "#/components/schemas/ModelPricing"
           },
+          "local_inference": {
+            "$ref": "#/components/schemas/LocalInferenceSupport"
+          },
           "nodes": {
             "type": "array",
             "description": "Cluster members holding this model; present only while the node belongs to a LAN cluster.",

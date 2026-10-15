@@ -30,7 +30,10 @@ func FromLocalModel(lm *model.LocalModel, modelDir string) api.LocalInferenceSup
 	switch model.ImageBackendFor(modelDir, lm.FullName()) {
 	case model.ImageBackendMLXQwen21:
 		return mlxQwenImageSupport("")
-	case model.ImageBackendMLXUnsupported:
+	case model.ImageBackendMLXUnsupported, model.ImageBackendGGUFUnsupported:
+		return unsupported("")
+	}
+	if lm.Format == model.FormatGGUF && (isImageTask(pipelineTag) || isImageTask(manifestPipelineTag)) {
 		return unsupported("")
 	}
 
@@ -91,6 +94,13 @@ func FromMarketplaceModel(format, architecture, className, modelName, libraryNam
 	case model.ImageBackendMLXQwen21:
 		return mlxQwenImageSupport(architecture)
 	case model.ImageBackendMLXUnsupported:
+		return unsupported(architecture)
+	}
+
+	// A GGUF image model is only the denoiser and no shipped runtime loads it.
+	if strings.EqualFold(strings.TrimSpace(format), string(model.FormatGGUF)) &&
+		(isImageTask(pipelineTag) || isImageTask(diffusersPipelineTagFromClassName(className)) ||
+			model.IsDiffusionGGUFArchitecture(architecture)) {
 		return unsupported(architecture)
 	}
 
@@ -315,6 +325,15 @@ func diffusersPipelineTagFromClassName(className string) string {
 func unsupportedPipelineTag(pipelineTag string) bool {
 	switch normalizePipelineTag(pipelineTag) {
 	case "image-to-video", "text-to-video", "video-text-to-text":
+		return true
+	default:
+		return false
+	}
+}
+
+func isImageTask(pipelineTag string) bool {
+	switch normalizePipelineTag(pipelineTag) {
+	case "text-to-image", "image-to-image":
 		return true
 	default:
 		return false

@@ -201,7 +201,7 @@ func (s *Store) Close() error {
 // "text-generation" before DetectPipelineTag learned to recognise codec-token
 // TTS models would stay misclassified after an upgrade. Bump this whenever
 // DetectPipelineTag or any other cached derivation changes.
-const DerivationVersion = 5
+const DerivationVersion = 6
 
 // Fingerprint hashes file identity metadata without reading model contents.
 // Any add, remove, resize, or modification invalidates the cached derivations,

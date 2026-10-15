@@ -88,6 +88,46 @@ func Read(reader io.Reader) (*Metadata, error) {
 	return metadata, nil
 }
 
+// ReadArchitecture returns general.architecture without decoding the rest of
+// the header, so it stays cheap on text models with large tokenizer arrays.
+func ReadArchitecture(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	limited := &io.LimitedReader{R: bufio.NewReaderSize(file, readBufferBytes), N: maxHeaderBytes}
+	metadataCount, err := readMetadataCount(limited)
+	if err != nil {
+		return "", err
+	}
+	for i := uint64(0); i < metadataCount; i++ {
+		key, err := readString(limited)
+		if err != nil {
+			return "", err
+		}
+		var valueType uint32
+		if err := binary.Read(limited, binary.LittleEndian, &valueType); err != nil {
+			return "", err
+		}
+		if key != "general.architecture" {
+			if err := skipValue(limited, valueType); err != nil {
+				return "", err
+			}
+			continue
+		}
+		item, scalar, err := readValue(limited, valueType)
+		if err != nil {
+			return "", err
+		}
+		if scalar && item.kind == typeString {
+			return strings.TrimSpace(item.stringValue), nil
+		}
+		return "", nil
+	}
+	return "", nil
+}
+
 // IsVisionProjectorFile checks projector metadata and stops as soon as the
 // GGUF architecture provides a definitive answer.
 func IsVisionProjectorFile(path string) (bool, error) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/decision"
 	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/localinference"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelregistry"
 	"github.com/opencsgs/csglite/pkg/api"
@@ -117,6 +118,7 @@ func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string
 	decisionOnly := false
 	var contextWindow int64
 	var maxModelLen int64
+	var localInference *api.LocalInferenceSupport
 
 	if dir, err := s.manager.ModelPath(storageID); err == nil {
 		metadata := s.localModelMetadata(storageID, dir, pipelineTag, item.Format)
@@ -134,6 +136,10 @@ func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string
 		}
 		contextWindow = s.localModelContextWindowFromMax(storageID, metadata.ModelMaxContext)
 		maxModelLen = metadata.MaxModelLen
+		// Derived live, not cached: it depends on runtime tables (supported
+		// architectures, platform) that change without the model files changing.
+		support := localinference.FromLocalModel(item, dir)
+		localInference = &support
 	}
 	if pipelineTag == "" {
 		pipelineTag = "text-generation"
@@ -170,6 +176,7 @@ func (s *Server) localModelInfoWithID(item *model.LocalModel, inferenceID string
 		MaxModelLen:       maxModelLen,
 		Description:       strings.TrimSpace(item.Description),
 		License:           strings.TrimSpace(item.License),
+		LocalInference:    localInference,
 	}
 }
 

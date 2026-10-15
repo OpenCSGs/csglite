@@ -89,3 +89,17 @@ func TestDiffusersGenerateReportsWorkerCrash(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveImageBackendRejectsGGUFImage(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("---\nlibrary_name: gguf\npipeline_tag: text-to-image\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "qwen-image-2.1-turbo-Q4_K_M.gguf"), []byte("GGUF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ResolveImageBackend(dir, "unsloth/Qwen-Image-2.1-Turbo-GGUF")
+	if err == nil || !strings.Contains(err.Error(), "GGUF image model") {
+		t.Fatalf("ResolveImageBackend() error = %v, want GGUF image model refusal", err)
+	}
+}

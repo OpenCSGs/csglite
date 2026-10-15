@@ -40,8 +40,11 @@ const (
 // Diffusers, and ordinary Diffusers weights cannot be loaded by MFLUX.
 func ResolveImageBackend(modelDir, modelName string) (string, error) {
 	backend := model.ImageBackendFor(modelDir, modelName)
-	if backend == model.ImageBackendMLXUnsupported {
+	switch backend {
+	case model.ImageBackendMLXUnsupported:
 		return "", fmt.Errorf("MLX image checkpoint %q is not supported; only Qwen-Image-2.1 MLX runs on Apple Silicon", modelName)
+	case model.ImageBackendGGUFUnsupported:
+		return "", fmt.Errorf("GGUF image model %q is not supported for local inference: the GGUF holds only the denoiser and needs a separate VAE and text encoder; download a Diffusers or MLX version of the model instead", modelName)
 	}
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(qwen21RuntimeEnv))) {
 	case "", "auto":
