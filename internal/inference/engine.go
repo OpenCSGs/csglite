@@ -242,7 +242,10 @@ func ensureConvertibleHFArchitecture(modelDir string) error {
 	if !ok {
 		return nil
 	}
-	if _, supported := convert.SupportedHFArchitecture(arch); supported {
+	// readHFArchitecture reports a decision checkpoint with the complete
+	// layout as DecisionCheckpointArchitecture, so its root architecture
+	// here means the encoder or head config is missing.
+	if _, supported := convert.SupportedHFArchitecture(arch); supported && !convert.IsDecisionCheckpointRootArchitecture(arch) {
 		return nil
 	}
 	log.Printf("CONVERT: unsupported HuggingFace architecture %q in %s", arch, modelDir)
@@ -250,6 +253,9 @@ func ensureConvertibleHFArchitecture(modelDir string) error {
 }
 
 func readHFArchitecture(modelDir string) (string, bool, error) {
+	if convert.IsDecisionCheckpoint(modelDir) {
+		return convert.DecisionCheckpointArchitecture, true, nil
+	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

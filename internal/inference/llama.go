@@ -107,6 +107,9 @@ type llamaEngine struct {
 	// decisionLoRA is set when a typed-decision adapter is loaded (scale 0
 	// by default, enabled per decision request).
 	decisionLoRA bool
+	// decisionType is the GGUF's native decision type ("laya", "openjev",
+	// ...), answered at /v1/systemone; "" for other models.
+	decisionType string
 	// slots pins conversations to llama-server slots; nil with one slot.
 	slots *llamaSlotScheduler
 }
@@ -600,6 +603,12 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	if decisionLoRA != "" {
 		args = append(args, decisionLoRAArgs(decisionLoRA)...)
 	}
+	if !embedding {
+		engine.decisionType = ggufmeta.DecisionType(modelPath)
+	}
+	if DecisionOnlyType(engine.decisionType) {
+		args = append(args, decisionOnlyBatchArgs(effectiveNumCtx)...)
+	}
 	if len(mmproj) > 0 && mmproj[0] != "" {
 		args = append(args, "--mmproj", mmproj[0])
 		engine.hasMultimodal = true
@@ -694,7 +703,7 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		engine.decisionLoRA = true
 	}
 	engine.detectNativeToolStreaming()
-	log.Printf("LLAMA: llama-server ready model=%q port=%d native_tool_streaming=%t typed_decisions=%t", modelName, port, engine.nativeToolStreaming, engine.decisionLoRA)
+	log.Printf("LLAMA: llama-server ready model=%q port=%d native_tool_streaming=%t typed_decisions=%t decision_type=%q", modelName, port, engine.nativeToolStreaming, engine.decisionLoRA, engine.decisionType)
 	return engine, nil
 }
 
@@ -793,6 +802,9 @@ func (b *releasingBody) Close() error {
 }
 
 func (e *llamaEngine) postChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
+	if err := e.errDecisionOnly(); err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)

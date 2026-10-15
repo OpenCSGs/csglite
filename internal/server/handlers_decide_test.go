@@ -248,3 +248,97 @@ func TestHandleDecisionsServesOpenAIDecisionsAPI(t *testing.T) {
 		t.Fatalf("untagged model: status %d body %s", w.Code, w.Body.String())
 	}
 }
+
+type fakeSystemOneEngine struct {
+	fakeEngine
+	bodies []string
+}
+
+func (e *fakeSystemOneEngine) NativeDecisionType() string { return "laya" }
+
+func (e *fakeSystemOneEngine) SystemOne(_ context.Context, body []byte) ([]byte, error) {
+	e.bodies = append(e.bodies, string(body))
+	return []byte(`{"answers":{"q000":{"type":"noul","noul":0.9},"q001":{"type":"choice","probabilities":{"billing":0.8,"other":0.2}}},"usage":{"input_tokens":40}}`), nil
+}
+
+// newNativeDecisionTestServer stores a Laya checkpoint (org/laya): a
+// ModernBERT encoder with a decision head, recognized by its layout.
+func newNativeDecisionTestServer(t *testing.T) *Server {
+	t.Helper()
+	useIsolatedStorageHome(t)
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	s := newTestServerWithConfig(t, cfg)
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace: "org", Name: "laya", Format: model.FormatSafeTensors, Size: 1,
+		Files: []string{"model.safetensors"}, DownloadedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for rel, content := range map[string]string{
+		"model.safetensors":    "weights",
+		"config.json":          `{"model_type":"laya","architectures":["LayaTypedDecisions"]}`,
+		"encoder/config.json":  `{"architectures":["ModernBertModel"]}`,
+		"rl_agent_config.json": `{"head_layers":2}`,
+		"README.md":            "---\ntags:\n- typed-decisions\n---\n",
+	} {
+		path := filepath.Join(cfg.ModelDir, "org", "laya", rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return s
+}
+
+func TestHandleDecisionsServesNativeDecisionModels(t *testing.T) {
+	s := newNativeDecisionTestServer(t)
+	engine := &fakeSystemOneEngine{}
+	s.engines["org/laya"] = &managedEngine{engine: engine, numCtx: 8192, numParallel: 1}
+
+	body := `{"model":"org/laya","input":"I was charged twice.","questions":[
+	  {"type":"predicate","name":"refund","instructions":"Is this a refund request?"},
+	  {"type":"choice","name":"department","instructions":"Which department?","choices":[{"value":"billing"},{"value":"other"}]}
+	]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/decisions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleDecisions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Answers []map[string]any `json:"answers"`
+		Usage   map[string]any   `json:"usage"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Answers) != 2 || resp.Answers[0]["probability"] != 0.9 || resp.Answers[1]["choice"] != "billing" || resp.Usage["input_tokens"] != float64(40) {
+		t.Fatalf("response = %s", w.Body.String())
+	}
+	if len(engine.bodies) != 1 || !strings.Contains(engine.bodies[0], `"state":"I was charged twice."`) {
+		t.Fatalf("System One bodies = %q", engine.bodies)
+	}
+
+	// The JEV-style endpoint points native models at /v1/decisions.
+	w = postDecide(t, s, `{"model":"org/laya","kind":"noul","question":"q"}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "/v1/decisions") {
+		t.Fatalf("/v1/decide: status %d body %s", w.Code, w.Body.String())
+	}
+}
+
+func TestLocalModelInfoFlagsNativeDecisionModels(t *testing.T) {
+	s := newNativeDecisionTestServer(t)
+	infos, err := s.listLocalModelInfos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || !infos[0].TypedDecisions || !infos[0].DecisionOnly {
+		t.Fatalf("infos = %+v", infos)
+	}
+	// The typed-decisions tag must not send the engine looking for a JEV adapter.
+	if path, err := s.resolveDecisionLoRA("org/laya"); path != "" || err != nil {
+		t.Fatalf("resolveDecisionLoRA = %q, %v", path, err)
+	}
+}

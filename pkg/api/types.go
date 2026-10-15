@@ -383,16 +383,20 @@ type ModelInfo struct {
 	InputModalities   []string  `json:"input_modalities,omitempty"`
 	OutputModalities  []string  `json:"output_modalities,omitempty"`
 	HasMMProj         bool      `json:"has_mmproj,omitempty"`
-	// TypedDecisions marks a local model that answers JEV-style typed
-	// decisions through POST /v1/decide.
-	TypedDecisions bool          `json:"typed_decisions,omitempty"`
-	ContextWindow  int64         `json:"context_window,omitempty"`
-	MaxModelLen    int64         `json:"max_model_len,omitempty"`
-	Description    string        `json:"description,omitempty"`
-	License        string        `json:"license,omitempty"`
-	LLMType        string        `json:"llm_type,omitempty"`
-	OwnedBy        string        `json:"owned_by,omitempty"`
-	Pricing        *ModelPricing `json:"pricing,omitempty"`
+	// TypedDecisions marks a local model that answers typed decisions
+	// through POST /v1/decisions: a JEV model with its System 1 block, or a
+	// native decision model such as Laya.
+	TypedDecisions bool `json:"typed_decisions,omitempty"`
+	// DecisionOnly marks a native decision model that cannot generate text
+	// (Laya and other encoder heads); it serves POST /v1/decisions only.
+	DecisionOnly  bool          `json:"decision_only,omitempty"`
+	ContextWindow int64         `json:"context_window,omitempty"`
+	MaxModelLen   int64         `json:"max_model_len,omitempty"`
+	Description   string        `json:"description,omitempty"`
+	License       string        `json:"license,omitempty"`
+	LLMType       string        `json:"llm_type,omitempty"`
+	OwnedBy       string        `json:"owned_by,omitempty"`
+	Pricing       *ModelPricing `json:"pricing,omitempty"`
 	// Nodes lists the cluster members holding this model. Only present while
 	// the node belongs to a LAN cluster.
 	Nodes []ModelNodePresence `json:"nodes,omitempty"`

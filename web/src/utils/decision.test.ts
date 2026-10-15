@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildDecisionRequest, canSendDecision, decisionUserSummary, formatDecisionAnswer, parseDecisionLines,
+  buildDecisionRequest, canSendDecision, decisionUserSummary, formatDecisionAnswer, isDecisionModeActive, parseDecisionLines,
 } from "./decision";
 import type { DecisionLabels } from "./decision";
 
@@ -22,6 +22,14 @@ const labels: DecisionLabels = {
 };
 
 describe("decision helpers", () => {
+  it("keeps decision-only models in decision mode", () => {
+    expect(isDecisionModeActive({ typed_decisions: true, decision_only: true }, false)).toBe(true);
+    expect(isDecisionModeActive({ typed_decisions: true }, false)).toBe(false);
+    expect(isDecisionModeActive({ typed_decisions: true }, true)).toBe(true);
+    expect(isDecisionModeActive({}, true)).toBe(false);
+    expect(isDecisionModeActive(null, true)).toBe(false);
+  });
+
   it("parses one entry per line", () => {
     expect(parseDecisionLines(" warn \n\nwait\r\norder\n")).toEqual(["warn", "wait", "order"]);
   });

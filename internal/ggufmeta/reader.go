@@ -380,3 +380,19 @@ func discard(reader io.Reader, count int64) error {
 	_, err := io.CopyN(io.Discard, reader, count)
 	return err
 }
+
+// DecisionType returns the native decision type ("laya", "openjev", ...) a
+// GGUF declares in its "<arch>.decision.type" metadata, or "" when it
+// declares none or cannot be read.
+func DecisionType(path string) string {
+	metadata, err := ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	arch, ok := metadata.String("general.architecture")
+	if !ok || strings.TrimSpace(arch) == "" {
+		return ""
+	}
+	decisionType, _ := metadata.String(arch + ".decision.type")
+	return strings.TrimSpace(decisionType)
+}

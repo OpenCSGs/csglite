@@ -224,6 +224,7 @@ export function Dashboard() {
           isEmbedding={isEmbeddingModel(apiModelInfo)}
           isASR={isASRModel(apiModelInfo)}
           isDecision={Boolean(apiModelInfo?.typed_decisions)}
+          isDecisionOnly={Boolean(apiModelInfo?.decision_only)}
           onClose={() => (apiInfoModel.value = "")}
         />
       )}

@@ -19,7 +19,10 @@ func SupportedHFArchitecture(hfArch string) (string, bool) {
 	if ggufArch, ok := archMapping[arch]; ok {
 		return ggufArch, true
 	}
-	ggufArch, ok := pythonConverterArchitectureMapping[arch]
+	if ggufArch, ok := pythonConverterArchitectureMapping[arch]; ok {
+		return ggufArch, true
+	}
+	ggufArch, ok := decisionCheckpointRootArchitectures[arch]
 	return ggufArch, ok
 }
 

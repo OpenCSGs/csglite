@@ -10,6 +10,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/decision"
 	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 // decisionProfileForModel resolves the typed-decision profile of a local
@@ -23,6 +24,9 @@ func (s *Server) decisionProfileForModel(modelID string) (*decision.Profile, err
 	dir, err := s.manager.ModelPath(lm.FullName())
 	if err != nil {
 		return nil, err
+	}
+	if decisionType := s.nativeDecisionTypeAt(lm, dir); decisionType != "" {
+		return nil, fmt.Errorf("model %q is a native %s decision model: ask it through POST /v1/decisions", modelID, decisionType)
 	}
 	if !decision.IsDecisionModel(dir) {
 		return nil, fmt.Errorf("model %q is not a typed-decision model (its model card has no jev or typed-decisions tag)", modelID)
@@ -64,7 +68,7 @@ func (s *Server) resolveDecisionLoRA(modelName string) (string, error) {
 		return "", nil
 	}
 	dir, err := s.manager.ModelPath(lm.FullName())
-	if err != nil || !decision.IsDecisionModel(dir) {
+	if err != nil || !decision.IsDecisionModel(dir) || s.nativeDecisionTypeAt(lm, dir) != "" {
 		return "", nil
 	}
 	profile, err := decision.FindProfile(dir, s.locateLocalRepo)
@@ -125,6 +129,10 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
+	if s.nativeDecisionType(req.Model) != "" {
+		s.handleNativeDecisions(w, r, req)
+		return
+	}
 	profile, err := s.decisionProfileForModel(req.Model)
 	if err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -150,6 +158,59 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordAPIUsage(r, req.Model, req.Source, resp.Usage.InputTokens, resp.Usage.OutputTokens)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleNativeDecisions answers an OpenAI Decisions request with a native
+// decision model (Laya, OpenJev, ...): llama-server reads the answers from the
+// head stored in the GGUF at /v1/systemone.
+func (s *Server) handleNativeDecisions(w http.ResponseWriter, r *http.Request, req decision.OpenAIRequest) {
+	questions, err := decision.PrepareNativeOpenAI(req)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	eng, err := s.getChatEngine(r.Context(), req.Model, req.Source, 0, 0, -1, "", "", "")
+	if err != nil {
+		writeOpenAIInferenceError(w, err)
+		return
+	}
+	defer s.touchEngine(req.Model)
+	answerer, ok := eng.(inference.SystemOneAnswerer)
+	if !ok || answerer.NativeDecisionType() == "" {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
+			fmt.Sprintf("model %q did not load as a native decision model; its llama.cpp engine may be too old", req.Model))
+		return
+	}
+	data, err := answerer.SystemOne(r.Context(), questions.Body())
+	if err != nil {
+		writeOpenAIInferenceError(w, err)
+		return
+	}
+	resp, err := questions.Answer(data, req.Model)
+	if err != nil {
+		writeOpenAIInferenceError(w, err)
+		return
+	}
+	s.recordAPIUsage(r, req.Model, req.Source, resp.Usage.InputTokens, resp.Usage.OutputTokens)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// nativeDecisionType returns the native decision type of a local model, or ""
+// when it is not a downloaded native decision model.
+func (s *Server) nativeDecisionType(modelID string) string {
+	lm, err := s.manager.ResolveLocalModel(modelID)
+	if err != nil || lm == nil {
+		return ""
+	}
+	dir, err := s.manager.ModelPath(lm.FullName())
+	if err != nil {
+		return ""
+	}
+	return s.nativeDecisionTypeAt(lm, dir)
+}
+
+func (s *Server) nativeDecisionTypeAt(lm *model.LocalModel, dir string) string {
+	return s.localModelMetadata(lm.FullName(), dir, strings.TrimSpace(lm.PipelineTag), lm.Format).DecisionType
 }
 
 // GET /v1/decide/info?model=... -- typed-decision capabilities of a model.

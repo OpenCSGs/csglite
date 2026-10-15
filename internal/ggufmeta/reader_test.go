@@ -3,6 +3,8 @@ package ggufmeta
 import (
 	"bytes"
 	"encoding/binary"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -96,5 +98,32 @@ func writeTestValue(t *testing.T, data *bytes.Buffer, value any) {
 	t.Helper()
 	if err := binary.Write(data, binary.LittleEndian, value); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDecisionType(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, entries []testMetadata) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, buildTestGGUF(t, entries), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	laya := write("laya.gguf", []testMetadata{
+		{key: "general.architecture", valueType: typeString, value: "modern-bert"},
+		{key: "modern-bert.decision.type", valueType: typeString, value: "laya"},
+	})
+	plain := write("plain.gguf", []testMetadata{
+		{key: "general.architecture", valueType: typeString, value: "qwen3"},
+	})
+	if got := DecisionType(laya); got != "laya" {
+		t.Fatalf("DecisionType(laya) = %q", got)
+	}
+	if got := DecisionType(plain); got != "" {
+		t.Fatalf("DecisionType(plain) = %q", got)
+	}
+	if got := DecisionType(filepath.Join(dir, "missing.gguf")); got != "" {
+		t.Fatalf("DecisionType(missing) = %q", got)
 	}
 }

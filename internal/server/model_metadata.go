@@ -33,6 +33,7 @@ func (s *Server) localModelMetadata(storageID, modelDir, manifestPipelineTag str
 		ContextWindow:   int64(inference.ResolveNumCtxFromModelMax(modelMaxContext, 0, s.modelNumCtxSetting(storageID), s.cfg.Inference.LlamaUseModelMaxCtx)),
 		ModelMaxContext: int64(modelMaxContext),
 		TypedDecisions:  decision.IsDecisionModel(modelDir),
+		DecisionType:    decision.NativeType(modelDir),
 	}
 	metadata.MaxModelLen, _ = model.MaxModelLen(modelDir, format)
 
