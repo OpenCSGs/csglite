@@ -126,6 +126,14 @@ func (m *Manager) fetchStatus(ctx context.Context, mem Member) (*Status, string,
 			}
 			return &st, addr, nil
 		}
+		if errors.Is(err, errSelfAddress) {
+			// Polling it again only dials this node; wait for discovery or
+			// gossip to report where the member went.
+			m.dir.ForgetAddress(mem.UUID, addr)
+			m.store.ForgetAddress(mem.UUID, addr)
+			failures = append(failures, fmt.Sprintf("%s: %v", addr, errSelfAddress))
+			continue
+		}
 		failures = append(failures, fmt.Sprintf("%s: %v", addr, unwrapURLError(err)))
 	}
 	return nil, "", errors.New(strings.Join(failures, "; "))

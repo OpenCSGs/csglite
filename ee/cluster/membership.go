@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -204,12 +205,14 @@ func OpenStore(dir string) (*Store, error) {
 		st.data.Members = []Member{}
 	}
 	st.data.Settings.normalize()
+	st.normalizeAddressesLocked()
 	st.pruneLocked(time.Now())
 	return st, nil
 }
 
 func (st *Store) saveLocked() error {
 	st.data.Settings.normalize()
+	st.normalizeAddressesLocked()
 	sort.Slice(st.data.Members, func(i, j int) bool { return st.data.Members[i].UUID < st.data.Members[j].UUID })
 	raw, err := json.MarshalIndent(st.data, "", "  ")
 	if err != nil {
@@ -507,6 +510,47 @@ func (st *Store) RecordAddress(nodeUUID, addr string) {
 			return
 		}
 	}
+}
+
+// ForgetAddress drops an endpoint that no longer reaches a member.
+func (st *Store) ForgetAddress(nodeUUID, addr string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for i := range st.data.Members {
+		if st.data.Members[i].UUID != nodeUUID {
+			continue
+		}
+		list := st.data.Members[i].LastAddresses
+		kept := slices.DeleteFunc(slices.Clone(list), func(a string) bool { return a == addr })
+		if len(kept) != len(list) {
+			st.data.Members[i].LastAddresses = kept
+			_ = st.saveLocked()
+		}
+		return
+	}
+}
+
+// normalizeAddressesLocked dedupes and caps every member's endpoints. New
+// members arrive with an observed address prepended to the ones they
+// reported, which is often the same endpoint twice.
+func (st *Store) normalizeAddressesLocked() {
+	for i := range st.data.Members {
+		st.data.Members[i].LastAddresses = uniqueAddresses(st.data.Members[i].LastAddresses)
+	}
+}
+
+func uniqueAddresses(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, a := range in {
+		a = strings.TrimSpace(a)
+		if a != "" && !slices.Contains(out, a) {
+			out = append(out, a)
+		}
+	}
+	if len(out) > maxLastAddresses {
+		out = out[:maxLastAddresses]
+	}
+	return out
 }
 
 // Remove drops a member and leaves a tombstone.
