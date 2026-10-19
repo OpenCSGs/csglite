@@ -53,7 +53,7 @@ by another machine on your network, or by a provider.
 - **Dataset download** from CSGHub platform
 - **Dataset management** — list, show details, and delete local datasets
 
-## Installation
+## Installation & Upgrade
 
 ### Desktop client
 
