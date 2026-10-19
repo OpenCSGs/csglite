@@ -1,6 +1,9 @@
 #!/bin/sh
 # csghub-lite install script
 # Usage: curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh | sh
+# Internal: --engine-only installs or aligns llama-server only, without
+# downloading or replacing csghub-lite. csghub-lite passes it at start-up to
+# align the engine after replacing its own binary.
 set -eu
 
 REPO="${REPO:-OpenCSGs/csglite}"
@@ -9,6 +12,12 @@ INSTALL_DIR_DEFAULT="/usr/local/bin"
 BINARY_NAME="${BINARY_NAME:-csghub-lite}"
 LLAMA_CPP_REPO="ggml-org/llama.cpp"
 LLAMA_CPP_DEFAULT_TAG="${CSGHUB_LITE_LLAMA_CPP_TAG:-b11541}"
+ENGINE_ONLY=""
+# Internal: csghub-lite sets this when it aligns the inference engine in the
+# background. Such a run has no terminal, so it must never escalate with sudo —
+# sudo prompts on /dev/tty and would block the server for as long as the prompt
+# stays open. Privileged steps are skipped and reported instead.
+NONINTERACTIVE="${CSGHUB_LITE_NONINTERACTIVE:-0}"
 INSTALL_PATH_PROFILE=""
 INSTALL_PATH_DIR=""
 
@@ -31,6 +40,15 @@ warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
 error() { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; exit 1; }
 step() { printf "${CYAN}[%s/%s]${NC} %s\n" "$1" "$2" "$3"; }
 
+parse_args() {
+    for _arg in "$@"; do
+        case "$_arg" in
+            --engine-only) ENGINE_ONLY=1 ;;
+            *) error "Unknown option: ${_arg}" ;;
+        esac
+    done
+}
+
 privileged_prefix() {
     if [ "$(id -u)" = "0" ]; then
         printf ""
@@ -44,6 +62,8 @@ privileged_prefix() {
 run_privileged() {
     if [ "$(id -u)" = "0" ]; then
         "$@"
+    elif [ "$NONINTERACTIVE" = "1" ]; then
+        error "This step requires root privileges, but this run cannot ask for them. Re-run the installer as root."
     elif command -v sudo >/dev/null 2>&1; then
         sudo "$@"
     else
@@ -54,6 +74,8 @@ run_privileged() {
 try_run_privileged() {
     if [ "$(id -u)" = "0" ]; then
         "$@"
+    elif [ "$NONINTERACTIVE" = "1" ]; then
+        return 1
     elif command -v sudo >/dev/null 2>&1; then
         sudo "$@"
     else
@@ -623,9 +645,14 @@ install_llama_server() {
                 ;;
         esac
         # Prefer the real footer line (after CUDA/backend init), not a stray "version:" elsewhere.
-        _local_build="$(printf "%s\n" "$_llama_ver_out" | grep -E '^version: [0-9]+ \(' | tail -1 | sed -n 's/^version: *\([0-9][0-9]*\) (.*/\1/p')"
+        # b11541 and later print "version: <semver>-dev (build <n>, commit <hash>)";
+        # older releases print "version: <n> (<hash>)". Both carry the build id in
+        # the parenthesised group, so only read it from there. A bare
+        # "version: <semver>" line has no build id and must not leak a version
+        # digit (that made the id non-comparable and every run re-download).
+        _local_build="$(printf "%s\n" "$_llama_ver_out" | grep -E '^version: ' | tail -1 | sed -n -E 's/.*\(build ([0-9]+).*/\1/p')"
         if [ -z "$_local_build" ]; then
-            _local_build="$(printf "%s\n" "$_llama_ver_out" | sed -n 's/^version: *\([0-9][0-9]*\).*/\1/p' | tail -1)"
+            _local_build="$(printf "%s\n" "$_llama_ver_out" | grep -E '^version: [0-9]+ \(' | tail -1 | sed -n -E 's/^version: *([0-9]+) \(.*/\1/p')"
         fi
         _remote_build="${_llama_tag#b}"
         # Ignore tiny local ids when release is large (shallow clone / non-official build id).
@@ -1021,15 +1048,26 @@ start_csghub_lite_server() {
 }
 
 main() {
+    parse_args "$@"
+    OS="$(detect_os)"
+    ARCH="$(detect_arch)"
+    REGION="$(detect_region)"
+
+    if [ -n "$ENGINE_ONLY" ]; then
+        # Engine-only run: csghub-lite itself is already installed and is being
+        # replaced by the caller, so only align the inference engine.
+        printf "\n${BOLD}Aligning inference engine${NC}\n\n"
+        install_llama_server
+        printf "\n"
+        return
+    fi
+
     TOTAL_STEPS=6
     SERVER_START_STATUS="failed"
     printf "\n${BOLD}Installing ${BINARY_NAME}${NC}\n\n"
 
     # Step 1: Detect environment
     step 1 "$TOTAL_STEPS" "Detecting environment..."
-    OS="$(detect_os)"
-    ARCH="$(detect_arch)"
-    REGION="$(detect_region)"
     info "OS: ${OS}, Arch: ${ARCH}, Region: ${REGION}"
 
     # Step 2: Check existing installation

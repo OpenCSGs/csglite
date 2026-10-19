@@ -55,6 +55,29 @@ such as `Qwen2ForCausalLM` to the llama.cpp/GGUF runtime architecture such as
 `qwen2`; do not rely on matching architecture names directly. Add or update
 tests for newly supported architectures and local inference support decisions.
 
+## Build id parsing
+
+`llama-server --version` reports the build id inside the parenthesised group, in
+two shapes: `version: <n> (<hash>)` on older releases, and
+`version: <semver>-dev (build <n>, commit <hash>)` since b11541. Three places
+read it, and they must stay in agreement:
+
+- `internal/inference/llama_version.go` (`parseLlamaServerBuildID`), which
+  decides whether `internal/upgrade.AlignLlamaRuntime` runs the installer.
+- `scripts/install.sh`, which decides whether a download is needed.
+- `scripts/install.ps1`, which decides the same on Windows.
+
+Read the id only from the parenthesised group. Matching a bare `version: <n>`
+instead picks up a version digit (b11541 prints `0.6.0-dev`, so the match is
+`0`); the shallow-clone rule then discards that value, and every run re-downloads
+the whole runtime.
+
+Probe with the same shared-library search path the server gets at start-up
+(`appendLlamaLibPath` in `llama.go`). Linux does not load a co-located `.so`
+unless the binary carries an `$ORIGIN` RUNPATH, so a runtime installed without
+`patchelf` reports no build id at all, and an unreadable id silently disables
+alignment.
+
 ## Binary sync policy
 
 When bumping the pinned llama.cpp tag, use **two paths**. Do not mix them.
