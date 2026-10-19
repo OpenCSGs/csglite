@@ -3,6 +3,7 @@ package model
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -65,5 +66,51 @@ func TestEnsureLocalModelFiles_BackfillsMissingEntries(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("changed = true on second pass, want false")
+	}
+}
+
+func TestRefreshManifestFiles_ReplacesConvertedSourceWithGGUF(t *testing.T) {
+	baseDir := t.TempDir()
+	modelDir := ModelDir(baseDir, "Acme", "demo")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "demo-f16.gguf"), []byte("gguf-data"), 0o644); err != nil {
+		t.Fatalf("write gguf: %v", err)
+	}
+	lm := &LocalModel{
+		Namespace: "Acme",
+		Name:      "demo",
+		Format:    FormatSafeTensors,
+		Size:      100,
+		Files:     []string{"config.json", "model.safetensors"},
+		FileEntries: []LocalModelFile{
+			{Path: "config.json", Size: 2},
+			{Path: "model.safetensors", Size: 98},
+		},
+	}
+	if err := SaveManifest(baseDir, lm); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+
+	if err := RefreshManifestFiles(modelDir); err != nil {
+		t.Fatalf("RefreshManifestFiles: %v", err)
+	}
+
+	got, err := LoadManifestInDir(modelDir)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if got.Format != FormatGGUF {
+		t.Fatalf("Format = %q, want %q", got.Format, FormatGGUF)
+	}
+	if want := []string{"config.json", "demo-f16.gguf"}; !reflect.DeepEqual(got.Files, want) {
+		t.Fatalf("Files = %v, want %v", got.Files, want)
+	}
+	if got.Size != int64(len("{}")+len("gguf-data")) {
+		t.Fatalf("Size = %d, want %d", got.Size, len("{}")+len("gguf-data"))
 	}
 }

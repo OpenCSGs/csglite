@@ -192,3 +192,21 @@ func fileSHA256(filePath string) (string, error) {
 	}
 	return hex.EncodeToString(sum.Sum(nil)), nil
 }
+
+// RefreshManifestFiles rescans modelDir after files were added or removed in
+// place, such as a GGUF conversion replacing its SafeTensors source, and
+// rewrites the manifest's file list, size and format to match the disk.
+func RefreshManifestFiles(modelDir string) error {
+	lm, err := LoadManifestInDir(modelDir)
+	if err != nil {
+		return err
+	}
+	if _, err := EnsureLocalModelFiles(modelDir, lm); err != nil {
+		return err
+	}
+	lm.Size = localModelEntriesSize(lm.FileEntries)
+	if format := DetectFormat(lm.Files); format != FormatUnknown {
+		lm.Format = format
+	}
+	return SaveManifestInDir(modelDir, lm)
+}
