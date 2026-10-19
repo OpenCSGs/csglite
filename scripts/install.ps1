@@ -1,5 +1,8 @@
+# csghub-lite runs this script with -EngineOnly at start-up to align llama-server
+# after replacing its own binary: only the engine needs to be installed then.
 Param(
-    [string]$InstallDir = "$HOME\bin"
+    [string]$InstallDir = "$HOME\bin",
+    [switch]$EngineOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -221,7 +224,10 @@ function Install-LlamaServer {
     }
 
     # Compare local and remote versions to skip unnecessary downloads.
-    # llama-server --version prints "version: <n> (<hash>)". Release tags: "b<n>".
+    # b11541 and later print "version: <semver>-dev (build <n>, commit <hash>)";
+    # older releases print "version: <n> (<hash>)". Both carry the build id in the
+    # parenthesised group, so only read it from there: a bare "version: <semver>"
+    # line has no build id and must not leak a version digit.
     # Upstream <n> is often git rev-list --count; shallow clones get small n — do not treat as official b-id.
     if ($existingLlama) {
         $localBuild = $null
@@ -233,16 +239,11 @@ function Install-LlamaServer {
                 $env:Path = "$llamaBinDir;$env:Path"
             }
             $verLines = @(& $existingLlama.Source --version 2>&1 | ForEach-Object { $_.ToString() })
-            $verFooter = $verLines | Where-Object { $_ -match '^\s*version:\s+\d+\s+\(' } | Select-Object -Last 1
-            if ($verFooter -match 'version:\s+(\d+)\s+\(') {
+            $verFooter = $verLines | Where-Object { $_ -match '^\s*version:\s+' } | Select-Object -Last 1
+            if ($verFooter -match '\(build\s+(\d+)') {
                 $localBuild = $Matches[1]
-            } elseif ($verLines) {
-                foreach ($line in ($verLines | Select-Object -Last 20)) {
-                    if ($line -match 'version:\s+(\d+)') {
-                        $localBuild = $Matches[1]
-                        break
-                    }
-                }
+            } elseif ($verFooter -match '^\s*version:\s+(\d+)\s+\(') {
+                $localBuild = $Matches[1]
             }
         } catch {
         } finally {
@@ -550,6 +551,14 @@ $script:Region = Detect-Region
 $script:ServerStartStatus = "failed"
 $script:WasServerRunning = $false
 Info "Detected region: $script:Region"
+
+if ($EngineOnly) {
+    # Engine-only run: csghub-lite itself is already installed and is being
+    # replaced by the caller, so only align the inference engine.
+    Info "Aligning inference engine..."
+    Install-LlamaServer
+    exit 0
+}
 
 Info "Checking for existing installation..."
 Check-Existing

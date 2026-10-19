@@ -158,6 +158,13 @@ func findLlamaBinary() string {
 	return ""
 }
 
+// ResolveLlamaServerBinary returns the llama-server binary inference would use,
+// following the same lookup order as model loading, or an empty string when
+// none is installed.
+func ResolveLlamaServerBinary() string {
+	return findLlamaBinary()
+}
+
 func llamaBinarySiblingPath(exePath, goos string) string {
 	if strings.TrimSpace(exePath) == "" {
 		return ""
@@ -656,15 +663,7 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 
 	// Ensure shared libraries co-located with the binary can be found
 	binDir := filepath.Dir(binary)
-	env := os.Environ()
-	switch runtime.GOOS {
-	case "darwin":
-		env = appendLibPath(env, "DYLD_LIBRARY_PATH", binDir)
-	case "linux":
-		env = appendLibPath(env, "LD_LIBRARY_PATH", binDir)
-	case "windows":
-		env = appendLibPath(env, "PATH", binDir)
-	}
+	env := appendLlamaLibPath(os.Environ(), binDir)
 	if IsROCMHost() {
 		env = appendEnvDefault(env, "GGML_CUDA_DISABLE_GRAPHS", "1")
 	}
@@ -1341,6 +1340,22 @@ func (e *llamaEngine) Close() error {
 
 func (e *llamaEngine) ModelName() string {
 	return e.modelName
+}
+
+// appendLlamaLibPath adds dir to the platform's shared-library search path so
+// llama-server finds the libraries shipped next to it. Both the start-up path
+// and the --version probe use it: a runtime that needs the path must not be
+// reported as missing or version-less because the probe looked it up bare.
+func appendLlamaLibPath(env []string, dir string) []string {
+	switch runtime.GOOS {
+	case "darwin":
+		return appendLibPath(env, "DYLD_LIBRARY_PATH", dir)
+	case "linux":
+		return appendLibPath(env, "LD_LIBRARY_PATH", dir)
+	case "windows":
+		return appendLibPath(env, "PATH", dir)
+	}
+	return env
 }
 
 func appendLibPath(env []string, key, dir string) []string {

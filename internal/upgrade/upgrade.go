@@ -618,15 +618,9 @@ func (u *Updater) installBinaryWindows(newBinary, currentBinary string) error {
 		return fmt.Errorf("writing Windows upgrade script: %w", err)
 	}
 
-	powershell, err := exec.LookPath("powershell.exe")
+	powershell, err := lookupPowerShell()
 	if err != nil {
-		if powershell, err = exec.LookPath("powershell"); err != nil {
-			if powershell, err = exec.LookPath("pwsh.exe"); err != nil {
-				if powershell, err = exec.LookPath("pwsh"); err != nil {
-					return fmt.Errorf("PowerShell not found for Windows upgrade: %w", err)
-				}
-			}
-		}
+		return err
 	}
 
 	cmd := exec.Command(powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
