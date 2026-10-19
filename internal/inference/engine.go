@@ -181,6 +181,11 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 			}
 			return startConverted(ggufPath)
 		}
+		// Falling through would serve whichever GGUF is left and ignore the
+		// requested dtype, which the removed SafeTensors could have produced.
+		if convert.SourceWeightsRemoved(modelDir) {
+			return nil, fmt.Errorf("model %s has no %s GGUF: %w", modelName, normalizedDType, convert.ErrSourceWeightsRemoved)
+		}
 	}
 
 	modelFile, format, err := model.FindModelFile(modelDir)

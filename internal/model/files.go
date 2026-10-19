@@ -210,3 +210,24 @@ func RefreshManifestFiles(modelDir string) error {
 	}
 	return SaveManifestInDir(modelDir, lm)
 }
+
+// RecordRemovedSourceWeights adds names to the manifest's removed source
+// weights before they are deleted, so an interrupted removal still leaves the
+// model marked as no longer convertible.
+func RecordRemovedSourceWeights(modelDir string, names []string) error {
+	lm, err := LoadManifestInDir(modelDir)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(lm.RemovedSourceWeights)+len(names))
+	for _, name := range lm.RemovedSourceWeights {
+		seen[name] = struct{}{}
+	}
+	for _, name := range names {
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			lm.RemovedSourceWeights = append(lm.RemovedSourceWeights, name)
+		}
+	}
+	return SaveManifestInDir(modelDir, lm)
+}

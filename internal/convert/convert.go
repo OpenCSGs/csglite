@@ -42,6 +42,10 @@ var allowedRuntimeDTypeSet = func() map[string]struct{} {
 // It runs the llama.cpp convert_hf_to_gguf.py bundled in the binary (or from
 // CSGHUB_LITE_CONVERTER_URL when set); see convert_python.go.
 func Convert(modelDir string, progress ProgressFunc, dtype string) (string, error) {
+	lock := sourceWeightLock(modelDir)
+	lock.RLock()
+	defer lock.RUnlock()
+
 	if progress == nil {
 		progress = func(string, int, int) {}
 	}
@@ -150,8 +154,14 @@ func HasPyTorchWeights(modelDir string) bool {
 	return false
 }
 
+// HasConvertibleHFWeights reports whether modelDir still holds weights the
+// GGUF converter can read. SafeTensors left behind after the converted shards
+// were removed, such as head.safetensors, do not count.
 func HasConvertibleHFWeights(modelDir string) bool {
-	return HasSafeTensors(modelDir) || HasPyTorchWeights(modelDir)
+	if HasPyTorchWeights(modelDir) {
+		return true
+	}
+	return HasSafeTensors(modelDir) && !SourceWeightsRemoved(modelDir)
 }
 
 func mmprojGGUFNames(modelDir string) ([]string, error) {
