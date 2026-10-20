@@ -415,6 +415,9 @@ func ConvertPython(modelDir string, progress ProgressFunc, dtype string) (string
 		log.Printf("CONVERT: existing GGUF found model_dir=%s dtype=%q path=%s", modelDir, effectiveDType, existingPath)
 		return existingPath, nil
 	}
+	if !HasConvertibleHFWeights(modelDir) && SourceWeightsRemoved(modelDir) {
+		return "", ErrSourceWeightsRemoved
+	}
 
 	basePython, unsupportedPython := findPythonInterpreterWithStatus()
 	if basePython == "" {

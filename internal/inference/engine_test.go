@@ -168,3 +168,27 @@ func TestShouldRemoveConvertedGGUF(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadEngine_DTypeAfterSourceWeightsRemovedFails(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"config.json":      `{"architectures":["LlamaForCausalLM"]}`,
+		"manifest.json":    `{"namespace":"demo","name":"demo","format":"gguf","removed_source_weights":["model.safetensors"]}`,
+		"head.safetensors": "head",
+		"demo-f16.gguf":    "gguf",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Without the error, a q8_0 request would quietly serve the f16 GGUF.
+	_, err := LoadEngineWithProgress(dir, &model.LocalModel{Namespace: "demo", Name: "demo"}, nil, false, 0, 0, -1, "", "", "q8_0")
+	if !errors.Is(err, convert.ErrSourceWeightsRemoved) {
+		t.Fatalf("LoadEngineWithProgress(q8_0) error = %v, want ErrSourceWeightsRemoved", err)
+	}
+}
