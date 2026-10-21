@@ -147,7 +147,7 @@ TTS worker 支持：
 | 变量 | 说明 | 默认值 |
 |---|---|---|
 | `CSGHUB_LITE_ADMIN_USERNAME` | 启动时创建的第一个管理员的用户名 | `admin` |
-| `CSGHUB_LITE_ADMIN_PASSWORD` | 第一个管理员的密码。**只在还没有任何账号时生效**：创建后被忽略，不会重置密码；仍设置时「成员与团队」页会提示移除。需要有效的企业版 License | 未设置 |
+| `CSGHUB_LITE_ADMIN_PASSWORD` | 第一个管理员的密码。**只在还没有任何账号时生效**：创建后被忽略，不会重置密码；仍设置时「团队」页会提示移除。需要有效的企业版 License | 未设置 |
 | `CSGHUB_LITE_ADMIN_PASSWORD_FILE` | 从文件读取上面的密码（去掉行尾换行），便于配合 Docker / Kubernetes secrets | 未设置 |
 
 不设置时，可在 Web 界面创建第一个管理员：本机访问直接创建，远程访问需填写服务器上
