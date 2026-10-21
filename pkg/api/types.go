@@ -1537,17 +1537,26 @@ type AuthPasswordChangeRequest struct {
 }
 
 type TeamUser struct {
-	ID          string     `json:"id"`
-	Username    string     `json:"username"`
-	DisplayName string     `json:"display_name,omitempty"`
-	Email       string     `json:"email,omitempty"`
-	Role        string     `json:"role"`
-	TeamID      string     `json:"team_id,omitempty"`
-	TeamName    string     `json:"team_name,omitempty"`
-	Disabled    bool       `json:"disabled"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Role        string `json:"role"`
+	TeamID      string `json:"team_id,omitempty"`
+	TeamName    string `json:"team_name,omitempty"`
+	Disabled    bool   `json:"disabled"`
+	// Pending is true for an invited user who has not set a password yet.
+	Pending bool `json:"pending"`
+	// MustChangePassword is true when an administrator set the password and
+	// the user has not replaced it yet.
+	MustChangePassword bool       `json:"must_change_password"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	LastLoginAt        *time.Time `json:"last_login_at,omitempty"`
+	InviteExpiresAt    *time.Time `json:"invite_expires_at,omitempty"`
+	// InviteToken is returned once, when an invitation is issued. The link to
+	// send is /invite/<token> on this instance.
+	InviteToken string `json:"invite_token,omitempty"`
 }
 
 type TeamUsersResponse struct {
@@ -1557,8 +1566,17 @@ type TeamUsersResponse struct {
 }
 
 type TeamUserCreateRequest struct {
-	Username    string `json:"username"`
-	Password    string `json:"password"`
+	Username string `json:"username"`
+	// Password is required unless Invite is set. A password set for someone
+	// else must be changed at their first sign-in.
+	Password string `json:"password,omitempty"`
+	// Invite creates the user without a password and returns an invitation
+	// token; the user sets their own password when accepting it.
+	Invite bool `json:"invite,omitempty"`
+	// SetupToken is required to create the first administrator from another
+	// machine. It is printed in the server log and kept in the
+	// team-setup-token file under the app home.
+	SetupToken  string `json:"setup_token,omitempty"`
 	DisplayName string `json:"display_name,omitempty"`
 	Email       string `json:"email,omitempty"`
 	Role        string `json:"role,omitempty"`
@@ -1585,6 +1603,29 @@ type TeamGroup struct {
 
 type TeamGroupsResponse struct {
 	Teams []TeamGroup `json:"teams"`
+}
+
+// TeamInviteInfo describes an invitation to the person opening its link.
+type TeamInviteInfo struct {
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name,omitempty"`
+	Role        string    `json:"role"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+type TeamInviteAcceptRequest struct {
+	Password string `json:"password"`
+}
+
+// TeamSettings are the sign-in settings plus read-only facts about how the
+// instance was set up.
+type TeamSettings struct {
+	SessionHours    int `json:"session_hours"`
+	MaxFailedLogins int `json:"max_failed_logins"`
+	LockoutMinutes  int `json:"lockout_minutes"`
+	// BootstrapEnvSet is true while CSGHUB_LITE_ADMIN_PASSWORD (or its _FILE
+	// form) is still set although accounts exist; it should be removed.
+	BootstrapEnvSet bool `json:"bootstrap_env_set"`
 }
 
 type TeamGroupRequest struct {

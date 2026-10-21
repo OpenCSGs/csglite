@@ -91,7 +91,7 @@ func (s *Server) handleAPIKeyDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		owned := false
 		for _, record := range state.Keys {
-			if record.ID == id && visibleAPIKey(r, record) {
+			if record.ID == id && deletableAPIKey(r, record) {
 				owned = true
 				break
 			}

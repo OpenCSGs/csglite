@@ -18,7 +18,7 @@
   "tags": [
     {
       "name": "Accounts",
-      "description": "Enterprise user accounts, teams and roles (feature.lite.team_management). Once the first user exists, remote callers must sign in or present an API key; administrators manage everything, members run inference and manage their own conversations, images and API keys, viewers only read."
+      "description": "Enterprise user accounts, teams and roles (feature.lite.team_management). Once the first user exists, remote callers must sign in or present an API key; administrators manage everything, auditors read everything and change nothing, members run inference and manage their own conversations, images and API keys."
     },
     {
       "name": "Health",
@@ -3033,7 +3033,7 @@
           "Accounts"
         ],
         "summary": "Sign in",
-        "description": "Checks a username and password and sets the `csglite_session` cookie (HttpOnly, SameSite=Lax, 7 days). Five wrong passwords for one username from one address lock that pair out for a minute. Signing in is not license-gated, so accounts keep protecting the instance after a license lapses.",
+        "description": "Checks a username and password and sets the `csglite_session` cookie (HttpOnly, SameSite=Lax; lifetime from the sign-in settings, 7 days by default). After the configured number of wrong passwords for one username from one address (5 by default) that pair is locked out (5 minutes by default). A user whose password an administrator set gets `must_change_password` and every other call answers `403 password_change_required` until they change it. Signing in is not license-gated, so accounts keep protecting the instance after a license lapses.",
         "operationId": "login",
         "requestBody": {
           "required": true,
@@ -3124,7 +3124,7 @@
           "Accounts"
         ],
         "summary": "Change your password",
-        "description": "Changes the signed-in user's password. Their other sessions end; this one is kept.",
+        "description": "Changes the signed-in user's password and clears `must_change_password`. Their other sessions end; this one is kept.",
         "operationId": "changePassword",
         "requestBody": {
           "required": true,
@@ -3170,13 +3170,248 @@
         }
       }
     },
+    "/api/auth/invite/{token}": {
+      "get": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Describe an invitation",
+        "description": "Returns who an invitation link is for. Never requires sign-in.",
+        "operationId": "getInvite",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Invitation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamInviteInfo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Invalid, expired or used invitation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Accept an invitation",
+        "description": "Sets the invited user's password, spends the invitation and signs them in (sets `csglite_session`). Not license-gated.",
+        "operationId": "acceptInvite",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamInviteAcceptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Cross-origin request (`code: permission_denied`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Invalid, expired or used invitation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/team/settings": {
+      "get": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Get sign-in settings",
+        "description": "Session length and lockout policy, and whether the bootstrap administrator password is still set in the environment. Administrators and auditors. Enterprise: `feature.lite.team_management`.",
+        "operationId": "getTeamSettings",
+        "responses": {
+          "200": {
+            "description": "Settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamSettings"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Update sign-in settings",
+        "description": "Changes the session length (1 hour to 90 days), failed sign-ins before lockout (3 to 50) and the lockout (1 minute to 1 day). New sessions use the new length. Enterprise: `feature.lite.team_management`.",
+        "operationId": "updateTeamSettings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamSettings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/team/users/{id}/invite": {
+      "post": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Issue a new invitation link",
+        "description": "Replaces an invited user's link with a new one valid 7 days; the earlier link stops working. The response carries `invite_token` once. Enterprise: `feature.lite.team_management`.",
+        "operationId": "reinviteTeamUser",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User with the new invitation token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamUser"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The user already accepted their invitation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/team/users": {
       "get": {
         "tags": [
           "Accounts"
         ],
         "summary": "List users",
-        "description": "Lists every user account with the licensed seat count. Administrators only. Enterprise: `feature.lite.team_management`.",
+        "description": "Lists every user account with the licensed seat count. Administrators and auditors. Enterprise: `feature.lite.team_management`.",
         "operationId": "listTeamUsers",
         "responses": {
           "200": {
@@ -3206,7 +3441,7 @@
           "Accounts"
         ],
         "summary": "Create a user",
-        "description": "Creates a user. While no user exists, any caller may create the first one, which is always an administrator, and that switches accounts on: from then on every remote request needs a session or an API key. Requests from this machine itself (loopback without forwarding headers) keep administrator access. Enterprise: `feature.lite.team_management`; the number of users is capped by `quota.lite.max_users`.",
+        "description": "Creates a user, either with a password (which the user must change at first sign-in) or, with `invite`, without one: the response then carries a one-time `invite_token` for the link `/invite/<token>`, valid 7 days. The first user is always an administrator and switches accounts on: from then on every remote request needs a session or an API key. Creating it from another machine needs `setup_token`, read from `team-setup-token` under the app home on the server; requests from this machine itself (loopback without forwarding headers) keep administrator access and need no token. The first administrator can also be created at start-up from CSGHUB_LITE_ADMIN_USERNAME and CSGHUB_LITE_ADMIN_PASSWORD (or _FILE). Enterprise: `feature.lite.team_management`; the number of users, invited ones included, is capped by `quota.lite.max_users`.",
         "operationId": "createTeamUser",
         "requestBody": {
           "required": true,
@@ -3238,7 +3473,7 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "403": {
-            "description": "Not licensed, or the licensed seat count is reached (`code: feature_not_licensed`, `feature: quota.lite.max_users`, with `limit` and `current`), or the caller is not an administrator.",
+            "description": "Not licensed, or the licensed seat count is reached (`code: feature_not_licensed`, `feature: quota.lite.max_users`, with `limit` and `current`), the caller is not an administrator, or the first administrator was requested from another machine without the right setup token (`code: setup_token_required`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3259,7 +3494,7 @@
           "Accounts"
         ],
         "summary": "Update a user",
-        "description": "Changes a user's profile, role, team, disabled state or password. Disabling, demoting or resetting the password signs the user out everywhere. The last enabled administrator cannot be disabled or demoted. Enterprise: `feature.lite.team_management`.",
+        "description": "Changes a user's profile, role, team, disabled state or password. Disabling, changing the role or resetting the password signs the user out everywhere; a reset password must be changed at next sign-in. The last enabled administrator cannot be disabled or demoted. Enterprise: `feature.lite.team_management`.",
         "operationId": "updateTeamUser",
         "parameters": [
           {
@@ -3296,7 +3531,7 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "403": {
-            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3318,7 +3553,7 @@
           "Accounts"
         ],
         "summary": "Delete a user",
-        "description": "Deletes a user, their sessions and their API keys. The last enabled administrator cannot be deleted. Enterprise: `feature.lite.team_management`.",
+        "description": "Deletes a user, their sessions, invitation and API keys; for an invited user this revokes the invitation. The last enabled administrator cannot be deleted. Enterprise: `feature.lite.team_management`.",
         "operationId": "deleteTeamUser",
         "parameters": [
           {
@@ -3342,7 +3577,7 @@
             }
           },
           "403": {
-            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3380,7 +3615,7 @@
             }
           },
           "403": {
-            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3426,7 +3661,7 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "403": {
-            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3484,7 +3719,7 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "403": {
-            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3530,7 +3765,7 @@
             }
           },
           "403": {
-            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3551,7 +3786,7 @@
           "System"
         ],
         "summary": "List local API keys",
-        "description": "Returns the remote access authorization setting and API key metadata. Secret values are never returned. When user accounts are on, administrators see every key and anyone else only the keys they own.",
+        "description": "Returns the remote access authorization setting and API key metadata. Secret values are never returned. When user accounts are on, administrators and auditors see every key and members only the keys they own.",
         "operationId": "listAPIKeys",
         "responses": {
           "200": {
@@ -3571,7 +3806,7 @@
           "System"
         ],
         "summary": "Create a local API key",
-        "description": "Creates an API key for remote access. The plaintext key is returned only once. When user accounts are on, the key belongs to the signed-in user and acts with their role.",
+        "description": "Creates an API key for remote access. The plaintext key is returned only once. When user accounts are on, the key belongs to the caller and acts with their role.",
         "operationId": "createAPIKey",
         "requestBody": {
           "required": true,
@@ -9625,7 +9860,7 @@
           },
           "code": {
             "type": "string",
-            "description": "`login_required`, `permission_denied` or `feature_not_licensed`."
+            "description": "`login_required`, `permission_denied`, `password_change_required`, `setup_token_required` or `feature_not_licensed`."
           },
           "feature": {
             "type": "string",
@@ -9667,7 +9902,7 @@
           },
           "local_operator": {
             "type": "boolean",
-            "description": "The request came from this machine itself, which administers the instance without signing in."
+            "description": "The request came from this machine itself, which administers the instance without signing in and needs no setup token to create the first administrator."
           },
           "user": {
             "$ref": "#/components/schemas/TeamUser"
@@ -9722,6 +9957,8 @@
           "username",
           "role",
           "disabled",
+          "pending",
+          "must_change_password",
           "created_at",
           "updated_at"
         ],
@@ -9742,8 +9979,8 @@
             "type": "string",
             "enum": [
               "admin",
-              "member",
-              "viewer"
+              "auditor",
+              "member"
             ]
           },
           "team_id": {
@@ -9754,6 +9991,14 @@
           },
           "disabled": {
             "type": "boolean"
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "Invited and has not set a password yet."
+          },
+          "must_change_password": {
+            "type": "boolean",
+            "description": "An administrator set the password and the user has not replaced it."
           },
           "created_at": {
             "type": "string",
@@ -9766,6 +10011,14 @@
           "last_login_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "invite_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "invite_token": {
+            "type": "string",
+            "description": "Returned once when an invitation is issued; the link is /invite/<token>."
           }
         }
       },
@@ -9793,8 +10046,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "username",
-          "password"
+          "username"
         ],
         "properties": {
           "username": {
@@ -9804,7 +10056,16 @@
           "password": {
             "type": "string",
             "format": "password",
-            "minLength": 8
+            "minLength": 8,
+            "description": "Required unless `invite` is set."
+          },
+          "invite": {
+            "type": "boolean",
+            "description": "Create the user without a password and return an invitation token."
+          },
+          "setup_token": {
+            "type": "string",
+            "description": "Required to create the first administrator from another machine."
           },
           "display_name": {
             "type": "string"
@@ -9816,8 +10077,8 @@
             "type": "string",
             "enum": [
               "admin",
-              "member",
-              "viewer"
+              "auditor",
+              "member"
             ],
             "description": "Defaults to member. The first user is always admin."
           },
@@ -9840,8 +10101,8 @@
             "type": "string",
             "enum": [
               "admin",
-              "member",
-              "viewer"
+              "auditor",
+              "member"
             ]
           },
           "team_id": {
@@ -9856,6 +10117,80 @@
             "format": "password",
             "minLength": 8,
             "description": "Resets the password and ends the user's sessions."
+          }
+        }
+      },
+      "TeamInviteInfo": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "username",
+          "role",
+          "expires_at"
+        ],
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "auditor",
+              "member"
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TeamInviteAcceptRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8
+          }
+        }
+      },
+      "TeamSettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "session_hours",
+          "max_failed_logins",
+          "lockout_minutes"
+        ],
+        "properties": {
+          "session_hours": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2160
+          },
+          "max_failed_logins": {
+            "type": "integer",
+            "minimum": 3,
+            "maximum": 50
+          },
+          "lockout_minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440
+          },
+          "bootstrap_env_set": {
+            "type": "boolean",
+            "readOnly": true,
+            "description": "CSGHUB_LITE_ADMIN_PASSWORD (or _FILE) is still set although accounts exist; remove it."
           }
         }
       },

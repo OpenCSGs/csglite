@@ -17,8 +17,11 @@ import { Cluster } from "./pages/Cluster";
 import { Observability, ObservabilityTraceDetailPage } from "./pages/Observability";
 import { Team } from "./pages/Team";
 import { Login } from "./pages/Login";
+import { Invite } from "./pages/Invite";
+import { AccountKeys } from "./pages/AccountKeys";
+import { ChangePasswordDialog } from "./components/ChangePasswordDialog";
 import { useEffect } from "preact/hooks";
-import { authChecked, installAuthInterceptor, loadAuthSession, loginRequired } from "./auth";
+import { authChecked, authSession, installAuthInterceptor, loadAuthSession, loginRequired, mustChangePassword } from "./auth";
 
 installAuthInterceptor();
 
@@ -37,10 +40,15 @@ function AppRoutes() {
     void loadAuthSession();
   }, []);
 
+  // An invitation link works whether or not anyone is signed in.
+  if (path.startsWith("/invite/")) {
+    return <Invite token={decodeURIComponent(path.slice("/invite/".length))} />;
+  }
   // Wait for the first session check so a signed-out user never sees pages
   // flash and fail before the sign-in form appears.
   if (!authChecked.value) return null;
   if (loginRequired.value) return <Login />;
+  if (mustChangePassword(authSession.value)) return <ChangePasswordDialog forced />;
 
   if (path === "/ai-apps/shell") {
     return <AIAppShell />;
@@ -63,6 +71,7 @@ function AppRoutes() {
         <Route path="/observability/traces/:traceID" component={ObservabilityTraceDetailPage} />
         <Route path="/observability" component={Observability} />
         <Route path="/team" component={Team} />
+        <Route path="/account/keys" component={AccountKeys} />
         <Route path="/settings" component={Settings} />
         <Route path="/pricing" component={Pricing} />
       </Router>

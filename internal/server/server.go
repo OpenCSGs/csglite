@@ -255,6 +255,7 @@ type Server struct {
 	apiKeys                *config.APIKeyStore
 	team                   *team.Store
 	loginLimiter           loginLimiter
+	setupTokenMu           sync.Mutex
 	apiUsage               *config.APIUsageStore
 	observabilityMu        sync.RWMutex
 	observability          *observability.Store
@@ -360,6 +361,7 @@ func New(cfg *config.Config, version string) *Server {
 		s.team = team.NewStore(appHome)
 		s.apiUsage = config.NewAPIUsageStore(appHome)
 	}
+	s.bootstrapAccounts()
 
 	handler := s.routes()
 	s.http = &http.Server{

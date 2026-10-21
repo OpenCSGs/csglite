@@ -22,7 +22,7 @@ func newTestStore(t *testing.T) *Store {
 
 func mustCreate(t *testing.T, s *Store, in NewUser) User {
 	t.Helper()
-	user, err := s.CreateUser(in, 0)
+	user, _, err := s.CreateUser(in, 0)
 	if err != nil {
 		t.Fatalf("create %s: %v", in.Username, err)
 	}
@@ -34,16 +34,16 @@ func TestFirstUserIsAlwaysAnAdministrator(t *testing.T) {
 	if s.Enabled() {
 		t.Fatal("a store without users must leave accounts off")
 	}
-	first := mustCreate(t, s, NewUser{Username: "alice", Password: "password1", Role: RoleViewer})
-	if first.Role != RoleAdmin {
-		t.Fatalf("first user role = %s, want admin", first.Role)
+	first := mustCreate(t, s, NewUser{Username: "alice", Password: "password1", Role: RoleAuditor, Invite: true})
+	if first.Role != RoleAdmin || first.Pending() || first.MustChangePassword {
+		t.Fatalf("first user = %+v, want an administrator who signs in with the password given", first)
 	}
 	if !s.Enabled() {
 		t.Fatal("creating a user must switch accounts on")
 	}
 	second := mustCreate(t, s, NewUser{Username: "bob", Password: "password1"})
-	if second.Role != RoleMember {
-		t.Fatalf("default role = %s, want member", second.Role)
+	if second.Role != RoleMember || !second.MustChangePassword {
+		t.Fatalf("second user = %+v, want a member who must change the password an administrator chose", second)
 	}
 	info, err := os.Stat(s.Path())
 	if err != nil {
@@ -69,7 +69,7 @@ func TestCreateUserValidates(t *testing.T) {
 		{NewUser{Username: "carol", Password: "password1", TeamID: "missing"}, ErrUnknownTeam},
 	}
 	for _, tc := range cases {
-		if _, err := s.CreateUser(tc.in, 0); !errors.Is(err, tc.want) {
+		if _, _, err := s.CreateUser(tc.in, 0); !errors.Is(err, tc.want) {
 			t.Errorf("%+v: err = %v, want %v", tc.in, err, tc.want)
 		}
 	}
@@ -77,13 +77,13 @@ func TestCreateUserValidates(t *testing.T) {
 
 func TestSeatLimit(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.CreateUser(NewUser{Username: "alice", Password: "password1"}, 2); err != nil {
+	if _, _, err := s.CreateUser(NewUser{Username: "alice", Password: "password1"}, 2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateUser(NewUser{Username: "bob", Password: "password1"}, 2); err != nil {
+	if _, _, err := s.CreateUser(NewUser{Username: "bob", Password: "password1"}, 2); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.CreateUser(NewUser{Username: "carol", Password: "password1"}, 2)
+	_, _, err := s.CreateUser(NewUser{Username: "carol", Password: "password1"}, 2)
 	var seats *SeatLimitError
 	if !errors.As(err, &seats) || seats.Limit != 2 || seats.Current != 2 {
 		t.Fatalf("third user err = %v, want a seat limit of 2", err)
@@ -95,8 +95,8 @@ func TestAnEnabledAdministratorAlwaysRemains(t *testing.T) {
 	admin := mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
 	member := mustCreate(t, s, NewUser{Username: "bob", Password: "password1"})
 
-	viewer := RoleViewer
-	if _, err := s.UpdateUser(admin.ID, UserPatch{Role: &viewer}); !errors.Is(err, ErrLastAdmin) {
+	auditor := RoleAuditor
+	if _, err := s.UpdateUser(admin.ID, UserPatch{Role: &auditor}); !errors.Is(err, ErrLastAdmin) {
 		t.Fatalf("demoting the only admin: %v", err)
 	}
 	disabled := true
@@ -129,7 +129,7 @@ func TestLoginSessionsAndSignOut(t *testing.T) {
 		t.Fatalf("unknown user: %v", err)
 	}
 	got, token, expires, err := s.Login("ALICE", "password1")
-	if err != nil || got.ID != user.ID || !expires.Equal(now.Add(SessionTTL)) {
+	if err != nil || got.ID != user.ID || !expires.Equal(now.Add(DefaultSessionHours*time.Hour)) {
 		t.Fatalf("login = %+v %v %v", got, expires, err)
 	}
 	if found, err := s.Session(token); err != nil || found.ID != user.ID {
@@ -139,7 +139,7 @@ func TestLoginSessionsAndSignOut(t *testing.T) {
 		t.Fatalf("unknown token: %v", err)
 	}
 
-	now = now.Add(SessionTTL)
+	now = now.Add(DefaultSessionHours * time.Hour)
 	if _, err := s.Session(token); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expired session: %v", err)
 	}
@@ -263,14 +263,25 @@ func TestAllowed(t *testing.T) {
 		{RoleMember, http.MethodGet, "/api/apps/shell/abc/ws", false},
 		{RoleMember, http.MethodGet, "/api/team/users", false},
 
-		{RoleViewer, http.MethodGet, "/api/tags", true},
-		{RoleViewer, http.MethodGet, "/v1/models", true},
-		{RoleViewer, http.MethodPost, "/v1/chat/completions", false},
-		{RoleViewer, http.MethodGet, "/v1/realtime", false},
-		{RoleViewer, http.MethodPost, "/api/conversations", false},
-		{RoleViewer, http.MethodGet, "/api/observability/requests", false},
+		{RoleAuditor, http.MethodGet, "/api/tags", true},
+		{RoleAuditor, http.MethodGet, "/v1/models", true},
+		{RoleAuditor, http.MethodGet, "/api/observability/requests", true},
+		{RoleAuditor, http.MethodGet, "/api/logs", true},
+		{RoleAuditor, http.MethodGet, "/api/team/users", true},
+		{RoleAuditor, http.MethodPost, "/api/show", true},
+		{RoleAuditor, http.MethodPost, "/api/api-keys", true},
+		{RoleAuditor, http.MethodDelete, "/api/api-keys/abc", true},
+		{RoleAuditor, http.MethodGet, "/api/cluster/token", false},
+		{RoleAuditor, http.MethodGet, "/api/apps/shell/abc/ws", false},
+		{RoleAuditor, http.MethodPost, "/v1/chat/completions", false},
+		{RoleAuditor, http.MethodGet, "/v1/realtime", false},
+		{RoleAuditor, http.MethodPost, "/api/conversations", false},
+		{RoleAuditor, http.MethodPost, "/api/team/users", false},
+		{RoleAuditor, http.MethodPut, "/api/team/settings", false},
+		{RoleAuditor, http.MethodPost, "/api/settings", false},
 
 		{Role("owner"), http.MethodGet, "/api/tags", false},
+		{legacyRoleViewer, http.MethodGet, "/api/tags", false},
 	}
 	for _, tc := range cases {
 		if got := Allowed(tc.role, tc.method, tc.path); got != tc.want {
@@ -321,9 +332,147 @@ func TestReturnedStateDoesNotAliasTheCache(t *testing.T) {
 	s := newTestStore(t)
 	mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
 	users, _ := s.Users()
-	users[0].Role = RoleViewer
+	users[0].Role = RoleAuditor
 	again, _ := s.Users()
 	if again[0].Role != RoleAdmin {
 		t.Fatal("changing a returned user changed the store's cache")
+	}
+}
+
+func TestInvitationFlow(t *testing.T) {
+	s := newTestStore(t)
+	admin := mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
+	bob, token, err := s.CreateUser(NewUser{Username: "bob", Role: RoleMember, Invite: true, CreatedBy: admin.ID}, 0)
+	if err != nil || token == "" || !bob.Pending() {
+		t.Fatalf("invite = %+v %q %v", bob, token, err)
+	}
+	if _, _, _, err := s.Login("bob", ""); !errors.Is(err, ErrInvalidCredential) {
+		t.Fatalf("an invited user signed in before accepting: %v", err)
+	}
+	got, invite, err := s.InvitedUser(token)
+	if err != nil || got.ID != bob.ID || invite.CreatedBy != admin.ID {
+		t.Fatalf("invited user = %+v %+v %v", got, invite, err)
+	}
+
+	// A new link revokes the old one.
+	next, _, err := s.ReissueInvite(bob.ID, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.InvitedUser(token); !errors.Is(err, ErrInviteInvalid) {
+		t.Fatalf("the replaced link still works: %v", err)
+	}
+	if _, _, _, err := s.AcceptInvite(next, "short"); !errors.Is(err, ErrWeakPassword) {
+		t.Fatalf("weak password: %v", err)
+	}
+	accepted, session, _, err := s.AcceptInvite(next, "bob-password")
+	if err != nil || accepted.Pending() || accepted.MustChangePassword || session == "" {
+		t.Fatalf("accept = %+v %q %v", accepted, session, err)
+	}
+	if _, _, _, err := s.AcceptInvite(next, "bob-password"); !errors.Is(err, ErrInviteInvalid) {
+		t.Fatalf("an invitation worked twice: %v", err)
+	}
+	if _, _, err := s.ReissueInvite(bob.ID, admin.ID); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("reinviting an active user: %v", err)
+	}
+	if _, _, _, err := s.Login("bob", "bob-password"); err != nil {
+		t.Fatalf("sign-in after accepting: %v", err)
+	}
+}
+
+func TestInvitationsExpire(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
+	_, token, err := s.CreateUser(NewUser{Username: "bob", Invite: true}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(InviteTTL)
+	if _, _, _, err := s.AcceptInvite(token, "bob-password"); !errors.Is(err, ErrInviteInvalid) {
+		t.Fatalf("an expired invitation was accepted: %v", err)
+	}
+}
+
+func TestAnInvitedAdministratorDoesNotKeepTheInstanceAdministered(t *testing.T) {
+	s := newTestStore(t)
+	alice := mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
+	if _, _, err := s.CreateUser(NewUser{Username: "bob", Role: RoleAdmin, Invite: true}, 0); err != nil {
+		t.Fatal(err)
+	}
+	member := RoleMember
+	if _, err := s.UpdateUser(alice.ID, UserPatch{Role: &member}); !errors.Is(err, ErrLastAdmin) {
+		t.Fatalf("demoting the only administrator who can sign in: %v", err)
+	}
+}
+
+func TestAdministratorResetMakesTheUserChooseAPassword(t *testing.T) {
+	s := newTestStore(t)
+	mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
+	bob := mustCreate(t, s, NewUser{Username: "bob", Password: "password1"})
+	if err := s.ChangePassword(bob.ID, "password1", "bob-own-pass", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.User(bob.ID)
+	if got.MustChangePassword {
+		t.Fatal("choosing a password must clear the change requirement")
+	}
+	reset := "temporary1"
+	got, err := s.UpdateUser(bob.ID, UserPatch{Password: &reset})
+	if err != nil || !got.MustChangePassword {
+		t.Fatalf("after an administrator reset = %+v %v", got, err)
+	}
+}
+
+func TestHostResetPasswordRecoversALockedOutAdministrator(t *testing.T) {
+	s := newTestStore(t)
+	alice := mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
+	_, token, _, _ := s.Login("alice", "password1")
+	got, err := s.ResetPassword("ALICE", "recovered1", false)
+	if err != nil || got.ID != alice.ID || got.MustChangePassword {
+		t.Fatalf("reset = %+v %v", got, err)
+	}
+	if _, err := s.Session(token); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("sessions survived a host reset: %v", err)
+	}
+	if _, _, _, err := s.Login("alice", "recovered1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ResetPassword("nobody", "recovered1", false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown user: %v", err)
+	}
+}
+
+func TestSettings(t *testing.T) {
+	s := newTestStore(t)
+	got, err := s.Settings()
+	if err != nil || got.SessionHours != DefaultSessionHours || got.MaxFailedLogins != DefaultMaxFailedLogins || got.LockoutMinutes != DefaultLockoutMinutes {
+		t.Fatalf("defaults = %+v %v", got, err)
+	}
+	if _, err := s.UpdateSettings(Settings{SessionHours: 0, MaxFailedLogins: 5, LockoutMinutes: 5}); !errors.Is(err, ErrInvalidSettings) {
+		t.Fatalf("zero session length: %v", err)
+	}
+	if _, err := s.UpdateSettings(Settings{SessionHours: 8, MaxFailedLogins: 3, LockoutMinutes: 30}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
+	_, _, expires, err := s.Login("alice", "password1")
+	if err != nil || !expires.Equal(now.Add(8*time.Hour)) {
+		t.Fatalf("session expiry = %v %v, want 8 hours", expires, err)
+	}
+}
+
+func TestLegacyViewersLoadAsMembers(t *testing.T) {
+	s := newTestStore(t)
+	data := `{"users":[{"id":"a","username":"alice","role":"admin","password_hash":"x"},{"id":"b","username":"bob","role":"viewer","password_hash":"x"}]}`
+	if err := os.WriteFile(s.Path(), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.User("b")
+	if err != nil || got.Role != RoleMember {
+		t.Fatalf("legacy viewer = %+v %v", got, err)
 	}
 }

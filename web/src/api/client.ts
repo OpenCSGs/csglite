@@ -3461,8 +3461,12 @@ export const LOGIN_REQUIRED = "login_required";
 /** Error code of a 403 refused by the caller's role. */
 export const PERMISSION_DENIED = "permission_denied";
 export const TEAM_MANAGEMENT_FEATURE = "feature.lite.team_management";
+/** Error code of a 403 for a user who must replace an administrator-set password. */
+export const PASSWORD_CHANGE_REQUIRED = "password_change_required";
+/** Error code of a 403 when the first administrator is created remotely without the setup token. */
+export const SETUP_TOKEN_REQUIRED = "setup_token_required";
 
-export type TeamRole = "admin" | "member" | "viewer";
+export type TeamRole = "admin" | "auditor" | "member";
 
 export interface TeamUser {
   id: string;
@@ -3473,9 +3477,30 @@ export interface TeamUser {
   team_id?: string;
   team_name?: string;
   disabled: boolean;
+  /** Invited and has not set a password yet. */
+  pending: boolean;
+  must_change_password: boolean;
   created_at: string;
   updated_at: string;
   last_login_at?: string;
+  invite_expires_at?: string;
+  /** Returned once when an invitation is issued; the link is /invite/<token>. */
+  invite_token?: string;
+}
+
+export interface TeamSettings {
+  session_hours: number;
+  max_failed_logins: number;
+  lockout_minutes: number;
+  /** CSGHUB_LITE_ADMIN_PASSWORD is still set although accounts exist. */
+  bootstrap_env_set: boolean;
+}
+
+export interface TeamInviteInfo {
+  username: string;
+  display_name?: string;
+  role: TeamRole;
+  expires_at: string;
 }
 
 export interface AuthSession {
@@ -3503,7 +3528,9 @@ export interface TeamGroup {
 
 export interface TeamUserCreateRequest {
   username: string;
-  password: string;
+  password?: string;
+  invite?: boolean;
+  setup_token?: string;
   display_name?: string;
   email?: string;
   role?: TeamRole;
@@ -3601,4 +3628,32 @@ export function updateTeam(id: string, name: string, description: string): Promi
 
 export async function deleteTeam(id: string): Promise<void> {
   await fetchAccountsJSON<{ status: string }>(`/api/team/teams/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function reinviteTeamUser(id: string): Promise<TeamUser> {
+  return fetchAccountsJSON<TeamUser>(`/api/team/users/${encodeURIComponent(id)}/invite`, { method: "POST" });
+}
+
+export function getTeamSettings(): Promise<TeamSettings> {
+  return fetchAccountsJSON<TeamSettings>("/api/team/settings", { cache: "no-store" });
+}
+
+export function updateTeamSettings(settings: Pick<TeamSettings, "session_hours" | "max_failed_logins" | "lockout_minutes">): Promise<TeamSettings> {
+  return fetchAccountsJSON<TeamSettings>("/api/team/settings", { method: "PUT", body: JSON.stringify(settings) });
+}
+
+export function getInvite(token: string): Promise<TeamInviteInfo> {
+  return fetchAccountsJSON<TeamInviteInfo>(`/api/auth/invite/${encodeURIComponent(token)}`, { cache: "no-store" });
+}
+
+export function acceptInvite(token: string, password: string): Promise<AuthSession> {
+  return fetchAccountsJSON<AuthSession>(`/api/auth/invite/${encodeURIComponent(token)}`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
+/** The full invitation link for a token, on the origin the UI is served from. */
+export function inviteLink(token: string): string {
+  return `${window.location.origin}/invite/${token}`;
 }

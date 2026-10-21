@@ -8,10 +8,10 @@ vi.hoisted(() => {
 });
 
 import type { AuthSession, TeamUser } from "./api/client";
-import { currentRole, installAuthInterceptor, isAdmin, loginRequired, userLabel } from "./auth";
+import { currentRole, installAuthInterceptor, isAdmin, loginRequired, mustChangePassword, seesEverything, userLabel } from "./auth";
 
 function user(role: TeamUser["role"]): TeamUser {
-  return { id: "u1", username: "alice", role, disabled: false, created_at: "", updated_at: "" };
+  return { id: "u1", username: "alice", role, disabled: false, pending: false, must_change_password: false, created_at: "", updated_at: "" };
 }
 
 function session(patch: Partial<AuthSession>): AuthSession {
@@ -30,8 +30,21 @@ describe("roles", () => {
 
   it("uses the signed-in user's role", () => {
     expect(currentRole(session({ user: user("member") }))).toBe("member");
-    expect(isAdmin(session({ user: user("viewer") }))).toBe(false);
+    expect(isAdmin(session({ user: user("auditor") }))).toBe(false);
     expect(isAdmin(session({ user: user("admin") }))).toBe(true);
+  });
+
+  it("lets administrators and auditors into the management pages", () => {
+    expect(seesEverything(session({ user: user("auditor") }))).toBe(true);
+    expect(seesEverything(session({ user: user("admin") }))).toBe(true);
+    expect(seesEverything(session({ user: user("member") }))).toBe(false);
+    expect(seesEverything(null)).toBe(true);
+  });
+
+  it("asks for a new password only from a signed-in user who must change it", () => {
+    expect(mustChangePassword(session({ user: { ...user("member"), must_change_password: true } }))).toBe(true);
+    expect(mustChangePassword(session({ user: user("member") }))).toBe(false);
+    expect(mustChangePassword(session({ local_operator: true, user: { ...user("admin"), must_change_password: true } }))).toBe(false);
   });
 
   it("labels a user by display name, then username", () => {

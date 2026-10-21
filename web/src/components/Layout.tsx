@@ -1,10 +1,11 @@
 import { ComponentChildren } from "preact";
 import { useLocation } from "preact-iso";
-import { useEffect, useState } from "preact/hooks";
-import { changePassword, getSettings, logout, openExternalURL, TEAM_MANAGEMENT_FEATURE } from "../api/client";
-import { t, locale } from "../i18n";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { getSettings, logout, openExternalURL, TEAM_MANAGEMENT_FEATURE } from "../api/client";
+import { ChangePasswordDialog } from "./ChangePasswordDialog";
+import { t, locale, setLocale } from "../i18n";
 import { isLicensed, licenseState, loadLicense, productTitle } from "../license";
-import { authSession, currentRole, isAdmin, loadAuthSession, loginRequired, userLabel } from "../auth";
+import { authSession, currentRole, loadAuthSession, loginRequired, seesEverything, userLabel } from "../auth";
 
 const helpURL = "https://opencsg.com/docs/csghub/101/function/csghub-lite/intro";
 
@@ -18,17 +19,47 @@ async function openHelp(event: MouseEvent) {
   window.open(helpURL, "_blank", "noopener,noreferrer");
 }
 
-const navKeys = [
-  { id: "dashboard", path: "/", key: "nav.dashboard", icon: DashboardIcon },
-  { id: "marketplace", path: "/marketplace", key: "nav.marketplace", icon: MarketplaceIcon },
-  { id: "library", path: "/library", key: "nav.library", icon: LibraryIcon },
-  { id: "datasets", path: "/datasets", key: "nav.datasets", icon: DatasetsIcon },
-  { id: "chat", path: "/chat", key: "nav.chat", icon: ChatIcon },
-  { id: "ai-apps", path: "/ai-apps", key: "nav.aiApps", icon: AIAppsIcon },
-  { id: "ai-gateway", path: "/ai-gateway", key: "nav.aiGateway", icon: AIGatewayIcon },
-  { id: "cluster", path: "/cluster", key: "nav.cluster", icon: ClusterIcon, adminOnly: true },
-  { id: "observability", path: "/observability", key: "nav.observability", icon: ObservabilityIcon, adminOnly: true },
-  { id: "team", path: "/team", key: "nav.team", icon: TeamIcon, adminOnly: true, feature: TEAM_MANAGEMENT_FEATURE },
+type NavItem = {
+  id: string;
+  path: string;
+  key: string;
+  icon: (props: { active: boolean }) => preact.JSX.Element;
+  feature?: string;
+};
+
+// The sidebar groups pages the way LiteLLM's admin UI does, and keeps the
+// management group out of sight for members, as OpenRouter keeps provider,
+// member and billing settings to administrators.
+const navGroups: { id: string; key: string; management?: boolean; items: NavItem[] }[] = [
+  {
+    id: "workspace",
+    key: "nav.groupWorkspace",
+    items: [
+      { id: "dashboard", path: "/", key: "nav.dashboard", icon: DashboardIcon },
+      { id: "chat", path: "/chat", key: "nav.chat", icon: ChatIcon },
+      { id: "ai-apps", path: "/ai-apps", key: "nav.aiApps", icon: AIAppsIcon },
+    ],
+  },
+  {
+    id: "models",
+    key: "nav.groupModels",
+    items: [
+      { id: "marketplace", path: "/marketplace", key: "nav.marketplace", icon: MarketplaceIcon },
+      { id: "library", path: "/library", key: "nav.library", icon: LibraryIcon },
+      { id: "datasets", path: "/datasets", key: "nav.datasets", icon: DatasetsIcon },
+    ],
+  },
+  {
+    id: "management",
+    key: "nav.groupManagement",
+    management: true,
+    items: [
+      { id: "ai-gateway", path: "/ai-gateway", key: "nav.aiGateway", icon: AIGatewayIcon },
+      { id: "cluster", path: "/cluster", key: "nav.cluster", icon: ClusterIcon },
+      { id: "observability", path: "/observability", key: "nav.observability", icon: ObservabilityIcon },
+      { id: "team", path: "/team", key: "nav.team", icon: TeamIcon, feature: TEAM_MANAGEMENT_FEATURE },
+    ],
+  },
 ];
 
 function SettingsIcon({ active }: { active: boolean }) {
@@ -81,7 +112,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
   }, []);
 
   const session = authSession.value;
-  const admin = isAdmin(session);
+  const canManage = seesEverything(session);
   const showNavItem = (id: string) => hiddenNavItems !== null && !hiddenNavItems.has(id);
   // A gated page stays in the menu with a lock so people can find the
   // feature; the page itself explains how to unlock it.
@@ -101,32 +132,44 @@ export function Layout({ children }: { children: ComponentChildren }) {
             )}
           </span>
         </div>
-        <nav class="flex-1 px-3 space-y-1 mt-2">
-          {navKeys.filter((item) => showNavItem(item.id) && (admin || !item.adminOnly)).map((item) => {
-            const active = path === item.path || (item.path !== "/" && path.startsWith(item.path));
-            return (
-              <a
-                key={item.path}
-                href={item.path}
-                onClick={(event) => {
-                  event.preventDefault();
-                  route(item.path);
-                }}
-                class={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  active
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                }`}
-              >
-                <item.icon active={active} />
-                <span class="flex-1">{t(item.key)}</span>
-                {locked(item.feature) && <LockIcon />}
-              </a>
-            );
-          })}
+        <nav class="flex-1 overflow-y-auto px-3 pb-2">
+          {navGroups
+            .filter((group) => !group.management || canManage)
+            .map((group) => {
+              const items = group.items.filter((item) => showNavItem(item.id));
+              if (items.length === 0) return null;
+              return (
+                <div key={group.id} class="mt-3 first:mt-1">
+                  <p class="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400">{t(group.key)}</p>
+                  <div class="space-y-0.5">
+                    {items.map((item) => {
+                      const active = path === item.path || (item.path !== "/" && path.startsWith(item.path));
+                      return (
+                        <a
+                          key={item.path}
+                          href={item.path}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            route(item.path);
+                          }}
+                          class={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                            active ? "bg-indigo-50 text-indigo-700" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                          }`}
+                        >
+                          <item.icon active={active} />
+                          <span class="flex-1">{t(item.key)}</span>
+                          {locked(item.feature) && <LockIcon />}
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
         </nav>
+        <div class="border-t border-gray-100 pt-2">
         {session?.accounts_enabled && session.authenticated && <AccountMenu />}
-        {showNavItem("settings") && (() => {
+        {showNavItem("settings") && canManage && (() => {
           const active = path === "/settings";
           return (
             <a
@@ -135,7 +178,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
                 event.preventDefault();
                 route("/settings");
               }}
-              class={`flex items-center gap-3 mx-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              class={`flex items-center gap-3 mx-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 active
                   ? "bg-indigo-50 text-indigo-700"
                   : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
@@ -155,7 +198,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
                 event.preventDefault();
                 route("/pricing");
               }}
-              class={`flex items-center gap-3 mx-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              class={`flex items-center gap-3 mx-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 active
                   ? "bg-indigo-50 text-indigo-700"
                   : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
@@ -172,12 +215,13 @@ export function Layout({ children }: { children: ComponentChildren }) {
             target="_blank"
             rel="noopener noreferrer"
             onClick={openHelp}
-            class="flex items-center gap-3 mx-3 mb-4 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+            class="flex items-center gap-3 mx-3 mb-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:bg-gray-50 hover:text-gray-900"
           >
             <HelpIcon />
             {t("nav.help")}
           </a>
         )}
+        </div>
       </aside>
       <main class="flex min-h-0 flex-1 flex-col overflow-hidden bg-gray-50">
         <div class="min-h-0 flex-1 overflow-auto">{children}</div>
@@ -191,12 +235,32 @@ export function Layout({ children }: { children: ComponentChildren }) {
 
 function AccountMenu() {
   const session = authSession.value;
+  const { route } = useLocation();
   const [open, setOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    window.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
   if (!session) return null;
   const local = session.local_operator;
   const name = local ? t("auth.localOperator") : userLabel(session.user);
   const role = currentRole(session);
+  const detail = local ? t("auth.localOperatorHint") : session.user?.email || session.user?.username || "";
 
   const signOut = async () => {
     try {
@@ -206,38 +270,80 @@ function AccountMenu() {
       loginRequired.value = true;
     }
   };
+  const go = (path: string) => {
+    setOpen(false);
+    route(path);
+  };
+  const item = "flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50";
 
   return (
-    <div class="relative mx-3 mb-2">
+    <div ref={menuRef} class="relative mx-3 mb-1">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50"
+        class={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${open ? "bg-gray-100" : "hover:bg-gray-50"}`}
+        aria-haspopup="menu"
         aria-expanded={open}
       >
-        <span class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
-          {(name || "?").slice(0, 1).toUpperCase()}
-        </span>
+        <Avatar name={name} />
         <span class="min-w-0 flex-1">
           <span class="block truncate font-medium text-gray-900">{name}</span>
           <span class="block truncate text-xs text-gray-500">{t(`team.role.${role}`)}</span>
         </span>
+        <svg class="h-4 w-4 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
+        </svg>
       </button>
-      {open && !local && (
-        <div class="absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              setPasswordOpen(true);
-            }}
-            class="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-          >
-            {t("auth.changePassword")}
-          </button>
-          <button type="button" onClick={signOut} class="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50">
-            {t("auth.signOut")}
-          </button>
+      {open && (
+        <div role="menu" class="absolute bottom-full left-0 z-40 mb-1 w-64 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+          <div class="flex items-center gap-3 border-b border-gray-100 px-3 py-3">
+            <Avatar name={name} />
+            <div class="min-w-0">
+              <p class="truncate text-sm font-semibold text-gray-900">{name}</p>
+              <p class="truncate text-xs text-gray-500">{detail}</p>
+            </div>
+            <span class="ml-auto rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">{t(`team.role.${role}`)}</span>
+          </div>
+          <div class="py-1">
+            <button type="button" role="menuitem" class={item} onClick={() => go(seesEverything(session) ? "/ai-gateway" : "/account/keys")}>
+              {t("account.myKeys")}
+            </button>
+            {!local && (
+              <button
+                type="button"
+                role="menuitem"
+                class={item}
+                onClick={() => {
+                  setOpen(false);
+                  setPasswordOpen(true);
+                }}
+              >
+                {t("auth.changePassword")}
+              </button>
+            )}
+          </div>
+          <div class="flex items-center justify-between border-t border-gray-100 px-3 py-2 text-sm text-gray-700">
+            <span>{t("account.language")}</span>
+            <span class="inline-flex overflow-hidden rounded-lg border border-gray-200 text-xs">
+              {(["zh", "en"] as const).map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => setLocale(code)}
+                  class={`px-2.5 py-1 ${locale.value === code ? "bg-indigo-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+                >
+                  {code === "zh" ? "中文" : "EN"}
+                </button>
+              ))}
+            </span>
+          </div>
+          {!local && (
+            <div class="border-t border-gray-100 py-1">
+              <button type="button" role="menuitem" onClick={signOut} class="flex w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50">
+                {t("auth.signOut")}
+              </button>
+            </div>
+          )}
         </div>
       )}
       {passwordOpen && <ChangePasswordDialog onClose={() => setPasswordOpen(false)} />}
@@ -245,78 +351,11 @@ function AccountMenu() {
   );
 }
 
-function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [done, setDone] = useState(false);
-
-  const submit = async (event: Event) => {
-    event.preventDefault();
-    if (next.length < 8) {
-      setError(t("team.passwordTooShort"));
-      return;
-    }
-    if (next !== confirm) {
-      setError(t("team.passwordMismatch"));
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      await changePassword(current, next);
-      setDone(true);
-    } catch (err: any) {
-      setError(err?.status === 400 ? t("auth.currentPasswordWrong") : err?.message || t("auth.changePasswordFailed"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const input = "mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+function Avatar({ name }: { name: string }) {
   return (
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-4" onClick={() => !busy && onClose()}>
-      <form
-        role="dialog"
-        aria-modal="true"
-        onSubmit={submit}
-        onClick={(event) => event.stopPropagation()}
-        class="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl"
-      >
-        <h2 class="text-lg font-semibold text-gray-900">{t("auth.changePassword")}</h2>
-        {done ? (
-          <p class="mt-4 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{t("auth.passwordChanged")}</p>
-        ) : (
-          <>
-            <label class="mt-4 block text-sm font-medium text-gray-700">
-              {t("auth.currentPassword")}
-              <input type="password" autoComplete="current-password" value={current} onInput={(e) => setCurrent((e.target as HTMLInputElement).value)} class={input} />
-            </label>
-            <label class="mt-3 block text-sm font-medium text-gray-700">
-              {t("auth.newPassword")}
-              <input type="password" autoComplete="new-password" value={next} onInput={(e) => setNext((e.target as HTMLInputElement).value)} class={input} />
-            </label>
-            <label class="mt-3 block text-sm font-medium text-gray-700">
-              {t("team.passwordConfirm")}
-              <input type="password" autoComplete="new-password" value={confirm} onInput={(e) => setConfirm((e.target as HTMLInputElement).value)} class={input} />
-            </label>
-            {error && <p role="alert" class="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-          </>
-        )}
-        <div class="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={busy} class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
-            {done ? t("dash.close") : t("team.cancel")}
-          </button>
-          {!done && (
-            <button type="submit" disabled={busy} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
-              {busy ? t("team.saving") : t("team.save")}
-            </button>
-          )}
-        </div>
-      </form>
-    </div>
+    <span class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
+      {(name || "?").slice(0, 1).toUpperCase()}
+    </span>
   );
 }
 

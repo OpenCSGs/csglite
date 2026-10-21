@@ -237,20 +237,26 @@ and scheduling.
 A shared instance gets accounts. Until the first user is created nothing
 changes; from then on every caller that reaches the instance over the network
 signs in through the web UI or presents an API key, and acts as an
-administrator, a member or a viewer. Requests made on the machine itself keep
-administrator access, so the CLI and the desktop app work as before. API keys,
+administrator, an auditor (reads everything, changes nothing) or a member.
+Requests made on the machine itself keep administrator access, so the CLI and
+the desktop app work as before. The first administrator comes from the
+machine itself, a one-time setup token, `CSGHUB_LITE_ADMIN_*` environment
+variables or `csghub-lite user create`; everyone else joins through an
+invitation link or a password they must change at first sign-in. API keys,
 conversations and image jobs belong to the user who created them. Managing
 users needs `feature.lite.team_management`; the number of users is capped by
 `quota.lite.max_users`. Signing in is never gated, so accounts keep protecting
-the instance after a license lapses.
+the instance after a license lapses, and `csghub-lite user reset-password`
+always works on the host.
 
 | File | Holds |
 | --- | --- |
-| `store.go` | `team.json`: users, teams and sessions, and the rules that keep one enabled administrator |
+| `store.go` | `team.json`: users, teams, invitations, sessions and sign-in settings, and the rule that keeps one enabled administrator |
 | `password.go` | PBKDF2-SHA256 password hashing |
 | `policy.go` | which paths are public and what each role may call |
 
-The HTTP side lives in `internal/server/team.go`. Design:
+The HTTP side lives in `internal/server/team.go` (identity and enforcement),
+`team_handlers.go` and `team_bootstrap.go`. Design:
 `docs/guides/ee-team-management.md`.
 
 See `docs/agent-guidelines/ee-features.md` for the full rules and

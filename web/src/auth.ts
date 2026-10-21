@@ -1,5 +1,5 @@
 import { signal } from "@preact/signals";
-import { getAuthSession, LOGIN_REQUIRED } from "./api/client";
+import { getAuthSession, LOGIN_REQUIRED, PASSWORD_CHANGE_REQUIRED } from "./api/client";
 import type { AuthSession, TeamRole } from "./api/client";
 
 /**
@@ -35,12 +35,24 @@ export function isAdmin(session: AuthSession | null): boolean {
   return currentRole(session) === "admin";
 }
 
+/** Administrators and auditors see the management pages and every record. */
+export function seesEverything(session: AuthSession | null): boolean {
+  const role = currentRole(session);
+  return role === "admin" || role === "auditor";
+}
+
+/** True while the signed-in user must replace a password someone else chose. */
+export function mustChangePassword(session: AuthSession | null): boolean {
+  return !!session?.accounts_enabled && !session.local_operator && !!session.user?.must_change_password;
+}
+
 let interceptorInstalled = false;
 
 /**
  * Watches every same-origin response for a `login_required` refusal, so a
  * session that expires mid-use returns the user to the sign-in page instead
- * of leaving each page to show its own error.
+ * of leaving each page to show its own error, and for
+ * `password_change_required`, which brings up the password change screen.
  */
 export function installAuthInterceptor() {
   if (interceptorInstalled || typeof window === "undefined") return;
@@ -48,10 +60,11 @@ export function installAuthInterceptor() {
   const original = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const resp = await original(input, init);
-    if (resp.status === 401 && isSameOrigin(input) && (resp.headers.get("content-type") || "").includes("application/json")) {
+    if ((resp.status === 401 || resp.status === 403) && isSameOrigin(input) && (resp.headers.get("content-type") || "").includes("application/json")) {
       try {
         const body = (await resp.clone().json()) as { code?: unknown };
-        if (body.code === LOGIN_REQUIRED) loginRequired.value = true;
+        if (resp.status === 401 && body.code === LOGIN_REQUIRED) loginRequired.value = true;
+        if (resp.status === 403 && body.code === PASSWORD_CHANGE_REQUIRED) void loadAuthSession();
       } catch {
         /* not a JSON error body */
       }

@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/opencsgs/csglite/ee/team"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/internal/license/licensetest"
@@ -124,15 +128,40 @@ func createTeamUser(t *testing.T, c *teamClient, req api.TeamUserCreateRequest) 
 }
 
 // newAccountsServer returns a licensed server whose first administrator,
-// "admin", exists, and a client signed in as that administrator.
+// "admin", was created on the machine itself, and a remote client signed in
+// as that administrator.
 func newAccountsServer(t *testing.T) (*Server, *teamClient) {
 	t.Helper()
 	s := newTestServer(t)
 	licenseTeamManagement(t, s, "")
+	local := newTeamClient(t, s)
+	local.remote = "127.0.0.1:50000"
+	createTeamUser(t, local, api.TeamUserCreateRequest{Username: "admin", Password: "admin-password"})
 	admin := newTeamClient(t, s)
-	createTeamUser(t, admin, api.TeamUserCreateRequest{Username: "admin", Password: "admin-password"})
 	admin.login("admin", "admin-password")
 	return s, admin
+}
+
+// inviteUser has admin invite a user, accepts the invitation as that user,
+// and returns the user and a client signed in as them.
+func inviteUser(t *testing.T, s *Server, admin *teamClient, username, role string) (api.TeamUser, *teamClient) {
+	t.Helper()
+	invited := createTeamUser(t, admin, api.TeamUserCreateRequest{Username: username, Role: role, Invite: true})
+	if !invited.Pending || invited.InviteToken == "" || invited.InviteExpiresAt == nil {
+		t.Fatalf("invited user %+v", invited)
+	}
+	c := newTeamClient(t, s)
+	rec := c.do(http.MethodPost, "/api/auth/invite/"+invited.InviteToken, api.TeamInviteAcceptRequest{Password: username + "-password"})
+	expectStatus(t, rec, http.StatusOK, "accept invitation for "+username)
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == sessionCookie {
+			c.cookie = cookie
+		}
+	}
+	if c.cookie == nil {
+		t.Fatalf("accepting the invitation for %s did not sign in", username)
+	}
+	return invited, c
 }
 
 func TestAccountsAreOffUntilTheFirstUser(t *testing.T) {
@@ -203,7 +232,7 @@ func TestLocalOperatorNeedsNoSignInButAProxiedRequestDoes(t *testing.T) {
 func TestLoginFailuresAreThrottled(t *testing.T) {
 	s, _ := newAccountsServer(t)
 	c := newTeamClient(t, s)
-	for i := 0; i < loginMaxFailures; i++ {
+	for i := 0; i < team.DefaultMaxFailedLogins; i++ {
 		expectStatus(t, c.do(http.MethodPost, "/api/auth/login", api.AuthLoginRequest{Username: "admin", Password: "wrong-password"}),
 			http.StatusUnauthorized, "wrong password")
 	}
@@ -219,11 +248,9 @@ func TestRolesLimitWhatUsersCanDo(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	createTeamUser(t, admin, api.TeamUserCreateRequest{Username: "member", Password: "member-password", Role: "member"})
-	createTeamUser(t, admin, api.TeamUserCreateRequest{Username: "viewer", Password: "viewer-password", Role: "viewer"})
+	_, member := inviteUser(t, s, admin, "member", "member")
+	_, auditor := inviteUser(t, s, admin, "auditor", "auditor")
 
-	member := newTeamClient(t, s)
-	member.login("member", "member-password")
 	expectStatus(t, member.do(http.MethodGet, "/api/tags", nil), http.StatusOK, "member reads models")
 	expectCode(t, member.do(http.MethodGet, "/api/team/users", nil), http.StatusForbidden, permissionDeniedCode, "member lists users")
 	expectCode(t, member.do(http.MethodPost, "/api/settings", map[string]any{}), http.StatusForbidden, permissionDeniedCode, "member changes settings")
@@ -239,11 +266,16 @@ func TestRolesLimitWhatUsersCanDo(t *testing.T) {
 		t.Fatalf("admin must still see upstream credentials: %s", rec.Body.String())
 	}
 
-	viewer := newTeamClient(t, s)
-	viewer.login("viewer", "viewer-password")
-	expectStatus(t, viewer.do(http.MethodGet, "/api/tags", nil), http.StatusOK, "viewer reads models")
-	expectCode(t, viewer.do(http.MethodPost, "/api/chat", map[string]any{"model": "m"}), http.StatusForbidden, permissionDeniedCode, "viewer chats")
-	expectCode(t, viewer.do(http.MethodPost, "/api/conversations", map[string]any{}), http.StatusForbidden, permissionDeniedCode, "viewer saves a conversation")
+	expectStatus(t, auditor.do(http.MethodGet, "/api/tags", nil), http.StatusOK, "auditor reads models")
+	expectStatus(t, auditor.do(http.MethodGet, "/api/team/users", nil), http.StatusOK, "auditor lists users")
+	expectStatus(t, auditor.do(http.MethodGet, "/api/observability/requests", nil), http.StatusOK, "auditor reads request logs")
+	expectCode(t, auditor.do(http.MethodGet, "/api/cluster/token", nil), http.StatusForbidden, permissionDeniedCode, "auditor reads the cluster join token")
+	expectCode(t, auditor.do(http.MethodPost, "/api/chat", map[string]any{"model": "m"}), http.StatusForbidden, permissionDeniedCode, "auditor chats")
+	expectCode(t, auditor.do(http.MethodPost, "/api/team/teams", api.TeamGroupRequest{Name: ptr("x")}), http.StatusForbidden, permissionDeniedCode, "auditor creates a team")
+	rec = auditor.do(http.MethodGet, "/api/providers?source=config", nil)
+	if strings.Contains(rec.Body.String(), "sk-upstream-secret") {
+		t.Fatalf("auditor sees upstream credentials: %s", rec.Body.String())
+	}
 }
 
 func TestCrossOriginChangesWithACookieAreRefused(t *testing.T) {
@@ -257,9 +289,7 @@ func TestCrossOriginChangesWithACookieAreRefused(t *testing.T) {
 
 func TestConversationsAndImagesArePrivateToTheirOwner(t *testing.T) {
 	s, admin := newAccountsServer(t)
-	createTeamUser(t, admin, api.TeamUserCreateRequest{Username: "member", Password: "member-password"})
-	member := newTeamClient(t, s)
-	member.login("member", "member-password")
+	_, member := inviteUser(t, s, admin, "member", "member")
 
 	rec := member.do(http.MethodPost, "/api/conversations", api.Conversation{Title: "member secret"})
 	expectStatus(t, rec, http.StatusCreated, "member creates a conversation")
@@ -290,14 +320,12 @@ func TestConversationsAndImagesArePrivateToTheirOwner(t *testing.T) {
 
 func TestAPIKeysBelongToTheirCreator(t *testing.T) {
 	s, admin := newAccountsServer(t)
-	member := createTeamUser(t, admin, api.TeamUserCreateRequest{Username: "member", Password: "member-password"})
+	member, mc := inviteUser(t, s, admin, "member", "member")
 	legacy, legacyPlain, err := s.apiKeys.Create("legacy", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	mc := newTeamClient(t, s)
-	mc.login("member", "member-password")
 	rec := mc.do(http.MethodPost, "/api/api-keys", api.APIKeyCreateRequest{Name: "mine"})
 	expectStatus(t, rec, http.StatusCreated, "member creates a key")
 	var created api.APIKeyCreateResponse
@@ -346,9 +374,9 @@ func TestSeatLimitComesFromTheLicense(t *testing.T) {
 	s := newTestServer(t)
 	licenseTeamManagement(t, s, `{"limits": {"quota.lite.max_users": 2}}`)
 	c := newTeamClient(t, s)
+	c.remote = "127.0.0.1:50000"
 	createTeamUser(t, c, api.TeamUserCreateRequest{Username: "admin", Password: "admin-password"})
-	c.login("admin", "admin-password")
-	createTeamUser(t, c, api.TeamUserCreateRequest{Username: "second", Password: "second-password"})
+	createTeamUser(t, c, api.TeamUserCreateRequest{Username: "second", Invite: true})
 	rec := c.do(http.MethodPost, "/api/team/users", api.TeamUserCreateRequest{Username: "third", Password: "third-password"})
 	expectCode(t, rec, http.StatusForbidden, licenseErrorCode, "third user over a two-seat license")
 	var body seatLimitResponse
@@ -410,4 +438,126 @@ func TestAKeyFromBeforeAccountsCannotMintKeys(t *testing.T) {
 	c := newTeamClient(t, s)
 	c.apiKey = plain
 	expectCode(t, c.do(http.MethodPost, "/api/api-keys", api.APIKeyCreateRequest{Name: "more"}), http.StatusForbidden, permissionDeniedCode, "legacy key creating a key")
+}
+
+func TestTheFirstAdministratorFromAnotherMachineNeedsTheSetupToken(t *testing.T) {
+	s := newTestServer(t)
+	licenseTeamManagement(t, s, "")
+	remote := newTeamClient(t, s)
+	req := api.TeamUserCreateRequest{Username: "admin", Password: "admin-password"}
+	expectCode(t, remote.do(http.MethodPost, "/api/team/users", req), http.StatusForbidden, setupTokenRequiredCode, "remote bootstrap without a token")
+	data, err := os.ReadFile(s.setupTokenPath())
+	if err != nil {
+		t.Fatalf("setup token file: %v", err)
+	}
+	if info, _ := os.Stat(s.setupTokenPath()); runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("setup token file mode %v", info.Mode().Perm())
+	}
+	req.SetupToken = "wrong"
+	expectCode(t, remote.do(http.MethodPost, "/api/team/users", req), http.StatusForbidden, setupTokenRequiredCode, "remote bootstrap with a wrong token")
+	req.SetupToken = strings.TrimSpace(string(data))
+	expectStatus(t, remote.do(http.MethodPost, "/api/team/users", req), http.StatusCreated, "remote bootstrap with the token")
+	if _, err := os.Stat(s.setupTokenPath()); !os.IsNotExist(err) {
+		t.Fatalf("the setup token outlived bootstrap: %v", err)
+	}
+	remote.login("admin", "admin-password")
+	var session api.AuthSessionResponse
+	_ = json.Unmarshal(remote.do(http.MethodGet, "/api/auth/session", nil).Body.Bytes(), &session)
+	if session.User == nil || session.User.MustChangePassword {
+		t.Fatalf("the first administrator chose their own password: %+v", session.User)
+	}
+}
+
+func TestEnvironmentCreatesTheFirstAdministrator(t *testing.T) {
+	s := newTestServer(t)
+	licenseTeamManagement(t, s, "")
+	passwordFile := filepath.Join(t.TempDir(), "admin-password")
+	if err := os.WriteFile(passwordFile, []byte("from-a-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envAdminUsername, "root")
+	t.Setenv(envAdminPasswordFile, passwordFile)
+	s.bootstrapAccounts()
+	if !s.accountsEnabled() {
+		t.Fatal("the environment did not create an administrator")
+	}
+	c := newTeamClient(t, s)
+	c.login("root", "from-a-secret")
+	var settings api.TeamSettings
+	_ = json.Unmarshal(c.do(http.MethodGet, "/api/team/settings", nil).Body.Bytes(), &settings)
+	if !settings.BootstrapEnvSet {
+		t.Fatalf("settings must warn that the bootstrap password is still set: %+v", settings)
+	}
+
+	// Once accounts exist the variables are ignored, so a restart never
+	// resets the password.
+	t.Setenv(envAdminPasswordFile, "")
+	t.Setenv(envAdminPassword, "another-password")
+	s.bootstrapAccounts()
+	c.login("root", "from-a-secret")
+}
+
+func TestEnvironmentBootstrapNeedsALicense(t *testing.T) {
+	s := newTestServer(t)
+	t.Setenv(envAdminPassword, "admin-password")
+	s.bootstrapAccounts()
+	if s.accountsEnabled() {
+		t.Fatal("an unlicensed instance created an administrator")
+	}
+}
+
+func TestAPasswordAnAdministratorSetMustBeChanged(t *testing.T) {
+	s, admin := newAccountsServer(t)
+	createTeamUser(t, admin, api.TeamUserCreateRequest{Username: "bob", Password: "temporary1"})
+	bob := newTeamClient(t, s)
+	bob.login("bob", "temporary1")
+	expectCode(t, bob.do(http.MethodGet, "/api/tags", nil), http.StatusForbidden, passwordChangeRequiredCode, "using the instance before changing the password")
+	expectStatus(t, bob.do(http.MethodGet, "/api/auth/session", nil), http.StatusOK, "session while a change is required")
+	expectStatus(t, bob.do(http.MethodPut, "/api/auth/password", api.AuthPasswordChangeRequest{CurrentPassword: "temporary1", NewPassword: "bob-own-pass"}),
+		http.StatusOK, "change the password")
+	expectStatus(t, bob.do(http.MethodGet, "/api/tags", nil), http.StatusOK, "after changing the password")
+}
+
+func TestInvitations(t *testing.T) {
+	s, admin := newAccountsServer(t)
+	invited := createTeamUser(t, admin, api.TeamUserCreateRequest{Username: "carol", Role: "auditor", Invite: true})
+	anon := newTeamClient(t, s)
+	rec := anon.do(http.MethodGet, "/api/auth/invite/"+invited.InviteToken, nil)
+	expectStatus(t, rec, http.StatusOK, "open the invitation")
+	var info api.TeamInviteInfo
+	_ = json.Unmarshal(rec.Body.Bytes(), &info)
+	if info.Username != "carol" || info.Role != "auditor" {
+		t.Fatalf("invitation info %+v", info)
+	}
+	expectStatus(t, anon.do(http.MethodPost, "/api/auth/login", api.AuthLoginRequest{Username: "carol", Password: ""}), http.StatusUnauthorized, "invited user signing in")
+
+	rec = admin.do(http.MethodPost, "/api/team/users/"+invited.ID+"/invite", nil)
+	expectStatus(t, rec, http.StatusOK, "reissue the invitation")
+	var reissued api.TeamUser
+	_ = json.Unmarshal(rec.Body.Bytes(), &reissued)
+	expectStatus(t, anon.do(http.MethodGet, "/api/auth/invite/"+invited.InviteToken, nil), http.StatusNotFound, "the replaced link")
+	anon.headers = map[string]string{"Origin": "http://evil.example.com"}
+	expectCode(t, anon.do(http.MethodPost, "/api/auth/invite/"+reissued.InviteToken, api.TeamInviteAcceptRequest{Password: "carol-password"}),
+		http.StatusForbidden, permissionDeniedCode, "accepting from another origin")
+	anon.headers = nil
+	expectStatus(t, anon.do(http.MethodPost, "/api/auth/invite/"+reissued.InviteToken, api.TeamInviteAcceptRequest{Password: "carol-password"}),
+		http.StatusOK, "accept the invitation")
+	expectStatus(t, admin.do(http.MethodPost, "/api/team/users/"+invited.ID+"/invite", nil), http.StatusConflict, "reinvite an active user")
+}
+
+func TestSignInSettings(t *testing.T) {
+	s, admin := newAccountsServer(t)
+	expectStatus(t, admin.do(http.MethodPut, "/api/team/settings", api.TeamSettings{SessionHours: 0, MaxFailedLogins: 5, LockoutMinutes: 5}),
+		http.StatusBadRequest, "invalid settings")
+	expectStatus(t, admin.do(http.MethodPut, "/api/team/settings", api.TeamSettings{SessionHours: 12, MaxFailedLogins: 3, LockoutMinutes: 10}),
+		http.StatusOK, "save settings")
+	c := newTeamClient(t, s)
+	for i := 0; i < 3; i++ {
+		expectStatus(t, c.do(http.MethodPost, "/api/auth/login", api.AuthLoginRequest{Username: "admin", Password: "wrong-wrong"}), http.StatusUnauthorized, "wrong password")
+	}
+	rec := c.do(http.MethodPost, "/api/auth/login", api.AuthLoginRequest{Username: "admin", Password: "admin-password"})
+	expectStatus(t, rec, http.StatusTooManyRequests, "locked after the configured three failures")
+	if retry := rec.Header().Get("Retry-After"); retry != "600" {
+		t.Fatalf("Retry-After = %q, want 600", retry)
+	}
 }
