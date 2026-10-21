@@ -232,5 +232,26 @@ The two HTTP surfaces hang off their own small types rather than off `Manager`,
 so adding an endpoint does not grow the type that also runs discovery, gossip
 and scheduling.
 
+### Users, teams and roles (`ee/team`)
+
+A shared instance gets accounts. Until the first user is created nothing
+changes; from then on every caller that reaches the instance over the network
+signs in through the web UI or presents an API key, and acts as an
+administrator, a member or a viewer. Requests made on the machine itself keep
+administrator access, so the CLI and the desktop app work as before. API keys,
+conversations and image jobs belong to the user who created them. Managing
+users needs `feature.lite.team_management`; the number of users is capped by
+`quota.lite.max_users`. Signing in is never gated, so accounts keep protecting
+the instance after a license lapses.
+
+| File | Holds |
+| --- | --- |
+| `store.go` | `team.json`: users, teams and sessions, and the rules that keep one enabled administrator |
+| `password.go` | PBKDF2-SHA256 password hashing |
+| `policy.go` | which paths are public and what each role may call |
+
+The HTTP side lives in `internal/server/team.go`. Design:
+`docs/guides/ee-team-management.md`.
+
 See `docs/agent-guidelines/ee-features.md` for the full rules and
 `docs/guides/ee-license-design.md` for the design.

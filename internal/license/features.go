@@ -51,8 +51,8 @@ type FeatureDefinition struct {
 	Since string
 }
 
-// Catalog entries. Only QuotaMaxClusterNodes is gated; every boolean is
-// enabled regardless of license. The ungated entries are declared so that the
+// Catalog entries. FeatureTeamManagement and the two quotas marked Gated
+// consult the license; every other boolean is enabled regardless of license. The ungated entries are declared so that the
 // issuer registry and this binary agree on the names before a feature moves
 // to EE.
 var (
@@ -101,6 +101,22 @@ var (
 		Key: quotaPrefix + "max_cluster_nodes", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
 		CommunityValue: 2, Since: "0.13.0",
 	}
+	// FeatureTeamManagement is user accounts, teams and role-based access:
+	// creating, changing and removing users and teams. Signing in is not
+	// gated, so accounts made under a license keep protecting the instance
+	// after it lapses. See docs/guides/ee-team-management.md.
+	FeatureTeamManagement = FeatureDefinition{
+		Key: featurePrefix + "team_management", Type: FeatureTypeBoolean, Gated: true, DefaultValue: true,
+		NavItem: "team", Since: "0.9.92",
+	}
+	// QuotaMaxUsers caps the number of user accounts. A license that does not
+	// set it allows any number. Unlicensed instances cannot create users at
+	// all, because FeatureTeamManagement is off; the community value only
+	// satisfies the rule that a gated limit is never 0 (unlimited) there.
+	QuotaMaxUsers = FeatureDefinition{
+		Key: quotaPrefix + "max_users", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
+		CommunityValue: 1, Since: "0.9.92",
+	}
 )
 
 var catalog = []FeatureDefinition{
@@ -113,6 +129,8 @@ var catalog = []FeatureDefinition{
 	QuotaMaxProviderPools,
 	FeatureLANCluster,
 	QuotaMaxClusterNodes,
+	FeatureTeamManagement,
+	QuotaMaxUsers,
 }
 
 // Catalog returns a copy of every registered feature definition.

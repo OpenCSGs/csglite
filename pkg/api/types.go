@@ -871,6 +871,10 @@ type APIKeyInfo struct {
 	Prefix     string     `json:"prefix"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	// OwnerID is the user account that owns the key, when accounts are on.
+	// A key without an owner predates accounts.
+	OwnerID   string `json:"owner_id,omitempty"`
+	OwnerName string `json:"owner_name,omitempty"`
 }
 
 type APIKeysResponse struct {
@@ -1244,6 +1248,7 @@ type OpenAIAudioSegment struct {
 
 type ImageGenerationJobResponse struct {
 	ID          string                          `json:"id"`
+	OwnerID     string                          `json:"owner_id,omitempty"`
 	Status      string                          `json:"status"`
 	CreatedAt   time.Time                       `json:"created_at"`
 	UpdatedAt   time.Time                       `json:"updated_at"`
@@ -1472,7 +1477,10 @@ func (s *ProviderTagModelSelection) UnmarshalJSON(data []byte) error {
 // -- Conversation history types --
 
 type Conversation struct {
-	ID        string                `json:"id"`
+	ID string `json:"id"`
+	// OwnerID is the user account the conversation belongs to. It is set by
+	// the server and ignored in request bodies.
+	OwnerID   string                `json:"owner_id,omitempty"`
 	Title     string                `json:"title"`
 	Model     string                `json:"model,omitempty"`
 	CreatedAt time.Time             `json:"created_at"`
@@ -1483,6 +1491,7 @@ type Conversation struct {
 
 type ConversationMeta struct {
 	ID        string    `json:"id"`
+	OwnerID   string    `json:"owner_id,omitempty"`
 	Title     string    `json:"title"`
 	Model     string    `json:"model,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
@@ -1497,4 +1506,88 @@ type ConversationSettings struct {
 
 type ConversationsListResponse struct {
 	Conversations []ConversationMeta `json:"conversations"`
+}
+
+// -- Accounts (Enterprise: feature.lite.team_management) --
+
+// AuthSessionResponse describes who the caller is. AccountsEnabled is false
+// until the first user is created; the instance is then open as before.
+type AuthSessionResponse struct {
+	AccountsEnabled bool `json:"accounts_enabled"`
+	// FeatureLicensed reports whether user and team management is licensed.
+	// Sign-in keeps working without it so nobody is locked out when a
+	// license lapses.
+	FeatureLicensed bool `json:"feature_licensed"`
+	Authenticated   bool `json:"authenticated"`
+	// LocalOperator is true for a request made on this machine itself, which
+	// administers the instance without signing in.
+	LocalOperator bool       `json:"local_operator"`
+	User          *TeamUser  `json:"user,omitempty"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+}
+
+type AuthLoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type AuthPasswordChangeRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+type TeamUser struct {
+	ID          string     `json:"id"`
+	Username    string     `json:"username"`
+	DisplayName string     `json:"display_name,omitempty"`
+	Email       string     `json:"email,omitempty"`
+	Role        string     `json:"role"`
+	TeamID      string     `json:"team_id,omitempty"`
+	TeamName    string     `json:"team_name,omitempty"`
+	Disabled    bool       `json:"disabled"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
+}
+
+type TeamUsersResponse struct {
+	Users []TeamUser `json:"users"`
+	// MaxUsers is the licensed number of users; 0 means unlimited.
+	MaxUsers int `json:"max_users"`
+}
+
+type TeamUserCreateRequest struct {
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	DisplayName string `json:"display_name,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Role        string `json:"role,omitempty"`
+	TeamID      string `json:"team_id,omitempty"`
+}
+
+type TeamUserUpdateRequest struct {
+	DisplayName *string `json:"display_name,omitempty"`
+	Email       *string `json:"email,omitempty"`
+	Role        *string `json:"role,omitempty"`
+	TeamID      *string `json:"team_id,omitempty"`
+	Disabled    *bool   `json:"disabled,omitempty"`
+	Password    *string `json:"password,omitempty"`
+}
+
+type TeamGroup struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	MemberCount int       `json:"member_count"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type TeamGroupsResponse struct {
+	Teams []TeamGroup `json:"teams"`
+}
+
+type TeamGroupRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
 }

@@ -40,6 +40,7 @@ const (
 type imageGenerationJob struct {
 	mu          sync.Mutex
 	id          string
+	ownerID     string
 	status      string
 	createdAt   time.Time
 	updatedAt   time.Time
@@ -82,7 +83,8 @@ func (s *Server) handleImageGenerationJobCreate(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
-	job, err := s.createImageGenerationJob(req)
+	owner, _ := ownerScope(r)
+	job, err := s.createImageGenerationJob(req, owner)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -91,11 +93,21 @@ func (s *Server) handleImageGenerationJobCreate(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleImageGenerationJobList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, api.ImageGenerationJobListResponse{Jobs: s.imageJobs.listSummaries()})
+	jobs := s.imageJobs.listSummaries()
+	if owner, scoped := ownerScope(r); scoped {
+		owned := jobs[:0]
+		for _, job := range jobs {
+			if job.OwnerID == owner {
+				owned = append(owned, job)
+			}
+		}
+		jobs = owned
+	}
+	writeJSON(w, http.StatusOK, api.ImageGenerationJobListResponse{Jobs: jobs})
 }
 
 func (s *Server) handleImageGenerationJobGet(w http.ResponseWriter, r *http.Request) {
-	job := s.imageJobs.get(r.PathValue("jobID"))
+	job := s.ownedImageJob(r, r.PathValue("jobID"))
 	if job == nil {
 		writeError(w, http.StatusNotFound, "image generation job not found")
 		return
@@ -104,7 +116,7 @@ func (s *Server) handleImageGenerationJobGet(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleImageGenerationJobResult(w http.ResponseWriter, r *http.Request) {
-	job := s.imageJobs.get(r.PathValue("jobID"))
+	job := s.ownedImageJob(r, r.PathValue("jobID"))
 	if job == nil {
 		writeError(w, http.StatusNotFound, "image generation job not found")
 		return
@@ -127,7 +139,7 @@ func (s *Server) handleImageGenerationJobResult(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleImageGenerationJobCancel(w http.ResponseWriter, r *http.Request) {
-	job := s.imageJobs.get(r.PathValue("jobID"))
+	job := s.ownedImageJob(r, r.PathValue("jobID"))
 	if job == nil {
 		writeError(w, http.StatusNotFound, "image generation job not found")
 		return
@@ -146,7 +158,25 @@ func (s *Server) handleImageGenerationJobCancel(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) createImageGenerationJob(req api.OpenAIImagesGenerationRequest) (*imageGenerationJob, error) {
+// ownedImageJob returns a job the caller may see. With accounts on, each user
+// sees only the images they generated.
+func (s *Server) ownedImageJob(r *http.Request, id string) *imageGenerationJob {
+	job := s.imageJobs.get(id)
+	if job == nil {
+		return nil
+	}
+	if owner, scoped := ownerScope(r); scoped {
+		job.mu.Lock()
+		jobOwner := job.ownerID
+		job.mu.Unlock()
+		if jobOwner != owner {
+			return nil
+		}
+	}
+	return job
+}
+
+func (s *Server) createImageGenerationJob(req api.OpenAIImagesGenerationRequest, ownerID string) (*imageGenerationJob, error) {
 	id, err := newImageGenerationJobID()
 	if err != nil {
 		return nil, err
@@ -155,6 +185,7 @@ func (s *Server) createImageGenerationJob(req api.OpenAIImagesGenerationRequest)
 	now := time.Now()
 	job := &imageGenerationJob{
 		id:        id,
+		ownerID:   ownerID,
 		status:    imageJobQueued,
 		createdAt: now,
 		updatedAt: now,
@@ -298,6 +329,7 @@ func imageJobResponse(job *imageGenerationJob) api.ImageGenerationJobResponse {
 	defer job.mu.Unlock()
 	return api.ImageGenerationJobResponse{
 		ID:          job.id,
+		OwnerID:     job.ownerID,
 		Status:      job.status,
 		CreatedAt:   job.createdAt,
 		UpdatedAt:   job.updatedAt,
@@ -499,6 +531,7 @@ func (s *imageGenerationJobStore) load() error {
 		}
 		job := &imageGenerationJob{
 			id:          item.ID,
+			ownerID:     item.OwnerID,
 			status:      status,
 			createdAt:   item.CreatedAt,
 			updatedAt:   item.UpdatedAt,

@@ -17,6 +17,10 @@
   ],
   "tags": [
     {
+      "name": "Accounts",
+      "description": "Enterprise user accounts, teams and roles (feature.lite.team_management). Once the first user exists, remote callers must sign in or present an API key; administrators manage everything, members run inference and manage their own conversations, images and API keys, viewers only read."
+    },
+    {
       "name": "Health",
       "description": "Health and lifecycle endpoints."
     },
@@ -3001,13 +3005,553 @@
         }
       }
     },
+    "/api/auth/session": {
+      "get": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Describe the caller",
+        "description": "Reports whether user accounts are on, whether team management is licensed, and who the caller is. Never requires sign-in.",
+        "operationId": "getAuthSession",
+        "responses": {
+          "200": {
+            "description": "Session state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSessionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Sign in",
+        "description": "Checks a username and password and sets the `csglite_session` cookie (HttpOnly, SameSite=Lax, 7 days). Five wrong passwords for one username from one address lock that pair out for a minute. Signing in is not license-gated, so accounts keep protecting the instance after a license lapses.",
+        "operationId": "login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthLoginRequest"
+              },
+              "example": {
+                "username": "alice",
+                "password": "correct horse"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "description": "Wrong username or password, or the user is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "User accounts are not enabled on this instance.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many failed attempts; retry after the `Retry-After` seconds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Sign out",
+        "description": "Ends the current session and clears the cookie.",
+        "operationId": "logout",
+        "responses": {
+          "200": {
+            "description": "Signed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/password": {
+      "put": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Change your password",
+        "description": "Changes the signed-in user's password. Their other sessions end; this one is kept.",
+        "operationId": "changePassword",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthPasswordChangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The current password is wrong or the new one is shorter than 8 characters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in through the web UI (`code: login_required`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/team/users": {
+      "get": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "List users",
+        "description": "Lists every user account with the licensed seat count. Administrators only. Enterprise: `feature.lite.team_management`.",
+        "operationId": "listTeamUsers",
+        "responses": {
+          "200": {
+            "description": "Users.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamUsersResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Team management is not licensed (`code: feature_not_licensed`, `feature: feature.lite.team_management`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Create a user",
+        "description": "Creates a user. While no user exists, any caller may create the first one, which is always an administrator, and that switches accounts on: from then on every remote request needs a session or an API key. Requests from this machine itself (loopback without forwarding headers) keep administrator access. Enterprise: `feature.lite.team_management`; the number of users is capped by `quota.lite.max_users`.",
+        "operationId": "createTeamUser",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamUserCreateRequest"
+              },
+              "example": {
+                "username": "alice",
+                "password": "correct horse",
+                "role": "member"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamUser"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Not licensed, or the licensed seat count is reached (`code: feature_not_licensed`, `feature: quota.lite.max_users`, with `limit` and `current`), or the caller is not an administrator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/team/users/{id}": {
+      "put": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Update a user",
+        "description": "Changes a user's profile, role, team, disabled state or password. Disabling, demoting or resetting the password signs the user out everywhere. The last enabled administrator cannot be disabled or demoted. Enterprise: `feature.lite.team_management`.",
+        "operationId": "updateTeamUser",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamUserUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamUser"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Delete a user",
+        "description": "Deletes a user, their sessions and their API keys. The last enabled administrator cannot be deleted. Enterprise: `feature.lite.team_management`.",
+        "operationId": "deleteTeamUser",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/team/teams": {
+      "get": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "List teams",
+        "description": "Lists teams with their member counts. Administrators only. Enterprise: `feature.lite.team_management`.",
+        "operationId": "listTeams",
+        "responses": {
+          "200": {
+            "description": "Teams.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamGroupsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Create a team",
+        "description": "Creates a team. Enterprise: `feature.lite.team_management`.",
+        "operationId": "createTeam",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamGroupRequest"
+              },
+              "example": {
+                "name": "Research"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created team.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamGroup"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/team/teams/{id}": {
+      "put": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Update a team",
+        "description": "Renames a team or changes its description. Enterprise: `feature.lite.team_management`.",
+        "operationId": "updateTeam",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamGroupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated team.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamGroup"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Delete a team",
+        "description": "Deletes a team. Its members stay, without a team. Enterprise: `feature.lite.team_management`.",
+        "operationId": "deleteTeam",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Accounts are on and the caller is not an administrator (`code: permission_denied`), or must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/api/api-keys": {
       "get": {
         "tags": [
           "System"
         ],
         "summary": "List local API keys",
-        "description": "Returns the remote access authorization setting and API key metadata. Secret values are never returned.",
+        "description": "Returns the remote access authorization setting and API key metadata. Secret values are never returned. When user accounts are on, administrators see every key and anyone else only the keys they own.",
         "operationId": "listAPIKeys",
         "responses": {
           "200": {
@@ -3027,7 +3571,7 @@
           "System"
         ],
         "summary": "Create a local API key",
-        "description": "Creates an API key for remote access. The plaintext key is returned only once.",
+        "description": "Creates an API key for remote access. The plaintext key is returned only once. When user accounts are on, the key belongs to the signed-in user and acts with their role.",
         "operationId": "createAPIKey",
         "requestBody": {
           "required": true,
@@ -9065,6 +9609,316 @@
           }
         }
       },
+      "AccountsErrorResponse": {
+        "type": "object",
+        "required": [
+          "error",
+          "errorCode"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "code": {
+            "type": "string",
+            "description": "`login_required`, `permission_denied` or `feature_not_licensed`."
+          },
+          "feature": {
+            "type": "string",
+            "description": "Catalog key of the feature or quota when code is feature_not_licensed."
+          },
+          "edition_required": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Licensed seat count when the user cap is reached."
+          },
+          "current": {
+            "type": "integer",
+            "description": "Existing users when the user cap is reached."
+          }
+        }
+      },
+      "AuthSessionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "accounts_enabled",
+          "feature_licensed",
+          "authenticated",
+          "local_operator"
+        ],
+        "properties": {
+          "accounts_enabled": {
+            "type": "boolean",
+            "description": "False until the first user exists; the instance is then open as a single-user installation."
+          },
+          "feature_licensed": {
+            "type": "boolean",
+            "description": "Whether user and team management is licensed."
+          },
+          "authenticated": {
+            "type": "boolean"
+          },
+          "local_operator": {
+            "type": "boolean",
+            "description": "The request came from this machine itself, which administers the instance without signing in."
+          },
+          "user": {
+            "$ref": "#/components/schemas/TeamUser"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AuthLoginRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          }
+        }
+      },
+      "AuthPasswordChangeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "format": "password"
+          },
+          "new_password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8
+          }
+        }
+      },
+      "TeamUser": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "username",
+          "role",
+          "disabled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "member",
+              "viewer"
+            ]
+          },
+          "team_id": {
+            "type": "string"
+          },
+          "team_name": {
+            "type": "string"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_login_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TeamUsersResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "users",
+          "max_users"
+        ],
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamUser"
+            }
+          },
+          "max_users": {
+            "type": "integer",
+            "description": "Licensed number of users; 0 means unlimited."
+          }
+        }
+      },
+      "TeamUserCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._@-]{2,64}$"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "member",
+              "viewer"
+            ],
+            "description": "Defaults to member. The first user is always admin."
+          },
+          "team_id": {
+            "type": "string"
+          }
+        }
+      },
+      "TeamUserUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "member",
+              "viewer"
+            ]
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Empty string removes the user from their team."
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8,
+            "description": "Resets the password and ends the user's sessions."
+          }
+        }
+      },
+      "TeamGroup": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "member_count",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "member_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TeamGroupsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "teams"
+        ],
+        "properties": {
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamGroup"
+            }
+          }
+        }
+      },
+      "TeamGroupRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
       "APIKeyInfo": {
         "type": "object",
         "additionalProperties": false,
@@ -9075,6 +9929,13 @@
           "created_at"
         ],
         "properties": {
+          "owner_id": {
+            "type": "string",
+            "description": "User account that owns the key when accounts are on. Keys created before accounts have none."
+          },
+          "owner_name": {
+            "type": "string"
+          },
           "id": {
             "type": "string"
           },
@@ -9754,6 +10615,10 @@
           "messages"
         ],
         "properties": {
+          "owner_id": {
+            "type": "string",
+            "description": "User account the record belongs to when accounts are on. Set by the server; each user sees only their own."
+          },
           "id": {
             "type": "string"
           },
@@ -9793,6 +10658,10 @@
           "msg_count"
         ],
         "properties": {
+          "owner_id": {
+            "type": "string",
+            "description": "User account the record belongs to when accounts are on. Set by the server; each user sees only their own."
+          },
           "id": {
             "type": "string"
           },
@@ -13011,6 +13880,10 @@
           "request"
         ],
         "properties": {
+          "owner_id": {
+            "type": "string",
+            "description": "User account the record belongs to when accounts are on. Set by the server; each user sees only their own."
+          },
           "id": {
             "type": "string"
           },

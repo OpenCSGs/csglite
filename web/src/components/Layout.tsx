@@ -1,9 +1,10 @@
 import { ComponentChildren } from "preact";
 import { useLocation } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
-import { getSettings, openExternalURL } from "../api/client";
+import { changePassword, getSettings, logout, openExternalURL, TEAM_MANAGEMENT_FEATURE } from "../api/client";
 import { t, locale } from "../i18n";
 import { isLicensed, licenseState, loadLicense, productTitle } from "../license";
+import { authSession, currentRole, isAdmin, loadAuthSession, loginRequired, userLabel } from "../auth";
 
 const helpURL = "https://opencsg.com/docs/csghub/101/function/csghub-lite/intro";
 
@@ -25,8 +26,9 @@ const navKeys = [
   { id: "chat", path: "/chat", key: "nav.chat", icon: ChatIcon },
   { id: "ai-apps", path: "/ai-apps", key: "nav.aiApps", icon: AIAppsIcon },
   { id: "ai-gateway", path: "/ai-gateway", key: "nav.aiGateway", icon: AIGatewayIcon },
-  { id: "cluster", path: "/cluster", key: "nav.cluster", icon: ClusterIcon },
-  { id: "observability", path: "/observability", key: "nav.observability", icon: ObservabilityIcon },
+  { id: "cluster", path: "/cluster", key: "nav.cluster", icon: ClusterIcon, adminOnly: true },
+  { id: "observability", path: "/observability", key: "nav.observability", icon: ObservabilityIcon, adminOnly: true },
+  { id: "team", path: "/team", key: "nav.team", icon: TeamIcon, adminOnly: true, feature: TEAM_MANAGEMENT_FEATURE },
 ];
 
 function SettingsIcon({ active }: { active: boolean }) {
@@ -78,7 +80,12 @@ export function Layout({ children }: { children: ComponentChildren }) {
     };
   }, []);
 
+  const session = authSession.value;
+  const admin = isAdmin(session);
   const showNavItem = (id: string) => hiddenNavItems !== null && !hiddenNavItems.has(id);
+  // A gated page stays in the menu with a lock so people can find the
+  // feature; the page itself explains how to unlock it.
+  const locked = (feature?: string) => !!feature && !(license?.features ?? []).includes(feature);
 
   return (
     <div class="flex h-screen overflow-hidden">
@@ -95,7 +102,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
           </span>
         </div>
         <nav class="flex-1 px-3 space-y-1 mt-2">
-          {navKeys.filter((item) => showNavItem(item.id)).map((item) => {
+          {navKeys.filter((item) => showNavItem(item.id) && (admin || !item.adminOnly)).map((item) => {
             const active = path === item.path || (item.path !== "/" && path.startsWith(item.path));
             return (
               <a
@@ -112,11 +119,13 @@ export function Layout({ children }: { children: ComponentChildren }) {
                 }`}
               >
                 <item.icon active={active} />
-                {t(item.key)}
+                <span class="flex-1">{t(item.key)}</span>
+                {locked(item.feature) && <LockIcon />}
               </a>
             );
           })}
         </nav>
+        {session?.accounts_enabled && session.authenticated && <AccountMenu />}
         {showNavItem("settings") && (() => {
           const active = path === "/settings";
           return (
@@ -177,6 +186,154 @@ export function Layout({ children }: { children: ComponentChildren }) {
         </div>
       </main>
     </div>
+  );
+}
+
+function AccountMenu() {
+  const session = authSession.value;
+  const [open, setOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  if (!session) return null;
+  const local = session.local_operator;
+  const name = local ? t("auth.localOperator") : userLabel(session.user);
+  const role = currentRole(session);
+
+  const signOut = async () => {
+    try {
+      await logout();
+    } finally {
+      await loadAuthSession();
+      loginRequired.value = true;
+    }
+  };
+
+  return (
+    <div class="relative mx-3 mb-2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50"
+        aria-expanded={open}
+      >
+        <span class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
+          {(name || "?").slice(0, 1).toUpperCase()}
+        </span>
+        <span class="min-w-0 flex-1">
+          <span class="block truncate font-medium text-gray-900">{name}</span>
+          <span class="block truncate text-xs text-gray-500">{t(`team.role.${role}`)}</span>
+        </span>
+      </button>
+      {open && !local && (
+        <div class="absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setPasswordOpen(true);
+            }}
+            class="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+          >
+            {t("auth.changePassword")}
+          </button>
+          <button type="button" onClick={signOut} class="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50">
+            {t("auth.signOut")}
+          </button>
+        </div>
+      )}
+      {passwordOpen && <ChangePasswordDialog onClose={() => setPasswordOpen(false)} />}
+    </div>
+  );
+}
+
+function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+
+  const submit = async (event: Event) => {
+    event.preventDefault();
+    if (next.length < 8) {
+      setError(t("team.passwordTooShort"));
+      return;
+    }
+    if (next !== confirm) {
+      setError(t("team.passwordMismatch"));
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await changePassword(current, next);
+      setDone(true);
+    } catch (err: any) {
+      setError(err?.status === 400 ? t("auth.currentPasswordWrong") : err?.message || t("auth.changePasswordFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const input = "mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  return (
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-4" onClick={() => !busy && onClose()}>
+      <form
+        role="dialog"
+        aria-modal="true"
+        onSubmit={submit}
+        onClick={(event) => event.stopPropagation()}
+        class="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl"
+      >
+        <h2 class="text-lg font-semibold text-gray-900">{t("auth.changePassword")}</h2>
+        {done ? (
+          <p class="mt-4 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{t("auth.passwordChanged")}</p>
+        ) : (
+          <>
+            <label class="mt-4 block text-sm font-medium text-gray-700">
+              {t("auth.currentPassword")}
+              <input type="password" autoComplete="current-password" value={current} onInput={(e) => setCurrent((e.target as HTMLInputElement).value)} class={input} />
+            </label>
+            <label class="mt-3 block text-sm font-medium text-gray-700">
+              {t("auth.newPassword")}
+              <input type="password" autoComplete="new-password" value={next} onInput={(e) => setNext((e.target as HTMLInputElement).value)} class={input} />
+            </label>
+            <label class="mt-3 block text-sm font-medium text-gray-700">
+              {t("team.passwordConfirm")}
+              <input type="password" autoComplete="new-password" value={confirm} onInput={(e) => setConfirm((e.target as HTMLInputElement).value)} class={input} />
+            </label>
+            {error && <p role="alert" class="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          </>
+        )}
+        <div class="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={busy} class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+            {done ? t("dash.close") : t("team.cancel")}
+          </button>
+          {!done && (
+            <button type="submit" disabled={busy} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
+              {busy ? t("team.saving") : t("team.save")}
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg class="h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-label={t("team.lockedNav")}>
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path stroke-linecap="round" d="M8 11V7a4 4 0 118 0v4" />
+    </svg>
+  );
+}
+
+function TeamIcon({ active }: { active: boolean }) {
+  return (
+    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke={active ? "currentColor" : "#9CA3AF"} stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+    </svg>
   );
 }
 

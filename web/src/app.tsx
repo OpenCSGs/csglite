@@ -15,6 +15,12 @@ import { AIAppShell } from "./pages/AIAppShell";
 import { AIGateway } from "./pages/AIGateway";
 import { Cluster } from "./pages/Cluster";
 import { Observability, ObservabilityTraceDetailPage } from "./pages/Observability";
+import { Team } from "./pages/Team";
+import { Login } from "./pages/Login";
+import { useEffect } from "preact/hooks";
+import { authChecked, installAuthInterceptor, loadAuthSession, loginRequired } from "./auth";
+
+installAuthInterceptor();
 
 export function App() {
   return (
@@ -26,6 +32,15 @@ export function App() {
 
 function AppRoutes() {
   const { path } = useLocation();
+
+  useEffect(() => {
+    void loadAuthSession();
+  }, []);
+
+  // Wait for the first session check so a signed-out user never sees pages
+  // flash and fail before the sign-in form appears.
+  if (!authChecked.value) return null;
+  if (loginRequired.value) return <Login />;
 
   if (path === "/ai-apps/shell") {
     return <AIAppShell />;
@@ -47,6 +62,7 @@ function AppRoutes() {
         <Route path="/cluster" component={Cluster} />
         <Route path="/observability/traces/:traceID" component={ObservabilityTraceDetailPage} />
         <Route path="/observability" component={Observability} />
+        <Route path="/team" component={Team} />
         <Route path="/settings" component={Settings} />
         <Route path="/pricing" component={Pricing} />
       </Router>

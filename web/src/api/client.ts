@@ -1,5 +1,5 @@
 import { stripReasoningText } from "../reasoning";
-import { locale } from "../i18n";
+import { locale, t } from "../i18n";
 
 export interface ModelInfo {
   name: string;
@@ -588,6 +588,9 @@ export interface LocalAPIKeyInfo {
   prefix: string;
   created_at: string;
   last_used_at?: string;
+  /** User account that owns the key when accounts are on. */
+  owner_id?: string;
+  owner_name?: string;
 }
 
 export interface LocalAPIKeysResponse {
@@ -1096,6 +1099,9 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const body = await resp.text();
 
   if (!resp.ok) {
+    if (resp.status === 403 && errorCodeOf(body, contentType) === PERMISSION_DENIED) {
+      throw new Error(t("auth.permissionDenied"));
+    }
     throw new Error(extractErrorMessage(body, contentType, resp.statusText));
   }
 
@@ -3446,4 +3452,153 @@ export function updateClusterSettings(patch: ClusterSettingsUpdate): Promise<Clu
     method: "PUT",
     body: JSON.stringify(patch),
   });
+}
+
+// -- Accounts (Enterprise: feature.lite.team_management) --
+
+/** Error code of a 401 from a route that needs a signed-in user. */
+export const LOGIN_REQUIRED = "login_required";
+/** Error code of a 403 refused by the caller's role. */
+export const PERMISSION_DENIED = "permission_denied";
+export const TEAM_MANAGEMENT_FEATURE = "feature.lite.team_management";
+
+export type TeamRole = "admin" | "member" | "viewer";
+
+export interface TeamUser {
+  id: string;
+  username: string;
+  display_name?: string;
+  email?: string;
+  role: TeamRole;
+  team_id?: string;
+  team_name?: string;
+  disabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login_at?: string;
+}
+
+export interface AuthSession {
+  accounts_enabled: boolean;
+  feature_licensed: boolean;
+  authenticated: boolean;
+  local_operator: boolean;
+  user?: TeamUser;
+  expires_at?: string;
+}
+
+export interface TeamUsersResponse {
+  users: TeamUser[];
+  max_users: number;
+}
+
+export interface TeamGroup {
+  id: string;
+  name: string;
+  description?: string;
+  member_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TeamUserCreateRequest {
+  username: string;
+  password: string;
+  display_name?: string;
+  email?: string;
+  role?: TeamRole;
+  team_id?: string;
+}
+
+export interface TeamUserUpdateRequest {
+  display_name?: string;
+  email?: string;
+  role?: TeamRole;
+  team_id?: string;
+  disabled?: boolean;
+  password?: string;
+}
+
+/** Reads the machine-readable `code` of a JSON error body, or "". */
+export function errorCodeOf(body: string, contentType: string): string {
+  if (!contentType.includes("application/json")) return "";
+  try {
+    const parsed = JSON.parse(body) as { code?: unknown };
+    return typeof parsed.code === "string" ? parsed.code : "";
+  } catch {
+    return "";
+  }
+}
+
+async function fetchAccountsJSON<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const resp = await fetch(url, withLocaleHeader({ ...init, headers }));
+  const contentType = resp.headers.get("content-type") || "";
+  const body = await resp.text();
+  if (!resp.ok) {
+    const err = parseApiError(body, contentType, resp.status, resp.statusText);
+    if (err.code === PERMISSION_DENIED) err.message = t("auth.permissionDenied");
+    throw err;
+  }
+  if (!contentType.includes("application/json")) throw unexpectedJSONError(url, contentType, body);
+  return JSON.parse(body) as T;
+}
+
+export function getAuthSession(): Promise<AuthSession> {
+  return fetchAccountsJSON<AuthSession>("/api/auth/session", { cache: "no-store" });
+}
+
+export function login(username: string, password: string): Promise<AuthSession> {
+  return fetchAccountsJSON<AuthSession>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function logout(): Promise<void> {
+  await fetchAccountsJSON<{ status: string }>("/api/auth/logout", { method: "POST" });
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await fetchAccountsJSON<{ status: string }>("/api/auth/password", {
+    method: "PUT",
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}
+
+export function getTeamUsers(): Promise<TeamUsersResponse> {
+  return fetchAccountsJSON<TeamUsersResponse>("/api/team/users", { cache: "no-store" });
+}
+
+export function createTeamUser(req: TeamUserCreateRequest): Promise<TeamUser> {
+  return fetchAccountsJSON<TeamUser>("/api/team/users", { method: "POST", body: JSON.stringify(req) });
+}
+
+export function updateTeamUser(id: string, req: TeamUserUpdateRequest): Promise<TeamUser> {
+  return fetchAccountsJSON<TeamUser>(`/api/team/users/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(req) });
+}
+
+export async function deleteTeamUser(id: string): Promise<void> {
+  await fetchAccountsJSON<{ status: string }>(`/api/team/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function getTeams(): Promise<TeamGroup[]> {
+  const data = await fetchAccountsJSON<{ teams: TeamGroup[] }>("/api/team/teams", { cache: "no-store" });
+  return data.teams || [];
+}
+
+export function createTeam(name: string, description: string): Promise<TeamGroup> {
+  return fetchAccountsJSON<TeamGroup>("/api/team/teams", { method: "POST", body: JSON.stringify({ name, description }) });
+}
+
+export function updateTeam(id: string, name: string, description: string): Promise<TeamGroup> {
+  return fetchAccountsJSON<TeamGroup>(`/api/team/teams/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify({ name, description }),
+  });
+}
+
+export async function deleteTeam(id: string): Promise<void> {
+  await fetchAccountsJSON<{ status: string }>(`/api/team/teams/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

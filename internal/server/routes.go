@@ -5,6 +5,7 @@ import (
 
 	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/ctxcompress"
+	"github.com/opencsgs/csglite/internal/license"
 )
 
 func (s *Server) routes() http.Handler {
@@ -109,6 +110,22 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/tts-voices", s.handleTTSVoices)
 	mux.HandleFunc("GET /api/tts-runtime", s.handleTTSRuntimeStatus)
 	mux.HandleFunc("POST /api/tts-runtime/install", s.handleTTSRuntimeInstall)
+	// Accounts. Signing in is never gated, so accounts made under a license
+	// keep protecting the instance after it lapses; managing them is.
+	mux.HandleFunc("GET /api/auth/session", s.handleAuthSession)
+	mux.HandleFunc("POST /api/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("POST /api/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("PUT /api/auth/password", s.handleAuthPasswordChange)
+	teamFeature := s.requireFeature(license.FeatureTeamManagement)
+	mux.HandleFunc("GET /api/team/users", teamFeature(s.handleTeamUsersList))
+	mux.HandleFunc("POST /api/team/users", teamFeature(s.handleTeamUserCreate))
+	mux.HandleFunc("PUT /api/team/users/{id}", teamFeature(s.handleTeamUserUpdate))
+	mux.HandleFunc("DELETE /api/team/users/{id}", teamFeature(s.handleTeamUserDelete))
+	mux.HandleFunc("GET /api/team/teams", teamFeature(s.handleTeamGroupsList))
+	mux.HandleFunc("POST /api/team/teams", teamFeature(s.handleTeamGroupCreate))
+	mux.HandleFunc("PUT /api/team/teams/{id}", teamFeature(s.handleTeamGroupUpdate))
+	mux.HandleFunc("DELETE /api/team/teams/{id}", teamFeature(s.handleTeamGroupDelete))
+
 	mux.HandleFunc("GET /api/api-keys", s.handleAPIKeysList)
 	mux.HandleFunc("POST /api/api-keys/settings", s.handleAPIKeysSettingsUpdate)
 	mux.HandleFunc("POST /api/api-keys", s.handleAPIKeyCreate)
@@ -203,9 +220,9 @@ func (s *Server) routes() http.Handler {
 	}
 
 	return correlationMiddleware(LogMiddleware(
-		s.desktopAuthMiddleware(s.corsMiddleware(sensitiveOriginGuard(s.apiAuthMiddleware(
+		s.desktopAuthMiddleware(s.corsMiddleware(sensitiveOriginGuard(s.accountsMiddleware(s.apiAuthMiddleware(
 			s.observabilityMiddleware(providerPoolUsageMiddleware(mux)),
-		)))),
+		))))),
 	))
 }
 
