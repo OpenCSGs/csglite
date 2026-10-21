@@ -62,31 +62,6 @@ const navGroups: { id: string; key: string; management?: boolean; items: NavItem
   },
 ];
 
-function SettingsIcon({ active }: { active: boolean }) {
-  return (
-    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke={active ? "currentColor" : "#9CA3AF"} stroke-width="2">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-      <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-    </svg>
-  );
-}
-
-function HelpIcon() {
-  return (
-    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="#9CA3AF" stroke-width="2">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
-}
-
-function PricingIcon({ active }: { active: boolean }) {
-  return (
-    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke={active ? "currentColor" : "#9CA3AF"} stroke-width="2">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
-}
-
 export function Layout({ children }: { children: ComponentChildren }) {
   const { path, route } = useLocation();
   const [hiddenNavItems, setHiddenNavItems] = useState<Set<string> | null>(null);
@@ -167,60 +142,8 @@ export function Layout({ children }: { children: ComponentChildren }) {
               );
             })}
         </nav>
-        <div class="border-t border-gray-100 pt-2">
-        {session?.accounts_enabled && session.authenticated && <AccountMenu />}
-        {showNavItem("settings") && canManage && (() => {
-          const active = path === "/settings";
-          return (
-            <a
-              href="/settings"
-              onClick={(event) => {
-                event.preventDefault();
-                route("/settings");
-              }}
-              class={`flex items-center gap-3 mx-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                active
-                  ? "bg-indigo-50 text-indigo-700"
-                  : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-              }`}
-            >
-              <SettingsIcon active={active} />
-              {t("nav.settings")}
-            </a>
-          );
-        })()}
-        {showNavItem("pricing") && (() => {
-          const active = path === "/pricing";
-          return (
-            <a
-              href="/pricing"
-              onClick={(event) => {
-                event.preventDefault();
-                route("/pricing");
-              }}
-              class={`flex items-center gap-3 mx-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                active
-                  ? "bg-indigo-50 text-indigo-700"
-                  : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-              }`}
-            >
-              <PricingIcon active={active} />
-              {t("nav.pricing")}
-            </a>
-          );
-        })()}
-        {showNavItem("help") && (
-          <a
-            href={helpURL}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={openHelp}
-            class="flex items-center gap-3 mx-3 mb-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-          >
-            <HelpIcon />
-            {t("nav.help")}
-          </a>
-        )}
+        <div class="border-t border-gray-100 py-2">
+        <AccountMenu showNavItem={showNavItem} />
         </div>
       </aside>
       <main class="flex min-h-0 flex-1 flex-col overflow-hidden bg-gray-50">
@@ -233,7 +156,12 @@ export function Layout({ children }: { children: ComponentChildren }) {
   );
 }
 
-function AccountMenu() {
+/**
+ * The profile menu at the foot of the sidebar. Like OpenRouter's account
+ * menu it also holds the pages people rarely visit (settings, pricing,
+ * help), so it shows even while accounts are off.
+ */
+function AccountMenu({ showNavItem }: { showNavItem: (id: string) => boolean }) {
   const session = authSession.value;
   const { route } = useLocation();
   const [open, setOpen] = useState(false);
@@ -256,11 +184,12 @@ function AccountMenu() {
     };
   }, [open]);
 
-  if (!session) return null;
-  const local = session.local_operator;
-  const name = local ? t("auth.localOperator") : userLabel(session.user);
+  // Without accounts, or on a server that predates them, the operator is
+  // the only user.
+  const signedIn = !!session?.accounts_enabled && !!session.authenticated && !session.local_operator;
+  const name = signedIn ? userLabel(session?.user) : t("auth.localOperator");
   const role = currentRole(session);
-  const detail = local ? t("auth.localOperatorHint") : session.user?.email || session.user?.username || "";
+  const detail = signedIn ? session?.user?.email || session?.user?.username || "" : t("auth.localOperatorHint");
 
   const signOut = async () => {
     try {
@@ -274,6 +203,7 @@ function AccountMenu() {
     setOpen(false);
     route(path);
   };
+  const canManage = seesEverything(session);
   const item = "flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50";
 
   return (
@@ -305,10 +235,10 @@ function AccountMenu() {
             <span class="ml-auto rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">{t(`team.role.${role}`)}</span>
           </div>
           <div class="py-1">
-            <button type="button" role="menuitem" class={item} onClick={() => go(seesEverything(session) ? "/ai-gateway" : "/account/keys")}>
+            <button type="button" role="menuitem" class={item} onClick={() => go(canManage ? "/ai-gateway" : "/account/keys")}>
               {t("account.myKeys")}
             </button>
-            {!local && (
+            {signedIn && (
               <button
                 type="button"
                 role="menuitem"
@@ -322,6 +252,38 @@ function AccountMenu() {
               </button>
             )}
           </div>
+          {(canManage && showNavItem("settings")) || showNavItem("pricing") || showNavItem("help") ? (
+            <div class="border-t border-gray-100 py-1">
+              {canManage && showNavItem("settings") && (
+                <button type="button" role="menuitem" class={item} onClick={() => go("/settings")}>
+                  {t("nav.settings")}
+                </button>
+              )}
+              {showNavItem("pricing") && (
+                <button type="button" role="menuitem" class={item} onClick={() => go("/pricing")}>
+                  {t("nav.pricing")}
+                </button>
+              )}
+              {showNavItem("help") && (
+                <a
+                  href={helpURL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  role="menuitem"
+                  class={item}
+                  onClick={(event) => {
+                    setOpen(false);
+                    void openHelp(event);
+                  }}
+                >
+                  {t("nav.help")}
+                  <svg class="ml-auto h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M14 5h5v5m0-5l-8 8M10 5H6a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1v-4" />
+                  </svg>
+                </a>
+              )}
+            </div>
+          ) : null}
           <div class="flex items-center justify-between border-t border-gray-100 px-3 py-2 text-sm text-gray-700">
             <span>{t("account.language")}</span>
             <span class="inline-flex overflow-hidden rounded-lg border border-gray-200 text-xs">
@@ -337,7 +299,7 @@ function AccountMenu() {
               ))}
             </span>
           </div>
-          {!local && (
+          {signedIn && (
             <div class="border-t border-gray-100 py-1">
               <button type="button" role="menuitem" onClick={signOut} class="flex w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50">
                 {t("auth.signOut")}
