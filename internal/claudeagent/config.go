@@ -10,8 +10,18 @@ import (
 )
 
 const (
-	ProviderID = "csghub-lite"
+	ProviderID    = "csghub-lite"
+	ManagedAPIKey = "csghub-lite"
 )
+
+var managedEnvKeys = []string{
+	"ANTHROPIC_BASE_URL",
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+	"CLAUDE_API_BASE_URL",
+	"CLAUDE_API_KEY",
+	"CLAUDE_CODE_ATTRIBUTION_HEADER",
+}
 
 // SyncConfig persists Claude Code settings to ~/.claude/settings.json
 // so that subsequent launches without csghub-lite will still use the
@@ -53,8 +63,81 @@ func IsManagedConfigData(data []byte) bool {
 		return false
 	}
 	env, _ := doc["env"].(map[string]interface{})
-	return envString(env, "ANTHROPIC_API_KEY") == "csghub-lite" ||
-		envString(env, "CLAUDE_API_KEY") == "csghub-lite"
+	return envString(env, "ANTHROPIC_API_KEY") == ManagedAPIKey ||
+		envString(env, "CLAUDE_API_KEY") == ManagedAPIKey
+}
+
+// MatchesManagedProviderConfigData reports whether the Claude Code fields
+// owned by csghub-lite still point at the expected local provider. Unrelated
+// settings are intentionally ignored because Claude Code and users update them
+// independently.
+func MatchesManagedProviderConfigData(data []byte, serverURL, apiKey string) bool {
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return false
+	}
+	env, _ := doc["env"].(map[string]interface{})
+	baseURL := strings.TrimRight(strings.TrimSpace(serverURL), "/")
+	apiKey = strings.TrimSpace(apiKey)
+	return envString(env, "ANTHROPIC_BASE_URL") == baseURL &&
+		envString(env, "ANTHROPIC_API_KEY") == apiKey &&
+		envString(env, "CLAUDE_API_BASE_URL") == baseURL &&
+		envString(env, "CLAUDE_API_KEY") == apiKey &&
+		envString(env, "CLAUDE_CODE_ATTRIBUTION_HEADER") == "0" &&
+		envString(env, "ANTHROPIC_AUTH_TOKEN") == ""
+}
+
+// RestoreNativeConfigData restores only the Claude Code fields managed by
+// csghub-lite. Settings that Claude Code or the user changed after enabling
+// OpenCSG remain untouched.
+func RestoreNativeConfigData(currentData, originalData []byte, originalExisted bool) error {
+	path, err := SettingsPath()
+	if err != nil {
+		return err
+	}
+
+	current := make(map[string]interface{})
+	if len(currentData) > 0 {
+		if err := json.Unmarshal(currentData, &current); err != nil {
+			return err
+		}
+	}
+	original := make(map[string]interface{})
+	if originalExisted && len(originalData) > 0 {
+		if err := json.Unmarshal(originalData, &original); err != nil {
+			// Preserve the exact pre-switch file when it was malformed.
+			return safefile.Write(path, originalData, 0o644)
+		}
+	}
+
+	restoreJSONValue(current, original, "model")
+	currentEnv, _ := current["env"].(map[string]interface{})
+	originalEnv, _ := original["env"].(map[string]interface{})
+	for _, key := range managedEnvKeys {
+		restoreJSONValue(currentEnv, originalEnv, key)
+	}
+	if len(currentEnv) == 0 {
+		delete(current, "env")
+	} else {
+		current["env"] = currentEnv
+	}
+
+	if len(current) == 0 {
+		if !originalExisted {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return nil
+		}
+		return safefile.Write(path, originalData, 0o644)
+	}
+
+	out, err := json.MarshalIndent(current, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	return safefile.Write(path, out, 0o644)
 }
 
 // RemoveManagedConfig removes settings written by legacy csghub-lite launches
@@ -81,13 +164,7 @@ func RemoveManagedConfig() error {
 
 	delete(doc, "model")
 	if env, ok := doc["env"].(map[string]interface{}); ok {
-		for _, key := range []string{
-			"ANTHROPIC_BASE_URL",
-			"ANTHROPIC_API_KEY",
-			"CLAUDE_API_BASE_URL",
-			"CLAUDE_API_KEY",
-			"CLAUDE_CODE_ATTRIBUTION_HEADER",
-		} {
+		for _, key := range managedEnvKeys {
 			delete(env, key)
 		}
 		if len(env) == 0 {
@@ -109,6 +186,17 @@ func envString(env map[string]interface{}, key string) string {
 	}
 	value, _ := env[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func restoreJSONValue(current, original map[string]interface{}, key string) {
+	if current == nil {
+		return
+	}
+	if value, ok := original[key]; ok {
+		current[key] = value
+		return
+	}
+	delete(current, key)
 }
 
 // SettingsPath returns the path to Claude Code's settings.json.

@@ -98,6 +98,143 @@ func TestCodexProviderRestorePreservesUnrelatedConfigChanges(t *testing.T) {
 	}
 }
 
+func TestClaudeProviderDriftIgnoresUnrelatedSettingsChanges(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	cfg := &config.Config{
+		ListenAddr: ":11435",
+		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
+	}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:    "Qwen",
+		Name:         "Qwen3.5-2B",
+		Format:       model.FormatGGUF,
+		Size:         4_000_000_000,
+		Files:        []string{"model.gguf"},
+		DownloadedAt: time.Unix(123, 0),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newTestServerWithConfig(t, cfg)
+	enableOpenCSGProviderForTest(t, s, "claude-code", func() error {
+		return claudeagent.SyncConfig(s.localBaseURL(), claudeagent.ManagedAPIKey, "old-model")
+	})
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	settings["model"] = "user-selected-model"
+	settings["theme"] = "dark"
+	data, err = json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	status, supported, err := s.aiAppProviderStatus("claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !supported || status.Drifted {
+		t.Fatalf("provider status = %#v, supported=%v", status, supported)
+	}
+	if err := s.switchAIAppProvider(context.Background(), "claude-code", apps.ProviderModeOpenCSG, "Qwen/Qwen3.5-2B", ""); err != nil {
+		t.Fatalf("switch OpenCSG model: %v", err)
+	}
+	data, err = os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings = nil
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings["theme"] != "dark" {
+		t.Fatalf("unrelated theme was not preserved: %#v", settings)
+	}
+	if settings["model"] == "user-selected-model" {
+		t.Fatalf("managed model was not updated: %#v", settings)
+	}
+}
+
+func TestClaudeProviderRestorePreservesUnrelatedConfigChanges(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{
+  "model": "native-model",
+  "theme": "dark",
+  "env": {"ANTHROPIC_API_KEY": "native-key", "ANTHROPIC_AUTH_TOKEN": "native-token"}
+}`)
+	if err := os.WriteFile(settingsPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newTestServerWithConfig(t, &config.Config{
+		ListenAddr: ":11435",
+		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
+	})
+	enableOpenCSGProviderForTest(t, s, "claude-code", func() error {
+		return claudeagent.SyncConfig(s.localBaseURL(), claudeagent.ManagedAPIKey, "managed-model")
+	})
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	settings["theme"] = "light"
+	settings["statusLine"] = map[string]interface{}{"type": "command", "command": "status"}
+	env, _ := settings["env"].(map[string]interface{})
+	env["OTHER_VAR"] = "new"
+	data, err = json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.switchAIAppProvider(context.Background(), "claude-code", apps.ProviderModeNative, "", ""); err != nil {
+		t.Fatalf("restore native provider: %v", err)
+	}
+	data, err = os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings = nil
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings["model"] != "native-model" || settings["theme"] != "light" {
+		t.Fatalf("restored settings = %#v", settings)
+	}
+	if _, ok := settings["statusLine"].(map[string]interface{}); !ok {
+		t.Fatalf("statusLine was not preserved: %#v", settings)
+	}
+	env, _ = settings["env"].(map[string]interface{})
+	if env["ANTHROPIC_API_KEY"] != "native-key" || env["ANTHROPIC_AUTH_TOKEN"] != "native-token" || env["OTHER_VAR"] != "new" {
+		t.Fatalf("restored env = %#v", env)
+	}
+}
+
 func TestExtractDashboardURL(t *testing.T) {
 	output := []byte("Using model Qwen/Qwen3.5-2B\nDashboard URL: http://127.0.0.1:18789/#token=abc123\nBrowser launch disabled (--no-open).\n")
 
