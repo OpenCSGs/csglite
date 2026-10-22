@@ -1,6 +1,3 @@
-// Copyright (c) OpenCSG. Licensed under the CSGLite Enterprise Edition License.
-// See ee/LICENSE for details.
-
 // Package team keeps the user accounts, teams, invitations and login sessions
 // of a CSGLite instance shared by several people. Accounts are switched on by
 // creating the first user; until then the instance behaves exactly as a

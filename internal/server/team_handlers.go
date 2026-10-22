@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencsgs/csglite/ee/team"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/httpjson"
 	"github.com/opencsgs/csglite/internal/license"
+	"github.com/opencsgs/csglite/internal/team"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 

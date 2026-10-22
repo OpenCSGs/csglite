@@ -1,6 +1,3 @@
-// Copyright (c) OpenCSG. Licensed under the CSGLite Enterprise Edition License.
-// See ee/LICENSE for details.
-
 package team
 
 import (

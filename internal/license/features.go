@@ -105,7 +105,7 @@ var (
 	// auditor role and the sign-in policy. Accounts themselves (users,
 	// invitations, the administrator and member roles, teams) are free, as
 	// in LiteLLM's open-source proxy, and signing in is never gated. See
-	// docs/guides/ee-team-management.md.
+	// docs/guides/team-management.md.
 	FeatureTeamManagement = FeatureDefinition{
 		Key: featurePrefix + "team_management", Type: FeatureTypeBoolean, Gated: true, DefaultValue: true,
 		Since: "0.9.92",

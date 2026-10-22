@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/opencsgs/csglite/ee/team"
 	"github.com/opencsgs/csglite/internal/safefile"
+	"github.com/opencsgs/csglite/internal/team"
 )
 
 // Environment variables that create the first administrator at start-up, for

@@ -47,5 +47,5 @@ csghub-lite user reset-password admin
     同样需要 License。
 - `list` 和 `reset-password` 始终直接读写 `team.json`，服务会立即看到变化。
 
-相关：[用户、团队与角色](../guides/ee-team-management.md)、
+相关：[用户、团队与角色](../guides/team-management.md)、
 [环境变量](../guides/environment-variables.md#用户账号)。

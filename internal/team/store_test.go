@@ -1,6 +1,3 @@
-// Copyright (c) OpenCSG. Licensed under the CSGLite Enterprise Edition License.
-// See ee/LICENSE for details.
-
 package team
 
 import (
@@ -248,22 +245,8 @@ func TestAllowed(t *testing.T) {
 		{RoleMember, http.MethodGet, "/api/apps/shell/abc/ws", false},
 		{RoleMember, http.MethodGet, "/api/team/users", false},
 
-		{RoleAuditor, http.MethodGet, "/api/tags", true},
-		{RoleAuditor, http.MethodGet, "/v1/models", true},
-		{RoleAuditor, http.MethodGet, "/api/observability/requests", true},
-		{RoleAuditor, http.MethodGet, "/api/logs", true},
-		{RoleAuditor, http.MethodGet, "/api/team/users", true},
-		{RoleAuditor, http.MethodPost, "/api/show", true},
-		{RoleAuditor, http.MethodPost, "/api/api-keys", true},
-		{RoleAuditor, http.MethodDelete, "/api/api-keys/abc", true},
-		{RoleAuditor, http.MethodGet, "/api/cluster/token", false},
-		{RoleAuditor, http.MethodGet, "/api/apps/shell/abc/ws", false},
-		{RoleAuditor, http.MethodPost, "/v1/chat/completions", false},
-		{RoleAuditor, http.MethodGet, "/v1/realtime", false},
-		{RoleAuditor, http.MethodPost, "/api/conversations", false},
-		{RoleAuditor, http.MethodPost, "/api/team/users", false},
-		{RoleAuditor, http.MethodPut, "/api/team/settings", false},
-		{RoleAuditor, http.MethodPost, "/api/settings", false},
+		// The auditor's rules are Enterprise code in ee/team.
+		{RoleAuditor, http.MethodGet, "/api/tags", false},
 
 		{Role("owner"), http.MethodGet, "/api/tags", false},
 		{legacyRoleViewer, http.MethodGet, "/api/tags", false},

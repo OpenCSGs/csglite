@@ -1,6 +1,3 @@
-// Copyright (c) OpenCSG. Licensed under the CSGLite Enterprise Edition License.
-// See ee/LICENSE for details.
-
 package team
 
 import (
@@ -23,31 +20,21 @@ func PublicPath(path string) bool {
 // the provider-scoped prefix /providers/{id}/v1/... are judged as the /v1/...
 // path they serve.
 //
-// Administrators may do everything. Auditors read everything an
-// administrator reads except the secrets that grant access (the cluster join
-// credentials and the interactive shell), manage their own API keys, and
-// change nothing else; they cannot run inference, which spends money.
-// Members read the instance, run inference, and manage their own
-// conversations, images and API keys; the handlers narrow those to the
-// member's own records.
+// Administrators may do everything. Members read the instance, run
+// inference, and manage their own conversations, images and API keys; the
+// handlers narrow those to the member's own records. The auditor role is an
+// Enterprise feature whose rules live in ee/team; here it is refused
+// everything.
 func Allowed(role Role, method, path string) bool {
-	path = inferencePathOf(path)
+	path = InferencePathOf(path)
 	switch role {
 	case RoleAdmin:
 		return true
-	case RoleAuditor:
-		if secretRead(path) {
-			return false
-		}
-		if safeMethod(method) {
-			return !InferencePath(path) || path == "/v1/models"
-		}
-		return ownKeyWrite(method, path) || lookupPost(method, path)
 	case RoleMember:
-		if secretRead(path) || adminOnlyRead(path) {
+		if SecretRead(path) || adminOnlyRead(path) {
 			return false
 		}
-		if safeMethod(method) {
+		if SafeMethod(method) {
 			return true
 		}
 		return InferencePath(path) || memberWrite(method, path)
@@ -64,7 +51,7 @@ func SeesEverything(role Role) bool {
 // InferencePath reports whether a path runs a model, which is what members
 // may do and auditors may not.
 func InferencePath(path string) bool {
-	path = inferencePathOf(path)
+	path = InferencePathOf(path)
 	if strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/anthropic/") {
 		return true
 	}
@@ -84,12 +71,13 @@ func isAPIPath(path string) bool {
 	return false
 }
 
-func safeMethod(method string) bool {
+// SafeMethod reports whether a request only reads.
+func SafeMethod(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead
 }
 
-// inferencePathOf maps /providers/{id}/v1/... onto /v1/....
-func inferencePathOf(path string) string {
+// InferencePathOf maps /providers/{id}/v1/... onto /v1/....
+func InferencePathOf(path string) string {
 	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 3)
 	if len(parts) == 3 && parts[0] == "providers" && strings.HasPrefix(parts[2], "v1/") {
 		return "/" + parts[2]
@@ -97,9 +85,9 @@ func inferencePathOf(path string) string {
 	return path
 }
 
-// secretRead lists reads that hand out access itself: the credentials that
+// SecretRead lists reads that hand out access itself: the credentials that
 // admit a machine to the cluster, and an interactive shell on the host.
-func secretRead(path string) bool {
+func SecretRead(path string) bool {
 	return path == "/api/cluster/token" || path == "/api/cluster/code" || strings.HasPrefix(path, "/api/apps/shell/")
 }
 
@@ -113,14 +101,16 @@ func adminOnlyRead(path string) bool {
 	return strings.HasPrefix(path, "/api/observability") || strings.HasPrefix(path, "/api/team/")
 }
 
-func ownKeyWrite(method, path string) bool {
+// OwnKeyWrite reports whether a request creates or deletes one of the
+// caller's own API keys.
+func OwnKeyWrite(method, path string) bool {
 	return (path == "/api/api-keys" && method == http.MethodPost) ||
 		(strings.HasPrefix(path, "/api/api-keys/") && path != "/api/api-keys/settings" && method == http.MethodDelete)
 }
 
 // memberWrite lists the changes a member may make besides running inference.
 func memberWrite(method, path string) bool {
-	if ownKeyWrite(method, path) {
+	if OwnKeyWrite(method, path) {
 		return true
 	}
 	switch {
@@ -130,11 +120,11 @@ func memberWrite(method, path string) bool {
 		strings.HasPrefix(path, "/api/images/jobs/") && method == http.MethodDelete:
 		return true
 	}
-	return lookupPost(method, path)
+	return LookupPost(method, path)
 }
 
-// lookupPost lists reads that use POST only to carry a body.
-func lookupPost(method, path string) bool {
+// LookupPost lists reads that use POST only to carry a body.
+func LookupPost(method, path string) bool {
 	switch path {
 	case "/api/show", "/api/datasets/show", "/api/marketplace/models/extra":
 		return method == http.MethodPost

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/opencsgs/csglite/ee/team"
+	"github.com/opencsgs/csglite/internal/team"
 	"log"
 	"net"
 	"net/http"

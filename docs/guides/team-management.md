@@ -10,9 +10,9 @@ API Key 与对话隔离，不限人数。企业版功能键 `feature.lite.team_m
 - **登录安全策略**：没有 License 时 `PUT /api/team/settings` 返回
   `403 feature_not_licensed`，使用默认值（7 天、5 次、5 分钟）；`GET` 不门控。
 
-实现位于 `ee/team`，HTTP 接入在 `internal/server/team*.go`，CLI 在
-`internal/cli/user.go`。`ee/` 下的代码按企业版许可证授权；无需 License 即可运行的
-部分，依许可证开头的社区版附加授权可免费用于生产。
+账号实现位于 `internal/team`（Apache-2.0），HTTP 接入在 `internal/server/team*.go`，
+CLI 在 `internal/cli/user.go`。只有审计员角色的权限规则属于企业版代码，位于
+`ee/team`。
 
 ## 1. 目标与参考
 
@@ -87,7 +87,7 @@ LiteLLM Proxy 和 OpenRouter Organizations：
 | 集群加入令牌、终端 | ✓ | — | — |
 | 一切修改（Provider、池、模型、设置、License、成员…） | ✓ | — | — |
 
-判定逻辑在 `ee/team/policy.go`：除管理员外，写操作一律采用白名单，未列出的路由
+判定逻辑在 `internal/team/policy.go`（审计员在 `ee/team/auditor.go`）：除管理员外，写操作一律采用白名单，未列出的路由
 默认受保护。对话和图片在任何角色之间都按归属人隔离，管理员也看不到他人的对话。
 非管理员读取 `GET /api/providers?source=config` 时，上游 API Key 和请求头的值会
 被清空。旧版的 `viewer` 角色（未发布）在加载时迁移为成员。

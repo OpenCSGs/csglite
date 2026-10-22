@@ -10,9 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opencsgs/csglite/ee/team"
+	eeteam "github.com/opencsgs/csglite/ee/team"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/httpjson"
+	"github.com/opencsgs/csglite/internal/team"
 )
 
 // sessionCookie carries a signed-in user's session token.
@@ -122,7 +123,7 @@ func (s *Server) accountsMiddleware(next http.Handler) http.Handler {
 			httpjson.WriteCodedError(w, http.StatusForbidden, "change your password before continuing", passwordChangeRequiredCode)
 			return
 		}
-		if !team.Allowed(id.role(), r.Method, r.URL.Path) {
+		if !roleAllowed(id.role(), r.Method, r.URL.Path) {
 			httpjson.WriteCodedError(w, http.StatusForbidden, "your role does not allow this action", permissionDeniedCode)
 			return
 		}
@@ -280,4 +281,14 @@ func (l *loginLimiter) succeed(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.failures, key)
+}
+
+// roleAllowed is team.Allowed with the Enterprise auditor role's rules from
+// ee/team. Auditors made under a license keep their read-only access after it
+// lapses, like every other account.
+func roleAllowed(role team.Role, method, path string) bool {
+	if role == team.RoleAuditor {
+		return eeteam.AuditorAllowed(method, path)
+	}
+	return team.Allowed(role, method, path)
 }

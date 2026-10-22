@@ -153,7 +153,7 @@ TTS worker 支持：
 不设置时，可在 Web 界面创建第一个管理员：本机访问直接创建，远程访问需填写服务器上
 `~/.csghub-lite/team-setup-token` 中的初始化令牌；也可以在服务器上运行
 `csghub-lite user create <用户名> --role admin`。详见
-[`user` 命令](../cli/user.md) 与 [用户、团队与角色](ee-team-management.md)。
+[`user` 命令](../cli/user.md) 与 [用户、团队与角色](team-management.md)。
 
 ## 局域网算力集群
 

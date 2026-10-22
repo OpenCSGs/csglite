@@ -233,33 +233,15 @@ The two HTTP surfaces hang off their own small types rather than off `Manager`,
 so adding an endpoint does not grow the type that also runs discovery, gossip
 and scheduling.
 
-### Users, teams and roles (`ee/team`)
+### The auditor role (`ee/team`)
 
-A shared instance gets accounts. Until the first user is created nothing
-changes; from then on every caller that reaches the instance over the network
-signs in through the web UI or presents an API key, and acts as an
-administrator, an auditor (reads everything, changes nothing) or a member.
-Requests made on the machine itself keep administrator access, so the CLI and
-the desktop app work as before. The first administrator comes from the
-machine itself, a one-time setup token, `CSGHUB_LITE_ADMIN_*` environment
-variables or `csghub-lite user create`; everyone else joins through an
-invitation link or a password they must change at first sign-in. API keys,
-conversations and image jobs belong to the user who created them. As in
-LiteLLM's open-source proxy, accounts are free: users, invitations, teams and
-the administrator and member roles run without a license, with no limit on
-the number of users. `feature.lite.team_management` adds the auditor role and
-the sign-in policy. Signing in is never gated, so accounts keep protecting the instance after a license lapses,
-and `csghub-lite user reset-password` always works on the host.
-
-| File | Holds |
-| --- | --- |
-| `store.go` | `team.json`: users, teams, invitations, sessions and sign-in settings, and the rule that keeps one enabled administrator |
-| `password.go` | PBKDF2-SHA256 password hashing |
-| `policy.go` | which paths are public and what each role may call |
-
-The HTTP side lives in `internal/server/team.go` (identity and enforcement),
-`team_handlers.go` and `team_bootstrap.go`. Design:
-`docs/guides/ee-team-management.md`.
+User accounts (users, invitations, teams, the administrator and member roles)
+are free and live under Apache-2.0 in `internal/team`. This package holds only
+the Enterprise part: `AuditorAllowed`, the rules for the auditor role, which
+reads everything an administrator reads, changes nothing and cannot run
+inference. `feature.lite.team_management` gates giving someone that role and
+changing the sign-in policy; both checks sit in `internal/server`. Design:
+`docs/guides/team-management.md`.
 
 See `docs/agent-guidelines/ee-features.md` for the full rules and
 `docs/guides/ee-license-design.md` for the design.

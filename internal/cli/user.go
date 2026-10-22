@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
-	"github.com/opencsgs/csglite/ee/team"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/license"
+	"github.com/opencsgs/csglite/internal/team"
 	"github.com/opencsgs/csglite/pkg/api"
 	"github.com/spf13/cobra"
 )

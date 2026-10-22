@@ -34,7 +34,7 @@ License 体系**：CSGHub SaaS 管理后台签发，CSGLite 只做校验和门�
   条款约束，所有同类项目均如此。
 - License 作用于整个 CSGLite 实例，不按用户签发。实例内的用户、团队和角色由
   EE 功能 `feature.lite.team_management` 提供（见
-  [`ee-team-management.md`](ee-team-management.md)）门控审计员角色和登录安全
+  [`team-management.md`](team-management.md)）门控审计员角色和登录安全
   策略；账号本身免费、不限人数，License 中的席位数只展示不强制。
 - 不在 CSGLite 内实现签发、私钥管理或 License 台账。
 
