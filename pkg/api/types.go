@@ -1561,8 +1561,6 @@ type TeamUser struct {
 
 type TeamUsersResponse struct {
 	Users []TeamUser `json:"users"`
-	// MaxUsers is the licensed number of users; 0 means unlimited.
-	MaxUsers int `json:"max_users"`
 }
 
 type TeamUserCreateRequest struct {

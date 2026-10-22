@@ -346,10 +346,9 @@ type NewUser struct {
 	CreatedBy   string
 }
 
-// CreateUser adds a user. maxUsers caps the total number of users, invited
-// ones included; 0 means unlimited. It returns the invitation token when one
-// was issued.
-func (s *Store) CreateUser(in NewUser, maxUsers int) (User, string, error) {
+// CreateUser adds a user. It returns the invitation token when one was
+// issued.
+func (s *Store) CreateUser(in NewUser) (User, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st, err := s.loadLocked()
@@ -381,9 +380,6 @@ func (s *Store) CreateUser(in NewUser, maxUsers int) (User, string, error) {
 	teamID := strings.TrimSpace(in.TeamID)
 	if teamID != "" && st.teamIndex(teamID) < 0 {
 		return User{}, "", ErrUnknownTeam
-	}
-	if maxUsers > 0 && len(st.Users) >= maxUsers {
-		return User{}, "", &SeatLimitError{Limit: maxUsers, Current: len(st.Users)}
 	}
 	id, err := randomHex(8)
 	if err != nil {
@@ -420,16 +416,6 @@ func (s *Store) CreateUser(in NewUser, maxUsers int) (User, string, error) {
 		return User{}, "", err
 	}
 	return user, token, nil
-}
-
-// SeatLimitError reports that the licensed number of users is reached.
-type SeatLimitError struct {
-	Limit   int
-	Current int
-}
-
-func (e *SeatLimitError) Error() string {
-	return fmt.Sprintf("the user limit is %d and %d users already exist", e.Limit, e.Current)
 }
 
 // ReissueInvite replaces a pending user's invitation with a new one, which

@@ -22,7 +22,7 @@ func newTestStore(t *testing.T) *Store {
 
 func mustCreate(t *testing.T, s *Store, in NewUser) User {
 	t.Helper()
-	user, _, err := s.CreateUser(in, 0)
+	user, _, err := s.CreateUser(in)
 	if err != nil {
 		t.Fatalf("create %s: %v", in.Username, err)
 	}
@@ -69,24 +69,9 @@ func TestCreateUserValidates(t *testing.T) {
 		{NewUser{Username: "carol", Password: "password1", TeamID: "missing"}, ErrUnknownTeam},
 	}
 	for _, tc := range cases {
-		if _, _, err := s.CreateUser(tc.in, 0); !errors.Is(err, tc.want) {
+		if _, _, err := s.CreateUser(tc.in); !errors.Is(err, tc.want) {
 			t.Errorf("%+v: err = %v, want %v", tc.in, err, tc.want)
 		}
-	}
-}
-
-func TestSeatLimit(t *testing.T) {
-	s := newTestStore(t)
-	if _, _, err := s.CreateUser(NewUser{Username: "alice", Password: "password1"}, 2); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := s.CreateUser(NewUser{Username: "bob", Password: "password1"}, 2); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err := s.CreateUser(NewUser{Username: "carol", Password: "password1"}, 2)
-	var seats *SeatLimitError
-	if !errors.As(err, &seats) || seats.Limit != 2 || seats.Current != 2 {
-		t.Fatalf("third user err = %v, want a seat limit of 2", err)
 	}
 }
 
@@ -342,7 +327,7 @@ func TestReturnedStateDoesNotAliasTheCache(t *testing.T) {
 func TestInvitationFlow(t *testing.T) {
 	s := newTestStore(t)
 	admin := mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
-	bob, token, err := s.CreateUser(NewUser{Username: "bob", Role: RoleMember, Invite: true, CreatedBy: admin.ID}, 0)
+	bob, token, err := s.CreateUser(NewUser{Username: "bob", Role: RoleMember, Invite: true, CreatedBy: admin.ID})
 	if err != nil || token == "" || !bob.Pending() {
 		t.Fatalf("invite = %+v %q %v", bob, token, err)
 	}
@@ -385,7 +370,7 @@ func TestInvitationsExpire(t *testing.T) {
 	now := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
-	_, token, err := s.CreateUser(NewUser{Username: "bob", Invite: true}, 0)
+	_, token, err := s.CreateUser(NewUser{Username: "bob", Invite: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +383,7 @@ func TestInvitationsExpire(t *testing.T) {
 func TestAnInvitedAdministratorDoesNotKeepTheInstanceAdministered(t *testing.T) {
 	s := newTestStore(t)
 	alice := mustCreate(t, s, NewUser{Username: "alice", Password: "password1"})
-	if _, _, err := s.CreateUser(NewUser{Username: "bob", Role: RoleAdmin, Invite: true}, 0); err != nil {
+	if _, _, err := s.CreateUser(NewUser{Username: "bob", Role: RoleAdmin, Invite: true}); err != nil {
 		t.Fatal(err)
 	}
 	member := RoleMember

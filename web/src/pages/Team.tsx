@@ -32,7 +32,6 @@ type Tab = "members" | "teams" | "invites" | "security";
 const users = signal<TeamUser[]>([]);
 const teams = signal<TeamGroup[]>([]);
 const settings = signal<TeamSettings | null>(null);
-const maxUsers = signal(0);
 const loading = signal(false);
 const loadError = signal("");
 const activeTab = signal<Tab>("members");
@@ -45,7 +44,6 @@ async function loadTeamData() {
   try {
     const [userList, teamList, signIn] = await Promise.all([getTeamUsers(), getTeams(), getTeamSettings()]);
     users.value = userList.users;
-    maxUsers.value = userList.max_users;
     teams.value = teamList;
     settings.value = signIn;
   } catch (err: any) {
@@ -55,22 +53,13 @@ async function loadTeamData() {
   }
 }
 
-async function loadCommunityUsers() {
-  loading.value = true;
-  loadError.value = "";
-  try {
-    const userList = await getTeamUsers();
-    users.value = userList.users;
-    maxUsers.value = userList.max_users;
-  } catch (err: any) {
-    loadError.value = err?.message || t("team.loadFailed");
-  } finally {
-    loading.value = false;
-  }
+/** Whether the license covers the Enterprise part of accounts. */
+function teamLicensed(): boolean {
+  return (licenseState.value?.features ?? []).includes(TEAM_MANAGEMENT_FEATURE);
 }
 
 function errorText(err: any, fallback: string): string {
-  if (isFeatureNotLicensedError(err) && err.limit) return t("team.seatLimitReached", err.limit);
+  if (isFeatureNotLicensedError(err)) return t("team.enterpriseRequired");
   return err?.message || fallback;
 }
 
@@ -91,34 +80,18 @@ const linkButton = "px-1.5 text-sm text-indigo-600 hover:underline disabled:opac
 export function Team() {
   void locale.value;
   const session = authSession.value;
-  const license = licenseState.value;
-  const licensed = (license?.features ?? []).includes(TEAM_MANAGEMENT_FEATURE);
   const accountsOn = !!session?.accounts_enabled;
   const canRead = seesEverything(session);
 
   useEffect(() => {
-    if (!accountsOn || !canRead) return;
-    if (licensed) void loadTeamData();
-    else void loadCommunityUsers();
-  }, [licensed, accountsOn, canRead]);
+    if (accountsOn && canRead) void loadTeamData();
+  }, [accountsOn, canRead]);
 
-  // The community edition includes one administrator account, so an
-  // unlicensed instance can still turn on sign-in; inviting more people,
-  // roles and teams are what the license adds.
   let body;
   if (!canRead) {
     body = <Notice tone="neutral" title={t("team.adminOnlyTitle")} text={t("team.adminOnlyDesc")} />;
-  } else if (!licensed && !accountsOn) {
-    body = (
-      <>
-        <EnableAccounts licensed={false} />
-        <FeatureLocked />
-      </>
-    );
-  } else if (!licensed) {
-    body = <CommunityAccounts />;
   } else if (!accountsOn) {
-    body = <EnableAccounts licensed />;
+    body = <EnableAccounts />;
   } else {
     body = <TeamManager />;
   }
@@ -127,11 +100,10 @@ export function Team() {
     <div class="page-shell space-y-6">
       <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
-          {licensed && <p class="mb-2 text-xs font-semibold uppercase tracking-[0.28em] text-indigo-500">{t("team.eyebrow")}</p>}
           <h1 class="text-3xl font-bold tracking-tight text-gray-950">{t("team.title")}</h1>
-          <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t(licensed ? "team.subtitle" : "team.subtitleCommunity")}</p>
+          <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t("team.subtitle")}</p>
         </div>
-        {licensed && accountsOn && canRead && <HeaderStats />}
+        {accountsOn && canRead && <HeaderStats />}
       </div>
       {body}
     </div>
@@ -140,9 +112,8 @@ export function Team() {
 
 function HeaderStats() {
   const pending = users.value.filter((user) => user.pending).length;
-  const seats = maxUsers.value;
   const stats = [
-    { label: t("team.statMembers"), value: seats > 0 ? `${users.value.length} / ${seats}` : String(users.value.length) },
+    { label: t("team.statMembers"), value: String(users.value.length) },
     { label: t("team.statPending"), value: String(pending) },
     { label: t("team.statTeams"), value: String(teams.value.length) },
   ];
@@ -168,29 +139,30 @@ function Notice({ tone, title, text }: { tone: "neutral" | "warn"; title: string
   );
 }
 
-function FeatureLocked() {
+/** What the Enterprise license adds to accounts, with the way to unlock it. */
+function EnterpriseCard() {
   const { route } = useLocation();
   return (
-    <section class="rounded-xl border border-indigo-100 bg-white p-8 shadow-sm">
+    <section class="rounded-xl border border-indigo-100 bg-white p-6 shadow-sm">
       <div class="flex items-start gap-4">
-        <span class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
-          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <span class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <rect x="5" y="11" width="14" height="10" rx="2" />
             <path stroke-linecap="round" d="M8 11V7a4 4 0 118 0v4" />
           </svg>
         </span>
         <div class="min-w-0">
-          <h2 class="text-lg font-semibold text-gray-900">{t("team.lockedTitle")}</h2>
+          <h2 class="text-base font-semibold text-gray-900">{t("team.lockedTitle")}</h2>
           <p class="mt-1 text-sm leading-6 text-gray-600">{t("team.lockedDesc")}</p>
-          <ul class="mt-4 space-y-1.5 text-sm text-gray-700">
-            {["team.lockedPoint1", "team.lockedPoint2", "team.lockedPoint3", "team.lockedPoint4"].map((key) => (
+          <ul class="mt-3 space-y-1.5 text-sm text-gray-700">
+            {["team.lockedPoint1", "team.lockedPoint2", "team.lockedPoint3"].map((key) => (
               <li key={key} class="flex gap-2">
                 <span class="text-indigo-500">•</span>
                 {t(key)}
               </li>
             ))}
           </ul>
-          <button type="button" class={`${primaryButton} mt-6`} onClick={() => route("/settings")}>
+          <button type="button" class={`${primaryButton} mt-5`} onClick={() => route("/settings")}>
             {t("team.lockedAction")}
           </button>
         </div>
@@ -199,65 +171,11 @@ function FeatureLocked() {
   );
 }
 
-/**
- * An unlicensed instance with accounts on: the administrator account the
- * community edition includes, or, after a license lapsed, the accounts made
- * under it, which keep signing in but cannot be changed.
- */
-function CommunityAccounts() {
-  const lapsed = users.value.length > 1;
-  return (
-    <div class="space-y-6">
-      {lapsed ? (
-        <Notice tone="warn" title={t("team.licenseLapsedTitle")} text={t("team.licenseLapsedDesc")} />
-      ) : (
-        <Notice tone="neutral" title={t("team.communityOnTitle")} text={t("team.communityOnDesc")} />
-      )}
-      {loadError.value && <p role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{loadError.value}</p>}
-      <section class="rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div class="flex items-center justify-between border-b border-gray-100 px-5 py-3">
-          <h2 class="text-sm font-semibold text-gray-900">{t("team.tabUsers")}</h2>
-          {maxUsers.value > 0 && (
-            <span class="text-xs text-gray-500">
-              {users.value.length} / {maxUsers.value}
-            </span>
-          )}
-        </div>
-        {loading.value ? (
-          <p class="px-5 py-6 text-sm text-gray-500">{t("team.loading")}</p>
-        ) : (
-          <ul class="divide-y divide-gray-100">
-            {users.value.map((user) => (
-              <li key={user.id} class="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-                <div class="min-w-0">
-                  <p class="truncate font-medium text-gray-900">{userLabel(user)}</p>
-                  <p class="truncate text-xs text-gray-500">
-                    {user.username}
-                    {user.email ? ` · ${user.email}` : ""}
-                  </p>
-                </div>
-                <div class="flex items-center gap-2">
-                  <RoleBadge role={user.role} />
-                  <StatusBadge user={user} />
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p class="border-t border-gray-100 px-5 py-3 text-xs leading-5 text-gray-500">
-          {t("team.communityRecover")} <code class="rounded bg-gray-100 px-1 py-0.5 font-mono">{"csghub-lite user reset-password <username>"}</code>
-        </p>
-      </section>
-      <FeatureLocked />
-    </div>
-  );
-}
-
 function CodeLine({ children }: { children: string }) {
   return <code class="mt-1 block overflow-x-auto whitespace-pre rounded-lg bg-gray-900 px-3 py-2 font-mono text-xs text-gray-100">{children}</code>;
 }
 
-function EnableAccounts({ licensed }: { licensed: boolean }) {
+function EnableAccounts() {
   const local = !!authSession.value?.local_operator;
   const [username, setUsername] = useState("admin");
   const [displayName, setDisplayName] = useState("");
@@ -295,7 +213,7 @@ function EnableAccounts({ licensed }: { licensed: boolean }) {
     <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
         <h2 class="text-lg font-semibold text-gray-900">{t("team.enableTitle")}</h2>
-        <p class="mt-1 text-sm leading-6 text-gray-600">{t(licensed ? "team.enableDesc" : "team.enableDescCommunity")}</p>
+        <p class="mt-1 text-sm leading-6 text-gray-600">{t("team.enableDesc")}</p>
         <form onSubmit={submit} class="mt-5 space-y-3">
           {!local && (
             <label class="block text-sm font-medium text-gray-700">
@@ -449,8 +367,6 @@ function MembersPanel({ readOnly }: { readOnly: boolean }) {
   const [teamFilter, setTeamFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const me = authSession.value?.user?.id;
-  const seats = maxUsers.value;
-  const seatsFull = seats > 0 && users.value.length >= seats;
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -537,16 +453,15 @@ function MembersPanel({ readOnly }: { readOnly: boolean }) {
         </select>
         {!readOnly && (
           <div class="ml-auto flex gap-2">
-            <button type="button" class={secondaryButton} disabled={seatsFull} onClick={() => setDialog({ mode: "create" })}>
+            <button type="button" class={secondaryButton} onClick={() => setDialog({ mode: "create" })}>
               {t("team.createDirect")}
             </button>
-            <button type="button" class={primaryButton} disabled={seatsFull} onClick={() => setDialog({ mode: "invite" })}>
+            <button type="button" class={primaryButton} onClick={() => setDialog({ mode: "invite" })}>
               {t("team.inviteMember")}
             </button>
           </div>
         )}
       </div>
-      {seatsFull && !readOnly && <p class="mx-5 mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{t("team.seatLimitReached", seats)}</p>}
       {actionError && <p role="alert" class="mx-5 mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</p>}
       <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
@@ -676,21 +591,30 @@ function RoleBadge({ role }: { role: TeamRole }) {
 }
 
 function RolePicker({ role, onChange }: { role: TeamRole; onChange: (role: TeamRole) => void }) {
+  const licensed = teamLicensed();
   return (
     <fieldset class="space-y-2">
       <legend class="text-sm font-medium text-gray-700">{t("team.colRole")}</legend>
-      {roles.map((r) => (
+      {roles.map((r) => {
+        // The auditor role is an Enterprise feature; someone who already
+        // holds it keeps it.
+        const locked = r === "auditor" && !licensed && role !== r;
+        return (
         <label
           key={r}
-          class={`flex cursor-pointer gap-3 rounded-lg border px-3 py-2 ${role === r ? "border-indigo-500 bg-indigo-50" : "border-gray-200 hover:bg-gray-50"}`}
+          class={`flex gap-3 rounded-lg border px-3 py-2 ${locked ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${role === r ? "border-indigo-500 bg-indigo-50" : "border-gray-200 hover:bg-gray-50"}`}
         >
-          <input type="radio" name="role" class="mt-1" checked={role === r} onChange={() => onChange(r)} />
+          <input type="radio" name="role" class="mt-1" checked={role === r} disabled={locked} onChange={() => onChange(r)} />
           <span>
-            <span class="block text-sm font-medium text-gray-900">{t(`team.role.${r}`)}</span>
+            <span class="flex items-center gap-2 text-sm font-medium text-gray-900">
+              {t(`team.role.${r}`)}
+              {r === "auditor" && !licensed && <span class="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">{t("team.enterpriseBadge")}</span>}
+            </span>
             <span class="block text-xs leading-5 text-gray-500">{t(`team.roleDesc.${r}`)}</span>
           </span>
         </label>
-      ))}
+        );
+      })}
     </fieldset>
   );
 }
@@ -1042,7 +966,11 @@ function TeamDialog({ team, onClose }: { team: TeamGroup | null; onClose: () => 
 
 const sessionChoices = [8, 24, 24 * 7, 24 * 30];
 
-function SecurityPanel({ readOnly }: { readOnly: boolean }) {
+function SecurityPanel({ readOnly: viewer }: { readOnly: boolean }) {
+  // The sign-in policy is an Enterprise feature: without the license the
+  // defaults apply and the form is shown read-only.
+  const licensed = teamLicensed();
+  const readOnly = viewer || !licensed;
   const current = settings.value;
   const [sessionHours, setSessionHours] = useState(current?.session_hours ?? 168);
   const [maxFailed, setMaxFailed] = useState(current?.max_failed_logins ?? 5);
@@ -1078,7 +1006,10 @@ function SecurityPanel({ readOnly }: { readOnly: boolean }) {
     <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <form onSubmit={save} class="space-y-4 rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
         <div>
-          <h2 class="text-base font-semibold text-gray-900">{t("team.securityTitle")}</h2>
+          <h2 class="flex items-center gap-2 text-base font-semibold text-gray-900">
+            {t("team.securityTitle")}
+            {!licensed && <span class="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-600">{t("team.enterpriseBadge")}</span>}
+          </h2>
           <p class="text-sm text-gray-500">{t("team.securityDesc")}</p>
         </div>
         <label class="block text-sm font-medium text-gray-700">
@@ -1135,6 +1066,11 @@ function SecurityPanel({ readOnly }: { readOnly: boolean }) {
           </p>
         </div>
       </section>
+      {!licensed && !viewer && (
+        <div class="lg:col-span-2">
+          <EnterpriseCard />
+        </div>
+      )}
     </div>
   );
 }

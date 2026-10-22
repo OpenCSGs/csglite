@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/opencsgs/csglite/ee/team"
-	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/internal/safefile"
 )
 
@@ -70,7 +69,7 @@ func (s *Server) bootstrapAccounts() {
 		if username == "" {
 			username = defaultAdminUsername
 		}
-		_, _, err := s.team.CreateUser(team.NewUser{Username: username, Password: password, SelfChosen: true}, s.license.Limit(license.QuotaMaxUsers))
+		_, _, err := s.team.CreateUser(team.NewUser{Username: username, Password: password, SelfChosen: true})
 		if err != nil {
 			log.Printf("accounts: creating administrator %q from %s: %v", username, envAdminPassword, err)
 			return

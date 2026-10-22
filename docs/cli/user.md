@@ -1,6 +1,6 @@
 # user
 
-管理共享实例的用户账号。社区版包含 1 个管理员账号；更多用户需要企业版功能
+管理共享实例的用户账号。账号功能免费；审计员角色需要企业版功能
 `feature.lite.team_management`。
 
 第一个账号创建后，所有通过网络访问此实例的人都必须登录或携带 API Key；在服务器
@@ -43,8 +43,8 @@ csghub-lite user reset-password admin
 
 - `create`：
   - 本机有运行中的服务时，通过本地 API 创建，License 与席位按 Web 界面同样的规则检查。
-  - 没有运行中的服务时，直接写入 `~/.csghub-lite/team.json`，同样检查席位：没有
-    License 时只能创建第一个管理员。
+  - 没有运行中的服务时，直接写入 `~/.csghub-lite/team.json`；`--role auditor`
+    同样需要 License。
 - `list` 和 `reset-password` 始终直接读写 `team.json`，服务会立即看到变化。
 
 相关：[用户、团队与角色](../guides/ee-team-management.md)、

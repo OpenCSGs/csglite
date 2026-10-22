@@ -1,17 +1,18 @@
-# 用户、团队与角色（EE）
+# 用户、团队与角色
 
-功能键：`feature.lite.team_management`（布尔，EE）；席位：`quota.lite.max_users`
-（整数，EE；License 未写则不限，已邀请未激活的账号也占席位）。实现位于
-`ee/team`，HTTP 接入在 `internal/server/team*.go`，CLI 在 `internal/cli/user.go`。
+账号功能和 LiteLLM 开源版一样**免费**：用户、邀请、团队、管理员和成员角色、个人
+API Key 与对话隔离，不限人数。企业版功能键 `feature.lite.team_management`（布尔）
+只解锁两项：
 
-**社区版包含 1 个管理员账号**（`quota.lite.max_users` 的社区值为 1），任何实例都能
-开启登录保护。邀请成员、审计员和成员角色、团队、修改或删除用户、登录安全设置需要
-企业版 License。没有 License 时：
+- **审计员角色**：没有 License 时，`POST /api/team/users` 和
+  `PUT /api/team/users/{id}` 指定 `auditor` 返回 `403 feature_not_licensed`。
+  License 失效前已有的审计员保留角色。
+- **登录安全策略**：没有 License 时 `PUT /api/team/settings` 返回
+  `403 feature_not_licensed`，使用默认值（7 天、5 次、5 分钟）；`GET` 不门控。
 
-- `GET /api/team/users` 和 `POST /api/team/users` 不门控，第二个账号被席位上限拒绝
-  （`403 feature_not_licensed`，`feature: quota.lite.max_users`）。
-- 其余 `/api/team/*` 返回 `403 feature_not_licensed`。
-- 环境变量和 CLI 同样可以创建这个管理员；管理员可在头像菜单修改自己的密码。
+实现位于 `ee/team`，HTTP 接入在 `internal/server/team*.go`，CLI 在
+`internal/cli/user.go`。`ee/` 下的代码按企业版许可证授权；无需 License 即可运行的
+部分，依许可证开头的社区版附加授权可免费用于生产。
 
 ## 1. 目标与参考
 
@@ -22,9 +23,9 @@ LiteLLM Proxy 和 OpenRouter Organizations：
 | 方面 | LiteLLM | OpenRouter | CSGLite |
 |---|---|---|---|
 | 初始化 | `UI_USERNAME`/`UI_PASSWORD` 环境变量登录，仅用于初始化，之后关掉并提示 | 账号注册 | 环境变量**只创建一次真实账号**，之后忽略并在页面提示移除；或使用本机访问、初始化令牌、CLI |
-| 免费版 | 开源版带管理员登录，多用户与 SSO 收费 | — | 社区版 1 个管理员账号，多用户、角色、团队收费 |
+| 免费与收费 | 开源版含团队、内部用户、Virtual Key、基础预算；组织、团队管理员与细粒度角色、SSO（超过 5 人）、审计日志、高级预算收费 | — | 免费：用户、邀请、团队、管理员和成员角色；收费：审计员角色、登录安全策略，以及后续的 Key 治理、花费报表、审计日志、SSO |
 | 加入方式 | Invite User 生成链接；管理员设的密码首登必须修改 | 邀请加入组织 | 默认邀请链接（7 天、一次性）；直接创建时首登强制改密 |
-| 角色 | proxy_admin / proxy_admin_viewer / internal_user | Admin / Member | 管理员 / 审计员 / 成员 |
+| 角色 | proxy_admin / proxy_admin_viewer / internal_user | Admin / Member | 管理员 / 审计员（企业版） / 成员 |
 | 应急 | break-glass 账号 | — | `csghub-lite user reset-password` 在主机上直接重置，不受 License 影响 |
 | 菜单 | 侧边栏分区，管理员可配置页面可见性 | 管理员专区，成员看不到入口 | 「工作台 / 模型与数据 / 管理」分组，「管理」只对管理员和审计员显示 |
 
@@ -71,15 +72,15 @@ LiteLLM Proxy 和 OpenRouter Organizations：
 - 无法识别身份时返回 `401 login_required`，前端据此跳到登录页。
 - 公开路径：Web UI 静态资源、`/api/health`、`/api/auth/*`（包括邀请的查看和接受）。
 - 用 Cookie 发起的写请求若带有不同源的 `Origin`，返回 403。
-- 同一地址对同一用户名连续输错达到阈值后锁定，阈值和时长在「登录安全」中配置，
-  默认 5 次、5 分钟。
+- 同一地址对同一用户名连续输错达到阈值后锁定，默认 5 次、5 分钟；企业版可在
+  「登录安全」中修改阈值和时长。
 
 ## 5. 角色
 
 | 能力 | 管理员 | 审计员 | 成员 |
 |---|---|---|---|
 | 读取模型、设置、仪表盘等 | ✓ | ✓ | ✓ |
-| 观测数据、日志、成员与团队、所有 API Key | ✓ | ✓（只读） | — |
+| 观测数据、日志、用户与团队、所有 API Key | ✓ | ✓（只读） | — |
 | 调用模型（`/v1/*`、`/anthropic/*`、`/api/chat` 等） | ✓ | 仅 `GET /v1/models` | ✓ |
 | 自己的 API Key | ✓ | ✓ | ✓ |
 | 自己的对话、图片任务 | ✓ | — | ✓ |
@@ -98,17 +99,16 @@ LiteLLM Proxy 和 OpenRouter Organizations：
   审计员显示。
 - **头像菜单**：位于侧边栏底部，未开启账号时显示为「本机」。菜单显示姓名、邮箱、
   角色徽标，菜单项包括「我的 API Key」、「修改密码」、「设置」（仅管理员和审计员）、
-  「帮助」、「语言」和「退出登录」。价格页从网关页 CSGHub Provider 旁的链接进入。成员的「我的 API Key」是 `/account/keys`
-  页，管理员和审计员跳转到网关。
-- **团队**：顶部显示成员数和席位、待接受邀请数、团队数，下设四个标签：
+  「帮助」、「语言」和「退出登录」。成员的「我的 API Key」是 `/account/keys` 页，
+  管理员和审计员跳转到网关。价格页从网关页 CSGHub Provider 旁的链接进入。
+- **团队**：顶部显示成员数、待接受邀请数、团队数，下设四个标签：
   - 成员：支持搜索，可按角色、团队、状态筛选；可邀请成员或直接创建账号。
   - 团队。
   - 邀请：列出待接受的邀请及过期时间，可重新生成链接或撤销。
   - 登录安全：会话时长、失败锁定阈值、访问规则说明、应急重置命令、初始化环境变量状态。
 
-  审计员看到的是只读版本。没有 License 时：未开启账号则显示创建管理员的表单，
-  已开启则显示「登录保护已开启」和账号列表；两种情况下方都有企业版功能介绍。
-  License 失效且账号多于 1 个时显示失效说明。「团队」菜单项不带锁标。
+  审计员看到的是只读版本。没有 License 时，角色选择里的「审计员」带「企业版」标记
+  且不可选，「登录安全」表单只读，下方显示企业版功能介绍。
 - **独立页面**：登录页、邀请接受页（`/invite/<token>`，不需要登录）、强制改密页。
 
 ## 7. 数据
@@ -129,12 +129,10 @@ LiteLLM Proxy 和 OpenRouter Organizations：
 
 ## 8. License 失效后
 
-- 登录、接受邀请和权限检查都不受 License 门控，已有账号继续保护实例。
-- 「团队」页只读列出已有账号；除列出用户外的 `/api/team/*` 返回
-  `403 feature_not_licensed`，也不能再添加账号（席位回到社区值 1）。
-- `csghub-lite user reset-password` 仍然可用。
-- 达到席位上限时返回 `403 feature_not_licensed`，并带上
-  `feature: quota.lite.max_users`、`limit` 和 `current`。
+- 账号、登录、邀请、团队照常可用，权限检查不受 License 影响。
+- 已有的审计员保留角色，但不能再把其他人设为审计员。
+- 登录安全策略保留最后一次保存的值，不能再修改。
+- `csghub-lite user reset-password` 始终可用。
 
 ## 9. 后续
 

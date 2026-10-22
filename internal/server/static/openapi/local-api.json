@@ -18,7 +18,7 @@
   "tags": [
     {
       "name": "Accounts",
-      "description": "Enterprise user accounts, teams and roles (feature.lite.team_management). Once the first user exists, remote callers must sign in or present an API key; administrators manage everything, auditors read everything and change nothing, members run inference and manage their own conversations, images and API keys."
+      "description": "User accounts, teams and roles. The auditor role and the sign-in policy are Enterprise (feature.lite.team_management); everything else is free. Once the first user exists, remote callers must sign in or present an API key; administrators manage everything, auditors read everything and change nothing, members run inference and manage their own conversations, images and API keys."
     },
     {
       "name": "Health",
@@ -3281,7 +3281,7 @@
           "Accounts"
         ],
         "summary": "Get sign-in settings",
-        "description": "Session length and lockout policy, and whether the bootstrap administrator password is still set in the environment. Administrators and auditors. Enterprise: `feature.lite.team_management`.",
+        "description": "Session length and lockout policy, and whether the bootstrap administrator password is still set in the environment. Administrators and auditors.",
         "operationId": "getTeamSettings",
         "responses": {
           "200": {
@@ -3295,7 +3295,7 @@
             }
           },
           "403": {
-            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "description": "The caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3356,7 +3356,7 @@
           "Accounts"
         ],
         "summary": "Issue a new invitation link",
-        "description": "Replaces an invited user's link with a new one valid 7 days; the earlier link stops working. The response carries `invite_token` once. Enterprise: `feature.lite.team_management`.",
+        "description": "Replaces an invited user's link with a new one valid 7 days; the earlier link stops working. The response carries `invite_token` once.",
         "operationId": "reinviteTeamUser",
         "parameters": [
           {
@@ -3380,7 +3380,7 @@
             }
           },
           "403": {
-            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "description": "The caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3411,7 +3411,7 @@
           "Accounts"
         ],
         "summary": "List users",
-        "description": "Lists every user account with the seat count (1 without a license). Administrators and auditors. Not gated, so the community edition can show its administrator account.",
+        "description": "Lists every user account. Administrators and auditors.",
         "operationId": "listTeamUsers",
         "responses": {
           "200": {
@@ -3425,7 +3425,7 @@
             }
           },
           "403": {
-            "description": "Team management is not licensed (`code: feature_not_licensed`, `feature: feature.lite.team_management`).",
+            "description": "The caller's role does not allow this (`code: permission_denied`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3441,7 +3441,7 @@
           "Accounts"
         ],
         "summary": "Create a user",
-        "description": "Creates a user, either with a password (which the user must change at first sign-in) or, with `invite`, without one: the response then carries a one-time `invite_token` for the link `/invite/<token>`, valid 7 days. The first user is always an administrator and switches accounts on: from then on every remote request needs a session or an API key. Creating it from another machine needs `setup_token`, read from `team-setup-token` under the app home on the server; requests from this machine itself (loopback without forwarding headers) keep administrator access and need no token. The first administrator can also be created at start-up from CSGHUB_LITE_ADMIN_USERNAME and CSGHUB_LITE_ADMIN_PASSWORD (or _FILE). Not gated by `feature.lite.team_management`: the number of users, invited ones included, is capped by `quota.lite.max_users`, which is 1 without a license, so the community edition can create its one administrator and nothing more.",
+        "description": "Creates a user, either with a password (which the user must change at first sign-in) or, with `invite`, without one: the response then carries a one-time `invite_token` for the link `/invite/<token>`, valid 7 days. The first user is always an administrator and switches accounts on: from then on every remote request needs a session or an API key. Creating it from another machine needs `setup_token`, read from `team-setup-token` under the app home on the server; requests from this machine itself (loopback without forwarding headers) keep administrator access and need no token. The first administrator can also be created at start-up from CSGHUB_LITE_ADMIN_USERNAME and CSGHUB_LITE_ADMIN_PASSWORD (or _FILE). The auditor role needs `feature.lite.team_management`; there is no limit on the number of users.",
         "operationId": "createTeamUser",
         "requestBody": {
           "required": true,
@@ -3473,7 +3473,7 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "403": {
-            "description": "Not licensed, or the licensed seat count is reached (`code: feature_not_licensed`, `feature: quota.lite.max_users`, with `limit` and `current`), the caller is not an administrator, or the first administrator was requested from another machine without the right setup token (`code: setup_token_required`).",
+            "description": "An auditor was requested without a license (`code: feature_not_licensed`, `feature: feature.lite.team_management`), the caller is not an administrator, or the first administrator was requested from another machine without the right setup token (`code: setup_token_required`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3494,7 +3494,7 @@
           "Accounts"
         ],
         "summary": "Update a user",
-        "description": "Changes a user's profile, role, team, disabled state or password. Disabling, changing the role or resetting the password signs the user out everywhere; a reset password must be changed at next sign-in. The last enabled administrator cannot be disabled or demoted. Enterprise: `feature.lite.team_management`.",
+        "description": "Changes a user's profile, role, team, disabled state or password. Disabling, changing the role or resetting the password signs the user out everywhere; a reset password must be changed at next sign-in. The last enabled administrator cannot be disabled or demoted. Making someone an auditor needs `feature.lite.team_management`.",
         "operationId": "updateTeamUser",
         "parameters": [
           {
@@ -3531,7 +3531,7 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "403": {
-            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "description": "Making someone an auditor without a license (`code: feature_not_licensed`, `feature: feature.lite.team_management`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3553,7 +3553,7 @@
           "Accounts"
         ],
         "summary": "Delete a user",
-        "description": "Deletes a user, their sessions, invitation and API keys; for an invited user this revokes the invitation. The last enabled administrator cannot be deleted. Enterprise: `feature.lite.team_management`.",
+        "description": "Deletes a user, their sessions, invitation and API keys; for an invited user this revokes the invitation. The last enabled administrator cannot be deleted.",
         "operationId": "deleteTeamUser",
         "parameters": [
           {
@@ -3577,7 +3577,7 @@
             }
           },
           "403": {
-            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "description": "The caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3601,7 +3601,7 @@
           "Accounts"
         ],
         "summary": "List teams",
-        "description": "Lists teams with their member counts. Administrators only. Enterprise: `feature.lite.team_management`.",
+        "description": "Lists teams with their member counts. Administrators only.",
         "operationId": "listTeams",
         "responses": {
           "200": {
@@ -3615,7 +3615,7 @@
             }
           },
           "403": {
-            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "description": "The caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3631,7 +3631,7 @@
           "Accounts"
         ],
         "summary": "Create a team",
-        "description": "Creates a team. Enterprise: `feature.lite.team_management`.",
+        "description": "Creates a team.",
         "operationId": "createTeam",
         "requestBody": {
           "required": true,
@@ -3661,7 +3661,7 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "403": {
-            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "description": "The caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3682,7 +3682,7 @@
           "Accounts"
         ],
         "summary": "Update a team",
-        "description": "Renames a team or changes its description. Enterprise: `feature.lite.team_management`.",
+        "description": "Renames a team or changes its description.",
         "operationId": "updateTeam",
         "parameters": [
           {
@@ -3719,7 +3719,7 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "403": {
-            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "description": "The caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3741,7 +3741,7 @@
           "Accounts"
         ],
         "summary": "Delete a team",
-        "description": "Deletes a team. Its members stay, without a team. Enterprise: `feature.lite.team_management`.",
+        "description": "Deletes a team. Its members stay, without a team.",
         "operationId": "deleteTeam",
         "parameters": [
           {
@@ -3765,7 +3765,7 @@
             }
           },
           "403": {
-            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "description": "The caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
             "content": {
               "application/json": {
                 "schema": {
@@ -9868,14 +9868,6 @@
           },
           "edition_required": {
             "type": "string"
-          },
-          "limit": {
-            "type": "integer",
-            "description": "Licensed seat count when the user cap is reached."
-          },
-          "current": {
-            "type": "integer",
-            "description": "Existing users when the user cap is reached."
           }
         }
       },
@@ -10026,8 +10018,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "users",
-          "max_users"
+          "users"
         ],
         "properties": {
           "users": {
@@ -10035,10 +10026,6 @@
             "items": {
               "$ref": "#/components/schemas/TeamUser"
             }
-          },
-          "max_users": {
-            "type": "integer",
-            "description": "Licensed number of users; 0 means unlimited."
           }
         }
       },

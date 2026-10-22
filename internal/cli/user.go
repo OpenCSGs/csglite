@@ -195,29 +195,31 @@ func newUserCreateCmd(version string) *cobra.Command {
 	return cmd
 }
 
-// createUserOffline creates a user while no server is running, applying the
-// seat cap the way the server would: without a license, only the first
-// administrator.
+// createUserOffline creates a user while no server is running. As in the
+// web UI, the auditor role needs the license.
 func createUserOffline(cfg *config.Config, version string, req api.TeamUserCreateRequest) (team.User, string, error) {
-	root := cfg.StorageDir()
-	if root == "" {
-		defaultRoot, err := config.DefaultStorageDir()
-		if err != nil {
-			return team.User{}, "", fmt.Errorf("resolving storage directory: %w", err)
-		}
-		root = defaultRoot
-	}
-	opts, err := license.DefaultOptions(root, version)
-	if err != nil {
-		return team.User{}, "", err
-	}
-	manager := license.NewManager(opts)
-	state := manager.Refresh()
 	store, err := teamStore()
 	if err != nil {
 		return team.User{}, "", err
 	}
-	user, token, err := store.CreateUser(team.NewUser{
+	if team.Role(req.Role) == team.RoleAuditor && store.Enabled() {
+		root := cfg.StorageDir()
+		if root == "" {
+			defaultRoot, err := config.DefaultStorageDir()
+			if err != nil {
+				return team.User{}, "", fmt.Errorf("resolving storage directory: %w", err)
+			}
+			root = defaultRoot
+		}
+		opts, err := license.DefaultOptions(root, version)
+		if err != nil {
+			return team.User{}, "", err
+		}
+		if !license.NewManager(opts).Refresh().Enabled(license.FeatureTeamManagement) {
+			return team.User{}, "", errors.New("the auditor role needs a CSGLite Enterprise license; install one with: csghub-lite license install <file>")
+		}
+	}
+	return store.CreateUser(team.NewUser{
 		Username:    req.Username,
 		Password:    req.Password,
 		DisplayName: req.DisplayName,
@@ -225,12 +227,7 @@ func createUserOffline(cfg *config.Config, version string, req api.TeamUserCreat
 		Role:        team.Role(req.Role),
 		Invite:      req.Invite,
 		SelfChosen:  !store.Enabled(),
-	}, state.Limit(license.QuotaMaxUsers))
-	var seats *team.SeatLimitError
-	if errors.As(err, &seats) && !state.Enabled(license.FeatureTeamManagement) {
-		return team.User{}, "", errors.New("the community edition includes one administrator account; more users need a CSGLite Enterprise license: csghub-lite license install <file>")
-	}
-	return user, token, err
+	})
 }
 
 func newUserResetPasswordCmd() *cobra.Command {

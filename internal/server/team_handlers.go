@@ -205,7 +205,7 @@ func (s *Server) handleTeamUsersList(w http.ResponseWriter, r *http.Request) {
 	for _, user := range users {
 		out = append(out, s.teamUserAPI(user, teams, invites))
 	}
-	writeJSON(w, http.StatusOK, api.TeamUsersResponse{Users: out, MaxUsers: s.license.Limit(license.QuotaMaxUsers)})
+	writeJSON(w, http.StatusOK, api.TeamUsersResponse{Users: out})
 }
 
 // POST /api/team/users. With no users yet this is how accounts are switched
@@ -225,6 +225,10 @@ func (s *Server) handleTeamUserCreate(w http.ResponseWriter, r *http.Request) {
 			setupTokenRequiredCode)
 		return
 	}
+	if !s.roleLicensed(team.Role(strings.TrimSpace(req.Role))) {
+		writeLicenseRequired(w, license.FeatureTeamManagement)
+		return
+	}
 	id, _ := identityFromRequest(r)
 	user, inviteToken, err := s.team.CreateUser(team.NewUser{
 		Username:    req.Username,
@@ -236,20 +240,7 @@ func (s *Server) handleTeamUserCreate(w http.ResponseWriter, r *http.Request) {
 		Invite:      req.Invite,
 		SelfChosen:  bootstrap,
 		CreatedBy:   id.User.ID,
-	}, s.license.Limit(license.QuotaMaxUsers))
-	var seats *team.SeatLimitError
-	if errors.As(err, &seats) {
-		writeJSON(w, http.StatusForbidden, seatLimitResponse{
-			Error:           err.Error(),
-			ErrorCode:       http.StatusForbidden,
-			Code:            licenseErrorCode,
-			Feature:         license.QuotaMaxUsers.Key,
-			EditionRequired: license.EditionEnterprise,
-			Limit:           seats.Limit,
-			Current:         seats.Current,
-		})
-		return
-	}
+	})
 	if err != nil {
 		writeTeamError(w, err)
 		return
@@ -262,14 +253,11 @@ func (s *Server) handleTeamUserCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, view)
 }
 
-type seatLimitResponse struct {
-	Error           string `json:"error"`
-	ErrorCode       int    `json:"errorCode"`
-	Code            string `json:"code"`
-	Feature         string `json:"feature"`
-	EditionRequired string `json:"edition_required"`
-	Limit           int    `json:"limit"`
-	Current         int    `json:"current"`
+// roleLicensed reports whether role may be given out: the auditor role is an
+// Enterprise feature. Auditors made under a license keep their role after it
+// lapses.
+func (s *Server) roleLicensed(role team.Role) bool {
+	return role != team.RoleAuditor || s.license.Enabled(license.FeatureTeamManagement)
 }
 
 // PUT /api/team/users/{id}
@@ -288,6 +276,12 @@ func (s *Server) handleTeamUserUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Role != nil {
 		role := team.Role(strings.TrimSpace(*req.Role))
+		if !s.roleLicensed(role) {
+			if current, err := s.team.User(r.PathValue("id")); err != nil || current.Role != role {
+				writeLicenseRequired(w, license.FeatureTeamManagement)
+				return
+			}
+		}
 		patch.Role = &role
 	}
 	user, err := s.team.UpdateUser(r.PathValue("id"), patch)

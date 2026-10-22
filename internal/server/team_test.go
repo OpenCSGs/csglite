@@ -14,7 +14,6 @@ import (
 
 	"github.com/opencsgs/csglite/ee/team"
 	"github.com/opencsgs/csglite/internal/config"
-	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/internal/license/licensetest"
 	"github.com/opencsgs/csglite/pkg/api"
 )
@@ -181,37 +180,37 @@ func TestAccountsAreOffUntilTheFirstUser(t *testing.T) {
 		http.StatusConflict, "login with accounts off")
 }
 
-// The community edition includes one administrator account, so any instance
-// can require a login; more users, and managing them, need the license.
-func TestCommunityEditionHasOneAdministrator(t *testing.T) {
+// Accounts are free, as in LiteLLM's open-source proxy: users, invitations,
+// teams and the administrator and member roles. The auditor role and the
+// sign-in policy need the license.
+func TestAccountsWorkWithoutALicense(t *testing.T) {
 	s := newTestServer(t)
 	local := newTeamClient(t, s)
 	local.remote = "127.0.0.1:50000"
-	created := createTeamUser(t, local, api.TeamUserCreateRequest{Username: "admin", Password: "admin-password"})
-	if created.Role != "admin" {
-		t.Fatalf("first user role = %q, want admin", created.Role)
-	}
-
+	createTeamUser(t, local, api.TeamUserCreateRequest{Username: "admin", Password: "admin-password"})
 	anon := newTeamClient(t, s)
 	expectCode(t, anon.do(http.MethodGet, "/api/tags", nil), http.StatusUnauthorized, loginRequiredCode, "anonymous request once the administrator exists")
 	admin := newTeamClient(t, s)
 	admin.login("admin", "admin-password")
-	expectStatus(t, admin.do(http.MethodGet, "/api/tags", nil), http.StatusOK, "administrator request")
 
-	rec := admin.do(http.MethodGet, "/api/team/users", nil)
-	expectStatus(t, rec, http.StatusOK, "list users")
-	var list api.TeamUsersResponse
-	_ = json.Unmarshal(rec.Body.Bytes(), &list)
-	if len(list.Users) != 1 || list.MaxUsers != 1 {
-		t.Fatalf("community user list = %+v", list)
-	}
+	rec := admin.do(http.MethodPost, "/api/team/teams", api.TeamGroupRequest{Name: ptr("research")})
+	expectStatus(t, rec, http.StatusCreated, "create a team")
+	var group api.TeamGroup
+	_ = json.Unmarshal(rec.Body.Bytes(), &group)
+	_, member := inviteUser(t, s, admin, "bob", "member")
+	expectStatus(t, member.do(http.MethodGet, "/api/tags", nil), http.StatusOK, "member request")
+	direct := createTeamUser(t, admin, api.TeamUserCreateRequest{Username: "carol", Password: "temporary1", TeamID: group.ID})
+	role := "admin"
+	expectStatus(t, admin.do(http.MethodPut, "/api/team/users/"+direct.ID, api.TeamUserUpdateRequest{Role: &role}), http.StatusOK, "promote to administrator")
+	expectStatus(t, admin.do(http.MethodGet, "/api/team/settings", nil), http.StatusOK, "read the sign-in policy")
 
-	rec = admin.do(http.MethodPost, "/api/team/users", api.TeamUserCreateRequest{Username: "bob", Role: "member", Invite: true})
-	expectCode(t, rec, http.StatusForbidden, licenseErrorCode, "second user without a license")
-	expectCode(t, admin.do(http.MethodGet, "/api/team/teams", nil), http.StatusForbidden, licenseErrorCode, "teams without a license")
-	expectCode(t, admin.do(http.MethodPut, "/api/team/users/"+created.ID, api.TeamUserUpdateRequest{}), http.StatusForbidden, licenseErrorCode, "editing users without a license")
-	expectStatus(t, admin.do(http.MethodPut, "/api/auth/password", api.AuthPasswordChangeRequest{CurrentPassword: "admin-password", NewPassword: "new-admin-pass"}),
-		http.StatusOK, "the administrator changes their own password")
+	expectCode(t, admin.do(http.MethodPost, "/api/team/users", api.TeamUserCreateRequest{Username: "dave", Role: "auditor", Invite: true}),
+		http.StatusForbidden, licenseErrorCode, "an auditor without a license")
+	auditor := "auditor"
+	expectCode(t, admin.do(http.MethodPut, "/api/team/users/"+direct.ID, api.TeamUserUpdateRequest{Role: &auditor}),
+		http.StatusForbidden, licenseErrorCode, "making someone an auditor without a license")
+	expectCode(t, admin.do(http.MethodPut, "/api/team/settings", api.TeamSettings{SessionHours: 24, MaxFailedLogins: 5, LockoutMinutes: 5}),
+		http.StatusForbidden, licenseErrorCode, "changing the sign-in policy without a license")
 }
 
 func TestSignInIsRequiredOnceAccountsExist(t *testing.T) {
@@ -400,27 +399,6 @@ func TestAPIKeysBelongToTheirCreator(t *testing.T) {
 	}
 }
 
-func TestSeatLimitComesFromTheLicense(t *testing.T) {
-	s := newTestServer(t)
-	licenseTeamManagement(t, s, `{"limits": {"quota.lite.max_users": 2}}`)
-	c := newTeamClient(t, s)
-	c.remote = "127.0.0.1:50000"
-	createTeamUser(t, c, api.TeamUserCreateRequest{Username: "admin", Password: "admin-password"})
-	createTeamUser(t, c, api.TeamUserCreateRequest{Username: "second", Invite: true})
-	rec := c.do(http.MethodPost, "/api/team/users", api.TeamUserCreateRequest{Username: "third", Password: "third-password"})
-	expectCode(t, rec, http.StatusForbidden, licenseErrorCode, "third user over a two-seat license")
-	var body seatLimitResponse
-	_ = json.Unmarshal(rec.Body.Bytes(), &body)
-	if body.Feature != license.QuotaMaxUsers.Key || body.Limit != 2 || body.Current != 2 {
-		t.Fatalf("seat limit response %+v", body)
-	}
-	var users api.TeamUsersResponse
-	_ = json.Unmarshal(c.do(http.MethodGet, "/api/team/users", nil).Body.Bytes(), &users)
-	if users.MaxUsers != 2 || len(users.Users) != 2 {
-		t.Fatalf("users response %+v", users)
-	}
-}
-
 func TestAccountsKeepProtectingTheInstanceAfterTheLicenseLapses(t *testing.T) {
 	s, admin := newAccountsServer(t)
 	if _, err := s.license.Remove(); err != nil {
@@ -429,8 +407,8 @@ func TestAccountsKeepProtectingTheInstanceAfterTheLicenseLapses(t *testing.T) {
 	anon := newTeamClient(t, s)
 	expectCode(t, anon.do(http.MethodGet, "/api/settings", nil), http.StatusUnauthorized, loginRequiredCode, "anonymous after the license lapsed")
 	expectStatus(t, admin.do(http.MethodGet, "/api/settings", nil), http.StatusOK, "signed-in admin after the license lapsed")
-	expectCode(t, admin.do(http.MethodPost, "/api/team/users", api.TeamUserCreateRequest{Username: "late", Password: "late-password"}),
-		http.StatusForbidden, licenseErrorCode, "creating a user after the license lapsed")
+	expectCode(t, admin.do(http.MethodPost, "/api/team/users", api.TeamUserCreateRequest{Username: "late", Role: "auditor", Invite: true}),
+		http.StatusForbidden, licenseErrorCode, "creating an auditor after the license lapsed")
 	fresh := newTeamClient(t, s)
 	fresh.login("admin", "admin-password")
 }

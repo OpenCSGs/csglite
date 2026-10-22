@@ -56,8 +56,7 @@ docker run -d --name csghub-lite \
   opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite:latest
 ```
 
-Require a sign-in (the community edition includes one administrator account;
-more users need an Enterprise license). The first administrator is created at
+Require a sign-in and share the instance with a team (no license needed). The first administrator is created at
 start-up while no account exists, so nobody on the network can claim the
 instance first; remove the variables afterwards:
 

@@ -102,7 +102,7 @@ func TestRequireFeatureUngatedAlwaysPasses(t *testing.T) {
 	}
 	for _, entry := range catalog {
 		switch entry.Key {
-		case license.QuotaMaxClusterNodes.Key, license.QuotaMaxUsers.Key:
+		case license.QuotaMaxClusterNodes.Key:
 			// Gated integer caps, never "enabled".
 			if !entry.Gated {
 				t.Fatalf("%s should be gated: %+v", entry.Key, entry)

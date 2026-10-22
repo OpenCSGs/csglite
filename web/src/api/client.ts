@@ -3514,7 +3514,6 @@ export interface AuthSession {
 
 export interface TeamUsersResponse {
   users: TeamUser[];
-  max_users: number;
 }
 
 export interface TeamGroup {

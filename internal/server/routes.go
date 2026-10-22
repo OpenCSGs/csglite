@@ -118,21 +118,20 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/auth/password", s.handleAuthPasswordChange)
 	mux.HandleFunc("GET /api/auth/invite/{token}", s.handleAuthInviteGet)
 	mux.HandleFunc("POST /api/auth/invite/{token}", s.handleAuthInviteAccept)
-	// The community edition includes one administrator account, so listing
-	// users and creating one are not gated: the seat cap (QuotaMaxUsers) stops
-	// an unlicensed instance at a single user. Everything else is EE.
-	teamFeature := s.requireFeature(license.FeatureTeamManagement)
+	// Users, invitations, teams and the administrator and member roles are
+	// free, as in LiteLLM's open-source proxy. The license adds the auditor
+	// role (checked in the user handlers) and the sign-in policy.
 	mux.HandleFunc("GET /api/team/users", s.handleTeamUsersList)
 	mux.HandleFunc("POST /api/team/users", s.handleTeamUserCreate)
-	mux.HandleFunc("PUT /api/team/users/{id}", teamFeature(s.handleTeamUserUpdate))
-	mux.HandleFunc("DELETE /api/team/users/{id}", teamFeature(s.handleTeamUserDelete))
-	mux.HandleFunc("POST /api/team/users/{id}/invite", teamFeature(s.handleTeamUserReinvite))
-	mux.HandleFunc("GET /api/team/settings", teamFeature(s.handleTeamSettingsGet))
-	mux.HandleFunc("PUT /api/team/settings", teamFeature(s.handleTeamSettingsUpdate))
-	mux.HandleFunc("GET /api/team/teams", teamFeature(s.handleTeamGroupsList))
-	mux.HandleFunc("POST /api/team/teams", teamFeature(s.handleTeamGroupCreate))
-	mux.HandleFunc("PUT /api/team/teams/{id}", teamFeature(s.handleTeamGroupUpdate))
-	mux.HandleFunc("DELETE /api/team/teams/{id}", teamFeature(s.handleTeamGroupDelete))
+	mux.HandleFunc("PUT /api/team/users/{id}", s.handleTeamUserUpdate)
+	mux.HandleFunc("DELETE /api/team/users/{id}", s.handleTeamUserDelete)
+	mux.HandleFunc("POST /api/team/users/{id}/invite", s.handleTeamUserReinvite)
+	mux.HandleFunc("GET /api/team/settings", s.handleTeamSettingsGet)
+	mux.HandleFunc("PUT /api/team/settings", s.requireFeature(license.FeatureTeamManagement)(s.handleTeamSettingsUpdate))
+	mux.HandleFunc("GET /api/team/teams", s.handleTeamGroupsList)
+	mux.HandleFunc("POST /api/team/teams", s.handleTeamGroupCreate)
+	mux.HandleFunc("PUT /api/team/teams/{id}", s.handleTeamGroupUpdate)
+	mux.HandleFunc("DELETE /api/team/teams/{id}", s.handleTeamGroupDelete)
 
 	mux.HandleFunc("GET /api/api-keys", s.handleAPIKeysList)
 	mux.HandleFunc("POST /api/api-keys/settings", s.handleAPIKeysSettingsUpdate)
