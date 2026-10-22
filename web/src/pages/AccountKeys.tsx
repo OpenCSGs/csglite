@@ -1,8 +1,8 @@
 import { useEffect, useState } from "preact/hooks";
-import { createLocalAPIKey, deleteLocalAPIKey, getLocalAPIKeys } from "../api/client";
+import { deleteLocalAPIKey, getLocalAPIKeys } from "../api/client";
 import type { LocalAPIKeyInfo } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { KeyLimitChips } from "../components/KeyLimits";
+import { CreateKeyDialog, KeyLimitChips } from "../components/KeyLimits";
 import { locale, t } from "../i18n";
 import { formatLicenseDate } from "../license";
 
@@ -16,10 +16,8 @@ export function AccountKeys() {
   const [keys, setKeys] = useState<LocalAPIKeyInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [created, setCreated] = useState("");
-  const [copied, setCopied] = useState(false);
   const [deleting, setDeleting] = useState<LocalAPIKeyInfo | null>(null);
 
   const load = async () => {
@@ -38,22 +36,6 @@ export function AccountKeys() {
     void load();
   }, []);
 
-  const create = async (event: Event) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const resp = await createLocalAPIKey(name.trim());
-      setCreated(resp.api_key);
-      setName("");
-      await load();
-    } catch (err: any) {
-      setError(err?.message || t("account.keysCreateFailed"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const remove = async () => {
     if (!deleting) return;
     setBusy(true);
@@ -69,16 +51,6 @@ export function AccountKeys() {
     }
   };
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(created);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* the key stays selectable */
-    }
-  };
-
   const base = `${window.location.origin}/v1`;
   return (
     <div class="page-shell space-y-6">
@@ -87,34 +59,14 @@ export function AccountKeys() {
         <h1 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">{t("account.myKeys")}</h1>
         <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t("account.keysSubtitle")}</p>
       </div>
-      {created && (
-        <section class="rounded-xl border border-green-200 bg-green-50 p-4">
-          <p class="text-sm font-semibold text-green-900">{t("account.keyCreatedTitle")}</p>
-          <p class="mt-0.5 text-xs text-green-800">{t("account.keyCreatedDesc")}</p>
-          <div class="mt-3 flex gap-2">
-            <input readOnly value={created} class="min-w-0 flex-1 rounded-lg border border-green-200 bg-white px-3 py-2 font-mono text-xs" onFocus={(e) => (e.target as HTMLInputElement).select()} />
-            <button type="button" onClick={() => void copy()} class="rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800">
-              {copied ? t("team.copied") : t("account.copyKey")}
-            </button>
-          </div>
-        </section>
-      )}
       {error && <p role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
       <section class="rounded-xl border border-gray-200 bg-white shadow-sm">
-        <form onSubmit={create} class="flex flex-wrap items-end gap-3 border-b border-gray-100 px-5 py-4">
-          <label class="block min-w-[240px] flex-1 text-sm font-medium text-gray-700">
-            {t("account.keyName")}
-            <input
-              class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              placeholder={t("account.keyNamePlaceholder")}
-              value={name}
-              onInput={(e) => setName((e.target as HTMLInputElement).value)}
-            />
-          </label>
-          <button type="submit" disabled={busy} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
+          <p class="text-sm font-semibold text-gray-900">{t("account.myKeys")}</p>
+          <button type="button" onClick={() => setCreating(true)} class="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700">
             {t("account.createKey")}
           </button>
-        </form>
+        </div>
         {loading ? (
           <p class="px-5 py-6 text-sm text-gray-500">{t("team.loading")}</p>
         ) : keys.length === 0 ? (
@@ -150,6 +102,7 @@ export function AccountKeys() {
           {`curl ${base}/chat/completions \\\n  -H "Authorization: Bearer <API_KEY>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"<model>","messages":[{"role":"user","content":"hi"}]}'`}
         </code>
       </section>
+      {creating && <CreateKeyDialog onClose={() => setCreating(false)} onCreated={() => void load()} />}
       <ConfirmDialog
         open={deleting !== null}
         title={t("account.deleteKeyTitle")}

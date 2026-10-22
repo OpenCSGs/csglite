@@ -10,7 +10,6 @@ import {
   clearCloudAPIKey,
   createProvider,
   createProviderPool,
-  createLocalAPIKey,
   deleteProvider,
   deleteProviderPool,
   deleteLocalAPIKey,
@@ -33,8 +32,7 @@ import {
 } from "../api/client";
 import type { CloudAuthStatus, LocalAPIKeyInfo, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
 import { authSession, isAdmin } from "../auth";
-import { draftLimits, KeyLimitChips, KeyLimitsDialog, limitsDraft, LimitsFields } from "../components/KeyLimits";
-import type { LimitsDraft } from "../components/KeyLimits";
+import { CreateKeyDialog, KeyLimitChips, KeyLimitsDialog } from "../components/KeyLimits";
 
 type GatewayTab = "apiKeys" | "providers" | "pools" | "usage";
 type UsagePeriod = "week" | "month" | "year";
@@ -50,10 +48,7 @@ const activeProtocolTab = signal<ProtocolTab>("openai");
 const localAPIKeys = signal<LocalAPIKeysResponse | null>(null);
 const localAPIKeysLoading = signal(false);
 const localAPIKeysError = signal("");
-const localAPIKeyName = signal("");
-const localAPIKeyLimits = signal<LimitsDraft>(limitsDraft());
 const editingLimitsKey = signal<LocalAPIKeyInfo | null>(null);
-const localAPIKeyCreated = signal("");
 const isLocalAPIKeyDialogOpen = signal(false);
 const localAPIKeySaving = signal(false);
 const localAPIKeyDeleting = signal("");
@@ -341,38 +336,6 @@ async function toggleLocalAPIAuth(enabled: boolean) {
     localAPIKeys.value = await updateLocalAPIKeySettings(enabled);
   } catch (err: any) {
     localAPIKeysError.value = err?.message || t("settings.localAPIAuthSaveFailed");
-  } finally {
-    localAPIKeySaving.value = false;
-  }
-}
-
-function openLocalAPIKeyDialog() {
-  localAPIKeyName.value = "";
-  localAPIKeyLimits.value = limitsDraft();
-  localAPIKeyCreated.value = "";
-  localAPIKeysError.value = "";
-  isLocalAPIKeyDialogOpen.value = true;
-}
-
-function closeLocalAPIKeyDialog() {
-  if (localAPIKeySaving.value) return;
-  isLocalAPIKeyDialogOpen.value = false;
-  localAPIKeyName.value = "";
-  localAPIKeyCreated.value = "";
-}
-
-async function createLocalKey() {
-  localAPIKeySaving.value = true;
-  localAPIKeysError.value = "";
-  localAPIKeyCreated.value = "";
-  try {
-    const limits = draftLimits(localAPIKeyLimits.value);
-    const resp = await createLocalAPIKey(localAPIKeyName.value.trim(), Object.keys(limits).length ? limits : undefined);
-    localAPIKeyCreated.value = resp.api_key;
-    localAPIKeyName.value = "";
-    await fetchLocalAPIKeys();
-  } catch (err: any) {
-    localAPIKeysError.value = err?.message || t("settings.localAPIKeyCreateFailed");
   } finally {
     localAPIKeySaving.value = false;
   }
@@ -1007,16 +970,9 @@ export function AIGateway() {
       {activeGatewayTab.value === "providers" && <ProvidersSection />}
       {activeGatewayTab.value === "pools" && <ProviderPoolsSection />}
       {activeGatewayTab.value === "usage" && <UsageStatisticsSection />}
-      <LocalAPIKeyDialog
-        open={isLocalAPIKeyDialogOpen.value}
-        name={localAPIKeyName.value}
-        createdKey={localAPIKeyCreated.value}
-        error={localAPIKeysError.value}
-        saving={localAPIKeySaving.value}
-        onClose={closeLocalAPIKeyDialog}
-        onSave={() => void createLocalKey()}
-        onChangeName={(value) => (localAPIKeyName.value = value)}
-      />
+      {isLocalAPIKeyDialogOpen.value && (
+        <CreateKeyDialog onClose={() => (isLocalAPIKeyDialogOpen.value = false)} onCreated={() => void fetchLocalAPIKeys()} />
+      )}
       <ProviderDialog
         open={isProviderDialogOpen.value}
         editing={!!editingProvider.value}
@@ -1316,7 +1272,7 @@ function LocalAPIKeysSection() {
             </span>
             <button
               type="button"
-              onClick={openLocalAPIKeyDialog}
+              onClick={() => (isLocalAPIKeyDialogOpen.value = true)}
               class="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-700"
             >
               {t("settings.localAPIKeyAdd")}
@@ -1389,100 +1345,6 @@ function LocalAPIKeysSection() {
           {activeProtocolTab.value === "responses" && <EndpointCard label={t("settings.localAPIBaseURLResponses")} value={responsesBaseURL} example={responsesCurl} />}
         </div>
       </section>
-    </div>
-  );
-}
-
-function LocalAPIKeyDialog({
-  open,
-  name,
-  createdKey,
-  error,
-  saving,
-  onClose,
-  onSave,
-  onChangeName,
-}: {
-  open: boolean;
-  name: string;
-  createdKey: string;
-  error: string;
-  saving: boolean;
-  onClose: () => void;
-  onSave: () => void;
-  onChangeName: (value: string) => void;
-}) {
-  if (!open) return null;
-  return (
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4" onClick={onClose}>
-      <div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div class="border-b border-gray-100 px-6 py-5">
-          <h2 class="text-lg font-semibold text-gray-900">{t("gateway.createKeyTitle")}</h2>
-          <p class="mt-1 text-sm text-gray-500">{t("settings.localAPIKeysDesc")}</p>
-        </div>
-        <div class="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-5">
-          <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.localAPIKeyName")}</label>
-            <input
-              class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={name}
-              onInput={(e) => onChangeName((e.target as HTMLInputElement).value)}
-              placeholder={t("settings.localAPIKeyNamePlaceholder")}
-              disabled={saving || !!createdKey}
-            />
-          </div>
-          {!createdKey && (
-            <details class="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-              <summary class="cursor-pointer text-sm font-medium text-gray-700">{t("limits.optional")}</summary>
-              <div class="mt-4">
-                <LimitsFields draft={localAPIKeyLimits.value} onChange={(draft) => (localAPIKeyLimits.value = draft)} disabled={saving} />
-              </div>
-            </details>
-          )}
-          {createdKey && (
-            <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
-              <p class="text-sm font-semibold text-amber-900">{t("settings.localAPIKeyCreated")}</p>
-              <div class="mt-2 flex gap-2">
-                <input
-                  readOnly
-                  class="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-mono text-amber-900"
-                  value={createdKey}
-                  onFocus={(e) => (e.target as HTMLInputElement).select()}
-                />
-                <button
-                  type="button"
-                  onClick={() => copySnippet(createdKey)}
-                  class="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-amber-900 hover:bg-amber-100"
-                >
-                  {copiedSnippet.value === createdKey ? t("settings.copied") : t("settings.copy")}
-                </button>
-              </div>
-              <p class="mt-2 text-xs text-amber-800">{t("settings.localAPIKeyCreatedHint")}</p>
-            </div>
-          )}
-          {error && <p class="text-sm text-red-600">{error}</p>}
-        </div>
-        <div class="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
-          >
-            {createdKey ? t("dash.close") : t("upgrade.cancel")}
-          </button>
-          {!createdKey && (
-            <button
-              type="button"
-              onClick={onSave}
-              disabled={saving}
-              class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
-            >
-              {saving ? "..." : t("settings.localAPIKeyCreate")}
-            </button>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

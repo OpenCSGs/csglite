@@ -1,5 +1,5 @@
-import { useState } from "preact/hooks";
-import { updateLocalAPIKey } from "../api/client";
+import { useEffect, useState } from "preact/hooks";
+import { createLocalAPIKey, updateLocalAPIKey } from "../api/client";
 import type { Budget, BudgetSpend, KeyLimits, LocalAPIKeyInfo } from "../api/client";
 import { locale, t } from "../i18n";
 
@@ -297,6 +297,115 @@ export function KeyLimitsDialog({ apiKey, onClose, onSaved }: { apiKey: LocalAPI
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Creates an API key: a name and optional limits, then the new key shown once
+ * with a copy button. onCreated runs after the key exists so the caller can
+ * refresh its list.
+ */
+export function CreateKeyDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  void locale.value;
+  const [name, setName] = useState("");
+  const [draft, setDraft] = useState(() => limitsDraft());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [created, setCreated] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy]);
+
+  const create = async (event: Event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const limits = draftLimits(draft);
+      const resp = await createLocalAPIKey(name.trim(), Object.keys(limits).length ? limits : undefined);
+      setCreated(resp.api_key);
+      onCreated();
+    } catch (err: any) {
+      setError(err?.message || t("settings.localAPIKeyCreateFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(created);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* the key stays selectable */
+    }
+  };
+
+  return (
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4" onClick={() => !busy && onClose()}>
+      <form role="dialog" aria-modal="true" onSubmit={create} class="w-full max-w-lg rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div class="border-b border-gray-100 px-6 py-5">
+          <h2 class="text-lg font-semibold text-gray-900">{t("gateway.createKeyTitle")}</h2>
+          <p class="mt-1 text-sm text-gray-500">{t("settings.localAPIKeysDesc")}</p>
+        </div>
+        <div class="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-5">
+          <label class="block text-sm font-medium text-gray-700">
+            {t("settings.localAPIKeyName")}
+            <input
+              autoFocus
+              class={fieldClass}
+              value={name}
+              onInput={(e) => setName((e.target as HTMLInputElement).value)}
+              placeholder={t("settings.localAPIKeyNamePlaceholder")}
+              disabled={busy || !!created}
+            />
+          </label>
+          {!created && (
+            <details class="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+              <summary class="cursor-pointer text-sm font-medium text-gray-700">{t("limits.optional")}</summary>
+              <div class="mt-4">
+                <LimitsFields draft={draft} onChange={setDraft} disabled={busy} />
+              </div>
+            </details>
+          )}
+          {created && (
+            <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p class="text-sm font-semibold text-amber-900">{t("settings.localAPIKeyCreated")}</p>
+              <div class="mt-2 flex gap-2">
+                <input
+                  readOnly
+                  class="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-sm text-amber-900"
+                  value={created}
+                  onFocus={(e) => (e.target as HTMLInputElement).select()}
+                />
+                <button type="button" onClick={() => void copy()} class="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-amber-900 hover:bg-amber-100">
+                  {copied ? t("settings.copied") : t("settings.copy")}
+                </button>
+              </div>
+              <p class="mt-2 text-xs text-amber-800">{t("settings.localAPIKeyCreatedHint")}</p>
+            </div>
+          )}
+          {error && <p class="text-sm text-red-600">{error}</p>}
+        </div>
+        <div class="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">
+          <button type="button" onClick={onClose} disabled={busy} class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60">
+            {created ? t("dash.close") : t("upgrade.cancel")}
+          </button>
+          {!created && (
+            <button type="submit" disabled={busy} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-60">
+              {busy ? "..." : t("settings.localAPIKeyCreate")}
+            </button>
+          )}
+        </div>
+      </form>
     </div>
   );
 }
