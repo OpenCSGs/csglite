@@ -28,9 +28,6 @@ func (s *Server) handleThirdPartyProvidersList(w http.ResponseWriter, r *http.Re
 	resp := api.ThirdPartyProvidersResponse{
 		Providers: make([]api.ThirdPartyProvider, len(providers)),
 	}
-	// Upstream credentials are for administrators; members see which
-	// providers exist but not the keys or header values behind them.
-	admin := requestIsAdmin(r)
 	for i, p := range providers {
 		resp.Providers[i] = api.ThirdPartyProvider{
 			ID:       p.ID,
@@ -40,12 +37,6 @@ func (s *Server) handleThirdPartyProvidersList(w http.ResponseWriter, r *http.Re
 			Provider: p.Provider,
 			Enabled:  p.Enabled,
 			Headers:  providerHeadersAPI(p.Headers),
-		}
-		if !admin {
-			resp.Providers[i].APIKey = ""
-			for j := range resp.Providers[i].Headers {
-				resp.Providers[i].Headers[j].Value = ""
-			}
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)

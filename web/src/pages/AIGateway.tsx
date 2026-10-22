@@ -32,7 +32,6 @@ import {
   updateLocalAPIKeySettings,
 } from "../api/client";
 import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
-import { authSession } from "../auth";
 
 type GatewayTab = "apiKeys" | "providers" | "pools" | "usage";
 type UsagePeriod = "week" | "month" | "year";
@@ -1331,11 +1330,6 @@ function LocalAPIKeysSection() {
                   <div class="mt-2 flex flex-wrap gap-2 text-xs">
                     <span class="rounded-full bg-gray-100 px-2.5 py-1 font-mono text-gray-600">{key.prefix}</span>
                     <span class="rounded-full bg-gray-50 px-2.5 py-1 text-gray-500">{t("settings.localAPIKeyLastUsed", formatDateTime(key.last_used_at))}</span>
-                    {authSession.value?.accounts_enabled && (
-                      <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-indigo-700">
-                        {key.owner_id ? t("team.keyOwner", key.owner_name || key.owner_id) : t("team.keyNoOwner")}
-                      </span>
-                    )}
                   </div>
                 </div>
                 <button
@@ -1541,11 +1535,6 @@ function ProvidersSection() {
 											<span class="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
 												{t("settings.providerBuiltIn")}
 											</span>
-										)}
-										{provider.id === "csghub" && (
-											<a href="/pricing" class="text-xs font-medium text-indigo-600 hover:underline">
-												{t("nav.pricing")}
-											</a>
 										)}
                     </div>
                     <p class="mt-1 truncate text-xs text-gray-500">{provider.base_url}</p>

@@ -14,7 +14,6 @@ enough to include a pilot or a proof of concept that carries real business.
 The one exception is the community grant at the top of the licence: a feature
 that runs without a licence may be used in production within the limit the
 software enforces for unlicensed users, which for the LAN cluster is two nodes.
-User accounts run without a license, so they fall under this grant too.
 That is what makes the community node cap a real entitlement rather than
 something the licence forbids.
 
@@ -232,16 +231,6 @@ subject rather than to whichever file is open.
 The two HTTP surfaces hang off their own small types rather than off `Manager`,
 so adding an endpoint does not grow the type that also runs discovery, gossip
 and scheduling.
-
-### The auditor role (`ee/team`)
-
-User accounts (users, invitations, teams, the administrator and member roles)
-are free and live under Apache-2.0 in `internal/team`. This package holds only
-the Enterprise part: `AuditorAllowed`, the rules for the auditor role, which
-reads everything an administrator reads, changes nothing and cannot run
-inference. `feature.lite.team_management` gates giving someone that role and
-changing the sign-in policy; both checks sit in `internal/server`. Design:
-`docs/guides/team-management.md`.
 
 See `docs/agent-guidelines/ee-features.md` for the full rules and
 `docs/guides/ee-license-design.md` for the design.

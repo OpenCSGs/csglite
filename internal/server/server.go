@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/opencsgs/csglite/internal/team"
 	"log"
 	"net"
 	"net/http"
@@ -253,9 +252,6 @@ type Server struct {
 
 	conversations          *chathistory.Store
 	apiKeys                *config.APIKeyStore
-	team                   *team.Store
-	loginLimiter           loginLimiter
-	setupTokenMu           sync.Mutex
 	apiUsage               *config.APIUsageStore
 	observabilityMu        sync.RWMutex
 	observability          *observability.Store
@@ -358,10 +354,8 @@ func New(cfg *config.Config, version string) *Server {
 	if appHome, err := config.AppHome(); err == nil {
 		s.conversations = chathistory.NewStore(appHome)
 		s.apiKeys = config.NewAPIKeyStore(appHome)
-		s.team = team.NewStore(appHome)
 		s.apiUsage = config.NewAPIUsageStore(appHome)
 	}
-	s.bootstrapAccounts()
 
 	handler := s.routes()
 	s.http = &http.Server{

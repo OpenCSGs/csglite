@@ -32,10 +32,7 @@ License 体系**：CSGHub SaaS 管理后台签发，CSGLite 只做校验和门�
 
 - 不做代码混淆，不阻止有人删掉校验重新编译。这在 open core 模式下由许可证
   条款约束，所有同类项目均如此。
-- License 作用于整个 CSGLite 实例，不按用户签发。实例内的用户、团队和角色由
-  EE 功能 `feature.lite.team_management` 提供（见
-  [`team-management.md`](team-management.md)）门控审计员角色和登录安全
-  策略；账号本身免费、不限人数，License 中的席位数只展示不强制。
+- 不做多租户或用户级权限；License 作用于整个 CSGLite 实例。
 - 不在 CSGLite 内实现签发、私钥管理或 License 台账。
 
 ## 2. 许可证与目录约定
@@ -153,7 +150,7 @@ var Catalog = []FeatureDefinition{ /* 以上全部 */ }
 **只有 `Gated: true` 的功能才受 License 控制；未标记的功能在社区版、开发
 构建和任何 License 状态下都始终开启。** 把一个功能收进 EE 的动作就是把它的
 `Gated` 改为 `true` 并包裹对应路由；在此之前注册表条目只是与签发端对齐名字，
-不影响任何行为。当前 `Gated: true` 的条目是集群节点上限和账号的企业版部分（审计员角色、登录安全策略）。
+不影响任何行为。当前仓库里没有任何条目是 `Gated: true`。
 
 对 `Gated` 功能，取值语义与 CSGHub 的 `licenseProvider` 一致：
 
@@ -497,9 +494,8 @@ csghub-lite license features           # 列出 Catalog 及当前是否可用
 > 实施进度：阶段一、二（`internal/license`、`/api/license*`、CLI、OpenAPI）和
 > 阶段三的 License 管理部分（Settings 页导入/校验/删除、侧边栏 “CSGLite EE”
 > 标识）已完成；导航锁标与 `FeatureLocked` 组件随第一条被门控的路由一起做。
-> 第一条被门控的功能是账号的企业版部分（`feature.lite.team_management`：审计员
-> 角色和登录安全策略；账号本身免费），导航锁标与锁定页随它一起完成；其余已发布
-> 功能仍不门控。
+> `Catalog` 已声明但没有任何条目 `Gated: true`，也未包裹路由，所有功能在所有版本
+> 下开启；等待产品确认初始划分（第 12 节问题 1）后逐条标记。
 
 
 | 阶段 | 内容 | 估时 |
@@ -519,8 +515,7 @@ starhub-server 仓库的 MR 与发版配合。在线校验与席位强制不在�
 1. 初始 `Catalog` 划分需产品最终确认，尤其是图像生成和实时语音是否进入 EE。
 2. `ee/LICENSE` 法律文本需法务审阅；是否允许非商业生产使用需明确。
 3. 是否需要 `Edition = "Trial"`（例如 30 天全功能试用）以及试用 License 由谁签发。
-4. ~~席位如何强制~~：不强制。账号功能与 LiteLLM 开源版一样免费、不限人数，席位只展示。
-   `MaxUser` 字段仍只展示。
+4. 席位 `MaxUser` 是否以及如何强制：按 API Key 数、按并发会话数，还是仅展示。
 5. License 过期后可观测性等历史数据的只读策略需逐功能确认。
 6. 生产公钥的获取与轮换流程：由哪一方把 CSGHub 签发端公钥交付给 CSGLite 仓库，
    轮换时如何保证旧 License 继续有效。

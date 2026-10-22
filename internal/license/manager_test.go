@@ -101,17 +101,11 @@ func TestRefreshWithoutFileIsCommunity(t *testing.T) {
 
 func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 	key := licensetest.NewKey(t)
-	// Shipped catalog: the cluster node cap and team management are gated.
+	// Shipped catalog: only the cluster node cap is gated.
 	m, _ := newManager(t, key, func(o *license.Options) { o.Catalog = license.Catalog() })
-	wantGated := []string{license.QuotaMaxClusterNodes.Key, license.FeatureTeamManagement.Key}
 	gated := license.GatedCatalog()
-	if len(gated) != len(wantGated) {
-		t.Fatalf("shipped catalog gates %v; only %v are expected. Update this test and the docs deliberately", gated, wantGated)
-	}
-	for i, def := range gated {
-		if def.Key != wantGated[i] {
-			t.Fatalf("shipped catalog gates %v; only %v are expected. Update this test and the docs deliberately", gated, wantGated)
-		}
+	if len(gated) != 1 || gated[0].Key != license.QuotaMaxClusterNodes.Key {
+		t.Fatalf("shipped catalog gates %v; only %s is expected. Update this test and the docs deliberately", gated, license.QuotaMaxClusterNodes.Key)
 	}
 	st := m.Refresh()
 	if st.Status != license.StatusNone {
@@ -120,8 +114,8 @@ func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 	for _, def := range license.Catalog() {
 		switch def.Type {
 		case license.FeatureTypeBoolean:
-			if st.Enabled(def) == def.Gated {
-				t.Errorf("%s: enabled=%v without a license, gated=%v", def.Key, st.Enabled(def), def.Gated)
+			if !st.Enabled(def) {
+				t.Errorf("%s must be enabled without a license", def.Key)
 			}
 		case license.FeatureTypeInt:
 			want := 0
@@ -432,7 +426,7 @@ func TestAPIViewsMirrorState(t *testing.T) {
 		}
 	}
 	full := st.APIState("")
-	if full.GraceUntil == nil || len(full.Features) != 7 {
+	if full.GraceUntil == nil || len(full.Features) != 6 {
 		t.Fatalf("state view %+v", full)
 	}
 	verify.Limits["quota.lite.max_provider_pools"] = 99

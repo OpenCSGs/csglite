@@ -95,12 +95,6 @@ func (s *Server) apiAuthMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// A signed-in user, or a key accountsMiddleware already checked,
-		// was authenticated and authorized there.
-		if id, ok := identityFromRequest(r); ok && !id.Local {
-			next.ServeHTTP(w, r)
-			return
-		}
 		secret := isClusterSecretPath(r.URL.Path) && !isLoopbackRequest(r)
 		if !secret && (!requiresRemoteAPIAuth(r) || isLoopbackRequest(r)) {
 			next.ServeHTTP(w, s.requestWithIdentifiedAPIKey(r))

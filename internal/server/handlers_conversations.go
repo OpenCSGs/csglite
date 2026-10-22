@@ -15,7 +15,6 @@ func (s *Server) handleConversationsList(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	metas = ownedConversations(r, metas)
 	if metas == nil {
 		metas = []api.ConversationMeta{}
 	}
@@ -28,7 +27,6 @@ func (s *Server) handleConversationsSearch(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	metas = ownedConversations(r, metas)
 	if metas == nil {
 		metas = []api.ConversationMeta{}
 	}
@@ -38,8 +36,8 @@ func (s *Server) handleConversationsSearch(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleConversationGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	conv, err := s.conversations.Get(id)
-	if err != nil || !ownsConversation(r, conv.OwnerID) {
-		writeError(w, http.StatusNotFound, "conversation not found")
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, conv)
@@ -47,7 +45,6 @@ func (s *Server) handleConversationGet(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConversationCreate(w http.ResponseWriter, r *http.Request) {
 	conv := chathistory.NewConversation()
-	conv.OwnerID, _ = ownerScope(r)
 
 	if r.Body != nil && r.ContentLength > 0 {
 		var patch api.Conversation
@@ -78,8 +75,8 @@ func (s *Server) handleConversationCreate(w http.ResponseWriter, r *http.Request
 func (s *Server) handleConversationUpdate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	existing, err := s.conversations.Get(id)
-	if err != nil || !ownsConversation(r, existing.OwnerID) {
-		writeError(w, http.StatusNotFound, "conversation not found")
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
@@ -112,34 +109,9 @@ func (s *Server) handleConversationUpdate(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleConversationDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if conv, err := s.conversations.Get(id); err == nil && !ownsConversation(r, conv.OwnerID) {
-		writeError(w, http.StatusNotFound, "conversation not found")
-		return
-	}
 	if err := s.conversations.Delete(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-}
-
-// ownsConversation reports whether the caller may open a conversation. With
-// accounts on, each user sees only their own; the local operator keeps the
-// conversations that predate accounts.
-func ownsConversation(r *http.Request, ownerID string) bool {
-	owner, scoped := ownerScope(r)
-	return !scoped || ownerID == owner
-}
-
-func ownedConversations(r *http.Request, metas []api.ConversationMeta) []api.ConversationMeta {
-	if _, scoped := ownerScope(r); !scoped {
-		return metas
-	}
-	out := metas[:0]
-	for _, meta := range metas {
-		if ownsConversation(r, meta.OwnerID) {
-			out = append(out, meta)
-		}
-	}
-	return out
 }

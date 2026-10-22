@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"github.com/opencsgs/csglite/internal/httpjson"
 	"net/http"
 	"sort"
 	"strings"
@@ -23,7 +22,7 @@ func (s *Server) handleAPIKeysList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load API keys")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.apiKeysResponseFor(r, state))
+	writeJSON(w, http.StatusOK, apiKeysResponse(state))
 }
 
 func (s *Server) handleAPIKeysSettingsUpdate(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +40,7 @@ func (s *Server) handleAPIKeysSettingsUpdate(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to save API key settings")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.apiKeysResponseFor(r, state))
+	writeJSON(w, http.StatusOK, apiKeysResponse(state))
 }
 
 func (s *Server) handleAPIKeyCreate(w http.ResponseWriter, r *http.Request) {
@@ -54,21 +53,13 @@ func (s *Server) handleAPIKeyCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	// With accounts on, a key belongs to whoever creates it, and the local
-	// operator creates keys with no owner. A key that predates accounts has
-	// no user to own a new key, so it cannot mint more.
-	id, _ := identityFromRequest(r)
-	if !id.Local && id.User.ID == "" && id.APIKey != nil {
-		httpjson.WriteCodedError(w, http.StatusForbidden, "sign in to create API keys", permissionDeniedCode)
-		return
-	}
-	record, plain, err := s.apiKeys.Create(strings.TrimSpace(req.Name), id.User.ID)
+	record, plain, err := s.apiKeys.Create(strings.TrimSpace(req.Name))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create API key")
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.APIKeyCreateResponse{
-		Key:    apiKeyInfo(record, s.apiKeyOwnerNames()),
+		Key:    apiKeyInfo(record),
 		APIKey: plain,
 	})
 }
@@ -82,24 +73,6 @@ func (s *Server) handleAPIKeyDelete(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "API key id is required")
 		return
-	}
-	if !requestIsAdmin(r) {
-		state, err := s.apiKeys.State()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load API keys")
-			return
-		}
-		owned := false
-		for _, record := range state.Keys {
-			if record.ID == id && deletableAPIKey(r, record) {
-				owned = true
-				break
-			}
-		}
-		if !owned {
-			writeError(w, http.StatusNotFound, "API key not found")
-			return
-		}
 	}
 	deleted, err := s.apiKeys.Delete(id)
 	if err != nil {
@@ -504,23 +477,18 @@ func addAPIUsageSourceTotal(totals *[]api.APIUsageSourceTotal, row api.APIUsageR
 	})
 }
 
-// apiKeysResponseFor lists the keys the caller may see: every key for an
-// administrator, only their own for anyone else.
-func (s *Server) apiKeysResponseFor(r *http.Request, state config.APIKeyState) api.APIKeysResponse {
+func apiKeysResponse(state config.APIKeyState) api.APIKeysResponse {
 	resp := api.APIKeysResponse{
 		AuthEnabled: state.AuthEnabled,
 		Keys:        make([]api.APIKeyInfo, 0, len(state.Keys)),
 	}
-	owners := s.apiKeyOwnerNames()
 	for _, record := range state.Keys {
-		if visibleAPIKey(r, record) {
-			resp.Keys = append(resp.Keys, apiKeyInfo(record, owners))
-		}
+		resp.Keys = append(resp.Keys, apiKeyInfo(record))
 	}
 	return resp
 }
 
-func apiKeyInfo(record config.APIKeyRecord, owners map[string]string) api.APIKeyInfo {
+func apiKeyInfo(record config.APIKeyRecord) api.APIKeyInfo {
 	var lastUsedAt *time.Time
 	if !record.LastUsedAt.IsZero() {
 		lastUsedAt = &record.LastUsedAt
@@ -531,7 +499,5 @@ func apiKeyInfo(record config.APIKeyRecord, owners map[string]string) api.APIKey
 		Prefix:     record.Prefix,
 		CreatedAt:  record.CreatedAt,
 		LastUsedAt: lastUsedAt,
-		OwnerID:    record.OwnerID,
-		OwnerName:  owners[record.OwnerID],
 	}
 }
