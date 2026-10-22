@@ -25,24 +25,30 @@ type NavItem = {
   key: string;
   icon: () => preact.JSX.Element;
   feature?: string;
+  /** "staff" items show only to administrators and auditors, "member" items only to everyone else. */
+  audience?: "staff" | "member";
 };
 
-// The sidebar groups pages the way LiteLLM's admin UI does, and keeps the
-// management group out of sight for members, as OpenRouter keeps provider,
-// member and billing settings to administrators.
+// The sidebar groups pages the way LiteLLM's admin UI does. A member, like
+// an internal user in LiteLLM, sees only chat and their own API keys; the
+// machine's models, datasets, apps and the management pages are for
+// administrators and auditors, as OpenRouter keeps provider, member and
+// billing settings to administrators.
 const navGroups: { id: string; key: string; management?: boolean; items: NavItem[] }[] = [
   {
     id: "workspace",
     key: "nav.groupWorkspace",
     items: [
-      { id: "dashboard", path: "/", key: "nav.dashboard", icon: DashboardIcon },
+      { id: "dashboard", path: "/", key: "nav.dashboard", icon: DashboardIcon, audience: "staff" },
       { id: "chat", path: "/chat", key: "nav.chat", icon: ChatIcon },
-      { id: "ai-apps", path: "/ai-apps", key: "nav.aiApps", icon: AIAppsIcon },
+      { id: "my-keys", path: "/account/keys", key: "nav.myKeys", icon: KeyIcon, audience: "member" },
+      { id: "ai-apps", path: "/ai-apps", key: "nav.aiApps", icon: AIAppsIcon, audience: "staff" },
     ],
   },
   {
     id: "models",
     key: "nav.groupModels",
+    management: true,
     items: [
       { id: "marketplace", path: "/marketplace", key: "nav.marketplace", icon: MarketplaceIcon },
       { id: "library", path: "/library", key: "nav.library", icon: LibraryIcon },
@@ -89,6 +95,19 @@ export function Layout({ children }: { children: ComponentChildren }) {
   const session = authSession.value;
   const canManage = seesEverything(session);
   const showNavItem = (id: string) => hiddenNavItems !== null && !hiddenNavItems.has(id);
+  const forAudience = (item: NavItem) => !item.audience || (item.audience === "staff") === canManage;
+
+  // A member who lands on a page meant for staff, such as the dashboard at
+  // "/", is taken to chat.
+  useEffect(() => {
+    if (!session || canManage) return;
+    const staffPage = navGroups.some((group) =>
+      group.items.some(
+        (item) => (group.management || item.audience === "staff") && (item.path === "/" ? path === "/" : path.startsWith(item.path)),
+      ),
+    );
+    if (staffPage) route("/chat", true);
+  }, [session, canManage, path]);
   // A gated page stays in the menu with a lock so people can find the
   // feature; the page itself explains how to unlock it.
   const locked = (feature?: string) => !!feature && !(license?.features ?? []).includes(feature);
@@ -111,7 +130,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
           {navGroups
             .filter((group) => !group.management || canManage)
             .map((group) => {
-              const items = group.items.filter((item) => showNavItem(item.id));
+              const items = group.items.filter((item) => forAudience(item) && showNavItem(item.id));
               if (items.length === 0) return null;
               return (
                 <div key={group.id} class="mt-3 first:mt-1">
@@ -372,6 +391,14 @@ function DatasetsIcon() {
   return (
     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
       <path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+    </svg>
+  );
+}
+
+function KeyIcon() {
+  return (
+    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
     </svg>
   );
 }
