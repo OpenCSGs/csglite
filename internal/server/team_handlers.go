@@ -13,6 +13,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/httpjson"
+	"github.com/opencsgs/csglite/internal/keygov"
 	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/internal/team"
 	"github.com/opencsgs/csglite/pkg/api"
@@ -347,7 +348,7 @@ func (s *Server) handleTeamGroupsList(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]api.TeamGroup, 0, len(teams))
 	for _, group := range teams {
-		out = append(out, teamGroupAPI(group, members[group.ID]))
+		out = append(out, s.teamGroupAPI(group, members[group.ID]))
 	}
 	writeJSON(w, http.StatusOK, api.TeamGroupsResponse{Teams: out})
 }
@@ -371,7 +372,7 @@ func (s *Server) handleTeamGroupCreate(w http.ResponseWriter, r *http.Request) {
 		writeTeamError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, teamGroupAPI(group, 0))
+	writeJSON(w, http.StatusCreated, s.teamGroupAPI(group, 0))
 }
 
 // PUT /api/team/teams/{id}
@@ -386,7 +387,7 @@ func (s *Server) handleTeamGroupUpdate(w http.ResponseWriter, r *http.Request) {
 		writeTeamError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, teamGroupAPI(group, s.teamMemberCount(group.ID)))
+	writeJSON(w, http.StatusOK, s.teamGroupAPI(group, s.teamMemberCount(group.ID)))
 }
 
 // DELETE /api/team/teams/{id}
@@ -522,15 +523,19 @@ func (s *Server) teamUserAPI(user team.User, teams map[string]string, invites ma
 		UpdatedAt:          user.UpdatedAt,
 		LastLoginAt:        lastLogin,
 		InviteExpiresAt:    inviteExpires,
+		Budget:             user.Budget,
+		Spend:              s.budgetSpend(keygov.UserSubject(user.ID), user.Budget),
 	}
 }
 
-func teamGroupAPI(group team.Team, members int) api.TeamGroup {
+func (s *Server) teamGroupAPI(group team.Team, members int) api.TeamGroup {
 	return api.TeamGroup{
 		ID:          group.ID,
 		Name:        group.Name,
 		Description: group.Description,
 		MemberCount: members,
+		Budget:      group.Budget,
+		Spend:       s.budgetSpend(keygov.TeamSubject(group.ID), group.Budget),
 		CreatedAt:   group.CreatedAt,
 		UpdatedAt:   group.UpdatedAt,
 	}
@@ -578,4 +583,46 @@ func ownsAPIKey(r *http.Request, record config.APIKeyRecord) bool {
 
 func secureEqual(a, b string) bool {
 	return a != "" && b != "" && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// PUT /api/team/users/{id}/budget (Enterprise)
+func (s *Server) handleTeamUserBudget(w http.ResponseWriter, r *http.Request) {
+	budget, ok := decodeBudget(w, r)
+	if !ok {
+		return
+	}
+	user, err := s.team.SetUserBudget(r.PathValue("id"), budget)
+	if err != nil {
+		writeTeamError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.teamUserAPI(user, nil, s.inviteExpiries()))
+}
+
+// PUT /api/team/teams/{id}/budget (Enterprise)
+func (s *Server) handleTeamGroupBudget(w http.ResponseWriter, r *http.Request) {
+	budget, ok := decodeBudget(w, r)
+	if !ok {
+		return
+	}
+	group, err := s.team.SetTeamBudget(r.PathValue("id"), budget)
+	if err != nil {
+		writeTeamError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.teamGroupAPI(group, s.teamMemberCount(group.ID)))
+}
+
+func decodeBudget(w http.ResponseWriter, r *http.Request) (*api.Budget, bool) {
+	var req api.BudgetRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return nil, false
+	}
+	budget, err := keygov.NormalizeBudget(req.Budget)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
+	return budget, true
 }

@@ -108,9 +108,9 @@ func TestRequireFeatureUngatedAlwaysPasses(t *testing.T) {
 				t.Fatalf("%s should be gated: %+v", entry.Key, entry)
 			}
 			continue
-		case license.FeatureTeamManagement.Key:
+		case license.FeatureTeamManagement.Key, license.FeatureBudgets.Key:
 			if !entry.Gated || entry.Enabled {
-				t.Fatalf("team management should be gated and off without a license: %+v", entry)
+				t.Fatalf("%s should be gated and off without a license: %+v", entry.Key, entry)
 			}
 			continue
 		}
@@ -205,7 +205,7 @@ func TestLicenseLifecycleOverHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if settings.Edition != license.EditionEnterprise || settings.LicenseStatus != "valid" || settings.License == nil ||
-		len(settings.Features) != 8 || len(settings.FeatureCatalog) != len(license.Catalog()) {
+		len(settings.Features) != 9 || len(settings.FeatureCatalog) != len(license.Catalog()) {
 		t.Fatalf("settings after import: edition=%s status=%s features=%v catalog=%d",
 			settings.Edition, settings.LicenseStatus, settings.Features, len(settings.FeatureCatalog))
 	}

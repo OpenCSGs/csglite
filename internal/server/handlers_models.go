@@ -48,6 +48,7 @@ func (s *Server) handleAnthropicModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	models = filterModelsByProviderRoute(models, providerRouteSourceFromContext(r.Context()))
+	models = s.filterModelsForKey(r, models)
 
 	data := make([]api.AnthropicModelInfo, 0, len(models))
 	for _, item := range models {

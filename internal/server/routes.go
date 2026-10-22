@@ -132,10 +132,14 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/team/teams", s.handleTeamGroupCreate)
 	mux.HandleFunc("PUT /api/team/teams/{id}", s.handleTeamGroupUpdate)
 	mux.HandleFunc("DELETE /api/team/teams/{id}", s.handleTeamGroupDelete)
+	// Budgets for users and teams are Enterprise; reading them is not.
+	mux.HandleFunc("PUT /api/team/users/{id}/budget", s.requireFeature(license.FeatureBudgets)(s.handleTeamUserBudget))
+	mux.HandleFunc("PUT /api/team/teams/{id}/budget", s.requireFeature(license.FeatureBudgets)(s.handleTeamGroupBudget))
 
 	mux.HandleFunc("GET /api/api-keys", s.handleAPIKeysList)
 	mux.HandleFunc("POST /api/api-keys/settings", s.handleAPIKeysSettingsUpdate)
 	mux.HandleFunc("POST /api/api-keys", s.handleAPIKeyCreate)
+	mux.HandleFunc("PUT /api/api-keys/{id}", s.handleAPIKeyUpdate)
 	mux.HandleFunc("DELETE /api/api-keys/{id}", s.handleAPIKeyDelete)
 	mux.HandleFunc("GET /api/api-usage", s.handleAPIUsage)
 	mux.HandleFunc("GET /api/observability/requests", s.handleObservabilityRequests)
@@ -228,7 +232,7 @@ func (s *Server) routes() http.Handler {
 
 	return correlationMiddleware(LogMiddleware(
 		s.desktopAuthMiddleware(s.corsMiddleware(sensitiveOriginGuard(s.accountsMiddleware(s.apiAuthMiddleware(
-			s.observabilityMiddleware(providerPoolUsageMiddleware(mux)),
+			s.observabilityMiddleware(s.keyGovernanceMiddleware(providerPoolUsageMiddleware(mux))),
 		))))),
 	))
 }
@@ -279,7 +283,7 @@ func (s *Server) externalAPIRoutes() http.Handler {
 
 	return correlationMiddleware(LogMiddleware(
 		desktopExternalAPIMiddleware(s.apiAuthMiddleware(
-			s.observabilityMiddleware(providerPoolUsageMiddleware(mux)),
+			s.observabilityMiddleware(s.keyGovernanceMiddleware(providerPoolUsageMiddleware(mux))),
 		)),
 	))
 }

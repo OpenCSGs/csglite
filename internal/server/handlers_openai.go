@@ -564,6 +564,7 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	models = filterModelsByProviderRoute(models, providerRouteSourceFromContext(r.Context()))
+	models = s.filterModelsForKey(r, models)
 
 	seen := make(map[string]struct{}, len(models))
 	data := make([]api.OpenAIModel, 0, len(models)+4)

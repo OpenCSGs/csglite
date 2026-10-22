@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/keygov"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -62,15 +63,74 @@ func (s *Server) handleAPIKeyCreate(w http.ResponseWriter, r *http.Request) {
 		httpjson.WriteCodedError(w, http.StatusForbidden, "sign in to create API keys", permissionDeniedCode)
 		return
 	}
-	record, plain, err := s.apiKeys.Create(strings.TrimSpace(req.Name), id.User.ID)
+	// Anyone may restrict a key they create; only an administrator may
+	// change limits later, so a member cannot lift what was set for them.
+	limits, err := keygov.NormalizeLimits(req.Limits)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	record, plain, err := s.apiKeys.Create(strings.TrimSpace(req.Name), id.User.ID, limits)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create API key")
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.APIKeyCreateResponse{
-		Key:    apiKeyInfo(record, s.apiKeyOwnerNames()),
+		Key:    s.apiKeyInfo(record, s.apiKeyOwnerNames()),
 		APIKey: plain,
 	})
+}
+
+// PUT /api/api-keys/{id}. The owner may rename a key; changing its limits
+// takes an administrator.
+func (s *Server) handleAPIKeyUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.apiKeys == nil {
+		writeError(w, http.StatusInternalServerError, "API key store is unavailable")
+		return
+	}
+	var req api.APIKeyUpdateRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if !requestIsAdmin(r) {
+		if req.Limits != nil {
+			httpjson.WriteCodedError(w, http.StatusForbidden, "only an administrator may change key limits", permissionDeniedCode)
+			return
+		}
+		state, err := s.apiKeys.State()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load API keys")
+			return
+		}
+		owned := false
+		for _, record := range state.Keys {
+			if record.ID == id && deletableAPIKey(r, record) {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			writeError(w, http.StatusNotFound, "API key not found")
+			return
+		}
+	}
+	limits, err := keygov.NormalizeLimits(req.Limits)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	record, ok, err := s.apiKeys.Update(id, req.Name, limits, req.Limits != nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update API key")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "API key not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.apiKeyInfo(record, s.apiKeyOwnerNames()))
 }
 
 func (s *Server) handleAPIKeyDelete(w http.ResponseWriter, r *http.Request) {
@@ -514,24 +574,8 @@ func (s *Server) apiKeysResponseFor(r *http.Request, state config.APIKeyState) a
 	owners := s.apiKeyOwnerNames()
 	for _, record := range state.Keys {
 		if visibleAPIKey(r, record) {
-			resp.Keys = append(resp.Keys, apiKeyInfo(record, owners))
+			resp.Keys = append(resp.Keys, s.apiKeyInfo(record, owners))
 		}
 	}
 	return resp
-}
-
-func apiKeyInfo(record config.APIKeyRecord, owners map[string]string) api.APIKeyInfo {
-	var lastUsedAt *time.Time
-	if !record.LastUsedAt.IsZero() {
-		lastUsedAt = &record.LastUsedAt
-	}
-	return api.APIKeyInfo{
-		ID:         record.ID,
-		Name:       record.Name,
-		Prefix:     record.Prefix,
-		CreatedAt:  record.CreatedAt,
-		LastUsedAt: lastUsedAt,
-		OwnerID:    record.OwnerID,
-		OwnerName:  owners[record.OwnerID],
-	}
 }

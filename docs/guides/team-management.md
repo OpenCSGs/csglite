@@ -23,7 +23,7 @@ LiteLLM Proxy 和 OpenRouter Organizations：
 | 方面 | LiteLLM | OpenRouter | CSGLite |
 |---|---|---|---|
 | 初始化 | `UI_USERNAME`/`UI_PASSWORD` 环境变量登录，仅用于初始化，之后关掉并提示 | 账号注册 | 环境变量**只创建一次真实账号**，之后忽略并在页面提示移除；或使用本机访问、初始化令牌、CLI |
-| 免费与收费 | 开源版含团队、内部用户、Virtual Key、基础预算；组织、团队管理员与细粒度角色、SSO（超过 5 人）、审计日志、高级预算收费 | — | 免费：用户、邀请、团队、管理员和成员角色；收费：审计员角色、登录安全策略，以及后续的 Key 治理、花费报表、审计日志、SSO |
+| 免费与收费 | 开源版含团队、内部用户、Virtual Key、基础预算；组织、团队管理员与细粒度角色、SSO（超过 5 人）、审计日志、高级预算收费 | — | 免费：用户、邀请、团队、管理员和成员角色、Key 限制（见 [`key-governance.md`](key-governance.md)）；收费：审计员角色、登录安全策略、用户和团队预算，以及后续的花费报表、审计日志、SSO |
 | 加入方式 | Invite User 生成链接；管理员设的密码首登必须修改 | 邀请加入组织 | 默认邀请链接（7 天、一次性）；直接创建时首登强制改密 |
 | 角色 | proxy_admin / proxy_admin_viewer / internal_user | Admin / Member | 管理员 / 审计员（企业版） / 成员 |
 | 应急 | break-glass 账号 | — | `csghub-lite user reset-password` 在主机上直接重置，不受 License 影响 |
@@ -136,7 +136,7 @@ LiteLLM Proxy 和 OpenRouter Organizations：
 
 ## 9. 后续
 
-- E2（Key 治理）：按用户和团队设置预算和模型白名单。
+- E2（Key 治理）：已完成，见 [`key-governance.md`](key-governance.md)。
 - E3（花费报表）：按用户和团队统计用量。
 - E4（审计日志）：记录账号的增删改和登录事件。
 - E5（SSO）：复用这里的会话和邀请。

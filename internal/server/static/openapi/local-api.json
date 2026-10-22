@@ -3780,6 +3780,122 @@
         }
       }
     },
+    "/api/team/users/{id}/budget": {
+      "put": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Set a user's budget",
+        "description": "Sets or, with a null `budget`, removes the user's budget. It caps what the user spends across every key and the web UI, per day, per month or in total; requests past it are refused with 429 (`budget_exceeded`). Enterprise (`feature.lite.budgets`); reading budgets is not gated. Administrators only.",
+        "operationId": "setTeamUserBudget",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamUser"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/team/teams/{id}/budget": {
+      "put": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Set a team's budget",
+        "description": "Sets or, with a null `budget`, removes the team's budget. It caps what the team spends across every key and the web UI, per day, per month or in total; requests past it are refused with 429 (`budget_exceeded`). Enterprise (`feature.lite.budgets`); reading budgets is not gated. Administrators only.",
+        "operationId": "setTeamBudget",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated team.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamGroup"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Not licensed (`code: feature_not_licensed`), the caller's role does not allow this (`code: permission_denied`), or the caller must sign in (`code: login_required`, 401).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/api/api-keys": {
       "get": {
         "tags": [
@@ -3877,6 +3993,62 @@
       }
     },
     "/api/api-keys/{id}": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update a local API key",
+        "description": "Renames a key or replaces its limits. The owner may rename a key; changing `limits` takes an administrator, and `{}` removes them. Limits are free in every edition.",
+        "operationId": "updateAPIKey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/APIKeyUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIKeyInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Only an administrator may change limits (`code: permission_denied`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
       "delete": {
         "tags": [
           "System"
@@ -10011,6 +10183,12 @@
           "invite_token": {
             "type": "string",
             "description": "Returned once when an invitation is issued; the link is /invite/<token>."
+          },
+          "budget": {
+            "$ref": "#/components/schemas/Budget"
+          },
+          "spend": {
+            "$ref": "#/components/schemas/BudgetSpend"
           }
         }
       },
@@ -10204,6 +10382,12 @@
           "member_count": {
             "type": "integer"
           },
+          "budget": {
+            "$ref": "#/components/schemas/Budget"
+          },
+          "spend": {
+            "$ref": "#/components/schemas/BudgetSpend"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -10248,7 +10432,8 @@
           "id",
           "name",
           "prefix",
-          "created_at"
+          "created_at",
+          "status"
         ],
         "properties": {
           "owner_id": {
@@ -10274,6 +10459,21 @@
           "last_used_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/KeyLimits"
+          },
+          "spend": {
+            "$ref": "#/components/schemas/BudgetSpend"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "expired",
+              "exhausted"
+            ],
+            "description": "`exhausted` means the key's budget is used up for the current period."
           }
         }
       },
@@ -10302,6 +10502,130 @@
         "properties": {
           "name": {
             "type": "string"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/KeyLimits"
+          }
+        }
+      },
+      "APIKeyUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/KeyLimits"
+          }
+        }
+      },
+      "KeyLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Restrictions on one API key, enforced on inference routes. A key past them is refused: an expired key with 401 (`api_key_expired`), a model outside `models` with 403 (`model_not_allowed`), over `rpm`/`tpm` with 429 (`rate_limited`, with `Retry-After`), past its budget with 429 (`budget_exceeded`). OpenAI-compatible routes put the code in `error.type`, Anthropic routes in `error.type`, Ollama routes in `code`. With an Enterprise license, responses carry `X-CSGLite-Budget-Warning` (for example `key=85%, team=92%`) once a budget passes 80%.",
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Models the key may call; an entry ending in `*` matches by prefix. Empty allows every model. `/v1/models` lists only these."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rpm": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Requests over the last minute; 0 is unlimited."
+          },
+          "tpm": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Tokens over the last minute; 0 is unlimited."
+          },
+          "budget": {
+            "$ref": "#/components/schemas/Budget"
+          }
+        }
+      },
+      "Budget": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Caps what a key, a user or a team uses per period. A zero cap is not checked.",
+        "properties": {
+          "tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cost": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Counted only from requests priced in `currency`."
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "description": "Required with `cost`, for example CNY or USD."
+          },
+          "period": {
+            "type": "string",
+            "enum": [
+              "",
+              "day",
+              "month"
+            ],
+            "description": "`day` and `month` restart at local midnight and on the first of the month; empty never restarts."
+          }
+        }
+      },
+      "BudgetSpend": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tokens",
+          "cost",
+          "exhausted"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "integer"
+          },
+          "cost": {
+            "type": "number"
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Start of the current period; absent for a budget that never restarts."
+          },
+          "exhausted": {
+            "type": "boolean"
+          },
+          "warning": {
+            "type": "boolean",
+            "description": "At 80% of a cap. Reported only with an Enterprise license."
+          }
+        }
+      },
+      "BudgetRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "budget"
+        ],
+        "properties": {
+          "budget": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },

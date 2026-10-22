@@ -260,6 +260,7 @@ func (s *Server) recordAPIUsageWithPool(r *http.Request, model, source string, i
 	costSnapshot, estimatedCost := s.requestPricingSnapshot(
 		resolvedSource, pricingModel, int64(inputTokens), int64(outputTokens),
 	)
+	s.recordSpend(r, int64(inputTokens+outputTokens), estimatedCost, costSnapshot.Currency)
 	observationFromContext(r.Context()).setUsage(
 		model,
 		resolvedSource,

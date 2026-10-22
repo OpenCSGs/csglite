@@ -14,14 +14,18 @@ import {
   isFeatureNotLicensedError,
   login,
   reinviteTeamUser,
+  BUDGETS_FEATURE,
+  setTeamBudget,
+  setTeamUserBudget,
   SETUP_TOKEN_REQUIRED,
   TEAM_MANAGEMENT_FEATURE,
   updateTeam,
   updateTeamSettings,
   updateTeamUser,
 } from "../api/client";
-import type { TeamGroup, TeamRole, TeamSettings, TeamUser } from "../api/client";
+import type { Budget, TeamGroup, TeamRole, TeamSettings, TeamUser } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { BudgetFields, BudgetMeter, budgetDraft, draftBudget } from "../components/KeyLimits";
 import { authSession, isAdmin, loadAuthSession, seesEverything, userLabel } from "../auth";
 import { locale, t } from "../i18n";
 import { formatLicenseDate, licenseState } from "../license";
@@ -56,6 +60,11 @@ async function loadTeamData() {
 /** Whether the license covers the Enterprise part of accounts. */
 function teamLicensed(): boolean {
   return (licenseState.value?.features ?? []).includes(TEAM_MANAGEMENT_FEATURE);
+}
+
+/** Whether the license covers budgets for users and teams. */
+function budgetsLicensed(): boolean {
+  return (licenseState.value?.features ?? []).includes(BUDGETS_FEATURE);
 }
 
 function errorText(err: any, fallback: string): string {
@@ -155,7 +164,7 @@ function EnterpriseCard() {
           <h2 class="text-base font-semibold text-gray-900">{t("team.lockedTitle")}</h2>
           <p class="mt-1 text-sm leading-6 text-gray-600">{t("team.lockedDesc")}</p>
           <ul class="mt-3 space-y-1.5 text-sm text-gray-700">
-            {["team.lockedPoint1", "team.lockedPoint2", "team.lockedPoint3"].map((key) => (
+            {["team.lockedPoint1", "team.lockedPoint2", "team.lockedPoint3", "team.lockedPoint4"].map((key) => (
               <li key={key} class="flex gap-2">
                 <span class="text-indigo-500">•</span>
                 {t(key)}
@@ -366,6 +375,7 @@ function MembersPanel({ readOnly }: { readOnly: boolean }) {
   const [roleFilter, setRoleFilter] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [budgetFor, setBudgetFor] = useState<BudgetTarget | null>(null);
   const me = authSession.value?.user?.id;
 
   const visible = useMemo(() => {
@@ -472,20 +482,21 @@ function MembersPanel({ readOnly }: { readOnly: boolean }) {
               <th class="px-5 py-3 font-medium">{t("team.colTeam")}</th>
               <th class="px-5 py-3 font-medium">{t("team.colStatus")}</th>
               <th class="px-5 py-3 font-medium">{t("team.colLastLogin")}</th>
+              <th class="px-5 py-3 font-medium">{t("team.colBudget")}</th>
               {!readOnly && <th class="px-5 py-3 text-right font-medium">{t("team.colActions")}</th>}
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
             {loading.value && users.value.length === 0 && (
               <tr>
-                <td colSpan={6} class="px-5 py-6 text-center text-gray-500">
+                <td colSpan={7} class="px-5 py-6 text-center text-gray-500">
                   {t("team.loading")}
                 </td>
               </tr>
             )}
             {!loading.value && visible.length === 0 && (
               <tr>
-                <td colSpan={6} class="px-5 py-8 text-center text-gray-500">
+                <td colSpan={7} class="px-5 py-8 text-center text-gray-500">
                   {t("team.noMatches")}
                 </td>
               </tr>
@@ -510,6 +521,7 @@ function MembersPanel({ readOnly }: { readOnly: boolean }) {
                   <StatusBadge user={user} />
                 </td>
                 <td class="px-5 py-3 text-gray-500">{user.last_login_at ? formatDate(user.last_login_at) : t("team.never")}</td>
+                <td class="px-5 py-3">{user.budget ? <BudgetMeter budget={user.budget} spend={user.spend} /> : <span class="text-gray-400">{t("team.noBudget")}</span>}</td>
                 {!readOnly && (
                   <td class="whitespace-nowrap px-5 py-3 text-right">
                     {user.pending ? (
@@ -529,6 +541,9 @@ function MembersPanel({ readOnly }: { readOnly: boolean }) {
                         <button type="button" class={linkButton} onClick={() => setDialog({ mode: "password", user })}>
                           {t("team.resetPassword")}
                         </button>
+                        <button type="button" class={linkButton} onClick={() => setBudgetFor({ kind: "user", id: user.id, name: userLabel(user), budget: user.budget })}>
+                          {t("team.budget")}
+                        </button>
                         <button type="button" class="px-1.5 text-sm text-gray-600 hover:underline" onClick={() => void toggleDisabled(user)}>
                           {user.disabled ? t("team.enable") : t("team.disable")}
                         </button>
@@ -545,6 +560,7 @@ function MembersPanel({ readOnly }: { readOnly: boolean }) {
         </table>
       </div>
       {dialog && <UserDialog state={dialog} onClose={() => setDialog(null)} />}
+      {budgetFor && <BudgetDialog target={budgetFor} onClose={() => setBudgetFor(null)} />}
       <ConfirmDialog
         open={deleting !== null}
         title={deleting?.pending ? t("team.revokeInviteTitle") : t("team.deleteUserTitle")}
@@ -834,6 +850,7 @@ function InvitesPanel({ readOnly }: { readOnly: boolean }) {
 function TeamsPanel({ readOnly }: { readOnly: boolean }) {
   const [dialog, setDialog] = useState<{ team: TeamGroup | null } | null>(null);
   const [deleting, setDeleting] = useState<TeamGroup | null>(null);
+  const [budgetFor, setBudgetFor] = useState<BudgetTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
 
@@ -880,10 +897,18 @@ function TeamsPanel({ readOnly }: { readOnly: boolean }) {
                   {group.description ? ` · ${group.description}` : ""}
                 </p>
               </div>
+              {group.budget && (
+                <div class="ml-auto w-64">
+                  <BudgetMeter budget={group.budget} spend={group.spend} />
+                </div>
+              )}
               {!readOnly && (
                 <div class="text-sm">
                   <button type="button" class={linkButton} onClick={() => setDialog({ team: group })}>
                     {t("team.edit")}
+                  </button>
+                  <button type="button" class={linkButton} onClick={() => setBudgetFor({ kind: "team", id: group.id, name: group.name, budget: group.budget })}>
+                    {t("team.budget")}
                   </button>
                   <button type="button" class="px-1.5 text-red-600 hover:underline" onClick={() => setDeleting(group)}>
                     {t("team.delete")}
@@ -895,6 +920,7 @@ function TeamsPanel({ readOnly }: { readOnly: boolean }) {
         </ul>
       )}
       {dialog && <TeamDialog team={dialog.team} onClose={() => setDialog(null)} />}
+      {budgetFor && <BudgetDialog target={budgetFor} onClose={() => setBudgetFor(null)} />}
       <ConfirmDialog
         open={deleting !== null}
         title={t("team.deleteTeamTitle")}
@@ -906,6 +932,68 @@ function TeamsPanel({ readOnly }: { readOnly: boolean }) {
         onCancel={() => setDeleting(null)}
       />
     </section>
+  );
+}
+
+interface BudgetTarget {
+  kind: "user" | "team";
+  id: string;
+  name: string;
+  budget?: Budget;
+}
+
+/** Sets a user's or a team's budget, which an Enterprise license unlocks. */
+function BudgetDialog({ target, onClose }: { target: BudgetTarget; onClose: () => void }) {
+  const licensed = budgetsLicensed();
+  const [draft, setDraft] = useState(() => budgetDraft(target.budget));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async (budget: Budget | null) => {
+    setBusy(true);
+    setError("");
+    try {
+      if (target.kind === "user") await setTeamUserBudget(target.id, budget);
+      else await setTeamBudget(target.id, budget);
+      await loadTeamData();
+      onClose();
+    } catch (err: any) {
+      setError(errorText(err, t("team.saveFailed")));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-4" onClick={() => !busy && onClose()}>
+      <div role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()} class="w-full max-w-md space-y-4 rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
+        <div>
+          <h2 class="flex items-center gap-2 text-lg font-semibold text-gray-900">
+            {t(target.kind === "user" ? "team.userBudgetTitle" : "team.teamBudgetTitle", target.name)}
+            {!licensed && <span class="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-600">{t("team.enterpriseBadge")}</span>}
+          </h2>
+          <p class="mt-1 text-sm text-gray-500">{t(target.kind === "user" ? "team.userBudgetDesc" : "team.teamBudgetDesc")}</p>
+        </div>
+        {!licensed && <p class="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-800">{t("team.budgetLocked")}</p>}
+        <BudgetFields draft={draft} onChange={setDraft} disabled={busy || !licensed} />
+        {error && <p role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        <div class="flex items-center gap-2 pt-2">
+          {target.budget && licensed && (
+            <button type="button" class="text-sm text-red-600 hover:underline disabled:opacity-50" disabled={busy} onClick={() => void save(null)}>
+              {t("team.removeBudget")}
+            </button>
+          )}
+          <div class="ml-auto flex gap-2">
+            <button type="button" class={secondaryButton} disabled={busy} onClick={onClose}>
+              {t("team.cancel")}
+            </button>
+            <button type="button" class={primaryButton} disabled={busy || !licensed} onClick={() => void save(draftBudget(draft))}>
+              {busy ? t("team.saving") : t("team.save")}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

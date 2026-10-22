@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { createLocalAPIKey, deleteLocalAPIKey, getLocalAPIKeys } from "../api/client";
 import type { LocalAPIKeyInfo } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { KeyLimitChips } from "../components/KeyLimits";
 import { locale, t } from "../i18n";
 import { formatLicenseDate } from "../license";
 
@@ -128,6 +129,11 @@ export function AccountKeys() {
                     <span class="font-mono">{key.prefix}</span> · {t("account.keyCreatedAt", formatLicenseDate(key.created_at, locale.value))}
                     {key.last_used_at ? ` · ${t("account.keyLastUsed", formatLicenseDate(key.last_used_at, locale.value))}` : ""}
                   </p>
+                  {(key.limits || key.status !== "active") && (
+                    <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                      <KeyLimitChips apiKey={key} />
+                    </div>
+                  )}
                 </div>
                 <button type="button" class="text-sm text-red-600 hover:underline" onClick={() => setDeleting(key)}>
                   {t("team.delete")}

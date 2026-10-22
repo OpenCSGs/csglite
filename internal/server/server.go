@@ -30,6 +30,7 @@ import (
 	"github.com/opencsgs/csglite/internal/dataset"
 	"github.com/opencsgs/csglite/internal/imagegen"
 	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/keygov"
 	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelmetadata"
@@ -257,6 +258,8 @@ type Server struct {
 	loginLimiter           loginLimiter
 	setupTokenMu           sync.Mutex
 	apiUsage               *config.APIUsageStore
+	spend                  *keygov.Ledger
+	rateLimits             *keygov.Limiter
 	observabilityMu        sync.RWMutex
 	observability          *observability.Store
 	observabilityCleanupAt atomic.Int64
@@ -360,7 +363,9 @@ func New(cfg *config.Config, version string) *Server {
 		s.apiKeys = config.NewAPIKeyStore(appHome)
 		s.team = team.NewStore(appHome)
 		s.apiUsage = config.NewAPIUsageStore(appHome)
+		s.spend = keygov.NewLedger(appHome)
 	}
+	s.rateLimits = keygov.NewLimiter()
 	s.bootstrapAccounts()
 
 	handler := s.routes()
@@ -597,6 +602,7 @@ func (s *Server) shutdownRuntime() {
 	if s.apiUsage != nil {
 		_ = s.apiUsage.Close()
 	}
+	_ = s.spend.Close()
 	s.modelMetadataMu.Lock()
 	if s.modelMetadata != nil {
 		_ = s.modelMetadata.Close()

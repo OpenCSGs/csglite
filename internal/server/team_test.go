@@ -350,7 +350,7 @@ func TestConversationsAndImagesArePrivateToTheirOwner(t *testing.T) {
 func TestAPIKeysBelongToTheirCreator(t *testing.T) {
 	s, admin := newAccountsServer(t)
 	member, mc := inviteUser(t, s, admin, "member", "member")
-	legacy, legacyPlain, err := s.apiKeys.Create("legacy", "")
+	legacy, legacyPlain, err := s.apiKeys.Create("legacy", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +439,7 @@ func ptr[T any](v T) *T { return &v }
 
 func TestAKeyFromBeforeAccountsCannotMintKeys(t *testing.T) {
 	s, _ := newAccountsServer(t)
-	_, plain, err := s.apiKeys.Create("legacy", "")
+	_, plain, err := s.apiKeys.Create("legacy", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

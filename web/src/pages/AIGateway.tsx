@@ -31,8 +31,10 @@ import {
   validateProvider,
   updateLocalAPIKeySettings,
 } from "../api/client";
-import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
-import { authSession } from "../auth";
+import type { CloudAuthStatus, LocalAPIKeyInfo, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
+import { authSession, isAdmin } from "../auth";
+import { draftLimits, KeyLimitChips, KeyLimitsDialog, limitsDraft, LimitsFields } from "../components/KeyLimits";
+import type { LimitsDraft } from "../components/KeyLimits";
 
 type GatewayTab = "apiKeys" | "providers" | "pools" | "usage";
 type UsagePeriod = "week" | "month" | "year";
@@ -49,6 +51,8 @@ const localAPIKeys = signal<LocalAPIKeysResponse | null>(null);
 const localAPIKeysLoading = signal(false);
 const localAPIKeysError = signal("");
 const localAPIKeyName = signal("");
+const localAPIKeyLimits = signal<LimitsDraft>(limitsDraft());
+const editingLimitsKey = signal<LocalAPIKeyInfo | null>(null);
 const localAPIKeyCreated = signal("");
 const isLocalAPIKeyDialogOpen = signal(false);
 const localAPIKeySaving = signal(false);
@@ -344,6 +348,7 @@ async function toggleLocalAPIAuth(enabled: boolean) {
 
 function openLocalAPIKeyDialog() {
   localAPIKeyName.value = "";
+  localAPIKeyLimits.value = limitsDraft();
   localAPIKeyCreated.value = "";
   localAPIKeysError.value = "";
   isLocalAPIKeyDialogOpen.value = true;
@@ -361,7 +366,8 @@ async function createLocalKey() {
   localAPIKeysError.value = "";
   localAPIKeyCreated.value = "";
   try {
-    const resp = await createLocalAPIKey(localAPIKeyName.value.trim());
+    const limits = draftLimits(localAPIKeyLimits.value);
+    const resp = await createLocalAPIKey(localAPIKeyName.value.trim(), Object.keys(limits).length ? limits : undefined);
     localAPIKeyCreated.value = resp.api_key;
     localAPIKeyName.value = "";
     await fetchLocalAPIKeys();
@@ -1336,19 +1342,34 @@ function LocalAPIKeysSection() {
                         {key.owner_id ? t("team.keyOwner", key.owner_name || key.owner_id) : t("team.keyNoOwner")}
                       </span>
                     )}
+                    <KeyLimitChips apiKey={key} />
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void removeLocalKey(key.id)}
-                  disabled={localAPIKeyDeleting.value === key.id}
-                  class="self-start rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 sm:self-center"
-                >
-                  {localAPIKeyDeleting.value === key.id ? "..." : t("settings.localAPIKeyDelete")}
-                </button>
+                <div class="flex gap-2 self-start sm:self-center">
+                  {isAdmin(authSession.value) && (
+                    <button
+                      type="button"
+                      onClick={() => (editingLimitsKey.value = key)}
+                      class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                    >
+                      {t("limits.edit")}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void removeLocalKey(key.id)}
+                    disabled={localAPIKeyDeleting.value === key.id}
+                    class="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {localAPIKeyDeleting.value === key.id ? "..." : t("settings.localAPIKeyDelete")}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
+        )}
+        {editingLimitsKey.value && (
+          <KeyLimitsDialog apiKey={editingLimitsKey.value} onClose={() => (editingLimitsKey.value = null)} onSaved={() => void fetchLocalAPIKeys()} />
         )}
       </section>
 
@@ -1394,12 +1415,12 @@ function LocalAPIKeyDialog({
   if (!open) return null;
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4" onClick={onClose}>
-      <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div class="border-b border-gray-100 px-6 py-5">
           <h2 class="text-lg font-semibold text-gray-900">{t("gateway.createKeyTitle")}</h2>
           <p class="mt-1 text-sm text-gray-500">{t("settings.localAPIKeysDesc")}</p>
         </div>
-        <div class="space-y-4 px-6 py-5">
+        <div class="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-5">
           <div>
             <label class="mb-1 block text-sm font-medium text-gray-700">{t("settings.localAPIKeyName")}</label>
             <input
@@ -1410,6 +1431,14 @@ function LocalAPIKeyDialog({
               disabled={saving || !!createdKey}
             />
           </div>
+          {!createdKey && (
+            <details class="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+              <summary class="cursor-pointer text-sm font-medium text-gray-700">{t("limits.optional")}</summary>
+              <div class="mt-4">
+                <LimitsFields draft={localAPIKeyLimits.value} onChange={(draft) => (localAPIKeyLimits.value = draft)} disabled={saving} />
+              </div>
+            </details>
+          )}
           {createdKey && (
             <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
               <p class="text-sm font-semibold text-amber-900">{t("settings.localAPIKeyCreated")}</p>

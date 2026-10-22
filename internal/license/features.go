@@ -51,7 +51,7 @@ type FeatureDefinition struct {
 	Since string
 }
 
-// Catalog entries. FeatureTeamManagement and the quota marked Gated consult
+// Catalog entries. FeatureTeamManagement, FeatureBudgets and the quota marked Gated consult
 // the license; every other boolean is enabled regardless of license. The ungated entries are declared so that the
 // issuer registry and this binary agree on the names before a feature moves
 // to EE.
@@ -110,6 +110,14 @@ var (
 		Key: featurePrefix + "team_management", Type: FeatureTypeBoolean, Gated: true, DefaultValue: true,
 		Since: "0.9.92",
 	}
+	// FeatureBudgets is the Enterprise part of spend control: budgets for a
+	// user and for a team, and the warning at 80% of any budget. A key's own
+	// limits (models, expiry, RPM/TPM, budget) are free, as in LiteLLM's
+	// open-source proxy. See docs/guides/key-governance.md.
+	FeatureBudgets = FeatureDefinition{
+		Key: featurePrefix + "budgets", Type: FeatureTypeBoolean, Gated: true, DefaultValue: true,
+		Since: "0.9.92",
+	}
 )
 
 var catalog = []FeatureDefinition{
@@ -123,6 +131,7 @@ var catalog = []FeatureDefinition{
 	FeatureLANCluster,
 	QuotaMaxClusterNodes,
 	FeatureTeamManagement,
+	FeatureBudgets,
 }
 
 // Catalog returns a copy of every registered feature definition.

@@ -243,5 +243,19 @@ inference. `feature.lite.team_management` gates giving someone that role and
 changing the sign-in policy; both checks sit in `internal/server`. Design:
 `docs/guides/team-management.md`.
 
+### Budgets for users and teams (`ee/budget`)
+
+A key's own limits (allowed models, expiry, RPM/TPM and a budget) are free, as
+in LiteLLM's open-source proxy, and live under Apache-2.0 in `internal/keygov`
+together with the spend ledger and the generic budget check. This package holds
+only the Enterprise part: `OwnerScopes`, which turns a user's and a team's
+budget into scopes the check counts every request against, and
+`WarningHeader`, the `X-CSGLite-Budget-Warning` response header at 80%.
+`feature.lite.budgets` gates setting those budgets
+(`PUT /api/team/{users,teams}/{id}/budget`) and reporting the warning. Budgets
+already set keep being enforced after a license lapses, so spending stays
+capped; they cannot be changed until it is renewed. Design:
+`docs/guides/key-governance.md`.
+
 See `docs/agent-guidelines/ee-features.md` for the full rules and
 `docs/guides/ee-license-design.md` for the design.

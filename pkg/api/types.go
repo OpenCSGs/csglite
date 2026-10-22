@@ -875,6 +875,64 @@ type APIKeyInfo struct {
 	// A key without an owner predates accounts.
 	OwnerID   string `json:"owner_id,omitempty"`
 	OwnerName string `json:"owner_name,omitempty"`
+	// Limits restrict what the key may do; nil means none.
+	Limits *KeyLimits `json:"limits,omitempty"`
+	// Spend is what the key used in its budget period, present when the key
+	// has a budget.
+	Spend *BudgetSpend `json:"spend,omitempty"`
+	// Status is "active", "expired" or "exhausted" (its budget is used up).
+	Status string `json:"status"`
+}
+
+// Budget caps what a key, a user or a team may use in each period. A zero
+// Tokens or Cost is not capped.
+type Budget struct {
+	Tokens int64 `json:"tokens,omitempty"`
+	// Cost is counted only from requests whose price is known in Currency.
+	Cost     float64 `json:"cost,omitempty"`
+	Currency string  `json:"currency,omitempty"`
+	// Period is "day" or "month", which restart at local midnight and on the
+	// first of the month, or empty for a budget that never restarts.
+	Period string `json:"period,omitempty"`
+}
+
+// BudgetSpend is what was used against a budget in its current period.
+type BudgetSpend struct {
+	Tokens int64   `json:"tokens"`
+	Cost   float64 `json:"cost"`
+	// Since is when the current period began; absent for a budget that never
+	// restarts.
+	Since *time.Time `json:"since,omitempty"`
+	// Exhausted is true once a cap is reached and requests are refused.
+	Exhausted bool `json:"exhausted"`
+	// Warning is true at 80% of a cap. It is reported only with an
+	// Enterprise license.
+	Warning bool `json:"warning,omitempty"`
+}
+
+// KeyLimits restrict one API key. Zero values are not limited.
+type KeyLimits struct {
+	// Models the key may call. An entry ending in "*" matches every model
+	// starting with the rest. Empty allows every model.
+	Models    []string   `json:"models,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// RPM and TPM cap requests and tokens over the last minute.
+	RPM    int     `json:"rpm,omitempty"`
+	TPM    int     `json:"tpm,omitempty"`
+	Budget *Budget `json:"budget,omitempty"`
+}
+
+// APIKeyUpdateRequest renames a key or replaces its limits. Only an
+// administrator may change limits.
+type APIKeyUpdateRequest struct {
+	Name   *string    `json:"name,omitempty"`
+	Limits *KeyLimits `json:"limits,omitempty"`
+}
+
+// BudgetRequest sets or, with a null budget, removes a user's or a team's
+// budget.
+type BudgetRequest struct {
+	Budget *Budget `json:"budget"`
 }
 
 type APIKeysResponse struct {
@@ -883,7 +941,8 @@ type APIKeysResponse struct {
 }
 
 type APIKeyCreateRequest struct {
-	Name string `json:"name,omitempty"`
+	Name   string     `json:"name,omitempty"`
+	Limits *KeyLimits `json:"limits,omitempty"`
 }
 
 type APIKeyCreateResponse struct {
@@ -1556,7 +1615,9 @@ type TeamUser struct {
 	InviteExpiresAt    *time.Time `json:"invite_expires_at,omitempty"`
 	// InviteToken is returned once, when an invitation is issued. The link to
 	// send is /invite/<token> on this instance.
-	InviteToken string `json:"invite_token,omitempty"`
+	InviteToken string       `json:"invite_token,omitempty"`
+	Budget      *Budget      `json:"budget,omitempty"`
+	Spend       *BudgetSpend `json:"spend,omitempty"`
 }
 
 type TeamUsersResponse struct {
@@ -1591,12 +1652,14 @@ type TeamUserUpdateRequest struct {
 }
 
 type TeamGroup struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	MemberCount int       `json:"member_count"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description,omitempty"`
+	MemberCount int          `json:"member_count"`
+	Budget      *Budget      `json:"budget,omitempty"`
+	Spend       *BudgetSpend `json:"spend,omitempty"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
 }
 
 type TeamGroupsResponse struct {

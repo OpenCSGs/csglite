@@ -591,7 +591,43 @@ export interface LocalAPIKeyInfo {
   /** User account that owns the key when accounts are on. */
   owner_id?: string;
   owner_name?: string;
+  limits?: KeyLimits;
+  /** Present when the key has a budget. */
+  spend?: BudgetSpend;
+  status: "active" | "expired" | "exhausted";
 }
+
+/** Caps what a key, a user or a team uses per period; 0 is not capped. */
+export interface Budget {
+  tokens?: number;
+  /** Counted only from requests priced in `currency`. */
+  cost?: number;
+  currency?: string;
+  /** "day", "month", or empty for a budget that never restarts. */
+  period?: "" | "day" | "month";
+}
+
+export interface BudgetSpend {
+  tokens: number;
+  cost: number;
+  since?: string;
+  exhausted: boolean;
+  /** At 80% of a cap; reported only with an Enterprise license. */
+  warning?: boolean;
+}
+
+/** Restrictions on one API key. They are free in every edition. */
+export interface KeyLimits {
+  /** An entry ending in "*" matches by prefix; empty allows every model. */
+  models?: string[];
+  expires_at?: string;
+  rpm?: number;
+  tpm?: number;
+  budget?: Budget;
+}
+
+/** Enterprise: budgets for users and teams, and the 80% warning. */
+export const BUDGETS_FEATURE = "feature.lite.budgets";
 
 export interface LocalAPIKeysResponse {
   auth_enabled: boolean;
@@ -1809,11 +1845,20 @@ export async function updateLocalAPIKeySettings(authEnabled: boolean): Promise<L
   });
 }
 
-export async function createLocalAPIKey(name: string): Promise<LocalAPIKeyCreateResponse> {
+export async function createLocalAPIKey(name: string, limits?: KeyLimits): Promise<LocalAPIKeyCreateResponse> {
   return fetchJSON<LocalAPIKeyCreateResponse>("/api/api-keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, limits }),
+  });
+}
+
+/** Only an administrator may change limits; `{}` removes them. */
+export async function updateLocalAPIKey(id: string, req: { name?: string; limits?: KeyLimits }): Promise<LocalAPIKeyInfo> {
+  return fetchJSON<LocalAPIKeyInfo>(`/api/api-keys/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
   });
 }
 
@@ -3486,6 +3531,8 @@ export interface TeamUser {
   invite_expires_at?: string;
   /** Returned once when an invitation is issued; the link is /invite/<token>. */
   invite_token?: string;
+  budget?: Budget;
+  spend?: BudgetSpend;
 }
 
 export interface TeamSettings {
@@ -3521,6 +3568,8 @@ export interface TeamGroup {
   name: string;
   description?: string;
   member_count: number;
+  budget?: Budget;
+  spend?: BudgetSpend;
   created_at: string;
   updated_at: string;
 }
@@ -3607,6 +3656,16 @@ export function updateTeamUser(id: string, req: TeamUserUpdateRequest): Promise<
 
 export async function deleteTeamUser(id: string): Promise<void> {
   await fetchAccountsJSON<{ status: string }>(`/api/team/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** Enterprise. A null budget removes it. */
+export function setTeamUserBudget(id: string, budget: Budget | null): Promise<TeamUser> {
+  return fetchAccountsJSON<TeamUser>(`/api/team/users/${encodeURIComponent(id)}/budget`, { method: "PUT", body: JSON.stringify({ budget }) });
+}
+
+/** Enterprise. A null budget removes it. */
+export function setTeamBudget(id: string, budget: Budget | null): Promise<TeamGroup> {
+  return fetchAccountsJSON<TeamGroup>(`/api/team/teams/${encodeURIComponent(id)}/budget`, { method: "PUT", body: JSON.stringify({ budget }) });
 }
 
 export async function getTeams(): Promise<TeamGroup[]> {

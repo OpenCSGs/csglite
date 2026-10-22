@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/safefile"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 // File is the runtime file under the app home that holds users, teams,
@@ -75,10 +76,13 @@ type User struct {
 	PasswordHash string `json:"password_hash,omitempty"`
 	// MustChangePassword is set when someone other than the user chose the
 	// password, so the user replaces it before doing anything else.
-	MustChangePassword bool      `json:"must_change_password,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	LastLoginAt        time.Time `json:"last_login_at,omitempty"`
+	MustChangePassword bool `json:"must_change_password,omitempty"`
+	// Budget caps what the user spends across all their keys and the web
+	// UI. It is an Enterprise feature; see ee/budget.
+	Budget      *api.Budget `json:"budget,omitempty"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
+	LastLoginAt time.Time   `json:"last_login_at,omitempty"`
 }
 
 // Pending reports whether the user was invited and has not set a password.
@@ -87,11 +91,14 @@ func (u User) Pending() bool { return u.PasswordHash == "" }
 // Team groups users. Usage and budgets are attributed to the team of the user
 // who owns a request.
 type Team struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Budget caps what the team's members spend together. It is an
+	// Enterprise feature; see ee/budget.
+	Budget    *api.Budget `json:"budget,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }
 
 // Invite is an outstanding invitation. Only the SHA-256 of its token is kept.
@@ -803,6 +810,48 @@ func (s *Store) UpdateTeam(id string, name, description *string) (Team, error) {
 		return Team{}, err
 	}
 	return team, nil
+}
+
+// SetUserBudget replaces a user's budget; nil removes it. The budget must
+// already be normalized.
+func (s *Store) SetUserBudget(id string, budget *api.Budget) (User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.loadLocked()
+	if err != nil {
+		return User{}, err
+	}
+	i := st.userIndex(id)
+	if i < 0 {
+		return User{}, ErrNotFound
+	}
+	st.Users[i].Budget = budget
+	st.Users[i].UpdatedAt = s.now().UTC()
+	if err := s.saveLocked(st); err != nil {
+		return User{}, err
+	}
+	return st.Users[i], nil
+}
+
+// SetTeamBudget replaces a team's budget; nil removes it. The budget must
+// already be normalized.
+func (s *Store) SetTeamBudget(id string, budget *api.Budget) (Team, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.loadLocked()
+	if err != nil {
+		return Team{}, err
+	}
+	i := st.teamIndex(id)
+	if i < 0 {
+		return Team{}, ErrNotFound
+	}
+	st.Teams[i].Budget = budget
+	st.Teams[i].UpdatedAt = s.now().UTC()
+	if err := s.saveLocked(st); err != nil {
+		return Team{}, err
+	}
+	return st.Teams[i], nil
 }
 
 // DeleteTeam removes a team. Its members stay, without a team.

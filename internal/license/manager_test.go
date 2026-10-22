@@ -103,7 +103,7 @@ func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 	key := licensetest.NewKey(t)
 	// Shipped catalog: the cluster node cap and team management are gated.
 	m, _ := newManager(t, key, func(o *license.Options) { o.Catalog = license.Catalog() })
-	wantGated := []string{license.QuotaMaxClusterNodes.Key, license.FeatureTeamManagement.Key}
+	wantGated := []string{license.QuotaMaxClusterNodes.Key, license.FeatureTeamManagement.Key, license.FeatureBudgets.Key}
 	gated := license.GatedCatalog()
 	if len(gated) != len(wantGated) {
 		t.Fatalf("shipped catalog gates %v; only %v are expected. Update this test and the docs deliberately", gated, wantGated)
@@ -432,7 +432,7 @@ func TestAPIViewsMirrorState(t *testing.T) {
 		}
 	}
 	full := st.APIState("")
-	if full.GraceUntil == nil || len(full.Features) != 7 {
+	if full.GraceUntil == nil || len(full.Features) != 8 {
 		t.Fatalf("state view %+v", full)
 	}
 	verify.Limits["quota.lite.max_provider_pools"] = 99

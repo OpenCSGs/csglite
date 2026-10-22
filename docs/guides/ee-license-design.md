@@ -498,8 +498,10 @@ csghub-lite license features           # 列出 Catalog 及当前是否可用
 > 阶段三的 License 管理部分（Settings 页导入/校验/删除、侧边栏 “CSGLite EE”
 > 标识）已完成；导航锁标与 `FeatureLocked` 组件随第一条被门控的路由一起做。
 > 第一条被门控的功能是账号的企业版部分（`feature.lite.team_management`：审计员
-> 角色和登录安全策略；账号本身免费），导航锁标与锁定页随它一起完成；其余已发布
-> 功能仍不门控。
+> 角色和登录安全策略；账号本身免费），导航锁标与锁定页随它一起完成。第二条是
+> 预算的企业版部分（`feature.lite.budgets`：用户和团队预算、80% 提醒；单个 Key
+> 的限制免费，见 [`key-governance.md`](key-governance.md)）。其余已发布功能仍不
+> 门控。
 
 
 | 阶段 | 内容 | 估时 |

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 const (
@@ -31,6 +33,8 @@ type APIKeyRecord struct {
 	// OwnerID is the user account that owns the key when accounts are on.
 	// Keys created before accounts have none.
 	OwnerID string `json:"owner_id,omitempty"`
+	// Limits restrict the key; nil means none.
+	Limits *api.KeyLimits `json:"limits,omitempty"`
 }
 
 type APIKeyState struct {
@@ -69,7 +73,8 @@ func (s *APIKeyStore) SetAuthEnabled(enabled bool) (APIKeyState, error) {
 }
 
 // Create adds a key owned by ownerID, which is empty when accounts are off.
-func (s *APIKeyStore) Create(name, ownerID string) (APIKeyRecord, string, error) {
+// Limits must already be normalized.
+func (s *APIKeyStore) Create(name, ownerID string, limits *api.KeyLimits) (APIKeyRecord, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -99,12 +104,43 @@ func (s *APIKeyStore) Create(name, ownerID string) (APIKeyRecord, string, error)
 		Hash:      hashAPIKey(plain),
 		CreatedAt: now,
 		OwnerID:   strings.TrimSpace(ownerID),
+		Limits:    limits,
 	}
 	state.Keys = append(state.Keys, record)
 	if err := s.saveLocked(state); err != nil {
 		return APIKeyRecord{}, "", err
 	}
 	return record, plain, nil
+}
+
+// Update renames a key when name is set and replaces its limits when
+// setLimits is true. Limits must already be normalized.
+func (s *APIKeyStore) Update(id string, name *string, limits *api.KeyLimits, setLimits bool) (APIKeyRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, err := s.loadLocked()
+	if err != nil {
+		return APIKeyRecord{}, false, err
+	}
+	for i := range state.Keys {
+		if state.Keys[i].ID != id {
+			continue
+		}
+		if name != nil {
+			if trimmed := strings.TrimSpace(*name); trimmed != "" {
+				state.Keys[i].Name = trimmed
+			}
+		}
+		if setLimits {
+			state.Keys[i].Limits = limits
+		}
+		if err := s.saveLocked(state); err != nil {
+			return APIKeyRecord{}, false, err
+		}
+		return state.Keys[i], true, nil
+	}
+	return APIKeyRecord{}, false, nil
 }
 
 func (s *APIKeyStore) Delete(id string) (bool, error) {
@@ -183,6 +219,27 @@ func (s *APIKeyStore) Validate(plain string) (APIKeyRecord, bool, error) {
 			if err := s.saveLocked(state); err != nil {
 				return APIKeyRecord{}, false, err
 			}
+			return record, true, nil
+		}
+	}
+	return APIKeyRecord{}, false, nil
+}
+
+// Find looks a key up like Validate without recording that it was used.
+func (s *APIKeyStore) Find(plain string) (APIKeyRecord, bool, error) {
+	plain = strings.TrimSpace(plain)
+	if plain == "" {
+		return APIKeyRecord{}, false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	state, err := s.loadLocked()
+	if err != nil {
+		return APIKeyRecord{}, false, err
+	}
+	hash := hashAPIKey(plain)
+	for _, record := range state.Keys {
+		if subtle.ConstantTimeCompare([]byte(record.Hash), []byte(hash)) == 1 {
 			return record, true, nil
 		}
 	}

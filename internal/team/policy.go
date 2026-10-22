@@ -101,11 +101,12 @@ func adminOnlyRead(path string) bool {
 	return strings.HasPrefix(path, "/api/observability") || strings.HasPrefix(path, "/api/team/")
 }
 
-// OwnKeyWrite reports whether a request creates or deletes one of the
+// OwnKeyWrite reports whether a request creates, renames or deletes one of the
 // caller's own API keys.
 func OwnKeyWrite(method, path string) bool {
 	return (path == "/api/api-keys" && method == http.MethodPost) ||
-		(strings.HasPrefix(path, "/api/api-keys/") && path != "/api/api-keys/settings" && method == http.MethodDelete)
+		(strings.HasPrefix(path, "/api/api-keys/") && path != "/api/api-keys/settings" &&
+			(method == http.MethodDelete || method == http.MethodPut))
 }
 
 // memberWrite lists the changes a member may make besides running inference.
