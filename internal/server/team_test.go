@@ -177,11 +177,41 @@ func TestAccountsAreOffUntilTheFirstUser(t *testing.T) {
 	}
 	expectStatus(t, c.do(http.MethodGet, "/api/settings", nil), http.StatusOK, "settings with accounts off")
 
-	// Creating users needs the license.
-	expectCode(t, c.do(http.MethodPost, "/api/team/users", api.TeamUserCreateRequest{Username: "admin", Password: "admin-password"}),
-		http.StatusForbidden, licenseErrorCode, "create user without a license")
 	expectStatus(t, c.do(http.MethodPost, "/api/auth/login", api.AuthLoginRequest{Username: "admin", Password: "x"}),
 		http.StatusConflict, "login with accounts off")
+}
+
+// The community edition includes one administrator account, so any instance
+// can require a login; more users, and managing them, need the license.
+func TestCommunityEditionHasOneAdministrator(t *testing.T) {
+	s := newTestServer(t)
+	local := newTeamClient(t, s)
+	local.remote = "127.0.0.1:50000"
+	created := createTeamUser(t, local, api.TeamUserCreateRequest{Username: "admin", Password: "admin-password"})
+	if created.Role != "admin" {
+		t.Fatalf("first user role = %q, want admin", created.Role)
+	}
+
+	anon := newTeamClient(t, s)
+	expectCode(t, anon.do(http.MethodGet, "/api/tags", nil), http.StatusUnauthorized, loginRequiredCode, "anonymous request once the administrator exists")
+	admin := newTeamClient(t, s)
+	admin.login("admin", "admin-password")
+	expectStatus(t, admin.do(http.MethodGet, "/api/tags", nil), http.StatusOK, "administrator request")
+
+	rec := admin.do(http.MethodGet, "/api/team/users", nil)
+	expectStatus(t, rec, http.StatusOK, "list users")
+	var list api.TeamUsersResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list.Users) != 1 || list.MaxUsers != 1 {
+		t.Fatalf("community user list = %+v", list)
+	}
+
+	rec = admin.do(http.MethodPost, "/api/team/users", api.TeamUserCreateRequest{Username: "bob", Role: "member", Invite: true})
+	expectCode(t, rec, http.StatusForbidden, licenseErrorCode, "second user without a license")
+	expectCode(t, admin.do(http.MethodGet, "/api/team/teams", nil), http.StatusForbidden, licenseErrorCode, "teams without a license")
+	expectCode(t, admin.do(http.MethodPut, "/api/team/users/"+created.ID, api.TeamUserUpdateRequest{}), http.StatusForbidden, licenseErrorCode, "editing users without a license")
+	expectStatus(t, admin.do(http.MethodPut, "/api/auth/password", api.AuthPasswordChangeRequest{CurrentPassword: "admin-password", NewPassword: "new-admin-pass"}),
+		http.StatusOK, "the administrator changes their own password")
 }
 
 func TestSignInIsRequiredOnceAccountsExist(t *testing.T) {
@@ -497,12 +527,12 @@ func TestEnvironmentCreatesTheFirstAdministrator(t *testing.T) {
 	c.login("root", "from-a-secret")
 }
 
-func TestEnvironmentBootstrapNeedsALicense(t *testing.T) {
+func TestEnvironmentBootstrapWorksWithoutALicense(t *testing.T) {
 	s := newTestServer(t)
 	t.Setenv(envAdminPassword, "admin-password")
 	s.bootstrapAccounts()
-	if s.accountsEnabled() {
-		t.Fatal("an unlicensed instance created an administrator")
+	if !s.accountsEnabled() {
+		t.Fatal("the community edition did not create its administrator from the environment")
 	}
 }
 

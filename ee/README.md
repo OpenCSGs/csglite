@@ -13,7 +13,8 @@ enough to include a pilot or a proof of concept that carries real business.
 
 The one exception is the community grant at the top of the licence: a feature
 that runs without a licence may be used in production within the limit the
-software enforces for unlicensed users, which for the LAN cluster is two nodes.
+software enforces for unlicensed users, which for the LAN cluster is two nodes
+and for user accounts is one administrator.
 That is what makes the community node cap a real entitlement rather than
 something the licence forbids.
 
@@ -243,11 +244,13 @@ the desktop app work as before. The first administrator comes from the
 machine itself, a one-time setup token, `CSGHUB_LITE_ADMIN_*` environment
 variables or `csghub-lite user create`; everyone else joins through an
 invitation link or a password they must change at first sign-in. API keys,
-conversations and image jobs belong to the user who created them. Managing
-users needs `feature.lite.team_management`; the number of users is capped by
-`quota.lite.max_users`. Signing in is never gated, so accounts keep protecting
-the instance after a license lapses, and `csghub-lite user reset-password`
-always works on the host.
+conversations and image jobs belong to the user who created them. The
+number of users is capped by `quota.lite.max_users`, which is 1 without a
+license: the community edition gets one administrator account, so any
+instance can require a sign-in. Inviting and managing further users, roles,
+teams and sign-in settings need `feature.lite.team_management`. Signing in is
+never gated, so accounts keep protecting the instance after a license lapses,
+and `csghub-lite user reset-password` always works on the host.
 
 | File | Holds |
 | --- | --- |

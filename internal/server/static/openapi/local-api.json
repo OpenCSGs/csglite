@@ -3411,7 +3411,7 @@
           "Accounts"
         ],
         "summary": "List users",
-        "description": "Lists every user account with the licensed seat count. Administrators and auditors. Enterprise: `feature.lite.team_management`.",
+        "description": "Lists every user account with the seat count (1 without a license). Administrators and auditors. Not gated, so the community edition can show its administrator account.",
         "operationId": "listTeamUsers",
         "responses": {
           "200": {
@@ -3441,7 +3441,7 @@
           "Accounts"
         ],
         "summary": "Create a user",
-        "description": "Creates a user, either with a password (which the user must change at first sign-in) or, with `invite`, without one: the response then carries a one-time `invite_token` for the link `/invite/<token>`, valid 7 days. The first user is always an administrator and switches accounts on: from then on every remote request needs a session or an API key. Creating it from another machine needs `setup_token`, read from `team-setup-token` under the app home on the server; requests from this machine itself (loopback without forwarding headers) keep administrator access and need no token. The first administrator can also be created at start-up from CSGHUB_LITE_ADMIN_USERNAME and CSGHUB_LITE_ADMIN_PASSWORD (or _FILE). Enterprise: `feature.lite.team_management`; the number of users, invited ones included, is capped by `quota.lite.max_users`.",
+        "description": "Creates a user, either with a password (which the user must change at first sign-in) or, with `invite`, without one: the response then carries a one-time `invite_token` for the link `/invite/<token>`, valid 7 days. The first user is always an administrator and switches accounts on: from then on every remote request needs a session or an API key. Creating it from another machine needs `setup_token`, read from `team-setup-token` under the app home on the server; requests from this machine itself (loopback without forwarding headers) keep administrator access and need no token. The first administrator can also be created at start-up from CSGHUB_LITE_ADMIN_USERNAME and CSGHUB_LITE_ADMIN_PASSWORD (or _FILE). Not gated by `feature.lite.team_management`: the number of users, invited ones included, is capped by `quota.lite.max_users`, which is 1 without a license, so the community edition can create its one administrator and nothing more.",
         "operationId": "createTeamUser",
         "requestBody": {
           "required": true,

@@ -101,18 +101,18 @@ var (
 		Key: quotaPrefix + "max_cluster_nodes", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
 		CommunityValue: 2, Since: "0.13.0",
 	}
-	// FeatureTeamManagement is user accounts, teams and role-based access:
-	// creating, changing and removing users and teams. Signing in is not
-	// gated, so accounts made under a license keep protecting the instance
-	// after it lapses. See docs/guides/ee-team-management.md.
+	// FeatureTeamManagement is multi-user accounts, teams and role-based
+	// access: inviting, changing and removing users, teams and sign-in
+	// policy. Signing in is not gated, and neither is creating the single
+	// administrator that QuotaMaxUsers allows without a license, so every
+	// instance can require a login. See docs/guides/ee-team-management.md.
 	FeatureTeamManagement = FeatureDefinition{
 		Key: featurePrefix + "team_management", Type: FeatureTypeBoolean, Gated: true, DefaultValue: true,
 		NavItem: "team", Since: "0.9.92",
 	}
 	// QuotaMaxUsers caps the number of user accounts. A license that does not
-	// set it allows any number. Unlicensed instances cannot create users at
-	// all, because FeatureTeamManagement is off; the community value only
-	// satisfies the rule that a gated limit is never 0 (unlimited) there.
+	// set it allows any number. The community value of 1 is the free
+	// administrator account.
 	QuotaMaxUsers = FeatureDefinition{
 		Key: quotaPrefix + "max_users", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
 		CommunityValue: 1, Since: "0.9.92",

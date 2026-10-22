@@ -429,7 +429,7 @@ type SeatLimitError struct {
 }
 
 func (e *SeatLimitError) Error() string {
-	return fmt.Sprintf("the license allows %d users and %d already exist", e.Limit, e.Current)
+	return fmt.Sprintf("the user limit is %d and %d users already exist", e.Limit, e.Current)
 }
 
 // ReissueInvite replaces a pending user's invitation with a new one, which

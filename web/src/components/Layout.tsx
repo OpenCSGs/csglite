@@ -1,7 +1,7 @@
 import { ComponentChildren } from "preact";
 import { useLocation } from "preact-iso";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { getSettings, logout, openExternalURL, TEAM_MANAGEMENT_FEATURE } from "../api/client";
+import { getSettings, logout, openExternalURL } from "../api/client";
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
 import { t, locale, setLocale } from "../i18n";
 import { isLicensed, licenseState, loadLicense, productTitle } from "../license";
@@ -57,7 +57,7 @@ const navGroups: { id: string; key: string; management?: boolean; items: NavItem
       { id: "ai-gateway", path: "/ai-gateway", key: "nav.aiGateway", icon: AIGatewayIcon },
       { id: "cluster", path: "/cluster", key: "nav.cluster", icon: ClusterIcon },
       { id: "observability", path: "/observability", key: "nav.observability", icon: ObservabilityIcon },
-      { id: "team", path: "/team", key: "nav.team", icon: TeamIcon, feature: TEAM_MANAGEMENT_FEATURE },
+      { id: "team", path: "/team", key: "nav.team", icon: TeamIcon },
     ],
   },
 ];

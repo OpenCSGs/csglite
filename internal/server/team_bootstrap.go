@@ -65,12 +65,6 @@ func (s *Server) bootstrapAccounts() {
 		}
 		return
 	}
-	if !s.license.Enabled(license.FeatureTeamManagement) {
-		if envSet {
-			log.Printf("accounts: %s is set, but user accounts need a CSGLite Enterprise license; no administrator was created", envAdminPassword)
-		}
-		return
-	}
 	if envSet {
 		username := strings.TrimSpace(os.Getenv(envAdminUsername))
 		if username == "" {

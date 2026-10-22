@@ -55,6 +55,20 @@ async function loadTeamData() {
   }
 }
 
+async function loadCommunityUsers() {
+  loading.value = true;
+  loadError.value = "";
+  try {
+    const userList = await getTeamUsers();
+    users.value = userList.users;
+    maxUsers.value = userList.max_users;
+  } catch (err: any) {
+    loadError.value = err?.message || t("team.loadFailed");
+  } finally {
+    loading.value = false;
+  }
+}
+
 function errorText(err: any, fallback: string): string {
   if (isFeatureNotLicensedError(err) && err.limit) return t("team.seatLimitReached", err.limit);
   return err?.message || fallback;
@@ -83,18 +97,28 @@ export function Team() {
   const canRead = seesEverything(session);
 
   useEffect(() => {
-    if (licensed && accountsOn && canRead) void loadTeamData();
+    if (!accountsOn || !canRead) return;
+    if (licensed) void loadTeamData();
+    else void loadCommunityUsers();
   }, [licensed, accountsOn, canRead]);
 
+  // The community edition includes one administrator account, so an
+  // unlicensed instance can still turn on sign-in; inviting more people,
+  // roles and teams are what the license adds.
   let body;
   if (!canRead) {
     body = <Notice tone="neutral" title={t("team.adminOnlyTitle")} text={t("team.adminOnlyDesc")} />;
   } else if (!licensed && !accountsOn) {
-    body = <FeatureLocked />;
+    body = (
+      <>
+        <EnableAccounts licensed={false} />
+        <FeatureLocked />
+      </>
+    );
   } else if (!licensed) {
-    body = <Notice tone="warn" title={t("team.licenseLapsedTitle")} text={t("team.licenseLapsedDesc")} />;
+    body = <CommunityAccounts />;
   } else if (!accountsOn) {
-    body = <EnableAccounts />;
+    body = <EnableAccounts licensed />;
   } else {
     body = <TeamManager />;
   }
@@ -103,9 +127,9 @@ export function Team() {
     <div class="page-shell space-y-6">
       <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p class="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-500">{t("team.eyebrow")}</p>
-          <h1 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">{t("team.title")}</h1>
-          <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t("team.subtitle")}</p>
+          {licensed && <p class="mb-2 text-xs font-semibold uppercase tracking-[0.28em] text-indigo-500">{t("team.eyebrow")}</p>}
+          <h1 class="text-3xl font-bold tracking-tight text-gray-950">{t("team.title")}</h1>
+          <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t(licensed ? "team.subtitle" : "team.subtitleCommunity")}</p>
         </div>
         {licensed && accountsOn && canRead && <HeaderStats />}
       </div>
@@ -175,11 +199,65 @@ function FeatureLocked() {
   );
 }
 
+/**
+ * An unlicensed instance with accounts on: the administrator account the
+ * community edition includes, or, after a license lapsed, the accounts made
+ * under it, which keep signing in but cannot be changed.
+ */
+function CommunityAccounts() {
+  const lapsed = users.value.length > 1;
+  return (
+    <div class="space-y-6">
+      {lapsed ? (
+        <Notice tone="warn" title={t("team.licenseLapsedTitle")} text={t("team.licenseLapsedDesc")} />
+      ) : (
+        <Notice tone="neutral" title={t("team.communityOnTitle")} text={t("team.communityOnDesc")} />
+      )}
+      {loadError.value && <p role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{loadError.value}</p>}
+      <section class="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="flex items-center justify-between border-b border-gray-100 px-5 py-3">
+          <h2 class="text-sm font-semibold text-gray-900">{t("team.tabUsers")}</h2>
+          {maxUsers.value > 0 && (
+            <span class="text-xs text-gray-500">
+              {users.value.length} / {maxUsers.value}
+            </span>
+          )}
+        </div>
+        {loading.value ? (
+          <p class="px-5 py-6 text-sm text-gray-500">{t("team.loading")}</p>
+        ) : (
+          <ul class="divide-y divide-gray-100">
+            {users.value.map((user) => (
+              <li key={user.id} class="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div class="min-w-0">
+                  <p class="truncate font-medium text-gray-900">{userLabel(user)}</p>
+                  <p class="truncate text-xs text-gray-500">
+                    {user.username}
+                    {user.email ? ` · ${user.email}` : ""}
+                  </p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <RoleBadge role={user.role} />
+                  <StatusBadge user={user} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p class="border-t border-gray-100 px-5 py-3 text-xs leading-5 text-gray-500">
+          {t("team.communityRecover")} <code class="rounded bg-gray-100 px-1 py-0.5 font-mono">{"csghub-lite user reset-password <username>"}</code>
+        </p>
+      </section>
+      <FeatureLocked />
+    </div>
+  );
+}
+
 function CodeLine({ children }: { children: string }) {
   return <code class="mt-1 block overflow-x-auto whitespace-pre rounded-lg bg-gray-900 px-3 py-2 font-mono text-xs text-gray-100">{children}</code>;
 }
 
-function EnableAccounts() {
+function EnableAccounts({ licensed }: { licensed: boolean }) {
   const local = !!authSession.value?.local_operator;
   const [username, setUsername] = useState("admin");
   const [displayName, setDisplayName] = useState("");
@@ -217,7 +295,7 @@ function EnableAccounts() {
     <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <section class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
         <h2 class="text-lg font-semibold text-gray-900">{t("team.enableTitle")}</h2>
-        <p class="mt-1 text-sm leading-6 text-gray-600">{t("team.enableDesc")}</p>
+        <p class="mt-1 text-sm leading-6 text-gray-600">{t(licensed ? "team.enableDesc" : "team.enableDescCommunity")}</p>
         <form onSubmit={submit} class="mt-5 space-y-3">
           {!local && (
             <label class="block text-sm font-medium text-gray-700">

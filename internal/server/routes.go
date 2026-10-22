@@ -118,9 +118,12 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/auth/password", s.handleAuthPasswordChange)
 	mux.HandleFunc("GET /api/auth/invite/{token}", s.handleAuthInviteGet)
 	mux.HandleFunc("POST /api/auth/invite/{token}", s.handleAuthInviteAccept)
+	// The community edition includes one administrator account, so listing
+	// users and creating one are not gated: the seat cap (QuotaMaxUsers) stops
+	// an unlicensed instance at a single user. Everything else is EE.
 	teamFeature := s.requireFeature(license.FeatureTeamManagement)
-	mux.HandleFunc("GET /api/team/users", teamFeature(s.handleTeamUsersList))
-	mux.HandleFunc("POST /api/team/users", teamFeature(s.handleTeamUserCreate))
+	mux.HandleFunc("GET /api/team/users", s.handleTeamUsersList)
+	mux.HandleFunc("POST /api/team/users", s.handleTeamUserCreate)
 	mux.HandleFunc("PUT /api/team/users/{id}", teamFeature(s.handleTeamUserUpdate))
 	mux.HandleFunc("DELETE /api/team/users/{id}", teamFeature(s.handleTeamUserDelete))
 	mux.HandleFunc("POST /api/team/users/{id}/invite", teamFeature(s.handleTeamUserReinvite))
