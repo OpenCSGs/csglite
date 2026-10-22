@@ -871,6 +871,10 @@ type APIKeyInfo struct {
 	Prefix     string     `json:"prefix"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	// OwnerID is the user account that owns the key, when accounts are on.
+	// A key without an owner predates accounts.
+	OwnerID   string `json:"owner_id,omitempty"`
+	OwnerName string `json:"owner_name,omitempty"`
 }
 
 type APIKeysResponse struct {
@@ -1244,6 +1248,7 @@ type OpenAIAudioSegment struct {
 
 type ImageGenerationJobResponse struct {
 	ID          string                          `json:"id"`
+	OwnerID     string                          `json:"owner_id,omitempty"`
 	Status      string                          `json:"status"`
 	CreatedAt   time.Time                       `json:"created_at"`
 	UpdatedAt   time.Time                       `json:"updated_at"`
@@ -1472,7 +1477,10 @@ func (s *ProviderTagModelSelection) UnmarshalJSON(data []byte) error {
 // -- Conversation history types --
 
 type Conversation struct {
-	ID        string                `json:"id"`
+	ID string `json:"id"`
+	// OwnerID is the user account the conversation belongs to. It is set by
+	// the server and ignored in request bodies.
+	OwnerID   string                `json:"owner_id,omitempty"`
 	Title     string                `json:"title"`
 	Model     string                `json:"model,omitempty"`
 	CreatedAt time.Time             `json:"created_at"`
@@ -1483,6 +1491,7 @@ type Conversation struct {
 
 type ConversationMeta struct {
 	ID        string    `json:"id"`
+	OwnerID   string    `json:"owner_id,omitempty"`
 	Title     string    `json:"title"`
 	Model     string    `json:"model,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
@@ -1497,4 +1506,127 @@ type ConversationSettings struct {
 
 type ConversationsListResponse struct {
 	Conversations []ConversationMeta `json:"conversations"`
+}
+
+// -- Accounts (Enterprise: feature.lite.team_management) --
+
+// AuthSessionResponse describes who the caller is. AccountsEnabled is false
+// until the first user is created; the instance is then open as before.
+type AuthSessionResponse struct {
+	AccountsEnabled bool `json:"accounts_enabled"`
+	// FeatureLicensed reports whether user and team management is licensed.
+	// Sign-in keeps working without it so nobody is locked out when a
+	// license lapses.
+	FeatureLicensed bool `json:"feature_licensed"`
+	Authenticated   bool `json:"authenticated"`
+	// LocalOperator is true for a request made on this machine itself, which
+	// administers the instance without signing in.
+	LocalOperator bool       `json:"local_operator"`
+	User          *TeamUser  `json:"user,omitempty"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+}
+
+type AuthLoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type AuthPasswordChangeRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+type TeamUser struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Role        string `json:"role"`
+	TeamID      string `json:"team_id,omitempty"`
+	TeamName    string `json:"team_name,omitempty"`
+	Disabled    bool   `json:"disabled"`
+	// Pending is true for an invited user who has not set a password yet.
+	Pending bool `json:"pending"`
+	// MustChangePassword is true when an administrator set the password and
+	// the user has not replaced it yet.
+	MustChangePassword bool       `json:"must_change_password"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	LastLoginAt        *time.Time `json:"last_login_at,omitempty"`
+	InviteExpiresAt    *time.Time `json:"invite_expires_at,omitempty"`
+	// InviteToken is returned once, when an invitation is issued. The link to
+	// send is /invite/<token> on this instance.
+	InviteToken string `json:"invite_token,omitempty"`
+}
+
+type TeamUsersResponse struct {
+	Users []TeamUser `json:"users"`
+}
+
+type TeamUserCreateRequest struct {
+	Username string `json:"username"`
+	// Password is required unless Invite is set. A password set for someone
+	// else must be changed at their first sign-in.
+	Password string `json:"password,omitempty"`
+	// Invite creates the user without a password and returns an invitation
+	// token; the user sets their own password when accepting it.
+	Invite bool `json:"invite,omitempty"`
+	// SetupToken is required to create the first administrator from another
+	// machine. It is printed in the server log and kept in the
+	// team-setup-token file under the app home.
+	SetupToken  string `json:"setup_token,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Email       string `json:"email,omitempty"`
+	Role        string `json:"role,omitempty"`
+	TeamID      string `json:"team_id,omitempty"`
+}
+
+type TeamUserUpdateRequest struct {
+	DisplayName *string `json:"display_name,omitempty"`
+	Email       *string `json:"email,omitempty"`
+	Role        *string `json:"role,omitempty"`
+	TeamID      *string `json:"team_id,omitempty"`
+	Disabled    *bool   `json:"disabled,omitempty"`
+	Password    *string `json:"password,omitempty"`
+}
+
+type TeamGroup struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	MemberCount int       `json:"member_count"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type TeamGroupsResponse struct {
+	Teams []TeamGroup `json:"teams"`
+}
+
+// TeamInviteInfo describes an invitation to the person opening its link.
+type TeamInviteInfo struct {
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name,omitempty"`
+	Role        string    `json:"role"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+type TeamInviteAcceptRequest struct {
+	Password string `json:"password"`
+}
+
+// TeamSettings are the sign-in settings plus read-only facts about how the
+// instance was set up.
+type TeamSettings struct {
+	SessionHours    int `json:"session_hours"`
+	MaxFailedLogins int `json:"max_failed_logins"`
+	LockoutMinutes  int `json:"lockout_minutes"`
+	// BootstrapEnvSet is true while CSGHUB_LITE_ADMIN_PASSWORD (or its _FILE
+	// form) is still set although accounts exist; it should be removed.
+	BootstrapEnvSet bool `json:"bootstrap_env_set"`
+}
+
+type TeamGroupRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
 }

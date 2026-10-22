@@ -51,8 +51,8 @@ type FeatureDefinition struct {
 	Since string
 }
 
-// Catalog entries. Only QuotaMaxClusterNodes is gated; every boolean is
-// enabled regardless of license. The ungated entries are declared so that the
+// Catalog entries. FeatureTeamManagement and the quota marked Gated consult
+// the license; every other boolean is enabled regardless of license. The ungated entries are declared so that the
 // issuer registry and this binary agree on the names before a feature moves
 // to EE.
 var (
@@ -101,6 +101,15 @@ var (
 		Key: quotaPrefix + "max_cluster_nodes", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
 		CommunityValue: 2, Since: "0.13.0",
 	}
+	// FeatureTeamManagement is the Enterprise part of user accounts: the
+	// auditor role and the sign-in policy. Accounts themselves (users,
+	// invitations, the administrator and member roles, teams) are free, as
+	// in LiteLLM's open-source proxy, and signing in is never gated. See
+	// docs/guides/team-management.md.
+	FeatureTeamManagement = FeatureDefinition{
+		Key: featurePrefix + "team_management", Type: FeatureTypeBoolean, Gated: true, DefaultValue: true,
+		Since: "0.9.92",
+	}
 )
 
 var catalog = []FeatureDefinition{
@@ -113,6 +122,7 @@ var catalog = []FeatureDefinition{
 	QuotaMaxProviderPools,
 	FeatureLANCluster,
 	QuotaMaxClusterNodes,
+	FeatureTeamManagement,
 }
 
 // Catalog returns a copy of every registered feature definition.

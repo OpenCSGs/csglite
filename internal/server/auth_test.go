@@ -77,7 +77,7 @@ func TestRemoteAPIAuthProtectsAnthropicAlias(t *testing.T) {
 
 func TestRemoteAPIAuthAcceptsBearerAndXAPIKey(t *testing.T) {
 	s := newTestServer(t)
-	_, plain, err := s.apiKeys.Create("client")
+	_, plain, err := s.apiKeys.Create("client", "")
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestDesktopExternalDownloadAuthFollowsRemoteAccessSetting(t *testing.T) {
 		}
 	}
 
-	_, plain, err := s.apiKeys.Create("downloads")
+	_, plain, err := s.apiKeys.Create("downloads", "")
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestDesktopExternalRuntimeAuthFollowsLocalAPIKeySetting(t *testing.T) {
 			t.Fatalf("%s status with auth disabled = %d body=%q, want request to reach handler", path, status, body)
 		}
 	}
-	_, plain, err := s.apiKeys.Create("desktop-runtime")
+	_, plain, err := s.apiKeys.Create("desktop-runtime", "")
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestAPIKeyCreateDoesNotExposeHash(t *testing.T) {
 
 func TestAPIUsageAggregatesByKeyAndModel(t *testing.T) {
 	s := newTestServer(t)
-	record, _, err := s.apiKeys.Create("client")
+	record, _, err := s.apiKeys.Create("client", "")
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestAPIUsageRecordsBuiltinClientWithoutAPIKey(t *testing.T) {
 
 func TestAPIUsageBackfillsLegacyMissingSourceFromModelHistory(t *testing.T) {
 	s := newTestServer(t)
-	record, _, err := s.apiKeys.Create("client")
+	record, _, err := s.apiKeys.Create("client", "")
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -565,7 +565,7 @@ func TestAPIUsageResolvesLegacyLocalModelID(t *testing.T) {
 
 func TestAPIUsageSourceTotalsKeepThirdPartyProvidersSeparate(t *testing.T) {
 	s := newTestServer(t)
-	record, _, err := s.apiKeys.Create("client")
+	record, _, err := s.apiKeys.Create("client", "")
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -619,7 +619,7 @@ func TestAPIUsageSourceTotalsKeepThirdPartyProvidersSeparate(t *testing.T) {
 
 func TestAPIUsageFiltersByProvider(t *testing.T) {
 	s := newTestServer(t)
-	record, _, err := s.apiKeys.Create("client")
+	record, _, err := s.apiKeys.Create("client", "")
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -725,7 +725,7 @@ func TestAPIUsageReportsPoolTotalsMemberSplitAndPoolFilter(t *testing.T) {
 
 func TestAPIUsageFiltersByPeriod(t *testing.T) {
 	s := newTestServer(t)
-	record, _, err := s.apiKeys.Create("client")
+	record, _, err := s.apiKeys.Create("client", "")
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
@@ -916,7 +916,7 @@ func TestAPIUsageKeyTotalsAggregatePerKeyAndFollowFilters(t *testing.T) {
 
 func TestAPIKeyIsIdentifiedForUsageWhenAuthIsNotEnforced(t *testing.T) {
 	s := newTestServer(t)
-	record, plain, err := s.apiKeys.Create("reporting")
+	record, plain, err := s.apiKeys.Create("reporting", "")
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}

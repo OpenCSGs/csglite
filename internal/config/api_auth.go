@@ -28,6 +28,9 @@ type APIKeyRecord struct {
 	Hash       string    `json:"hash"`
 	CreatedAt  time.Time `json:"created_at"`
 	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	// OwnerID is the user account that owns the key when accounts are on.
+	// Keys created before accounts have none.
+	OwnerID string `json:"owner_id,omitempty"`
 }
 
 type APIKeyState struct {
@@ -65,7 +68,8 @@ func (s *APIKeyStore) SetAuthEnabled(enabled bool) (APIKeyState, error) {
 	return state, nil
 }
 
-func (s *APIKeyStore) Create(name string) (APIKeyRecord, string, error) {
+// Create adds a key owned by ownerID, which is empty when accounts are off.
+func (s *APIKeyStore) Create(name, ownerID string) (APIKeyRecord, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -94,6 +98,7 @@ func (s *APIKeyStore) Create(name string) (APIKeyRecord, string, error) {
 		Prefix:    keyPrefix(plain),
 		Hash:      hashAPIKey(plain),
 		CreatedAt: now,
+		OwnerID:   strings.TrimSpace(ownerID),
 	}
 	state.Keys = append(state.Keys, record)
 	if err := s.saveLocked(state); err != nil {
@@ -127,6 +132,34 @@ func (s *APIKeyStore) Delete(id string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// DeleteOwnedBy removes every key owned by ownerID and reports how many went.
+func (s *APIKeyStore) DeleteOwnedBy(ownerID string) (int, error) {
+	if strings.TrimSpace(ownerID) == "" {
+		return 0, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, err := s.loadLocked()
+	if err != nil {
+		return 0, err
+	}
+	next := state.Keys[:0]
+	removed := 0
+	for _, key := range state.Keys {
+		if key.OwnerID == ownerID {
+			removed++
+			continue
+		}
+		next = append(next, key)
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	state.Keys = next
+	return removed, s.saveLocked(state)
 }
 
 func (s *APIKeyStore) Validate(plain string) (APIKeyRecord, bool, error) {

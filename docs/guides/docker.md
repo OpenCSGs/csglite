@@ -56,6 +56,25 @@ docker run -d --name csghub-lite \
   opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite:latest
 ```
 
+Require a sign-in and share the instance with a team (no license needed). The first administrator is created at
+start-up while no account exists, so nobody on the network can claim the
+instance first; remove the variables afterwards:
+
+```bash
+docker run -d --name csghub-lite \
+  -p 11435:11435 \
+  -e CSGHUB_LITE_LICENSE_FILE=/run/secrets/csglite.lic \
+  -e CSGHUB_LITE_ADMIN_USERNAME=admin \
+  -e CSGHUB_LITE_ADMIN_PASSWORD_FILE=/run/secrets/csglite_admin \
+  -v ./secrets:/run/secrets:ro \
+  -v csghub-lite-data:/root/.csghub-lite \
+  opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csghub-lite:latest
+```
+
+Without these variables, create the first administrator in the web UI with the
+setup token from `docker exec csghub-lite cat /root/.csghub-lite/team-setup-token`,
+or with `docker exec -it csghub-lite csghub-lite user create admin --role admin`.
+
 Pin both runtime versions:
 
 ```bash

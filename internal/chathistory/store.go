@@ -170,6 +170,7 @@ func (s *Store) filePath(id string) string {
 func conversationMeta(conv api.Conversation) api.ConversationMeta {
 	return api.ConversationMeta{
 		ID:        conv.ID,
+		OwnerID:   conv.OwnerID,
 		Title:     conv.Title,
 		Model:     conv.Model,
 		CreatedAt: conv.CreatedAt,
