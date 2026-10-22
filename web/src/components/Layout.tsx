@@ -127,7 +127,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
                             event.preventDefault();
                             route(item.path);
                           }}
-                          class={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                          class={`flex items-center gap-3 rounded-lg pl-5 pr-3 py-2 text-sm font-medium transition-colors ${
                             active ? "bg-indigo-50 text-indigo-700" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                           }`}
                         >
