@@ -1542,6 +1542,11 @@ function ProvidersSection() {
 												{t("settings.providerBuiltIn")}
 											</span>
 										)}
+										{provider.id === "csghub" && (
+											<a href="/pricing" class="text-xs font-medium text-indigo-600 hover:underline">
+												{t("nav.pricing")}
+											</a>
+										)}
                     </div>
                     <p class="mt-1 truncate text-xs text-gray-500">{provider.base_url}</p>
                     <p class="mt-1 text-[11px] uppercase tracking-wide text-gray-400">{provider.provider || "openai"}</p>

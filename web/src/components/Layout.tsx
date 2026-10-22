@@ -158,8 +158,9 @@ export function Layout({ children }: { children: ComponentChildren }) {
 
 /**
  * The profile menu at the foot of the sidebar. Like OpenRouter's account
- * menu it also holds the pages people rarely visit (settings, pricing,
- * help), so it shows even while accounts are off.
+ * menu it also holds the pages people rarely visit (settings, help), so it
+ * shows even while accounts are off. Pricing is linked from the CSGHub
+ * provider on the gateway page.
  */
 function AccountMenu({ showNavItem }: { showNavItem: (id: string) => boolean }) {
   const session = authSession.value;
@@ -252,16 +253,11 @@ function AccountMenu({ showNavItem }: { showNavItem: (id: string) => boolean }) 
               </button>
             )}
           </div>
-          {(canManage && showNavItem("settings")) || showNavItem("pricing") || showNavItem("help") ? (
+          {(canManage && showNavItem("settings")) || showNavItem("help") ? (
             <div class="border-t border-gray-100 py-1">
               {canManage && showNavItem("settings") && (
                 <button type="button" role="menuitem" class={item} onClick={() => go("/settings")}>
                   {t("nav.settings")}
-                </button>
-              )}
-              {showNavItem("pricing") && (
-                <button type="button" role="menuitem" class={item} onClick={() => go("/pricing")}>
-                  {t("nav.pricing")}
                 </button>
               )}
               {showNavItem("help") && (
