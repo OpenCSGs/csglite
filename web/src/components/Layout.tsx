@@ -188,9 +188,9 @@ function AccountMenu({ showNavItem }: { showNavItem: (id: string) => boolean }) 
   // Without accounts, or on a server that predates them, the operator is
   // the only user.
   const signedIn = !!session?.accounts_enabled && !!session.authenticated && !session.local_operator;
-  const name = signedIn ? userLabel(session?.user) : t("auth.localOperator");
   const role = currentRole(session);
-  const detail = signedIn ? session?.user?.email || session?.user?.username || "" : t("auth.localOperatorHint");
+  const name = signedIn ? userLabel(session?.user) : t(`team.role.${role}`);
+  const detail = signedIn ? session?.user?.email || session?.user?.username || "" : "";
 
   const signOut = async () => {
     try {
@@ -216,10 +216,10 @@ function AccountMenu({ showNavItem }: { showNavItem: (id: string) => boolean }) 
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <Avatar name={name} />
+        <Avatar name={signedIn ? name : ""} />
         <span class="min-w-0 flex-1">
           <span class="block truncate font-medium text-gray-900">{name}</span>
-          <span class="block truncate text-xs text-gray-500">{t(`team.role.${role}`)}</span>
+          {signedIn && <span class="block truncate text-xs text-gray-500">{t(`team.role.${role}`)}</span>}
         </span>
         <svg class="h-4 w-4 flex-shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
@@ -228,12 +228,14 @@ function AccountMenu({ showNavItem }: { showNavItem: (id: string) => boolean }) 
       {open && (
         <div role="menu" class="absolute bottom-full left-0 z-40 mb-1 w-64 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
           <div class="flex items-center gap-3 border-b border-gray-100 px-3 py-3">
-            <Avatar name={name} />
+            <Avatar name={signedIn ? name : ""} />
             <div class="min-w-0">
               <p class="truncate text-sm font-semibold text-gray-900">{name}</p>
-              <p class="truncate text-xs text-gray-500">{detail}</p>
+              {detail && <p class="truncate text-xs text-gray-500">{detail}</p>}
             </div>
-            <span class="ml-auto rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">{t(`team.role.${role}`)}</span>
+            {signedIn && (
+              <span class="ml-auto rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">{t(`team.role.${role}`)}</span>
+            )}
           </div>
           <div class="py-1">
             <button type="button" role="menuitem" class={item} onClick={() => go(canManage ? "/ai-gateway" : "/account/keys")}>
@@ -309,10 +311,18 @@ function AccountMenu({ showNavItem }: { showNavItem: (id: string) => boolean }) 
   );
 }
 
+// Without a name (no one is signed in) the avatar shows a generic person.
 function Avatar({ name }: { name: string }) {
   return (
     <span class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
-      {(name || "?").slice(0, 1).toUpperCase()}
+      {name ? (
+        name.slice(0, 1).toUpperCase()
+      ) : (
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <circle cx="12" cy="8" r="4" />
+          <path stroke-linecap="round" d="M4 21a8 8 0 0116 0" />
+        </svg>
+      )}
     </span>
   );
 }
