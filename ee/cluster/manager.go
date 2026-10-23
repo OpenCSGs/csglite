@@ -208,6 +208,9 @@ func New(opts Options) (*Manager, error) {
 	// machine had a model split onto it, leaving its tensor worker holding
 	// memory for a model nothing remembers.
 	m.worker.stopOrphan()
+	// The cache may have sat unused for weeks while this node was off or out
+	// of a cluster, when the watch loop that ages it does not run.
+	m.worker.pruneIdleCache(time.Now())
 	return m, nil
 }
 

@@ -416,6 +416,19 @@ func (m *Manager) startLocalRPCWorker(ctx context.Context, holder string) (int, 
 	if err != nil {
 		return 0, err
 	}
+	// The worker is about to write this machine's share of a model to disk.
+	// If the disk is already below the cluster's reserve, the cache of
+	// whatever was split here before is the first thing to give up.
+	if m.worker.running() == 0 {
+		if disk := m.cachedLocalStatus(ctx).Disk; disk.Total > 0 {
+			reserve := uint64(m.store.Settings().DiskReserveGB) << 30
+			if disk.Free < reserve {
+				if m.worker.clearCacheForDisk(disk.Free, reserve) > 0 {
+					m.invalidateLocalStatus()
+				}
+			}
+		}
+	}
 	return m.worker.start(m.context(), binary, holder)
 }
 
@@ -454,9 +467,9 @@ func (m *Manager) releaseLocalRPCWorker(holder string) {
 // difference between one clear log line and a queue of requests timing out.
 const spanWatchInterval = 20 * time.Second
 
-// spanWatchLoop does two jobs that both belong to spanning and both only
-// matter between requests: it stops a worker nobody is using any more, and it
-// tears down a span whose machine has gone.
+// spanWatchLoop does the jobs that belong to spanning and only matter between
+// requests: it stops a worker nobody is using any more, drops a tensor cache
+// nobody has used for a week, and tears down a span whose machine has gone.
 //
 // A span cannot survive losing a member: the weights exist once, spread across
 // the machines, so a member that disappears takes its layers with it and every
@@ -480,6 +493,7 @@ func (m *Manager) spanWatchLoop() {
 				m.logf("cluster: nothing has been served for %s on behalf of %s, so this node is no longer holding memory for it",
 					rpcWorkerHoldGrace, m.memberName(holder))
 			}
+			m.worker.pruneIdleCacheDue(time.Now())
 		}
 		for _, lost := range m.lostSpans() {
 			m.logf("cluster: %s was split across machines and %s %s; unloading it, as a split model has no redundancy",

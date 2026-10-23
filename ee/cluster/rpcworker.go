@@ -72,6 +72,8 @@ type rpcWorker struct {
 	// that is switched off never withdraws it.
 	conns    int
 	lastConn time.Time
+	// lastPrune is when the cache was last looked at for having gone unused.
+	lastPrune time.Time
 }
 
 func newRPCWorker(cacheDir, pidFile string, logf func(string, ...any)) *rpcWorker {
@@ -183,6 +185,7 @@ func (w *rpcWorker) start(ctx context.Context, binary, holder string) (int, erro
 		defer w.mu.Unlock()
 		if w.cmd == cmd {
 			w.logf("cluster: the RPC worker exited: %s", tail.String())
+			w.touchCacheStamp(time.Now())
 			w.cmd = nil
 			w.port = 0
 			w.holders = map[string]int{}
@@ -208,6 +211,7 @@ func (w *rpcWorker) start(ctx context.Context, binary, holder string) (int, erro
 			w.port = port
 			w.hold(holder)
 			w.recordPID(cmd.Process.Pid, binary)
+			w.touchCacheStamp(time.Now())
 			w.logf("cluster: RPC worker listening on 127.0.0.1:%d, reachable only through the cluster channel", port)
 			return port, nil
 		}
@@ -386,6 +390,9 @@ func (w *rpcWorker) stopLocked() {
 	if w.cmd.Process != nil {
 		_ = w.cmd.Process.Kill()
 	}
+	// The worker was in use until now, so the cache's idle time starts here
+	// rather than when it last wrote a file.
+	w.touchCacheStamp(time.Now())
 	w.cmd = nil
 	w.port = 0
 	w.holders = map[string]int{}
