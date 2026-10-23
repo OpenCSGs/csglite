@@ -87,8 +87,8 @@ func (w *rpcWorker) pruneIdleCache(now time.Time) int64 {
 	if size == 0 || now.Sub(lastUsed) < rpcCacheIdleTTL {
 		return 0
 	}
-	idle := now.Sub(lastUsed).Truncate(time.Hour)
-	return w.clearCacheLocked(size, fmt.Sprintf("nothing has been split onto this node for %s", idle))
+	days := int(now.Sub(lastUsed) / (24 * time.Hour))
+	return w.clearCacheLocked(size, fmt.Sprintf("nothing has been split onto this node for %d days", days))
 }
 
 // pruneIdleCacheDue is pruneIdleCache at most once per rpcCachePruneEvery.
