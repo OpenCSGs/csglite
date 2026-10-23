@@ -39,7 +39,9 @@ func (m *Manager) pollMember(ctx context.Context, mem Member) {
 	if err != nil {
 		m.dir.MarkFailure(mem.UUID, err)
 		after, _ := m.dir.Get(mem.UUID)
-		if before.Health != after.Health {
+		// BeginPoll flips a down member to probing before this poll, so a
+		// failed retry would otherwise log "down" again every backoff cycle.
+		if settledHealth(before.Health) != after.Health {
 			m.logf("cluster: node %s (%s) is %s: %v", shortUUID(mem.UUID), mem.Name, after.Health, err)
 		}
 		return
@@ -52,6 +54,15 @@ func (m *Manager) pollMember(ctx context.Context, mem Member) {
 	if before.Health != HealthHealthy {
 		m.logf("cluster: node %s (%s) is online at %s", shortUUID(mem.UUID), st.Name, addr)
 	}
+}
+
+// settledHealth maps the transient probing state back to down, the health
+// a member had before the poll that is still in flight.
+func settledHealth(h Health) Health {
+	if h == HealthProbing {
+		return HealthDown
+	}
+	return h
 }
 
 // discoveredRefreshLoop re-reads every unpaired node it knows about. mDNS

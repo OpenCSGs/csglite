@@ -96,7 +96,7 @@ irm https://hub.opencsg.com/csghub-lite/install.ps1 | iex
 
 ```text
 Select an inference engine to install:
-  1) llama.cpp   llama-server b10830 for GGUF / SafeTensors text, embedding and vision models (recommended)
+  1) llama.cpp   llama-server b11541 for GGUF / SafeTensors text, embedding and vision models (recommended)
                  detected accelerator: CUDA 12.x
   2) none        skip for now; remote and cloud models still work, install later with
                  `csghub-lite engine install llama.cpp`
@@ -242,7 +242,7 @@ type Status struct {
     DisplayName     string `json:"display_name"`
     Installed       bool   `json:"installed"`
     Path            string `json:"path,omitempty"`
-    Version         string `json:"version,omitempty"`         // 本机版本，如 b10830
+    Version         string `json:"version,omitempty"`         // 本机版本，如 b11541
     PinnedVersion   string `json:"pinned_version,omitempty"`  // 本二进制锁定的版本
     UpToDate        bool   `json:"up_to_date"`
     Managed         bool   `json:"managed"`                   // 是否由 csghub-lite 安装
@@ -277,7 +277,7 @@ type Status struct {
 ~/.csghub-lite/engines/<id>/manifest.json
 {
   "id": "llama.cpp",
-  "version": "b10830",
+  "version": "b11541",
   "accelerator": "cuda",
   "install_dir": "/usr/local/bin",
   "files": ["/usr/local/bin/llama-server", "/usr/local/bin/libggml-cuda.so", ...],
@@ -301,7 +301,7 @@ type Status struct {
 |---|---|
 | `inference.loadEngineWithProgressMode` | 通过 `Registry.ForRuntime(support.Runtime)` 取 Provider；`Detect` 未安装时返回 `ErrEngineNotInstalled{Engine, Hint}`，替代现在 `llama.go` 里手写的多行错误 |
 | `server` | 新增 `GET /api/engines`；错误中间层把 `ErrEngineNotInstalled` 映射为 3.4 节的 JSON（HTTP 503） |
-| `cli` | 新增 `engine` 子命令；`run` / `chat` 捕获该错误打印 hint；`uninstall` 改为遍历 Registry 并只删 Managed 文件；`upgrade` 完成后对每个 Managed 引擎调用 `Install`，保持“升级 csghub-lite 顺带把引擎对齐到新锁定版本”的现有体验 |
+| `cli` | 新增 `engine` 子命令；`run` / `chat` 捕获该错误打印 hint；`uninstall` 改为遍历 Registry 并只删 Managed 文件；`serve` 启动时对每个 Managed 引擎调用 `Install`，让“升级 csghub-lite 顺带把引擎对齐到新锁定版本”成立（对齐不能放在 `upgrade` 流程里，原因见第 8 节） |
 | `config` | 只新增 `inference.engine`（首选引擎 ID，空表示自动），用于将来一个 Runtime 有多个引擎可选时做默认选择；**不**把“已安装”状态写进 `config.json`，那是磁盘事实，由 `Detect` 得出 |
 | Web `Settings.tsx` / Dashboard | 引擎卡片、横幅、结构化错误引导；文案进 i18n |
 | `openapi/local-api.json` | 新增 `/api/engines` 与 `EngineStatus`；跑 `go test ./internal/server` |
@@ -344,6 +344,12 @@ engine_llama_cpp_install() {
 ```
 
 安装脚本不再维护资产选择逻辑，Windows 的 `install.ps1` 也同步收敛。
+
+内部调用还有一条约定：csghub-lite 用 `--engine-only` 在后台运行脚本时会同时设置
+`CSGHUB_LITE_NONINTERACTIVE=1`，此时脚本不得用 sudo 提权——sudo 会在 `/dev/tty`
+上等密码，把后台任务一直挂住——需要 root 的步骤（装 patchelf、NVIDIA CUDA 运行库）
+跳过并写进日志。`install.ps1` 没有提权路径，引擎-only 分支在 `Check-Existing`
+（唯一会 `Read-Host` 的地方）之前 `exit`，因此不需要对应开关。
 
 ## 7. 新增一个引擎需要做什么
 
@@ -388,11 +394,10 @@ engine_llama_cpp_install() {
   `InstallHint` / `Remove`；`ErrEngineNotInstalled`；`GET /api/engines`；
   `csghub-lite engine list|show|remove`；`uninstall` 改为按 manifest 删除。
 - `csghub-lite engine install llama.cpp` 在本阶段的实现是**下载并执行官方安装
-  脚本**，附带 `CSGHUB_LITE_INFERENCE_ENGINE=llama.cpp
-  CSGHUB_LITE_INSTALL_COMPONENTS=engine`。后者是新增变量，取值 `binary,engine`
-  （默认）或 `engine`，令脚本跳过 csghub-lite 二进制的下载与替换。Windows 走
-  `install.ps1` 的同名参数。这样 CLI 命令从第一阶段起就存在且行为稳定，第二阶段
-  只替换实现。
+  脚本**，附带 `CSGHUB_LITE_INFERENCE_ENGINE=llama.cpp` 与 `--engine-only`
+  （Windows 为 `-EngineOnly`）。后者是脚本的内部开关，令脚本跳过 csghub-lite
+  二进制的下载与替换，只处理引擎；它不面向用户，`curl | sh` 始终同时安装两者。
+  这样 CLI 命令从第一阶段起就存在且行为稳定，第二阶段只替换实现。
 - Web：Settings 引擎卡片（只读状态 + 命令提示）、Dashboard 横幅、结构化错误引导。
 - Docker、Homebrew、README、安装文档、环境变量文档更新。
 
@@ -405,7 +410,9 @@ engine_llama_cpp_install() {
 - 安装脚本第 6 步改为调用 `csghub-lite engine install`，删除
   `LLAMA_CPP_DEFAULT_TAG` 与其锁步测试项，`PinnedVersion` 单一来源为
   `llama-cpp-assets`。
-- `csghub-lite upgrade` 结束后升级 Managed 引擎。
+- `csghub-lite upgrade` 结束后升级 Managed 引擎。注意 `upgrade` 是由**旧**二进制
+  执行的，它手里的锁定 tag 也是旧的，用它对齐会把运行时降级；所以对齐要由替换
+  后的新二进制在启动时完成，而不是在 `upgrade` 流程内部。
 
 ### 第三阶段：第二个引擎
 
@@ -436,7 +443,7 @@ engine_llama_cpp_install() {
   行为、`run` 打印 hint。
 - 安装脚本：新增 `scripts/test-install.sh`，用 `CSGHUB_LITE_INSTALL_DRY_RUN=1`
   让脚本只打印将执行的下载与安装动作，覆盖 `none`、`llama.cpp`、旧变量、
-  无 TTY 默认值、`CSGHUB_LITE_INSTALL_COMPONENTS=engine` 五种情形；CI 在 macOS 和
+  无 TTY 默认值、`--engine-only` 五种情形；CI 在 macOS 和
   Ubuntu runner 上运行，`install.ps1` 在 Windows runner 上用 `-WhatIf` 风格参数做
   同样检查。
 - 手工验收清单：

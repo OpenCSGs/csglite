@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +66,6 @@ func (e *scriptedChatEngine) Close() error {
 func (e *scriptedChatEngine) ModelName() string { return "scripted" }
 
 func TestMain(m *testing.M) {
-	providerPoolJudgeRetryBackoff = 0
 	_ = os.Setenv(config.DisableFileLoggingEnv, "1")
 	if home, err := os.MkdirTemp("", "csghub-lite-server-test-home-*"); err == nil {
 		_ = os.Setenv("HOME", home)
@@ -105,6 +105,15 @@ func newTestServerWithConfig(t *testing.T, cfg *config.Config) *Server {
 	s := New(cfg, "test")
 	t.Cleanup(s.shutdownRuntime)
 	return s
+}
+
+// useIsolatedStorageHome points the storage root at a per-test directory so
+// persisted state such as API usage does not leak between tests.
+func useIsolatedStorageHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 }
 
 func TestDisplayServerAddr(t *testing.T) {
@@ -1174,6 +1183,87 @@ func TestHandleDelete(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+// Two models sharing a short name must list under distinct IDs, and deleting a
+// row must remove that row's model rather than whichever owns the short name.
+func TestHandleDeleteRemovesTheListedModelWhenNamesCollide(t *testing.T) {
+	s := newTestServer(t)
+	older := &model.LocalModel{Namespace: "Qwen", Name: "Same-Model", Format: model.FormatGGUF, Size: 1, Files: []string{"model.gguf"}, DownloadedAt: time.Now().Add(-time.Hour)}
+	newer := &model.LocalModel{Namespace: "someone", Name: "Same-Model", Format: model.FormatGGUF, Size: 1, Files: []string{"model.gguf"}, DownloadedAt: time.Now()}
+	for _, lm := range []*model.LocalModel{older, newer} {
+		if err := model.SaveManifest(s.cfg.ModelDir, lm); err != nil {
+			t.Fatalf("SaveManifest: %v", err)
+		}
+	}
+
+	infos, err := s.listLocalModelInfos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]api.ModelInfo{}
+	names := map[string]bool{}
+	for _, info := range infos {
+		byID[info.ID] = info
+		if names[info.Name] {
+			t.Fatalf("duplicate listed name %q in %#v", info.Name, infos)
+		}
+		names[info.Name] = true
+	}
+	newerInfo, ok := byID["someone/Same-Model"]
+	if !ok {
+		t.Fatalf("listing has no id for someone/Same-Model: %#v", infos)
+	}
+
+	body := `{"model":` + strconv.Quote(newerInfo.Name) + `,"id":` + strconv.Quote(newerInfo.ID) + `}`
+	req := httptest.NewRequest(http.MethodDelete, "/api/delete", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleDelete(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if s.manager.Exists("someone/Same-Model") {
+		t.Fatal("the clicked model someone/Same-Model still exists")
+	}
+	if !s.manager.Exists("Qwen/Same-Model") {
+		t.Fatal("deleting someone/Same-Model removed Qwen/Same-Model instead")
+	}
+}
+
+// Older clients send only the listed name; it must still resolve to the row's
+// own model now that colliding names are listed with a suffix.
+func TestHandleDeleteByListedSuffixedName(t *testing.T) {
+	s := newTestServer(t)
+	older := &model.LocalModel{Namespace: "Qwen", Name: "Same-Model", Format: model.FormatGGUF, Size: 1, Files: []string{"model.gguf"}, DownloadedAt: time.Now().Add(-time.Hour)}
+	newer := &model.LocalModel{Namespace: "someone", Name: "Same-Model", Format: model.FormatGGUF, Size: 1, Files: []string{"model.gguf"}, DownloadedAt: time.Now()}
+	for _, lm := range []*model.LocalModel{older, newer} {
+		if err := model.SaveManifest(s.cfg.ModelDir, lm); err != nil {
+			t.Fatalf("SaveManifest: %v", err)
+		}
+	}
+	infos, err := s.listLocalModelInfos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listedName string
+	for _, info := range infos {
+		if info.ID == "someone/Same-Model" {
+			listedName = info.Name
+		}
+	}
+	if listedName == "" || listedName == "Same-Model" {
+		t.Fatalf("newer model listed as %q, want a suffixed public ID", listedName)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/delete", strings.NewReader(`{"model":`+strconv.Quote(listedName)+`}`))
+	w := httptest.NewRecorder()
+	s.handleDelete(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if s.manager.Exists("someone/Same-Model") || !s.manager.Exists("Qwen/Same-Model") {
+		t.Fatal("delete by listed name removed the wrong model")
 	}
 }
 

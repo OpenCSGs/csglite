@@ -169,6 +169,18 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Inference.LlamaNumParallel = numParallel
 		configUpdated = true
 	}
+	if req.ContextCompression != nil {
+		if !config.IsContextCompressionMode(*req.ContextCompression) {
+			writeError(w, http.StatusBadRequest, `context_compression must be "off", "safe" or "aggressive"`)
+			return
+		}
+		mode := config.NormalizeContextCompression(*req.ContextCompression)
+		if mode == config.ContextCompressionOff {
+			mode = "" // off is the default, so it is not written out
+		}
+		s.cfg.Inference.ContextCompression = mode
+		configUpdated = true
+	}
 	if req.ServerURL != nil {
 		serverURL := strings.TrimSpace(*req.ServerURL)
 		if serverURL == "" {
@@ -272,10 +284,6 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		if err := s.reopenModelMetadata(s.cfg.StorageDir()); err != nil {
 			log.Printf("MODEL METADATA: cache unavailable after storage update: %v", err)
 		}
-		if err := s.reopenRouterProfiles(s.cfg.StorageDir()); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to open router profile storage: "+err.Error())
-			return
-		}
 	} else if observabilityUpdated {
 		s.cleanupObservability()
 	}
@@ -322,6 +330,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 	}
 	return api.SettingsResponse{
 		Version:                  version,
+		LlamaServerVersion:       inference.LlamaServerVersion(),
 		StorageDir:               cfg.StorageDir(),
 		ModelDir:                 cfg.ModelDir,
 		DatasetDir:               cfg.DatasetDir,
@@ -346,6 +355,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		},
 		LlamaUseModelMaxCtx: inference.UseModelMaxCtxByDefault(cfg.Inference.LlamaUseModelMaxCtx),
 		LlamaNumParallel:    inference.ResolveNumParallel(cfg.Inference.LlamaNumParallel),
+		ContextCompression:  config.NormalizeContextCompression(cfg.Inference.ContextCompression),
 		HiddenNavItems:      append([]string{}, cfg.HiddenNavItems...),
 	}
 }

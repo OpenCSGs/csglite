@@ -3,6 +3,7 @@ export type ApiExampleMode =
   | "vision"
   | "embedding"
   | "asr"
+  | "decision"
   | "text-to-image"
   | "image-to-image";
 
@@ -67,6 +68,76 @@ const response = await fetch("${baseUrl}/v1/audio/transcriptions", {
 
 const data = await response.json();
 console.log(data.text);`,
+      };
+    case "decision":
+      return {
+        curl: `curl ${baseUrl}/v1/decisions \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${model}",
+    "input": "I was charged twice for my order.",
+    "questions": [{
+      "type": "choice",
+      "name": "department",
+      "instructions": "Which department should handle this complaint?",
+      "choices": [
+        {"value": "billing", "description": "Payments, invoices, and refunds."},
+        {"value": "technical", "description": "Problems using the product."},
+        {"value": "shipping", "description": "Delivery and tracking."},
+        {"value": "other", "description": "Requests outside these categories."}
+      ]
+    }]
+  }'`,
+        python: `from openai import OpenAI
+
+client = OpenAI(
+    base_url="${baseUrl}/v1",
+    api_key="unused"
+)
+
+decision = client.decisions.create(
+    model="${model}",
+    input="I was charged twice for my order.",
+    questions=[
+        {
+            "type": "choice",
+            "name": "department",
+            "instructions": "Which department should handle this complaint?",
+            "choices": [
+                {"value": "billing", "description": "Payments, invoices, and refunds."},
+                {"value": "technical", "description": "Problems using the product."},
+                {"value": "shipping", "description": "Delivery and tracking."},
+                {"value": "other", "description": "Requests outside these categories."},
+            ],
+        }
+    ],
+)
+
+answer = decision.answers[0]
+print(f"Department: {answer.choice} (confidence: {answer.confidence})")`,
+        javascript: `import OpenAI from "openai";
+
+const client = new OpenAI({ baseURL: "${baseUrl}/v1", apiKey: "unused" });
+const decision = await client.decisions.create({
+  model: "${model}",
+  input: "I was charged twice for my order.",
+  questions: [
+    {
+      type: "choice",
+      name: "department",
+      instructions: "Which department should handle this complaint?",
+      choices: [
+        { value: "billing", description: "Payments, invoices, and refunds." },
+        { value: "technical", description: "Problems using the product." },
+        { value: "shipping", description: "Delivery and tracking." },
+        { value: "other", description: "Requests outside these categories." },
+      ],
+    },
+  ],
+});
+
+const answer = decision.answers[0];
+console.log(\`Department: \${answer.choice} (confidence: \${answer.confidence})\`);`,
       };
     case "embedding":
       return {

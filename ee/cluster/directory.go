@@ -154,6 +154,20 @@ func (d *Directory) Reset() {
 	d.cooldowns = map[string]time.Time{}
 }
 
+// ForgetAddress drops an endpoint that no longer reaches a member.
+func (d *Directory) ForgetAddress(nodeUUID, addr string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n, ok := d.nodes[nodeUUID]
+	if !ok {
+		return
+	}
+	delete(n.Observed, addr)
+	if n.Addr == addr {
+		n.Addr = d.bestAddrLocked(n)
+	}
+}
+
 // LearnAddress records an endpoint for a member from discovery or gossip. A
 // fresh address becomes the preferred one immediately, so an IP change is
 // picked up on the very next poll.

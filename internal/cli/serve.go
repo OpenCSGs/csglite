@@ -5,13 +5,20 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/server"
+	"github.com/opencsgs/csglite/internal/upgrade"
 	"github.com/spf13/cobra"
 )
+
+// alignmentShutdownGrace bounds how long stopping serve waits for the llama.cpp
+// runtime alignment to unwind. Cancelling the alignment kills its installer, so
+// this is a safety net rather than the normal path.
+const alignmentShutdownGrace = 10 * time.Second
 
 func newServeCmd(version string) *cobra.Command {
 	var listenAddr string
@@ -55,11 +62,39 @@ func newServeCmd(version string) *cobra.Command {
 			if cmd.Flags().Changed("openai-stream-default") {
 				cfg.OpenAIStreamDefault = openAIStreamDefault
 			}
+			stopAlignment := func() {}
 			if !desktopMode {
 				if err := writePIDFile(os.Getpid()); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: could not write PID file: %v\n", err)
 				}
 				defer func() { _ = removePIDFile() }()
+
+				// Keep the llama.cpp runtime in lockstep with this build.
+				// Upgrading only replaces the csghub-lite binary, so a runtime
+				// installed by an older release keeps its old build and cannot
+				// load newer architectures (the Laya decision model, for one).
+				// Best-effort and off the request path: it logs and the next
+				// start retries instead of failing start-up. Desktop mode skips
+				// it: the app bundles its runtime under Contents/Resources,
+				// signs it, and replaces both together on update.
+				alignContext, cancelAlign := context.WithCancel(context.Background())
+				aligned := make(chan struct{})
+				go func() {
+					defer close(aligned)
+					if err := upgrade.AlignLlamaRuntime(alignContext, cfg.TempDir()); err != nil {
+						log.Printf("LLAMA: runtime alignment failed: %v", err)
+					}
+				}()
+				// Stopping serve cancels the alignment and waits for it to
+				// unwind, so no installer and no temporary directory outlive the
+				// server. Cancelling kills the installer, so the wait is short.
+				stopAlignment = func() {
+					cancelAlign()
+					select {
+					case <-aligned:
+					case <-time.After(alignmentShutdownGrace):
+					}
+				}
 			}
 			srv := server.New(cfg, version)
 			runContext := cmd.Context()
@@ -69,7 +104,9 @@ func newServeCmd(version string) *cobra.Command {
 				defer cancel()
 				go cancelWhenParentExits(runContext, desktopParentPID, cancel)
 			}
-			return srv.Run(runContext)
+			err = srv.Run(runContext)
+			stopAlignment()
+			return err
 		},
 	}
 

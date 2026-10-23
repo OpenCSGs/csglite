@@ -9,10 +9,17 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
+
+// errSelfAddress means a member's endpoint answered with this node's own
+// certificate: the member moved and this node now holds its old address.
+var errSelfAddress = errors.New("address now belongs to this node")
 
 // pinCheck answers whether a certificate fingerprint is pinned for a UUID.
 type pinCheck func(nodeUUID, fingerprint string) bool
@@ -62,7 +69,11 @@ func clientTLSConfig(id *Identity, wantUUID, wantFingerprint string) *tls.Config
 			if wantFingerprint == "" {
 				return nil
 			}
-			if got := CertFingerprint(leaf); got != wantFingerprint {
+			got := CertFingerprint(leaf)
+			if got == id.Fingerprint() && got != wantFingerprint {
+				return errSelfAddress
+			}
+			if got != wantFingerprint {
 				return fmt.Errorf("peer certificate %s is not the pinned certificate for %s", got, wantUUID)
 			}
 			if wantUUID != "" && uuidFromCert(leaf) != wantUUID {
@@ -103,8 +114,22 @@ func listenPeer(addr string, id *Identity, handler http.Handler) (net.Listener, 
 		TLSConfig:         serverTLSConfig(id),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		ErrorLog:          log.New(handshakeErrorFilter{w: log.Writer()}, "", log.LstdFlags),
 	}
 	return ln, srv, nil
+}
+
+// handshakeErrorFilter drops net/http's per-connection "TLS handshake error"
+// lines. On the peer port they are routine (a member polling with a stale
+// pin, a port scanner) and repeat on every retry; the dialing side already
+// logs the failure with the reason.
+type handshakeErrorFilter struct{ w io.Writer }
+
+func (f handshakeErrorFilter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "http: TLS handshake error") {
+		return len(p), nil
+	}
+	return f.w.Write(p)
 }
 
 // serveTLS runs the peer listener until ctx ends.

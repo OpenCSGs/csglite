@@ -1,5 +1,8 @@
+# csghub-lite runs this script with -EngineOnly at start-up to align llama-server
+# after replacing its own binary: only the engine needs to be installed then.
 Param(
-    [string]$InstallDir = "$HOME\bin"
+    [string]$InstallDir = "$HOME\bin",
+    [switch]$EngineOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -7,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $Repo = "OpenCSGs/csglite"
 $BinaryName = "csghub-lite.exe"
 $LlamaCppRepo = "ggml-org/llama.cpp"
-$LlamaCppDefaultTag = if ($env:CSGHUB_LITE_LLAMA_CPP_TAG) { $env:CSGHUB_LITE_LLAMA_CPP_TAG } else { "b10830" }
+$LlamaCppDefaultTag = if ($env:CSGHUB_LITE_LLAMA_CPP_TAG) { $env:CSGHUB_LITE_LLAMA_CPP_TAG } else { "b11541" }
 
 $GitHubApi = "https://api.github.com/repos"
 $GitLabHost = "https://git-devops.opencsg.com"
@@ -221,7 +224,10 @@ function Install-LlamaServer {
     }
 
     # Compare local and remote versions to skip unnecessary downloads.
-    # llama-server --version prints "version: <n> (<hash>)". Release tags: "b<n>".
+    # b11541 and later print "version: <semver>-dev (build <n>, commit <hash>)";
+    # older releases print "version: <n> (<hash>)". Both carry the build id in the
+    # parenthesised group, so only read it from there: a bare "version: <semver>"
+    # line has no build id and must not leak a version digit.
     # Upstream <n> is often git rev-list --count; shallow clones get small n — do not treat as official b-id.
     if ($existingLlama) {
         $localBuild = $null
@@ -233,16 +239,11 @@ function Install-LlamaServer {
                 $env:Path = "$llamaBinDir;$env:Path"
             }
             $verLines = @(& $existingLlama.Source --version 2>&1 | ForEach-Object { $_.ToString() })
-            $verFooter = $verLines | Where-Object { $_ -match '^\s*version:\s+\d+\s+\(' } | Select-Object -Last 1
-            if ($verFooter -match 'version:\s+(\d+)\s+\(') {
+            $verFooter = $verLines | Where-Object { $_ -match '^\s*version:\s+' } | Select-Object -Last 1
+            if ($verFooter -match '\(build\s+(\d+)') {
                 $localBuild = $Matches[1]
-            } elseif ($verLines) {
-                foreach ($line in ($verLines | Select-Object -Last 20)) {
-                    if ($line -match 'version:\s+(\d+)') {
-                        $localBuild = $Matches[1]
-                        break
-                    }
-                }
+            } elseif ($verFooter -match '^\s*version:\s+(\d+)\s+\(') {
+                $localBuild = $Matches[1]
             }
         } catch {
         } finally {
@@ -377,6 +378,22 @@ function Install-LlamaServer {
     Info "Installed llama-server to $llamaInstallDir"
 }
 
+# Get-CsghubLiteCliProcesses returns running csghub-lite processes, leaving out
+# desktop sidecars ("serve --desktop"). The CSGLite desktop app owns and
+# respawns its own csghub-lite backend, so the installer must neither treat it
+# as the CLI service nor kill it.
+function Get-CsghubLiteCliProcesses {
+    $procs = @(Get-Process -Name "csghub-lite" -ErrorAction SilentlyContinue)
+    if ($procs.Count -eq 0) { return @() }
+    $desktopIds = @()
+    try {
+        $desktopIds = @(Get-CimInstance Win32_Process -Filter "Name = 'csghub-lite.exe'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -match '(^|\s)--desktop(\s|=|$)' } |
+            ForEach-Object { $_.ProcessId })
+    } catch {}
+    return @($procs | Where-Object { $desktopIds -notcontains $_.Id })
+}
+
 function Check-Existing {
     $existing = Get-Command "csghub-lite.exe" -ErrorAction SilentlyContinue
     if (-not $existing) {
@@ -395,9 +412,9 @@ function Check-Existing {
     Write-Host "  Binary:  $($existing.Source)"
     Write-Host "  Version: $oldVersion"
 
-    $procs = Get-Process -Name "csghub-lite" -ErrorAction SilentlyContinue
+    $procs = @(Get-CsghubLiteCliProcesses)
     $hasRunning = $false
-    if ($procs) {
+    if ($procs.Count -gt 0) {
         $hasRunning = $true
         $script:WasServerRunning = $true
         Warn "Running csghub-lite process(es) detected."
@@ -541,6 +558,14 @@ $script:Region = Detect-Region
 $script:ServerStartStatus = "failed"
 $script:WasServerRunning = $false
 Info "Detected region: $script:Region"
+
+if ($EngineOnly) {
+    # Engine-only run: csghub-lite itself is already installed and is being
+    # replaced by the caller, so only align the inference engine.
+    Info "Aligning inference engine..."
+    Install-LlamaServer
+    exit 0
+}
 
 Info "Checking for existing installation..."
 Check-Existing

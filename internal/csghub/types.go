@@ -147,16 +147,26 @@ type FileCommit struct {
 
 // ModelListParams holds parameters for listing models.
 type ModelListParams struct {
-	Search         string
-	Sort           string
-	Page           int
-	PerPage        int
-	Source         string
-	Framework      string
-	TagCategory    string
-	TagName        string
+	Search      string
+	Sort        string
+	Page        int
+	PerPage     int
+	Source      string
+	Framework   string
+	TagCategory string
+	TagName     string
+	// Tags adds further tag filters after TagCategory/TagName. CSGHub accepts
+	// repeated tag_category/tag_name pairs and returns only models carrying
+	// every listed tag, so a task and a framework can be filtered together.
+	Tags           []TagFilter
 	ModelParamsMin string
 	ModelParamsMax string
+}
+
+// TagFilter is one tag_category/tag_name pair of a model list query.
+type TagFilter struct {
+	Category string
+	Name     string
 }
 
 // Dataset represents a dataset returned by the CSGHub API.

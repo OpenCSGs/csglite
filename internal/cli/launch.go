@@ -48,7 +48,7 @@ func newLaunchCmd() *cobra.Command {
 		Use:     "launch APP [-- APP_ARGS...]",
 		Aliases: []string{"lanuch"},
 		Short:   "Launch an AI app CLI, installing it first if needed",
-		Long: `Launch an AI app command-line tool managed by CSGHub Lite.
+		Long: `Launch an AI app command-line tool managed by CSGLite.
 
 If the selected app is not installed yet, the CLI will prompt to install it
 first using the same AI Apps installer backend as the web UI.

@@ -10,6 +10,8 @@ export function ApiInfoDialog({
   isVision,
   isEmbedding,
   isASR,
+  isDecision,
+  isDecisionOnly,
   onClose,
 }: {
   model: string;
@@ -18,6 +20,10 @@ export function ApiInfoDialog({
   isVision?: boolean;
   isEmbedding?: boolean;
   isASR?: boolean;
+  /** Typed-decision (JEV) model: show /v1/decide examples before the chat ones. */
+  isDecision?: boolean;
+  /** Native decision model that cannot chat: show the decision examples only. */
+  isDecisionOnly?: boolean;
   onClose: () => void;
 }) {
   const runtimeBaseUrl = useRuntimeAPIOrigin();
@@ -28,6 +34,11 @@ export function ApiInfoDialog({
       ? "embedding"
       : apiExampleModeFromPipelineTag(pipelineTag, isVision);
   const examples = buildApiExamples(resolvedBaseUrl, model, mode);
+  const decisionExamples = isDecision ? buildApiExamples(resolvedBaseUrl, model, "decision") : null;
+  // A decision-only model cannot chat. The chat heading only separates the
+  // two sections, so it shows when decision examples come first.
+  const showChatExamples = !(decisionExamples && isDecisionOnly);
+  const showChatHeading = Boolean(decisionExamples) && showChatExamples;
   const isTextToImage = mode === "text-to-image";
   const isImageToImage = mode === "image-to-image";
 
@@ -44,6 +55,7 @@ export function ApiInfoDialog({
               {t("dash.apiModel")}: <span class="font-mono text-indigo-600">{model}</span>
               {isVision && <span class="ml-2 px-1.5 py-0.5 text-xs bg-purple-50 text-purple-700 rounded">{t("dash.apiVision")}</span>}
               {isEmbedding && <span class="ml-2 px-1.5 py-0.5 text-xs bg-emerald-50 text-emerald-700 rounded">{t("dash.apiEmbedding")}</span>}
+              {isDecision && <span class="ml-2 px-1.5 py-0.5 text-xs bg-amber-50 text-amber-700 rounded">{t("dash.apiDecision")}</span>}
               {isASR && <span class="ml-2 px-1.5 py-0.5 text-xs bg-cyan-50 text-cyan-700 rounded">{t("dash.apiASR")}</span>}
               {isTextToImage && <span class="ml-2 px-1.5 py-0.5 text-xs bg-fuchsia-50 text-fuchsia-700 rounded">{t("dash.apiTextToImage")}</span>}
               {isImageToImage && <span class="ml-2 px-1.5 py-0.5 text-xs bg-orange-50 text-orange-700 rounded">{t("dash.apiImageToImage")}</span>}
@@ -51,9 +63,24 @@ export function ApiInfoDialog({
           </div>
         </div>
         <div class="flex-1 overflow-auto px-6 py-4 space-y-5">
-          <CodeBlock title={t("dash.apiCurl")} code={examples.curl} />
-          <CodeBlock title={t("dash.apiPython")} code={examples.python} />
-          <CodeBlock title={t("dash.apiJs")} code={examples.javascript} />
+          {decisionExamples && (
+            <>
+              <h4 class="text-sm font-semibold text-gray-900">{t("dash.apiDecisionSection")}</h4>
+              <CodeBlock title={t("dash.apiCurl")} code={decisionExamples.curl} />
+              <CodeBlock title={t("dash.apiPython")} code={decisionExamples.python} />
+              <CodeBlock title={t("dash.apiJs")} code={decisionExamples.javascript} />
+            </>
+          )}
+          {showChatHeading && (
+            <h4 class="border-t border-gray-100 pt-4 text-sm font-semibold text-gray-900">{t("dash.apiChatSection")}</h4>
+          )}
+          {showChatExamples && (
+            <>
+              <CodeBlock title={t("dash.apiCurl")} code={examples.curl} />
+              <CodeBlock title={t("dash.apiPython")} code={examples.python} />
+              <CodeBlock title={t("dash.apiJs")} code={examples.javascript} />
+            </>
+          )}
         </div>
       </div>
     </div>

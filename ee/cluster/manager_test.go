@@ -602,6 +602,107 @@ func TestLeaveAndStaticAddressRecovery(t *testing.T) {
 	}
 }
 
+func TestModelsTreatSameRepositoryAsOneModel(t *testing.T) {
+	bus := NewMemoryBus()
+	local := &fakeHost{licensed: true, models: []ModelStatus{{
+		ID: "modelscope/Qwen/Qwen3-ASR-0.6B", Repo: "Qwen/Qwen3-ASR-0.6B", Source: "modelscope", Size: 100,
+	}}}
+	remote := &fakeHost{licensed: true, models: []ModelStatus{
+		{ID: "Qwen3-ASR-0.6B", Repo: "Qwen/Qwen3-ASR-0.6B", Source: "opencsg", Size: 90, Loaded: true},
+		{ID: "modelscope/Qwen/Qwen3-ASR-0.6B", Repo: "Qwen/Qwen3-ASR-0.6B", Source: "modelscope", Size: 100},
+		{ID: "other", Size: 1},
+	}}
+	a := startNode(t, bus, "alpha", local)
+	b := startNode(t, bus, "beta", remote)
+	_, token, err := a.m.CreateCluster("Lab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "b to discover a", func() bool { return len(b.m.dir.Discovered(time.Minute)) == 1 })
+	if _, err := b.m.Join(context.Background(), token, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "a to see the remote ASR model", func() bool {
+		rt, ok := a.m.dir.Get(b.m.identity.UUID)
+		if !ok || rt.Status == nil {
+			return false
+		}
+		_, ok = rt.Status.Model("Qwen3-ASR-0.6B")
+		return ok
+	})
+
+	var asr *ClusterModel
+	var other int
+	for _, model := range a.m.Models(context.Background()) {
+		switch model.Repository {
+		case "Qwen/Qwen3-ASR-0.6B":
+			copied := model
+			asr = &copied
+		case "":
+			if model.ID == "other" {
+				other++
+			}
+		}
+	}
+	if asr == nil {
+		t.Fatalf("ASR repository missing from %+v", a.m.Models(context.Background()))
+	}
+	if len(asr.Nodes) != 2 {
+		t.Fatalf("ASR nodes = %+v", asr.Nodes)
+	}
+	for _, node := range asr.Nodes {
+		if node.UUID == b.m.identity.UUID && !node.Loaded {
+			t.Fatal("remote copy is loaded but the row is not")
+		}
+		if node.UUID == a.m.identity.UUID && node.Loaded {
+			t.Fatal("local copy is not loaded")
+		}
+	}
+	if other != 1 {
+		t.Fatalf("unrelated models = %d", other)
+	}
+
+	rec := httptest.NewRecorder()
+	a.m.Admin().HandleModelSync(rec, httptest.NewRequest(http.MethodPost, "/api/cluster/models/sync", strings.NewReader(`{"model":"Qwen/Qwen3-ASR-0.6B","nodes":"all"}`)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("sync: %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), `"job"`) || strings.Count(rec.Body.String(), "already present") != 2 {
+		t.Fatalf("both nodes already have the repository: %s", rec.Body)
+	}
+}
+
+func TestModelsShowPullProgressForNodesThatLackTheModel(t *testing.T) {
+	bus := NewMemoryBus()
+	host := &fakeHost{licensed: true, models: []ModelStatus{{
+		ID: "modelscope/Qwen/Qwen3-ASR-0.6B", Repo: "Qwen/Qwen3-ASR-0.6B", Source: "modelscope", Size: 100,
+	}}}
+	host.statusMod = func(st *Status) {
+		st.Jobs.Pulls = []PullStatus{{
+			Model: "hexgrad/Kokoro-82M", Source: "opencsg", Status: "running",
+			CompletedBytes: 30, TotalBytes: 80, Detail: "copying model.safetensors",
+		}}
+	}
+	a := startNode(t, bus, "alpha", host)
+	var kokoro *ClusterModel
+	for _, model := range a.m.Models(context.Background()) {
+		if model.Repository == "hexgrad/Kokoro-82M" {
+			copied := model
+			kokoro = &copied
+		}
+		if model.Repository == "Qwen/Qwen3-ASR-0.6B" && len(model.Syncs) != 0 {
+			t.Fatalf("held model should not show a sync bar: %+v", model.Syncs)
+		}
+	}
+	if kokoro == nil || len(kokoro.Nodes) != 0 || len(kokoro.Syncs) != 1 {
+		t.Fatalf("kokoro = %+v", kokoro)
+	}
+	sync := kokoro.Syncs[0]
+	if sync.UUID != a.m.identity.UUID || sync.CompletedBytes != 30 || sync.TotalBytes != 80 || sync.Status != "running" {
+		t.Fatalf("sync = %+v", sync)
+	}
+}
+
 func TestHTTPHandlersViaRecorder(t *testing.T) {
 	bus := NewMemoryBus()
 	a := startNode(t, bus, "alpha", &fakeHost{licensed: true, models: []ModelStatus{{ID: "m", Size: gb, Loaded: true}}})

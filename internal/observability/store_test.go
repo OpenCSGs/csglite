@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestStoreMigratesRouterAndCostSnapshotColumns(t *testing.T) {
+func TestStoreMigratesCostSnapshotColumns(t *testing.T) {
 	root := t.TempDir()
 	store, err := Open(root)
 	if err != nil {
@@ -25,9 +25,7 @@ func TestStoreMigratesRouterAndCostSnapshotColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, column := range []string{
-		"actual_member_id", "router_profile_id", "router_profile_version", "routing_text_version",
-		"semantic_cluster_id", "semantic_ood", "semantic_fallback_reason", "price_input_per_million",
-		"price_output_per_million", "estimated_cost", "cost_currency", "cost_known",
+		"actual_member_id", "price_input_per_million", "price_output_per_million", "estimated_cost", "cost_currency", "cost_known",
 	} {
 		if _, err := db.Exec("ALTER TABLE requests DROP COLUMN " + column); err != nil {
 			t.Fatal(err)
@@ -45,7 +43,7 @@ func TestStoreMigratesRouterAndCostSnapshotColumns(t *testing.T) {
 	if err := store.Add(t.Context(), RequestRecord{
 		ID: "migrated", TraceID: "trace", StartedAt: now, CompletedAt: now,
 		Method: "POST", Path: "/v1/chat/completions", Status: "completed", StatusCode: http.StatusOK,
-		RouterProfileID: "profile", SemanticClusterID: "cluster", CostKnown: true, CostCurrency: "USD",
+		ActualMemberID: "member", CostKnown: true, CostCurrency: "USD",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -53,12 +51,12 @@ func TestStoreMigratesRouterAndCostSnapshotColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.RouterProfileID != "profile" || record.SemanticClusterID != "cluster" || !record.CostKnown {
+	if record.ActualMemberID != "member" || !record.CostKnown {
 		t.Fatalf("migrated record = %+v", record)
 	}
 }
 
-func TestStoreRetainsPerRequestRouterAndPriceSnapshots(t *testing.T) {
+func TestStoreRetainsPerRequestPriceSnapshots(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -67,17 +65,10 @@ func TestStoreRetainsPerRequestRouterAndPriceSnapshots(t *testing.T) {
 	now := time.Now().UTC()
 	for i, snapshot := range []RequestRecord{
 		{
-			RouterProfileID: "profile-1", RouterProfileVersion: 1,
-			SemanticClusterID: "cluster-1", SemanticDistance: 0.01,
 			PriceInputPerMillion: 1, PriceOutputPerMillion: 2,
 			EstimatedCost: 0.001, CostCurrency: "USD", CostKnown: true,
 		},
 		{
-			RouterProfileID: "profile-2", RouterProfileVersion: 2,
-			RouterProfileSchemaVersion: 2, RouterAlgorithm: "pairwise_router_v2",
-			RouterConfidence: .82, RouterMargin: .21, RouterSimilarity: .73,
-			SemanticClusterID: "cluster-2", SemanticDistance: 0.987654,
-			SemanticFallback: true, SemanticFallbackReason: "low_confidence",
 			PriceInputPerMillion: 3, PriceOutputPerMillion: 5,
 			EstimatedCost: 0.004, CostCurrency: "EUR", CostKnown: true,
 		},
@@ -99,16 +90,10 @@ func TestStoreRetainsPerRequestRouterAndPriceSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.RouterProfileID != "profile-1" || first.SemanticDistance != 0.01 ||
-		first.PriceInputPerMillion != 1 || first.CostCurrency != "USD" {
+	if first.PriceInputPerMillion != 1 || first.CostCurrency != "USD" {
 		t.Fatalf("first snapshot = %+v", first)
 	}
-	if second.RouterProfileID != "profile-2" || second.SemanticDistance != 0.987654 ||
-		second.RouterProfileSchemaVersion != 2 || second.RouterAlgorithm != "pairwise_router_v2" ||
-		second.RouterConfidence != .82 || second.RouterMargin != .21 || second.RouterSimilarity != .73 ||
-		second.SemanticClusterID != "cluster-2" ||
-		second.SemanticFallbackReason != "low_confidence" ||
-		second.PriceInputPerMillion != 3 || second.CostCurrency != "EUR" {
+	if second.PriceInputPerMillion != 3 || second.CostCurrency != "EUR" {
 		t.Fatalf("second snapshot = %+v", second)
 	}
 }
@@ -129,10 +114,7 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 			CompletedAt: start.Add(1200 * time.Millisecond), Method: "POST", Path: "/v1/chat/completions",
 			Protocol: "openai", Status: "completed", StatusCode: 200, Stream: true, Model: "model-a",
 			Source: "local", SourceType: "local", APIKeyID: "key-a", APIKeyName: "Client",
-			PoolID: "pool-a", ActualMemberID: "member-a", MemberModel: "actual-a", PoolPolicy: "semantic",
-			RouterProfileID: "profile-a", RouterProfileVersion: 3, RoutingTextVersion: "routing-v1",
-			SemanticRouted: true, SemanticCluster: 2, SemanticClusterID: "cluster-code", SemanticDistance: 0.125,
-			SemanticOOD: true, SemanticFallback: true, SemanticFallbackReason: "out_of_distribution",
+			PoolID: "pool-a", ActualMemberID: "member-a", MemberModel: "actual-a", PoolPolicy: "priority_weight",
 			PriceInputPerMillion: 1.5, PriceOutputPerMillion: 2.5, EstimatedCost: 0.0000215,
 			CostCurrency: "USD", CostKnown: true,
 			InputTokens: 6, OutputTokens: 5, CacheReadInputTokens: 4, CacheCreationTokens: 2,
@@ -188,12 +170,9 @@ func TestStoreRequestLifecycleAndTraceAggregation(t *testing.T) {
 	if detail.RequestID != "gateway-request" || detail.B3TraceID != "463ac35c9f6413ad" {
 		t.Fatalf("correlation identifiers did not round trip: %+v", detail)
 	}
-	if detail.RouterProfileID != "profile-a" || detail.RouterProfileVersion != 3 ||
-		detail.RoutingTextVersion != "routing-v1" || detail.SemanticClusterID != "cluster-code" ||
-		!detail.SemanticOOD || detail.SemanticFallbackReason != "out_of_distribution" ||
-		detail.ActualMemberID != "member-a" || !detail.CostKnown || detail.CostCurrency != "USD" ||
+	if detail.ActualMemberID != "member-a" || !detail.CostKnown || detail.CostCurrency != "USD" ||
 		detail.EstimatedCost != 0.0000215 {
-		t.Fatalf("router and cost snapshot did not round trip: %+v", detail)
+		t.Fatalf("member and cost snapshot did not round trip: %+v", detail)
 	}
 
 	traces, err := store.ListTraces(ctx, RequestFilter{Limit: 10})
@@ -455,5 +434,47 @@ func TestListCompletedPoolRequestsIsBoundedAndPoolIsolated(t *testing.T) {
 	if len(records) != 1 || records[0].ID != "a-complete" ||
 		!strings.Contains(records[0].RequestBody, "pool a request") {
 		t.Fatalf("pool-a completed records = %+v", records)
+	}
+}
+
+func TestStoreAcceptsDatabasesWithRemovedRouterColumns(t *testing.T) {
+	root := t.TempDir()
+	store, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, DirName, DatabaseFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{
+		"router_profile_id TEXT NOT NULL DEFAULT ''",
+		"semantic_routed INTEGER NOT NULL DEFAULT 0",
+		"semantic_fallback_reason TEXT NOT NULL DEFAULT ''",
+	} {
+		if _, err := db.Exec("ALTER TABLE requests ADD COLUMN " + column); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().UTC()
+	if err := store.Add(t.Context(), RequestRecord{
+		ID: "legacy", TraceID: "trace", StartedAt: now, CompletedAt: now,
+		Method: "POST", Path: "/v1/chat/completions", Status: "completed", StatusCode: http.StatusOK,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetRequest(t.Context(), "legacy"); err != nil {
+		t.Fatal(err)
 	}
 }

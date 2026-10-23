@@ -323,6 +323,49 @@ func TestInferenceConfigPersistsAcrossSaveAndLoad(t *testing.T) {
 	}
 }
 
+func TestContextCompressionPersistsAndDefaultsOff(t *testing.T) {
+	var legacy Config
+	if err := json.Unmarshal([]byte(`{"inference":{"llama_num_parallel":2}}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if got := NormalizeContextCompression(legacy.Inference.ContextCompression); got != ContextCompressionOff {
+		t.Fatalf("legacy config mode = %q, want off", got)
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	clearCloudServiceEnv(t)
+	Reset()
+	t.Cleanup(Reset)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Inference.ContextCompression = ContextCompressionAggressive
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	Reset()
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Inference.ContextCompression != ContextCompressionAggressive {
+		t.Fatalf("mode after reload = %q", loaded.Inference.ContextCompression)
+	}
+
+	for value, want := range map[string]string{"": "off", "OFF": "off", " Safe ": "safe", "aggressive": "aggressive", "max": "off"} {
+		if got := NormalizeContextCompression(value); got != want {
+			t.Errorf("NormalizeContextCompression(%q) = %q, want %q", value, got, want)
+		}
+	}
+	if IsContextCompressionMode("max") || !IsContextCompressionMode("Safe") {
+		t.Fatal("IsContextCompressionMode accepted or rejected the wrong value")
+	}
+}
+
 func TestMarketplaceModelSourcePersistsAndDefaults(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

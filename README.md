@@ -23,6 +23,7 @@ by another machine on your network, or by a provider.
 - **Local inference** via llama.cpp (GGUF models, SafeTensors auto-converted)
 - **Interactive chat** with streaming output
 - **REST API** compatible with Ollama's API format
+- **OpenAI-compatible API** — Chat Completions (including `logprobs`, `top_logprobs`, `logit_bias`, and `response_format`), Responses, Embeddings, Images, Audio, Realtime, and the Decisions API (`POST /v1/decisions`); the official OpenAI SDKs work with `base_url` pointed at CSGLite
 - **Cross-platform** — macOS, Linux, Windows
 - **Resume downloads** — interrupted downloads resume where they left off
 - **Pause/Resume** — pause ongoing downloads and resume later
@@ -45,6 +46,7 @@ by another machine on your network, or by a provider.
 
 - **Third-Party Providers** — integrate OpenAI, DeepSeek, MiMo, Kimi, BigModel, Qianfan, MiniMax, OpenRouter, and any OpenAI-compatible API
 - **Coding Agents** — one-click config for Claude Code, Codex, Pi, OpenCode, and Open Code Review
+- **Context compression** — optionally shrinks the tool output inside agent requests before any model sees it (Settings → Context compression). Safe mode removes only redundancy and keeps every distinct line; aggressive mode also samples long logs, arrays and search results. File reads and source code are never changed. On captured Claude Code / Codex traffic tool output drops 6% (safe) to 17% (aggressive), search results 24–56%; savings per request show in Observability
 - **AI Applications** — one-click setup for Claude Code, OpenCode, Open Code Review, Codex, Codex App, ZCode, Pi, OpenClaw, CSGClaw, Dify, and AnythingLLM
 
 ### Dataset Support
@@ -52,7 +54,7 @@ by another machine on your network, or by a provider.
 - **Dataset download** from CSGHub platform
 - **Dataset management** — list, show details, and delete local datasets
 
-## Installation
+## Installation & Upgrade
 
 ### Desktop client
 
@@ -116,6 +118,30 @@ csghub-lite login
 
 > **Note:** The install script automatically installs [llama-server](https://github.com/ggml-org/llama.cpp) (required for inference). If you installed from source, install it separately: `brew install llama.cpp` (macOS) or download from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases).
 
+## LAN cluster
+
+Machines on the same network can share one pool of compute. Give every machine
+the same secret and they find each other; there is no separate create or join
+step:
+
+```bash
+csghub-lite config set cluster_secret "a-long-shared-secret"
+csghub-lite config set cluster_name "lab"
+csghub-lite restart
+```
+
+The same values can be set at install time with `CSGHUB_LITE_CLUSTER_SECRET`
+and `CSGHUB_LITE_CLUSTER_NAME`. The first machine to start creates the cluster;
+later ones join when they see it. A request this machine cannot serve is
+forwarded to a member that can, models are copied over the LAN instead of
+downloaded again, and an address that changes on reboot is picked up
+automatically. Two nodes work without a licence; more need a CSGLite Enterprise
+licence. A machine with no secret stays a single node and opens no cluster
+port.
+
+Routing, model sync, join tokens, and admission codes are in the
+[cluster command reference](docs/cli/cluster.md).
+
 ## Local Inference Capabilities
 
 CSGLite can run several model families locally today, with more runtime
@@ -127,13 +153,33 @@ currently supported for local inference.
 | Text generation / chat | Supported | llama.cpp | Qwen/Qwen3, GLM, Llama, Mistral, DeepSeek distilled GGUF models |
 | Embeddings | Supported | llama.cpp | BGE, GTE, E5, Sentence Transformers-compatible embedding models |
 | Vision-language chat | Supported | llama.cpp multimodal | Qwen2.5-VL, Gemma 3 / 4 vision, Idefics-style multimodal models |
-| Text-to-image | Supported | Diffusers runtime | Qwen-Image, FLUX, Stable Diffusion, PixArt, Sana, CogView, Z-Image |
-| Image-to-image | Supported | Diffusers runtime | Qwen-Image-Edit, inpaint, img2img, editing pipelines |
+| Text-to-image | Supported | Diffusers runtime; MLX on Apple Silicon | Qwen-Image, Qwen-Image-2.1 MLX (including Turbo), FLUX, Stable Diffusion, PixArt, Sana, CogView, Z-Image, Kolors, Hunyuan |
+| Image-to-image | Supported | Diffusers runtime; MLX on Apple Silicon for one reference image | Qwen-Image-Edit, FLUX Kontext, inpaint, img2img, editing pipelines |
 | Automatic speech recognition | Supported | Python ASR runtime | FunASR, Whisper, Wav2Vec2-family ASR models |
 | Text-to-speech | Supported | Python TTS runtime | VoxCPM, Qwen3-TTS, Kokoro, MMS-TTS and other transformers-native TTS models |
 | Realtime voice | Supported | Python ASR + TTS runtimes | Full-duplex over WebRTC or WebSocket, OpenAI Realtime-compatible |
+| Decisions | Supported | llama.cpp (decision LoRA or native head) | JEV models such as `autotrust/JEV-9B` and its GGUF quantizations; native decision models such as `convaiinnovations/laya`; OpenAI Decisions API-compatible |
 | Image-to-video | Coming soon | - | Stable Video Diffusion, SV3D |
 | Text-to-video | Coming soon | - | Video generation Diffusers models |
+
+### Image models
+
+Image requests use `POST /v1/images/generations` and `POST /v1/images/edits`.
+NVIDIA, AMD, and CPU machines run Diffusers checkpoints. Apple Silicon uses
+MFLUX for MLX Qwen-Image-2.1 checkpoints and Diffusers for the other image
+families. Other MLX image checkpoints are unsupported on every platform,
+including before download. The model library disables **Run** for any
+downloaded model that cannot run locally.
+
+| Model | Runtime | Notes |
+| --- | --- | --- |
+| `Qwen/Qwen-Image`, `Qwen/Qwen-Image-2512` | Diffusers | Text-to-image |
+| `Qwen/Qwen-Image-Edit`, `Qwen/Qwen-Image-Edit-2511` | Diffusers | Image editing, including multi-image edits |
+| `mlx-community/Qwen-Image-2.1-MLX-4bit` | MFLUX on Apple Silicon | Text-to-image and one reference image, 40 steps by default. Runs on a 16 GB Mac: about 4 minutes for 1024x1024. Python 3.10 or newer. `n=1` only |
+| `OsaurusAI/Qwen-Image-2.1-Turbo-mflux-4bit` and other mflux-saved Qwen-Image-2.1 bundles | MFLUX on Apple Silicon | Turbo is the 8-step distilled checkpoint, sampled on the fixed sigma grid in its `model_index.json`; the `steps` request field is ignored. About 70 seconds for 1024x1024 on a 16 GB Mac. Weights are under the Qwen Research License (non-commercial) |
+| FLUX, Stable Diffusion, Stable Cascade, PixArt, Sana, CogView, Z-Image, Kolors, Hunyuan, Kandinsky, Lumina, AuraFlow, GLM-Image, Ovis-Image | Diffusers | Text-to-image when `model_index.json` names that pipeline |
+| FLUX Kontext, Stable Diffusion img2img and inpaint | Diffusers | Image-to-image and editing |
+| GGUF image models such as `unsloth/Qwen-Image-2.1-Turbo-GGUF` | Not supported | A GGUF image file holds only the denoiser and needs a separate VAE and text encoder. Download a Diffusers or MLX version of the model instead |
 
 ### Text-to-speech models
 
@@ -171,6 +217,57 @@ defaults and limits in the `realtime` section of `config.json`
 for a deployment that has to pin its media ports). The protocol and the
 measured latencies are in
 [docs/guides/realtime-audio-api.md](docs/guides/realtime-audio-api.md).
+
+### Decisions
+
+CSGLite implements the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions),
+`POST /v1/decisions`, for local decision models: JEV models tagged `jev` or
+`typed-decisions` (for example `autotrust/JEV-9B` and its GGUF quantizations)
+and native decision models whose head llama.cpp runs directly (for example
+`convaiinnovations/laya` and `laya-typed-decisions`). A request shares one
+`input` across up to 200 questions and returns calibrated probabilities instead
+of generated text:
+
+| Question type | Use it to | Main result |
+| --- | --- | --- |
+| `predicate` | check whether a condition is true | `probability` |
+| `choice` | pick one of 2-255 string or boolean values | `choice`, `probabilities`, `confidence` |
+| `score` | rate against ordered `levels` | `score` (probability-weighted level index), `probabilities`, `confidence` |
+
+| Model | Size | Chat | Notes |
+| --- | --- | --- | --- |
+| `autotrust/JEV-9B` | 17 GB (BF16) | Yes | Qwen3.5-9B with a System 1 decision adapter; converted to GGUF on first use, `q8_0` fits a 16 GB Mac |
+| `mradermacher/JEV-9B-GGUF` | 5.2 GB (Q4_K_M) | Yes | Base weights only: also pull `autotrust/JEV-9B` for the decision adapter |
+| `convaiinnovations/laya` | 842 MB | No | ModernBERT-large encoder with a decision head; English, trained on 512-token inputs |
+| `convaiinnovations/laya-typed-decisions` | 842 MB | No | Laya fine-tuned on the typed-decisions workflows (agent traces, customer service, invoices, security incidents); 1,024-token inputs |
+
+Other GGUF models that llama.cpp runs as native decision models (Julia,
+OpenJev, Lev, Kev, Nimble, Clef, Perplexity Decider, LFM2-D1) are recognized
+from their GGUF metadata and served the same way.
+
+```bash
+curl http://localhost:11435/v1/decisions -H "Content-Type: application/json" -d '{
+  "model": "huggingface/mradermacher/JEV-9B-GGUF",
+  "input": "I was charged twice for my order.",
+  "questions": [{
+    "type": "choice",
+    "name": "department",
+    "instructions": "Which department should handle this complaint?",
+    "choices": [{"value": "billing"}, {"value": "technical"}, {"value": "shipping"}, {"value": "other"}]
+  }]
+}'
+```
+
+The OpenAI SDKs' `client.decisions.create(...)` works unchanged with
+`base_url="http://localhost:11435/v1"`. GGUF quantizations ship only the base
+weights, so also pull the original repository (`autotrust/JEV-9B`) that holds
+the decision adapter; CSGLite converts and loads it automatically, and the same
+model keeps answering ordinary chat. Laya is a ModernBERT encoder with a
+decision head: CSGLite converts it to GGUF on first use, it answers decisions
+only, and Chat opens it straight in **Decide** mode. For other models, pick the
+model in Chat and switch the composer to **Decide**. Text input only: `input_image` parts are
+refused. `POST /v1/decide` remains available for clients written against the
+JEV API. Details: [docs/guides/typed-decisions.md](docs/guides/typed-decisions.md).
 
 ## Integrations
 
@@ -333,6 +430,20 @@ End a line with `\` for multiline input. Press Ctrl+D to exit.
 
 The server listens on `localhost:11435` by default.
 
+OpenAI-compatible endpoints (point any OpenAI SDK at `http://localhost:11435/v1`):
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /v1/chat/completions` | Chat completions, streaming, tools, `logprobs` / `top_logprobs`, `logit_bias`, `response_format` |
+| `POST /v1/responses` | Responses API |
+| `POST /v1/messages` | Anthropic Messages API |
+| `POST /v1/embeddings` | Embeddings |
+| `POST /v1/images/generations`, `POST /v1/images/edits` | Image generation and editing |
+| `POST /v1/audio/transcriptions`, `POST /v1/audio/speech` | Speech recognition and synthesis |
+| `POST /v1/realtime/calls`, `GET /v1/realtime` | Realtime voice over WebRTC or WebSocket |
+| `POST /v1/decisions` | Decisions API: predicate, choice, and score questions |
+| `GET /v1/models` | List models |
+
 For full endpoint details and examples, see the [REST API Reference](docs/api/overview.md).
 
 If the local server is running, you can also open the interactive API docs in your browser:
@@ -399,7 +510,7 @@ Full documentation is available in the [`docs/`](docs/) directory:
 - **Getting Started**: [Installation](docs/getting-started/installation.md) | [Quick Start](docs/getting-started/quickstart.md)
 - **CLI Reference**: [All Commands](docs/cli/overview.md)
 - **REST API**: [API Reference](docs/api/overview.md)
-- **Guides**: [Configuration](docs/guides/configuration.md) | [Environment Variables](docs/guides/environment-variables.md) | [Model Formats](docs/guides/model-formats.md) | [Packaging](docs/guides/packaging.md) | [Architecture](docs/guides/architecture.md)
+- **Guides**: [Configuration](docs/guides/configuration.md) | [Environment Variables](docs/guides/environment-variables.md) | [LAN Cluster](docs/cli/cluster.md) | [Model Formats](docs/guides/model-formats.md) | [Packaging](docs/guides/packaging.md) | [Architecture](docs/guides/architecture.md)
 
 ## License
 

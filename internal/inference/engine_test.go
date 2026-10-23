@@ -68,6 +68,52 @@ func TestLoadEngine_UnsupportedSafeTensorsArchitectureDoesNotConvert(t *testing.
 	}
 }
 
+func TestReadHFArchitectureRecognizesDecisionCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	for rel, content := range map[string]string{
+		"config.json":          `{"model_type":"laya","architectures":["LayaTypedDecisions"]}`,
+		"encoder/config.json":  `{"architectures":["ModernBertModel"]}`,
+		"rl_agent_config.json": `{"head_layers":2}`,
+	} {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	arch, ok, err := readHFArchitecture(dir)
+	if err != nil || !ok || arch != convert.DecisionCheckpointArchitecture {
+		t.Fatalf("readHFArchitecture = %q, %t, %v", arch, ok, err)
+	}
+	if err := ensureConvertibleHFArchitecture(dir); err != nil {
+		t.Fatalf("decision checkpoint refused: %v", err)
+	}
+
+	// Without the head config the converter cannot load it: refuse cleanly.
+	if err := os.Remove(filepath.Join(dir, "rl_agent_config.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureConvertibleHFArchitecture(dir); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("incomplete decision checkpoint: err = %v, want ErrUnsupportedFormat", err)
+	}
+}
+
+func TestDecisionOnlyEngineRefusesTextGeneration(t *testing.T) {
+	engine := &llamaEngine{modelName: "org/laya", decisionType: "laya"}
+	_, err := engine.postChatCompletion(t.Context(), map[string]interface{}{})
+	if HTTPStatusCode(err) != 400 || !strings.Contains(HTTPErrorMessage(err), "/v1/decisions") {
+		t.Fatalf("chat on a laya engine: %v", err)
+	}
+	if (&llamaEngine{decisionType: "openjev"}).errDecisionOnly() != nil {
+		t.Fatal("openjev generates text and must not be refused")
+	}
+	if args := decisionOnlyBatchArgs(8192); strings.Join(args, " ") != "--batch-size 8192 --ubatch-size 8192" {
+		t.Fatalf("batch args = %v", args)
+	}
+}
+
 func TestLoadEngine_NoModelFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}"), 0o644); err != nil {
@@ -120,5 +166,29 @@ func TestShouldRemoveConvertedGGUF(t *testing.T) {
 				t.Fatalf("shouldRemoveConvertedGGUF(%q) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoadEngine_DTypeAfterSourceWeightsRemovedFails(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"config.json":      `{"architectures":["LlamaForCausalLM"]}`,
+		"manifest.json":    `{"namespace":"demo","name":"demo","format":"gguf","removed_source_weights":["model.safetensors"]}`,
+		"head.safetensors": "head",
+		"demo-f16.gguf":    "gguf",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Without the error, a q8_0 request would quietly serve the f16 GGUF.
+	_, err := LoadEngineWithProgress(dir, &model.LocalModel{Namespace: "demo", Name: "demo"}, nil, false, 0, 0, -1, "", "", "q8_0")
+	if !errors.Is(err, convert.ErrSourceWeightsRemoved) {
+		t.Fatalf("LoadEngineWithProgress(q8_0) error = %v, want ErrSourceWeightsRemoved", err)
 	}
 }

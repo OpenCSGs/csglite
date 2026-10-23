@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Rebuild Ubuntu 22.04 CUDA arm64 tarball and upload to GitLab generic packages.
+#
+# Set LLAMA_BUILD_SKIP_UPLOAD=1 to build and verify without publishing.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -35,5 +37,11 @@ docker run --platform "${PLATFORM}" --pull=never --rm \
   -v "${OUT}/${TAR}:/pkg.tar.gz:ro" \
   "${LLAMA_BUILD_CUDA_IMAGE}" bash -lc \
   "mkdir -p /tmp/p && tar -xzf /pkg.tar.gz -C /tmp/p && r=/tmp/p/${PKG_ROOT} && LD_LIBRARY_PATH=\$r/lib \$r/bin/llama-server --version"
+
+if [ "${LLAMA_BUILD_SKIP_UPLOAD:-0}" = "1" ]; then
+  echo "LLAMA_BUILD_SKIP_UPLOAD=1, not uploading. Artifact: ${OUT}/${TAR}"
+  shasum -a 256 "${OUT}/${TAR}"
+  exit 0
+fi
 
 llama_build_upload_tarball "${TAG}" "${OUT}/${TAR}"

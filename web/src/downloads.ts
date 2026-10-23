@@ -352,9 +352,22 @@ async function syncDownloadsFromServer() {
 
 export const downloadTasks = signal<Record<string, DownloadTask>>(loadTasks());
 export const downloadCompletionVersion = signal(0);
-export const downloadTaskList = computed(() =>
-  Object.values(downloadTasks.value).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-);
+
+// Progress polls rewrite updatedAt about once a second. Sorting on that
+// timestamp makes concurrent downloads trade places in the library table.
+export function compareDownloadTasks(a: Pick<DownloadTask, "key" | "name" | "createdAt">, b: Pick<DownloadTask, "key" | "name" | "createdAt">): number {
+  const createdAtDiff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  if (createdAtDiff) return createdAtDiff;
+  const nameDiff = a.name.localeCompare(b.name);
+  if (nameDiff) return nameDiff;
+  return a.key.localeCompare(b.key);
+}
+
+export function downloadRowTime(task: Pick<DownloadTask, "createdAt">): string {
+  return task.createdAt;
+}
+
+export const downloadTaskList = computed(() => Object.values(downloadTasks.value).sort(compareDownloadTasks));
 
 void syncDownloadsFromServer();
 

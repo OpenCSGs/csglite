@@ -150,6 +150,14 @@ type InferenceConfig struct {
 	// global default decide how many slots a load gets.
 	LlamaNumParallel int `json:"llama_num_parallel,omitempty"`
 
+	// ContextCompression is how far the gateway shrinks the tool output
+	// inside agent requests before a model sees them: ContextCompressionOff
+	// (the default when empty), ContextCompressionSafe or
+	// ContextCompressionAggressive. It is one process-wide policy because the
+	// same agent traffic reaches local, cluster and provider models alike, and
+	// no existing setting describes request rewriting.
+	ContextCompression string `json:"context_compression,omitempty"`
+
 	// Models holds the per-model load options keyed by model ID. They live in
 	// the app config rather than in the model directory so that re-downloading
 	// a model keeps its settings.
@@ -505,6 +513,34 @@ func Load() (*Config, error) {
 		migrateLegacyModelSettings(&globalConfig.Inference)
 	})
 	return globalConfig, loadErr
+}
+
+const (
+	ContextCompressionOff        = "off"
+	ContextCompressionSafe       = "safe"
+	ContextCompressionAggressive = "aggressive"
+)
+
+// NormalizeContextCompression maps a stored or requested mode to one of the
+// ContextCompression constants; anything unknown means off.
+func NormalizeContextCompression(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ContextCompressionSafe:
+		return ContextCompressionSafe
+	case ContextCompressionAggressive:
+		return ContextCompressionAggressive
+	default:
+		return ContextCompressionOff
+	}
+}
+
+// IsContextCompressionMode reports whether value names a mode.
+func IsContextCompressionMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ContextCompressionOff, ContextCompressionSafe, ContextCompressionAggressive:
+		return true
+	}
+	return false
 }
 
 func NormalizeMarketplaceModelSource(value string) string {

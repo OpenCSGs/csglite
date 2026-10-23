@@ -5,17 +5,21 @@ import {
   getPs, streamChat, getCloudAuthStatus,
   listConversations, searchConversations, getConversation, createConversation, updateConversation, deleteConversation,
   getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob, getASRRuntimeStatus, transcribeAudioStream,
-  getTTSRuntimeStatus, getTTSVoices, synthesizeSpeech,
+  getTTSRuntimeStatus, getTTSVoices, synthesizeSpeech, createDecision,
 } from "../api/client";
 import type {
   ModelInfo, ChatMessage, ContentPart, CloudAuthStatus,
   ConversationMeta, Conversation,
-  ChatMessageMeta, WebSearchResult,
+  ChatMessageMeta, WebSearchResult, DecisionQuestionType,
 } from "../api/client";
 import { t, locale } from "../i18n";
 import { RealtimeVoiceDialog } from "../components/RealtimeVoiceDialog";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PromptDialog } from "../components/PromptDialog";
 import { parseReasoningText } from "../reasoning";
 import { isImageGenerationModel, isImageToImageModel, stripDataURL } from "../utils/imageModels";
+import { buildDecisionRequest, canSendDecision, decisionUserSummary, formatDecisionAnswer, isDecisionModeActive } from "../utils/decision";
+import type { DecisionLabels } from "../utils/decision";
 import {
   formatModelOptionLabel as modelLabel,
   loadModelOptions,
@@ -98,10 +102,93 @@ const isRecordingAudio = signal(false);
 // lazily because listing them loads the model.
 const ttsVoices = signal<{ id: string; label?: string; language?: string }[]>([]);
 const selectedVoice = signal("");
+// Typed-decision models (JEV) chat normally and can also answer a question
+// through the OpenAI Decisions API (/v1/decisions); the composer switches
+// between the two. decisionLines holds the choices or the score levels.
+const decisionEnabled = signal(false);
+const decisionKind = signal<DecisionQuestionType>("choice");
+const decisionState = signal("");
+const decisionLines = signal("");
+const decisionCollapsedStorageKey = "csghub.chat.decision_form_collapsed";
+// The options/levels and context fields fold away to save room; the choice is
+// remembered per browser.
+const decisionFormCollapsed = signal(readDecisionFormCollapsed());
+
+function readDecisionFormCollapsed(): boolean {
+  try {
+    return localStorage.getItem(decisionCollapsedStorageKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setDecisionFormCollapsed(collapsed: boolean) {
+  decisionFormCollapsed.value = collapsed;
+  try {
+    localStorage.setItem(decisionCollapsedStorageKey, collapsed ? "1" : "0");
+  } catch {
+    /* storage unavailable: keep the in-memory state */
+  }
+}
+
+// decisionFormSummary describes the folded fields, flagging missing options.
+function decisionFormSummary(): { text: string; missing: boolean } {
+  const parts: string[] = [];
+  let missing = false;
+  if (decisionKind.value !== "predicate") {
+    const count = decisionLines.value.split("\n").map((line) => line.trim()).filter(Boolean).length;
+    const levels = decisionKind.value === "score";
+    if (count < 2) {
+      missing = true;
+      parts.push(levels ? t("chat.decisionSummaryLevelsMissing") : t("chat.decisionSummaryOptionsMissing"));
+    } else {
+      parts.push(levels ? t("chat.decisionSummaryLevels", count) : t("chat.decisionSummaryOptions", count));
+    }
+  }
+  parts.push(decisionState.value.trim() ? t("chat.decisionSummaryState") : t("chat.decisionSummaryNoState"));
+  return { text: parts.join(" · "), missing };
+}
+const decisionKinds: DecisionQuestionType[] = ["predicate", "choice", "score"];
+
+// decisionLineRows keeps the options box one line tall when empty and grows
+// it with each entered line, up to six.
+function decisionLineRows(text: string): number {
+  return Math.min(6, Math.max(1, text.split("\n").length));
+}
+
+// fillDecisionExample shows what each field expects for the selected type.
+function fillDecisionExample() {
+  const type = decisionKind.value;
+  inputText.value = t(`chat.decisionExample.${type}.question`);
+  decisionLines.value = type === "predicate" ? "" : t(`chat.decisionExample.${type}.lines`);
+  decisionState.value = t(`chat.decisionExample.${type}.state`);
+}
+
+function decisionLabels(): DecisionLabels {
+  return {
+    kind: { predicate: t("chat.decisionKindPredicate"), choice: t("chat.decisionKindChoice"), score: t("chat.decisionKindScore") },
+    state: t("chat.decisionState"),
+    options: t("chat.decisionOptions"),
+    levels: t("chat.decisionLevels"),
+    probability: t("chat.decisionProbability"),
+    probabilityTrue: t("chat.decisionProbabilityTrue"),
+    choice: t("chat.decisionResult"),
+    score: t("chat.decisionScore"),
+    confidence: t("chat.decisionConfidence"),
+    option: t("chat.decisionOption"),
+    level: t("chat.decisionLevel"),
+    yes: t("chat.decisionYes"),
+    no: t("chat.decisionNo"),
+    refused: t("chat.decisionRefused"),
+  };
+}
 // The realtime dialog runs a WebRTC call; it is opened from the speech modes,
 // where both halves of the pipeline are already in front of the user.
 const showRealtimeVoice = signal(false);
 const ttsVoicesModel = signal("");
+const renameDialogMeta = signal<ConversationMeta | null>(null);
+const deleteDialogId = signal<string | null>(null);
+const clearHistoryOpen = signal(false);
 const contextStorageKey = "csghub.chat.num_ctx";
 const contextModeStorageKey = "csghub.chat.num_ctx_mode";
 const contextLengthSteps = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
@@ -297,6 +384,10 @@ function stripReasoningForStats(text: string): string {
 }
 
 function formatResponseMeta(meta: ChatMessageMeta): string {
+  // Decisions carry only a duration: their Markdown table is not generated text.
+  if (meta.tokens === undefined) {
+    return t("chat.responseMetaTime", formatDuration(meta.duration_ms || 0));
+  }
   const tokens = meta.tokens ?? 0;
   const speed = meta.speed ?? 0;
   const duration = formatDuration(meta.duration_ms || 0);
@@ -629,6 +720,7 @@ function setAvailableModels(models: ModelInfo[]) {
 }
 
 const selectedModelMode = computed(() => getChatModelMode(selectedModelInfo.value));
+const decisionActive = computed(() => isDecisionModeActive(selectedModelInfo.value, decisionEnabled.value));
 
 function normalizeImage(file: File): Promise<{ full: string; thumb: string }> {
   return new Promise((resolve, reject) => {
@@ -1250,9 +1342,12 @@ export function Chat() {
     const asrMode = mode === "asr";
     const ttsMode = mode === "tts";
     const visionMode = mode === "vision";
+    const decisionMode = isDecisionModeActive(currentModel, decisionEnabled.value);
     const audio = pendingAudio.value;
     if (!currentModel || isGenerating.value) return;
-    if (asrMode) {
+    if (decisionMode) {
+      if (!canSendDecision(decisionKind.value, text, decisionLines.value)) return;
+    } else if (asrMode) {
       if (!audio || isRecordingAudio.value) return;
     } else if (imageEditMode && pendingImages.value.length === 0) {
       chatError.value = t("image.inputImageRequired");
@@ -1285,7 +1380,10 @@ export function Chat() {
     let userContent: ChatMessage["content"];
     let currentUserMessage: ChatMessage;
 
-    if (asrMode && audio) {
+    if (decisionMode) {
+      userContent = decisionUserSummary(decisionKind.value, text, decisionState.value, decisionLines.value, decisionLabels());
+      currentUserMessage = { role: "user", content: userContent };
+    } else if (asrMode && audio) {
       const audioLabel = audio.recorded ? t("chat.recordedAudio") : t("chat.audioFile");
       userContent = text
         ? `${audioLabel}: ${audio.name}\n${t("chat.audioPrompt")}: ${text}`
@@ -1362,7 +1460,29 @@ export function Chat() {
     chatError.value = "";
     const responseStartedAt = Date.now();
     try {
-      if (imageMode) {
+      if (decisionMode) {
+        streamingContent.value = t("chat.decisionRunning");
+        let result: Awaited<ReturnType<typeof createDecision>>;
+        try {
+          result = await createDecision(buildDecisionRequest(
+            currentModel.model || currentModel.name,
+            currentModel.source,
+            decisionKind.value,
+            text,
+            decisionState.value,
+            decisionLines.value,
+          ), ac.signal);
+        } finally {
+          streamingContent.value = "";
+        }
+        conv.messages.push({
+          role: "assistant",
+          content: formatDecisionAnswer(result.answers[0], decisionLabels()),
+          meta: { duration_ms: Math.max(1, Date.now() - responseStartedAt) },
+        });
+        activeConversation.value = { ...conv };
+        saveCurrentConversation();
+      } else if (imageMode) {
         const encodedImages = imageEditMode ? images.map((img) => stripDataURL(img.full)) : [];
         const job = await createImageGenerationJob({
           model: currentModel.model || currentModel.name,
@@ -1573,7 +1693,7 @@ export function Chat() {
     } catch (e: any) {
       const errMessage = e?.message || t("chat.failedResp");
       const localizedErrorMessage = localizeChatErrorMessage(errMessage, currentModel.provider || configuredCloudProviderName());
-      if (streamingContent.value && !asrMode && !ttsMode && (!ac.signal.aborted || !imageMode)) {
+      if (streamingContent.value && !asrMode && !ttsMode && !decisionMode && (!ac.signal.aborted || !imageMode)) {
         const assistantContent = streamingContent.value;
         const sources = streamingSources.value;
         conv.messages.push({
@@ -1601,7 +1721,7 @@ export function Chat() {
     searchPlanningQuery.value = "";
     searchSkippedReason.value = "";
     streamingSources.value = [];
-    if (asrMode || ttsMode || (imageMode && ac.signal.aborted)) {
+    if (asrMode || ttsMode || decisionMode || (imageMode && ac.signal.aborted)) {
       streamingContent.value = "";
     }
     isGenerating.value = false;
@@ -1641,10 +1761,50 @@ export function Chat() {
     await loadConversation(id);
   };
 
-  const handleDeleteConversation = async (id: string, e: Event) => {
+  const handleDeleteConversation = (id: string, e: Event) => {
     e.stopPropagation();
     openConversationMenuId.value = "";
-    if (!confirm(t("chat.deleteChatConfirm"))) return;
+    deleteDialogId.value = id;
+  };
+
+  const handleRenameConversation = (meta: ConversationMeta, e: Event) => {
+    e.stopPropagation();
+    openConversationMenuId.value = "";
+    renameDialogMeta.value = meta;
+  };
+
+  const handleClearHistory = () => {
+    const conv = activeConversation.value;
+    if (!conv || conv.messages.length === 0) return;
+    clearHistoryOpen.value = true;
+  };
+
+  const confirmRename = async (title: string) => {
+    const meta = renameDialogMeta.value;
+    const nextTitle = title.trim();
+    if (!meta || !nextTitle || nextTitle === meta.title) {
+      renameDialogMeta.value = null;
+      return;
+    }
+    try {
+      const updated = await updateConversation(meta.id, { title: nextTitle });
+      if (meta.id === activeSessionId.value && activeConversation.value) {
+        activeConversation.value = {
+          ...activeConversation.value,
+          title: updated.title || nextTitle,
+        };
+      }
+      await refreshConversationList();
+    } catch {
+      chatError.value = t("chat.renameChatFailed");
+    } finally {
+      renameDialogMeta.value = null;
+    }
+  };
+
+  const confirmDelete = async () => {
+    const id = deleteDialogId.value;
+    if (!id) return;
     try {
       await deleteConversation(id);
       await refreshConversationList();
@@ -1661,32 +1821,15 @@ export function Chat() {
       }
     } catch {
       /* ignore */
+    } finally {
+      deleteDialogId.value = null;
     }
   };
 
-  const handleRenameConversation = async (meta: ConversationMeta, e: Event) => {
-    e.stopPropagation();
-    openConversationMenuId.value = "";
-    const nextTitle = prompt(t("chat.renameChatPrompt"), meta.title)?.trim();
-    if (!nextTitle || nextTitle === meta.title) return;
-    try {
-      const updated = await updateConversation(meta.id, { title: nextTitle });
-      if (meta.id === activeSessionId.value && activeConversation.value) {
-        activeConversation.value = {
-          ...activeConversation.value,
-          title: updated.title || nextTitle,
-        };
-      }
-      await refreshConversationList();
-    } catch {
-      chatError.value = t("chat.renameChatFailed");
-    }
-  };
-
-  const handleClearHistory = () => {
+  const confirmClearHistory = () => {
+    clearHistoryOpen.value = false;
     const conv = activeConversation.value;
     if (!conv || conv.messages.length === 0) return;
-    if (!confirm(t("chat.clearConfirm"))) return;
     conv.messages = [];
     conv.title = "New Chat";
     clearModelContextBoundary(conv.id);
@@ -1713,7 +1856,11 @@ export function Chat() {
   const asrMode = modelMode === "asr";
   const ttsMode = modelMode === "tts";
   const visionMode = modelMode === "vision";
-  const canSend = asrMode
+  const typedDecisionModel = Boolean(selectedModelInfo.value?.typed_decisions);
+  const decisionMode = decisionActive.value;
+  const canSend = decisionMode
+    ? Boolean(selectedModelInfo.value) && canSendDecision(decisionKind.value, inputText.value, decisionLines.value)
+    : asrMode
     ? Boolean(pendingAudio.value && !isRecordingAudio.value && selectedModelInfo.value)
     : imageEditMode
       ? Boolean(inputText.value.trim() && pendingImages.value.length > 0 && selectedModelInfo.value)
@@ -1999,14 +2146,114 @@ export function Chat() {
               </div>
             )}
             <div class="rounded-[24px] border border-gray-200 bg-white p-3 shadow-[0_16px_50px_rgba(15,23,42,0.08)]">
-              <textarea
-                class="min-h-[46px] w-full resize-none border-0 bg-transparent px-2 text-sm leading-6 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0"
-                rows={2}
-                placeholder={asrMode ? t("chat.askAudio") : ttsMode ? t("chat.askSpeak") : imageEditMode ? t("chat.askImageEdit") : visionMode ? t("chat.askImage") : imageMode ? t("chat.askImageGenerate") : t("chat.askHelp")}
-                value={inputText.value}
-                onInput={(e) => (inputText.value = (e.target as HTMLTextAreaElement).value)}
-                onKeyDown={handleKeyDown}
-              />
+              {decisionMode ? (
+                <div class="space-y-2 px-1 pb-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-xs font-medium text-gray-500">{t("chat.decisionKind")}</span>
+                    {decisionKinds.map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        onClick={() => { decisionKind.value = kind; }}
+                        class={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                          decisionKind.value === kind
+                            ? "border-amber-300 bg-amber-50 text-amber-700"
+                            : "border-gray-200 text-gray-500 hover:bg-gray-50"
+                        }`}
+                      >
+                        {decisionLabels().kind[kind]}
+                      </button>
+                    ))}
+                    {decisionFormCollapsed.value ? (
+                      <button
+                        type="button"
+                        onClick={() => setDecisionFormCollapsed(false)}
+                        class={`truncate text-xs ${decisionFormSummary().missing ? "font-medium text-red-500" : "text-gray-400"} hover:underline`}
+                        title={t("chat.decisionExpand")}
+                      >
+                        {decisionFormSummary().text}
+                      </button>
+                    ) : (
+                      <span class="text-xs text-gray-400">{t(`chat.decisionKindHint.${decisionKind.value}`)}</span>
+                    )}
+                    <div class="ml-auto flex items-center gap-3">
+                      {!decisionFormCollapsed.value && (
+                        <button
+                          type="button"
+                          onClick={fillDecisionExample}
+                          class="text-xs font-medium text-amber-700 hover:text-amber-800 hover:underline"
+                        >
+                          {t("chat.decisionFillExample")}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setDecisionFormCollapsed(!decisionFormCollapsed.value)}
+                        class="inline-flex items-center gap-0.5 text-xs font-medium text-gray-500 hover:text-gray-700"
+                        aria-expanded={!decisionFormCollapsed.value}
+                      >
+                        {decisionFormCollapsed.value ? t("chat.decisionExpand") : t("chat.decisionCollapse")}
+                        <svg class={`h-3.5 w-3.5 transition-transform ${decisionFormCollapsed.value ? "" : "rotate-180"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <label class="block">
+                    <span class="mb-0.5 flex items-center gap-1 text-xs font-semibold text-gray-800">
+                      {t("chat.decisionQuestion")}
+                      <span class="text-red-500">*</span>
+                    </span>
+                    <textarea
+                      class="w-full resize-none rounded-xl border-2 border-amber-200 bg-white px-3 py-1.5 text-sm leading-6 text-gray-900 placeholder:text-gray-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                      rows={1}
+                      placeholder={t(`chat.decisionQuestionPlaceholder.${decisionKind.value}`)}
+                      value={inputText.value}
+                      onInput={(e) => (inputText.value = (e.target as HTMLTextAreaElement).value)}
+                      onKeyDown={handleKeyDown}
+                    />
+                  </label>
+                  {!decisionFormCollapsed.value && decisionKind.value !== "predicate" && (
+                    <label class="block">
+                      <span class="mb-0.5 flex items-center gap-1 text-xs font-semibold text-gray-800">
+                        {decisionKind.value === "score" ? t("chat.decisionLevelsLabel") : t("chat.decisionOptionsLabel")}
+                        <span class="text-red-500">*</span>
+                      </span>
+                      <textarea
+                        class="w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm leading-6 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                        rows={decisionLineRows(decisionLines.value)}
+                        placeholder={decisionKind.value === "score" ? t("chat.decisionLevelsPlaceholder") : t("chat.decisionOptionsPlaceholder")}
+                        value={decisionLines.value}
+                        onInput={(e) => (decisionLines.value = (e.target as HTMLTextAreaElement).value)}
+                      />
+                    </label>
+                  )}
+                  {!decisionFormCollapsed.value && (
+                    <label class="block">
+                      <span class="mb-0.5 flex items-center gap-1 text-xs font-semibold text-gray-800">
+                        {t("chat.decisionState")}
+                        <span class="font-normal text-gray-400">{t("chat.decisionOptional")}</span>
+                      </span>
+                      <textarea
+                        class="w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm leading-6 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                        rows={1}
+                        placeholder={t("chat.decisionStatePlaceholder")}
+                        value={decisionState.value}
+                        onInput={(e) => (decisionState.value = (e.target as HTMLTextAreaElement).value)}
+                      />
+                    </label>
+                  )}
+                </div>
+              ) : (
+                <textarea
+                  class="min-h-[46px] w-full resize-none border-0 bg-transparent px-2 text-sm leading-6 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0"
+                  rows={2}
+                  placeholder={asrMode ? t("chat.askAudio") : ttsMode ? t("chat.askSpeak") : imageEditMode ? t("chat.askImageEdit") : visionMode ? t("chat.askImage") : imageMode ? t("chat.askImageGenerate") : t("chat.askHelp")}
+                  value={inputText.value}
+                  onInput={(e) => (inputText.value = (e.target as HTMLTextAreaElement).value)}
+                  onKeyDown={handleKeyDown}
+                />
+              )}
               <div class="mt-2 flex items-center justify-between gap-3">
                 <div class="flex min-w-0 items-center gap-2">
                   {asrMode ? (
@@ -2069,6 +2316,27 @@ export function Chat() {
                       </option>
                     ))}
                   </select>
+                  {typedDecisionModel && (
+                    <div class="flex h-9 items-center rounded-full border border-gray-200 bg-gray-50 p-0.5 text-xs font-medium" role="group" aria-label={t("chat.decisionModeToggle")}>
+                      {!selectedModelInfo.value?.decision_only && (
+                        <button
+                          type="button"
+                          onClick={() => { decisionEnabled.value = false; }}
+                          class={`rounded-full px-3 py-1.5 transition-colors ${!decisionMode ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                        >
+                          {t("chat.decisionModeChat")}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => { decisionEnabled.value = true; }}
+                        title={selectedModelInfo.value?.decision_only ? t("chat.decisionOnlyHint") : t("chat.decisionModeHint")}
+                        class={`rounded-full px-3 py-1.5 transition-colors ${decisionMode ? "bg-white text-amber-700 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
+                      >
+                        {t("chat.decisionModeDecide")}
+                      </button>
+                    </div>
+                  )}
                   {(ttsMode || asrMode) && (
                     <button
                       class="flex h-9 items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-3 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100"
@@ -2113,7 +2381,7 @@ export function Chat() {
                     onClick={handleSend}
                     disabled={!canSend}
                     class="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
-                    title={asrMode ? t("chat.transcribe") : ttsMode ? t("chat.speak") : t("chat.send")}
+                    title={decisionMode ? t("chat.decisionSend") : asrMode ? t("chat.transcribe") : ttsMode ? t("chat.speak") : t("chat.send")}
                   >
                     <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
@@ -2301,6 +2569,37 @@ export function Chat() {
           </div>
         </div>
       )}
+      <PromptDialog
+        open={renameDialogMeta.value !== null}
+        title={t("chat.renameChatPrompt")}
+        initialValue={renameDialogMeta.value?.title || ""}
+        confirmLabel={t("chat.renameChat")}
+        onConfirm={(value) => void confirmRename(value)}
+        onCancel={() => {
+          renameDialogMeta.value = null;
+        }}
+      />
+      <ConfirmDialog
+        open={deleteDialogId.value !== null}
+        title={t("chat.deleteChat")}
+        name={conversationMetas.value.find((meta) => meta.id === deleteDialogId.value)?.title}
+        description={t("chat.deleteChatConfirm")}
+        confirmLabel={t("chat.deleteChat")}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => {
+          deleteDialogId.value = null;
+        }}
+      />
+      <ConfirmDialog
+        open={clearHistoryOpen.value}
+        title={t("chat.clearHistory")}
+        description={t("chat.clearConfirm")}
+        confirmLabel={t("chat.clearHistory")}
+        onConfirm={confirmClearHistory}
+        onCancel={() => {
+          clearHistoryOpen.value = false;
+        }}
+      />
     </div>
   );
 }

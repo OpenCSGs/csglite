@@ -218,6 +218,35 @@ func TestDetectPipelineTagNewVisionArchitectures(t *testing.T) {
 	}
 }
 
+func TestDetectPipelineTagLlamacppB11541Architectures(t *testing.T) {
+	vision := []string{
+		"BailingMoeV3VLForConditionalGeneration",
+		"ClefModel",
+		"Cohere2VisionForConditionalGeneration",
+		"D1OmniModel",
+		"Glm5NextForConditionalGeneration",
+		"PplxDeciderModel",
+	}
+	for _, arch := range vision {
+		dir := t.TempDir()
+		cfg := []byte(`{"architectures":["` + arch + `"]}`)
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := DetectPipelineTag(dir); got != "image-text-to-text" {
+			t.Fatalf("DetectPipelineTag(%q) = %q, want image-text-to-text", arch, got)
+		}
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["EmbeddingGemma2Model"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := DetectPipelineTag(dir); got != "feature-extraction" {
+		t.Fatalf("DetectPipelineTag(EmbeddingGemma2Model) = %q, want feature-extraction", got)
+	}
+}
+
 func TestDetectPipelineTagMMProjWithoutConfig(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "mmproj-model-f16.gguf"), []byte("mmproj"), 0o644); err != nil {
@@ -298,6 +327,60 @@ func TestDetectPipelineTagDiffusersModelIndexDefaultsToTextToImage(t *testing.T)
 
 	if got := DetectPipelineTag(dir); got != "text-to-image" {
 		t.Fatalf("DetectPipelineTag() = %q, want text-to-image", got)
+	}
+}
+
+func TestImageBackendForMLXQwenImage21(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("---\nlibrary_name: mlx\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"QwenImage21Pipeline"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ImageBackendFor(dir, "mlx-community/Qwen-Image-2.1-MLX-4bit"); got != ImageBackendMLXQwen21 {
+		t.Fatalf("ImageBackendFor() = %q, want %q", got, ImageBackendMLXQwen21)
+	}
+	if got := ImageBackendFor(dir, "Qwen/Qwen-Image-2.1"); got != ImageBackendMLXQwen21 {
+		t.Fatalf("ImageBackendFor() = %q, want model card MLX detection", got)
+	}
+}
+
+func TestImageBackendForOfficialQwenImage21UsesDiffusers(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"QwenImage21Pipeline"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ImageBackendFor(dir, "Qwen/Qwen-Image-2.1"); got != ImageBackendDiffusers {
+		t.Fatalf("ImageBackendFor() = %q, want %q", got, ImageBackendDiffusers)
+	}
+}
+
+func TestImageBackendForOtherMLXImageUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("---\nlibrary_name: mlx\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name":"FluxPipeline"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ImageBackendFor(dir, "mlx-community/FLUX.1-schnell-4bit"); got != ImageBackendMLXUnsupported {
+		t.Fatalf("ImageBackendFor() = %q, want %q", got, ImageBackendMLXUnsupported)
+	}
+}
+
+func TestImageBackendForMetadata(t *testing.T) {
+	if got := ImageBackendForMetadata("mlx-community/Qwen-Image-2.1-MLX-4bit", "", "mlx", "text-to-image"); got != ImageBackendMLXQwen21 {
+		t.Fatalf("ImageBackendForMetadata() = %q, want %q", got, ImageBackendMLXQwen21)
+	}
+	if got := ImageBackendForMetadata("mlx-community/FLUX.1-schnell-4bit", "FluxPipeline", "mlx", "text-to-image"); got != ImageBackendMLXUnsupported {
+		t.Fatalf("ImageBackendForMetadata() = %q, want %q", got, ImageBackendMLXUnsupported)
+	}
+	if got := ImageBackendForMetadata("Qwen/Qwen-Image", "QwenImagePipeline", "diffusers", "text-to-image"); got != ImageBackendDiffusers {
+		t.Fatalf("ImageBackendForMetadata() = %q, want %q", got, ImageBackendDiffusers)
+	}
+	if got := ImageBackendForMetadata("mlx-community/Qwen3-4bit", "", "mlx", "text-generation"); got != ImageBackendDiffusers {
+		t.Fatalf("ImageBackendForMetadata() = %q, want MLX text models left alone", got)
 	}
 }
 

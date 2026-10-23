@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,9 +17,9 @@ import (
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/correlation"
+	"github.com/opencsgs/csglite/internal/ctxcompress"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/observability"
-	routerprofile "github.com/opencsgs/semantic-router"
 )
 
 const (
@@ -42,6 +41,7 @@ type observationMetadata struct {
 	pool         *apiUsagePoolMetadata
 	inputTokens  int64
 	outputTokens int64
+	compression  observationCompression
 }
 
 type observationMetadataSnapshot struct {
@@ -52,6 +52,33 @@ type observationMetadataSnapshot struct {
 	pool         *apiUsagePoolMetadata
 	inputTokens  int64
 	outputTokens int64
+	compression  observationCompression
+}
+
+// observationCompression is what context compression did to the request.
+type observationCompression struct {
+	mode        string
+	blocks      int64
+	compressed  int64
+	bytesBefore int64
+	bytesAfter  int64
+	tokensSaved int64
+}
+
+func (m *observationMetadata) setContextCompression(mode string, stats ctxcompress.Stats) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.compression = observationCompression{
+		mode:        mode,
+		blocks:      int64(stats.Blocks),
+		compressed:  int64(stats.Compressed),
+		bytesBefore: int64(stats.BytesBefore),
+		bytesAfter:  int64(stats.BytesAfter),
+		tokensSaved: int64(stats.TokensSaved),
+	}
 }
 
 func observationFromContext(ctx context.Context) *observationMetadata {
@@ -90,6 +117,7 @@ func (m *observationMetadata) snapshot() observationMetadataSnapshot {
 		sourceName:   m.sourceName,
 		inputTokens:  m.inputTokens,
 		outputTokens: m.outputTokens,
+		compression:  m.compression,
 	}
 	if m.pool != nil {
 		pool := *m.pool
@@ -141,16 +169,21 @@ func (w *observationResponseWriter) capture(p []byte) {
 }
 
 func (w *observationResponseWriter) captureUsageTail(p []byte) {
+	w.usageTail = appendUsageTail(w.usageTail, p)
+}
+
+// appendUsageTail keeps only the newest observabilityUsageTailLimit bytes, the
+// region where a streamed response advertises its token usage.
+func appendUsageTail(tail []byte, p []byte) []byte {
 	if len(p) >= observabilityUsageTailLimit {
-		w.usageTail = append(w.usageTail[:0], p[len(p)-observabilityUsageTailLimit:]...)
-		return
+		return append(tail[:0], p[len(p)-observabilityUsageTailLimit:]...)
 	}
-	overflow := len(w.usageTail) + len(p) - observabilityUsageTailLimit
+	overflow := len(tail) + len(p) - observabilityUsageTailLimit
 	if overflow > 0 {
-		copy(w.usageTail, w.usageTail[overflow:])
-		w.usageTail = w.usageTail[:len(w.usageTail)-overflow]
+		copy(tail, tail[overflow:])
+		tail = tail[:len(tail)-overflow]
 	}
-	w.usageTail = append(w.usageTail, p...)
+	return append(tail, p...)
 }
 
 func (w *observationResponseWriter) Flush() {
@@ -283,6 +316,13 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			ResponseBody:          string(responseBody),
 			RequestBodyTruncated:  requestTruncated,
 			ResponseBodyTruncated: ow.truncated,
+
+			ContextCompressionMode:  snapshot.compression.mode,
+			ContextBlocks:           snapshot.compression.blocks,
+			ContextCompressedBlocks: snapshot.compression.compressed,
+			ContextBytesBefore:      snapshot.compression.bytesBefore,
+			ContextBytesAfter:       snapshot.compression.bytesAfter,
+			ContextTokensSaved:      snapshot.compression.tokensSaved,
 		}
 		if !ow.firstWrite.IsZero() {
 			record.FirstTokenLatencyMS = ow.firstWrite.Sub(startedAt).Milliseconds()
@@ -294,21 +334,6 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			record.ActualMemberID = snapshot.pool.ActualMemberID
 			record.MemberModel = snapshot.pool.MemberModel
 			record.PoolPolicy = snapshot.pool.Policy
-			record.RouterProfileID = snapshot.pool.RouterProfileID
-			record.RouterProfileVersion = snapshot.pool.RouterProfileVersion
-			record.RouterProfileSchemaVersion = snapshot.pool.RouterProfileSchemaVersion
-			record.RouterAlgorithm = snapshot.pool.RouterAlgorithm
-			record.RoutingTextVersion = snapshot.pool.RoutingTextVersion
-			record.RouterConfidence = snapshot.pool.RouterConfidence
-			record.RouterMargin = snapshot.pool.RouterMargin
-			record.RouterSimilarity = snapshot.pool.RouterSimilarity
-			record.SemanticRouted = snapshot.pool.SemanticRouted
-			record.SemanticCluster = snapshot.pool.SemanticCluster
-			record.SemanticClusterID = snapshot.pool.SemanticClusterID
-			record.SemanticDistance = snapshot.pool.SemanticDistance
-			record.SemanticOOD = snapshot.pool.SemanticOOD
-			record.SemanticFallback = snapshot.pool.SemanticFallback
-			record.SemanticFallbackReason = snapshot.pool.SemanticFallbackReason
 			record.FallbackCount = snapshot.pool.FallbackCount
 			record.LimitedCount = snapshot.pool.LimitedCount
 		}
@@ -338,12 +363,8 @@ func (s *Server) addObservation(record observability.RequestRecord) error {
 		if _, err := s.observability.Cleanup(context.Background(), retentionDays); err != nil {
 			log.Printf("OBSERVABILITY: retention cleanup failed: %v", err)
 		}
-		s.cleanupRouterTraceData(retentionDays)
 	}
 	s.observabilityMu.RUnlock()
-	if record.Status == "completed" && record.PoolID != "" {
-		s.enqueueRouterCuration(record.PoolID)
-	}
 	return nil
 }
 
@@ -487,11 +508,11 @@ func updateObservationResponseUsage(value map[string]any, result *observationRes
 	switch {
 	case hasAnthropicRead:
 		result.eligibleTokens = max(result.eligibleTokens, inputTokens+readTokens+creationTokens)
-case hasTopLevelRead:
-			switch {
-			case readTokens > 0 && inputTokens < readTokens:
-				inputTokens += readTokens
-			}
+	case hasTopLevelRead:
+		switch {
+		case readTokens > 0 && inputTokens < readTokens:
+			inputTokens += readTokens
+		}
 		result.eligibleTokens = max(result.eligibleTokens, inputTokens)
 	case hasNestedRead || hasCreation:
 		result.eligibleTokens = max(result.eligibleTokens, inputTokens)
@@ -514,7 +535,6 @@ func observationJSONInt(value map[string]any, keys ...string) (int64, bool) {
 	}
 	return 0, false
 }
-
 
 func observationNestedJSONInt(value map[string]any, target string, parents ...string) (int64, bool) {
 	for _, parent := range parents {
@@ -673,20 +693,6 @@ func (s *Server) cleanupObservability() {
 	retentionDays := config.ObservabilityRetentionDays(s.cfg.Observability)
 	if _, err := s.observability.Cleanup(context.Background(), retentionDays); err != nil {
 		log.Printf("OBSERVABILITY: retention cleanup failed: %v", err)
-	}
-	s.cleanupRouterTraceData(retentionDays)
-}
-
-func (s *Server) cleanupRouterTraceData(retentionDays int) {
-	s.routerStoreMu.RLock()
-	defer s.routerStoreMu.RUnlock()
-	if s.routerProfiles == nil {
-		return
-	}
-	cutoff := time.Now().UTC().Add(-time.Duration(retentionDays) * 24 * time.Hour)
-	if _, err := s.routerProfiles.PurgeTraceDataBefore(context.Background(), cutoff); err != nil &&
-		!errors.Is(err, routerprofile.ErrConflict) {
-		log.Printf("SEMANTIC ROUTER: retention cleanup failed: %v", err)
 	}
 }
 

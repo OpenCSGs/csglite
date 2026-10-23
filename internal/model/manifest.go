@@ -15,8 +15,12 @@ import (
 // Vision-related HuggingFace architecture suffixes/names.
 var visionArchitectures = map[string]bool{
 	"AudioFlamingo3ForConditionalGeneration": true,
+	"BailingMoeV3VLForConditionalGeneration": true,
 	"ChameleonForConditionalGeneration":      true,
+	"ClefModel":                              true,
 	"CogVLMForCausalLM":                      true,
+	"Cohere2VisionForConditionalGeneration":  true,
+	"D1OmniModel":                            true,
 	"DeepseekOCRForCausalLM":                 true,
 	"Dots3NoteForConditionalGeneration":      true,
 	"DotsOCRForCausalLM":                     true,
@@ -24,6 +28,7 @@ var visionArchitectures = map[string]bool{
 	"Gemma3nForConditionalGeneration":        true,
 	"Glm4vForConditionalGeneration":          true,
 	"Glm4vMoeForConditionalGeneration":       true,
+	"Glm5NextForConditionalGeneration":       true,
 	"GlmOcrForConditionalGeneration":         true,
 	"HunYuanVLForConditionalGeneration":      true,
 	"Idefics3ForConditionalGeneration":       true,
@@ -45,6 +50,7 @@ var visionArchitectures = map[string]bool{
 	"PaddleOCRVLForConditionalGeneration":    true,
 	"Phi3VForCausalLM":                       true,
 	"Phi4ForCausalLMV":                       true,
+	"PplxDeciderModel":                       true,
 	"Qwen2VLForConditionalGeneration":        true,
 	"Qwen2VLModel":                           true,
 	"Qwen2_5OmniModel":                       true,
@@ -160,6 +166,7 @@ var embeddingArchitectures = map[string]bool{
 	"DistilBertForMaskedLM":               true,
 	"DistilBertForSequenceClassification": true,
 	"DistilBertModel":                     true,
+	"EmbeddingGemma2Model":                true,
 	"EuroBertModel":                       true,
 	"JinaBertForMaskedLM":                 true,
 	"JinaBertModel":                       true,
@@ -308,6 +315,214 @@ func TTSBackendForMetadata(architecture, modelName string) string {
 	return ttsBackendFrom("", architectures, modelName)
 }
 
+const (
+	// ImageBackendDiffusers is the portable PyTorch/Diffusers image runtime.
+	ImageBackendDiffusers = "diffusers"
+	// ImageBackendMLXQwen21 serves MLX-converted Qwen-Image-2.1 checkpoints
+	// through MFLUX on Apple Silicon.
+	ImageBackendMLXQwen21 = "mlx-qwen-image-2.1"
+	// ImageBackendMLXUnsupported marks an MLX image checkpoint that must not
+	// be sent to Diffusers. Only Qwen-Image-2.1 has an MLX image backend.
+	ImageBackendMLXUnsupported = "mlx-image-unsupported"
+	// ImageBackendGGUFUnsupported marks a diffusion model shipped as GGUF. Such
+	// a file holds only the denoiser; it needs a separate VAE and text encoder
+	// and a GGUF-capable runtime such as stable-diffusion.cpp, which
+	// csghub-lite does not ship. Diffusers cannot load it and llama.cpp does
+	// not know the architecture.
+	ImageBackendGGUFUnsupported = "gguf-image-unsupported"
+)
+
+// diffusionGGUFArchitectures lists general.architecture values written by
+// diffusion GGUF converters (stable-diffusion.cpp, ComfyUI-GGUF). None of them
+// is a llama.cpp text architecture.
+var diffusionGGUFArchitectures = map[string]bool{
+	"flux":       true,
+	"sd1":        true,
+	"sdxl":       true,
+	"sd3":        true,
+	"aura":       true,
+	"hidream":    true,
+	"lumina2":    true,
+	"chroma":     true,
+	"qwen_image": true,
+}
+
+// ImageBackendFor identifies image checkpoints which require a runtime other
+// than Diffusers. It intentionally requires both Qwen-Image-2.1 metadata and
+// an MLX signal so the official Diffusers checkpoint keeps its existing path.
+// Other MLX image checkpoints are reported separately so they are not loaded
+// as Diffusers models.
+func ImageBackendFor(modelDir, modelName string) string {
+	if IsDiffusionGGUF(modelDir) {
+		return ImageBackendGGUFUnsupported
+	}
+	if !isMLXImageCandidate(modelDir, modelName) {
+		return ImageBackendDiffusers
+	}
+	if isMLXQwenImage21(modelDir, modelName) {
+		return ImageBackendMLXQwen21
+	}
+	return ImageBackendMLXUnsupported
+}
+
+// ImageBackendForMetadata makes the same choice from hub metadata, before the
+// checkpoint is downloaded. An empty class name is normal: the model card
+// usually carries library_name and pipeline_tag, not model_index.json.
+func ImageBackendForMetadata(modelName, className, libraryName, pipelineTag string) string {
+	if !isMLXNameOrLibrary(modelName, libraryName) || !metadataLooksLikeImage(modelName, className, pipelineTag) {
+		return ImageBackendDiffusers
+	}
+	if isQwenImage21Metadata(modelName, className) {
+		return ImageBackendMLXQwen21
+	}
+	return ImageBackendMLXUnsupported
+}
+
+// IsDiffusionGGUF reports whether modelDir holds a text-to-image or
+// image-to-image model as GGUF weights rather than a Diffusers pipeline: the
+// model card declares an image task, or the GGUF names a diffusion
+// architecture.
+func IsDiffusionGGUF(modelDir string) bool {
+	if _, err := os.Stat(filepath.Join(modelDir, "model_index.json")); err == nil {
+		return false
+	}
+	weights := diffusionGGUFCandidates(modelDir)
+	if len(weights) == 0 {
+		return false
+	}
+	switch detectModelCardPipelineTag(modelDir) {
+	case "text-to-image", "image-to-image":
+		return true
+	}
+	return hasDiffusionGGUFArchitecture(weights)
+}
+
+func diffusionGGUFCandidates(modelDir string) []string {
+	var paths []string
+	_ = filepath.WalkDir(modelDir, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".gguf") || ggufpick.IsMMProjGGUF(entry.Name()) {
+			return nil
+		}
+		paths = append(paths, current)
+		return nil
+	})
+	sort.Strings(paths)
+	return paths
+}
+
+// IsDiffusionGGUFArchitecture reports whether a GGUF general.architecture
+// value belongs to a diffusion model rather than a llama.cpp text model.
+func IsDiffusionGGUFArchitecture(architecture string) bool {
+	return diffusionGGUFArchitectures[strings.ToLower(strings.TrimSpace(architecture))]
+}
+
+func hasDiffusionGGUFArchitecture(paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	// Quantizations of one model share an architecture; the first is enough.
+	arch, err := ggufmeta.ReadArchitecture(paths[0])
+	return err == nil && IsDiffusionGGUFArchitecture(arch)
+}
+
+func isMLXImageCandidate(modelDir, modelName string) bool {
+	if !isMLXNameOrLibrary(modelName, modelCardMLXLibrary(modelDir)) {
+		return false
+	}
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	if strings.Contains(name, "qwen-image") {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(modelDir, "model_index.json")); err == nil {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(modelCardMetadataValue(modelDir, "pipeline_tag", "pipeline-tag", "task"))) {
+	case "text-to-image", "image-to-image":
+		return true
+	default:
+		return false
+	}
+}
+
+func isMLXQwenImage21(modelDir, modelName string) bool {
+	if !isMLXNameOrLibrary(modelName, modelCardMLXLibrary(modelDir)) {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(modelDir, "model_index.json"))
+	if err != nil {
+		return isQwenImage21Metadata(modelName, "")
+	}
+	var index struct {
+		ClassName string `json:"_class_name"`
+	}
+	if json.Unmarshal(data, &index) != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(index.ClassName), "QwenImage21Pipeline")
+}
+
+// modelCardMLXLibrary returns the card's library_name, falling back to an
+// "mlx" or "mflux" tag: some cards (OsaurusAI's mflux bundles) declare the
+// library only as a tag, which the hub turns into library_name on its side.
+func modelCardMLXLibrary(modelDir string) string {
+	if library := modelCardMetadataValue(modelDir, "library_name", "library-name"); library != "" {
+		return library
+	}
+	for _, tag := range stringSliceMetadataValue(modelCardMetadata(modelDir)["tags"]) {
+		switch tag = strings.ToLower(strings.TrimSpace(tag)); tag {
+		case "mlx", "mflux":
+			return tag
+		}
+	}
+	return ""
+}
+
+func isMLXNameOrLibrary(modelName, libraryName string) bool {
+	// mflux checkpoints are MLX weights saved by MFLUX.
+	switch strings.ToLower(strings.TrimSpace(libraryName)) {
+	case "mlx", "mflux":
+		return true
+	}
+	if strings.Contains(strings.ToLower(modelName), "-mflux") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "mlx-community/")
+}
+
+func metadataLooksLikeImage(modelName, className, pipelineTag string) bool {
+	switch strings.ToLower(strings.TrimSpace(pipelineTag)) {
+	case "text-to-image", "image-to-image":
+		return true
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "qwen-image") {
+		return true
+	}
+	className = strings.ToLower(strings.TrimSpace(className))
+	if className == "" {
+		return false
+	}
+	for _, token := range []string{
+		"qwenimage", "flux", "stablediffusion", "stablecascade", "pixart", "sana",
+		"cogview", "zimage", "kolors", "hunyuan", "kandinsky", "lumina", "auraflow",
+		"glmimage", "ovisimage", "img2img", "image2image", "inpaint", "kontext",
+	} {
+		if strings.Contains(className, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func isQwenImage21Metadata(modelName, className string) bool {
+	if strings.EqualFold(strings.TrimSpace(className), "QwenImage21Pipeline") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "qwen-image-2.1")
+}
+
 func ttsBackendFrom(modelType string, architectures []string, name string) string {
 	if strings.EqualFold(strings.TrimSpace(modelType), "qwen3_tts") {
 		return TTSBackendQwen3
@@ -432,6 +647,9 @@ func DetectPipelineTag(modelDir string) string {
 	}
 	if tag := detectModelScopePipelineTag(modelDir); tag != "" {
 		return tag
+	}
+	if hasDiffusionGGUFArchitecture(diffusionGGUFCandidates(modelDir)) {
+		return "text-to-image"
 	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {

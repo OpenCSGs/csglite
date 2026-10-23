@@ -4,6 +4,8 @@ import { locale } from "../i18n";
 export interface ModelInfo {
   name: string;
   model: string;
+  /** Unique on-disk storage ID of a local model ([source/]namespace/name). */
+  id?: string;
   size: number;
   format: string;
   modified_at: string;
@@ -21,6 +23,12 @@ export interface ModelInfo {
   input_modalities?: string[];
   output_modalities?: string[];
   has_mmproj?: boolean;
+  /** Local model that answers the OpenAI Decisions API (POST /v1/decisions). */
+  typed_decisions?: boolean;
+  /** Native decision model (e.g. Laya) that answers decisions only and cannot chat. */
+  decision_only?: boolean;
+  /** Whether and how a downloaded local model runs on this machine. */
+  local_inference?: LocalInferenceSupport;
   context_window?: number;
   max_model_len?: number;
   description?: string;
@@ -76,6 +84,8 @@ export interface ModelManifestResponse {
   details: ModelInfo;
   files: ModelFileEntry[];
   local_inference: LocalInferenceSupport;
+  /** Tags from the model card's front matter. */
+  tags?: string[];
 }
 
 export interface ModelConfigResponse {
@@ -308,8 +318,12 @@ export interface SystemInfo {
   gpu_shared_memory: boolean;
 }
 
+/** How the gateway shrinks tool output in agent requests. */
+export type ContextCompressionMode = "off" | "safe" | "aggressive";
+
 export interface AppSettings {
   version: string;
+  llama_server_version?: string;
   storage_dir: string;
   model_dir: string;
   dataset_dir: string;
@@ -330,6 +344,7 @@ export interface AppSettings {
   autostart: boolean;
   llama_use_model_max_ctx: boolean;
   llama_num_parallel: number;
+  context_compression: ContextCompressionMode;
   web_search: WebSearchSettings;
   observability: ObservabilitySettings;
   hidden_nav_items: string[];
@@ -447,6 +462,8 @@ export interface ImageRuntimeStatus {
   missing_packages?: string[];
   install_command?: string[];
   error?: string;
+  diffusers_version?: string;
+  diffusers_latest_version?: string;
 }
 
 export type ASRRuntimeStatus = ImageRuntimeStatus;
@@ -609,6 +626,7 @@ export interface LocalAPIUsageRow {
   fallback_count?: number;
   limited_count?: number;
   requests: number;
+  estimated_requests?: number;
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;
@@ -716,21 +734,6 @@ export interface ObservabilityRequest {
   actual_member_id?: string;
   member_model?: string;
   pool_policy?: string;
-  router_profile_id?: string;
-  router_profile_version?: number;
-  router_profile_schema_version?: number;
-  router_algorithm?: string;
-  routing_text_version?: string;
-  router_confidence?: number;
-  router_margin?: number;
-  router_similarity?: number;
-  semantic_routed?: boolean;
-  semantic_cluster?: number;
-  semantic_cluster_id?: string;
-  semantic_distance?: number;
-  semantic_ood?: boolean;
-  semantic_fallback?: boolean;
-  semantic_fallback_reason?: string;
   price_input_per_million: number;
   price_output_per_million: number;
   estimated_cost: number;
@@ -752,6 +755,18 @@ export interface ObservabilityRequest {
   response_body?: string;
   request_body_truncated: boolean;
   response_body_truncated: boolean;
+  context_compression?: ObservabilityContextCompression;
+}
+
+/** What context compression did to one request's tool results. */
+export interface ObservabilityContextCompression {
+  mode: ContextCompressionMode;
+  blocks: number;
+  compressed: number;
+  bytes_before: number;
+  bytes_after: number;
+  /** Estimated input tokens removed. */
+  tokens_saved: number;
 }
 
 export interface ObservabilityRequestSummary {
@@ -760,6 +775,7 @@ export interface ObservabilityRequestSummary {
   failed: number;
   total_tokens: number;
   average_latency_ms: number;
+  context_tokens_saved: number;
 }
 
 export interface ObservabilityRequestListResponse {
@@ -1433,7 +1449,9 @@ export async function openExternalURL(url: string): Promise<boolean> {
 }
 
 export async function getImageRuntimeStatus(): Promise<ImageRuntimeStatus> {
-  return fetchJSON<ImageRuntimeStatus>("/api/image-runtime");
+  return fetchJSON<ImageRuntimeStatus>("/api/image-runtime", {
+    cache: "no-store",
+  });
 }
 
 export async function installImageRuntime(options?: { upgrade_packages?: boolean }): Promise<ImageRuntimeStatus> {
@@ -1488,6 +1506,56 @@ export async function synthesizeSpeech(req: AudioSpeechRequest, signal?: AbortSi
   }
   const blob = await resp.blob();
   return { url: URL.createObjectURL(blob), mime: contentType.split(";")[0] || "audio/mpeg" };
+}
+
+export type DecisionQuestionType = "predicate" | "choice" | "score";
+
+/** OpenAI Decisions API question. */
+export interface DecisionQuestion {
+  type: DecisionQuestionType;
+  name?: string;
+  instructions: string;
+  choices?: { value: string | boolean; description?: string }[];
+  levels?: { label: string; description?: string }[];
+}
+
+export interface CreateDecisionRequest {
+  model: string;
+  source?: string;
+  input: string;
+  questions: DecisionQuestion[];
+}
+
+export interface DecisionAnswer {
+  type: DecisionQuestionType | "refusal";
+  name: string | null;
+  probability?: number;
+  choice?: string | boolean;
+  score?: number;
+  probabilities?: { value: string | boolean | number; label?: string; probability: number }[];
+  confidence?: number;
+}
+
+export interface Decision {
+  answers: DecisionAnswer[];
+  model: string;
+  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
+}
+
+/** POST /v1/decisions (OpenAI Decisions API). */
+export async function createDecision(req: CreateDecisionRequest, signal?: AbortSignal): Promise<Decision> {
+  const resp = await fetch("/v1/decisions", withLocaleHeader({
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  }));
+  const contentType = resp.headers.get("content-type") || "";
+  const body = await resp.text();
+  if (!resp.ok) {
+    throw new Error(extractErrorMessage(body, contentType, resp.statusText || "decision failed"));
+  }
+  return JSON.parse(body) as Decision;
 }
 
 export interface RealtimeSessionOptions {
@@ -1712,6 +1780,7 @@ export async function saveSettings(patch: {
   autostart?: boolean;
   llama_use_model_max_ctx?: boolean;
   llama_num_parallel?: number;
+  context_compression?: ContextCompressionMode;
   web_search?: WebSearchSettings;
   observability?: ObservabilitySettings;
 }): Promise<AppSettings> {
@@ -1890,11 +1959,11 @@ export async function stopModel(model: string): Promise<void> {
   });
 }
 
-export async function deleteModel(model: string): Promise<void> {
+export async function deleteModel(model: string, id?: string): Promise<void> {
   await fetchJSON("/api/delete", {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model }),
+    body: JSON.stringify(id ? { model, id } : { model }),
   });
 }
 
@@ -2823,24 +2892,12 @@ export interface ProviderPoolMember {
   max_concurrent?: number;
 }
 
-export type ProviderPoolPolicyType = "priority_weight" | "semantic";
-
-export interface ProviderPoolPolicy {
-  type: ProviderPoolPolicyType | string;
-  label?: string;
-  experimental: boolean;
-  available: boolean;
-  reason?: string;
-}
-
 export interface ProviderPool {
   id: string;
   name: string;
   model: string;
   enabled: boolean;
-  policy?: ProviderPoolPolicyType | string;
-  policy_available?: boolean;
-  policy_unavailable_reason?: string;
+  policy?: string;
   members: ProviderPoolMember[];
 }
 
@@ -2848,7 +2905,6 @@ export interface ProviderPoolCreateRequest {
   name: string;
   model: string;
   enabled?: boolean;
-  policy?: ProviderPoolPolicyType | string;
   members: ProviderPoolMember[];
 }
 
@@ -2856,252 +2912,7 @@ export interface ProviderPoolUpdateRequest {
   name?: string;
   model?: string;
   enabled?: boolean;
-  policy?: ProviderPoolPolicyType | string;
   members?: ProviderPoolMember[];
-}
-
-export interface ProviderPoolRouterSuggestion {
-  id: string;
-  reason: string;
-  qualified_query_count: number;
-  new_query_count: number;
-  member_compatible: boolean;
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProviderPoolRouterEvaluationRequest {
-  evaluation_mode?: "absolute_v1" | "listwise_v2";
-  base_profile_id?: string;
-  judge_model: string;
-  max_queries: number;
-  repeats: number;
-  max_output_tokens: number;
-  request_timeout_seconds: number;
-  budget_currency: string;
-  budget_amount: number;
-  allow_unknown_pricing: boolean;
-}
-
-export interface ProviderPoolRouterEvaluationPreview {
-  evaluation_mode: "absolute_v1" | "listwise_v2";
-  eligible_snapshot_count: number;
-  selected_snapshot_count: number;
-  direct_candidate_calls: number;
-  judge_calls: number;
-  max_judge_calls: number;
-  max_total_calls: number;
-  judge_prompt_tokens: number;
-  max_judge_token_exposure: number;
-  max_token_exposure: number;
-  known_judge_estimated_cost: number;
-  known_estimated_cost: number;
-  currency: string;
-  unknown_price_members: Array<{ source: string; model: string }>;
-  judge_price_known: boolean;
-  requires_unknown_pricing_consent: boolean;
-  limits: {
-    max_queries: number;
-    max_repeats: number;
-    max_output_tokens: number;
-    max_request_timeout_seconds: number;
-  };
-}
-
-export type ProviderPoolRouterJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
-
-export interface ProviderPoolRouterEvaluationJob {
-  id: string;
-  evaluation_mode: "absolute_v1" | "listwise_v2";
-  base_profile_id?: string;
-  member_compatible: boolean;
-  judge_model: string;
-  max_queries: number;
-  repeats: number;
-  max_output_tokens: number;
-  request_timeout_seconds: number;
-  budget_currency: string;
-  budget_amount: number;
-  allow_unknown_pricing: boolean;
-  direct_candidate_calls?: number;
-  judge_calls?: number;
-  max_judge_calls?: number;
-  judge_prompt_tokens?: number;
-  max_judge_token_exposure?: number;
-  max_token_exposure?: number;
-  known_judge_estimated_cost?: number;
-  known_estimated_cost?: number;
-  estimate_currency?: string;
-  unknown_pricing?: boolean;
-  current: number;
-  total: number;
-  phase?: string;
-  cancellation_requested: boolean;
-  status: ProviderPoolRouterJobStatus;
-  error?: string;
-  created_at: string;
-  started_at?: string;
-  completed_at?: string;
-  updated_at: string;
-}
-
-export interface ProviderPoolRouterBaselineResult {
-  quality: number;
-  cost: number;
-}
-
-export interface ProviderPoolRouterBaselines {
-  best_single_model: ProviderPoolRouterBaselineResult;
-  cheapest_model: ProviderPoolRouterBaselineResult;
-  random_model: ProviderPoolRouterBaselineResult;
-  oracle_model: ProviderPoolRouterBaselineResult;
-}
-
-export interface ProviderPoolRouterMetrics {
-  query_count: number;
-  cell_count: number;
-  trial_count: number;
-  repeats: number;
-  response_outcomes: Record<string, number>;
-  win_rate: number;
-  spend: number;
-  total_cost: number;
-  currency?: string;
-  cost_unit: string;
-  monetary_spend_known: boolean;
-  unknown_monetary_spend: boolean;
-  train_query_count: number;
-  held_out_query_count: number;
-  cv_fold_count: number;
-  train_utility: number;
-  train_quality: number;
-  train_cost_score: number;
-  held_out_utility: number;
-  held_out_quality: number;
-  held_out_cost_score: number;
-  all_clusters_one_member: boolean;
-  semantic_differentiation: boolean;
-  baselines: ProviderPoolRouterBaselines;
-}
-
-export interface ProviderPoolRouterProfile {
-  id: string;
-  version: number;
-  schema_version: 1 | 2;
-  router_algorithm?: string;
-  member_compatible: boolean;
-  member_fingerprint_drift: boolean;
-  active: boolean;
-  created_at: string;
-  created_by?: string;
-  source_job_id?: string;
-  description?: string;
-  generated_at: string;
-  distance: string;
-  cost_unit: string;
-  fallback_member_id: string;
-  metrics: ProviderPoolRouterMetrics;
-  clusters?: Array<{
-    id: string;
-    target_member_id: string;
-    target: { source: string; model: string };
-    sample_count: number;
-    distance_quantiles: { p50: number; p90: number; p95: number; p99: number };
-    ood_threshold: number;
-  }>;
-  candidate_distribution?: Array<{
-    member_id: string;
-    target: { source: string; model: string };
-    cluster_count: number;
-    sample_count: number;
-    fraction?: number;
-  }>;
-  activation_allowed: boolean;
-  activation_blocked_reason?: string;
-  validation_state?: string;
-  feasible: boolean;
-  collapsed_single_member: boolean;
-  collapsed_quality_passed: boolean;
-  v2?: {
-    profile_algorithm: string;
-    model_type: string;
-    model_fallback_reason?: string;
-    sample_count: number;
-    query_group_count: number;
-    round_count: number;
-    cv_fold_count: number;
-    target_quality_retention: number;
-    confidence_level: number;
-    baseline_best_single_model: ProviderPoolRouterQualityCost;
-    routed: ProviderPoolRouterQualityCost;
-    point_retention: number;
-    conservative_retention: number;
-    retention_lower_bound: number;
-    savings?: number;
-    savings_fraction?: number;
-    savings_known: boolean;
-    coverage: number;
-    fallback_rate: number;
-    low_confidence_rate: number;
-    ood_rate: number;
-    pairwise_metrics: ProviderPoolRouterPairwiseMetrics;
-    thresholds: {
-      minimum_confidence: number;
-      minimum_margin: number;
-      minimum_similarity: number;
-      quality_slack: number;
-    };
-    optimize_known_cost: boolean;
-    quality_feasible: boolean;
-    known_cost_feasible: boolean;
-    insufficient_evidence: boolean;
-    collapsed_member_id?: string;
-    warnings?: string[];
-  };
-}
-
-export interface ProviderPoolRouterQualityCost {
-  quality: number;
-  cost?: number;
-  cost_known: boolean;
-  currency?: string;
-}
-
-export interface ProviderPoolRouterPairwiseMetrics {
-  count: number;
-  log_loss: number;
-  brier: number;
-  top_class_accuracy: number;
-  ece: number;
-}
-
-export interface ProviderPoolRouterStatus {
-  qualified_query_count: number;
-  new_query_count: number;
-  pending_suggestion?: ProviderPoolRouterSuggestion;
-  running_job?: ProviderPoolRouterEvaluationJob;
-  latest_job?: ProviderPoolRouterEvaluationJob;
-  active_profile?: ProviderPoolRouterProfile;
-  latest_candidate_profile?: ProviderPoolRouterProfile;
-  rollback_target_profile?: ProviderPoolRouterProfile;
-  current_profile_id?: string;
-  semantic_differentiation: boolean;
-}
-
-export interface ProviderPoolRouterActivation {
-  id: number;
-  from_profile_id?: string;
-  to_profile_id: string;
-  action: string;
-  reason: string;
-  actor: string;
-  created_at: string;
-}
-
-export async function getProviderPoolPolicies(): Promise<ProviderPoolPolicy[]> {
-  const resp = await fetchJSON<{ policies: ProviderPoolPolicy[] }>("/api/provider-pool-policies");
-  return resp.policies || [];
 }
 
 export async function getProviderPools(): Promise<ProviderPool[]> {
@@ -3128,95 +2939,6 @@ export async function updateProviderPool(id: string, req: ProviderPoolUpdateRequ
 export async function deleteProviderPool(id: string): Promise<void> {
   await fetchJSON<{ status: string }>(`/api/provider-pools/${encodeURIComponent(id)}`, {
     method: "DELETE",
-  });
-}
-
-function providerPoolRouterPath(id: string, suffix: string): string {
-  return `/api/provider-pools/${encodeURIComponent(id)}/router${suffix}`;
-}
-
-export async function getProviderPoolRouterStatus(id: string): Promise<ProviderPoolRouterStatus> {
-  return fetchJSON<ProviderPoolRouterStatus>(providerPoolRouterPath(id, "/status"));
-}
-
-export async function getProviderPoolRouterSuggestion(id: string): Promise<ProviderPoolRouterSuggestion> {
-  return fetchJSON<ProviderPoolRouterSuggestion>(providerPoolRouterPath(id, "/suggestion"));
-}
-
-export async function previewProviderPoolRouterEvaluation(
-  id: string,
-  request: ProviderPoolRouterEvaluationRequest,
-): Promise<ProviderPoolRouterEvaluationPreview> {
-  return fetchJSON<ProviderPoolRouterEvaluationPreview>(providerPoolRouterPath(id, "/evaluations/preview"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
-}
-
-export async function createProviderPoolRouterEvaluation(
-  id: string,
-  request: ProviderPoolRouterEvaluationRequest,
-): Promise<ProviderPoolRouterEvaluationJob> {
-  return fetchJSON<ProviderPoolRouterEvaluationJob>(providerPoolRouterPath(id, "/evaluations"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
-}
-
-export async function listProviderPoolRouterEvaluations(
-  id: string,
-  query?: { status?: ProviderPoolRouterJobStatus; limit?: number; offset?: number },
-): Promise<{ items: ProviderPoolRouterEvaluationJob[]; limit: number; offset: number }> {
-  const params = new URLSearchParams();
-  if (query?.status) params.set("status", query.status);
-  if (query?.limit !== undefined) params.set("limit", String(query.limit));
-  if (query?.offset !== undefined) params.set("offset", String(query.offset));
-  const suffix = params.size ? `?${params}` : "";
-  return fetchJSON(providerPoolRouterPath(id, `/evaluations${suffix}`));
-}
-
-export async function getProviderPoolRouterEvaluation(id: string, jobID: string): Promise<ProviderPoolRouterEvaluationJob> {
-  return fetchJSON(providerPoolRouterPath(id, `/evaluations/${encodeURIComponent(jobID)}`));
-}
-
-export async function cancelProviderPoolRouterEvaluation(id: string, jobID: string): Promise<ProviderPoolRouterEvaluationJob> {
-  return fetchJSON(providerPoolRouterPath(id, `/evaluations/${encodeURIComponent(jobID)}`), { method: "DELETE" });
-}
-
-export async function listProviderPoolRouterProfiles(
-  id: string,
-  query?: { limit?: number; offset?: number },
-): Promise<{ items: ProviderPoolRouterProfile[]; limit: number; offset: number }> {
-  const params = new URLSearchParams();
-  if (query?.limit !== undefined) params.set("limit", String(query.limit));
-  if (query?.offset !== undefined) params.set("offset", String(query.offset));
-  const suffix = params.size ? `?${params}` : "";
-  return fetchJSON(providerPoolRouterPath(id, `/profiles${suffix}`));
-}
-
-export async function getProviderPoolRouterProfile(id: string, profileID: string): Promise<ProviderPoolRouterProfile> {
-  return fetchJSON(providerPoolRouterPath(id, `/profiles/${encodeURIComponent(profileID)}`));
-}
-
-export async function activateProviderPoolRouterProfile(
-  id: string,
-  profileID: string,
-  reason: string,
-): Promise<ProviderPoolRouterActivation> {
-  return fetchJSON(providerPoolRouterPath(id, `/profiles/${encodeURIComponent(profileID)}/activate`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ actor: "local-ui", reason }),
-  });
-}
-
-export async function rollbackProviderPoolRouterProfile(id: string, expectedCurrentProfileID: string, reason: string): Promise<ProviderPoolRouterActivation> {
-  return fetchJSON(providerPoolRouterPath(id, "/rollback"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ actor: "local-ui", reason, expected_current_profile_id: expectedCurrentProfileID }),
   });
 }
 
@@ -3556,13 +3278,24 @@ export interface ClusterModelNode {
   local: boolean;
 }
 
+export interface ClusterModelSync {
+  uuid: string;
+  name: string;
+  status: string;
+  completed_bytes?: number;
+  total_bytes?: number;
+  detail?: string;
+}
+
 export interface ClusterModelDistribution {
   id: string;
+  repository?: string;
   size: number;
   format?: string;
   pipeline_tag?: string;
   category?: string;
   nodes: ClusterModelNode[];
+  syncs?: ClusterModelSync[];
 }
 
 export interface ClusterSyncResult {
@@ -3681,10 +3414,6 @@ export function updateClusterNode(uuid: string, patch: { name?: string; static_a
     method: "PUT",
     body: JSON.stringify(patch),
   });
-}
-
-export function removeClusterNode(uuid: string): Promise<ClusterView> {
-  return fetchClusterJSON<ClusterView>(`/api/cluster/nodes/${encodeURIComponent(uuid)}`, { method: "DELETE" });
 }
 
 export function setClusterNodeState(uuid: string, state: ClusterNodeState): Promise<ClusterSettings> {

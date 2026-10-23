@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/opencsgs/csglite/internal/convert"
@@ -24,6 +25,16 @@ func FromLocalModel(lm *model.LocalModel, modelDir string) api.LocalInferenceSup
 		if detected := strings.TrimSpace(model.DetectPipelineTag(modelDir)); detected != "" {
 			pipelineTag = detected
 		}
+	}
+
+	switch model.ImageBackendFor(modelDir, lm.FullName()) {
+	case model.ImageBackendMLXQwen21:
+		return mlxQwenImageSupport("")
+	case model.ImageBackendMLXUnsupported, model.ImageBackendGGUFUnsupported:
+		return unsupported("")
+	}
+	if lm.Format == model.FormatGGUF && (isImageTask(pipelineTag) || isImageTask(manifestPipelineTag)) {
+		return unsupported("")
 	}
 
 	if support := diffusersSupportFromPipelineTag(pipelineTag); support.Supported {
@@ -78,7 +89,21 @@ func FromMarketplace(format, architecture, className string) api.LocalInferenceS
 
 // FromMarketplaceModel reports likely support for a marketplace model when the
 // model id/name or task tag provides stronger routing hints than config metadata.
-func FromMarketplaceModel(format, architecture, className, modelName, pipelineTag string) api.LocalInferenceSupport {
+func FromMarketplaceModel(format, architecture, className, modelName, libraryName, pipelineTag string) api.LocalInferenceSupport {
+	switch model.ImageBackendForMetadata(modelName, className, libraryName, pipelineTag) {
+	case model.ImageBackendMLXQwen21:
+		return mlxQwenImageSupport(architecture)
+	case model.ImageBackendMLXUnsupported:
+		return unsupported(architecture)
+	}
+
+	// A GGUF image model is only the denoiser and no shipped runtime loads it.
+	if strings.EqualFold(strings.TrimSpace(format), string(model.FormatGGUF)) &&
+		(isImageTask(pipelineTag) || isImageTask(diffusersPipelineTagFromClassName(className)) ||
+			model.IsDiffusionGGUFArchitecture(architecture)) {
+		return unsupported(architecture)
+	}
+
 	switch normalizePipelineTag(pipelineTag) {
 	case "text-to-image", "image-to-image":
 		return diffusersSupportForImageTask(architecture, className)
@@ -157,6 +182,26 @@ func diffusersSupportFromPipelineTag(pipelineTag string) api.LocalInferenceSuppo
 	default:
 		return api.LocalInferenceSupport{Mode: "none"}
 	}
+}
+
+func mlxImageSupported() bool {
+	return mlxImageSupportedFor(runtime.GOOS, runtime.GOARCH)
+}
+
+func mlxQwenImageSupport(architecture string) api.LocalInferenceSupport {
+	if !mlxImageSupported() {
+		return unsupported(architecture)
+	}
+	return api.LocalInferenceSupport{
+		Supported:    true,
+		Runtime:      "mlx-image",
+		Mode:         "image",
+		Architecture: strings.TrimSpace(architecture),
+	}
+}
+
+func mlxImageSupportedFor(goos, goarch string) bool {
+	return goos == "darwin" && goarch == "arm64"
 }
 
 func diffusersSupportForImageTask(architecture, className string) api.LocalInferenceSupport {
@@ -286,6 +331,15 @@ func unsupportedPipelineTag(pipelineTag string) bool {
 	}
 }
 
+func isImageTask(pipelineTag string) bool {
+	switch normalizePipelineTag(pipelineTag) {
+	case "text-to-image", "image-to-image":
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizePipelineTag(pipelineTag string) string {
 	return strings.ToLower(strings.TrimSpace(pipelineTag))
 }
@@ -337,6 +391,9 @@ func isImageToImageDiffusersClass(className string) bool {
 func readArchitectureFromDir(modelDir string) string {
 	if strings.TrimSpace(modelDir) == "" {
 		return ""
+	}
+	if convert.IsDecisionCheckpoint(modelDir) {
+		return convert.DecisionCheckpointArchitecture
 	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {

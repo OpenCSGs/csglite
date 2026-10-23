@@ -11,6 +11,7 @@ import {
   clearObservabilityData,
   clearCloudToken,
   deleteLicense,
+  getImageRuntimeStatus,
   getCloudAuthStatus,
   importLicense,
   verifyLicense,
@@ -20,7 +21,9 @@ import {
   saveSettings,
   upgradeWithProgress,
 } from "../api/client";
-import type { AppSettings, ArtifactSource, CloudAuthStatus, LocalDirectoryBrowseResponse } from "../api/client";
+import type { AppSettings, ArtifactSource, CloudAuthStatus, ContextCompressionMode, LocalDirectoryBrowseResponse } from "../api/client";
+import { COMMUNITY_SITES, CUSTOM_SITE_ID, matchCommunitySite } from "../data/communitySites";
+import type { CommunitySite } from "../data/communitySites";
 import {
   editionOf,
   formatLicenseDate,
@@ -46,6 +49,7 @@ const storageLocation = signal("");
 const modelDirectory = signal("");
 const datasetDirectory = signal("");
 const appVersion = signal("");
+const llamaServerVersion = signal("");
 const desktopMode = signal(false);
 const localAPIURL = signal("");
 const autostartEnabled = signal(false);
@@ -53,6 +57,7 @@ const isSavingAutostart = signal(false);
 const contextIndex = signal(1);
 const contextMode = signal<ContextLengthMode>("global");
 const parallelIndex = signal(0);
+const contextCompression = signal<ContextCompressionMode>("off");
 const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudAuthError = signal("");
 const isClearingCloudToken = signal(false);
@@ -74,6 +79,13 @@ const upgradeProgress = signal<UpgradeProgress>({
 let upgradeReloadTimer: number | undefined;
 const serverUrlInput = signal("");
 const aiGatewayUrlInput = signal("");
+const communitySiteChoice = signal<string | null>(null);
+const isSavingCommunitySite = signal(false);
+let communitySiteSaveID = 0;
+let communitySiteSaveChain: Promise<void> = Promise.resolve();
+const savedServerUrl = signal("");
+const savedAiGatewayUrl = signal("");
+const isOpeningCloudLogin = signal(false);
 const cloudProviderNameInput = signal("");
 const defaultServerUrl = signal("");
 const defaultAiGatewayUrl = signal("");
@@ -93,6 +105,10 @@ const isResettingDefaults = signal(false);
 const resetDefaultsMessage = signal("");
 const resetDefaultsError = signal("");
 const isUpgradingDiffuser = signal(false);
+const diffuserRuntimeReady = signal(false);
+const diffuserJustUpgraded = signal(false);
+const diffuserVersion = signal("");
+const diffuserLatestVersion = signal("");
 const diffuserUpgradeMessage = signal("");
 const diffuserUpgradeError = signal("");
 const observabilityRetentionPresets = [7, 30, 90, 365, 0] as const;
@@ -216,6 +232,19 @@ async function saveParallelIndex(idx: number) {
   }
 }
 
+// Like the slot count, only this setting's own value is taken from the
+// response, so unsaved text elsewhere on the page survives.
+async function saveContextCompression(mode: ContextCompressionMode) {
+  const previous = contextCompression.value;
+  contextCompression.value = mode;
+  try {
+    const data = await saveSettings({ context_compression: mode });
+    contextCompression.value = data.context_compression || "off";
+  } catch {
+    contextCompression.value = previous;
+  }
+}
+
 async function resetDefaults() {
   isResettingDefaults.value = true;
   resetDefaultsMessage.value = "";
@@ -224,6 +253,7 @@ async function resetDefaults() {
   saveContextIndex(1);
   setContextModeLocal("global");
   parallelIndex.value = parallelIndexFor(1);
+  contextCompression.value = "off";
   setCloudServiceFeedback("", "");
   try {
     const data = await saveSettings({
@@ -232,6 +262,7 @@ async function resetDefaults() {
       cloud_provider_name: "",
       llama_use_model_max_ctx: false,
       llama_num_parallel: 1,
+      context_compression: "off",
     });
     applySettings(data);
     notifyProvidersChanged();
@@ -251,12 +282,16 @@ async function resetDefaults() {
 function applySettings(data: AppSettings) {
   setContextModeLocal(data.llama_use_model_max_ctx ? "model_max" : "global");
   parallelIndex.value = parallelIndexFor(data.llama_num_parallel);
+  contextCompression.value = data.context_compression || "off";
   storageLocation.value = data.storage_dir || "";
   storageDirInput.value = data.storage_dir || "";
   modelDirectory.value = data.model_dir || "";
   datasetDirectory.value = data.dataset_dir || "";
   serverUrlInput.value = data.server_url || "";
   aiGatewayUrlInput.value = data.ai_gateway_url || "";
+  savedServerUrl.value = data.server_url || "";
+  savedAiGatewayUrl.value = data.ai_gateway_url || "";
+  communitySiteChoice.value = null;
   cloudProviderNameInput.value = data.cloud_provider_name || "";
   defaultServerUrl.value = data.default_server_url || "";
   defaultAiGatewayUrl.value = data.default_ai_gateway_url || "";
@@ -266,6 +301,7 @@ function applySettings(data: AppSettings) {
   modelScopeEndpointInput.value = data.modelscope_endpoint || "https://modelscope.cn";
   modelScopeTokenConfigured.value = data.modelscope_token_configured ?? false;
   appVersion.value = data.version || "";
+  llamaServerVersion.value = data.llama_server_version || "";
   desktopMode.value = data.desktop_mode ?? false;
   localAPIURL.value = data.local_api_url || "";
   upgradeProgress.value = {
@@ -323,16 +359,14 @@ function fetchSettings() {
     .catch(() => {});
 }
 
-function fetchCloudAuth() {
-  getCloudAuthStatus()
-    .then((status) => {
-      cloudAuth.value = status;
-      cloudAuthError.value = "";
-    })
-    .catch((err: any) => {
-      cloudAuth.value = null;
-      cloudAuthError.value = err?.message || "";
-    });
+async function fetchCloudAuth() {
+  try {
+    cloudAuth.value = await getCloudAuthStatus();
+    cloudAuthError.value = "";
+  } catch (err: any) {
+    cloudAuth.value = null;
+    cloudAuthError.value = err?.message || "";
+  }
 }
 
 function pollCloudAuthAfterLogin() {
@@ -638,14 +672,34 @@ async function refreshCloudModels() {
   }
 }
 
+async function fetchDiffuserRuntimeStatus() {
+  try {
+    const status = await getImageRuntimeStatus();
+    diffuserRuntimeReady.value = !!status.ready;
+    diffuserVersion.value = status.diffusers_version || "";
+    diffuserLatestVersion.value = status.diffusers_latest_version || "";
+  } catch {
+    diffuserRuntimeReady.value = false;
+    diffuserVersion.value = "";
+    diffuserLatestVersion.value = "";
+  }
+}
+
 async function upgradeDiffuser() {
   if (isUpgradingDiffuser.value) return;
   isUpgradingDiffuser.value = true;
   diffuserUpgradeMessage.value = "";
   diffuserUpgradeError.value = "";
+  const prevVersion = diffuserVersion.value;
   try {
     await installImageRuntime({ upgrade_packages: true });
-    diffuserUpgradeMessage.value = t("settings.diffuserUpgradeSuccess");
+    await fetchDiffuserRuntimeStatus();
+    diffuserJustUpgraded.value = true;
+    if (diffuserVersion.value && diffuserVersion.value !== prevVersion) {
+      diffuserUpgradeMessage.value = t("settings.diffuserUpgradeSuccess");
+    } else {
+      diffuserUpgradeMessage.value = t("settings.diffuserAlreadyLatest");
+    }
   } catch (err: any) {
     diffuserUpgradeError.value = err?.message || t("settings.diffuserUpgradeFailed");
   } finally {
@@ -751,9 +805,173 @@ function RegistryCredentialFields({
   );
 }
 
-function openCloudLogin() {
-  openExternal(cloudAuth.value?.login_url);
-  pollCloudAuthAfterLogin();
+function selectedCommunitySite(): string {
+  if (communitySiteChoice.value === CUSTOM_SITE_ID) return CUSTOM_SITE_ID;
+  return matchCommunitySite(serverUrlInput.value, aiGatewayUrlInput.value, {
+    serverURL: defaultServerUrl.value,
+    gatewayURL: defaultAiGatewayUrl.value,
+  });
+}
+
+function selectCommunitySite(site: CommunitySite) {
+  communitySiteChoice.value = null;
+  serverUrlInput.value = site.id === "main"
+    ? (defaultServerUrl.value || site.serverURL)
+    : site.serverURL;
+  aiGatewayUrlInput.value = site.id === "main"
+    ? (defaultAiGatewayUrl.value || site.gatewayURL)
+    : site.gatewayURL;
+  persistCommunitySite();
+}
+
+// persistCommunitySite writes the selected community into config.json. The
+// dropdown is derived from those URLs on the next launch, so the choice
+// survives a refresh and a restart. Saves run one at a time; a newer choice
+// replaces an older one that has not been written yet.
+function persistCommunitySite() {
+  const requestID = ++communitySiteSaveID;
+  communitySiteSaveChain = communitySiteSaveChain
+    .then(() => persistCommunitySiteNow(requestID))
+    .catch(() => {});
+}
+
+async function persistCommunitySiteNow(requestID: number) {
+  if (requestID !== communitySiteSaveID) return;
+  if (!communitySiteChanged()) {
+    isSavingCommunitySite.value = false;
+    return;
+  }
+  const serverURL = serverUrlInput.value.trim();
+  const gatewayURL = aiGatewayUrlInput.value.trim();
+  isSavingCommunitySite.value = true;
+  cloudAuthError.value = "";
+  try {
+    const data = await saveSettings({
+      server_url: serverURL,
+      ai_gateway_url: gatewayURL,
+    });
+    if (requestID !== communitySiteSaveID) return;
+    if (serverUrlInput.value.trim() !== serverURL || aiGatewayUrlInput.value.trim() !== gatewayURL) return;
+    applySettings(data);
+    notifyProvidersChanged();
+    const status = await getCloudAuthStatus();
+    if (requestID !== communitySiteSaveID) return;
+    cloudAuth.value = status;
+  } catch (err: any) {
+    if (requestID !== communitySiteSaveID) return;
+    cloudAuthError.value = err?.message || t("settings.serviceUrlsSaveFailed");
+  } finally {
+    if (requestID === communitySiteSaveID) isSavingCommunitySite.value = false;
+  }
+}
+
+function CommunitySiteSelect({ locked }: { locked: boolean }) {
+  const selected = selectedCommunitySite();
+  return (
+    <div class="space-y-4">
+      <label class="block">
+        <span class="text-sm font-medium text-gray-700">{t("settings.sitePicker")}</span>
+        <select
+          value={selected}
+          disabled={locked || isOpeningCloudLogin.value || isSavingCommunitySite.value}
+          onChange={(event) => {
+            const id = (event.currentTarget as HTMLSelectElement).value;
+            const site = COMMUNITY_SITES.find((item) => item.id === id);
+            if (site) selectCommunitySite(site);
+            else {
+              communitySiteSaveID += 1;
+              isSavingCommunitySite.value = false;
+              communitySiteChoice.value = CUSTOM_SITE_ID;
+            }
+          }}
+          class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500"
+        >
+          {COMMUNITY_SITES.map((site) => (
+            <option key={site.id} value={site.id}>{t(site.nameKey)}</option>
+          ))}
+          <option value={CUSTOM_SITE_ID}>{t("settings.siteCustom")}</option>
+        </select>
+        <span class="mt-1 block text-xs text-gray-400">
+          {locked ? t("settings.siteSwitchSignedIn") : t("settings.sitePickerHint")}
+        </span>
+      </label>
+      {selected === CUSTOM_SITE_ID && !locked && (
+        <>
+          <label class="block">
+            <span class="text-sm font-medium text-gray-700">{t("settings.serverUrl")}</span>
+            <input
+              type="url"
+              value={serverUrlInput.value}
+              onInput={(event) => {
+                serverUrlInput.value = (event.currentTarget as HTMLInputElement).value;
+              }}
+              onBlur={() => void persistCommunitySite()}
+              placeholder={defaultServerUrl.value}
+              class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            />
+          </label>
+          <label class="block">
+            <span class="text-sm font-medium text-gray-700">{t("settings.aiGatewayUrl")}</span>
+            <input
+              type="url"
+              value={aiGatewayUrlInput.value}
+              onInput={(event) => {
+                aiGatewayUrlInput.value = (event.currentTarget as HTMLInputElement).value;
+              }}
+              onBlur={() => void persistCommunitySite()}
+              placeholder={defaultAiGatewayUrl.value}
+              class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            />
+          </label>
+        </>
+      )}
+    </div>
+  );
+}
+
+function communitySiteChanged(): boolean {
+  return serverUrlInput.value.trim() !== savedServerUrl.value.trim()
+    || aiGatewayUrlInput.value.trim() !== savedAiGatewayUrl.value.trim();
+}
+
+// openCloudLogin signs in to the community picked in the dropdown. A changed
+// community is saved first so the backend returns that site's login URL; the
+// tab is opened before the save because browsers block popups opened after an
+// await.
+async function openCloudLogin() {
+  if (!communitySiteChanged()) {
+    openExternal(cloudAuth.value?.login_url);
+    pollCloudAuthAfterLogin();
+    return;
+  }
+  if (isOpeningCloudLogin.value) return;
+  isOpeningCloudLogin.value = true;
+  cloudAuthError.value = "";
+  const loginWindow = window.open("", "_blank");
+  try {
+    const data = await saveSettings({
+      server_url: serverUrlInput.value,
+      ai_gateway_url: aiGatewayUrlInput.value,
+      cloud_provider_name: cloudProviderNameInput.value,
+    });
+    applySettings(data);
+    notifyProvidersChanged();
+    const status = await getCloudAuthStatus();
+    cloudAuth.value = status;
+    if (!status.login_url) throw new Error(t("chat.failedResp"));
+    if (loginWindow) {
+      loginWindow.opener = null;
+      loginWindow.location.href = status.login_url;
+    } else {
+      openExternal(status.login_url);
+    }
+    pollCloudAuthAfterLogin();
+  } catch (err: any) {
+    loginWindow?.close();
+    cloudAuthError.value = err?.message || t("settings.serviceUrlsSaveFailed");
+  } finally {
+    isOpeningCloudLogin.value = false;
+  }
 }
 
 async function logoutCloudAccount() {
@@ -781,6 +999,11 @@ function OpenCSGAccountPanel() {
           </span>
         )}
       </div>
+      {cloudAuth.value !== null && (
+        <div class="mb-4">
+          <CommunitySiteSelect locked={cloudAuth.value.has_token} />
+        </div>
+      )}
       {cloudAuth.value === null ? (
         <p class="text-sm text-gray-500">...</p>
       ) : cloudAuth.value.authenticated && cloudAuth.value.user ? (
@@ -825,8 +1048,9 @@ function OpenCSGAccountPanel() {
           <div class="flex gap-2">
             <button
               type="button"
-              onClick={openCloudLogin}
-              class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-100"
+              onClick={() => void openCloudLogin()}
+              disabled={isOpeningCloudLogin.value || isSavingCommunitySite.value}
+              class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {t("settings.login")}
             </button>
@@ -849,10 +1073,11 @@ function OpenCSGAccountPanel() {
           <div class="flex gap-2">
             <button
               type="button"
-              onClick={openCloudLogin}
-              class="rounded-lg bg-[#169F95] px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#128a81]"
+              onClick={() => void openCloudLogin()}
+              disabled={isOpeningCloudLogin.value || isSavingCommunitySite.value}
+              class="rounded-lg bg-[#169F95] px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#128a81] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {t("settings.login")}
+              {isOpeningCloudLogin.value ? "..." : t("settings.login")}
             </button>
           </div>
         </div>
@@ -1209,6 +1434,7 @@ export function Settings() {
     fetchCloudAuth();
     void loadLicense();
     void fetchUpgradeInfo();
+    void fetchDiffuserRuntimeStatus();
     contextIndex.value = loadContextIndex();
     contextMode.value = loadContextMode();
   }, []);
@@ -1327,31 +1553,16 @@ export function Settings() {
         </div>
         <p class="text-sm text-gray-500 mb-4 ml-7">{t("settings.contextLengthDesc")}</p>
         <div class="ml-7 space-y-4">
-          <div class="grid gap-3 sm:grid-cols-2">
-            {([
-              ["global", "settings.contextLengthGlobal", "settings.contextLengthGlobalDesc"],
-              ["model_max", "settings.contextLengthModelMax", "settings.contextLengthModelMaxDesc"],
-            ] as const).map(([mode, labelKey, descriptionKey]) => {
-              const selected = contextMode.value === mode;
-              return (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => void saveContextMode(mode)}
-                  class={`rounded-xl border p-4 text-left transition ${
-                    selected
-                      ? "border-indigo-300 bg-indigo-50 ring-1 ring-indigo-200"
-                      : "border-gray-200 bg-white hover:border-gray-300"
-                  }`}
-                >
-                  <span class={`block text-sm font-medium ${selected ? "text-indigo-800" : "text-gray-800"}`}>
-                    {t(labelKey)}
-                  </span>
-                  <span class="mt-1 block text-xs leading-5 text-gray-500">{t(descriptionKey)}</span>
-                </button>
-              );
-            })}
-          </div>
+          <SettingRadios
+            name="context-length-mode"
+            label={t("settings.contextLength")}
+            value={contextMode.value}
+            onChange={(mode) => void saveContextMode(mode)}
+            options={[
+              { value: "global", label: t("settings.contextLengthGlobal"), description: t("settings.contextLengthGlobalDesc") },
+              { value: "model_max", label: t("settings.contextLengthModelMax"), description: t("settings.contextLengthModelMaxDesc") },
+            ]}
+          />
           {contextMode.value === "global" && (
             <div>
               <input
@@ -1414,6 +1625,30 @@ export function Settings() {
         </div>
       </div>
 
+      {/* Context compression */}
+      <div class="mb-10">
+        <div class="flex items-center gap-2 mb-1">
+          <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
+          </svg>
+          <span class="font-semibold text-gray-900">{t("settings.contextCompression")}</span>
+        </div>
+        <p class="text-sm text-gray-500 mb-4 ml-7">{t("settings.contextCompressionDesc")}</p>
+        <div class="ml-7">
+          <SettingRadios
+            name="context-compression"
+            label={t("settings.contextCompression")}
+            value={contextCompression.value}
+            onChange={(mode) => void saveContextCompression(mode)}
+            options={[
+              { value: "off", label: t("settings.contextCompressionOff"), description: t("settings.contextCompressionOffDesc") },
+              { value: "safe", label: t("settings.contextCompressionSafe"), description: t("settings.contextCompressionSafeDesc") },
+              { value: "aggressive", label: t("settings.contextCompressionAggressive"), description: t("settings.contextCompressionAggressiveDesc") },
+            ]}
+          />
+        </div>
+      </div>
+
       {/* Language */}
       <div class="mb-10">
         <div class="flex items-center gap-2 mb-1">
@@ -1472,32 +1707,6 @@ export function Settings() {
                 <div class="space-y-5">
                   <OpenCSGAccountPanel />
                   <div class="space-y-4 border-t border-gray-100 pt-5">
-                    <label class="block">
-                      <span class="text-sm font-medium text-gray-700">{t("settings.serverUrl")}</span>
-                      <input
-                        type="url"
-                        value={serverUrlInput.value}
-                        onInput={(event) => {
-                          serverUrlInput.value = (event.currentTarget as HTMLInputElement).value;
-                        }}
-                        placeholder={defaultServerUrl.value}
-                        class="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                      />
-                      <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultServerUrl.value || "-")}</span>
-                    </label>
-                    <label class="block">
-                      <span class="text-sm font-medium text-gray-700">{t("settings.aiGatewayUrl")}</span>
-                      <input
-                        type="url"
-                        value={aiGatewayUrlInput.value}
-                        onInput={(event) => {
-                          aiGatewayUrlInput.value = (event.currentTarget as HTMLInputElement).value;
-                        }}
-                        placeholder={defaultAiGatewayUrl.value}
-                        class="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                      />
-                      <span class="mt-1 block text-xs text-gray-400">{t("settings.serviceUrlDefault", defaultAiGatewayUrl.value || "-")}</span>
-                    </label>
                     <label class="block">
                       <span class="text-sm font-medium text-gray-700">{t("settings.cloudProviderName")}</span>
                       <input
@@ -1709,14 +1918,34 @@ export function Settings() {
             <div>
               <p class="text-sm font-semibold text-gray-900">{t("settings.diffuserUpgradeTitle")}</p>
               <p class="mt-1 text-sm text-gray-500">{t("settings.diffuserUpgradeHint")}</p>
+              {(diffuserVersion.value || diffuserLatestVersion.value) && (
+                <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                  {diffuserVersion.value && (
+                    <span class="text-gray-500">
+                      {t("settings.diffuserCurrentVersion")}{" "}
+                      <span class="font-mono text-gray-700">{diffuserVersion.value}</span>
+                    </span>
+                  )}
+                  {diffuserLatestVersion.value && diffuserLatestVersion.value !== diffuserVersion.value && (
+                    <span class="text-gray-500">
+                      {t("settings.diffuserLatestVersion")}{" "}
+                      <span class="font-mono text-indigo-600">{diffuserLatestVersion.value}</span>
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             <button
               type="button"
               onClick={() => void upgradeDiffuser()}
-              disabled={isUpgradingDiffuser.value}
+              disabled={isUpgradingDiffuser.value || diffuserJustUpgraded.value || (diffuserRuntimeReady.value && (!diffuserLatestVersion.value || diffuserVersion.value === diffuserLatestVersion.value))}
               class="inline-flex items-center justify-center px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
-              {isUpgradingDiffuser.value ? t("settings.diffuserUpgrading") : t("settings.diffuserUpgrade")}
+              {isUpgradingDiffuser.value
+                ? t("settings.diffuserUpgrading")
+                : diffuserJustUpgraded.value || (diffuserRuntimeReady.value && (!diffuserLatestVersion.value || diffuserVersion.value === diffuserLatestVersion.value))
+                  ? t("settings.diffuserAlreadyUpgraded")
+                  : t("settings.diffuserUpgrade")}
             </button>
           </div>
           {diffuserUpgradeMessage.value && <p class="mt-3 text-sm text-green-600">{diffuserUpgradeMessage.value}</p>}
@@ -1733,21 +1962,30 @@ export function Settings() {
           <span class="font-semibold text-gray-900">{t("settings.versionInfo")}</span>
         </div>
         <div class="ml-7 mt-3 rounded-xl border border-gray-200 bg-white p-4">
-          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p class="text-sm font-semibold text-gray-900">{displayVersion(upgradeProgress.value.currentVersion || appVersion.value)}</p>
-              <p class="mt-1 text-sm text-gray-500">
+          <table class="w-full text-sm">
+            <tbody class="divide-y divide-gray-200 border-b border-gray-200">
+              <tr>
+                <th scope="row" class="py-2 text-left font-medium text-gray-700">{t("settings.csglite")}</th>
+                <td class="py-2 text-right font-mono text-gray-900">{upgradeProgress.value.currentVersion || appVersion.value || "..."}</td>
+              </tr>
+              <tr>
+                <th scope="row" class="py-2 text-left font-medium text-gray-700">{t("settings.llamaServer")}</th>
+                <td class="py-2 text-right font-mono text-gray-900">{llamaServerVersion.value || "..."}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-sm text-gray-500">
                 {upgradeProgress.value.hasUpdate && upgradeProgress.value.latestVersion
                   ? t("upgrade.available", displayVersion(upgradeProgress.value.latestVersion))
                   : t("upgrade.upToDate")}
-              </p>
-            </div>
+            </p>
             {!desktopMode.value && (
               <button
                 type="button"
                 onClick={openUpgradeDialog}
                 disabled={!upgradeProgress.value.hasUpdate}
-                class="px-4 py-2 border border-indigo-200 rounded-lg text-sm text-indigo-700 hover:bg-indigo-50 disabled:border-gray-200 disabled:text-gray-400 disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
+                class="self-start px-4 py-2 border border-indigo-200 rounded-lg text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:border-gray-200 disabled:text-gray-400 disabled:opacity-70 disabled:cursor-not-allowed transition-colors sm:self-auto"
               >
                 {t("upgrade.upgrade")}
               </button>
@@ -1791,6 +2029,52 @@ export function Settings() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function SettingRadios<T extends string>({
+  name,
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  name: string;
+  label: string;
+  value: T;
+  options: readonly { value: T; label: string; description: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-2" role="radiogroup" aria-label={label}>
+      {options.map((option) => {
+        const selected = value === option.value;
+        const tipId = `${name}-${option.value}-tip`;
+        return (
+          <label key={option.value} class="group relative inline-flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name={name}
+              value={option.value}
+              checked={selected}
+              aria-describedby={tipId}
+              onChange={() => onChange(option.value)}
+              class="h-4 w-4 accent-indigo-600"
+            />
+            <span class={`text-sm ${selected ? "font-medium text-gray-900" : "text-gray-700"}`}>{option.label}</span>
+            <span class="pointer-events-none absolute left-0 top-full z-30 mt-1.5 hidden w-80 group-hover:block">
+              <span
+                id={tipId}
+                role="tooltip"
+                class="block rounded-lg bg-gray-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white shadow-lg"
+              >
+                {option.description}
+              </span>
+            </span>
+          </label>
+        );
+      })}
     </div>
   );
 }

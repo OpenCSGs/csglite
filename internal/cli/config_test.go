@@ -2,6 +2,7 @@ package cli
 
 import (
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,7 +217,25 @@ func setupCLIConfigHome(t *testing.T) string {
 	t.Setenv("USERPROFILE", home)
 	config.Reset()
 	t.Cleanup(config.Reset)
+	isolateFromRunningServer(t)
 	return home
+}
+
+// isolateFromRunningServer points the temporary config at a closed local port.
+// Commands sync their changes to the running server at listen_addr, and the
+// default address is the developer's own csghub-lite: a test run there once
+// logged that server out and shut it down.
+func isolateFromRunningServer(t *testing.T) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve closed port: %v", err)
+	}
+	addr := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close reserved port: %v", err)
+	}
+	saveListenAddr(t, addr)
 }
 
 func captureCLIStdout(t *testing.T, fn func()) string {

@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "CSGHub Lite Local API",
+    "title": "CSGLite Local API",
     "version": "0.1.0",
     "description": "Structured documentation for the local `/api/*` and `/v1/*` endpoints served by `csghub-lite`.\n\nRequest correlation: every API response includes `X-Request-ID` and `X-B3-TraceId`. Callers may provide `X-Request-ID` using up to 128 alphanumeric or `-_.:` characters and may provide a non-zero 16- or 32-hex-character `X-B3-TraceId`; invalid values are replaced. Text-generation requests also accept `X-CSGLite-Trace-ID` and `X-CSGLite-Thread-ID`. A valid CSGLite trace ID remains the logical Observability grouping key, while B3 identifies the distributed path through trusted inference services.\n\nMaintenance note: whenever you add, remove, or rename an `/api/*` or `/v1/*` route in `internal/server/routes.go`, update this file and run the OpenAPI sync test before merging."
   },
@@ -3699,37 +3699,6 @@
         }
       }
     },
-    "/api/provider-pool-policies": {
-      "get": {
-        "tags": [
-          "Providers"
-        ],
-        "summary": "List provider pool policy capabilities",
-        "operationId": "listProviderPoolPolicies",
-        "parameters": [
-          {
-            "name": "refresh",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Provider pool routing policies and current availability.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProviderPoolPolicyCapabilitiesResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/provider-pools/{id}": {
       "put": {
         "tags": [
@@ -3806,146 +3775,6 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           }
-        }
-      }
-    },
-    "/api/provider-pools/{id}/router/status": {
-      "get": {
-        "tags": ["Providers"],
-        "summary": "Get provider pool router status",
-        "operationId": "getProviderPoolRouterStatus",
-        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}],
-        "responses": {
-          "200": {"description": "Closed-loop router status.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterStatus"}}}},
-          "404": {"$ref": "#/components/responses/NotFound"}
-        }
-      }
-    },
-    "/api/provider-pools/{id}/router/suggestion": {
-      "get": {
-        "tags": ["Providers"],
-        "summary": "Get pending provider pool router suggestion",
-        "operationId": "getProviderPoolRouterSuggestion",
-        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}],
-        "responses": {
-          "200": {"description": "Pending evaluation suggestion.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterSuggestion"}}}},
-          "404": {"$ref": "#/components/responses/NotFound"}
-        }
-      }
-    },
-    "/api/provider-pools/{id}/router/evaluations/preview": {
-      "post": {
-        "tags": ["Providers"],
-        "summary": "Preview a provider pool router evaluation",
-        "operationId": "previewProviderPoolRouterEvaluation",
-        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationRequest"}}}},
-        "responses": {
-          "200": {"description": "Evaluation call, token, and known-cost preview.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationPreview"}}}},
-          "400": {"$ref": "#/components/responses/BadRequest"}
-        }
-      }
-    },
-    "/api/provider-pools/{id}/router/evaluations": {
-      "get": {
-        "tags": ["Providers"],
-        "summary": "List provider pool router evaluation jobs",
-        "operationId": "listProviderPoolRouterEvaluations",
-        "parameters": [
-          {"$ref": "#/components/parameters/ProviderPoolID"},
-          {"name": "status", "in": "query", "schema": {"type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"]}},
-          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
-          {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}}
-        ],
-        "responses": {"200": {"description": "Lightweight evaluation jobs without candidate responses.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJobsResponse"}}}}}
-      },
-      "post": {
-        "tags": ["Providers"],
-        "summary": "Create a provider pool router evaluation job",
-        "operationId": "createProviderPoolRouterEvaluation",
-        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationRequest"}}}},
-        "responses": {
-          "202": {"description": "Evaluation job accepted.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"}}}},
-          "400": {"$ref": "#/components/responses/BadRequest"},
-          "409": {"$ref": "#/components/responses/Conflict"}
-        }
-      }
-    },
-    "/api/provider-pools/{id}/router/evaluations/{jobID}": {
-      "get": {
-        "tags": ["Providers"],
-        "summary": "Get a provider pool router evaluation job",
-        "operationId": "getProviderPoolRouterEvaluation",
-        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}, {"$ref": "#/components/parameters/RouterJobID"}],
-        "responses": {
-          "200": {"description": "Lightweight evaluation job without candidate responses.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"}}}},
-          "404": {"$ref": "#/components/responses/NotFound"}
-        }
-      },
-      "delete": {
-        "tags": ["Providers"],
-        "summary": "Cancel a provider pool router evaluation job",
-        "operationId": "cancelProviderPoolRouterEvaluation",
-        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}, {"$ref": "#/components/parameters/RouterJobID"}],
-        "responses": {
-          "200": {"description": "Cancellation requested or queued job cancelled.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"}}}},
-          "404": {"$ref": "#/components/responses/NotFound"},
-          "409": {"$ref": "#/components/responses/Conflict"}
-        }
-      }
-    },
-    "/api/provider-pools/{id}/router/profiles": {
-      "get": {
-        "tags": ["Providers"],
-        "summary": "List provider pool router profiles",
-        "operationId": "listProviderPoolRouterProfiles",
-        "parameters": [
-          {"$ref": "#/components/parameters/ProviderPoolID"},
-          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
-          {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}}
-        ],
-        "responses": {"200": {"description": "Lightweight profiles without embedding vectors.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterProfilesResponse"}}}}}
-      }
-    },
-    "/api/provider-pools/{id}/router/profiles/{profileID}": {
-      "get": {
-        "tags": ["Providers"],
-        "summary": "Get provider pool router profile detail",
-        "operationId": "getProviderPoolRouterProfile",
-        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}, {"$ref": "#/components/parameters/RouterProfileID"}],
-        "responses": {
-          "200": {"description": "Profile metrics and bounded structured diagnostics without learner nodes, prompts, or responses.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterProfile"}}}},
-          "404": {"$ref": "#/components/responses/NotFound"}
-        }
-      }
-    },
-    "/api/provider-pools/{id}/router/profiles/{profileID}/activate": {
-      "post": {
-        "tags": ["Providers"],
-        "summary": "Manually activate a compatible provider pool router profile",
-        "operationId": "activateProviderPoolRouterProfile",
-        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}, {"$ref": "#/components/parameters/RouterProfileID"}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterActivationRequest"}}}},
-        "responses": {
-          "200": {"description": "Audited profile activation.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterActivation"}}}},
-          "400": {"$ref": "#/components/responses/BadRequest"},
-          "409": {"$ref": "#/components/responses/Conflict"}
-        }
-      }
-    },
-    "/api/provider-pools/{id}/router/rollback": {
-      "post": {
-        "tags": ["Providers"],
-        "summary": "Rollback a provider pool router profile",
-        "operationId": "rollbackProviderPoolRouterProfile",
-        "parameters": [{"$ref": "#/components/parameters/ProviderPoolID"}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterActivationRequest"}}}},
-        "responses": {
-          "200": {"description": "Audited rollback activation.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProviderPoolRouterActivation"}}}},
-          "400": {"$ref": "#/components/responses/BadRequest"},
-          "404": {"$ref": "#/components/responses/NotFound"},
-          "409": {"$ref": "#/components/responses/Conflict"}
         }
       }
     },
@@ -5271,6 +5100,201 @@
           },
           "429": {
             "$ref": "#/components/responses/OpenAITooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/v1/decisions": {
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible decisions",
+        "description": "OpenAI Decisions API: answers predicate, choice and score questions about shared input with calibrated probabilities. Served by local JEV models tagged jev or typed-decisions through their System 1 head: predicate uses the yes/no head, choice and score use the choice head (more than 16 options run as a tournament), and score is the probability-weighted level index. Native decision models such as Laya are answered by llama.cpp's /v1/systemone (predicate as noul; score takes 2-10 levels). Confidence is the gap between the two most likely options. Input images are not supported.",
+        "operationId": "createDecision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionCreateRequest"
+              },
+              "example": {
+                "model": "huggingface/mradermacher/JEV-9B-GGUF",
+                "input": "I was charged twice for my order.",
+                "questions": [
+                  {
+                    "type": "choice",
+                    "name": "department",
+                    "instructions": "Which department should handle this complaint?",
+                    "choices": [
+                      {
+                        "value": "billing",
+                        "description": "Payments, invoices, and refunds."
+                      },
+                      {
+                        "value": "technical",
+                        "description": "Problems using the product."
+                      },
+                      {
+                        "value": "shipping",
+                        "description": "Delivery and tracking."
+                      },
+                      {
+                        "value": "other",
+                        "description": "Requests outside these categories."
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Answers in question order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/v1/decide": {
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "JEV-style typed decision",
+        "description": "Answers a typed question (noul yes/no, score 0-5, or choice over 2-256 options) with a calibrated probability distribution in one prefill pass, in the response shape of the hosted JEV API. Available for local models whose model card is tagged jev or typed-decisions and whose System 1 block (adapter_vllm/ with decision_head.json, plus calibration.json) is in the model directory or in a downloaded base_model repository. Choices with more options than the head has slots use a tournament. Thinking (System 2 escalation) and image state are not supported.",
+        "operationId": "decide",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideRequest"
+              },
+              "example": {
+                "model": "huggingface/mradermacher/JEV-9B-GGUF",
+                "kind": "choice",
+                "state": "SKU AX-330 stock at 8% of safety level; supplier late twice this quarter.",
+                "question": "Supplier response for this scenario.",
+                "options": [
+                  "issue_warning",
+                  "renegotiate",
+                  "dual_source",
+                  "maintain"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision distribution aligned with options.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
+    "/v1/decide/info": {
+      "get": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "Typed-decision capabilities of a model",
+        "operationId": "decideInfo",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Local model ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Protocol, option limits, and calibration temperatures.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecideInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
           },
           "500": {
             "$ref": "#/components/responses/OpenAIInternalError"
@@ -7705,7 +7729,7 @@
           "Cluster"
         ],
         "summary": "List models across the cluster",
-        "description": "Union of every member's models with the nodes holding each one and whether it is loaded there.",
+        "description": "Union of every member's models with the nodes holding each one and whether it is loaded there. Copies of the same repository from different registries are one row, and a node that holds any copy is shown as having the model. A node that is still downloading a model reports that progress on the same row.",
         "operationId": "listClusterModels",
         "responses": {
           "200": {
@@ -7748,7 +7772,7 @@
           "Cluster"
         ],
         "summary": "Sync a model to nodes",
-        "description": "Asks each target node to pull the model from its own model source (the on-prem CSGHub in the intended deployment). Nodes that already hold it are skipped. Refused while members use different model sources.",
+        "description": "Asks each target node to pull the model from its own model source (the on-prem CSGHub in the intended deployment). Nodes that already hold the same repository, including under another registry id, are skipped. Refused while members use different model sources.",
         "operationId": "syncClusterModel",
         "requestBody": {
           "required": true,
@@ -8144,24 +8168,6 @@
           "type": "string",
           "format": "password"
         }
-      },
-      "ProviderPoolID": {
-        "name": "id",
-        "in": "path",
-        "required": true,
-        "schema": {"type": "string"}
-      },
-      "RouterJobID": {
-        "name": "jobID",
-        "in": "path",
-        "required": true,
-        "schema": {"type": "string"}
-      },
-      "RouterProfileID": {
-        "name": "profileID",
-        "in": "path",
-        "required": true,
-        "schema": {"type": "string"}
       }
     },
     "responses": {
@@ -8686,7 +8692,6 @@
           "model",
           "enabled",
           "policy",
-          "policy_available",
           "members"
         ],
         "properties": {
@@ -8706,17 +8711,10 @@
           "policy": {
             "type": "string",
             "enum": [
-              "priority_weight",
-              "semantic"
+              "priority_weight"
             ],
             "default": "priority_weight",
-            "description": "Pool routing policy. semantic is experimental."
-          },
-          "policy_available": {
-            "type": "boolean"
-          },
-          "policy_unavailable_reason": {
-            "type": "string"
+            "description": "Pool routing policy."
           },
           "members": {
             "type": "array",
@@ -8762,11 +8760,10 @@
           "policy": {
             "type": "string",
             "enum": [
-              "priority_weight",
-              "semantic"
+              "priority_weight"
             ],
             "default": "priority_weight",
-            "description": "Pool routing policy. semantic is experimental."
+            "description": "Pool routing policy."
           },
           "members": {
             "type": "array",
@@ -8793,11 +8790,10 @@
           "policy": {
             "type": "string",
             "enum": [
-              "priority_weight",
-              "semantic"
+              "priority_weight"
             ],
             "default": "priority_weight",
-            "description": "Pool routing policy. semantic is experimental."
+            "description": "Pool routing policy."
           },
           "members": {
             "type": "array",
@@ -8806,279 +8802,6 @@
               "$ref": "#/components/schemas/ProviderPoolMember"
             }
           }
-        }
-      },
-      "ProviderPoolPolicyCapability": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "type",
-          "experimental",
-          "available"
-        ],
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": [
-              "priority_weight",
-              "semantic"
-            ]
-          },
-          "experimental": {
-            "type": "boolean"
-          },
-          "available": {
-            "type": "boolean"
-          },
-          "reason": {
-            "type": "string"
-          }
-        }
-      },
-      "ProviderPoolPolicyCapabilitiesResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "policies"
-        ],
-        "properties": {
-          "policies": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProviderPoolPolicyCapability"
-            }
-          }
-        }
-      },
-      "ProviderPoolRouterTarget": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["source", "model"],
-        "properties": {"source": {"type": "string"}, "model": {"type": "string"}}
-      },
-      "ProviderPoolRouterSuggestion": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "reason", "qualified_query_count", "new_query_count", "member_compatible", "status", "created_at", "updated_at"],
-        "properties": {
-          "id": {"type": "string"}, "reason": {"type": "string"},
-          "qualified_query_count": {"type": "integer"}, "new_query_count": {"type": "integer"},
-          "member_compatible": {"type": "boolean"}, "status": {"type": "string", "enum": ["pending", "evaluating", "accepted", "rejected"]},
-          "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"}
-        }
-      },
-      "ProviderPoolRouterEvaluationRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["judge_model", "max_queries", "repeats", "max_output_tokens", "request_timeout_seconds", "budget_currency", "budget_amount", "allow_unknown_pricing"],
-        "properties": {
-          "evaluation_mode": {"type": "string", "enum": ["absolute_v1", "listwise_v2"], "default": "listwise_v2"},
-          "base_profile_id": {"type": "string"}, "judge_model": {"type": "string"},
-          "max_queries": {"type": "integer", "minimum": 1, "maximum": 100},
-          "repeats": {"type": "integer", "minimum": 1, "maximum": 3},
-          "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 4096},
-          "request_timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
-          "budget_currency": {"type": "string", "enum": ["￥", "USD"], "default": "￥"}, "budget_amount": {"type": "number", "minimum": 0},
-          "allow_unknown_pricing": {"type": "boolean"}
-        }
-      },
-      "ProviderPoolRouterEvaluationPreview": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["evaluation_mode", "eligible_snapshot_count", "selected_snapshot_count", "direct_candidate_calls", "judge_calls", "max_judge_calls", "max_total_calls", "judge_prompt_tokens", "max_judge_token_exposure", "max_token_exposure", "known_judge_estimated_cost", "known_estimated_cost", "currency", "unknown_price_members", "judge_price_known", "requires_unknown_pricing_consent", "limits"],
-        "properties": {
-          "evaluation_mode": {"type": "string", "enum": ["absolute_v1", "listwise_v2"]},
-          "eligible_snapshot_count": {"type": "integer"}, "selected_snapshot_count": {"type": "integer"},
-          "direct_candidate_calls": {"type": "integer"}, "judge_calls": {"type": "integer"},
-          "max_judge_calls": {"type": "integer"}, "max_total_calls": {"type": "integer"},
-          "judge_prompt_tokens": {"type": "integer", "format": "int64"},
-          "max_judge_token_exposure": {"type": "integer", "format": "int64"},
-          "known_judge_estimated_cost": {"type": "number"},
-          "max_token_exposure": {"type": "integer", "format": "int64"}, "known_estimated_cost": {"type": "number"},
-          "currency": {"type": "string"}, "unknown_price_members": {"type": "array", "items": {"$ref": "#/components/schemas/ProviderPoolRouterTarget"}},
-          "judge_price_known": {"type": "boolean"},
-          "requires_unknown_pricing_consent": {"type": "boolean"},
-          "limits": {
-            "type": "object", "additionalProperties": false,
-            "required": ["max_queries", "max_repeats", "max_output_tokens", "max_request_timeout_seconds"],
-            "properties": {
-              "max_queries": {"type": "integer"}, "max_repeats": {"type": "integer"},
-              "max_output_tokens": {"type": "integer"}, "max_request_timeout_seconds": {"type": "integer"}
-            }
-          }
-        }
-      },
-      "ProviderPoolRouterEvaluationJob": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "evaluation_mode", "member_compatible", "judge_model", "max_queries", "repeats", "max_output_tokens", "request_timeout_seconds", "budget_currency", "budget_amount", "allow_unknown_pricing", "current", "total", "cancellation_requested", "status", "created_at", "updated_at"],
-        "properties": {
-          "id": {"type": "string"}, "evaluation_mode": {"type": "string", "enum": ["absolute_v1", "listwise_v2"]}, "base_profile_id": {"type": "string"}, "member_compatible": {"type": "boolean"},
-          "judge_model": {"type": "string"}, "max_queries": {"type": "integer"}, "repeats": {"type": "integer"},
-          "max_output_tokens": {"type": "integer"}, "request_timeout_seconds": {"type": "integer"},
-          "budget_currency": {"type": "string"}, "budget_amount": {"type": "number"}, "allow_unknown_pricing": {"type": "boolean"},
-          "direct_candidate_calls": {"type": "integer"}, "judge_calls": {"type": "integer"}, "max_judge_calls": {"type": "integer"},
-          "judge_prompt_tokens": {"type": "integer", "format": "int64"}, "max_judge_token_exposure": {"type": "integer", "format": "int64"},
-          "max_token_exposure": {"type": "integer", "format": "int64"},
-          "known_judge_estimated_cost": {"type": "number"}, "known_estimated_cost": {"type": "number"},
-          "estimate_currency": {"type": "string"}, "unknown_pricing": {"type": "boolean"},
-          "current": {"type": "integer"}, "total": {"type": "integer"}, "phase": {"type": "string"},
-          "cancellation_requested": {"type": "boolean"},
-          "status": {"type": "string", "enum": ["queued", "running", "succeeded", "failed", "cancelled"]},
-          "error": {"type": "string"}, "created_at": {"type": "string", "format": "date-time"},
-          "started_at": {"type": "string", "format": "date-time"}, "completed_at": {"type": "string", "format": "date-time"},
-          "updated_at": {"type": "string", "format": "date-time"}
-        }
-      },
-      "ProviderPoolRouterEvaluationJobsResponse": {
-        "type": "object", "additionalProperties": false, "required": ["items", "limit", "offset"],
-        "properties": {
-          "items": {"type": "array", "items": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"}},
-          "limit": {"type": "integer"}, "offset": {"type": "integer"}
-        }
-      },
-      "ProviderPoolRouterMetrics": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["query_count", "cell_count", "trial_count", "repeats", "response_outcomes", "win_rate", "spend", "total_cost", "cost_unit", "monetary_spend_known", "unknown_monetary_spend", "train_query_count", "held_out_query_count", "cv_fold_count", "train_utility", "train_quality", "train_cost_score", "held_out_utility", "held_out_quality", "held_out_cost_score", "all_clusters_one_member", "semantic_differentiation"],
-        "properties": {
-          "query_count": {"type": "integer"}, "cell_count": {"type": "integer"}, "trial_count": {"type": "integer"},
-          "repeats": {"type": "integer"}, "response_outcomes": {"type": "object", "additionalProperties": {"type": "integer"}},
-          "win_rate": {"type": "number"}, "spend": {"type": "number"}, "total_cost": {"type": "number"},
-          "currency": {"type": "string"}, "cost_unit": {"type": "string"}, "monetary_spend_known": {"type": "boolean"},
-          "unknown_monetary_spend": {"type": "boolean"}, "train_query_count": {"type": "integer"},
-          "held_out_query_count": {"type": "integer"}, "cv_fold_count": {"type": "integer"},
-          "train_utility": {"type": "number"}, "train_quality": {"type": "number"}, "train_cost_score": {"type": "number"},
-          "held_out_utility": {"type": "number"}, "held_out_quality": {"type": "number"}, "held_out_cost_score": {"type": "number"},
-          "all_clusters_one_member": {"type": "boolean"}, "semantic_differentiation": {"type": "boolean"}
-        }
-      },
-      "ProviderPoolRouterPairwiseMetrics": {
-        "type": "object", "additionalProperties": false,
-        "required": ["count", "log_loss", "brier", "top_class_accuracy", "ece"],
-        "properties": {
-          "count": {"type": "integer"}, "log_loss": {"type": "number"}, "brier": {"type": "number"},
-          "top_class_accuracy": {"type": "number"}, "ece": {"type": "number"}
-        }
-      },
-      "ProviderPoolRouterQualityCost": {
-        "type": "object", "additionalProperties": false, "required": ["quality", "cost_known"],
-        "properties": {
-          "quality": {"type": "number"}, "cost": {"type": "number"},
-          "cost_known": {"type": "boolean"}, "currency": {"type": "string"}
-        }
-      },
-      "ProviderPoolRouterV2Summary": {
-        "type": "object",
-        "description": "Bounded V2 diagnostics. Learner samples, embeddings, forest nodes, prompts, and responses are intentionally omitted.",
-        "additionalProperties": false,
-        "required": ["profile_algorithm", "model_type", "sample_count", "query_group_count", "round_count", "cv_fold_count", "target_quality_retention", "confidence_level", "baseline_best_single_model", "routed", "point_retention", "conservative_retention", "retention_lower_bound", "savings_known", "coverage", "fallback_rate", "low_confidence_rate", "ood_rate", "pairwise_metrics", "thresholds", "optimize_known_cost", "quality_feasible", "known_cost_feasible", "insufficient_evidence"],
-        "properties": {
-          "profile_algorithm": {"type": "string"}, "model_type": {"type": "string", "enum": ["similarity_weighted_bt_v1", "pairwise_forest_v1"]},
-          "model_fallback_reason": {"type": "string"},
-          "sample_count": {"type": "integer"}, "query_group_count": {"type": "integer"}, "round_count": {"type": "integer"}, "cv_fold_count": {"type": "integer"},
-          "target_quality_retention": {"type": "number"}, "confidence_level": {"type": "number"},
-          "baseline_best_single_model": {"$ref": "#/components/schemas/ProviderPoolRouterQualityCost"},
-          "routed": {"$ref": "#/components/schemas/ProviderPoolRouterQualityCost"},
-          "point_retention": {"type": "number"}, "conservative_retention": {"type": "number"}, "retention_lower_bound": {"type": "number"},
-          "savings": {"type": "number"}, "savings_fraction": {"type": "number"}, "savings_known": {"type": "boolean"},
-          "coverage": {"type": "number"}, "fallback_rate": {"type": "number"}, "low_confidence_rate": {"type": "number"}, "ood_rate": {"type": "number"},
-          "pairwise_metrics": {"$ref": "#/components/schemas/ProviderPoolRouterPairwiseMetrics"},
-          "thresholds": {
-            "type": "object", "additionalProperties": false,
-            "required": ["minimum_confidence", "minimum_margin", "minimum_similarity", "quality_slack"],
-            "properties": {
-              "minimum_confidence": {"type": "number"}, "minimum_margin": {"type": "number"},
-              "minimum_similarity": {"type": "number"}, "quality_slack": {"type": "number"}
-            }
-          },
-          "optimize_known_cost": {"type": "boolean"}, "quality_feasible": {"type": "boolean"},
-          "known_cost_feasible": {"type": "boolean"}, "insufficient_evidence": {"type": "boolean"},
-          "collapsed_member_id": {"type": "string"}, "warnings": {"type": "array", "items": {"type": "string"}}
-        }
-      },
-      "ProviderPoolRouterProfile": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "version", "schema_version", "member_compatible", "member_fingerprint_drift", "active", "created_at", "generated_at", "distance", "cost_unit", "fallback_member_id", "metrics", "activation_allowed", "feasible", "collapsed_single_member", "collapsed_quality_passed"],
-        "properties": {
-          "id": {"type": "string"}, "version": {"type": "integer"}, "schema_version": {"type": "integer", "enum": [1, 2]},
-          "router_algorithm": {"type": "string"}, "member_compatible": {"type": "boolean"},
-          "member_fingerprint_drift": {"type": "boolean"},
-          "active": {"type": "boolean"}, "created_at": {"type": "string", "format": "date-time"},
-          "created_by": {"type": "string"}, "source_job_id": {"type": "string"}, "description": {"type": "string"},
-          "generated_at": {"type": "string", "format": "date-time"}, "distance": {"type": "string"},
-          "cost_unit": {"type": "string"}, "fallback_member_id": {"type": "string"},
-          "metrics": {"$ref": "#/components/schemas/ProviderPoolRouterMetrics"},
-          "clusters": {
-            "type": "array", "description": "Cluster detail with embedding center vectors intentionally omitted.",
-            "items": {
-              "type": "object", "additionalProperties": false,
-              "required": ["id", "target_member_id", "target", "sample_count", "distance_quantiles", "ood_threshold"],
-              "properties": {
-                "id": {"type": "string"}, "target_member_id": {"type": "string"},
-                "target": {"$ref": "#/components/schemas/ProviderPoolRouterTarget"}, "sample_count": {"type": "integer"},
-                "distance_quantiles": {
-                  "type": "object", "additionalProperties": false, "required": ["p50", "p90", "p95", "p99"],
-                  "properties": {"p50": {"type": "number"}, "p90": {"type": "number"}, "p95": {"type": "number"}, "p99": {"type": "number"}}
-                },
-                "ood_threshold": {"type": "number"}
-              }
-            }
-          },
-          "candidate_distribution": {
-            "type": "array",
-            "items": {
-              "type": "object", "additionalProperties": false,
-              "required": ["member_id", "target", "cluster_count", "sample_count"],
-              "properties": {
-                "member_id": {"type": "string"}, "target": {"$ref": "#/components/schemas/ProviderPoolRouterTarget"},
-                "cluster_count": {"type": "integer"}, "sample_count": {"type": "integer"}, "fraction": {"type": "number"}
-              }
-            }
-          },
-          "activation_allowed": {"type": "boolean"},
-          "activation_blocked_reason": {"type": "string", "enum": ["candidate_members_incompatible", "missing_safe_fallback", "member_fingerprint_changed", "no_held_out_queries", "collapsed", "collapsed_quality_not_passed", "no_semantic_differentiation", "infeasible"]},
-          "validation_state": {"type": "string"},
-          "feasible": {"type": "boolean"},
-          "collapsed_single_member": {"type": "boolean"},
-          "collapsed_quality_passed": {"type": "boolean"},
-          "v2": {"$ref": "#/components/schemas/ProviderPoolRouterV2Summary"}
-        }
-      },
-      "ProviderPoolRouterProfilesResponse": {
-        "type": "object", "additionalProperties": false, "required": ["items", "limit", "offset"],
-        "properties": {
-          "items": {"type": "array", "items": {"$ref": "#/components/schemas/ProviderPoolRouterProfile"}},
-          "limit": {"type": "integer"}, "offset": {"type": "integer"}
-        }
-      },
-      "ProviderPoolRouterActivationRequest": {
-        "type": "object", "additionalProperties": false, "required": ["actor", "reason"],
-        "properties": {"actor": {"type": "string"}, "reason": {"type": "string"}, "expected_current_profile_id": {"type": "string"}}
-      },
-      "ProviderPoolRouterActivation": {
-        "type": "object", "additionalProperties": false,
-        "required": ["id", "to_profile_id", "action", "reason", "actor", "created_at"],
-        "properties": {
-          "id": {"type": "integer", "format": "int64"}, "from_profile_id": {"type": "string"},
-          "to_profile_id": {"type": "string"}, "action": {"type": "string", "enum": ["activate", "rollback"]},
-          "reason": {"type": "string"}, "actor": {"type": "string"}, "created_at": {"type": "string", "format": "date-time"}
-        }
-      },
-      "ProviderPoolRouterStatus": {
-        "type": "object", "additionalProperties": false, "required": ["qualified_query_count", "new_query_count", "semantic_differentiation"],
-        "properties": {
-          "qualified_query_count": {"type": "integer"},
-          "new_query_count": {"type": "integer"},
-          "pending_suggestion": {"$ref": "#/components/schemas/ProviderPoolRouterSuggestion"},
-          "running_job": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"},
-          "latest_job": {"$ref": "#/components/schemas/ProviderPoolRouterEvaluationJob"},
-          "active_profile": {"$ref": "#/components/schemas/ProviderPoolRouterProfile"},
-          "latest_candidate_profile": {"$ref": "#/components/schemas/ProviderPoolRouterProfile"},
-          "rollback_target_profile": {"$ref": "#/components/schemas/ProviderPoolRouterProfile"},
-          "current_profile_id": {"type": "string"},
-          "semantic_differentiation": {"type": "boolean"}
         }
       },
       "ProviderTagModelRequest": {
@@ -9222,6 +8945,7 @@
           "autostart",
           "desktop_mode",
           "llama_use_model_max_ctx",
+          "context_compression",
           "web_search",
           "observability",
           "hidden_nav_items",
@@ -9235,6 +8959,10 @@
         "properties": {
           "version": {
             "type": "string"
+          },
+          "llama_server_version": {
+            "type": "string",
+            "description": "Version reported by the installed llama-server binary, empty when llama-server is not installed."
           },
           "storage_dir": {
             "type": "string"
@@ -9299,6 +9027,11 @@
           "llama_use_model_max_ctx": {
             "type": "boolean",
             "description": "Whether local models use their native maximum context when a request does not explicitly set num_ctx. CSGHUB_LITE_LLAMA_USE_MODEL_MAX_CTX takes precedence when set."
+          },
+          "context_compression": {
+            "type": "string",
+            "enum": ["off", "safe", "aggressive"],
+            "description": "How the gateway shrinks tool output (tool_result blocks, role=tool messages, function_call_output items) in /v1/messages, /v1/chat/completions and /v1/responses requests before a model sees them. off leaves requests untouched. safe removes only redundancy and keeps every distinct line: JSON is minified and arrays of records become a header plus rows, search results are grouped by file, runs of identical lines are counted, terminal escapes are dropped, lines over 2000 bytes are cut, and a log, search or JSON result identical to an earlier one points back to it. aggressive also drops content: long JSON arrays, command output over 150 lines and search results over 12 matches per file are sampled, and lines differing only in their numbers are folded; every error line, boundaries and outliers are kept. File reads and source code are never changed. Affected responses carry an X-CSGLite-Context-Compression header."
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"
@@ -9412,6 +9145,11 @@
           "llama_use_model_max_ctx": {
             "type": "boolean",
             "description": "Use each local model's native maximum context when requests omit num_ctx."
+          },
+          "context_compression": {
+            "type": "string",
+            "enum": ["off", "safe", "aggressive"],
+            "description": "Context compression mode for agent requests; see SettingsResponse.context_compression."
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchSettings"
@@ -9620,6 +9358,10 @@
             "type": "string"
           },
           "requests": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "estimated_requests": {
             "type": "integer",
             "minimum": 0
           },
@@ -9871,7 +9613,7 @@
       },
       "ObservabilityRequest": {
         "type": "object",
-        "required": ["id", "trace_id", "started_at", "completed_at", "method", "path", "protocol", "status", "status_code", "stream", "model", "semantic_cluster", "price_input_per_million", "price_output_per_million", "estimated_cost", "cost_known", "fallback_count", "limited_count", "input_tokens", "output_tokens", "total_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "cache_eligible_input_tokens", "cache_hit_rate", "duration_ms", "first_token_latency_ms", "request_body_truncated", "response_body_truncated"],
+        "required": ["id", "trace_id", "started_at", "completed_at", "method", "path", "protocol", "status", "status_code", "stream", "model", "price_input_per_million", "price_output_per_million", "estimated_cost", "cost_known", "fallback_count", "limited_count", "input_tokens", "output_tokens", "total_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "cache_eligible_input_tokens", "cache_hit_rate", "duration_ms", "first_token_latency_ms", "request_body_truncated", "response_body_truncated"],
         "properties": {
           "id": {"type": "string"},
           "request_id": {"type": "string", "description": "Effective X-Request-ID used for end-to-end request correlation."},
@@ -9898,21 +9640,6 @@
           "actual_member_id": {"type": "string"},
           "member_model": {"type": "string"},
           "pool_policy": {"type": "string"},
-          "router_profile_id": {"type": "string"},
-          "router_profile_version": {"type": "integer"},
-          "router_profile_schema_version": {"type": "integer"},
-          "router_algorithm": {"type": "string"},
-          "routing_text_version": {"type": "string"},
-          "router_confidence": {"type": "number", "format": "double"},
-          "router_margin": {"type": "number", "format": "double"},
-          "router_similarity": {"type": "number", "format": "double"},
-          "semantic_routed": {"type": "boolean"},
-          "semantic_cluster": {"type": "integer"},
-          "semantic_cluster_id": {"type": "string"},
-          "semantic_distance": {"type": "number", "format": "double"},
-          "semantic_ood": {"type": "boolean"},
-          "semantic_fallback": {"type": "boolean"},
-          "semantic_fallback_reason": {"type": "string"},
           "price_input_per_million": {"type": "number", "format": "double"},
           "price_output_per_million": {"type": "number", "format": "double"},
           "estimated_cost": {"type": "number", "format": "double"},
@@ -9933,7 +9660,21 @@
           "request_body": {"type": "string"},
           "response_body": {"type": "string"},
           "request_body_truncated": {"type": "boolean"},
-          "response_body_truncated": {"type": "boolean"}
+          "response_body_truncated": {"type": "boolean"},
+          "context_compression": {"$ref": "#/components/schemas/ObservabilityContextCompression"}
+        }
+      },
+      "ObservabilityContextCompression": {
+        "type": "object",
+        "description": "What context compression did to the request's tool results. Present only when compression was on and the request carried tool results. request_body keeps the body as the client sent it.",
+        "required": ["mode", "blocks", "compressed", "bytes_before", "bytes_after", "tokens_saved"],
+        "properties": {
+          "mode": {"type": "string", "enum": ["safe", "aggressive"]},
+          "blocks": {"type": "integer", "format": "int64", "description": "Tool results in the request."},
+          "compressed": {"type": "integer", "format": "int64", "description": "Tool results that were rewritten."},
+          "bytes_before": {"type": "integer", "format": "int64"},
+          "bytes_after": {"type": "integer", "format": "int64"},
+          "tokens_saved": {"type": "integer", "format": "int64", "description": "Estimated input tokens removed."}
         }
       },
       "ObservabilityRequestSummary": {
@@ -9943,7 +9684,8 @@
           "succeeded": {"type": "integer", "format": "int64"},
           "failed": {"type": "integer", "format": "int64"},
           "total_tokens": {"type": "integer", "format": "int64"},
-          "average_latency_ms": {"type": "number", "format": "double"}
+          "average_latency_ms": {"type": "number", "format": "double"},
+          "context_tokens_saved": {"type": "integer", "format": "int64", "description": "Estimated input tokens context compression removed across the matching requests."}
         }
       },
       "ObservabilityTrace": {
@@ -10819,6 +10561,10 @@
           "model": {
             "type": "string",
             "description": "Model ID to delete. Local models accept the short public ID returned by model list APIs; legacy `namespace/name` IDs are also accepted."
+          },
+          "id": {
+            "type": "string",
+            "description": "Storage ID from `ModelInfo.id`. When set it is used as-is instead of resolving `model`, so the request cannot delete a different model that shares a short name."
           }
         }
       },
@@ -10976,6 +10722,10 @@
             "type": "string",
             "description": "Client-visible model ID. Local models use a short public ID without `namespace/`; when local names collide, later models receive a stable hash suffix."
           },
+          "id": {
+            "type": "string",
+            "description": "Unique on-disk storage ID of a local model (`[source/]namespace/name`). Unlike `model`, it does not change when another local model shares the same name; pass it as `id` to `DELETE /api/delete` to delete exactly this model."
+          },
           "size": {
             "type": "integer"
           },
@@ -11047,6 +10797,14 @@
           "has_mmproj": {
             "type": "boolean"
           },
+          "typed_decisions": {
+            "type": "boolean",
+            "description": "Local model that answers POST /v1/decisions: a JEV model tagged jev or typed-decisions whose System 1 block is downloaded, or a native decision model such as Laya."
+          },
+          "decision_only": {
+            "type": "boolean",
+            "description": "Native decision model that cannot generate text (Laya, Kev, Clef, LFM2-D1-Omni); it serves POST /v1/decisions only and refuses chat requests."
+          },
           "context_window": {
             "type": "integer"
           },
@@ -11069,6 +10827,9 @@
           },
           "pricing": {
             "$ref": "#/components/schemas/ModelPricing"
+          },
+          "local_inference": {
+            "$ref": "#/components/schemas/LocalInferenceSupport"
           },
           "nodes": {
             "type": "array",
@@ -11443,7 +11204,8 @@
         "required": [
           "details",
           "files",
-          "local_inference"
+          "local_inference",
+          "tags"
         ],
         "properties": {
           "details": {
@@ -11457,6 +11219,13 @@
           },
           "local_inference": {
             "$ref": "#/components/schemas/LocalInferenceSupport"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags from the model card's front matter; empty when there are none."
           }
         }
       },
@@ -13028,6 +12797,11 @@
           "delta": {
             "$ref": "#/components/schemas/Message"
           },
+          "logprobs": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "OpenAI-style token log probabilities, relayed from the backend when the request sets logprobs."
+          },
           "finish_reason": {
             "oneOf": [
               {
@@ -13116,6 +12890,14 @@
           },
           "error": {
             "type": "string"
+          },
+          "diffusers_version": {
+            "type": "string",
+            "description": "Installed diffusers package version. Present only when the runtime is ready."
+          },
+          "diffusers_latest_version": {
+            "type": "string",
+            "description": "Latest diffusers version available from the configured package index. Present only when the runtime is ready and the version lookup succeeded."
           }
         }
       },
@@ -13373,6 +13155,463 @@
           }
         }
       },
+      "DecisionCreateRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "input",
+          "questions"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Model source; decisions run on local llama.cpp models only."
+          },
+          "input": {
+            "description": "Shared evidence: a string, or user messages whose content is a string or input_text parts.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "role",
+                    "content"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "message"
+                      ]
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "user"
+                      ]
+                    },
+                    "content": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "input_text",
+                                  "input_image"
+                                ]
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "image_url": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "questions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/DecisionQuestion"
+            }
+          },
+          "safety_identifier": {
+            "type": "string",
+            "description": "Accepted for compatibility and ignored."
+          }
+        }
+      },
+      "DecisionQuestion": {
+        "type": "object",
+        "required": [
+          "type",
+          "instructions"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "predicate",
+              "choice",
+              "score"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Echoed in the answer."
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "choices": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 255,
+            "description": "choice only; values must be unique.",
+            "items": {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "description": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "levels": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 255,
+            "description": "score only; ordered from lowest to highest.",
+            "items": {
+              "type": "object",
+              "required": [
+                "label"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Decision": {
+        "type": "object",
+        "required": [
+          "answers",
+          "model",
+          "usage"
+        ],
+        "properties": {
+          "answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionAnswer"
+            }
+          },
+          "model": {
+            "type": "string"
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "input_tokens": {
+                "type": "integer"
+              },
+              "input_tokens_details": {
+                "type": "object",
+                "properties": {
+                  "cache_write_tokens": {
+                    "type": "integer"
+                  },
+                  "cached_tokens": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "output_tokens": {
+                "type": "integer"
+              },
+              "output_tokens_details": {
+                "type": "object",
+                "properties": {
+                  "reasoning_tokens": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "total_tokens": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "DecisionAnswer": {
+        "type": "object",
+        "required": [
+          "type",
+          "name"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "predicate",
+              "choice",
+              "score",
+              "refusal"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "probability": {
+            "type": "number",
+            "description": "predicate: probability that the condition is true."
+          },
+          "choice": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "description": "choice: the selected value."
+          },
+          "score": {
+            "type": "number",
+            "description": "score: probability-weighted average of the level indices."
+          },
+          "probabilities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "probability": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "description": "choice and score: gap between the two most likely options."
+          }
+        }
+      },
+      "DecideRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "kind",
+          "question"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Model source such as local; typed decisions run on local llama.cpp models only."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "noul",
+              "score",
+              "choice"
+            ]
+          },
+          "state": {
+            "description": "Context for the question: a string, a JSON object (rendered as Python json.dumps), or a list of strings and {\"type\":\"text\",\"text\":...} parts.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "array",
+                "items": {}
+              }
+            ]
+          },
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 2,
+            "maxItems": 256,
+            "description": "Choice options; noul and score use fixed options."
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "single",
+              "tournament",
+              "permute"
+            ],
+            "description": "How to answer more options than the head has slots; this model family supports tournament."
+          },
+          "thinking": {
+            "type": "string",
+            "enum": [
+              "default",
+              "off",
+              "auto",
+              "on"
+            ],
+            "description": "Only off (the default) is supported."
+          }
+        }
+      },
+      "DecideResponse": {
+        "type": "object",
+        "required": [
+          "kind",
+          "options",
+          "probabilities",
+          "choice_index",
+          "choice",
+          "model"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "effective_kind": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "probabilities": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "Calibrated probabilities aligned with options."
+          },
+          "choice_index": {
+            "type": "integer"
+          },
+          "choice": {
+            "type": "string"
+          },
+          "adaptation": {
+            "type": "string",
+            "description": "native, or tournament for more options than head slots."
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "usage": {
+            "type": "object",
+            "properties": {
+              "prompt_tokens": {
+                "type": "integer"
+              },
+              "completion_tokens": {
+                "type": "integer"
+              },
+              "total_tokens": {
+                "type": "integer"
+              }
+            }
+          },
+          "elapsed_seconds": {
+            "type": "number"
+          },
+          "num_model_requests": {
+            "type": "integer"
+          }
+        }
+      },
+      "DecideInfo": {
+        "type": "object",
+        "properties": {
+          "protocol": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "max_options": {
+            "type": "integer"
+          },
+          "native_choice_options": {
+            "type": "integer"
+          },
+          "temperatures": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "defaults": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "system2_available": {
+            "type": "boolean"
+          }
+        }
+      },
       "OpenAIEmbeddingsRequest": {
         "type": "object",
         "required": [
@@ -13591,6 +13830,28 @@
             "items": {
               "type": "string"
             }
+          },
+          "logprobs": {
+            "type": "boolean",
+            "description": "Return log probabilities of the output tokens in choices[].logprobs."
+          },
+          "top_logprobs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "description": "Number of most likely tokens to return at each position. Requires logprobs to be true."
+          },
+          "logit_bias": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Map of token ID to a bias added to its logit before sampling."
+          },
+          "response_format": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "OpenAI response format, such as {\"type\":\"json_object\"} or {\"type\":\"json_schema\",\"json_schema\":{...}}. Local llama.cpp models enforce it with a grammar."
           }
         }
       },
@@ -15528,7 +15789,12 @@
         ],
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Public inference id used to route and sync this model. When several registries hold the repository, this is the id most members advertise."
+          },
+          "repository": {
+            "type": "string",
+            "description": "Library name, namespace/name. Copies from different registries share it."
           },
           "size": {
             "type": "integer"
@@ -15547,7 +15813,26 @@
             "items": {
               "$ref": "#/components/schemas/ClusterModelNode"
             }
+          },
+          "syncs": {
+            "type": "array",
+            "description": "Nodes that are downloading this model and do not have it yet.",
+            "items": {
+              "$ref": "#/components/schemas/ClusterModelSync"
+            }
           }
+        }
+      },
+      "ClusterModelSync": {
+        "type": "object",
+        "required": ["uuid", "name", "status"],
+        "properties": {
+          "uuid": { "type": "string" },
+          "name": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued", "running"] },
+          "completed_bytes": { "type": "integer" },
+          "total_bytes": { "type": "integer" },
+          "detail": { "type": "string" }
         }
       },
       "ClusterExplain": {

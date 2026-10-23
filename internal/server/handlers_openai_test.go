@@ -22,8 +22,9 @@ import (
 )
 
 type fakeChatCompletionEngine struct {
-	resp    api.OpenAIChatResponse
-	lastReq map[string]interface{}
+	resp       api.OpenAIChatResponse
+	lastReq    map[string]interface{}
+	streamBody string
 }
 
 type fakeNativeToolStreamingEngine struct {
@@ -72,6 +73,13 @@ func (e *fakeChatCompletionEngine) ModelName() string { return "test/model" }
 func (e *fakeChatCompletionEngine) ChatCompletion(_ context.Context, reqBody map[string]interface{}) (*http.Response, error) {
 	e.lastReq = reqBody
 	if stream, _ := reqBody["stream"].(bool); stream {
+		if e.streamBody != "" {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(e.streamBody)),
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			}, nil
+		}
 		var body strings.Builder
 		for _, choice := range e.resp.Choices {
 			delta := choice.Message
@@ -847,6 +855,125 @@ func TestHandleOpenAIChatCompletionsForwardsChatTemplateKwargs(t *testing.T) {
 	}
 }
 
+func TestHandleOpenAIChatCompletionsForwardsLogprobsAndResponseFormat(t *testing.T) {
+	logprobs := json.RawMessage(`{"content":[{"token":"A","logprob":-0.1,"top_logprobs":[{"token":"A","logprob":-0.1},{"token":"B","logprob":-2.3}]}]}`)
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-test",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index:    0,
+				Message:  &api.Message{Role: "assistant", Content: "A"},
+				Logprobs: logprobs,
+			}},
+		},
+	}
+	s := newTestServerWithConfig(t, &config.Config{ModelDir: t.TempDir()})
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 8192, numParallel: 1}
+
+	body := `{
+	  "model": "test/model",
+	  "messages": [{"role":"user","content":"A or B?"}],
+	  "stream": false,
+	  "logprobs": true,
+	  "top_logprobs": 2,
+	  "logit_bias": {"32": 5, "33": 5},
+	  "response_format": {"type":"json_schema","json_schema":{"name":"pick","schema":{"enum":["A","B"]}}}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	if got := engine.lastReq["logprobs"]; got != true {
+		t.Fatalf("logprobs = %#v, want true", got)
+	}
+	if got := engine.lastReq["top_logprobs"]; got != 2 {
+		t.Fatalf("top_logprobs = %#v, want 2", got)
+	}
+	if bias, ok := engine.lastReq["logit_bias"].(map[string]float64); !ok || bias["32"] != 5 || bias["33"] != 5 {
+		t.Fatalf("logit_bias = %#v", engine.lastReq["logit_bias"])
+	}
+	format, ok := engine.lastReq["response_format"].(map[string]interface{})
+	if !ok || format["type"] != "json_schema" {
+		t.Fatalf("response_format = %#v", engine.lastReq["response_format"])
+	}
+
+	var resp api.OpenAIChatResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Choices) != 1 || !bytes.Contains(resp.Choices[0].Logprobs, []byte(`"top_logprobs"`)) {
+		t.Fatalf("logprobs not relayed: %s", w.Body.String())
+	}
+}
+
+func TestHandleOpenAIChatCompletionsWithToolsKeepsLogprobs(t *testing.T) {
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-test",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index:    0,
+				Message:  &api.Message{Role: "assistant", Content: "no tool needed"},
+				Logprobs: json.RawMessage(`{"content":[{"token":"no","logprob":-0.5}]}`),
+			}},
+		},
+	}
+	s := newTestServerWithConfig(t, &config.Config{ModelDir: t.TempDir()})
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 8192, numParallel: 1}
+
+	body := `{
+	  "model": "test/model",
+	  "messages": [{"role":"user","content":"hi"}],
+	  "tools": [{"type":"function","function":{"name":"get_time","parameters":{"type":"object","properties":{}}}}],
+	  "stream": false,
+	  "logprobs": true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: %d body=%s", w.Code, w.Body.String())
+	}
+	var resp api.OpenAIChatResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Choices) != 1 || !bytes.Contains(resp.Choices[0].Logprobs, []byte(`"logprob":-0.5`)) {
+		t.Fatalf("logprobs not kept on tool path: %s", w.Body.String())
+	}
+}
+
+func TestOpenAIChatRequestToProxyBodyValidatesTopLogprobs(t *testing.T) {
+	enabled, disabled := true, false
+	tooMany, two := maxOpenAITopLogprobs+1, 2
+	tests := []struct {
+		name string
+		req  api.OpenAIChatRequest
+	}{
+		{name: "without logprobs", req: api.OpenAIChatRequest{TopLogprobs: &two}},
+		{name: "logprobs false", req: api.OpenAIChatRequest{Logprobs: &disabled, TopLogprobs: &two}},
+		{name: "above limit", req: api.OpenAIChatRequest{Logprobs: &enabled, TopLogprobs: &tooMany}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := openAIChatRequestToProxyBody(tt.req, inference.DefaultOptions(), false); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
 func TestHandleOpenAIChatCompletionsDisableThinkingHeaderSetsTemplateKwargs(t *testing.T) {
 	engine := &fakeChatCompletionEngine{
 		resp: api.OpenAIChatResponse{
@@ -1323,4 +1450,190 @@ func TestProviderConfiguredHeadersAreAutomaticallyAddedToClientChatRequest(t *te
 	}
 
 	assertProviderHeaders(t, <-received)
+}
+
+func TestHandleOpenAIChatCompletionsProxyStreamRecordsUpstreamUsage(t *testing.T) {
+	useIsolatedStorageHome(t)
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:    "test",
+		Name:         "model",
+		Format:       model.FormatGGUF,
+		Size:         1,
+		Files:        []string{"model.gguf", "config.json"},
+		DownloadedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("save model manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "test", "model")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-usage",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index:   0,
+				Message: &api.Message{Role: "assistant", Content: "the answer is 42"},
+			}},
+			Usage: api.OpenAIUsage{PromptTokens: 120, CompletionTokens: 8, TotalTokens: 128},
+		},
+	}
+	s := newTestServerWithConfig(t, cfg)
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 16384, numParallel: 4}
+
+	body := `{"model":"test/model","messages":[{"role":"user","content":"what is the answer to everything"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if engine.lastReq == nil {
+		t.Fatal("proxy request was not made")
+	}
+	if opts, ok := engine.lastReq["stream_options"].(map[string]interface{}); !ok || opts["include_usage"] != true {
+		t.Fatalf("stream_options.include_usage not set in proxy request: %#v", engine.lastReq["stream_options"])
+	}
+	if !strings.Contains(w.Body.String(), `"prompt_tokens":120`) {
+		t.Fatalf("streamed usage chunk was not forwarded: %s", w.Body.String())
+	}
+	state, err := s.apiUsage.List(config.APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("usage records = %#v", state.Records)
+	}
+	record := state.Records[0]
+	if record.InputTokens != 120 || record.OutputTokens != 8 || record.TotalTokens != 128 {
+		t.Fatalf("usage tokens = input %d output %d total %d, want 120/8/128",
+			record.InputTokens, record.OutputTokens, record.TotalTokens)
+	}
+	if record.EstimatedRequests != 0 {
+		t.Fatalf("estimated requests = %d, want 0 (real usage should not be marked estimated)", record.EstimatedRequests)
+	}
+}
+
+func TestHandleOpenAIChatCompletionsProxyStreamFallsBackWithoutUpstreamUsage(t *testing.T) {
+	useIsolatedStorageHome(t)
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:    "test",
+		Name:         "model",
+		Format:       model.FormatGGUF,
+		Size:         1,
+		Files:        []string{"model.gguf", "config.json"},
+		DownloadedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("save model manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "test", "model")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	engine := &fakeChatCompletionEngine{
+		resp: api.OpenAIChatResponse{
+			ID:      "chatcmpl-no-usage",
+			Object:  "chat.completion",
+			Created: 123,
+			Model:   "test/model",
+			Choices: []api.OpenAIChoice{{
+				Index:   0,
+				Message: &api.Message{Role: "assistant", Content: "answer"},
+			}},
+		},
+	}
+	s := newTestServerWithConfig(t, cfg)
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 16384, numParallel: 4}
+
+	body := `{"model":"test/model","messages":[{"role":"user","content":"what is the answer to everything"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	state, err := s.apiUsage.List(config.APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("usage records = %#v", state.Records)
+	}
+	record := state.Records[0]
+	if want := countMessageTokens([]api.Message{{Role: "user", Content: "what is the answer to everything"}}); record.InputTokens != int64(want) {
+		t.Fatalf("input tokens = %d, want fallback estimate %d", record.InputTokens, want)
+	}
+	if record.OutputTokens != 1 {
+		t.Fatalf("output tokens = %d, want 1 (estimated from stream content)", record.OutputTokens)
+	}
+	if record.EstimatedRequests != 1 {
+		t.Fatalf("estimated requests = %d, want 1", record.EstimatedRequests)
+	}
+}
+
+func TestHandleOpenAIChatCompletionsProxyStreamRecordsOnMidStreamError(t *testing.T) {
+	useIsolatedStorageHome(t)
+	cfg := &config.Config{ModelDir: t.TempDir()}
+	if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+		Namespace:    "test",
+		Name:         "model",
+		Format:       model.FormatGGUF,
+		Size:         1,
+		Files:        []string{"model.gguf", "config.json"},
+		DownloadedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("save model manifest: %v", err)
+	}
+	modelDir := filepath.Join(cfg.ModelDir, "test", "model")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatalf("mkdir model dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	streamBody := "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"model\":\"test/model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"partial answer here\"}}]}\n\n"
+	engine := &fakeChatCompletionEngine{
+		streamBody: streamBody + "data: [BROKEN",
+	}
+	s := newTestServerWithConfig(t, cfg)
+	s.engines["test/model"] = &managedEngine{engine: engine, numCtx: 16384, numParallel: 4}
+
+	body := `{"model":"test/model","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleOpenAIChatCompletions(w, req)
+
+	state, err := s.apiUsage.List(config.APIUsageListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Records) != 1 {
+		t.Fatalf("usage records = %#v (want 1 record even on stream error)", state.Records)
+	}
+	record := state.Records[0]
+	if record.EstimatedRequests != 1 {
+		t.Fatalf("estimated requests = %d, want 1 (mid-stream error should be marked estimated)", record.EstimatedRequests)
+	}
+	if record.OutputTokens == 0 {
+		t.Fatalf("output tokens = 0, want >0 (should estimate from partial stream content)")
+	}
 }

@@ -740,7 +740,7 @@ func (s *Server) handleImageRuntimeStatus(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, manager.Status(r.Context()))
+	writeJSON(w, http.StatusOK, manager.StatusWithVersions(r.Context()))
 }
 
 // POST /api/image-runtime/install -- install or repair the Diffusers runtime.

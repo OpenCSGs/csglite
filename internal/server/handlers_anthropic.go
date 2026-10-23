@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/pkg/api"
@@ -90,6 +89,19 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Fallback for engines that do not implement ChatCompletionProxier.
+	// All real Engines currently implement it, so this branch is only
+	// reached by non-proxier fakes.
+	var reportedIn, reportedOut int64
+	opts.OnUsage = func(promptTokens, completionTokens int64) {
+		if promptTokens > 0 {
+			reportedIn = promptTokens
+		}
+		if completionTokens > 0 {
+			reportedOut = completionTokens
+		}
+	}
+
 	messages := anthropicMessagesToInference(req)
 
 	if req.Stream {
@@ -143,7 +155,7 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 		writeAnthropicSSE(w, "message_stop", map[string]interface{}{
 			"type": "message_stop",
 		})
-		s.recordAPIUsage(r, req.Model, req.Source, inputTokens, outputTokens)
+		s.recordResolvedUsage(r, req.Model, req.Source, reportedIn, reportedOut, inputTokens, outputTokens)
 		return
 	}
 
@@ -161,7 +173,7 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	}
 
 	anthropicResp := buildAnthropicMessageResponse(id, req.Model, response, inputTokens)
-	s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
+	s.recordResolvedUsage(r, req.Model, req.Source, reportedIn, reportedOut, inputTokens, estimateAnthropicTokens(response))
 	writeJSON(w, http.StatusOK, anthropicResp)
 }
 
@@ -189,10 +201,26 @@ func (s *Server) tryNativeAnthropicMessages(
 	copyAnthropicUpstreamHeaders(w.Header(), resp.Header)
 	if req.Stream && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 		w.WriteHeader(resp.StatusCode)
-		_, err = io.Copy(openAIStreamWriter{ResponseWriter: w}, resp.Body)
-		if err == nil {
-			s.recordAPIUsage(r, req.Model, req.Source, inputTokens, 0)
+		capture := &streamUsageCapture{}
+		_, err = io.Copy(openAIStreamWriter{ResponseWriter: w}, io.TeeReader(resp.Body, capture))
+		recordInput, recordOutput := inputTokens, 0
+		if capturedInput, capturedOutput, ok := capture.usage(); ok {
+			if capturedInput > 0 {
+				recordInput = capturedInput
+			}
+			if capturedOutput > 0 {
+				recordOutput = capturedOutput
+			} else {
+				recordOutput = estimateAnthropicTokens(extractAnthropicStreamContent(capture.tail))
+			}
+			if capturedInput <= 0 || capturedOutput <= 0 {
+				r = markUsageEstimated(r)
+			}
+		} else {
+			recordOutput = estimateAnthropicTokens(extractAnthropicStreamContent(capture.tail))
+			r = markUsageEstimated(r)
 		}
+		s.recordAPIUsage(r, req.Model, req.Source, recordInput, recordOutput)
 		return true, err
 	}
 
@@ -205,15 +233,31 @@ func (s *Server) tryNativeAnthropicMessages(
 		return true, fmt.Errorf("writing Anthropic messages response: %w", err)
 	}
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-		var usageEnvelope struct {
-			Usage api.AnthropicUsage `json:"usage"`
+		var envelope struct {
+			Usage   api.AnthropicUsage `json:"usage"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
 		}
-		if json.Unmarshal(body, &usageEnvelope) == nil {
-			recordInput := usageEnvelope.Usage.InputTokens
+		if json.Unmarshal(body, &envelope) == nil {
+			recordInput := envelope.Usage.InputTokens
 			if recordInput == 0 {
 				recordInput = inputTokens
+				r = markUsageEstimated(r)
 			}
-			s.recordAPIUsage(r, req.Model, req.Source, recordInput, usageEnvelope.Usage.OutputTokens)
+			recordOutput := envelope.Usage.OutputTokens
+			if recordOutput == 0 {
+				var sb strings.Builder
+				for _, block := range envelope.Content {
+					if block.Type == "text" {
+						sb.WriteString(block.Text)
+					}
+				}
+				recordOutput = estimateAnthropicTokens(sb.String())
+				r = markUsageEstimated(r)
+			}
+			s.recordAPIUsage(r, req.Model, req.Source, recordInput, recordOutput)
 		}
 	}
 	return true, nil
@@ -319,6 +363,9 @@ func (s *Server) handleAnthropicMessagesProxy(
 	}
 
 	if !req.Stream {
+		if openAIResp.Usage.PromptTokens == 0 || openAIResp.Usage.CompletionTokens == 0 {
+			r = markUsageEstimated(r)
+		}
 		s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 		writeJSON(w, http.StatusOK, anthropicResp)
 		return
@@ -327,6 +374,9 @@ func (s *Server) handleAnthropicMessagesProxy(
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	if openAIResp.Usage.PromptTokens == 0 || openAIResp.Usage.CompletionTokens == 0 {
+		r = markUsageEstimated(r)
+	}
 	s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 	writeAnthropicStreamedMessage(w, anthropicResp)
 }
@@ -374,7 +424,8 @@ func (s *Server) handleAnthropicMessagesProxyStream(
 	w.Header().Set("X-Accel-Buffering", "no")
 	writeAnthropicMessageStart(w, id, req.Model, inputTokens)
 
-	outputTokens, err := streamOpenAIChatAsAnthropic(w, resp.Body)
+	reportedIn, reportedOut, estimatedOutput, err := streamOpenAIChatAsAnthropic(w, resp.Body)
+	s.recordResolvedUsage(r, req.Model, req.Source, int64(reportedIn), int64(reportedOut), inputTokens, estimatedOutput)
 	if err != nil {
 		writeAnthropicSSE(w, "error", anthropicErrorPayloadWithStatus(
 			http.StatusBadGateway,
@@ -383,7 +434,6 @@ func (s *Server) handleAnthropicMessagesProxyStream(
 		))
 		return
 	}
-	s.recordAPIUsage(r, req.Model, req.Source, inputTokens, outputTokens)
 }
 
 type anthropicStreamToolCall struct {
@@ -392,7 +442,7 @@ type anthropicStreamToolCall struct {
 	arguments strings.Builder
 }
 
-func streamOpenAIChatAsAnthropic(w http.ResponseWriter, body io.Reader) (int, error) {
+func streamOpenAIChatAsAnthropic(w http.ResponseWriter, body io.Reader) (promptTokens, completionTokens, estimatedOutput int, err error) {
 	blockIndex := 0
 	openBlock := ""
 	finishReason := ""
@@ -449,8 +499,12 @@ func streamOpenAIChatAsAnthropic(w http.ResponseWriter, body io.Reader) (int, er
 		outputText.WriteString(value)
 	}
 
-	err := scanOpenAIChatStream(body, func(chunk api.OpenAIChatResponse) error {
+	err = scanOpenAIChatStream(body, func(chunk api.OpenAIChatResponse) error {
+		if chunk.Usage.PromptTokens > 0 {
+			promptTokens = chunk.Usage.PromptTokens
+		}
 		if chunk.Usage.CompletionTokens > 0 {
+			completionTokens = chunk.Usage.CompletionTokens
 			outputTokens = chunk.Usage.CompletionTokens
 		}
 		if len(chunk.Choices) == 0 {
@@ -493,7 +547,8 @@ func streamOpenAIChatAsAnthropic(w http.ResponseWriter, body io.Reader) (int, er
 		return nil
 	})
 	if err != nil {
-		return outputTokens, err
+		estimatedOutput = estimateAnthropicTokens(outputText.String())
+		return promptTokens, completionTokens, estimatedOutput, err
 	}
 
 	closeBlock()
@@ -539,7 +594,8 @@ func streamOpenAIChatAsAnthropic(w http.ResponseWriter, body io.Reader) (int, er
 		}
 	}
 	if outputTokens == 0 {
-		outputTokens = estimateAnthropicTokens(outputText.String())
+		estimatedOutput = estimateAnthropicTokens(outputText.String())
+		outputTokens = estimatedOutput
 	}
 	writeAnthropicSSE(w, "message_delta", map[string]interface{}{
 		"type": "message_delta",
@@ -554,7 +610,7 @@ func streamOpenAIChatAsAnthropic(w http.ResponseWriter, body io.Reader) (int, er
 	writeAnthropicSSE(w, "message_stop", map[string]interface{}{
 		"type": "message_stop",
 	})
-	return outputTokens, nil
+	return promptTokens, completionTokens, estimatedOutput, nil
 }
 
 func scanOpenAIChatStream(body io.Reader, onChunk func(api.OpenAIChatResponse) error) error {
@@ -705,6 +761,9 @@ func (s *Server) handleAnthropicMessagesWithTools(
 	}
 
 	if !req.Stream {
+		if openAIResp.Usage.PromptTokens == 0 || openAIResp.Usage.CompletionTokens == 0 {
+			r = markUsageEstimated(r)
+		}
 		s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 		writeJSON(w, http.StatusOK, anthropicResp)
 		return
@@ -713,6 +772,9 @@ func (s *Server) handleAnthropicMessagesWithTools(
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	if openAIResp.Usage.PromptTokens == 0 || openAIResp.Usage.CompletionTokens == 0 {
+		r = markUsageEstimated(r)
+	}
 	s.recordAPIUsage(r, req.Model, req.Source, anthropicResp.Usage.InputTokens, anthropicResp.Usage.OutputTokens)
 	writeAnthropicStreamedMessage(w, anthropicResp)
 }
@@ -841,6 +903,9 @@ func anthropicRequestToProxyBody(req api.AnthropicMessageRequest, opts inference
 		"temperature": opts.Temperature,
 		"top_p":       opts.TopP,
 		"stream":      stream,
+	}
+	if stream {
+		body["stream_options"] = map[string]interface{}{"include_usage": true}
 	}
 	if opts.MaxTokens > 0 {
 		body["max_tokens"] = opts.MaxTokens
@@ -1084,11 +1149,33 @@ func estimateAnthropicTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	count := utf8.RuneCountInString(text) / 4
+	cjk, other := 0, 0
+	for _, r := range text {
+		if isCJKRune(r) {
+			cjk++
+		} else {
+			other++
+		}
+	}
+	// CJK-adjacent scripts (Han, Kana, Hangul, CJK punctuation) tokenize near
+	// 0.6 tokens/char on modern BPE tokenizers (Qwen/GLM/DeepSeek); Latin and
+	// other scripts stay near 4 chars/token. This is a rough fallback, not a
+	// tokenizer model — precision is intentionally limited.
+	count := cjk*3/5 + other/4
 	if count < 1 {
 		count = 1
 	}
 	return count
+}
+
+func isCJKRune(r rune) bool {
+	return (r >= 0x3000 && r <= 0x303f) || // CJK Symbols and Punctuation
+		(r >= 0x3040 && r <= 0x30ff) || // Hiragana and Katakana
+		(r >= 0x3400 && r <= 0x4dbf) || // CJK Extension A
+		(r >= 0x4e00 && r <= 0x9fff) || // CJK Unified Ideographs
+		(r >= 0xac00 && r <= 0xd7af) || // Hangul Syllables
+		(r >= 0xf900 && r <= 0xfaff) || // CJK Compatibility Ideographs
+		(r >= 0xfe30 && r <= 0xfe4f) // CJK Compatibility Forms
 }
 
 func anthropicContentText(content interface{}) string {

@@ -23,65 +23,59 @@ const (
 )
 
 type RequestRecord struct {
-	ID                         string
-	RequestID                  string
-	TraceID                    string
-	B3TraceID                  string
-	ThreadID                   string
-	StartedAt                  time.Time
-	CompletedAt                time.Time
-	Method                     string
-	Path                       string
-	Protocol                   string
-	Status                     string
-	StatusCode                 int
-	Stream                     bool
-	Model                      string
-	Source                     string
-	SourceType                 string
-	SourceName                 string
-	APIKeyID                   string
-	APIKeyName                 string
-	PoolID                     string
-	PoolName                   string
-	PoolModel                  string
-	ActualMemberID             string
-	MemberModel                string
-	PoolPolicy                 string
-	RouterProfileID            string
-	RouterProfileVersion       int
-	RouterProfileSchemaVersion int
-	RouterAlgorithm            string
-	RoutingTextVersion         string
-	RouterConfidence           float64
-	RouterMargin               float64
-	RouterSimilarity           float64
-	SemanticRouted             bool
-	SemanticCluster            int
-	SemanticClusterID          string
-	SemanticDistance           float64
-	SemanticOOD                bool
-	SemanticFallback           bool
-	SemanticFallbackReason     string
-	PriceInputPerMillion       float64
-	PriceOutputPerMillion      float64
-	EstimatedCost              float64
-	CostCurrency               string
-	CostKnown                  bool
-	FallbackCount              int64
-	LimitedCount               int64
-	InputTokens                int64
-	OutputTokens               int64
-	CacheReadInputTokens       int64
-	CacheCreationTokens        int64
-	CacheEligibleTokens        int64
-	DurationMS                 int64
-	FirstTokenLatencyMS        int64
-	ErrorMessage               string
-	RequestBody                string
-	ResponseBody               string
-	RequestBodyTruncated       bool
-	ResponseBodyTruncated      bool
+	ID                    string
+	RequestID             string
+	TraceID               string
+	B3TraceID             string
+	ThreadID              string
+	StartedAt             time.Time
+	CompletedAt           time.Time
+	Method                string
+	Path                  string
+	Protocol              string
+	Status                string
+	StatusCode            int
+	Stream                bool
+	Model                 string
+	Source                string
+	SourceType            string
+	SourceName            string
+	APIKeyID              string
+	APIKeyName            string
+	PoolID                string
+	PoolName              string
+	PoolModel             string
+	ActualMemberID        string
+	MemberModel           string
+	PoolPolicy            string
+	PriceInputPerMillion  float64
+	PriceOutputPerMillion float64
+	EstimatedCost         float64
+	CostCurrency          string
+	CostKnown             bool
+	FallbackCount         int64
+	LimitedCount          int64
+	InputTokens           int64
+	OutputTokens          int64
+	CacheReadInputTokens  int64
+	CacheCreationTokens   int64
+	CacheEligibleTokens   int64
+	DurationMS            int64
+	FirstTokenLatencyMS   int64
+	ErrorMessage          string
+	RequestBody           string
+	ResponseBody          string
+	RequestBodyTruncated  bool
+	ResponseBodyTruncated bool
+	// Context compression: the mode that applied, the tool results the
+	// request carried and how many were rewritten, their size before and
+	// after, and an estimate of the input tokens that saved.
+	ContextCompressionMode  string
+	ContextBlocks           int64
+	ContextCompressedBlocks int64
+	ContextBytesBefore      int64
+	ContextBytesAfter       int64
+	ContextTokensSaved      int64
 }
 
 type RequestFilter struct {
@@ -102,6 +96,9 @@ type RequestSummary struct {
 	Failed         int64
 	TotalTokens    int64
 	AverageLatency float64
+	// ContextTokensSaved is the estimated input tokens context compression
+	// removed across the matching requests.
+	ContextTokensSaved int64
 }
 
 type RequestPage struct {
@@ -193,21 +190,6 @@ CREATE TABLE IF NOT EXISTS requests (
 	actual_member_id TEXT NOT NULL DEFAULT '',
 	member_model TEXT NOT NULL DEFAULT '',
 	pool_policy TEXT NOT NULL DEFAULT '',
-	router_profile_id TEXT NOT NULL DEFAULT '',
-	router_profile_version INTEGER NOT NULL DEFAULT 0,
-	router_profile_schema_version INTEGER NOT NULL DEFAULT 0,
-	router_algorithm TEXT NOT NULL DEFAULT '',
-	routing_text_version TEXT NOT NULL DEFAULT '',
-	router_confidence REAL NOT NULL DEFAULT 0,
-	router_margin REAL NOT NULL DEFAULT 0,
-	router_similarity REAL NOT NULL DEFAULT 0,
-	semantic_routed INTEGER NOT NULL DEFAULT 0,
-	semantic_cluster INTEGER NOT NULL DEFAULT 0,
-	semantic_cluster_id TEXT NOT NULL DEFAULT '',
-	semantic_distance REAL NOT NULL DEFAULT 0,
-	semantic_ood INTEGER NOT NULL DEFAULT 0,
-	semantic_fallback INTEGER NOT NULL DEFAULT 0,
-	semantic_fallback_reason TEXT NOT NULL DEFAULT '',
 	price_input_per_million REAL NOT NULL DEFAULT 0,
 	price_output_per_million REAL NOT NULL DEFAULT 0,
 	estimated_cost REAL NOT NULL DEFAULT 0,
@@ -227,7 +209,13 @@ CREATE TABLE IF NOT EXISTS requests (
 	response_body BLOB,
 	request_body_truncated INTEGER NOT NULL DEFAULT 0,
 	response_body_truncated INTEGER NOT NULL DEFAULT 0,
-	usage_reconciled INTEGER NOT NULL DEFAULT 0
+	usage_reconciled INTEGER NOT NULL DEFAULT 0,
+	context_compression_mode TEXT NOT NULL DEFAULT '',
+	context_blocks INTEGER NOT NULL DEFAULT 0,
+	context_compressed_blocks INTEGER NOT NULL DEFAULT 0,
+	context_bytes_before INTEGER NOT NULL DEFAULT 0,
+	context_bytes_after INTEGER NOT NULL DEFAULT 0,
+	context_tokens_saved INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_requests_started_at ON requests(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_requests_trace_id ON requests(trace_id, started_at);
@@ -251,27 +239,18 @@ CREATE INDEX IF NOT EXISTS idx_requests_pool_id ON requests(pool_id, pool_name);
 		{"cache_eligible_input_tokens", "INTEGER NOT NULL DEFAULT 0"},
 		{"usage_reconciled", "INTEGER NOT NULL DEFAULT 0"},
 		{"pool_policy", "TEXT NOT NULL DEFAULT ''"},
-		{"semantic_routed", "INTEGER NOT NULL DEFAULT 0"},
-		{"semantic_cluster", "INTEGER NOT NULL DEFAULT 0"},
-		{"semantic_distance", "REAL NOT NULL DEFAULT 0"},
-		{"semantic_fallback", "INTEGER NOT NULL DEFAULT 0"},
 		{"actual_member_id", "TEXT NOT NULL DEFAULT ''"},
-		{"router_profile_id", "TEXT NOT NULL DEFAULT ''"},
-		{"router_profile_version", "INTEGER NOT NULL DEFAULT 0"},
-		{"router_profile_schema_version", "INTEGER NOT NULL DEFAULT 0"},
-		{"router_algorithm", "TEXT NOT NULL DEFAULT ''"},
-		{"routing_text_version", "TEXT NOT NULL DEFAULT ''"},
-		{"router_confidence", "REAL NOT NULL DEFAULT 0"},
-		{"router_margin", "REAL NOT NULL DEFAULT 0"},
-		{"router_similarity", "REAL NOT NULL DEFAULT 0"},
-		{"semantic_cluster_id", "TEXT NOT NULL DEFAULT ''"},
-		{"semantic_ood", "INTEGER NOT NULL DEFAULT 0"},
-		{"semantic_fallback_reason", "TEXT NOT NULL DEFAULT ''"},
 		{"price_input_per_million", "REAL NOT NULL DEFAULT 0"},
 		{"price_output_per_million", "REAL NOT NULL DEFAULT 0"},
 		{"estimated_cost", "REAL NOT NULL DEFAULT 0"},
 		{"cost_currency", "TEXT NOT NULL DEFAULT ''"},
 		{"cost_known", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_compression_mode", "TEXT NOT NULL DEFAULT ''"},
+		{"context_blocks", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_compressed_blocks", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_bytes_before", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_bytes_after", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_tokens_saved", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.addColumnIfMissing("requests", migration.name, migration.definition); err != nil {
 			return err
@@ -334,31 +313,27 @@ func (s *Store) Add(ctx context.Context, record RequestRecord) error {
 		record.Method, record.Path, record.Protocol, record.Status, record.StatusCode, boolInt(record.Stream),
 		record.Model, record.Source, record.SourceType, record.SourceName, record.APIKeyID, record.APIKeyName,
 		record.PoolID, record.PoolName, record.PoolModel, record.ActualMemberID, record.MemberModel, record.PoolPolicy,
-		record.RouterProfileID, record.RouterProfileVersion, record.RouterProfileSchemaVersion,
-		record.RouterAlgorithm, record.RoutingTextVersion, record.RouterConfidence,
-		record.RouterMargin, record.RouterSimilarity,
-		boolInt(record.SemanticRouted), record.SemanticCluster, record.SemanticClusterID, record.SemanticDistance,
-		boolInt(record.SemanticOOD), boolInt(record.SemanticFallback), record.SemanticFallbackReason,
 		record.PriceInputPerMillion, record.PriceOutputPerMillion, record.EstimatedCost,
 		record.CostCurrency, boolInt(record.CostKnown), record.FallbackCount, record.LimitedCount,
 		record.InputTokens, record.OutputTokens, record.DurationMS,
 		record.CacheReadInputTokens, record.CacheCreationTokens, record.CacheEligibleTokens,
 		record.FirstTokenLatencyMS, record.ErrorMessage, requestBody, responseBody,
 		boolInt(record.RequestBodyTruncated), boolInt(record.ResponseBodyTruncated), 1,
+		record.ContextCompressionMode, record.ContextBlocks, record.ContextCompressedBlocks,
+		record.ContextBytesBefore, record.ContextBytesAfter, record.ContextTokensSaved,
 	}
 	query := `
 INSERT OR REPLACE INTO requests (
 	id, request_id, trace_id, b3_trace_id, thread_id, started_at, completed_at, method, path, protocol,
 	status, status_code, stream, model, source, source_type, source_name,
 	api_key_id, api_key_name, pool_id, pool_name, pool_model, actual_member_id, member_model,
-	pool_policy, router_profile_id, router_profile_version, router_profile_schema_version,
-	router_algorithm, routing_text_version, router_confidence, router_margin, router_similarity,
-	semantic_routed, semantic_cluster, semantic_cluster_id, semantic_distance, semantic_ood, semantic_fallback,
-	semantic_fallback_reason, price_input_per_million, price_output_per_million, estimated_cost, cost_currency, cost_known,
+	pool_policy, price_input_per_million, price_output_per_million, estimated_cost, cost_currency, cost_known,
 	fallback_count, limited_count, input_tokens, output_tokens, duration_ms,
 	cache_read_input_tokens, cache_creation_input_tokens, cache_eligible_input_tokens,
 	first_token_latency_ms, error_message, request_body, response_body,
-	request_body_truncated, response_body_truncated, usage_reconciled
+	request_body_truncated, response_body_truncated, usage_reconciled,
+	context_compression_mode, context_blocks, context_compressed_blocks,
+	context_bytes_before, context_bytes_after, context_tokens_saved
 ) VALUES (` + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + `)`
 	_, err = s.db.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -452,10 +427,11 @@ SELECT COUNT(*),
 	COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
 	COALESCE(SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END), 0),
 	COALESCE(SUM(MAX(input_tokens, cache_eligible_input_tokens) + output_tokens), 0),
-	COALESCE(AVG(duration_ms), 0)
+	COALESCE(AVG(duration_ms), 0),
+	COALESCE(SUM(context_tokens_saved), 0)
 FROM requests`+where, args...).Scan(
 		&page.Summary.Requests, &page.Summary.Succeeded, &page.Summary.Failed,
-		&page.Summary.TotalTokens, &page.Summary.AverageLatency,
+		&page.Summary.TotalTokens, &page.Summary.AverageLatency, &page.Summary.ContextTokensSaved,
 	); err != nil {
 		return page, fmt.Errorf("summarizing observability requests: %w", err)
 	}
@@ -912,14 +888,13 @@ func requestSelect(includeBodies bool) string {
 	return `SELECT id, request_id, trace_id, b3_trace_id, thread_id, started_at, completed_at, method, path, protocol,
 status, status_code, stream, model, source, source_type, source_name, api_key_id, api_key_name,
 pool_id, pool_name, pool_model, actual_member_id, member_model, pool_policy,
-router_profile_id, router_profile_version, router_profile_schema_version, router_algorithm,
-routing_text_version, router_confidence, router_margin, router_similarity,
-semantic_routed, semantic_cluster, semantic_cluster_id, semantic_distance, semantic_ood,
-semantic_fallback, semantic_fallback_reason, price_input_per_million, price_output_per_million,
+price_input_per_million, price_output_per_million,
 estimated_cost, cost_currency, cost_known, fallback_count, limited_count, input_tokens,
 output_tokens, duration_ms, cache_read_input_tokens, cache_creation_input_tokens,
 cache_eligible_input_tokens, first_token_latency_ms, error_message,
-request_body_truncated, response_body_truncated` + bodyColumns + ` FROM requests`
+request_body_truncated, response_body_truncated, context_compression_mode, context_blocks,
+context_compressed_blocks, context_bytes_before, context_bytes_after,
+context_tokens_saved` + bodyColumns + ` FROM requests`
 }
 
 type scanner interface {
@@ -929,22 +904,20 @@ type scanner interface {
 func scanRequest(row scanner, includeBodies bool) (RequestRecord, error) {
 	var record RequestRecord
 	var started, completed int64
-	var stream, semanticRouted, semanticOOD, semanticFallback, costKnown, requestTruncated, responseTruncated int
+	var stream, costKnown, requestTruncated, responseTruncated int
 	dest := []any{
 		&record.ID, &record.RequestID, &record.TraceID, &record.B3TraceID, &record.ThreadID,
 		&started, &completed, &record.Method,
 		&record.Path, &record.Protocol, &record.Status, &record.StatusCode, &stream, &record.Model,
 		&record.Source, &record.SourceType, &record.SourceName, &record.APIKeyID, &record.APIKeyName,
 		&record.PoolID, &record.PoolName, &record.PoolModel, &record.ActualMemberID, &record.MemberModel, &record.PoolPolicy,
-		&record.RouterProfileID, &record.RouterProfileVersion, &record.RouterProfileSchemaVersion,
-		&record.RouterAlgorithm, &record.RoutingTextVersion, &record.RouterConfidence,
-		&record.RouterMargin, &record.RouterSimilarity,
-		&semanticRouted, &record.SemanticCluster, &record.SemanticClusterID, &record.SemanticDistance, &semanticOOD,
-		&semanticFallback, &record.SemanticFallbackReason, &record.PriceInputPerMillion, &record.PriceOutputPerMillion,
+		&record.PriceInputPerMillion, &record.PriceOutputPerMillion,
 		&record.EstimatedCost, &record.CostCurrency, &costKnown, &record.FallbackCount,
 		&record.LimitedCount, &record.InputTokens, &record.OutputTokens, &record.DurationMS,
 		&record.CacheReadInputTokens, &record.CacheCreationTokens, &record.CacheEligibleTokens,
 		&record.FirstTokenLatencyMS, &record.ErrorMessage, &requestTruncated, &responseTruncated,
+		&record.ContextCompressionMode, &record.ContextBlocks, &record.ContextCompressedBlocks,
+		&record.ContextBytesBefore, &record.ContextBytesAfter, &record.ContextTokensSaved,
 	}
 	var requestBody, responseBody []byte
 	if includeBodies {
@@ -959,9 +932,6 @@ func scanRequest(row scanner, includeBodies bool) (RequestRecord, error) {
 	record.StartedAt = fromMillis(started)
 	record.CompletedAt = fromMillis(completed)
 	record.Stream = stream != 0
-	record.SemanticRouted = semanticRouted != 0
-	record.SemanticOOD = semanticOOD != 0
-	record.SemanticFallback = semanticFallback != 0
 	record.CostKnown = costKnown != 0
 	record.RequestBodyTruncated = requestTruncated != 0
 	record.ResponseBodyTruncated = responseTruncated != 0

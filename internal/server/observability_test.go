@@ -183,20 +183,6 @@ func TestObservationResponseCacheUsage(t *testing.T) {
 	}
 }
 
-func TestObservabilityResponseIncludesVersionedRouterDiagnostics(t *testing.T) {
-	response := observabilityRequestResponse(observability.RequestRecord{
-		RouterProfileID: "profile-v2", RouterProfileVersion: 4,
-		RouterProfileSchemaVersion: 2, RouterAlgorithm: "pairwise_router_v2",
-		RouterConfidence: .81, RouterMargin: .19, RouterSimilarity: .74,
-		SemanticFallback: true, SemanticFallbackReason: "low_confidence",
-	})
-	if response.RouterProfileSchemaVersion != 2 || response.RouterAlgorithm != "pairwise_router_v2" ||
-		response.RouterConfidence != .81 || response.RouterMargin != .19 ||
-		response.RouterSimilarity != .74 || response.SemanticFallbackReason != "low_confidence" {
-		t.Fatalf("router diagnostics response = %+v", response)
-	}
-}
-
 func TestObservationResponseUsageReadsFinalUsageFromTruncatedTail(t *testing.T) {
 	var writer observationResponseWriter
 	writer.capture([]byte("data: " + strings.Repeat("x", observabilityBodyLimit) + "\n"))

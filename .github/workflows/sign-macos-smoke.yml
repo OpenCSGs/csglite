@@ -1,0 +1,75 @@
+name: Sign macOS smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    environment:
+      name: release
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check Apple signing secrets
+        run: |
+          missing=()
+          if [[ -z "${APPLE_CERTIFICATE:-}" ]]; then
+            missing+=("APPLE_CERTIFICATE")
+          fi
+          if [[ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]]; then
+            missing+=("APPLE_CERTIFICATE_PASSWORD")
+          fi
+          if ((${#missing[@]} > 0)); then
+            echo "::error::Add ${missing[*]} to the release environment on OpenCSGs/csglite."
+            exit 1
+          fi
+
+      - name: Import Apple signing certificate
+        run: bash scripts/ci-import-apple-certificate.sh
+
+      - name: Build and sign sample archives
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/sign-smoke"
+          mkdir -p "${work}/src" "${work}/dist"
+          cat >"${work}/src/main.go" <<'EOF'
+          package main
+          import "fmt"
+          func main() { fmt.Println("csghub-lite") }
+          EOF
+          for arch in arm64 amd64; do
+            GOOS=darwin GOARCH="${arch}" CGO_ENABLED=0 go build -o "${work}/csghub-lite" "${work}/src/main.go"
+            stage="${work}/stage-${arch}"
+            mkdir -p "${stage}"
+            cp "${work}/csghub-lite" "${stage}/csghub-lite"
+            printf 'readme\n' >"${stage}/README.md"
+            name="darwin-arm64"
+            [[ "${arch}" == "amd64" ]] && name="darwin-amd64"
+            COPYFILE_DISABLE=1 tar czf "${work}/dist/csghub-lite_0.0.0_${name}.tar.gz" --no-xattrs -C "${stage}" .
+          done
+          bash scripts/sign-darwin-archives.sh "${work}/dist"
+          for name in darwin-arm64 darwin-amd64; do
+            extract="${work}/out-${name}"
+            mkdir -p "${extract}"
+            tar xzf "${work}/dist/csghub-lite_0.0.0_${name}.tar.gz" -C "${extract}"
+            codesign -dv --verbose=4 "${extract}/csghub-lite" 2>&1 | awk '
+              /^(Identifier|Format)=/ || /Authority=/ || /TeamIdentifier=/ || /flags=/ || /Timestamp=/ { print }
+            '
+            codesign --verify --strict --verbose=2 "${extract}/csghub-lite"
+          done

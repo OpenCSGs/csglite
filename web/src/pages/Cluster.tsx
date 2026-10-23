@@ -15,7 +15,6 @@ import {
   isFeatureNotLicensedError,
   joinCluster,
   leaveCluster,
-  removeClusterNode,
   rotateClusterToken,
   setClusterNodeState,
   syncClusterModel,
@@ -25,12 +24,12 @@ import type {
   ClusterCodeResponse,
   ClusterExplainResponse,
   ClusterModelDistribution,
+  ClusterModelSync,
   ClusterNodeState,
   ClusterNodeView,
   ClusterRecommendation,
   ClusterRoutingMode,
   ClusterSettings,
-  ClusterSyncResponse,
   ClusterTokenResponse,
   ClusterView,
   DiscoveredClusterNode,
@@ -85,8 +84,6 @@ const nameSaving = signal(false);
 const staticEditUUID = signal("");
 const staticDraft = signal("");
 const staticSaving = signal(false);
-const removeTarget = signal<ClusterNodeView | null>(null);
-const removing = signal(false);
 const stateSaving = signal(false);
 const overviewError = signal("");
 
@@ -95,7 +92,6 @@ const models = signal<ClusterModelDistribution[]>([]);
 const modelsLoading = signal(false);
 const modelsError = signal("");
 const syncBusy = signal("");
-const syncResults = signal<Record<string, ClusterSyncResponse | { error: string }>>({});
 const recommendations = signal<ClusterRecommendation[]>([]);
 const applyBusy = signal("");
 const applyResults = signal<Record<string, string>>({});
@@ -188,6 +184,14 @@ async function loadAdmissionCode() {
 async function loadModels() {
   modelsLoading.value = true;
   try {
+    await refreshModels();
+  } finally {
+    modelsLoading.value = false;
+  }
+}
+
+async function refreshModels() {
+  try {
     const [list, recs] = await Promise.all([getClusterModels(), getClusterRecommendations().catch(() => [])]);
     models.value = list;
     recommendations.value = recs;
@@ -195,8 +199,6 @@ async function loadModels() {
     if (!explainModel.value && list.length > 0) explainModel.value = list[0].id;
   } catch (err) {
     modelsError.value = errorMessage(err);
-  } finally {
-    modelsLoading.value = false;
   }
 }
 
@@ -335,20 +337,6 @@ async function saveStaticAddress() {
   }
 }
 
-async function confirmRemove() {
-  const target = removeTarget.value;
-  if (!target) return;
-  removing.value = true;
-  try {
-    view.value = await removeClusterNode(target.uuid);
-    removeTarget.value = null;
-  } catch (err) {
-    overviewError.value = errorMessage(err);
-  } finally {
-    removing.value = false;
-  }
-}
-
 async function changeLocalState(uuid: string, state: ClusterNodeState) {
   stateSaving.value = true;
   overviewError.value = "";
@@ -365,11 +353,12 @@ async function changeLocalState(uuid: string, state: ClusterNodeState) {
 
 async function handleSync(model: string, nodes: string[] | "all", resultKey: string) {
   syncBusy.value = resultKey;
+  modelsError.value = "";
   try {
-    const result = await syncClusterModel(model, nodes);
-    syncResults.value = { ...syncResults.value, [resultKey]: result };
+    await syncClusterModel(model, nodes);
+    void refreshModels();
   } catch (err) {
-    syncResults.value = { ...syncResults.value, [resultKey]: { error: errorMessage(err) } };
+    modelsError.value = errorMessage(err);
   } finally {
     syncBusy.value = "";
   }
@@ -817,18 +806,6 @@ function InCluster({ view }: { view: ClusterView }) {
 
       <InviteDialog />
       <ConfirmDialog
-        open={removeTarget.value !== null}
-        title={t("cluster.removeTitle")}
-        name={removeTarget.value?.name}
-        description={t("cluster.removeDesc")}
-        confirmLabel={t("cluster.removeConfirm")}
-        busy={removing.value}
-        onConfirm={() => void confirmRemove()}
-        onCancel={() => {
-          if (!removing.value) removeTarget.value = null;
-        }}
-      />
-      <ConfirmDialog
         open={leaveOpen.value}
         title={t("cluster.leaveTitle")}
         name={view.cluster?.name}
@@ -1111,18 +1088,9 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
             <option value="maintenance">{t("cluster.stateMaintenance")}</option>
           </select>
         ) : (
-          <div class="flex justify-end gap-2">
-            <button type="button" class="text-xs text-indigo-600 hover:underline" onClick={() => startStaticEdit(node)}>
-              {t("cluster.setStaticAddress")}
-            </button>
-            <button
-              type="button"
-              onClick={() => (removeTarget.value = node)}
-              class="rounded border border-red-300 px-2.5 py-1 text-xs text-red-600 transition-colors hover:bg-red-50"
-            >
-              {t("cluster.remove")}
-            </button>
-          </div>
+          <button type="button" class="text-xs text-indigo-600 hover:underline" onClick={() => startStaticEdit(node)}>
+            {t("cluster.setStaticAddress")}
+          </button>
         )}
       </td>
     </tr>
@@ -1277,6 +1245,10 @@ function InviteDialog() {
 function ModelsSection({ view }: { view: ClusterView }) {
   const columns = sortMembers(view.members);
   const list = models.value;
+  useEffect(() => {
+    const timer = window.setInterval(() => void refreshModels(), 2000);
+    return () => window.clearInterval(timer);
+  }, []);
   return (
     <>
       <section class="bg-white rounded-xl border border-gray-200 p-6">
@@ -1287,7 +1259,8 @@ function ModelsSection({ view }: { view: ClusterView }) {
           </div>
           <div class="flex items-center gap-4 text-xs text-gray-500">
             <span class="flex items-center gap-1.5"><span class="inline-block h-3 w-3 rounded bg-indigo-600" />{t("cluster.cellLoaded")}</span>
-            <span class="flex items-center gap-1.5"><span class="inline-block h-3 w-3 rounded border-2 border-indigo-400" />{t("cluster.cellPresent")}</span>
+            <span class="flex items-center gap-1.5"><span class="font-semibold text-indigo-600" aria-hidden="true">✓</span>{t("cluster.cellPresent")}</span>
+            <span class="flex items-center gap-1.5"><span class="inline-block h-1.5 w-3 rounded-full bg-indigo-600" />{t("cluster.cellSyncing")}</span>
             <span class="flex items-center gap-1.5"><span class="inline-block w-3 text-center text-gray-300">—</span>{t("cluster.cellAbsent")}</span>
             <button type="button" class="text-indigo-600 hover:underline" disabled={modelsLoading.value} onClick={() => void loadModels()}>
               {modelsLoading.value ? t("cluster.refreshing") : t("cluster.refresh")}
@@ -1314,25 +1287,28 @@ function ModelsSection({ view }: { view: ClusterView }) {
               </thead>
               <tbody>
                 {list.map((m) => {
-                  const key = `${m.id}::all`;
-                  const result = syncResults.value[key];
+                  const label = m.repository || m.id;
+                  const key = `${label}::all`;
                   return (
                     <>
-                      <tr key={m.id} class="border-b border-gray-50">
+                      <tr key={label} class="border-b border-gray-50">
                         <td class="py-3 pr-3">
-                          <div class="font-medium text-gray-900 break-all">{m.id}</div>
+                          <div class="font-medium text-gray-900 break-all">{label}</div>
                           <div class="text-xs text-gray-400">
                             {fmtGB(m.size)} GB{m.format ? ` · ${m.format}` : ""}{m.pipeline_tag ? ` · ${m.pipeline_tag}` : ""}
                           </div>
                         </td>
                         {columns.map((c) => {
                           const cell = m.nodes.find((n) => n.uuid === c.uuid);
+                          const sync = m.syncs?.find((item) => item.uuid === c.uuid);
                           return (
                             <td key={c.uuid} class="py-3 px-3 text-center">
                               {cell?.loaded ? (
                                 <span class="inline-block rounded bg-indigo-600 px-2 py-0.5 text-[11px] font-medium text-white">{t("cluster.cellLoaded")}</span>
                               ) : cell ? (
-                                <span class="inline-block rounded border-2 border-indigo-400 px-2 py-0.5 text-[11px] font-medium text-indigo-700">{t("cluster.cellPresent")}</span>
+                                <span class="text-base font-semibold leading-none text-indigo-600" title={t("cluster.cellPresent")} aria-label={t("cluster.cellPresent")}>✓</span>
+                              ) : sync ? (
+                                <SyncProgress sync={sync} />
                               ) : (
                                 <span class="text-gray-300">—</span>
                               )}
@@ -1343,24 +1319,13 @@ function ModelsSection({ view }: { view: ClusterView }) {
                           <button
                             type="button"
                             disabled={syncBusy.value !== ""}
-                            onClick={() => void handleSync(m.id, "all", key)}
+                            onClick={() => void handleSync(label, "all", key)}
                             class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:opacity-60"
                           >
                             {syncBusy.value === key ? t("cluster.syncing") : t("cluster.syncAll")}
                           </button>
                         </td>
                       </tr>
-                      {result && (
-                        <tr key={`${m.id}-result`} class="border-b border-gray-50 bg-gray-50/60">
-                          <td colSpan={columns.length + 2} class="px-3 py-2 text-xs">
-                            <SyncResultList result={result} onDismiss={() => {
-                              const next = { ...syncResults.value };
-                              delete next[key];
-                              syncResults.value = next;
-                            }} />
-                          </td>
-                        </tr>
-                      )}
                     </>
                   );
                 })}
@@ -1378,34 +1343,23 @@ function ModelsSection({ view }: { view: ClusterView }) {
   );
 }
 
-function SyncResultList({ result, onDismiss }: { result: ClusterSyncResponse | { error: string }; onDismiss: () => void }) {
+function SyncProgress({ sync }: { sync: ClusterModelSync }) {
+  const known = (sync.total_bytes ?? 0) > 0;
+  const pct = known ? percentOf(sync.completed_bytes ?? 0, sync.total_bytes ?? 0) : 0;
+  const label = sync.status === "queued" && !known
+    ? t("cluster.syncQueued")
+    : known
+      ? `${pct}%`
+      : t("cluster.cellSyncing");
   return (
-    <div class="flex items-start justify-between gap-3">
-      {"error" in result ? (
-        <span class="text-red-700">{t("cluster.syncError", result.error)}</span>
-      ) : (
-        <ul class="space-y-0.5">
-          {result.results.length === 0 && <li class="text-gray-500">{t("cluster.syncNothing")}</li>}
-          {result.results.map((r) => (
-            <li key={r.node_uuid} class="flex flex-wrap items-center gap-1.5">
-              <span class="font-medium text-gray-800">{r.node_name}:</span>
-              {r.error ? (
-                <span class="text-red-700">{t("cluster.syncError", r.error)}</span>
-              ) : r.skipped ? (
-                <span class="text-gray-500">{t("cluster.syncSkipped", r.skipped)}</span>
-              ) : (
-                <span class="text-green-700">
-                  {t("cluster.syncStarted")}
-                  {r.job?.id ? <span class="ml-1 font-mono text-[11px] text-gray-400">{r.job.id}</span> : null}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      <button type="button" class="text-gray-400 hover:text-gray-600" onClick={onDismiss} aria-label={t("dash.close")}>
-        ×
-      </button>
+    <div class="mx-auto w-16" title={sync.detail || label}>
+      <div class="h-1.5 overflow-hidden rounded-full bg-indigo-100">
+        <div
+          class={`h-full rounded-full bg-indigo-600 ${known ? "" : "w-1/2 animate-pulse"}`}
+          style={known ? { width: `${pct}%` } : undefined}
+        />
+      </div>
+      <div class="mt-1 text-[10px] font-medium leading-none text-indigo-700">{label}</div>
     </div>
   );
 }
@@ -1466,7 +1420,7 @@ function ExplainCard({ models: list }: { models: ClusterModelDistribution[] }) {
           >
             {list.length === 0 && <option value="">{t("cluster.modelsEmpty")}</option>}
             {list.map((m) => (
-              <option key={m.id} value={m.id}>{m.id}</option>
+              <option key={m.id} value={m.id}>{m.repository || m.id}</option>
             ))}
           </select>
         </div>

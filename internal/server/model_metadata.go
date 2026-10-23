@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 
+	"github.com/opencsgs/csglite/internal/decision"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelmetadata"
@@ -24,10 +26,14 @@ func (s *Server) localModelMetadata(storageID, modelDir, manifestPipelineTag str
 		}
 	}
 
+	modelMaxContext := inference.ModelMaxPositionEmbeddings(modelDir)
 	metadata := modelmetadata.Metadata{
-		PipelineTag:   s.resolvedLocalPipelineTag(storageID, manifestPipelineTag),
-		HasMMProj:     model.FindMMProj(modelDir) != "",
-		ContextWindow: int64(inference.ResolveNumCtxWithModelSetting(modelDir, 0, s.modelNumCtxSetting(storageID), s.cfg.Inference.LlamaUseModelMaxCtx)),
+		PipelineTag:     s.resolvedLocalPipelineTag(storageID, manifestPipelineTag),
+		HasMMProj:       model.FindMMProj(modelDir) != "",
+		ContextWindow:   int64(inference.ResolveNumCtxFromModelMax(modelMaxContext, 0, s.modelNumCtxSetting(storageID), s.cfg.Inference.LlamaUseModelMaxCtx)),
+		ModelMaxContext: int64(modelMaxContext),
+		TypedDecisions:  decision.IsDecisionModel(modelDir),
+		DecisionType:    decision.NativeType(modelDir),
 	}
 	metadata.MaxModelLen, _ = model.MaxModelLen(modelDir, format)
 
@@ -39,6 +45,18 @@ func (s *Server) localModelMetadata(storageID, modelDir, manifestPipelineTag str
 		s.modelMetadataMu.RUnlock()
 	}
 	return metadata
+}
+
+// warmLocalModelMetadata derives and caches metadata for every local model so
+// the first model listing after startup or a download does not pay for reading
+// model files. Models already cached for their current files are skipped.
+func (s *Server) warmLocalModelMetadata() {
+	if s == nil || s.manager == nil {
+		return
+	}
+	if _, err := s.listLocalModelInfos(); err != nil {
+		log.Printf("warming local model metadata failed: %v", err)
+	}
 }
 
 func (s *Server) reopenModelMetadata(storageRoot string) error {

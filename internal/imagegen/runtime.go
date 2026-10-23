@@ -8,15 +8,18 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/model"
 )
 
 const (
@@ -29,6 +32,7 @@ const (
 	manifestFileName      = "runtime.json"
 	aliyunPyPIIndex       = "https://mirrors.aliyun.com/pypi/simple"
 	aliyunTorchRoot       = "https://mirrors.aliyun.com/pytorch-wheels"
+	tsinghuaPyPIIndex     = "https://pypi.tuna.tsinghua.edu.cn/simple"
 	officialTorchRoot     = "https://download.pytorch.org/whl"
 	mirrorModeEnv         = "CSGHUB_LITE_PACKAGE_MIRROR"
 	regionEnv             = "CSGHUB_LITE_REGION"
@@ -147,17 +151,19 @@ const (
 
 // RuntimeStatus describes whether the Diffusers runtime is ready.
 type RuntimeStatus struct {
-	Ready           bool         `json:"ready"`
-	RuntimeDir      string       `json:"runtime_dir"`
-	VenvDir         string       `json:"venv_dir"`
-	Python          string       `json:"python,omitempty"`
-	Platform        string       `json:"platform"`
-	Arch            string       `json:"arch"`
-	Hardware        HardwareKind `json:"hardware"`
-	TorchIndexURL   string       `json:"torch_index_url,omitempty"`
-	MissingPackages []string     `json:"missing_packages,omitempty"`
-	InstallCommand  []string     `json:"install_command,omitempty"`
-	Error           string       `json:"error,omitempty"`
+	Ready                  bool         `json:"ready"`
+	RuntimeDir             string       `json:"runtime_dir"`
+	VenvDir                string       `json:"venv_dir"`
+	Python                 string       `json:"python,omitempty"`
+	Platform               string       `json:"platform"`
+	Arch                   string       `json:"arch"`
+	Hardware               HardwareKind `json:"hardware"`
+	TorchIndexURL          string       `json:"torch_index_url,omitempty"`
+	MissingPackages        []string     `json:"missing_packages,omitempty"`
+	InstallCommand         []string     `json:"install_command,omitempty"`
+	Error                  string       `json:"error,omitempty"`
+	DiffusersVersion       string       `json:"diffusers_version,omitempty"`
+	DiffusersLatestVersion string       `json:"diffusers_latest_version,omitempty"`
 }
 
 type RuntimeManifest struct {
@@ -177,6 +183,7 @@ type PackageMirror string
 const (
 	PackageMirrorOfficial PackageMirror = "official"
 	PackageMirrorAliyun   PackageMirror = "aliyun"
+	PackageMirrorTsinghua PackageMirror = "tsinghua"
 )
 
 type PackageIndexes struct {
@@ -381,7 +388,6 @@ func (m *RuntimeManager) venvIsOlderThan(ctx context.Context, hostPython string)
 
 func (m *RuntimeManager) Status(ctx context.Context) RuntimeStatus {
 	hardware := DetectHardware()
-	indexes := ResolvePackageIndexes(hardware)
 	status := RuntimeStatus{
 		RuntimeDir:    m.rootDir,
 		VenvDir:       m.VenvDir(),
@@ -389,7 +395,7 @@ func (m *RuntimeManager) Status(ctx context.Context) RuntimeStatus {
 		Platform:      runtime.GOOS,
 		Arch:          runtime.GOARCH,
 		Hardware:      hardware,
-		TorchIndexURL: torchSourceURL(indexes),
+		TorchIndexURL: torchSourceURL(torchInstallIndexes(hardware)),
 	}
 	status.InstallCommand = m.InstallCommand(status.Hardware)
 
@@ -412,6 +418,22 @@ func (m *RuntimeManager) Status(ctx context.Context) RuntimeStatus {
 	return status
 }
 
+// StatusWithVersions returns Status enriched with the installed diffusers
+// package version and the latest version available from the configured package
+// index. The version lookup uses a short timeout so an unreachable index never
+// blocks the caller; the installed-version probe is a fast local Python call.
+// Both fields are left empty when the runtime is not ready.
+func (m *RuntimeManager) StatusWithVersions(ctx context.Context) RuntimeStatus {
+	status := m.Status(ctx)
+	if !status.Ready {
+		return status
+	}
+	status.DiffusersVersion = installedPackageVersion(ctx, status.Python, "diffusers")
+	indexes := ResolvePackageIndexes(status.Hardware)
+	status.DiffusersLatestVersion = latestPyPIPackageVersion("diffusers", indexes.PyPIIndexURL)
+	return status
+}
+
 func (m *RuntimeManager) EnsureReady(ctx context.Context) error {
 	status := m.Status(ctx)
 	if status.Ready {
@@ -422,7 +444,6 @@ func (m *RuntimeManager) EnsureReady(ctx context.Context) error {
 
 func (m *RuntimeManager) ASRStatus(ctx context.Context) RuntimeStatus {
 	hardware := DetectHardware()
-	indexes := ResolvePackageIndexes(hardware)
 	status := RuntimeStatus{
 		RuntimeDir:    m.rootDir,
 		VenvDir:       m.VenvDir(),
@@ -430,7 +451,7 @@ func (m *RuntimeManager) ASRStatus(ctx context.Context) RuntimeStatus {
 		Platform:      runtime.GOOS,
 		Arch:          runtime.GOARCH,
 		Hardware:      hardware,
-		TorchIndexURL: torchSourceURL(indexes),
+		TorchIndexURL: torchSourceURL(torchInstallIndexes(hardware)),
 	}
 	status.InstallCommand = m.ASRInstallCommand(status.Hardware)
 
@@ -477,7 +498,6 @@ func (m *RuntimeManager) EnsureASRReady(ctx context.Context) error {
 // import names probed inside the venv.
 func (m *RuntimeManager) pythonRuntimeStatus(ctx context.Context, label string, torchPkgs, requiredPkgs []string, installCommand []string) RuntimeStatus {
 	hardware := DetectHardware()
-	indexes := ResolvePackageIndexes(hardware)
 	status := RuntimeStatus{
 		RuntimeDir:     m.rootDir,
 		VenvDir:        m.VenvDir(),
@@ -485,7 +505,7 @@ func (m *RuntimeManager) pythonRuntimeStatus(ctx context.Context, label string, 
 		Platform:       runtime.GOOS,
 		Arch:           runtime.GOARCH,
 		Hardware:       hardware,
-		TorchIndexURL:  torchSourceURL(indexes),
+		TorchIndexURL:  torchSourceURL(torchInstallIndexes(hardware)),
 		InstallCommand: installCommand,
 	}
 	all := append(append([]string{}, torchPkgs...), requiredPkgs...)
@@ -585,11 +605,78 @@ func (m *RuntimeManager) EnsureTTSOverlay(ctx context.Context, backend string) (
 	if len(missing) == 0 {
 		return dir, writeOverlayProjectRoot(dir)
 	}
-	indexes := ResolvePackageIndexes(DetectHardware())
+	indexes := mlxPackageIndexes()
 	if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
 		return "", err
 	}
 	if err := m.uvPipInstallTarget(ctx, python, dir, indexes, packages); err != nil {
+		return "", fmt.Errorf("installing %s overlay packages: %w", backend, err)
+	}
+	if err := writeOverlayProjectRoot(dir); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// imageOverlayPackagesFor lists dependencies which are private to image
+// backends. MFLUX is deliberately isolated from the Diffusers environment:
+// it owns the MLX implementation and is only usable on Apple Silicon.
+// mfluxQwen21Version is the only MFLUX release the MLX Qwen-Image-2.1 worker
+// supports; keep it in step with MFLUX_QWEN21_VERSION in diffusers_worker.py.
+const mfluxQwen21Version = "0.20.0"
+
+func imageOverlayPackagesFor(backend, goos, goarch string) []string {
+	if backend == model.ImageBackendMLXQwen21 && goos == "darwin" && goarch == "arm64" {
+		// Pinned: the worker loads pre-converted MLX checkpoints through
+		// MFLUX 0.20's Qwen-Image-2.1 internals. 0.21 renamed them and moved
+		// to a video VAE layout, and its own loader rejects these checkpoints.
+		return []string{"mflux==" + mfluxQwen21Version, "mlx", "mlx-metal"}
+	}
+	return nil
+}
+
+// ImageOverlayDir reports the private package directory used by an image
+// backend, or "" when it runs entirely from the shared image venv.
+func (m *RuntimeManager) ImageOverlayDir(backend string) string {
+	if len(imageOverlayPackagesFor(backend, runtime.GOOS, runtime.GOARCH)) == 0 {
+		return ""
+	}
+	return filepath.Join(m.rootDir, "overlays", backend)
+}
+
+// EnsureImageOverlay installs a backend's private packages and returns the
+// directory which must be prepended to PYTHONPATH for its worker.
+func (m *RuntimeManager) EnsureImageOverlay(ctx context.Context, backend string) (string, error) {
+	packages := imageOverlayPackagesFor(backend, runtime.GOOS, runtime.GOARCH)
+	if len(packages) == 0 {
+		if backend == model.ImageBackendMLXQwen21 {
+			return "", fmt.Errorf("%s requires macOS on Apple Silicon", backend)
+		}
+		return "", nil
+	}
+	dir := m.ImageOverlayDir(backend)
+	python := m.PythonPath()
+	missing, err := missingPackagesWithPath(ctx, python, dir, importNamesFor(packages))
+	if err != nil {
+		return "", err
+	}
+	mfluxVersion, versionErr := installedPackageVersionWithPath(ctx, python, dir, "mflux")
+	if len(missing) == 0 && versionErr == nil && compareVersions(mfluxVersion, mfluxQwen21Version) == 0 {
+		return dir, writeOverlayProjectRoot(dir)
+	}
+	// A prior unpinned install can leave another MFLUX release in the overlay.
+	// Remove it before installing so Python cannot mix modules from releases.
+	if err := os.RemoveAll(dir); err != nil {
+		return "", fmt.Errorf("removing outdated %s overlay: %w", backend, err)
+	}
+	indexes := mlxPackageIndexes()
+	if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
+		return "", err
+	}
+	// MFLUX needs transformers 5.x and several dependencies which must stay
+	// private to this backend; unlike the TTS overlay, it cannot reuse the
+	// shared Diffusers venv's transformers<5 constraint.
+	if err := m.uvPipInstallTargetWithDeps(ctx, python, dir, indexes, packages); err != nil {
 		return "", fmt.Errorf("installing %s overlay packages: %w", backend, err)
 	}
 	if err := writeOverlayProjectRoot(dir); err != nil {
@@ -671,7 +758,13 @@ func modelTTSPackagesFor(modelName, modelDir string) []string {
 func importNamesFor(packages []string) []string {
 	names := make([]string, 0, len(packages)+1)
 	for _, spec := range packages {
-		name := spec
+		name := strings.TrimSpace(spec)
+		for _, sep := range []string{">=", "<=", "==", "!=", "~=", ">", "<"} {
+			if index := strings.Index(name, sep); index >= 0 {
+				name = strings.TrimSpace(name[:index])
+				break
+			}
+		}
 		if index := strings.IndexByte(name, '['); index >= 0 {
 			if strings.Contains(spec, "[zh]") {
 				names = append(names, "ordered_set")
@@ -734,6 +827,7 @@ func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progres
 	}
 	hardware := DetectHardware()
 	indexes := ResolvePackageIndexes(hardware)
+	torchIndexes := torchInstallIndexes(hardware)
 	progress(fmt.Sprintf("detect system %s/%s %s mirror=%s", runtime.GOOS, runtime.GOARCH, hardware, indexes.Mirror), 1, 6)
 	progress("prepare image runtime", 2, 6)
 	if err := os.MkdirAll(m.rootDir, 0o755); err != nil {
@@ -748,21 +842,24 @@ func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progres
 	if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
 		return m.Status(ctx), err
 	}
-	if indexes.TorchIndexURL != "" {
-		progress("install PyTorch from "+indexes.TorchIndexURL, 5, 6)
-	} else if indexes.TorchFindLinksURL != "" && indexes.PyPIIndexURL != "" {
-		progress("install PyTorch from "+string(indexes.Mirror)+" mirror", 5, 6)
-	} else if indexes.TorchFindLinksURL != "" {
-		progress("install PyTorch from "+indexes.TorchFindLinksURL, 5, 6)
-	} else if indexes.PyPIIndexURL != "" {
-		progress("install PyTorch from "+indexes.PyPIIndexURL, 5, 6)
+	if torchIndexes.TorchIndexURL != "" {
+		progress("install PyTorch from "+torchIndexes.TorchIndexURL, 5, 6)
+	} else if torchIndexes.TorchFindLinksURL != "" && torchIndexes.PyPIIndexURL != "" {
+		progress("install PyTorch from "+string(torchIndexes.Mirror)+" mirror", 5, 6)
+	} else if torchIndexes.TorchFindLinksURL != "" {
+		progress("install PyTorch from "+torchIndexes.TorchFindLinksURL, 5, 6)
+	} else if torchIndexes.PyPIIndexURL != "" {
+		progress("install PyTorch from "+torchIndexes.PyPIIndexURL, 5, 6)
 	} else {
 		progress("install PyTorch", 5, 6)
 	}
-	if err := m.uvPipInstall(ctx, python, indexes, torchPackages, false, true); err != nil {
+	if err := m.uvPipInstall(ctx, python, torchIndexes, torchPackages, false, true); err != nil {
 		return m.Status(ctx), fmt.Errorf("installing PyTorch: %w", err)
 	}
 	diffusersDeps := []string{"diffusers>=0.34.0", "transformers>=4.48.0,<5.0", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow"}
+	if upgradePackages {
+		diffusersDeps = stripVersionSpecs(diffusersDeps)
+	}
 	if indexes.PyPIIndexURL != "" {
 		if upgradePackages {
 			progress("upgrade Diffusers dependencies from "+indexes.PyPIIndexURL, 6, 6)
@@ -788,14 +885,14 @@ func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progres
 		Hardware:    hardware,
 		CreatedAt:   now,
 		UpdatedAt:   now,
-		TorchIndex:  torchSourceURL(indexes),
+		TorchIndex:  torchSourceURL(torchIndexes),
 		PyPIIndex:   indexes.PyPIIndexURL,
 		PackageSpec: append(torchPackages, "diffusers", "transformers", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow"),
 	}
 	if err := writeManifest(filepath.Join(m.rootDir, manifestFileName), manifest); err != nil {
 		return m.Status(ctx), err
 	}
-	return m.Status(ctx), nil
+	return m.StatusWithVersions(ctx), nil
 }
 
 func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, progress ProgressFunc, upgradePackages bool) (RuntimeStatus, error) {
@@ -805,6 +902,7 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 
 	hardware := DetectHardware()
 	indexes := ResolvePackageIndexes(hardware)
+	torchIndexes := torchInstallIndexes(hardware)
 	progress(fmt.Sprintf("detect system %s/%s %s mirror=%s", runtime.GOOS, runtime.GOARCH, hardware, indexes.Mirror), 1, 5)
 	progress("prepare ASR runtime", 2, 5)
 	if err := os.MkdirAll(m.rootDir, 0o755); err != nil {
@@ -823,18 +921,18 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 		if err := m.ensurePipAndUV(ctx, python, indexes); err != nil {
 			return m.ASRStatus(ctx), err
 		}
-		if indexes.TorchIndexURL != "" {
-			progress("install PyTorch from "+indexes.TorchIndexURL, 4, 5)
-		} else if indexes.TorchFindLinksURL != "" && indexes.PyPIIndexURL != "" {
-			progress("install PyTorch from "+string(indexes.Mirror)+" mirror", 4, 5)
-		} else if indexes.TorchFindLinksURL != "" {
-			progress("install PyTorch from "+indexes.TorchFindLinksURL, 4, 5)
-		} else if indexes.PyPIIndexURL != "" {
-			progress("install PyTorch from "+indexes.PyPIIndexURL, 4, 5)
+		if torchIndexes.TorchIndexURL != "" {
+			progress("install PyTorch from "+torchIndexes.TorchIndexURL, 4, 5)
+		} else if torchIndexes.TorchFindLinksURL != "" && torchIndexes.PyPIIndexURL != "" {
+			progress("install PyTorch from "+string(torchIndexes.Mirror)+" mirror", 4, 5)
+		} else if torchIndexes.TorchFindLinksURL != "" {
+			progress("install PyTorch from "+torchIndexes.TorchFindLinksURL, 4, 5)
+		} else if torchIndexes.PyPIIndexURL != "" {
+			progress("install PyTorch from "+torchIndexes.PyPIIndexURL, 4, 5)
 		} else {
 			progress("install PyTorch", 4, 5)
 		}
-		if err := m.uvPipInstall(ctx, python, indexes, torchPackages, upgradePackages, true); err != nil {
+		if err := m.uvPipInstall(ctx, python, torchIndexes, torchPackages, upgradePackages, true); err != nil {
 			return m.ASRStatus(ctx), fmt.Errorf("installing PyTorch: %w", err)
 		}
 	}
@@ -878,7 +976,7 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 		Hardware:    DetectHardware(),
 		CreatedAt:   now,
 		UpdatedAt:   now,
-		TorchIndex:  torchSourceURL(indexes),
+		TorchIndex:  torchSourceURL(torchIndexes),
 		PyPIIndex:   indexes.PyPIIndexURL,
 		PackageSpec: append(torchPackages, asrPythonPackages...),
 	}
@@ -895,6 +993,7 @@ func (m *RuntimeManager) InstallTTSWithProgressOptions(ctx context.Context, prog
 
 	hardware := DetectHardware()
 	indexes := ResolvePackageIndexes(hardware)
+	torchIndexes := torchInstallIndexes(hardware)
 	progress(fmt.Sprintf("detect system %s/%s %s mirror=%s", runtime.GOOS, runtime.GOARCH, hardware, indexes.Mirror), 1, 5)
 	progress("prepare text-to-speech runtime", 2, 5)
 	if err := os.MkdirAll(m.rootDir, 0o755); err != nil {
@@ -914,7 +1013,7 @@ func (m *RuntimeManager) InstallTTSWithProgressOptions(ctx context.Context, prog
 			return m.TTSStatus(ctx), err
 		}
 		progress("install PyTorch", 4, 5)
-		if err := m.uvPipInstall(ctx, python, indexes, torchPackages, upgradePackages, true); err != nil {
+		if err := m.uvPipInstall(ctx, python, torchIndexes, torchPackages, upgradePackages, true); err != nil {
 			return m.TTSStatus(ctx), fmt.Errorf("installing PyTorch: %w", err)
 		}
 	}
@@ -946,7 +1045,7 @@ func (m *RuntimeManager) InstallTTSWithProgressOptions(ctx context.Context, prog
 		Hardware:    DetectHardware(),
 		CreatedAt:   now,
 		UpdatedAt:   now,
-		TorchIndex:  torchSourceURL(indexes),
+		TorchIndex:  torchSourceURL(torchIndexes),
 		PyPIIndex:   indexes.PyPIIndexURL,
 		PackageSpec: append(torchPackages, ttsPythonPackages...),
 	}
@@ -988,6 +1087,7 @@ func (m *RuntimeManager) InstallCommand(hw HardwareKind) []string {
 	pythonPath := m.PythonPath()
 	uvPath := m.uvPath()
 	indexes := ResolvePackageIndexes(hw)
+	torchIndexes := torchInstallIndexes(hw)
 	cmd := []string{python, "-m", "venv", venv, "&&", pythonPath, "-m", "ensurepip", "--upgrade", "&&", pythonPath, "-m", "pip", "install", "--upgrade", "pip"}
 	if indexes.PyPIIndexURL != "" {
 		cmd = append(cmd, "-i", indexes.PyPIIndexURL)
@@ -997,8 +1097,8 @@ func (m *RuntimeManager) InstallCommand(hw HardwareKind) []string {
 		cmd = append(cmd, "-i", indexes.PyPIIndexURL)
 	}
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
-	cmd = append(cmd, torchPackageSpecs(hw, indexes)...)
-	cmd = append(cmd, torchInstallIndexArgs(indexes)...)
+	cmd = append(cmd, torchPackageSpecs(hw, torchIndexes)...)
+	cmd = append(cmd, torchInstallIndexArgs(torchIndexes)...)
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath, "diffusers>=0.34.0", "transformers>=4.48.0,<5.0", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow")
 	if indexes.PyPIIndexURL != "" {
 		cmd = append(cmd, "--index-url", indexes.PyPIIndexURL)
@@ -1018,6 +1118,7 @@ func (m *RuntimeManager) ASRInstallCommand(hw HardwareKind) []string {
 	pythonPath := m.PythonPath()
 	uvPath := m.uvPath()
 	indexes := ResolvePackageIndexes(hw)
+	torchIndexes := torchInstallIndexes(hw)
 	cmd := []string{python, "-m", "venv", venv, "&&", pythonPath, "-m", "ensurepip", "--upgrade", "&&", pythonPath, "-m", "pip", "install", "--upgrade", "pip"}
 	if indexes.PyPIIndexURL != "" {
 		cmd = append(cmd, "-i", indexes.PyPIIndexURL)
@@ -1027,8 +1128,8 @@ func (m *RuntimeManager) ASRInstallCommand(hw HardwareKind) []string {
 		cmd = append(cmd, "-i", indexes.PyPIIndexURL)
 	}
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
-	cmd = append(cmd, torchPackageSpecs(hw, indexes)...)
-	cmd = append(cmd, torchInstallIndexArgs(indexes)...)
+	cmd = append(cmd, torchPackageSpecs(hw, torchIndexes)...)
+	cmd = append(cmd, torchInstallIndexArgs(torchIndexes)...)
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
 	cmd = append(cmd, asrPythonPackages...)
 	if indexes.PyPIIndexURL != "" {
@@ -1055,6 +1156,7 @@ func (m *RuntimeManager) venvInstallCommand(hw HardwareKind, torchPkgs, packages
 	pythonPath := m.PythonPath()
 	uvPath := m.uvPath()
 	indexes := ResolvePackageIndexes(hw)
+	torchIndexes := torchInstallIndexes(hw)
 	cmd := []string{python, "-m", "venv", venv, "&&", pythonPath, "-m", "ensurepip", "--upgrade", "&&", pythonPath, "-m", "pip", "install", "--upgrade", "pip"}
 	if indexes.PyPIIndexURL != "" {
 		cmd = append(cmd, "-i", indexes.PyPIIndexURL)
@@ -1065,7 +1167,7 @@ func (m *RuntimeManager) venvInstallCommand(hw HardwareKind, torchPkgs, packages
 	}
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
 	cmd = append(cmd, torchPkgs...)
-	cmd = append(cmd, torchInstallIndexArgs(indexes)...)
+	cmd = append(cmd, torchInstallIndexArgs(torchIndexes)...)
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
 	cmd = append(cmd, packages...)
 	if indexes.PyPIIndexURL != "" {
@@ -1094,7 +1196,7 @@ func DetectHardware() HardwareKind {
 }
 
 func TorchIndexURL(hw HardwareKind) string {
-	return torchSourceURL(ResolvePackageIndexes(hw))
+	return torchSourceURL(torchInstallIndexes(hw))
 }
 
 func PyPIIndexURL() string {
@@ -1122,6 +1224,8 @@ func ResolvePackageIndexes(hw HardwareKind) PackageIndexes {
 			// macOS MPS wheels are published through PyPI; use the Aliyun PyPI
 			// mirror rather than a CUDA/ROCm-specific PyTorch wheel index.
 		}
+	case PackageMirrorTsinghua:
+		indexes.PyPIIndexURL = tsinghuaPyPIIndex
 	case PackageMirrorOfficial:
 		switch hw {
 		case HardwareCUDA:
@@ -1144,6 +1248,35 @@ func ResolvePackageIndexes(hw HardwareKind) PackageIndexes {
 	return indexes
 }
 
+// torchInstallIndexes keeps PyTorch on the Aliyun wheel mirror. CUDA, ROCm,
+// and CPU builds are published there as find-links, while their dependencies
+// stay on the Aliyun PyPI index. CSGHUB_LITE_TORCH_INDEX_URL replaces that
+// choice; the general PyPI mirror does not.
+func torchInstallIndexes(hw HardwareKind) PackageIndexes {
+	if v := strings.TrimSpace(os.Getenv(torchIndexOverrideEnv)); v != "" {
+		return PackageIndexes{TorchIndexURL: v}
+	}
+	indexes := PackageIndexes{Mirror: PackageMirrorAliyun, PyPIIndexURL: aliyunPyPIIndex}
+	switch hw {
+	case HardwareCUDA:
+		indexes.TorchFindLinksURL = aliyunTorchRoot + "/cu128"
+	case HardwareROCm:
+		indexes.TorchFindLinksURL = aliyunTorchRoot + "/rocm7.1"
+	case HardwareCPU:
+		indexes.TorchFindLinksURL = aliyunTorchRoot + "/cpu"
+	}
+	return indexes
+}
+
+// mlxPackageIndexes installs the private MLX image overlay from the Tsinghua
+// PyPI mirror. An explicit PyPI override applies here too.
+func mlxPackageIndexes() PackageIndexes {
+	if v := strings.TrimSpace(os.Getenv(pypiIndexOverrideEnv)); v != "" {
+		return PackageIndexes{PyPIIndexURL: v}
+	}
+	return PackageIndexes{Mirror: PackageMirrorTsinghua, PyPIIndexURL: tsinghuaPyPIIndex}
+}
+
 func torchSourceURL(indexes PackageIndexes) string {
 	if indexes.TorchIndexURL != "" {
 		return indexes.TorchIndexURL
@@ -1153,23 +1286,27 @@ func torchSourceURL(indexes PackageIndexes) string {
 
 func ResolvePackageMirror() PackageMirror {
 	switch normalizeMirrorValue(os.Getenv(mirrorModeEnv)) {
-	case "aliyun", "cn", "china", "domestic":
+	case "tsinghua", "tuna":
+		return PackageMirrorTsinghua
+	case "aliyun":
 		return PackageMirrorAliyun
+	case "cn", "china", "domestic":
+		return PackageMirrorTsinghua
 	case "official", "global", "foreign", "overseas", "off":
 		return PackageMirrorOfficial
 	}
 
 	switch normalizeMirrorValue(os.Getenv(regionEnv)) {
 	case "cn", "china", "mainland":
-		return PackageMirrorAliyun
+		return PackageMirrorTsinghua
 	case "intl", "international", "global", "foreign", "overseas":
 		return PackageMirrorOfficial
 	}
 
 	if isChinaLocale() {
-		return PackageMirrorAliyun
+		return PackageMirrorTsinghua
 	}
-	return PackageMirrorAliyun
+	return PackageMirrorOfficial
 }
 
 func normalizeMirrorValue(value string) string {
@@ -1472,6 +1609,143 @@ print(json.dumps(missing))
 	return missing, nil
 }
 
+// installedPackageVersion returns the version string of an installed pip
+// package by probing the venv's Python interpreter. Returns "" when the
+// package is not installed or the probe fails.
+func installedPackageVersion(ctx context.Context, python, pkg string) string {
+	script := fmt.Sprintf(`import importlib.metadata; print(importlib.metadata.version("%s"))`, pkg)
+	out, err := exec.CommandContext(ctx, python, "-c", script).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// installedPackageVersionWithPath probes a package version with a private
+// overlay preceding the shared runtime packages.
+func installedPackageVersionWithPath(ctx context.Context, python, overlayDir, pkg string) (string, error) {
+	script := fmt.Sprintf(`import importlib.metadata; print(importlib.metadata.version("%s"))`, pkg)
+	cmd := exec.CommandContext(ctx, python, "-c", script)
+	cmd.Env = WithPythonPath(os.Environ(), overlayDir)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// stripVersionSpecs removes version constraints from package specs so that
+// --upgrade picks up the latest version. uv pip install --upgrade treats a
+// spec like "diffusers>=0.34.0" as "ensure the installed version satisfies
+// >=0.34.0" rather than "upgrade to the latest version", so an installed
+// 0.39.0 that already satisfies the constraint is left untouched.
+func stripVersionSpecs(packages []string) []string {
+	out := make([]string, len(packages))
+	for i, spec := range packages {
+		name := spec
+		for _, sep := range []string{">=", "<=", "==", "!=", "~=", ">", "<"} {
+			if idx := strings.Index(spec, sep); idx >= 0 {
+				name = strings.TrimSpace(spec[:idx])
+				break
+			}
+		}
+		out[i] = name
+	}
+	return out
+}
+
+// latestPyPIPackageVersion queries for the latest released version of a package.
+// When a mirror index URL is configured (e.g. Aliyun), it parses the mirror's
+// simple index page so the "latest version" reflects what the installer can
+// actually install from that mirror. Falls back to the official PyPI JSON API
+// when no mirror is configured or the mirror lookup fails.
+func latestPyPIPackageVersion(pkg, pypiIndexURL string) string {
+	if pypiIndexURL != "" {
+		simpleURL := strings.TrimSuffix(pypiIndexURL, "/") + "/" + pkg + "/"
+		if v := latestVersionFromSimplePage(simpleURL); v != "" {
+			return v
+		}
+	}
+	return fetchPyPIVersion(fmt.Sprintf("https://pypi.org/pypi/%s/json", pkg))
+}
+
+func fetchPyPIVersion(url string) string {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var data struct {
+		Info struct {
+			Version string `json:"version"`
+		} `json:"info"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return ""
+	}
+	return data.Info.Version
+}
+
+// latestVersionFromSimplePage fetches a PEP 503 simple index page and returns
+// the highest version number found. The page lists files as
+// <a href="...">pkg-1.2.3-py3-none-any.whl</a>; we extract version numbers and
+// pick the maximum by semantic ordering.
+func latestVersionFromSimplePage(url string) string {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return ""
+	}
+	// Match version-like strings in href text: pkg-1.2.3[-...]
+	re := regexp.MustCompile(`-(\d+\.\d+\.\d+(?:\.\d+)*)`)
+	matches := re.FindAllStringSubmatch(string(body), -1)
+	var best string
+	for _, m := range matches {
+		v := m[1]
+		if compareVersions(v, best) > 0 {
+			best = v
+		}
+	}
+	return best
+}
+
+// compareVersions returns 1 if a > b, -1 if a < b, 0 if equal.
+func compareVersions(a, b string) int {
+	if b == "" {
+		return 1
+	}
+	pa := strings.Split(a, ".")
+	pb := strings.Split(b, ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var na, nb int
+		if i < len(pa) {
+			na, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			nb, _ = strconv.Atoi(pb[i])
+		}
+		if na > nb {
+			return 1
+		}
+		if na < nb {
+			return -1
+		}
+	}
+	return 0
+}
+
 // missingPackagesWithPath probes for packages with an overlay directory placed
 // ahead of the venv's site-packages, the same way the worker will see them.
 func missingPackagesWithPath(ctx context.Context, python, overlayDir string, packages []string) ([]string, error) {
@@ -1624,6 +1898,21 @@ func (m *RuntimeManager) uvPipInstallTarget(ctx context.Context, python, targetD
 	return runCommandEnv(ctx, m.uvInstallEnv(), m.uvPath(), args...)
 }
 
+func (m *RuntimeManager) uvPipInstallTargetWithDeps(ctx context.Context, python, targetDir string, indexes PackageIndexes, packages []string) error {
+	if len(packages) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return fmt.Errorf("creating overlay directory: %w", err)
+	}
+	args := []string{"pip", "install", "--python", python, "--target", targetDir}
+	args = append(args, packages...)
+	if indexes.PyPIIndexURL != "" {
+		args = append(args, "--index-url", indexes.PyPIIndexURL)
+	}
+	return runCommandEnv(ctx, m.uvInstallEnv(), m.uvPath(), args...)
+}
+
 func torchInstallIndexArgs(indexes PackageIndexes) []string {
 	args := make([]string, 0, 4)
 	if indexes.TorchIndexURL != "" {
@@ -1656,7 +1945,7 @@ func runCommandEnv(ctx context.Context, extraEnv []string, name string, args ...
 	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(output.String())
+		msg := cleanCommandOutput(output.String())
 		if len(msg) > 4096 {
 			msg = msg[len(msg)-4096:]
 		}
@@ -1666,6 +1955,70 @@ func runCommandEnv(ctx context.Context, extraEnv []string, name string, args ...
 		return err
 	}
 	return nil
+}
+
+// cleanCommandOutput strips HTML error pages from captured command output so a
+// network or mirror failure surfaces a readable message instead of a full HTML
+// document. pip and uv sometimes print the body of an HTML response (a block or
+// landing page from an intercepting proxy, or a misconfigured index URL) when a
+// request to the package index fails; without filtering that markup becomes the
+// user-facing error. The full output still reaches os.Stdout/os.Stderr (logs).
+func cleanCommandOutput(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if !containsHTMLMarker(raw) {
+		return raw
+	}
+	var keep []string
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if isHTMLLine(trimmed) {
+			continue
+		}
+		if trimmed != "" {
+			keep = append(keep, trimmed)
+		}
+	}
+	cleaned := strings.TrimSpace(strings.Join(keep, "\n"))
+	if cleaned == "" {
+		return "package index returned an HTML page instead of a package index; check network/proxy and CSGHUB_LITE_PYPI_INDEX_URL / CSGHUB_LITE_PACKAGE_MIRROR settings"
+	}
+	return cleaned
+}
+
+// containsHTMLMarker reports whether captured output embeds an HTML document
+// (a DOCTYPE or <html> tag), used to decide whether to filter markup out.
+func containsHTMLMarker(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "<!doctype html") || strings.Contains(lower, "<html")
+}
+
+// isHTMLLine reports whether a line is HTML markup rather than pip/uv text. It
+// matches opening and closing tags of the elements that make up an error/landing
+// page, while leaving lines such as "<frozen importlib>" in Python tracebacks
+// untouched.
+func isHTMLLine(line string) bool {
+	if line == "" {
+		return false
+	}
+	lower := strings.ToLower(line)
+	body := lower
+	switch {
+	case strings.HasPrefix(body, "</"):
+		body = body[2:]
+	case strings.HasPrefix(body, "<"):
+		body = body[1:]
+	default:
+		return false
+	}
+	for _, tag := range []string{"!doctype", "!--", "html", "head", "body", "meta", "link", "title", "style", "script", "div", "p>", "p "} {
+		if strings.HasPrefix(body, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 func commandExists(name string) bool {

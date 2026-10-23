@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS api_usage_events (
 	fallback_count INTEGER NOT NULL DEFAULT 0,
 	limited_count INTEGER NOT NULL DEFAULT 0,
 	requests INTEGER NOT NULL DEFAULT 0,
+	estimated_requests INTEGER NOT NULL DEFAULT 0,
 	input_tokens INTEGER NOT NULL DEFAULT 0,
 	output_tokens INTEGER NOT NULL DEFAULT 0,
 	total_tokens INTEGER NOT NULL DEFAULT 0,
@@ -65,15 +66,15 @@ CREATE TABLE IF NOT EXISTS api_usage_meta (
 
 const apiUsageColumns = `day, api_key_id, model, source, source_type, pool_id, pool_model,
 	actual_member_id, member_model, cost_currency, cost_known, api_key_name, source_name,
-	pool_name, estimated_cost, fallback_count, limited_count, requests, input_tokens,
-	output_tokens, total_tokens, created_at`
+	pool_name, estimated_cost, fallback_count, limited_count, requests, estimated_requests,
+	input_tokens, output_tokens, total_tokens, created_at`
 
 // apiUsageUpsertStatement folds a new event into its day bucket in a single
 // write. Names fall back to the stored value when the new event omits them,
 // matching latestNonEmpty.
 const apiUsageUpsertStatement = `
 INSERT INTO api_usage_events (` + apiUsageColumns + `)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (
 	day, api_key_id, model, source, source_type,
 	pool_id, pool_model, actual_member_id, member_model,
@@ -86,6 +87,7 @@ ON CONFLICT (
 	fallback_count = api_usage_events.fallback_count + excluded.fallback_count,
 	limited_count = api_usage_events.limited_count + excluded.limited_count,
 	requests = api_usage_events.requests + excluded.requests,
+	estimated_requests = api_usage_events.estimated_requests + excluded.estimated_requests,
 	input_tokens = api_usage_events.input_tokens + excluded.input_tokens,
 	output_tokens = api_usage_events.output_tokens + excluded.output_tokens,
 	total_tokens = api_usage_events.total_tokens + excluded.total_tokens,
@@ -185,6 +187,21 @@ func (s *APIUsageStore) openLocked() (*sql.DB, error) {
 	if _, err := db.Exec(apiUsageSchema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initializing API usage database: %w", err)
+	}
+	// Older databases created before the estimated_requests column existed
+	// need an ALTER TABLE; new databases already have it from the schema.
+	// Check PRAGMA table_info so we only ALTER when the column is missing,
+	// and any real failure surfaces instead of being silently swallowed.
+	needsMigration, err := needsEstimatedRequestsColumn(db)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("checking API usage database schema: %w", err)
+	}
+	if needsMigration {
+		if _, err := db.Exec("ALTER TABLE api_usage_events ADD COLUMN estimated_requests INTEGER NOT NULL DEFAULT 0"); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrating API usage database: %w", err)
+		}
 	}
 	s.db = db
 	// A failed import must not take usage recording down: the JSON file stays
@@ -299,7 +316,7 @@ func apiUsageSelectEvents(db *sql.DB, options APIUsageListOptions) ([]APIUsageEv
 			&event.PoolID, &event.PoolModel, &event.ActualMemberID, &event.MemberModel,
 			&event.CostCurrency, &costKnown, &event.APIKeyName, &event.SourceName,
 			&event.PoolName, &event.EstimatedCost, &event.FallbackCount, &event.LimitedCount,
-			&event.Requests, &event.InputTokens, &event.OutputTokens, &event.TotalTokens,
+			&event.Requests, &event.EstimatedRequests, &event.InputTokens, &event.OutputTokens, &event.TotalTokens,
 			&createdAt,
 		); err != nil {
 			return nil, fmt.Errorf("reading API usage: %w", err)
@@ -347,27 +364,28 @@ func apiUsageEventRecord(event APIUsageEvent) (APIUsageEventRecord, bool) {
 		event.CostKnown, event.CostCurrency, event.EstimatedCost,
 	)
 	compacted := compactAPIUsageEvents([]APIUsageEventRecord{{
-		APIKeyID:       event.APIKeyID,
-		APIKeyName:     event.APIKeyName,
-		Model:          event.Model,
-		Source:         event.Source,
-		SourceType:     event.SourceType,
-		SourceName:     event.SourceName,
-		PoolID:         event.PoolID,
-		PoolName:       event.PoolName,
-		PoolModel:      event.PoolModel,
-		ActualMemberID: event.ActualMemberID,
-		MemberModel:    event.MemberModel,
-		EstimatedCost:  estimatedCost,
-		CostCurrency:   costCurrency,
-		CostKnown:      costKnown,
-		FallbackCount:  event.FallbackCount,
-		LimitedCount:   event.LimitedCount,
-		Requests:       1,
-		InputTokens:    event.InputTokens,
-		OutputTokens:   event.OutputTokens,
-		TotalTokens:    event.InputTokens + event.OutputTokens,
-		CreatedAt:      createdAt,
+		APIKeyID:          event.APIKeyID,
+		APIKeyName:        event.APIKeyName,
+		Model:             event.Model,
+		Source:            event.Source,
+		SourceType:        event.SourceType,
+		SourceName:        event.SourceName,
+		PoolID:            event.PoolID,
+		PoolName:          event.PoolName,
+		PoolModel:         event.PoolModel,
+		ActualMemberID:    event.ActualMemberID,
+		MemberModel:       event.MemberModel,
+		EstimatedCost:     estimatedCost,
+		CostCurrency:      costCurrency,
+		CostKnown:         costKnown,
+		FallbackCount:     event.FallbackCount,
+		LimitedCount:      event.LimitedCount,
+		Requests:          1,
+		EstimatedRequests: boolToInt64(event.Estimated),
+		InputTokens:       event.InputTokens,
+		OutputTokens:      event.OutputTokens,
+		TotalTokens:       event.InputTokens + event.OutputTokens,
+		CreatedAt:         createdAt,
 	}})
 	if len(compacted) == 0 {
 		return APIUsageEventRecord{}, false
@@ -399,6 +417,7 @@ func apiUsageInsertArgs(event APIUsageEventRecord) []any {
 		event.FallbackCount,
 		event.LimitedCount,
 		apiUsageEventRequests(event),
+		apiUsageEventEstimatedRequests(event),
 		event.InputTokens,
 		event.OutputTokens,
 		apiUsageEventTotalTokens(event),
@@ -413,9 +432,41 @@ func apiUsageTimeToStorage(value time.Time) int64 {
 	return value.UTC().UnixNano()
 }
 
+func boolToInt64(v bool) int64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
 func apiUsageTimeFromStorage(value int64) time.Time {
 	if value == 0 {
 		return time.Time{}
 	}
 	return time.Unix(0, value).UTC()
+}
+
+func needsEstimatedRequestsColumn(db *sql.DB) (bool, error) {
+	rows, err := db.Query("PRAGMA table_info(api_usage_events)")
+	if err != nil {
+		return false, fmt.Errorf("querying table_info: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dfltValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return false, fmt.Errorf("scanning table_info: %w", err)
+		}
+		if name == "estimated_requests" {
+			return false, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("reading table_info: %w", err)
+	}
+	return true, nil
 }

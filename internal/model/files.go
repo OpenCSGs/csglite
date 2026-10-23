@@ -192,3 +192,42 @@ func fileSHA256(filePath string) (string, error) {
 	}
 	return hex.EncodeToString(sum.Sum(nil)), nil
 }
+
+// RefreshManifestFiles rescans modelDir after files were added or removed in
+// place, such as a GGUF conversion replacing its SafeTensors source, and
+// rewrites the manifest's file list, size and format to match the disk.
+func RefreshManifestFiles(modelDir string) error {
+	lm, err := LoadManifestInDir(modelDir)
+	if err != nil {
+		return err
+	}
+	if _, err := EnsureLocalModelFiles(modelDir, lm); err != nil {
+		return err
+	}
+	lm.Size = localModelEntriesSize(lm.FileEntries)
+	if format := DetectFormat(lm.Files); format != FormatUnknown {
+		lm.Format = format
+	}
+	return SaveManifestInDir(modelDir, lm)
+}
+
+// RecordRemovedSourceWeights adds names to the manifest's removed source
+// weights before they are deleted, so an interrupted removal still leaves the
+// model marked as no longer convertible.
+func RecordRemovedSourceWeights(modelDir string, names []string) error {
+	lm, err := LoadManifestInDir(modelDir)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(lm.RemovedSourceWeights)+len(names))
+	for _, name := range lm.RemovedSourceWeights {
+		seen[name] = struct{}{}
+	}
+	for _, name := range names {
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			lm.RemovedSourceWeights = append(lm.RemovedSourceWeights, name)
+		}
+	}
+	return SaveManifestInDir(modelDir, lm)
+}

@@ -12,6 +12,12 @@ type Options struct {
 	// DisableThinking forces routing-style requests to skip provider thinking
 	// modes (Qwen enable_thinking=false, GLM/Kimi/DeepSeek thinking.type=disabled).
 	DisableThinking bool
+	// OnUsage reports the token usage a backend advertised for one generation
+	// call, when available. Backends that cannot report usage leave it uncalled;
+	// it may fire more than once (e.g. once per streamed chunk carrying usage),
+	// so callers should keep the last non-zero values rather than accumulate.
+	// Callers must keep their own estimate as a fallback for the no-usage case.
+	OnUsage func(promptTokens, completionTokens int64)
 }
 
 // DefaultOptions returns sensible defaults. MaxTokens follows Ollama and

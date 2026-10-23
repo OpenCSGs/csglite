@@ -119,7 +119,7 @@ func resolveLaunchModelSelection(serverURL, defaultModel, requested, requestedPr
 			}
 		}
 		if !hasCloudCredential {
-			return launchModelChoice{}, fmt.Errorf("model %q is not available for AI apps. If you are trying to use an OpenCSG model, please open csghub-lite Settings and sign in or save an API Key first", requested)
+			return launchModelChoice{}, fmt.Errorf("model %q is not available for AI apps. If you are trying to use an OpenCSG model, please open CSGLite Settings and sign in or save an API Key first", requested)
 		}
 		return launchModelChoice{}, fmt.Errorf("model %q is not available for AI apps", requested)
 	}

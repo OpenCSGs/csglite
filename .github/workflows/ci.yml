@@ -51,6 +51,11 @@ jobs:
         shell: bash
         run: ./bin/csghub-lite --version
 
+      - name: Test macOS archive signing script
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/sign-darwin-archives_test.sh
+
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
@@ -90,3 +95,6 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: v1.64.8
+          # Skip the online JSON-schema check; fetching it from golangci-lint.run
+          # intermittently times out on CI runners.
+          verify: false

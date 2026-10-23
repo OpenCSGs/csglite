@@ -74,6 +74,19 @@ func (s *Server) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fallback for engines that do not implement ChatCompletionProxier.
+	// All real Engines currently implement it, so this branch is only
+	// reached by non-proxier fakes.
+	var reportedIn, reportedOut int64
+	opts.OnUsage = func(promptTokens, completionTokens int64) {
+		if promptTokens > 0 {
+			reportedIn = promptTokens
+		}
+		if completionTokens > 0 {
+			reportedOut = completionTokens
+		}
+	}
+
 	messages := responsesRequestMessages(req)
 	inputTokens := countResponsesTokens(req)
 	id := fmt.Sprintf("resp_%d", time.Now().UnixNano())
@@ -172,7 +185,7 @@ func (s *Server) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
 			"type":     "response.completed",
 			"response": buildResponsesResponse(id, itemID, req.Model, text, created, "completed", inputTokens),
 		})
-		s.recordAPIUsage(r, req.Model, req.Source, inputTokens, estimateAnthropicTokens(text))
+		s.recordResolvedUsage(r, req.Model, req.Source, reportedIn, reportedOut, inputTokens, estimateAnthropicTokens(text))
 		fmt.Fprintf(w, "event: done\ndata: [DONE]\n\n")
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
@@ -193,7 +206,7 @@ func (s *Server) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text = normalizeResponsesVisibleText(text)
-	s.recordAPIUsage(r, req.Model, req.Source, inputTokens, estimateAnthropicTokens(text))
+	s.recordResolvedUsage(r, req.Model, req.Source, reportedIn, reportedOut, inputTokens, estimateAnthropicTokens(text))
 
 	writeJSON(w, http.StatusOK, buildResponsesResponse(id, itemID, req.Model, text, created, "completed", inputTokens))
 }
@@ -247,6 +260,11 @@ func (s *Server) handleOpenAIResponsesProxy(
 	recordInputTokens, outputTokens := openAIUsageTokens(openAIResp)
 	if recordInputTokens == 0 {
 		recordInputTokens = inputTokens
+		r = markUsageEstimated(r)
+	}
+	if outputTokens == 0 && openAIResp.Usage.CompletionTokens == 0 {
+		outputTokens = estimateOpenAIOutputTokens(openAIResp)
+		r = markUsageEstimated(r)
 	}
 	s.recordAPIUsage(r, req.Model, req.Source, recordInputTokens, outputTokens)
 	if req.Stream {
@@ -331,6 +349,11 @@ func (s *Server) handleOpenAIResponsesWithTools(
 	recordInputTokens, outputTokens := openAIUsageTokens(openAIResp)
 	if recordInputTokens == 0 {
 		recordInputTokens = inputTokens
+		r = markUsageEstimated(r)
+	}
+	if outputTokens == 0 && openAIResp.Usage.CompletionTokens == 0 {
+		outputTokens = estimateOpenAIOutputTokens(openAIResp)
+		r = markUsageEstimated(r)
 	}
 	s.recordAPIUsage(r, req.Model, req.Source, recordInputTokens, outputTokens)
 

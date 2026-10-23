@@ -1,6 +1,9 @@
 #!/bin/sh
 # csghub-lite install script
 # Usage: curl -fsSL https://hub.opencsg.com/csghub-lite/install.sh | sh
+# Internal: --engine-only installs or aligns llama-server only, without
+# downloading or replacing csghub-lite. csghub-lite passes it at start-up to
+# align the engine after replacing its own binary.
 set -eu
 
 REPO="${REPO:-OpenCSGs/csglite}"
@@ -8,7 +11,13 @@ INSTALL_DIR="${INSTALL_DIR:-}"
 INSTALL_DIR_DEFAULT="/usr/local/bin"
 BINARY_NAME="${BINARY_NAME:-csghub-lite}"
 LLAMA_CPP_REPO="ggml-org/llama.cpp"
-LLAMA_CPP_DEFAULT_TAG="${CSGHUB_LITE_LLAMA_CPP_TAG:-b10830}"
+LLAMA_CPP_DEFAULT_TAG="${CSGHUB_LITE_LLAMA_CPP_TAG:-b11541}"
+ENGINE_ONLY=""
+# Internal: csghub-lite sets this when it aligns the inference engine in the
+# background. Such a run has no terminal, so it must never escalate with sudo —
+# sudo prompts on /dev/tty and would block the server for as long as the prompt
+# stays open. Privileged steps are skipped and reported instead.
+NONINTERACTIVE="${CSGHUB_LITE_NONINTERACTIVE:-0}"
 INSTALL_PATH_PROFILE=""
 INSTALL_PATH_DIR=""
 
@@ -31,6 +40,15 @@ warn() { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
 error() { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; exit 1; }
 step() { printf "${CYAN}[%s/%s]${NC} %s\n" "$1" "$2" "$3"; }
 
+parse_args() {
+    for _arg in "$@"; do
+        case "$_arg" in
+            --engine-only) ENGINE_ONLY=1 ;;
+            *) error "Unknown option: ${_arg}" ;;
+        esac
+    done
+}
+
 privileged_prefix() {
     if [ "$(id -u)" = "0" ]; then
         printf ""
@@ -44,6 +62,8 @@ privileged_prefix() {
 run_privileged() {
     if [ "$(id -u)" = "0" ]; then
         "$@"
+    elif [ "$NONINTERACTIVE" = "1" ]; then
+        error "This step requires root privileges, but this run cannot ask for them. Re-run the installer as root."
     elif command -v sudo >/dev/null 2>&1; then
         sudo "$@"
     else
@@ -54,6 +74,8 @@ run_privileged() {
 try_run_privileged() {
     if [ "$(id -u)" = "0" ]; then
         "$@"
+    elif [ "$NONINTERACTIVE" = "1" ]; then
+        return 1
     elif command -v sudo >/dev/null 2>&1; then
         sudo "$@"
     else
@@ -182,33 +204,6 @@ add_release_candidates() {
         add_candidate "$_match"
     done
     IFS="$_old_ifs"
-}
-
-add_release_cuda_candidates() {
-    _arch_token="$1"
-    _versioned_pattern="llama-${_llama_tag}-bin-ubuntu-cuda-[0-9]+(\\.[0-9]+(\\.[0-9]+)?)?-${_arch_token}\\.tar\\.gz"
-    _versioned_matches="$(extract_release_asset_names "$_versioned_pattern" 2>/dev/null | while IFS= read -r _match; do
-        [ -n "$_match" ] || continue
-        _ver="$(printf "%s\n" "$_match" | sed -n "s/.*-cuda-\\([0-9][0-9]*\\)\\(\\.\\([0-9][0-9]*\\)\\)\\{0,1\\}\\(\\.\\([0-9][0-9]*\\)\\)\\{0,1\\}-${_arch_token}\\.tar\\.gz/\\1 \\3 \\5/p")"
-        [ -n "$_ver" ] || continue
-        # shellcheck disable=SC2086
-        set -- $_ver
-        printf "%06d %06d %06d %s\n" "${1:-0}" "${2:-0}" "${3:-0}" "$_match"
-    done | sort -r | sed 's/^[0-9][0-9]* [0-9][0-9]* [0-9][0-9]* //')"
-    if [ -n "$_versioned_matches" ]; then
-        _old_ifs="$IFS"
-        IFS='
-'
-        for _match in $_versioned_matches; do
-            add_candidate "$_match"
-        done
-        IFS="$_old_ifs"
-    fi
-
-    # Some mirrored CUDA builds intentionally omit the CUDA minor version in the
-    # filename. Prefer the release metadata name before trying hard-coded legacy
-    # aliases, so installers do not stall on missing versioned URLs.
-    add_release_candidates "llama-${_llama_tag}-bin-ubuntu-cuda-${_arch_token}\\.tar\\.gz"
 }
 
 normalize_minor_version() {
@@ -619,9 +614,12 @@ install_llama_server() {
     ARCH="$(detect_arch)"
 
     _llama_tag="${LLAMA_CPP_DEFAULT_TAG}"
-    _gh_url="${GITHUB_API}/${LLAMA_CPP_REPO}/releases/tags/${_llama_tag}"
     _gl_url="${GITLAB_API}/${GITLAB_LLAMA_ID}/releases/${_llama_tag}"
-    _llama_json="$(region_download_text "$_gh_url" "$_gl_url" 2>/dev/null || true)"
+    # Only our own GitLab release metadata may feed the ROCm series scan below.
+    # Upstream publishes its Linux ROCm assets from ubuntu-24.04 (they need
+    # GLIBC_2.38 and die on the 22.04 hosts this installer targets), so reading
+    # GitHub metadata here is how a 24.04 build once reached a 22.04 host.
+    _llama_json="$(try_download_text "$_gl_url" 2>/dev/null || true)"
     if [ -z "$_llama_json" ]; then
         warn "Failed to query llama.cpp release metadata for ${_llama_tag}; continuing with the pinned tag."
     fi
@@ -647,9 +645,14 @@ install_llama_server() {
                 ;;
         esac
         # Prefer the real footer line (after CUDA/backend init), not a stray "version:" elsewhere.
-        _local_build="$(printf "%s\n" "$_llama_ver_out" | grep -E '^version: [0-9]+ \(' | tail -1 | sed -n 's/^version: *\([0-9][0-9]*\) (.*/\1/p')"
+        # b11541 and later print "version: <semver>-dev (build <n>, commit <hash>)";
+        # older releases print "version: <n> (<hash>)". Both carry the build id in
+        # the parenthesised group, so only read it from there. A bare
+        # "version: <semver>" line has no build id and must not leak a version
+        # digit (that made the id non-comparable and every run re-download).
+        _local_build="$(printf "%s\n" "$_llama_ver_out" | grep -E '^version: ' | tail -1 | sed -n -E 's/.*\(build ([0-9]+).*/\1/p')"
         if [ -z "$_local_build" ]; then
-            _local_build="$(printf "%s\n" "$_llama_ver_out" | sed -n 's/^version: *\([0-9][0-9]*\).*/\1/p' | tail -1)"
+            _local_build="$(printf "%s\n" "$_llama_ver_out" | grep -E '^version: [0-9]+ \(' | tail -1 | sed -n -E 's/^version: *([0-9]+) \(.*/\1/p')"
         fi
         _remote_build="${_llama_tag#b}"
         # Ignore tiny local ids when release is large (shallow clone / non-official build id).
@@ -688,8 +691,16 @@ install_llama_server() {
             if [ -n "${_arch_token:-}" ]; then
                 if command -v nvidia-smi >/dev/null 2>&1; then
                     info "NVIDIA GPU detected, trying CUDA build first."
-                    add_release_cuda_candidates "$_arch_token"
+                    # Deliberately no metadata scan for versioned Linux CUDA
+                    # names: upstream has published them since b11541 but builds
+                    # that job on Ubuntu 24.04, so they need GLIBC_2.38 and die on
+                    # the 22.04 hosts this installer targets, and nothing here
+                    # verifies the binary afterwards. The local 22.04 mirror
+                    # (scripts/llama-build/) is the only Linux CUDA source to trust.
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-cuda-${_arch_token}.tar.gz"
+                    # Legacy alias of the pre-b9158 local mirrors (b8429 and
+                    # earlier). Harmless for current tags, which publish no such
+                    # asset, but kept so an old pinned tag still resolves.
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-cuda-12.4-${_arch_token}.tar.gz"
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-vulkan-${_arch_token}.tar.gz"
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-${_arch_token}.tar.gz"
@@ -701,6 +712,10 @@ install_llama_server() {
                     else
                         info "ROCm runtime detected, trying published ROCm builds first."
                     fi
+                    # Unlike CUDA, the series is part of our ROCm asset name, so a
+                    # fixed-name candidate cannot cover it. Scan only our own
+                    # GitLab release metadata (see the fetch above); upstream's
+                    # 24.04 ROCm builds must never become candidates.
                     add_release_candidates "llama-${_llama_tag}-bin-ubuntu-rocm-[0-9]+\\.[0-9]+-${_arch_token}\\.tar\\.gz"
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-vulkan-${_arch_token}.tar.gz"
                     add_candidate "llama-${_llama_tag}-bin-ubuntu-${_arch_token}.tar.gz"
@@ -868,23 +883,42 @@ check_python_optional() {
     fi
 }
 
-has_running_named_processes() {
+# cli_service_pids lists the PIDs of running processes named $1, leaving out
+# desktop sidecars ("serve --desktop"). The CSGLite desktop app owns and
+# respawns its own csghub-lite backend, so the installer must neither treat it
+# as the CLI service nor kill it.
+cli_service_pids() {
     _proc_name="$1"
     if ! command -v pgrep >/dev/null 2>&1; then
-        return 1
+        return 0
     fi
-    pgrep -x "$_proc_name" >/dev/null 2>&1
+    for _pid in $(pgrep -x "$_proc_name" 2>/dev/null); do
+        case " $(ps -o args= -p "$_pid" 2>/dev/null) " in
+            *" --desktop "*|*" --desktop="*) ;;
+            *) printf '%s\n' "$_pid" ;;
+        esac
+    done
+}
+
+has_running_named_processes() {
+    [ -n "$(cli_service_pids "$1")" ]
 }
 
 force_stop_named_processes() {
     _proc_name="$1"
-    if ! command -v pkill >/dev/null 2>&1; then
-        return 1
+    _pids="$(cli_service_pids "$_proc_name")"
+    if [ -z "$_pids" ]; then
+        return 0
     fi
-    pkill -x "$_proc_name" 2>/dev/null || true
+    # shellcheck disable=SC2086
+    kill $_pids 2>/dev/null || true
     sleep 1
-    pkill -9 -x "$_proc_name" 2>/dev/null || true
-    sleep 1
+    _pids="$(cli_service_pids "$_proc_name")"
+    if [ -n "$_pids" ]; then
+        # shellcheck disable=SC2086
+        kill -9 $_pids 2>/dev/null || true
+        sleep 1
+    fi
     ! has_running_named_processes "$_proc_name"
 }
 
@@ -1029,15 +1063,26 @@ start_csghub_lite_server() {
 }
 
 main() {
+    parse_args "$@"
+    OS="$(detect_os)"
+    ARCH="$(detect_arch)"
+    REGION="$(detect_region)"
+
+    if [ -n "$ENGINE_ONLY" ]; then
+        # Engine-only run: csghub-lite itself is already installed and is being
+        # replaced by the caller, so only align the inference engine.
+        printf "\n${BOLD}Aligning inference engine${NC}\n\n"
+        install_llama_server
+        printf "\n"
+        return
+    fi
+
     TOTAL_STEPS=6
     SERVER_START_STATUS="failed"
     printf "\n${BOLD}Installing ${BINARY_NAME}${NC}\n\n"
 
     # Step 1: Detect environment
     step 1 "$TOTAL_STEPS" "Detecting environment..."
-    OS="$(detect_os)"
-    ARCH="$(detect_arch)"
-    REGION="$(detect_region)"
     info "OS: ${OS}, Arch: ${ARCH}, Region: ${REGION}"
 
     # Step 2: Check existing installation

@@ -9,6 +9,7 @@ import (
 
 	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/ctxcompress"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/pkg/api"
 )
@@ -28,13 +29,13 @@ func (s *Server) registerProviderInferenceRoutes(mux *http.ServeMux) {
 
 	register("GET /providers/{providerID}/v1/models", s.handleModels)
 	register("GET /providers/{providerID}/v1/responses", s.handleOpenAIResponsesUnsupported)
-	register("POST /providers/{providerID}/v1/chat/completions", s.handleOpenAIChatCompletions)
+	register("POST /providers/{providerID}/v1/chat/completions", s.withContextCompression(ctxcompress.ProtocolOpenAIChat, s.handleOpenAIChatCompletions))
 	register("POST /providers/{providerID}/v1/embeddings", s.handleOpenAIEmbeddings)
 	register("POST /providers/{providerID}/v1/images/generations", s.handleOpenAIImagesGenerations)
 	register("POST /providers/{providerID}/v1/images/edits", s.handleOpenAIImagesEdits)
 	register("POST /providers/{providerID}/v1/audio/transcriptions", s.handleOpenAIAudioTranscriptions)
-	register("POST /providers/{providerID}/v1/responses", s.handleOpenAIResponses)
-	register("POST /providers/{providerID}/v1/messages", s.handleAnthropicMessages)
+	register("POST /providers/{providerID}/v1/responses", s.withContextCompression(ctxcompress.ProtocolResponses, s.handleOpenAIResponses))
+	register("POST /providers/{providerID}/v1/messages", s.withContextCompression(ctxcompress.ProtocolAnthropic, s.handleAnthropicMessages))
 	register("POST /providers/{providerID}/v1/messages/count_tokens", s.handleAnthropicCountTokens)
 
 	notFound := func(w http.ResponseWriter, _ *http.Request) {

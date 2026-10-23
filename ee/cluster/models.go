@@ -26,31 +26,85 @@ type ModelNode struct {
 	Local  bool   `json:"local"`
 }
 
+// ModelSync is a download of this model that has not finished on a node.
+type ModelSync struct {
+	UUID           string `json:"uuid"`
+	Name           string `json:"name"`
+	Status         string `json:"status"`
+	CompletedBytes int64  `json:"completed_bytes,omitempty"`
+	TotalBytes     int64  `json:"total_bytes,omitempty"`
+	Detail         string `json:"detail,omitempty"`
+}
+
 // ClusterModel is one model with the nodes holding it.
 type ClusterModel struct {
-	ID          string      `json:"id"`
+	ID string `json:"id"`
+	// Repository is the library name (namespace/name). Copies from different
+	// registries share it, so the distribution view treats them as one model.
+	Repository  string      `json:"repository,omitempty"`
 	Size        int64       `json:"size"`
 	Format      string      `json:"format,omitempty"`
 	PipelineTag string      `json:"pipeline_tag,omitempty"`
 	Category    string      `json:"category,omitempty"`
 	Nodes       []ModelNode `json:"nodes"`
+	Syncs       []ModelSync `json:"syncs,omitempty"`
+}
+
+// modelGroup collects every registry copy of one library model.
+type modelGroup struct {
+	model ClusterModel
+	ids   map[string]int
+	seen  map[string]int
 }
 
 // Models returns the union of models on every member, this node included.
+// A repository downloaded from more than one registry is one row: a node that
+// holds any copy has the model.
 func (m *Manager) Models(ctx context.Context) []ClusterModel {
-	byID := map[string]*ClusterModel{}
+	byKey := map[string]*modelGroup{}
 	add := func(uuid, name string, local, online bool, st *Status) {
 		if st == nil {
 			return
 		}
 		for _, ms := range st.Models {
-			cm, ok := byID[ms.ID]
-			if !ok {
-				cm = &ClusterModel{ID: ms.ID, Size: ms.Size, Format: ms.Format, PipelineTag: ms.PipelineTag, Category: ms.Category}
-				byID[ms.ID] = cm
+			key := modelIdentity(ms)
+			if key == "" {
+				continue
 			}
-			cm.Nodes = append(cm.Nodes, ModelNode{UUID: uuid, Name: name, Loaded: ms.Loaded, Online: online, Local: local})
+			group, ok := byKey[key]
+			if !ok {
+				group = &modelGroup{ids: map[string]int{}, seen: map[string]int{}}
+				group.model = ClusterModel{Size: ms.Size, Format: ms.Format, PipelineTag: ms.PipelineTag, Category: ms.Category}
+				byKey[key] = group
+			}
+			if repo := normalizeRepo(ms.Repo); repo != "" {
+				group.model.Repository = repo
+			}
+			if id := strings.TrimSpace(ms.ID); id != "" {
+				group.ids[id]++
+			}
+			if ms.Size > group.model.Size {
+				group.model.Size = ms.Size
+			}
+			if group.model.Format == "" {
+				group.model.Format = ms.Format
+			}
+			if group.model.PipelineTag == "" {
+				group.model.PipelineTag = ms.PipelineTag
+			}
+			if group.model.Category == "" {
+				group.model.Category = ms.Category
+			}
+			if idx, ok := group.seen[uuid]; ok {
+				if ms.Loaded {
+					group.model.Nodes[idx].Loaded = true
+				}
+				continue
+			}
+			group.seen[uuid] = len(group.model.Nodes)
+			group.model.Nodes = append(group.model.Nodes, ModelNode{UUID: uuid, Name: name, Loaded: ms.Loaded, Online: online, Local: local})
 		}
+		attachPulls(byKey, uuid, name, st)
 	}
 	add(m.identity.UUID, m.identity.DisplayName(), true, true, m.cachedLocalStatus(ctx))
 	for _, rt := range m.dir.Snapshot() {
@@ -64,13 +118,189 @@ func (m *Manager) Models(ctx context.Context) []ClusterModel {
 		}
 		add(rt.UUID, name, false, rt.Online(), rt.Status)
 	}
-	out := make([]ClusterModel, 0, len(byID))
-	for _, cm := range byID {
-		sort.Slice(cm.Nodes, func(i, j int) bool { return cm.Nodes[i].Name+cm.Nodes[i].UUID < cm.Nodes[j].Name+cm.Nodes[j].UUID })
-		out = append(out, *cm)
+	out := make([]ClusterModel, 0, len(byKey))
+	for _, group := range byKey {
+		group.model.ID = choosePublicID(group.ids)
+		if group.model.ID == "" {
+			group.model.ID = group.model.Repository
+		}
+		if group.model.Nodes == nil {
+			group.model.Nodes = []ModelNode{}
+		}
+		sort.Slice(group.model.Nodes, func(i, j int) bool {
+			return group.model.Nodes[i].Name+group.model.Nodes[i].UUID < group.model.Nodes[j].Name+group.model.Nodes[j].UUID
+		})
+		sort.Slice(group.model.Syncs, func(i, j int) bool {
+			return group.model.Syncs[i].Name+group.model.Syncs[i].UUID < group.model.Syncs[j].Name+group.model.Syncs[j].UUID
+		})
+		out = append(out, group.model)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// attachPulls records a download on the row for that repository. A node that
+// already holds the model is left as present; the bar is only for a copy
+// that has not landed yet.
+func attachPulls(byKey map[string]*modelGroup, uuid, name string, st *Status) {
+	if st == nil {
+		return
+	}
+	for _, pull := range st.Jobs.Pulls {
+		if pull.Status != "queued" && pull.Status != "running" {
+			continue
+		}
+		repo := normalizeRepo(pull.Model)
+		if repo == "" {
+			continue
+		}
+		group := modelGroupForPull(byKey, pull)
+		if group == nil {
+			group = &modelGroup{ids: map[string]int{repo: 1}, seen: map[string]int{}}
+			group.model = ClusterModel{Repository: repo}
+			byKey[repo] = group
+		}
+		if _, held := group.seen[uuid]; held {
+			continue
+		}
+		group.model.Syncs = append(group.model.Syncs, ModelSync{
+			UUID:           uuid,
+			Name:           name,
+			Status:         pull.Status,
+			CompletedBytes: pull.CompletedBytes,
+			TotalBytes:     pull.TotalBytes,
+			Detail:         pull.Detail,
+		})
+	}
+}
+
+func modelGroupForPull(byKey map[string]*modelGroup, pull PullStatus) *modelGroup {
+	repo := normalizeRepo(pull.Model)
+	if repo == "" {
+		return nil
+	}
+	if group, ok := byKey[repo]; ok {
+		return group
+	}
+	source := strings.ToLower(strings.TrimSpace(pull.Source))
+	if source != "" && source != "opencsg" {
+		if group, ok := byKey[source+"/"+repo]; ok {
+			return group
+		}
+	}
+	for _, group := range byKey {
+		if group.model.Repository == repo || group.model.ID == repo {
+			return group
+		}
+		if source != "" && source != "opencsg" && group.model.ID == source+"/"+repo {
+			return group
+		}
+	}
+	return nil
+}
+
+// modelIdentity is the library name when the node reported a repository, and
+// the public inference id otherwise.
+func modelIdentity(ms ModelStatus) string {
+	if repo := normalizeRepo(ms.Repo); repo != "" {
+		return repo
+	}
+	return strings.TrimSpace(ms.ID)
+}
+
+func normalizeRepo(repo string) string {
+	return strings.Trim(strings.TrimSpace(repo), "/")
+}
+
+// choosePublicID picks the inference id most members advertise. A tie prefers
+// the shorter id so the row stays stable.
+func choosePublicID(counts map[string]int) string {
+	best, bestN := "", -1
+	for id, n := range counts {
+		if n > bestN || (n == bestN && preferPublicID(id, best)) {
+			best, bestN = id, n
+		}
+	}
+	return best
+}
+
+func preferPublicID(id, current string) bool {
+	if strings.Count(id, "/") != strings.Count(current, "/") {
+		return strings.Count(id, "/") < strings.Count(current, "/")
+	}
+	return id < current
+}
+
+// modelStatusMatches reports whether a stored copy is the requested model.
+// The request may be the public inference id, the library repository, or
+// source/namespace/name.
+func modelStatusMatches(ms ModelStatus, id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	if ms.ID == id {
+		return true
+	}
+	repo := normalizeRepo(ms.Repo)
+	if repo == "" {
+		return false
+	}
+	if id == repo {
+		return true
+	}
+	// OpenCSG advertises the model under its short name. That name is the
+	// repository's last segment, whichever registry the copy came from.
+	if !strings.Contains(id, "/") {
+		if name := repo[strings.LastIndex(repo, "/")+1:]; name == id {
+			return true
+		}
+	}
+	source := strings.ToLower(strings.TrimSpace(ms.Source))
+	if source != "" && source != "opencsg" && id == source+"/"+repo {
+		return true
+	}
+	prefix, rest, ok := splitRegistryID(id)
+	return ok && prefix != "" && rest == repo
+}
+
+// pullSpecForModel returns the repository and artifact source a pull job
+// needs. An exact public id wins; otherwise any copy of the same repository
+// is enough, because the files are the model the library already shows.
+func pullSpecForModel(members []NodeView, modelID string) (string, string) {
+	modelID = strings.TrimSpace(modelID)
+	repo, source := "", ""
+	for _, mv := range members {
+		if mv.Status == nil {
+			continue
+		}
+		for _, ms := range mv.Status.Models {
+			if !modelStatusMatches(ms, modelID) || normalizeRepo(ms.Repo) == "" {
+				continue
+			}
+			if ms.ID == modelID {
+				return normalizeRepo(ms.Repo), strings.TrimSpace(ms.Source)
+			}
+			if repo == "" {
+				repo, source = normalizeRepo(ms.Repo), strings.TrimSpace(ms.Source)
+			}
+		}
+	}
+	return repo, source
+}
+
+func splitRegistryID(id string) (string, string, bool) {
+	slash := strings.Index(id, "/")
+	if slash <= 0 || strings.Count(id, "/") < 2 {
+		return "", "", false
+	}
+	prefix := strings.ToLower(id[:slash])
+	switch prefix {
+	case "huggingface", "modelscope":
+		return prefix, id[slash+1:], true
+	default:
+		return "", "", false
+	}
 }
 
 // RemoteHolders lists online members (not this node) that hold a model and

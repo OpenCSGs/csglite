@@ -608,3 +608,68 @@ func TestProviderPoolDirectChatRecordsPoolAndMemberUsage(t *testing.T) {
 		t.Fatalf("pool usage record = %#v", record)
 	}
 }
+
+func TestProviderPoolRequestAffinityKeyCoversResponsesAndAnthropic(t *testing.T) {
+	key := func(path, body string) string {
+		return providerPoolRequestAffinityKey(httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+	}
+	first := key("/v1/responses", `{"model":"m","instructions":"be brief","input":[
+		{"type":"message","role":"user","content":"inspect the repository"}]}`)
+	next := key("/v1/responses", `{"model":"m","instructions":"be brief","input":[
+		{"type":"message","role":"user","content":"inspect the repository"},
+		{"type":"function_call","call_id":"c1","name":"shell","arguments":"{}"},
+		{"type":"function_call_output","call_id":"c1","output":"ok"}]}`)
+	other := key("/v1/responses", `{"model":"m","instructions":"be brief","input":[
+		{"type":"message","role":"user","content":"a different task"}]}`)
+	if first == "" || first != next || first == other {
+		t.Fatalf("responses keys: first=%q next=%q other=%q", first, next, other)
+	}
+	if key("/v1/responses", `{"model":"m","input":"hello"}`) == "" {
+		t.Fatal("string input produced no key")
+	}
+
+	// Two Claude Code sessions whose first message matches but whose system
+	// prompts (and so working directories) differ are separate conversations.
+	a := key("/v1/messages", `{"model":"m","system":"cwd: /repo/a","messages":[{"role":"user","content":"run the tests"}]}`)
+	b := key("/v1/messages", `{"model":"m","system":"cwd: /repo/b","messages":[{"role":"user","content":"run the tests"}]}`)
+	if a == "" || a == b {
+		t.Fatalf("anthropic keys: a=%q b=%q", a, b)
+	}
+}
+
+func TestProviderPoolUsageMiddlewareTagsSlotAffinity(t *testing.T) {
+	var got string
+	handler := providerPoolUsageMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = providerPoolUsageCaptureFromContext(r.Context()).affinity
+		if slot := inference.SlotAffinity(r.Context()); slot != got {
+			t.Errorf("slot affinity = %q, want the pool affinity key %q", slot, got)
+		}
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	if got == "" {
+		t.Fatal("no affinity key computed")
+	}
+}
+
+// Agent clients start every session with the same system prompt and the same
+// injected reminder messages; only the task that follows tells two sessions
+// apart.
+func TestProviderPoolRequestAffinityKeySeparatesSessionsWithSharedPreamble(t *testing.T) {
+	session := func(task string, tail string) string {
+		body := `{"model":"m","messages":[
+			{"role":"system","content":"You are an agent"},
+			{"role":"user","content":"<system-reminder>skills: ...</system-reminder>"},
+			{"role":"user","content":"<system-reminder>context: ...</system-reminder>"},
+			{"role":"user","content":"` + task + `"}` + tail + `]}`
+		return providerPoolRequestAffinityKey(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)))
+	}
+	loop := `,{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"Read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c1","content":"x"}`
+	a, aNext, b := session("fix the login bug", ""), session("fix the login bug", loop), session("write release notes", "")
+	if a == "" || a != aNext {
+		t.Fatalf("one session changed key across turns: %q vs %q", a, aNext)
+	}
+	if a == b {
+		t.Fatal("two sessions with a shared preamble got the same key")
+	}
+}

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelmetadata"
 	"github.com/opencsgs/csglite/pkg/api"
@@ -56,6 +58,48 @@ func TestLocalModelInfoPersistsAndInvalidatesDerivedMetadata(t *testing.T) {
 	second := s.localModelInfo(lm)
 	if second.MaxModelLen != 8192 {
 		t.Fatalf("invalidated max model len = %d", second.MaxModelLen)
+	}
+}
+
+func TestLocalModelInfoResolvesContextWindowFromCachedModelMax(t *testing.T) {
+	s := newTestServer(t)
+	lm := &model.LocalModel{
+		Namespace:   "Acme",
+		Name:        "ctx-model",
+		Format:      model.FormatSafeTensors,
+		PipelineTag: "text-generation",
+	}
+	modelDir := model.ModelDir(s.cfg.ModelDir, lm.Namespace, lm.Name)
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"max_position_embeddings":40960}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := model.SaveManifestInDir(modelDir, lm); err != nil {
+		t.Fatal(err)
+	}
+
+	first := s.localModelInfo(lm)
+	if want := int64(inference.ResolveNumCtxFromModelMax(40960, 0, 0, s.cfg.Inference.LlamaUseModelMaxCtx)); first.ContextWindow != want {
+		t.Fatalf("first context window = %d, want %d", first.ContextWindow, want)
+	}
+	fingerprint, err := modelmetadata.Fingerprint(modelDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.modelMetadataMu.RLock()
+	cached, ok, err := s.modelMetadata.Get(context.Background(), lm.FullName(), fingerprint)
+	s.modelMetadataMu.RUnlock()
+	if err != nil || !ok || cached.ModelMaxContext != 40960 {
+		t.Fatalf("cached model max = %d, %v, %v; want 40960", cached.ModelMaxContext, ok, err)
+	}
+
+	// A per-model setting changes no model file, so the cache still hits; the
+	// effective window must follow the setting anyway.
+	s.cfg.Inference.SetModelSettings(lm.FullName(), config.ModelRuntimeSettings{NumCtx: 16384})
+	if second := s.localModelInfo(lm); second.ContextWindow != 16384 {
+		t.Fatalf("context window after setting = %d, want 16384", second.ContextWindow)
 	}
 }
 

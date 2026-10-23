@@ -56,6 +56,11 @@ func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req
 	inputTokens, outputTokens := openAIUsageTokens(openAIResp)
 	if inputTokens == 0 {
 		inputTokens = countMessageTokens(req.Messages)
+		r = markUsageEstimated(r)
+	}
+	if outputTokens == 0 && openAIResp.Usage.CompletionTokens == 0 {
+		outputTokens = estimateOpenAIOutputTokens(openAIResp)
+		r = markUsageEstimated(r)
 	}
 	s.recordAPIUsage(r, req.Model, req.Source, inputTokens, outputTokens)
 

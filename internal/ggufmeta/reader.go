@@ -1,12 +1,18 @@
 package ggufmeta
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 )
+
+// readBufferBytes batches the many small header reads into few syscalls. A
+// tokenizer vocabulary is read as hundreds of thousands of tiny strings, and
+// reading them straight from the file took ~300-450ms per GGUF.
+const readBufferBytes = 1 << 20
 
 const (
 	maxHeaderBytes   = 64 << 20
@@ -50,7 +56,7 @@ func ReadFile(path string) (*Metadata, error) {
 		return nil, err
 	}
 	defer file.Close()
-	return Read(file)
+	return Read(bufio.NewReaderSize(file, readBufferBytes))
 }
 
 // Read reads bounded scalar metadata from a GGUF stream without reading tensors.
@@ -82,6 +88,46 @@ func Read(reader io.Reader) (*Metadata, error) {
 	return metadata, nil
 }
 
+// ReadArchitecture returns general.architecture without decoding the rest of
+// the header, so it stays cheap on text models with large tokenizer arrays.
+func ReadArchitecture(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	limited := &io.LimitedReader{R: bufio.NewReaderSize(file, readBufferBytes), N: maxHeaderBytes}
+	metadataCount, err := readMetadataCount(limited)
+	if err != nil {
+		return "", err
+	}
+	for i := uint64(0); i < metadataCount; i++ {
+		key, err := readString(limited)
+		if err != nil {
+			return "", err
+		}
+		var valueType uint32
+		if err := binary.Read(limited, binary.LittleEndian, &valueType); err != nil {
+			return "", err
+		}
+		if key != "general.architecture" {
+			if err := skipValue(limited, valueType); err != nil {
+				return "", err
+			}
+			continue
+		}
+		item, scalar, err := readValue(limited, valueType)
+		if err != nil {
+			return "", err
+		}
+		if scalar && item.kind == typeString {
+			return strings.TrimSpace(item.stringValue), nil
+		}
+		return "", nil
+	}
+	return "", nil
+}
+
 // IsVisionProjectorFile checks projector metadata and stops as soon as the
 // GGUF architecture provides a definitive answer.
 func IsVisionProjectorFile(path string) (bool, error) {
@@ -90,7 +136,7 @@ func IsVisionProjectorFile(path string) (bool, error) {
 		return false, err
 	}
 	defer file.Close()
-	limited := &io.LimitedReader{R: file, N: maxHeaderBytes}
+	limited := &io.LimitedReader{R: bufio.NewReaderSize(file, readBufferBytes), N: maxHeaderBytes}
 	metadataCount, err := readMetadataCount(limited)
 	if err != nil {
 		return false, err
@@ -373,4 +419,20 @@ func readString(reader io.Reader) (string, error) {
 func discard(reader io.Reader, count int64) error {
 	_, err := io.CopyN(io.Discard, reader, count)
 	return err
+}
+
+// DecisionType returns the native decision type ("laya", "openjev", ...) a
+// GGUF declares in its "<arch>.decision.type" metadata, or "" when it
+// declares none or cannot be read.
+func DecisionType(path string) string {
+	metadata, err := ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	arch, ok := metadata.String("general.architecture")
+	if !ok || strings.TrimSpace(arch) == "" {
+		return ""
+	}
+	decisionType, _ := metadata.String(arch + ".decision.type")
+	return strings.TrimSpace(decisionType)
 }

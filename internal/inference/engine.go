@@ -134,6 +134,28 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 		return "", nil
 	}
 
+	// startConverted serves a GGUF this load just converted. A GGUF that
+	// llama-server rejects is removed so the next load converts again; once
+	// one loads, the SafeTensors source is no longer needed.
+	startConverted := func(ggufPath string) (Engine, error) {
+		mmproj, err := resolveMMProj()
+		if err != nil {
+			return nil, err
+		}
+		var eng Engine
+		if embedding {
+			eng, err = newLlamaEmbeddingEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
+		} else {
+			eng, err = newLlamaSpeculativeEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, speculative, mmproj)
+		}
+		if err != nil {
+			removeConvertedGGUFIfInvalid(ggufPath, err)
+			return nil, err
+		}
+		go removeConvertedSourceWeights(modelDir)
+		return eng, nil
+	}
+
 	if normalizedDType != "" {
 		if ggufPath, ok, err := convert.FindGGUFForDType(modelDir, normalizedDType); err != nil {
 			return nil, err
@@ -157,24 +179,12 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 			if err != nil {
 				return nil, fmt.Errorf("auto-converting SafeTensors to GGUF: %w", err)
 			}
-			mmproj, err := resolveMMProj()
-			if err != nil {
-				return nil, err
-			}
-			if embedding {
-				eng, err := newLlamaEmbeddingEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
-				if err != nil {
-					removeConvertedGGUFIfInvalid(ggufPath, err)
-					return nil, err
-				}
-				return eng, nil
-			}
-			eng, err := newLlamaSpeculativeEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, speculative, mmproj)
-			if err != nil {
-				removeConvertedGGUFIfInvalid(ggufPath, err)
-				return nil, err
-			}
-			return eng, nil
+			return startConverted(ggufPath)
+		}
+		// Falling through would serve whichever GGUF is left and ignore the
+		// requested dtype, which the removed SafeTensors could have produced.
+		if convert.SourceWeightsRemoved(modelDir) {
+			return nil, fmt.Errorf("model %s has no %s GGUF: %w", modelName, normalizedDType, convert.ErrSourceWeightsRemoved)
 		}
 	}
 
@@ -210,24 +220,7 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 		if err != nil {
 			return nil, fmt.Errorf("auto-converting SafeTensors to GGUF: %w", err)
 		}
-		mmproj, err := resolveMMProj()
-		if err != nil {
-			return nil, err
-		}
-		if embedding {
-			eng, err := newLlamaEmbeddingEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, mmproj)
-			if err != nil {
-				removeConvertedGGUFIfInvalid(ggufPath, err)
-				return nil, err
-			}
-			return eng, nil
-		}
-		eng, err := newLlamaSpeculativeEngine(ggufPath, lm.FullName(), verbose, progress, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, speculative, mmproj)
-		if err != nil {
-			removeConvertedGGUFIfInvalid(ggufPath, err)
-			return nil, err
-		}
-		return eng, nil
+		return startConverted(ggufPath)
 
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFormat, format)
@@ -242,7 +235,10 @@ func ensureConvertibleHFArchitecture(modelDir string) error {
 	if !ok {
 		return nil
 	}
-	if _, supported := convert.SupportedHFArchitecture(arch); supported {
+	// readHFArchitecture reports a decision checkpoint with the complete
+	// layout as DecisionCheckpointArchitecture, so its root architecture
+	// here means the encoder or head config is missing.
+	if _, supported := convert.SupportedHFArchitecture(arch); supported && !convert.IsDecisionCheckpointRootArchitecture(arch) {
 		return nil
 	}
 	log.Printf("CONVERT: unsupported HuggingFace architecture %q in %s", arch, modelDir)
@@ -250,6 +246,9 @@ func ensureConvertibleHFArchitecture(modelDir string) error {
 }
 
 func readHFArchitecture(modelDir string) (string, bool, error) {
+	if convert.IsDecisionCheckpoint(modelDir) {
+		return convert.DecisionCheckpointArchitecture, true, nil
+	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -292,6 +291,23 @@ func convertSafeTensors(modelDir string, progress ConvertProgressFunc, dtype str
 	}
 	log.Printf("CONVERT: complete output=%s", path)
 	return path, nil
+}
+
+// removeConvertedSourceWeights deletes the SafeTensors a loaded GGUF was
+// converted from and rewrites the manifest to list the GGUF instead. It runs
+// in the background because refreshing the manifest hashes the new GGUF.
+func removeConvertedSourceWeights(modelDir string) {
+	removed, freed, err := convert.RemoveConvertedSourceWeights(modelDir)
+	if err != nil {
+		log.Printf("warning: could not remove converted SafeTensors in %s: %v", modelDir, err)
+	}
+	if len(removed) == 0 {
+		return
+	}
+	log.Printf("CONVERT: removed %d converted SafeTensors file(s) from %s, freed %d bytes", len(removed), modelDir, freed)
+	if err := model.RefreshManifestFiles(modelDir); err != nil {
+		log.Printf("warning: could not refresh manifest in %s: %v", modelDir, err)
+	}
 }
 
 func removeConvertedGGUFIfInvalid(ggufPath string, err error) {

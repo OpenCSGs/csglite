@@ -37,6 +37,10 @@ type LocalModel struct {
 	Repository        string           `json:"repository,omitempty"`
 	RequestedRevision string           `json:"requested_revision,omitempty"`
 	ResolvedRevision  string           `json:"resolved_revision,omitempty"`
+	// RemovedSourceWeights names the SafeTensors files deleted once a
+	// converted GGUF served the model, so later loads know the checkpoint
+	// can no longer be converted to another dtype.
+	RemovedSourceWeights []string `json:"removed_source_weights,omitempty"`
 }
 
 type LocalModelFile struct {

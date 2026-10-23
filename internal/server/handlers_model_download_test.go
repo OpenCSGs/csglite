@@ -253,3 +253,47 @@ func TestHandleModelFile_RejectsInvalidPath(t *testing.T) {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
+
+func TestHandleModelManifestReturnsModelCardTags(t *testing.T) {
+	s := newTestServer(t)
+	save := func(name, card string) {
+		modelDir := filepath.Join(s.cfg.ModelDir, "Acme", name)
+		if err := os.MkdirAll(modelDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(modelDir, "model.gguf"), []byte("gguf"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if card != "" {
+			if err := os.WriteFile(filepath.Join(modelDir, "README.md"), []byte(card), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		mustSaveLocalModel(t, s.cfg.ModelDir, &model.LocalModel{
+			Namespace: "Acme", Name: name, Format: model.FormatGGUF, Size: 4,
+			Files: []string{"model.gguf"}, DownloadedAt: time.Unix(100, 0),
+		})
+	}
+	save("tagged", "---\ntags:\n- jev\n- typed-decisions\n- qwen3_5\n---\n# card\n")
+	save("untagged", "")
+
+	get := func(name string) string {
+		req := httptest.NewRequest(http.MethodGet, "/api/models/Acme/"+name+"/manifest", nil)
+		w := httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status %d body %s", name, w.Code, w.Body.String())
+		}
+		var resp map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		return string(resp["tags"])
+	}
+	if got := get("tagged"); got != `["jev","typed-decisions","qwen3_5"]` {
+		t.Fatalf("tags = %s", got)
+	}
+	if got := get("untagged"); got != `[]` {
+		t.Fatalf("tags without a card = %s, want []", got)
+	}
+}

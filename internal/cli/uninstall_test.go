@@ -103,6 +103,9 @@ func setupUninstallTestEnv(t *testing.T) (appHome, dataFile, csghubBin, llamaBin
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)
 	}
+	config.Reset()
+	t.Cleanup(config.Reset)
+	isolateFromRunningServer(t)
 
 	binDir := filepath.Join(home, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {

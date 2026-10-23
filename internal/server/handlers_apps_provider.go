@@ -93,9 +93,13 @@ func (s *Server) switchAIAppProvider(ctx context.Context, appID, mode, requested
 	}
 	if mode == apps.ProviderModeNative {
 		options := apps.RestoreNativeOptions{}
-		if group == codexProviderGroup {
+		switch group {
+		case codexProviderGroup:
 			options.ValidateManaged = s.sourceSwitchManagedValidator(group)
 			options.RestoreManaged = codexagent.RestoreNativeConfigData
+		case claudeProviderGroup:
+			options.ValidateManaged = s.sourceSwitchManagedValidator(group)
+			options.RestoreManaged = claudeagent.RestoreNativeConfigData
 		}
 		_, err := s.sourceSwitches.RestoreNative(group, targetPath, isManaged, restoreLegacy, options)
 		return err
@@ -127,7 +131,7 @@ func (s *Server) switchAIAppProvider(ctx context.Context, appID, mode, requested
 				models,
 			)
 		case claudeProviderGroup:
-			return claudeagent.SyncConfig(serverURL, "csghub-lite", modelID)
+			return claudeagent.SyncConfig(serverURL, claudeagent.ManagedAPIKey, modelID)
 		default:
 			return fmt.Errorf("unknown provider group %s", group)
 		}
@@ -177,7 +181,7 @@ func (s *Server) aiAppProviderStatus(appID string) (apps.SourceSwitchStatus, boo
 }
 
 func (s *Server) sourceSwitchManagedValidator(group string) func([]byte) bool {
-	if group != codexProviderGroup {
+	if group != codexProviderGroup && group != claudeProviderGroup {
 		return nil
 	}
 	serverURL := s.localBaseURL()
@@ -200,21 +204,35 @@ func (s *Server) sourceSwitchManagedValidator(group string) func([]byte) bool {
 			allowedURLs = append(allowedURLs, value)
 		}
 	}
-	for _, appID := range []string{"codex", "codex-app"} {
+	for _, appID := range []string{"codex", "codex-app", "claude-code"} {
 		if source := s.preferredAIAppModelSource(appID); source != "" {
 			if value, err := providerScopedBaseURL(serverURL, source); err == nil {
 				allowedURLs = append(allowedURLs, value)
 			}
 		}
 	}
-	apiKey := openClawProviderAPIKey(s.cfg.Token)
-	return func(data []byte) bool {
-		for _, allowedURL := range allowedURLs {
-			if codexagent.MatchesManagedProviderConfigData(data, allowedURL, apiKey) {
-				return true
+	switch group {
+	case codexProviderGroup:
+		apiKey := openClawProviderAPIKey(s.cfg.Token)
+		return func(data []byte) bool {
+			for _, allowedURL := range allowedURLs {
+				if codexagent.MatchesManagedProviderConfigData(data, allowedURL, apiKey) {
+					return true
+				}
 			}
+			return false
 		}
-		return false
+	case claudeProviderGroup:
+		return func(data []byte) bool {
+			for _, allowedURL := range allowedURLs {
+				if claudeagent.MatchesManagedProviderConfigData(data, allowedURL, claudeagent.ManagedAPIKey) {
+					return true
+				}
+			}
+			return false
+		}
+	default:
+		return nil
 	}
 }
 

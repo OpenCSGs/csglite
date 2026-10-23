@@ -105,6 +105,14 @@ type llamaEngine struct {
 	logFile             *os.File
 	hasMultimodal       bool
 	nativeToolStreaming bool
+	// decisionLoRA is set when a typed-decision adapter is loaded (scale 0
+	// by default, enabled per decision request).
+	decisionLoRA bool
+	// decisionType is the GGUF's native decision type ("laya", "openjev",
+	// ...), answered at /v1/systemone; "" for other models.
+	decisionType string
+	// slots pins conversations to llama-server slots; nil with one slot.
+	slots *llamaSlotScheduler
 }
 
 type inferenceHTTPError struct {
@@ -149,6 +157,13 @@ func findLlamaBinary() string {
 		}
 	}
 	return ""
+}
+
+// ResolveLlamaServerBinary returns the llama-server binary inference would use,
+// following the same lookup order as model loading, or an empty string when
+// none is installed.
+func ResolveLlamaServerBinary() string {
+	return findLlamaBinary()
 }
 
 func llamaBinarySiblingPath(exePath, goos string) string {
@@ -269,6 +284,20 @@ func ResolveNumCtxWithModelMax(modelDir string, requested int, configured bool) 
 	if requested >= 1024 {
 		return requested
 	}
+	return ResolveNumCtxFromModelMax(ModelMaxPositionEmbeddings(modelDir), 0, 0, configured)
+}
+
+// ResolveNumCtxFromModelMax applies the same precedence as
+// ResolveNumCtxWithModelSetting to an already known model maximum (0 when
+// unknown), so callers that cache the maximum resolve the context window
+// without reading the model files again.
+func ResolveNumCtxFromModelMax(maxPos, requested, modelSetting int, configured bool) int {
+	if requested >= 1024 {
+		return requested
+	}
+	if modelSetting >= 1024 {
+		return modelSetting
+	}
 	if v := strings.TrimSpace(os.Getenv("CSGHUB_LITE_LLAMA_NUM_CTX")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 1024 {
 			// CSGHUB_LITE_LLAMA_NUM_CTX is a global setting that applies to
@@ -276,11 +305,13 @@ func ResolveNumCtxWithModelMax(modelDir string, requested int, configured bool) 
 			// KV cache for the whole context up front, so a value beyond what
 			// the model itself supports buys nothing and costs memory linearly:
 			// a 0.6B embedding model asked for 128K reserves tens of GB.
-			return capNumCtxToModelMax(modelDir, n)
+			if maxPos >= 1024 && n > maxPos {
+				return maxPos
+			}
+			return n
 		}
 	}
 
-	maxPos := ModelMaxPositionEmbeddings(modelDir)
 	if UseModelMaxCtxByDefault(configured) && maxPos >= 1024 {
 		return maxPos
 	}
@@ -289,17 +320,6 @@ func ResolveNumCtxWithModelMax(modelDir string, requested int, configured bool) 
 	}
 
 	return defaultLlamaCtxSize
-}
-
-// capNumCtxToModelMax limits numCtx to the model's own maximum context length.
-// The model maximum is unknown for some models (it reports 0), and in that case
-// numCtx is kept as requested rather than guessed down.
-func capNumCtxToModelMax(modelDir string, numCtx int) int {
-	maxPos := ModelMaxPositionEmbeddings(modelDir)
-	if maxPos >= 1024 && numCtx > maxPos {
-		return maxPos
-	}
-	return numCtx
 }
 
 // CapNumCtxToEmbeddingModelMax caps the context to what an embedding model can
@@ -534,6 +554,9 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		effectiveNumCtx = CapNumCtxToEmbeddingModelMax(filepath.Dir(modelPath), effectiveNumCtx)
 	}
 	effectiveNumParallel := ResolveNumParallel(numParallel)
+	if !embedding {
+		engine.slots = newLlamaSlotScheduler(effectiveNumParallel)
+	}
 	effectiveNGPULayers := ResolveNGPULayers(nGPULayers)
 	normalizedCacheTypeK, err := NormalizeCacheType(cacheTypeK)
 	if err != nil {
@@ -563,6 +586,11 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		"--parallel", strconv.Itoa(effectiveNumParallel),
 		"--jinja",
 	}
+	// Without an alias llama-server reports the GGUF file path as the
+	// response "model"; OpenAI clients expect the requested model ID.
+	if modelName != "" {
+		args = append(args, "--alias", modelName)
+	}
 	if embedding {
 		args = append(args, "--embedding")
 		if pooling := ResolveEmbeddingPooling(modelName); pooling != "" {
@@ -576,6 +604,19 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		args = append(args, "--cache-type-v", normalizedCacheTypeV)
 	}
 	args = append(args, speculative.llamaArgs()...)
+	decisionLoRA := ""
+	if !embedding {
+		decisionLoRA = resolveDecisionLoRA(modelName)
+	}
+	if decisionLoRA != "" {
+		args = append(args, decisionLoRAArgs(decisionLoRA)...)
+	}
+	if !embedding {
+		engine.decisionType = ggufmeta.DecisionType(modelPath)
+	}
+	if DecisionOnlyType(engine.decisionType) {
+		args = append(args, decisionOnlyBatchArgs(effectiveNumCtx)...)
+	}
 	if len(mmproj) > 0 && mmproj[0] != "" {
 		args = append(args, "--mmproj", mmproj[0])
 		engine.hasMultimodal = true
@@ -646,15 +687,7 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 
 	// Ensure shared libraries co-located with the binary can be found
 	binDir := filepath.Dir(binary)
-	env := os.Environ()
-	switch runtime.GOOS {
-	case "darwin":
-		env = appendLibPath(env, "DYLD_LIBRARY_PATH", binDir)
-	case "linux":
-		env = appendLibPath(env, "LD_LIBRARY_PATH", binDir)
-	case "windows":
-		env = appendLibPath(env, "PATH", binDir)
-	}
+	env := appendLlamaLibPath(os.Environ(), binDir)
 	if IsROCMHost() {
 		env = appendEnvDefault(env, "GGML_CUDA_DISABLE_GRAPHS", "1")
 	}
@@ -683,8 +716,17 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		return nil, fmt.Errorf("llama-server failed to start: %w", err)
 	}
 
+	if decisionLoRA != "" {
+		if err := engine.disableDecisionLoRA(); err != nil {
+			// Leaving the adapter at its default scale would change every
+			// chat answer, so refuse to serve rather than degrade silently.
+			engine.Close()
+			return nil, fmt.Errorf("llama-server could not park the typed-decision adapter: %w", err)
+		}
+		engine.decisionLoRA = true
+	}
 	engine.detectNativeToolStreaming()
-	log.Printf("LLAMA: llama-server ready model=%q port=%d native_tool_streaming=%t", modelName, port, engine.nativeToolStreaming)
+	log.Printf("LLAMA: llama-server ready model=%q port=%d native_tool_streaming=%t typed_decisions=%t decision_type=%q", modelName, port, engine.nativeToolStreaming, engine.decisionLoRA, engine.decisionType)
 	return engine, nil
 }
 
@@ -747,6 +789,45 @@ func (e *llamaEngine) baseURL() string {
 }
 
 func (e *llamaEngine) ChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
+	release := func() {}
+	if _, explicit := reqBody["id_slot"]; !explicit {
+		var slot int
+		slot, release = e.slots.acquire(SlotAffinity(ctx))
+		if slot >= 0 {
+			pinned := make(map[string]interface{}, len(reqBody)+1)
+			for k, v := range reqBody {
+				pinned[k] = v
+			}
+			pinned["id_slot"] = slot
+			reqBody = pinned
+		}
+	}
+	resp, err := e.postChatCompletion(ctx, reqBody)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	resp.Body = &releasingBody{ReadCloser: resp.Body, release: release}
+	return resp, nil
+}
+
+// releasingBody frees the request's slot once the caller has finished with
+// the response, streamed or not.
+type releasingBody struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b *releasingBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.release()
+	return err
+}
+
+func (e *llamaEngine) postChatCompletion(ctx context.Context, reqBody map[string]interface{}) (*http.Response, error) {
+	if err := e.errDecisionOnly(); err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
@@ -1050,6 +1131,7 @@ func trimOldestNonSystemMessage(messages []Message) ([]Message, bool) {
 
 type llamaChatUsage struct {
 	PromptTokens        int64 `json:"prompt_tokens"`
+	CompletionTokens    int64 `json:"completion_tokens"`
 	PromptTokensDetails struct {
 		CachedTokens int64 `json:"cached_tokens"`
 	} `json:"prompt_tokens_details"`
@@ -1079,6 +1161,19 @@ func recordLlamaCacheUsage(collector *CacheUsageCollector, usage llamaChatUsage,
 	if eligible > 0 {
 		collector.add(read, creation, eligible)
 	}
+}
+
+// reportLlamaGenerationUsage forwards the prompt/completion token counts a
+// backend advertised to the caller's OnUsage callback. It is a no-op when the
+// caller did not request usage reporting or the backend reported nothing.
+func reportLlamaGenerationUsage(onUsage func(int64, int64), usage llamaChatUsage) {
+	if onUsage == nil {
+		return
+	}
+	if usage.PromptTokens <= 0 && usage.CompletionTokens <= 0 {
+		return
+	}
+	onUsage(usage.PromptTokens, usage.CompletionTokens)
 }
 
 func (e *llamaEngine) handleStream(body io.Reader, onToken TokenCallback, opts Options) (string, error) {
@@ -1116,6 +1211,7 @@ func (e *llamaEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenCa
 			continue
 		}
 		recordLlamaCacheUsage(collector, chunk.Usage, chunk.Timings)
+		reportLlamaGenerationUsage(opts.OnUsage, chunk.Usage)
 		if len(chunk.Choices) > 0 {
 			d := chunk.Choices[0].Delta
 			// Use at most one delta text per chunk. Some llama-server builds populate both
@@ -1170,6 +1266,7 @@ func (e *llamaEngine) handleNonStreamWithCacheUsage(body io.Reader, opts Options
 		return "", fmt.Errorf("decoding response: %w", err)
 	}
 	recordLlamaCacheUsage(collector, resp.Usage, resp.Timings)
+	reportLlamaGenerationUsage(opts.OnUsage, resp.Usage)
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("no choices in response")
 	}
@@ -1267,6 +1364,22 @@ func (e *llamaEngine) Close() error {
 
 func (e *llamaEngine) ModelName() string {
 	return e.modelName
+}
+
+// appendLlamaLibPath adds dir to the platform's shared-library search path so
+// llama-server finds the libraries shipped next to it. Both the start-up path
+// and the --version probe use it: a runtime that needs the path must not be
+// reported as missing or version-less because the probe looked it up bare.
+func appendLlamaLibPath(env []string, dir string) []string {
+	switch runtime.GOOS {
+	case "darwin":
+		return appendLibPath(env, "DYLD_LIBRARY_PATH", dir)
+	case "linux":
+		return appendLibPath(env, "LD_LIBRARY_PATH", dir)
+	case "windows":
+		return appendLibPath(env, "PATH", dir)
+	}
+	return env
 }
 
 func appendLibPath(env []string, key, dir string) []string {

@@ -38,8 +38,11 @@ func staticHandler() http.Handler {
 			return
 		}
 
-		// SPA fallback: serve index.html for non-file paths
-		if isHTML {
+		// SPA fallback: serve index.html for non-file paths, and for page
+		// loads whose route merely contains a dot, such as the detail page of
+		// a model named Qwen2-0.5B-Instruct-GGUF. Missing assets still 404.
+		if isHTML || acceptsHTML(r) {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 			r.URL.Path = "/"
 			fileServer.ServeHTTP(w, r)
 			return
@@ -82,4 +85,9 @@ func devStaticHandler(dir string) http.Handler {
 		}
 		http.NotFound(w, r)
 	})
+}
+
+// acceptsHTML reports whether the request is a browser page navigation.
+func acceptsHTML(r *http.Request) bool {
+	return r.Method == http.MethodGet && strings.Contains(r.Header.Get("Accept"), "text/html")
 }
