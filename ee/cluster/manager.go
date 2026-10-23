@@ -41,6 +41,21 @@ type Host interface {
 	// ModelBundle describes a complete local model for a peer to copy, or
 	// returns an error when the model is absent or still downloading.
 	ModelBundle(modelID string) (*ModelBundle, error)
+	// SpanModel loads modelID on this node with its weights held by the given
+	// RPC endpoints, which are loopback addresses this package has already
+	// tunnelled to other machines. hostDevices says whether this machine holds
+	// a share too; it is false for a model that does not fit here, which is
+	// the usual reason to split one. An empty list unloads the split copy. A
+	// host that cannot do this returns ErrSpanNotSupported.
+	SpanModel(ctx context.Context, modelID string, rpcEndpoints []string, hostDevices bool, numCtx int) error
+	// RPCWorkerPath is the worker binary this build ships, or an error saying
+	// why a model cannot be split across machines here.
+	RPCWorkerPath() (string, error)
+	// LlamaBuildID identifies the llama.cpp build this machine runs. Two
+	// machines can only share one model's weights when it matches: the RPC
+	// protocol carries no version negotiation, and a mismatched pair fails to
+	// connect and then loads the whole model locally without saying so.
+	LlamaBuildID() string
 	// PullSpec turns a cluster model id into the repository and artifact
 	// source a pull job needs: registry-prefixed ids such as
 	// "modelscope/Qwen/Qwen3.5-2B" split into ("Qwen/Qwen3.5-2B", "modelscope").
@@ -114,6 +129,8 @@ type Manager struct {
 	affinity *Affinity
 	perf     *perfStore
 	peers    *peerClientCache
+	spans    *spanState
+	worker   *rpcWorker
 
 	mu          sync.RWMutex
 	ctx         context.Context
@@ -178,6 +195,8 @@ func New(opts Options) (*Manager, error) {
 		affinity:    NewAffinity(),
 		perf:        newPerfStore(filepath.Join(opts.Dir, "perf.json")),
 		peers:       newPeerClientCache(id),
+		spans:       newSpanState(),
+		worker:      newRPCWorker(filepath.Join(opts.Dir, "rpc-cache"), filepath.Join(opts.Dir, "rpc-worker.pid"), logf),
 		gossipWake:  make(chan struct{}, 1),
 		discoverer:  opts.Discoverer,
 		observedIPs: map[string]time.Time{},
@@ -185,6 +204,13 @@ func New(opts Options) (*Manager, error) {
 	for _, mem := range store.Members() {
 		m.dir.Track(mem.UUID, m.seedAddressesFor(mem))
 	}
+	// A previous run of this node may have been killed outright while another
+	// machine had a model split onto it, leaving its tensor worker holding
+	// memory for a model nothing remembers.
+	m.worker.stopOrphan()
+	// The cache may have sat unused for weeks while this node was off or out
+	// of a cluster, when the watch loop that ages it does not run.
+	m.worker.pruneIdleCache(time.Now())
 	return m, nil
 }
 
@@ -290,6 +316,7 @@ func (m *Manager) Activate() error {
 	go m.pollLoop()
 	go m.gossipLoop()
 	go m.discoveredRefreshLoop()
+	go m.spanWatchLoop()
 	if token := strings.TrimSpace(m.opts.JoinToken); token != "" && !m.store.InCluster() {
 		go m.autoJoin(token)
 	}
@@ -330,11 +357,17 @@ func (m *Manager) deactivate() {
 	_ = m.discoverer.Close()
 	m.dir.Reset()
 	m.peers.closeAll()
+	if m.worker != nil {
+		m.worker.stop()
+	}
 	m.invalidateLocalStatus()
 }
 
 // Stop shuts the manager down for process exit.
 func (m *Manager) Stop() {
+	// A split model is torn down before anything else, so the machines lending
+	// their memory are told rather than left to work it out from the silence.
+	m.releaseAllSpans()
 	m.deactivate()
 	m.mu.Lock()
 	cancel := m.cancel
@@ -344,6 +377,9 @@ func (m *Manager) Stop() {
 		cancel()
 	}
 	m.perf.flush()
+	if m.worker != nil {
+		m.worker.stop()
+	}
 }
 
 // context is the lifetime of the current activation (or the manager when

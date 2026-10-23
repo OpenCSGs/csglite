@@ -39,6 +39,10 @@ func (m *Manager) LocalStatus(ctx context.Context) Status {
 	}
 	st.Time = time.Now().UTC()
 	st.Net.Addrs = m.localAddrs()
+	st.SpanWorker = m.worker != nil && m.worker.inUse()
+	if spans := m.spans.list(); len(spans) > 0 {
+		st.Spans = spans
+	}
 	// Merge this node's own perf samples so peers see them in status.
 	for i := range st.Models {
 		if p := m.perf.get(m.identity.UUID, st.Models[i].ID); p != nil {
@@ -190,11 +194,13 @@ func (m *Manager) candidateStatus(nodeUUID string) *Status {
 func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 	var out []Candidate
 	local := m.cachedLocalStatus(ctx)
-	localReserved := 0
-	if rt, ok := m.dir.Get(m.identity.UUID); ok {
-		localReserved = int(rt.reserveSeq)
-	}
-	out = append(out, Candidate{UUID: m.identity.UUID, Name: m.identity.DisplayName(), Local: true, Status: local, Health: HealthHealthy, Reserved: localReserved, Breaker: m.dir.ModelBroken(m.identity.UUID, model)})
+	// Reserved is how many requests are in flight to a node right now, not how
+	// many it has ever been sent: a running total never comes down, so it
+	// would stop telling the scheduler anything the moment the cluster had
+	// been busy for a while, and tells it nothing at all on a cluster that has
+	// just started, where every node reads zero and a burst of identical
+	// requests lands on whichever node the tie-break happens to name.
+	out = append(out, Candidate{UUID: m.identity.UUID, Name: m.identity.DisplayName(), Local: true, Status: local, Health: HealthHealthy, Reserved: m.dir.ReservedCount(m.identity.UUID), Breaker: m.dir.ModelBroken(m.identity.UUID, model)})
 	for _, rt := range m.dir.Snapshot() {
 		if _, ok := m.store.Member(rt.UUID); !ok {
 			continue
@@ -211,7 +217,7 @@ func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 			// we have measured this node ourselves.
 			st = m.overlayPerf(rt.UUID, st)
 		}
-		out = append(out, Candidate{UUID: rt.UUID, Name: name, Status: st, Health: rt.Health, Reserved: int(rt.reserveSeq), Breaker: m.dir.ModelBroken(rt.UUID, model), Cooling: m.dir.Cooling(rt.UUID)})
+		out = append(out, Candidate{UUID: rt.UUID, Name: name, Status: st, Health: rt.Health, Reserved: m.dir.ReservedCount(rt.UUID), Breaker: m.dir.ModelBroken(rt.UUID, model), Cooling: m.dir.Cooling(rt.UUID)})
 	}
 	return out
 }

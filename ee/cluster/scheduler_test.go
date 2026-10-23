@@ -227,3 +227,26 @@ func TestRankDoesNotPunishANodeMerelyForHavingNoSamples(t *testing.T) {
 		t.Fatalf("a node measured at 3 tok/s outranked an unmeasured one (%s)", summarizeExplain(ex))
 	}
 }
+
+func TestRankRefusesColdLoadOnASpanWorkerButKeepsUsingWhatItHasLoaded(t *testing.T) {
+	// A node lending its memory to a model split across machines is holding
+	// tensors that appear in nobody's inventory. It must not be given a second
+	// model to load, but a model it already serves is still fine.
+	lending := nodeWithModel("lending", ModelStatus{ID: "m", Size: 4 * gb}, func(s *Status) { s.SpanWorker = true })
+	free := nodeWithModel("free", ModelStatus{ID: "m", Size: 4 * gb}, nil)
+	ranked, ex := Rank(RankRequest{Model: "m"}, []Candidate{lending, free})
+	for _, r := range ranked {
+		if r.UUID == "lending" && r.Eligible {
+			t.Fatalf("a node lending memory to a span took a cold load: %s", summarizeExplain(ex))
+		}
+	}
+	if len(ex.Order) != 1 || ex.Order[0] != "free" {
+		t.Fatalf("order %v (%s)", ex.Order, summarizeExplain(ex))
+	}
+
+	warmLending := nodeWithModel("lending", ModelStatus{ID: "m", Size: 4 * gb, Loaded: true, Slots: 4}, func(s *Status) { s.SpanWorker = true })
+	ranked, ex = Rank(RankRequest{Model: "m"}, []Candidate{warmLending})
+	if len(ranked) != 1 || !ranked[0].Eligible {
+		t.Fatalf("a loaded model on a lending node should still serve: %s", summarizeExplain(ex))
+	}
+}
