@@ -46,7 +46,7 @@ by another machine on your network, or by a provider.
 - **Third-Party Providers** — integrate OpenAI, DeepSeek, MiMo, Kimi, BigModel, Qianfan, MiniMax, OpenRouter, and any OpenAI-compatible API
 - **Coding Agents** — one-click config for Claude Code, Codex, Pi, OpenCode, and Open Code Review
 - **Context compression** — optionally shrinks the tool output inside agent requests before any model sees it (Settings → Context compression). Safe mode removes only redundancy and keeps every distinct line; aggressive mode also samples long logs, arrays and search results. File reads and source code are never changed. On captured Claude Code / Codex traffic tool output drops 6% (safe) to 17% (aggressive), search results 24–56%; savings per request show in Observability
-- **AI Applications** — one-click setup for Claude Code, OpenCode, Open Code Review, Codex, Codex App, ZCode, Pi, OpenClaw, CSGClaw, Dify, and AnythingLLM
+- **AI Applications** — one-click setup for Claude Code, OpenCode, Open Code Review, Codex, Codex App, ZCode, Pi, OpenClaw, CSGClaw, CSGStudio, Dify, and AnythingLLM
 
 ### Dataset Support
 
@@ -339,6 +339,7 @@ One-click setup for AI assistant applications:
 | **DeepSeek Harness** | Plugin-based agent harness | `csghub-lite launch dsh` or Web UI → AI Apps |
 | **OpenClaw** | Open-source AI assistant with web UI | `csghub-lite launch openclaw` or Web UI → AI Apps |
 | **CSGClaw** | macOS/Windows multi-agent desktop application | Web UI → AI Apps |
+| **CSGStudio** | OpenCSG desktop studio; enabled on platforms its release channel publishes | Web UI → AI Apps |
 | **Dify** | LLM app development platform | Web UI → AI Apps |
 | **AnythingLLM** | Private document chat | Web UI → AI Apps |
 

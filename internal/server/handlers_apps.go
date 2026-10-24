@@ -257,8 +257,10 @@ func (s *Server) handleAppSetPath(w http.ResponseWriter, r *http.Request) {
 		err = apps.SetCodexAppLaunchTarget(path)
 	case "csgclaw":
 		err = apps.SetCSGClawDesktopLaunchTarget(path)
+	case "csgstudio":
+		err = apps.SetCSGStudioLaunchTarget(path)
 	default:
-		writeError(w, http.StatusBadRequest, "manual install path is only supported for codex-app and csgclaw")
+		writeError(w, http.StatusBadRequest, "manual install path is only supported for codex-app, csgclaw, and csgstudio")
 		return
 	}
 	if err != nil {

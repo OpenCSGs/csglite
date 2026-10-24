@@ -616,6 +616,51 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     },
   },
   {
+    id: "csgstudio",
+    name: "CSGStudio",
+    siteLabel: "@opencsg.com",
+    website: "https://opencsg.com",
+    detailsUrl: "https://opencsg.com",
+    icon: "/apps/csgstudio.png",
+    category: "automation",
+    description: {
+      en: "OpenCSG's local-first AI agent desktop app, with MCP tools, installable OpenCSG Apps, and an isolated Linux sandbox per platform.",
+      zh: "OpenCSG 本地优先的 AI Agent 桌面应用，支持 MCP 工具、可安装的 OpenCSG Apps，并在各平台使用独立 Linux 沙箱。",
+    },
+    installMode: "script",
+    progressMode: "percent",
+    installHint: {
+      en: "Install CSGStudio for every platform published in its release channel. Platforms without a package stay disabled automatically.",
+      zh: "按 release channel 已发布的平台安装 CSGStudio，未提供安装包的平台会自动禁用。",
+    },
+    cnInstallHint: {
+      en: "The installer selects the current platform package from the release-channel downloads manifest and verifies its checksum when one is published.",
+      zh: "安装器会从 release channel 的 downloads manifest 中选择当前平台安装包，并在提供校验值时校验完整性。",
+    },
+    commandPreview: "https://opencsg-public-resource.oss-cn-beijing.aliyuncs.com/csgstudio/channels/release/downloads.json",
+    liveLogsReady: true,
+    desktop: true,
+    plannedSteps: [
+      {
+        en: "Resolve the latest CSGStudio version and the package for this platform from downloads.json.",
+        zh: "从 downloads.json 解析最新 CSGStudio 版本及当前平台安装包。",
+      },
+      {
+        en: "Download the macOS DMG, Windows installer, or Linux AppImage and install it for the current user.",
+        zh: "下载 macOS DMG、Windows 安装程序或 Linux AppImage，并为当前用户安装。",
+      },
+      {
+        en: "Launch CSGStudio, which connects to CSGLite through its built-in local provider.",
+        zh: "启动 CSGStudio，通过内置的 CSGLite 本地 provider 连接 CSGLite。",
+      },
+    ],
+    status: "idle",
+    statusText: {
+      en: "Ready to install",
+      zh: "可安装",
+    },
+  },
+  {
     id: "xiaozhi",
     name: "小智 (Xiaozhi)",
     siteLabel: "@xiaozhi.cognitoaigo.com",

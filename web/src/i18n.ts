@@ -477,6 +477,8 @@ export const en: Record<string, string> = {
   "aiApps.disabledReason.architecture_unsupported": "The current Xiaozhi image set supports amd64 only. Use an amd64 machine, Apple Silicon with Docker Desktop, or publish a compatible image.",
   "aiApps.disabledLinuxNotice": "This desktop app is not available on Linux.",
   "aiApps.disabledWindowsNotice": "This app is not available on Windows.",
+  "aiApps.disabledPlatformNotice": "This app does not publish a package for this operating system or CPU architecture yet.",
+  "aiApps.disabledPlatformCheckingNotice": "Checking which platforms this app publishes packages for…",
   "aiApps.installMode": "Install Mode",
   "aiApps.progressMode": "Progress",
   "aiApps.currentStatus": "Status",
@@ -610,6 +612,7 @@ export const en: Record<string, string> = {
   "aiApps.phase.architecture_unsupported": "Architecture is unsupported",
   "aiApps.phase.windows_unsupported": "Not available on Windows",
   "aiApps.phase.linux_unsupported": "Not available on Linux",
+  "aiApps.phase.platform_checking": "Checking platform support",
 
   // Settings
   "nav.settings": "Settings",
@@ -2335,6 +2338,8 @@ export const zh: Record<string, string> = {
   "aiApps.disabledReason.architecture_unsupported": "当前小智镜像仅支持 amd64。请使用 amd64 设备、安装 Docker Desktop 的 Apple Silicon Mac，或发布兼容镜像。",
   "aiApps.disabledLinuxNotice": "该桌面应用暂不支持 Linux。",
   "aiApps.disabledWindowsNotice": "该应用暂不支持 Windows。",
+  "aiApps.disabledPlatformNotice": "该应用暂未提供适用于当前操作系统或 CPU 架构的安装包。",
+  "aiApps.disabledPlatformCheckingNotice": "正在检查该应用已发布安装包的平台…",
   "aiApps.installMode": "安装方式",
   "aiApps.progressMode": "进度展示",
   "aiApps.currentStatus": "当前状态",
@@ -2485,6 +2490,7 @@ export const zh: Record<string, string> = {
   "aiApps.phase.architecture_unsupported": "不支持当前架构",
   "aiApps.phase.windows_unsupported": "暂不支持 Windows",
   "aiApps.phase.linux_unsupported": "暂不支持 Linux",
+  "aiApps.phase.platform_checking": "正在检查平台支持",
   "nav.settings": "设置",
   "nav.apiDocs": "API",
   "nav.help": "帮助",
