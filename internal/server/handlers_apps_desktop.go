@@ -116,7 +116,40 @@ func (s *Server) launchCodexDesktopApp(ctx context.Context) error {
 }
 
 func isDesktopAIAppID(appID string) bool {
-	return appID == "codex-app" || appID == "zcode" || appID == "csgclaw"
+	return appID == "codex-app" || appID == "zcode" || appID == "csgclaw" || appID == "csgstudio"
+}
+
+func (s *Server) launchCSGStudioDesktopApp(ctx context.Context) error {
+	if !isLocalhostBrowserAccessFromContext(ctx) {
+		return fmt.Errorf("CSGStudio can only be opened from localhost")
+	}
+	target, err := apps.CSGStudioLaunchTarget()
+	if err != nil {
+		return err
+	}
+
+	log.Printf("AI APP csgstudio: launching desktop target=%s", target)
+	switch runtime.GOOS {
+	case "darwin":
+		if out, err := exec.CommandContext(ctx, "open", target).CombinedOutput(); err != nil {
+			return desktopLaunchError("CSGStudio", out, err)
+		}
+	case "windows":
+		if out, err := exec.CommandContext(ctx, "cmd", "/c", "start", "", target).CombinedOutput(); err != nil {
+			return desktopLaunchError("CSGStudio", out, err)
+		}
+	case "linux":
+		cmd := exec.Command(target)
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("launching CSGStudio: %w", err)
+		}
+		if err := cmd.Process.Release(); err != nil {
+			return fmt.Errorf("releasing CSGStudio process: %w", err)
+		}
+	default:
+		return fmt.Errorf("CSGStudio is not available on %s", runtime.GOOS)
+	}
+	return nil
 }
 
 func (s *Server) launchCSGClawDesktopApp(ctx context.Context, _, _ string) error {

@@ -32,6 +32,7 @@ var installDetectProfiles = map[string]installDetectProfile{
 	"open-code-review": {mode: installDetectCLI, versionedShare: "open-code-review"},
 	"openclaw":         {mode: installDetectCLI},
 	"csgclaw":          {mode: installDetectDesktop},
+	"csgstudio":        {mode: installDetectDesktop},
 	"codex":            {mode: installDetectCLI, versionedShare: "codex"},
 	"codex-app":        {mode: installDetectDesktop},
 	"zcode":            {mode: installDetectDesktop},
@@ -67,6 +68,8 @@ func detectInstalled(ctx context.Context, spec appSpec) (string, string, bool) {
 			return detectZCodeInstall()
 		case "csgclaw":
 			return detectCSGClawDesktopInstall()
+		case csgstudioAppID:
+			return detectCSGStudioInstall()
 		default:
 			return "", "", false
 		}

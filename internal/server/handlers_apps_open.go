@@ -60,6 +60,11 @@ func (s *Server) openAIAppURL(ctx context.Context, appID, modelID, modelSource, 
 			return "", err
 		}
 		return "", nil
+	case "csgstudio":
+		if err := s.launchCSGStudioDesktopApp(ctx); err != nil {
+			return "", err
+		}
+		return "", nil
 	case "xiaozhi":
 		running, err := s.appManager.XiaozhiRunning(ctx)
 		if err != nil {

@@ -125,6 +125,7 @@ TTS worker 支持：
 | `CSGHUB_LITE_CODEX_DIST_BASE_URL` | 内置版本化镜像 | Codex CLI 发布包基础 URL。 |
 | `CSGHUB_LITE_CODEX_APP_DIST_BASE_URL` | 内置版本化镜像 | Codex App 发布包基础 URL。 |
 | `CSGHUB_LITE_CSGCLAW_LATEST_URL` | CSGClaw 官方 latest 地址 | 覆盖 CSGClaw 最新版本元数据地址。 |
+| `CSGHUB_LITE_CSGSTUDIO_MANIFEST_URL` | CSGStudio release `downloads.json` | 覆盖 CSGStudio 的 downloads manifest，同时决定平台是否可用。 |
 | `CSGHUB_LITE_ZCODE_SITE_URL` | ZCode changelog | ZCode 版本发现页面。 |
 | `CSGHUB_LITE_ZCODE_DIST_BASE_URL` | ZCode 国内 CDN | ZCode 安装包基础 URL。 |
 | `CSGHUB_LITE_PI_PACKAGE` | `@mariozechner/pi-coding-agent@latest` | Pi 的 npm 包规格。 |

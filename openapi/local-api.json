@@ -4728,7 +4728,7 @@
           "AI Apps"
         ],
         "summary": "Set a manual install path for an AI App",
-        "description": "Records a user-specified install location for an AI App whose automatic detection missed a custom install path. Currently only codex-app is supported. Returns the refreshed app state.",
+        "description": "Records a user-specified install location for an AI App whose automatic detection missed a custom install path. Supported for codex-app, csgclaw, and csgstudio. Returns the refreshed app state.",
         "operationId": "setAIAppPath",
         "requestBody": {
           "required": true,

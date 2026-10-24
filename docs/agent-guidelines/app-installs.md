@@ -132,6 +132,24 @@ standard macOS Applications directories and Windows uninstall registry/common
 per-user application locations. Linux must report `linux_unsupported` and must
 not run an installer.
 
+CSGStudio platform support is not fixed in code. Its spec sets
+`platformManifest`, so `internal/apps/platform_manifest.go` reads
+`csgstudio/channels/release/downloads.json` in the background (10 minute TTL)
+and enables the app only when the `latest` release lists an artifact for the
+host OS/arch in a format the installer handles: macOS `.dmg`, Windows
+`.exe`/`.msi`, Linux `.AppImage`. Missing hosts report `linux_unsupported`,
+`windows_unsupported`, or `platform_unsupported`; the app stays disabled with
+`platform_checking` until the first check settles. An unreadable manifest keeps
+the last settled verdict (or stays disabled and retries every minute); only an
+already installed copy is enabled without a manifest, so it still launches
+offline. Publishing
+a new platform in `downloads.json` enables it without a csghub-lite release.
+The installer verifies `sha256` when the artifact provides one. Managed files
+live under `~/.local/share/csgstudio` (`versions/<version>`, `version`,
+`launch-target`); detection also covers `CSGStudio.app` in the standard macOS
+Applications directories and Windows uninstall registry/common per-user
+locations.
+
 ### Adding A New App
 
 When adding a script-based AI app:

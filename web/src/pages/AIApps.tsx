@@ -1072,10 +1072,10 @@ function LiveLogsDrawer({
   };
 
   const handleOpenCurrentApp = async () => {
-    if (app.id !== "csgclaw" && !(await ensureCloudAuthForModel(currentModelInfo))) {
+    if (!isModelFreeAIApp(app) && !(await ensureCloudAuthForModel(currentModelInfo))) {
       return;
     }
-    if (app.id === "csgclaw") {
+    if (isModelFreeAIApp(app)) {
       onOpenChat();
       return;
     }
@@ -1369,7 +1369,7 @@ function LiveLogsDrawer({
           )}
 
           {!isXiaozhi &&
-            app.id !== "csgclaw" &&
+            !isModelFreeAIApp(app) &&
             (!state.providerSwitchSupported || state.providerMode === "opencsg") &&
             (canSelectModel || currentModelID) && (
             <section class="space-y-2">
@@ -1905,6 +1905,12 @@ function drawerNotice(app: AIAppCatalogEntry, state: AIAppRuntimeState): string 
     if (state.phase === "windows_unsupported") {
       return t("aiApps.disabledWindowsNotice");
     }
+    if (reasonKey === "platform_unsupported") {
+      return t("aiApps.disabledPlatformNotice");
+    }
+    if (reasonKey === "platform_checking") {
+      return t("aiApps.disabledPlatformCheckingNotice");
+    }
     if (state.disabledReason) {
       return state.disabledReason;
     }
@@ -1951,9 +1957,14 @@ function canOpenAIApp(app: AIAppCatalogEntry, state: AIAppRuntimeState): boolean
       !state.disabled &&
       (state.runtimeRunning || state.runtimeStatus === "running");
   }
-  return ["openclaw", "csgclaw", "claude-code", "open-code", "open-code-review", "codex", "pi", "kimi-code", "dsh"].includes(app.id) &&
+  return ["openclaw", "csgclaw", "csgstudio", "claude-code", "open-code", "open-code-review", "codex", "pi", "kimi-code", "dsh"].includes(app.id) &&
     state.status === "installed" &&
     !state.disabled;
+}
+
+// Desktop apps that connect to CSGLite on their own and take no model choice.
+function isModelFreeAIApp(app: AIAppCatalogEntry): boolean {
+  return app.id === "csgclaw" || app.id === "csgstudio";
 }
 
 function isBuiltinAIApp(app: AIAppCatalogEntry | undefined): boolean {

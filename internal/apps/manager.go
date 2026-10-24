@@ -76,12 +76,15 @@ type appSpec struct {
 	progressMode   string
 	supported      bool
 	disabledReason string
-	versionArgs    []string
-	latest         *latestVersionSource
-	unix           *scriptSource
-	windows        *scriptSource
-	uninstallUnix  *scriptSource
-	uninstallWin   *scriptSource
+	// platformManifest apps derive supported/disabledReason at runtime from
+	// whether latest's downloads.json publishes a package for this host.
+	platformManifest bool
+	versionArgs      []string
+	latest           *latestVersionSource
+	unix             *scriptSource
+	windows          *scriptSource
+	uninstallUnix    *scriptSource
+	uninstallWin     *scriptSource
 }
 
 type appState struct {
@@ -120,6 +123,17 @@ type Manager struct {
 
 	xiaozhiAvailability        xiaozhiAvailability
 	xiaozhiAvailabilityExpires time.Time
+
+	// platformChecks tracks downloads.json availability checks for
+	// platformManifest apps. Guarded by mu.
+	platformChecks map[string]*platformCheck
+}
+
+type platformCheck struct {
+	expiresAt time.Time
+	running   bool
+	// settled is true once a downloads.json read has decided availability.
+	settled bool
 }
 
 type installDetectionState struct {
@@ -139,6 +153,8 @@ func NewManager(cfg *config.Config) *Manager {
 		states:      make(map[string]*appState),
 		latestCache: make(map[string]latestVersionCacheEntry),
 		latestJobs:  make(map[string]struct{}),
+
+		platformChecks: make(map[string]*platformCheck),
 	}
 
 	for _, spec := range m.specs {
@@ -335,6 +351,31 @@ func appSpecs() []appSpec {
 			},
 			uninstallWin: &scriptSource{
 				embeddedPath: "scripts/csgclaw-uninstall.ps1",
+			},
+		},
+		{
+			id:               csgstudioAppID,
+			binaryName:       "csgstudio",
+			installMode:      "script",
+			progressMode:     progressModePercent,
+			disabledReason:   platformCheckingReason,
+			platformManifest: true,
+			latest: &latestVersionSource{
+				baseURL: csgstudioManifestURL,
+				envVar:  csgstudioManifestEnvVar,
+				format:  "downloads-json",
+			},
+			unix: &scriptSource{
+				embeddedPath: "scripts/csgstudio-install.sh",
+			},
+			windows: &scriptSource{
+				embeddedPath: "scripts/csgstudio-install.ps1",
+			},
+			uninstallUnix: &scriptSource{
+				embeddedPath: "scripts/csgstudio-uninstall.sh",
+			},
+			uninstallWin: &scriptSource{
+				embeddedPath: "scripts/csgstudio-uninstall.ps1",
 			},
 		},
 		{
@@ -544,6 +585,9 @@ func (m *Manager) RefreshAll(ctx context.Context) error {
 				m.refreshXiaozhiStateLocked(ctx, st)
 			}
 			continue
+		}
+		if spec.platformManifest {
+			m.schedulePlatformCheckLocked(spec)
 		}
 		if st.running || !spec.supported {
 			continue
@@ -1675,6 +1719,8 @@ func inferLegacyManagedInstall(spec appSpec, installPath string) bool {
 		return looksLikeZCodeInstall(installPath)
 	case "csgclaw":
 		return looksLikeCSGClawDesktopInstall(installPath)
+	case csgstudioAppID:
+		return looksLikeCSGStudioInstall(installPath)
 	case "openclaw":
 		return looksLikeLegacyOpenClawInstall(installPath)
 	case "kimi-code":
