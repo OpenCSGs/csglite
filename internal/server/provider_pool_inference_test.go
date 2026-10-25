@@ -673,3 +673,73 @@ func TestProviderPoolRequestAffinityKeySeparatesSessionsWithSharedPreamble(t *te
 		t.Fatal("two sessions with a shared preamble got the same key")
 	}
 }
+
+func TestProviderPoolFailureRecordsFailedMemberThenSkips(t *testing.T) {
+	now := time.Date(2026, 10, 22, 16, 48, 47, 0, time.UTC)
+	limited := func() (inference.Engine, error) {
+		return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) {
+			response := poolRuntimeResponse(`{"error":"limited"}`)
+			response.StatusCode = http.StatusTooManyRequests
+			return response, nil
+		}}, nil
+	}
+	engine := newPoolRuntimeTestEngine(&now,
+		providerPoolEngineMember{member: config.ProviderPoolMember{ID: "m1", Source: "provider:minimax", Model: "MiniMax-M2", Priority: 0}, new: limited},
+		providerPoolEngineMember{member: config.ProviderPoolMember{ID: "m2", Source: "provider:opencsg", Model: "DeepSeek-V3", Priority: 1}, new: limited},
+	)
+	engine.poolName = "Deepseek-V"
+	engine.usage = &providerPoolUsageCapture{}
+
+	if _, err := engine.ChatCompletion(t.Context(), map[string]interface{}{"prompt": "x"}); inference.HTTPStatusCode(err) != http.StatusTooManyRequests {
+		t.Fatalf("upstream failure = %v, want HTTP 429", err)
+	}
+	source, failure := engine.usage.getFailure()
+	if failure == nil || failure.ActualMemberID != "m2" || failure.MemberModel != "DeepSeek-V3" ||
+		source != "provider:opencsg" || failure.PoolName != "Deepseek-V" ||
+		failure.FallbackCount != 2 || failure.LimitedCount != 2 {
+		t.Fatalf("upstream failure route = %q %#v", source, failure)
+	}
+
+	now = now.Add(8 * time.Second)
+	engine.usage = &providerPoolUsageCapture{}
+	_, err := engine.ChatCompletion(t.Context(), map[string]interface{}{"prompt": "x"})
+	if inference.HTTPStatusCode(err) != http.StatusTooManyRequests {
+		t.Fatalf("skipped pool error = %v, want HTTP 429", err)
+	}
+	for _, want := range []string{"MiniMax-M2: cooling down 52s", "DeepSeek-V3: cooling down 52s"} {
+		if !strings.Contains(inference.HTTPErrorMessage(err), want) {
+			t.Fatalf("skipped pool error = %q, want it to contain %q", inference.HTTPErrorMessage(err), want)
+		}
+	}
+	source, failure = engine.usage.getFailure()
+	if failure == nil || failure.ActualMemberID != "" || failure.MemberModel != "" || source != poolSource("pool") {
+		t.Fatalf("skipped pool route = %q %#v", source, failure)
+	}
+}
+
+func TestProviderPoolUsageMiddlewareAttributesFailedRequest(t *testing.T) {
+	run := func(succeed bool) observationMetadataSnapshot {
+		metadata := &observationMetadata{}
+		handler := providerPoolUsageMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capture := providerPoolUsageCaptureFromContext(r.Context())
+			capture.setFailure("provider:minimax", apiUsagePoolMetadata{PoolID: "p", PoolName: "Pool", PoolModel: "pool-model", ActualMemberID: "m1", MemberModel: "MiniMax-M2"})
+			if succeed {
+				capture.set("provider:opencsg", apiUsagePoolMetadata{PoolID: "p", MemberModel: "DeepSeek-V3"})
+				observationFromContext(r.Context()).setUsage("pool-model", "provider:opencsg", "provider", "OpenCSG", 1, 1, &apiUsagePoolMetadata{PoolID: "p", MemberModel: "DeepSeek-V3"})
+			}
+		}))
+		request := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		request = request.WithContext(context.WithValue(request.Context(), observationContextKey{}, metadata))
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+		return metadata.snapshot()
+	}
+
+	failed := run(false)
+	if failed.pool == nil || failed.pool.MemberModel != "MiniMax-M2" || failed.source != "provider:minimax" || failed.model != "pool-model" {
+		t.Fatalf("failed request observation = %#v", failed)
+	}
+	succeeded := run(true)
+	if succeeded.pool == nil || succeeded.pool.MemberModel != "DeepSeek-V3" || succeeded.source != "provider:opencsg" {
+		t.Fatalf("successful request observation = %#v", succeeded)
+	}
+}

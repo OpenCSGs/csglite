@@ -9,6 +9,7 @@ import (
 
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
+	"github.com/opencsgs/csglite/internal/observability"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -227,5 +228,64 @@ func TestProviderPoolRoutesToFallbackMember(t *testing.T) {
 	}
 	if got := resp.Header.Get(providerPoolFallbackCountHeader); got != "1" {
 		t.Fatalf("fallback count header = %q, want 1", got)
+	}
+}
+
+func TestProviderPoolFailedRequestIsObservedWithFailedMember(t *testing.T) {
+	s := newTestServer(t)
+	limited := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":{"message":"rate limited"}}`, http.StatusTooManyRequests)
+	}))
+	defer limited.Close()
+	if err := config.SaveProviders([]config.ThirdPartyProvider{
+		{ID: "first", Name: "First", BaseURL: limited.URL + "/v1", APIKey: "one", Enabled: true},
+		{ID: "second", Name: "Second", BaseURL: limited.URL + "/v1", APIKey: "two", Enabled: true},
+	}); err != nil {
+		t.Fatalf("save providers: %v", err)
+	}
+	if err := config.SaveProviderPools([]config.ProviderPool{{
+		ID: "code", Name: "Code", Model: "code-pool", Enabled: true,
+		Members: []config.ProviderPoolMember{
+			{ID: "first", Source: "provider:first", Model: "upstream-first", Priority: 0, Weight: 1},
+			{ID: "second", Source: "provider:second", Model: "upstream-second", Priority: 1, Weight: 1},
+		},
+	}}); err != nil {
+		t.Fatalf("save pools: %v", err)
+	}
+
+	send := func() {
+		body := `{"model":"code-pool","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:12345"
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		s.routes().ServeHTTP(w, req)
+		if w.Code != http.StatusTooManyRequests {
+			t.Fatalf("status = %d, want 429; body=%s", w.Code, w.Body.String())
+		}
+	}
+	latest := func() observability.RequestRecord {
+		s.observabilityMu.RLock()
+		defer s.observabilityMu.RUnlock()
+		page, err := s.observability.ListRequests(t.Context(), observability.RequestFilter{})
+		if err != nil || len(page.Items) == 0 {
+			t.Fatalf("list observations = %#v, %v", page, err)
+		}
+		return page.Items[0]
+	}
+
+	send()
+	attempted := latest()
+	if attempted.Status != "failed" || attempted.PoolName != "Code" || attempted.MemberModel != "upstream-second" ||
+		attempted.ActualMemberID != "second" || attempted.SourceName != "Second" || attempted.FallbackCount != 2 {
+		t.Fatalf("attempted failure observation = %#v", attempted)
+	}
+
+	send()
+	skipped := latest()
+	if skipped.ID == attempted.ID || skipped.PoolName != "Code" || skipped.MemberModel != "" ||
+		!strings.Contains(skipped.ErrorMessage, "upstream-first: cooling down") ||
+		!strings.Contains(skipped.ErrorMessage, "upstream-second: cooling down") {
+		t.Fatalf("skipped failure observation = %#v", skipped)
 	}
 }

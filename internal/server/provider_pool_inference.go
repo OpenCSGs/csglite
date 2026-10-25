@@ -109,6 +109,10 @@ type providerPoolUsageCapture struct {
 	source   string
 	metadata *apiUsagePoolMetadata
 	affinity string
+	// failure holds the pool route of a request that failed. It is kept apart
+	// from metadata so usage accounting never charges a failed request.
+	failureSource string
+	failure       *apiUsagePoolMetadata
 }
 
 type providerPoolUsageContextKey struct{}
@@ -121,6 +125,9 @@ func providerPoolUsageMiddleware(next http.Handler) http.Handler {
 		// in one slot, so its prompt cache survives other conversations.
 		ctx = inference.WithSlotAffinity(ctx, capture.affinity)
 		next.ServeHTTP(w, r.WithContext(ctx))
+		if source, failure := capture.getFailure(); failure != nil {
+			observationFromContext(ctx).setFailedRoute(source, failure)
+		}
 	})
 }
 
@@ -239,6 +246,30 @@ func (c *providerPoolUsageCapture) get() (string, *apiUsagePoolMetadata) {
 	return c.source, &copy
 }
 
+func (c *providerPoolUsageCapture) setFailure(source string, metadata apiUsagePoolMetadata) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failureSource = strings.TrimSpace(source)
+	copy := metadata
+	c.failure = &copy
+}
+
+func (c *providerPoolUsageCapture) getFailure() (string, *apiUsagePoolMetadata) {
+	if c == nil {
+		return "", nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.failure == nil || c.metadata != nil {
+		return "", nil
+	}
+	copy := *c.failure
+	return c.failureSource, &copy
+}
+
 func (c *providerPoolUsageCapture) affinityKey() string {
 	if c == nil {
 		return ""
@@ -322,15 +353,24 @@ func (e *providerPoolEngine) Embeddings(ctx context.Context, reqBody map[string]
 
 func (e *providerPoolEngine) runChat(ctx context.Context, inputTokens, estimatedTokens int, onToken inference.TokenCallback, call func(inference.Engine, inference.TokenCallback) (string, error)) (string, error) {
 	var lastErr error
+	var failed *config.ProviderPoolMember
+	var skips []string
 	fallbackCount := int64(0)
 	limitedCount := int64(0)
+	defer func() {
+		if lastErr != nil {
+			e.captureFailure(failed, fallbackCount, limitedCount)
+		}
+	}()
 	for _, member := range e.orderedMembers() {
-		admission, ok := e.admit(member.member, estimatedTokens)
-		if !ok {
+		admission, skipped := e.admit(member.member, estimatedTokens)
+		if skipped != "" {
+			skips = append(skips, providerPoolMemberLabel(member.member)+": "+skipped)
 			fallbackCount++
 			limitedCount++
 			continue
 		}
+		failed = &member.member
 		eng, err := member.new()
 		if err == nil {
 			var result string
@@ -374,7 +414,8 @@ func (e *providerPoolEngine) runChat(ctx context.Context, inputTokens, estimated
 	}
 	if lastErr == nil {
 		if len(e.members) > 0 {
-			return "", inference.NewHTTPStatusError(http.StatusTooManyRequests, "provider pool capacity is exhausted")
+			lastErr = providerPoolExhaustedError(skips)
+			return "", lastErr
 		}
 		lastErr = fmt.Errorf("provider pool has no available members")
 	}
@@ -383,15 +424,24 @@ func (e *providerPoolEngine) runChat(ctx context.Context, inputTokens, estimated
 
 func (e *providerPoolEngine) runProxy(ctx context.Context, estimatedTokens int, collectActual bool, call func(inference.Engine) (*http.Response, error)) (*http.Response, error) {
 	var lastErr error
+	var failed *config.ProviderPoolMember
+	var skips []string
 	fallbackCount := 0
 	limitedCount := 0
+	defer func() {
+		if lastErr != nil {
+			e.captureFailure(failed, int64(fallbackCount), int64(limitedCount))
+		}
+	}()
 	for _, member := range e.orderedMembers() {
-		admission, ok := e.admit(member.member, estimatedTokens)
-		if !ok {
+		admission, skipped := e.admit(member.member, estimatedTokens)
+		if skipped != "" {
+			skips = append(skips, providerPoolMemberLabel(member.member)+": "+skipped)
 			fallbackCount++
 			limitedCount++
 			continue
 		}
+		failed = &member.member
 		eng, err := member.new()
 		retryAfter := ""
 		if err == nil {
@@ -439,7 +489,8 @@ func (e *providerPoolEngine) runProxy(ctx context.Context, estimatedTokens int, 
 	}
 	if lastErr == nil {
 		if len(e.members) > 0 {
-			return nil, inference.NewHTTPStatusError(http.StatusTooManyRequests, "provider pool capacity is exhausted")
+			lastErr = providerPoolExhaustedError(skips)
+			return nil, lastErr
 		}
 		lastErr = fmt.Errorf("provider pool has no available members")
 	}
@@ -458,6 +509,42 @@ func (e *providerPoolEngine) captureUsage(member config.ProviderPoolMember, fall
 		FallbackCount:  fallbackCount,
 		LimitedCount:   limitedCount,
 	})
+}
+
+// captureFailure records the member whose error the request returned, so a
+// failed request is attributed to it. When every member was skipped, member is
+// nil and only the pool is recorded.
+func (e *providerPoolEngine) captureFailure(member *config.ProviderPoolMember, fallbackCount, limitedCount int64) {
+	metadata := apiUsagePoolMetadata{
+		PoolID:        e.poolID,
+		PoolName:      e.poolName,
+		PoolModel:     e.modelID,
+		Policy:        e.policy,
+		FallbackCount: fallbackCount,
+		LimitedCount:  limitedCount,
+	}
+	source := poolSource(e.poolID)
+	if member != nil {
+		metadata.ActualMemberID = member.ID
+		metadata.MemberModel = member.Model
+		source = member.Source
+	}
+	e.usage.setFailure(source, metadata)
+}
+
+func providerPoolMemberLabel(member config.ProviderPoolMember) string {
+	if model := strings.TrimSpace(member.Model); model != "" {
+		return model
+	}
+	return member.ID
+}
+
+func providerPoolExhaustedError(skips []string) error {
+	message := "provider pool capacity is exhausted"
+	if len(skips) > 0 {
+		message += ": " + strings.Join(skips, "; ")
+	}
+	return inference.NewHTTPStatusError(http.StatusTooManyRequests, message)
 }
 
 func (e *providerPoolEngine) affinityCacheKey() string {
@@ -568,8 +655,9 @@ func (e *providerPoolEngine) clock() time.Time {
 }
 
 // admit atomically reserves request, token, and concurrency capacity. It never
-// waits: unavailable members are skipped so routing can immediately fall back.
-func (e *providerPoolEngine) admit(member config.ProviderPoolMember, estimatedTokens int) (providerPoolAdmission, bool) {
+// waits: unavailable members are skipped so routing can immediately fall back,
+// and the returned reason says why a member was skipped.
+func (e *providerPoolEngine) admit(member config.ProviderPoolMember, estimatedTokens int) (providerPoolAdmission, string) {
 	if estimatedTokens < 1 {
 		estimatedTokens = 1
 	}
@@ -588,17 +676,21 @@ func (e *providerPoolEngine) admit(member config.ProviderPoolMember, estimatedTo
 	}
 	state.requests = pruneProviderPoolRequests(state.requests, cutoff)
 	state.tokens = pruneProviderPoolTokens(state.tokens, cutoff)
-	if now.Before(state.cooldown) ||
-		(member.MaxConcurrent > 0 && state.concurrent >= member.MaxConcurrent) ||
-		(member.RequestsPM > 0 && len(state.requests) >= member.RequestsPM) ||
-		(member.TokensPM > 0 && providerPoolTokenTotal(state.tokens)+estimatedTokens > member.TokensPM) {
-		return providerPoolAdmission{}, false
+	switch {
+	case now.Before(state.cooldown):
+		return providerPoolAdmission{}, fmt.Sprintf("cooling down %s after a rate limit", state.cooldown.Sub(now).Round(time.Second))
+	case member.MaxConcurrent > 0 && state.concurrent >= member.MaxConcurrent:
+		return providerPoolAdmission{}, fmt.Sprintf("at the concurrency limit of %d", member.MaxConcurrent)
+	case member.RequestsPM > 0 && len(state.requests) >= member.RequestsPM:
+		return providerPoolAdmission{}, fmt.Sprintf("at the limit of %d requests per minute", member.RequestsPM)
+	case member.TokensPM > 0 && providerPoolTokenTotal(state.tokens)+estimatedTokens > member.TokensPM:
+		return providerPoolAdmission{}, fmt.Sprintf("at the limit of %d tokens per minute", member.TokensPM)
 	}
 	state.nextToken++
 	state.requests = append(state.requests, now)
 	state.tokens = append(state.tokens, providerPoolUsageEvent{id: state.nextToken, at: now, tokens: estimatedTokens})
 	state.concurrent++
-	return providerPoolAdmission{key: key, tokenID: state.nextToken, estimated: estimatedTokens}, true
+	return providerPoolAdmission{key: key, tokenID: state.nextToken, estimated: estimatedTokens}, ""
 }
 
 // complete replaces the admission estimate with actual total usage when known
