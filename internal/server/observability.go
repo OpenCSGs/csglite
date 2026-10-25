@@ -104,6 +104,27 @@ func (m *observationMetadata) setUsage(model, source, sourceType, sourceName str
 	}
 }
 
+// setFailedRoute attributes a failed provider pool request to the member that
+// failed, unless the handler already recorded usage for the request.
+func (m *observationMetadata) setFailedRoute(source string, pool *apiUsagePoolMetadata) {
+	if m == nil || pool == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pool != nil {
+		return
+	}
+	if m.model == "" {
+		m.model = pool.PoolModel
+	}
+	m.source = strings.TrimSpace(source)
+	m.sourceType = ""
+	m.sourceName = ""
+	copy := *pool
+	m.pool = &copy
+}
+
 func (m *observationMetadata) snapshot() observationMetadataSnapshot {
 	if m == nil {
 		return observationMetadataSnapshot{}
