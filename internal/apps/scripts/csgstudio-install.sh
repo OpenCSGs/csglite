@@ -6,6 +6,7 @@ MANIFEST_URL="${CSGHUB_LITE_CSGSTUDIO_MANIFEST_URL:-$DEFAULT_MANIFEST_URL}"
 RUNTIME_ROOT="${HOME}/.local/share/csgstudio"
 WORKDIR=""
 MOUNT_DIR=""
+STAGING_TARGET=""
 
 emit_progress() {
   printf 'CSGHUB_PROGRESS|%s|%s\n' "$1" "$2"
@@ -15,6 +16,9 @@ cleanup() {
   if [[ -n "$MOUNT_DIR" && -d "$MOUNT_DIR" ]]; then
     hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
     rmdir "$MOUNT_DIR" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$STAGING_TARGET" && -d "$STAGING_TARGET" ]]; then
+    rm -rf "$STAGING_TARGET"
   fi
   if [[ -n "$WORKDIR" && -d "$WORKDIR" ]]; then
     rm -rf "$WORKDIR"
@@ -60,6 +64,21 @@ artifact_entry() {
   done
 }
 
+# /Applications is group-writable for admin users, so installing there needs no
+# sudo. Standard users fall back to ~/Applications, which Finder and Launchpad
+# also index.
+darwin_applications_dir() {
+  if [[ -n "${CSGHUB_LITE_CSGSTUDIO_APPLICATIONS_DIR:-}" ]]; then
+    mkdir -p "$CSGHUB_LITE_CSGSTUDIO_APPLICATIONS_DIR"
+    printf '%s' "$CSGHUB_LITE_CSGSTUDIO_APPLICATIONS_DIR"
+  elif [[ -d /Applications && -w /Applications ]]; then
+    printf '%s' /Applications
+  else
+    mkdir -p "${HOME}/Applications"
+    printf '%s' "${HOME}/Applications"
+  fi
+}
+
 sha256_file() {
   if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
@@ -88,7 +107,7 @@ esac
 
 required_commands=(curl)
 if [[ "$os" == "darwin" ]]; then
-  required_commands+=(hdiutil)
+  required_commands+=(hdiutil ditto)
 fi
 for command_name in "${required_commands[@]}"; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -142,11 +161,24 @@ case "$os" in
     fi
 
     emit_progress 90 installing_runtime
-    installed_target="${version_dir}/$(basename "$app_bundle")"
-    rm -rf "$version_dir"
-    mkdir -p "$version_dir"
-    cp -R "$app_bundle" "$version_dir/"
-    xattr -cr "$installed_target" >/dev/null 2>&1 || true
+    applications_dir="$(darwin_applications_dir)"
+    installed_target="${applications_dir}/$(basename "$app_bundle")"
+    STAGING_TARGET="${installed_target}.installing.$$"
+    rm -rf "$STAGING_TARGET"
+    ditto "$app_bundle" "$STAGING_TARGET"
+    xattr -cr "$STAGING_TARGET" >/dev/null 2>&1 || true
+    if [[ -d "$installed_target" ]]; then
+      app_name="$(basename "$installed_target" .app)"
+      osascript -e "if application \"${app_name}\" is running then tell application \"${app_name}\" to quit" >/dev/null 2>&1 || true
+      rm -rf "$installed_target"
+    fi
+    mv "$STAGING_TARGET" "$installed_target"
+    STAGING_TARGET=""
+    mkdir -p "$RUNTIME_ROOT"
+    printf '%s\n' "$installed_target" > "${RUNTIME_ROOT}/managed-bundle"
+    # Earlier releases kept the bundle under the runtime root, where Finder and
+    # Launchpad never list it.
+    rm -rf "${RUNTIME_ROOT}/versions" "${RUNTIME_ROOT}/current"
     ;;
   linux)
     case "$(printf '%s' "$package_path" | tr '[:upper:]' '[:lower:]')" in
@@ -166,9 +198,12 @@ case "$os" in
     ;;
 esac
 
+mkdir -p "$RUNTIME_ROOT"
 printf '%s\n' "$version" > "${RUNTIME_ROOT}/version"
 printf '%s\n' "$installed_target" > "${RUNTIME_ROOT}/launch-target"
-ln -sfn "$version_dir" "${RUNTIME_ROOT}/current"
+if [[ "$os" == "linux" ]]; then
+  ln -sfn "$version_dir" "${RUNTIME_ROOT}/current"
+fi
 
 emit_progress 100 complete
 printf 'INFO: installed CSGStudio %s to %s\n' "$version" "$installed_target"

@@ -144,11 +144,16 @@ the last settled verdict (or stays disabled and retries every minute); only an
 already installed copy is enabled without a manifest, so it still launches
 offline. Publishing
 a new platform in `downloads.json` enables it without a csghub-lite release.
-The installer verifies `sha256` when the artifact provides one. Managed files
-live under `~/.local/share/csgstudio` (`versions/<version>`, `version`,
-`launch-target`); detection also covers `CSGStudio.app` in the standard macOS
-Applications directories and Windows uninstall registry/common per-user
-locations.
+The installer verifies `sha256` when the artifact provides one. On macOS it
+copies `CSGStudio.app` into `/Applications` when that directory is writable
+(admin users, no sudo) and into `~/Applications` otherwise, so the app shows up
+in Finder and Launchpad. The bundle path is recorded in
+`~/.local/share/csgstudio/managed-bundle`; only a bundle recorded there is
+`managed=true` and removed by the uninstaller. Linux keeps the AppImage under
+`~/.local/share/csgstudio/versions/<version>`. Metadata (`version`,
+`launch-target`) lives under `~/.local/share/csgstudio` on every platform;
+detection also covers `CSGStudio.app` in the standard macOS Applications
+directories and Windows uninstall registry/common per-user locations.
 
 ### Adding A New App
 

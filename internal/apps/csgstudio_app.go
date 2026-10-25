@@ -177,5 +177,23 @@ func looksLikeCSGStudioInstall(installPath string) bool {
 		return false
 	}
 	target, ok := readCSGStudioLaunchTargetFile(home)
-	return ok && samePath(target, installPath) && pathWithinBase(target, csgstudioRuntimeRoot(home))
+	if !ok || !samePath(target, installPath) {
+		return false
+	}
+	if pathWithinBase(target, csgstudioRuntimeRoot(home)) {
+		return true
+	}
+	bundle, ok := readCSGStudioManagedBundle(home)
+	return ok && samePath(target, bundle)
+}
+
+// readCSGStudioManagedBundle returns the macOS app bundle the installer copied
+// into an Applications directory.
+func readCSGStudioManagedBundle(home string) (string, bool) {
+	data, err := os.ReadFile(filepath.Join(csgstudioRuntimeRoot(home), "managed-bundle"))
+	if err != nil {
+		return "", false
+	}
+	bundle := strings.TrimSpace(string(data))
+	return bundle, bundle != ""
 }

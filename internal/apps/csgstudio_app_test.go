@@ -143,6 +143,46 @@ func TestDetectCSGStudioFromManagedLaunchTarget(t *testing.T) {
 	}
 }
 
+func TestDetectCSGStudioManagedBundleInApplications(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS app bundle install")
+	}
+	home := setTempHome(t)
+	bundle := filepath.Join(home, "Applications", csgstudioAppBundleName)
+	if err := os.MkdirAll(bundle, 0o755); err != nil {
+		t.Fatalf("mkdir app bundle: %v", err)
+	}
+	root := csgstudioRuntimeRoot(home)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir runtime root: %v", err)
+	}
+	for name, value := range map[string]string{"launch-target": bundle, "managed-bundle": bundle, "version": "0.2.0"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(value+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	installPath, version, ok := detectCSGStudioInstall()
+	if !ok || installPath != bundle || version != "0.2.0" {
+		t.Fatalf("detectCSGStudioInstall() = (%q, %q, %v), want (%q, 0.2.0, true)", installPath, version, ok, bundle)
+	}
+	if !looksLikeCSGStudioInstall(installPath) {
+		t.Fatal("bundle recorded in managed-bundle should be reported as managed")
+	}
+
+	// A manual path override elsewhere must not inherit the managed flag.
+	other := filepath.Join(home, "Other", csgstudioAppBundleName)
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatalf("mkdir other bundle: %v", err)
+	}
+	if err := SetCSGStudioLaunchTarget(other); err != nil {
+		t.Fatalf("SetCSGStudioLaunchTarget: %v", err)
+	}
+	if looksLikeCSGStudioInstall(other) {
+		t.Fatal("manual CSGStudio path must not be reported as managed")
+	}
+}
+
 func writeManagedCSGStudio(t *testing.T, home string) string {
 	t.Helper()
 	root := csgstudioRuntimeRoot(home)
