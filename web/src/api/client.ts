@@ -35,6 +35,8 @@ export interface ModelInfo {
   license?: string;
   llm_type?: string;
   owned_by?: string;
+  /** Featured cloud model, such as the gateway's auto router. */
+  hot?: boolean;
   pricing?: ModelPricing;
 }
 

@@ -4,6 +4,7 @@ import { useEffect } from "preact/hooks";
 import { t, locale } from "../i18n";
 import { formatNumber, formatDateTime, formatChartDate, chartXAxisLabels } from "../utils/format";
 import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
+import { modelHotIcon } from "../utils/modelOptions";
 import { ProviderModelModalityBadges, providerModelLabel, defaultProviderModelDisplayName } from "../components/ProviderModelBadges";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import {
@@ -2281,7 +2282,7 @@ function ProviderDialog({
                       />
                       <span class="min-w-0 flex-1">
                         <span class="flex min-w-0 flex-wrap items-center gap-1.5">
-                          <span class="truncate text-sm font-medium text-gray-900">{providerModelLabel(model)}</span>
+                          <span class="truncate text-sm font-medium text-gray-900">{modelHotIcon(model)}{providerModelLabel(model)}</span>
                           <ProviderModelModalityBadges model={model} showPipelineTag showInputs showOutputs />
                         </span>
                         <span class="block truncate text-xs text-gray-500">{model.model}</span>

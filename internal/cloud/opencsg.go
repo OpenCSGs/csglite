@@ -364,6 +364,7 @@ func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
 	pricing := extractPricing(item.Metadata)
 
 	return api.ModelInfo{
+		Hot:              isHotCloudModel(item.ID),
 		Name:             item.ID,
 		Model:            item.ID,
 		Format:           "cloud",
@@ -385,6 +386,12 @@ func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
 
 func cloudModelProvider(string) string {
 	return "csghub"
+}
+
+// isHotCloudModel marks the gateway's auto router as a featured model so UIs
+// can list it first and highlight it.
+func isHotCloudModel(modelID string) bool {
+	return strings.EqualFold(strings.TrimSpace(modelID), "auto")
 }
 
 func cloneStringSlice(values []string) []string {

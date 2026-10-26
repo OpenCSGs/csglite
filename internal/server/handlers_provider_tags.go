@@ -300,7 +300,11 @@ func (s *Server) providerModelFromCatalog(r *http.Request, provider modelManageP
 
 func (s *Server) listProviderManageCatalogModels(r *http.Request, provider modelManageProvider) ([]api.ModelInfo, error) {
 	if provider.IsCloud() {
-		return s.listCloudModelCatalog(r.Context(), requestWantsModelRefresh(r))
+		models, err := s.listCloudModelCatalog(r.Context(), requestWantsModelRefresh(r))
+		if err != nil {
+			return nil, err
+		}
+		return putHotModelsFirst(models), nil
 	}
 	return listOpenAICompatibleProviderModels(r.Context(), provider.ThirdParty)
 }

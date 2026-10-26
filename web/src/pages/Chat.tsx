@@ -23,9 +23,11 @@ import type { DecisionLabels } from "../utils/decision";
 import {
   formatModelOptionLabel as modelLabel,
   loadModelOptions,
+  modelHotIcon,
   modelOptionKey as modelKey,
   realtimeChatOptions as buildRealtimeChatOptions,
   realtimeVoiceOptions as buildRealtimeVoiceOptions,
+  sortHotModelsFirst,
 } from "../utils/modelOptions";
 
 const availableModels = signal<ModelInfo[]>([]);
@@ -686,6 +688,10 @@ const selectedModelInfo = computed(() =>
   availableModels.value.find((x) => modelKey(x) === selectedModelKey.value)
 );
 
+// Only the model dropdown puts hot models first. Other consumers, such as the
+// realtime voice dialog and the default-model fallback, keep the source order.
+const sortedAvailableModels = computed(() => sortHotModelsFirst(availableModels.value));
+
 function setAvailableModels(models: ModelInfo[]) {
   availableModels.value = models;
   if (selectedModelKey.value && models.some((x) => modelKey(x) === selectedModelKey.value)) {
@@ -856,6 +862,9 @@ async function refreshConversationList() {
 
 // Keep the model selector in sync with the conversation being opened so
 // continuing an old chat uses the model it was created with (issue #70).
+// Only an explicit switch does this: the conversation restored when the page
+// opens must not override the model the user selected last, otherwise the
+// selector comes back on a model the user did not choose.
 // The sync is view-local: it never overwrites the user's manually saved
 // preference, and conversations without a recorded model (and new chats)
 // fall back to that saved preference.
@@ -877,12 +886,14 @@ function syncModelSelectionToConversation(conv: Conversation) {
   }
 }
 
-async function loadConversation(id: string) {
+async function loadConversation(id: string, options?: { syncModel?: boolean }) {
   try {
     const conv = await getConversation(id);
     activeConversation.value = conv;
     activeSessionId.value = conv.id;
-    syncModelSelectionToConversation(conv);
+    if (options?.syncModel !== false) {
+      syncModelSelectionToConversation(conv);
+    }
   } catch {
     /* ignore */
   }
@@ -1034,7 +1045,10 @@ export function Chat() {
       await refreshConversationList();
       const metas = conversationMetas.value;
       if (metas.length > 0) {
-        await loadConversation(metas[0].id);
+        // Entering the page restores the model the user selected last. Only
+        // when there is no saved preference does the restored conversation
+        // supply the model, as an explicit conversation switch does (issue #70).
+        await loadConversation(metas[0].id, { syncModel: !readSelectedModelKey() });
       } else {
         const conv = await createConversation({});
         activeConversation.value = conv;
@@ -2310,9 +2324,9 @@ export function Chat() {
                     value={selectedModelKey.value}
                     onChange={(e) => handleModelChange((e.target as HTMLSelectElement).value)}
                   >
-                    {availableModels.value.map((m) => (
+                    {sortedAvailableModels.value.map((m) => (
                       <option key={modelKey(m)} value={modelKey(m)}>
-                        {modelLabel(m)}
+                        {modelHotIcon(m)}{modelLabel(m)}
                       </option>
                     ))}
                   </select>

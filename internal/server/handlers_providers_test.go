@@ -993,6 +993,57 @@ func TestProviderTagsManageReplaceModels(t *testing.T) {
 	}
 }
 
+func TestCloudProviderTagsManagePutsHotModelsFirst(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	config.ResetProviderModelAllowlist()
+	t.Cleanup(config.ResetProviderModelAllowlist)
+
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{"id": "cloud/model-a", "task": "text-generation", "owned_by": "OpenCSG"},
+				{"id": "auto", "task": "text-generation", "owned_by": "OpenCSG"},
+				{"id": "cloud/model-b", "task": "text-generation", "owned_by": "OpenCSG"},
+			},
+		})
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cloud = cloud.NewService(apiServer.URL)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags/manage?provider=csghub", nil)
+	w := httptest.NewRecorder()
+	s.handleProviderTagsManageList(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cloud manage list status = %d body=%s", w.Code, w.Body.String())
+	}
+	var resp api.TagsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode cloud manage list: %v", err)
+	}
+	got := make([]string, 0, len(resp.Models))
+	for _, model := range resp.Models {
+		got = append(got, model.Model)
+	}
+	want := []string{"auto", "cloud/model-a", "cloud/model-b"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("manage models = %#v, want %#v", got, want)
+	}
+	if !resp.Models[0].Hot {
+		t.Fatal("auto.Hot = false, want true")
+	}
+	for _, model := range resp.Models[1:] {
+		if model.Hot {
+			t.Fatalf("%s.Hot = true, want false", model.Model)
+		}
+	}
+}
+
 func TestCloudProviderTagsManageModels(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

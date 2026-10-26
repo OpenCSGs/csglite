@@ -326,6 +326,25 @@ func sortModelsByPriority(models []api.ModelInfo) {
 	})
 }
 
+// putHotModelsFirst moves hot models to the front while keeping the relative
+// order of every other model, so catalogs that do not sort by priority still
+// surface featured models without reshuffling the rest.
+func putHotModelsFirst(models []api.ModelInfo) []api.ModelInfo {
+	if len(models) == 0 {
+		return models
+	}
+	hot := make([]api.ModelInfo, 0, len(models))
+	rest := make([]api.ModelInfo, 0, len(models))
+	for _, model := range models {
+		if model.Hot {
+			hot = append(hot, model)
+			continue
+		}
+		rest = append(rest, model)
+	}
+	return append(hot, rest...)
+}
+
 func isLocalModelInfo(model api.ModelInfo) bool {
 	source := strings.TrimSpace(strings.ToLower(model.Source))
 	format := strings.TrimSpace(strings.ToLower(model.Format))
