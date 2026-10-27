@@ -64,6 +64,43 @@ func TestModelInfoFromRemote_LabelFallsBackToID(t *testing.T) {
 	}
 }
 
+func TestModelInfoFromRemote_MarksAutoModelHot(t *testing.T) {
+	info, ok := modelInfoFromRemote(remoteModel{
+		ID:   "auto",
+		Task: "text-generation",
+	})
+	if !ok {
+		t.Fatal("expected auto model to be included")
+	}
+	if !info.Hot {
+		t.Fatal("Hot = false, want true for the auto router")
+	}
+
+	other, ok := modelInfoFromRemote(remoteModel{
+		ID:   "qwen3.8-max",
+		Task: "text-generation",
+	})
+	if !ok {
+		t.Fatal("expected regular model to be included")
+	}
+	if other.Hot {
+		t.Fatal("Hot = true, want false for a regular model")
+	}
+}
+
+func TestIsHotCloudModel(t *testing.T) {
+	for _, modelID := range []string{"auto", " Auto ", "AUTO"} {
+		if !isHotCloudModel(modelID) {
+			t.Fatalf("isHotCloudModel(%q) = false, want true", modelID)
+		}
+	}
+	for _, modelID := range []string{"", "auto-router", "qwen3.8-max"} {
+		if isHotCloudModel(modelID) {
+			t.Fatalf("isHotCloudModel(%q) = true, want false", modelID)
+		}
+	}
+}
+
 func TestModelInfoFromRemote_LabelUsesOfficialName(t *testing.T) {
 	info, ok := modelInfoFromRemote(remoteModel{
 		ID:           "Qwen/Qwen3Guard-Gen-0.6B:s-qwen-qwen3guard-gen-0-6b(OpenCSG)",

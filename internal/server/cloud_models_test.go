@@ -735,6 +735,34 @@ func TestSortModelsByPriorityKeepsLocalModelsFirst(t *testing.T) {
 	}
 }
 
+func TestPutHotModelsFirstKeepsOtherModelsInOrder(t *testing.T) {
+	models := []api.ModelInfo{
+		{Model: "b"},
+		{Model: "auto", Hot: true},
+		{Model: "c"},
+		{Model: "auto-2", Hot: true},
+	}
+
+	got := make([]string, 0, len(models))
+	for _, model := range putHotModelsFirst(models) {
+		got = append(got, model.Model)
+	}
+	want := []string{"auto", "auto-2", "b", "c"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("hot-first models = %#v, want %#v", got, want)
+	}
+}
+
+func TestPutHotModelsFirstPreservesEmptyInput(t *testing.T) {
+	if got := putHotModelsFirst(nil); got != nil {
+		t.Fatalf("putHotModelsFirst(nil) = %#v, want nil", got)
+	}
+	empty := []api.ModelInfo{}
+	if got := putHotModelsFirst(empty); got == nil || len(got) != 0 {
+		t.Fatalf("putHotModelsFirst(empty) = %#v, want non-nil empty", got)
+	}
+}
+
 func containsModelID(modelIDs []string, want string) bool {
 	for _, item := range modelIDs {
 		if item == want {

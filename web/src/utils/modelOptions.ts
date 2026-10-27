@@ -78,3 +78,21 @@ export function modelOptionDisplayName(model: ModelInfo): string {
 export function formatModelOptionLabel(model: ModelInfo): string {
   return `${modelOptionDisplayName(model)} [${modelOptionProviderName(model)}]`;
 }
+
+// Native <select> options only render text, so featured models are marked with
+// an emoji instead of an SVG icon.
+export function modelHotIcon(model: { hot?: boolean }): string {
+  return model.hot ? "🔥 " : "";
+}
+
+// sortHotModelsFirst keeps hot models at the top without changing the order of
+// the remaining models.
+export function sortHotModelsFirst(models: ModelInfo[]): ModelInfo[] {
+  const hot: ModelInfo[] = [];
+  const rest: ModelInfo[] = [];
+  for (const model of models) {
+    if (model.hot) hot.push(model);
+    else rest.push(model);
+  }
+  return hot.concat(rest);
+}

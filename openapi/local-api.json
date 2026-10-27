@@ -10721,6 +10721,10 @@
           "pricing": {
             "$ref": "#/components/schemas/ModelPricing"
           },
+          "hot": {
+            "type": "boolean",
+            "description": "Marks a featured cloud model, such as the gateway's auto router. UIs list hot models first and highlight them."
+          },
           "local_inference": {
             "$ref": "#/components/schemas/LocalInferenceSupport"
           },
