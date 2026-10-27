@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -624,6 +625,29 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	// value as fixed and skips its fit-to-free-memory auto-adjustment.
 	if effectiveNGPULayers >= 0 {
 		args = append(args, "-ngl", strconv.Itoa(effectiveNGPULayers))
+	}
+	// A model too large for this machine has part of its weights held by other
+	// machines, reached through loopback addresses the cluster has already
+	// tunnelled. llama-server treats them as extra devices and splits the
+	// weights across all of them by free memory.
+	if RPCEndpointsForModel != nil {
+		if endpoints, hostDevices := RPCEndpointsForModel(modelName); len(endpoints) > 0 {
+			args = append(args, "--rpc", strings.Join(endpoints, ","))
+			if !hostDevices {
+				// The weights go on the other machines only. A model is split
+				// because it does not fit here, and llama.cpp otherwise gives
+				// this machine a share by free memory and then adds the whole
+				// KV cache on top of it, which is what runs it out of GPU
+				// memory: a 27B loaded that way reported success and then
+				// failed every request with a compute error.
+				devices := make([]string, len(endpoints))
+				for i := range endpoints {
+					devices[i] = fmt.Sprintf("RPC%d", i)
+				}
+				args = append(args, "--device", strings.Join(devices, ","))
+			}
+			log.Printf("LLAMA: %s is split across %d machines, host devices used: %t", modelName, len(endpoints), hostDevices)
+		}
 	}
 
 	engine.cmd = exec.Command(binary, args...)
@@ -1375,4 +1399,45 @@ func appendEnvDefault(env []string, key, value string) []string {
 		}
 	}
 	return append(env, key+"="+value)
+}
+
+// LlamaBinaryPath reports the llama-server this build would launch, or the
+// empty string when none is installed.
+func LlamaBinaryPath() string { return findLlamaBinary() }
+
+// RPCEndpointsForModel, when set, contributes the --rpc endpoints that let one
+// model's weights be split across machines, and says whether this machine's
+// own devices should hold a share as well. It is a hook rather than another
+// parameter on every loader because only the cluster uses it, and threading it
+// through would grow half a dozen signatures that have nothing to do with it.
+var RPCEndpointsForModel func(modelName string) (endpoints []string, hostDevices bool)
+
+// llamaBuildOnce caches the build identifier, which costs a subprocess.
+var (
+	llamaBuildOnce sync.Once
+	llamaBuildID   string
+)
+
+var llamaBuildPattern = regexp.MustCompile(`build (\d+)`)
+
+// LlamaBuildID reports the llama.cpp build this machine runs, as the number
+// llama-server prints for itself. Two machines can only share one model's
+// weights when they run the same build: the RPC protocol carries no version
+// negotiation, and a mismatched pair fails to connect, after which
+// llama-server quietly loads the whole model locally instead of saying so.
+func LlamaBuildID() string {
+	llamaBuildOnce.Do(func() {
+		binary := findLlamaBinary()
+		if binary == "" {
+			return
+		}
+		out, err := exec.Command(binary, "--version").CombinedOutput()
+		if err != nil && len(out) == 0 {
+			return
+		}
+		if m := llamaBuildPattern.FindSubmatch(out); len(m) == 2 {
+			llamaBuildID = string(m[1])
+		}
+	})
+	return llamaBuildID
 }
