@@ -5113,7 +5113,7 @@
           "Compatibility"
         ],
         "summary": "OpenAI-compatible decisions",
-        "description": "OpenAI Decisions API: answers predicate, choice and score questions about shared input with calibrated probabilities. Served by local JEV models tagged jev or typed-decisions through their System 1 head: predicate uses the yes/no head, choice and score use the choice head (more than 16 options run as a tournament), and score is the probability-weighted level index. Native decision models such as Laya are answered by llama.cpp's /v1/systemone (predicate as noul; score takes 2-10 levels). Confidence is the gap between the two most likely options. Input images are not supported.",
+        "description": "OpenAI Decisions API: answers predicate, choice and score questions about shared input with calibrated probabilities. Served by local JEV models tagged jev or typed-decisions through their System 1 head: predicate uses the yes/no head, choice and score use the choice head (more than 16 options run as a tournament), and score is the probability-weighted level index. Native decision models such as Laya are answered by llama.cpp's /v1/systemone (predicate as noul; score takes 2-10 levels). Cloud models the gateway lists with the typed-decisions task are forwarded to the gateway's /v1/systemone. Confidence is the gap between the two most likely options. Input images are not supported.",
         "operationId": "createDecision",
         "parameters": [
           {
@@ -10692,11 +10692,11 @@
           },
           "typed_decisions": {
             "type": "boolean",
-            "description": "Local model that answers POST /v1/decisions: a JEV model tagged jev or typed-decisions whose System 1 block is downloaded, or a native decision model such as Laya."
+            "description": "Model that answers POST /v1/decisions: a local JEV model tagged jev or typed-decisions whose System 1 block is downloaded, a native decision model such as Laya, or a cloud model the gateway lists with the typed-decisions task."
           },
           "decision_only": {
             "type": "boolean",
-            "description": "Native decision model that cannot generate text (Laya, Kev, Clef, LFM2-D1-Omni); it serves POST /v1/decisions only and refuses chat requests."
+            "description": "Decision model that cannot generate text (a native head such as Laya, Kev, Clef or LFM2-D1-Omni, or a cloud model whose only task is typed-decisions); it serves POST /v1/decisions only and refuses chat requests."
           },
           "context_window": {
             "type": "integer"

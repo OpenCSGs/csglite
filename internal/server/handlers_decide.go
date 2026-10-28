@@ -1,13 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
 
+	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/decision"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
@@ -129,7 +132,29 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
-	if s.nativeDecisionType(req.Model) != "" {
+	// A downloaded model always wins over a cloud model of the same name.
+	if lm, err := s.manager.ResolveLocalModel(req.Model); err == nil {
+		s.handleLocalDecisions(w, r, req, lm)
+		return
+	}
+	cloudModel, err := s.isCloudTypedDecisionModel(r.Context(), req.Model)
+	if err != nil {
+		writeOpenAIInferenceError(w, err)
+		return
+	}
+	if cloudModel {
+		s.handleCloudDecisions(w, r, req)
+		return
+	}
+	writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
+		fmt.Sprintf("model %q is not a typed-decision model", req.Model))
+}
+
+// handleLocalDecisions answers a Decisions request with a downloaded model:
+// a native decision model reads the answers from its llama.cpp head, other
+// typed-decision models run their System 1 adapter.
+func (s *Server) handleLocalDecisions(w http.ResponseWriter, r *http.Request, req decision.OpenAIRequest, lm *model.LocalModel) {
+	if dir, err := s.manager.ModelPath(lm.FullName()); err == nil && s.nativeDecisionTypeAt(lm, dir) != "" {
 		s.handleNativeDecisions(w, r, req)
 		return
 	}
@@ -195,18 +220,70 @@ func (s *Server) handleNativeDecisions(w http.ResponseWriter, r *http.Request, r
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// nativeDecisionType returns the native decision type of a local model, or ""
-// when it is not a downloaded native decision model.
-func (s *Server) nativeDecisionType(modelID string) string {
-	lm, err := s.manager.ResolveLocalModel(modelID)
-	if err != nil || lm == nil {
-		return ""
-	}
-	dir, err := s.manager.ModelPath(lm.FullName())
+// handleCloudDecisions forwards a Decisions request to the gateway's System
+// One endpoint for a cloud typed-decision model and translates the answer
+// back to the OpenAI Decisions response.
+func (s *Server) handleCloudDecisions(w http.ResponseWriter, r *http.Request, req decision.OpenAIRequest) {
+	questions, err := decision.PrepareNativeOpenAI(req)
 	if err != nil {
-		return ""
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
 	}
-	return s.nativeDecisionTypeAt(lm, dir)
+	apiKey, err := s.cloudAPIKey(r.Context())
+	if err != nil {
+		writeOpenAIInferenceError(w, err)
+		return
+	}
+	data, err := s.cloud.SystemOne(r.Context(), apiKey, s.resolveCloudOriginalModelID(req.Model), questions.Body())
+	if err != nil {
+		writeOpenAIInferenceError(w, toInferenceError(err))
+		return
+	}
+	resp, err := questions.Answer(data, req.Model)
+	if err != nil {
+		writeOpenAIInferenceError(w, err)
+		return
+	}
+	s.recordAPIUsage(r, req.Model, req.Source, resp.Usage.InputTokens, resp.Usage.OutputTokens)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// isCloudTypedDecisionModel reports whether modelID is a cloud model the
+// gateway advertises as a typed-decision model. The model list is refreshed
+// (throttled to once per 30s) so a gateway-side task change is picked up
+// without restarting the server.
+func (s *Server) isCloudTypedDecisionModel(ctx context.Context, modelID string) (bool, error) {
+	if s == nil || s.cloud == nil {
+		return false, nil
+	}
+	models, err := s.listCloudModels(ctx, true)
+	if err != nil {
+		return false, err
+	}
+	modelID = strings.TrimSpace(modelID)
+	for _, item := range models {
+		if !strings.EqualFold(strings.TrimSpace(item.Source), "cloud") {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(item.Model), modelID) {
+			return item.TypedDecisions, nil
+		}
+	}
+	return false, nil
+}
+
+// toInferenceError translates a cloud gateway error into an inference error so
+// the OpenAI handler reports the upstream status instead of a generic 500.
+func toInferenceError(err error) error {
+	var statusErr *cloud.StatusError
+	if !errors.As(err, &statusErr) {
+		return err
+	}
+	if statusErr.StatusCode == http.StatusNotFound {
+		return inference.NewHTTPStatusError(http.StatusNotFound,
+			"this model needs a newer AIGateway that serves /v1/systemone")
+	}
+	return inference.NewHTTPStatusError(statusErr.StatusCode, statusErr.Message())
 }
 
 func (s *Server) nativeDecisionTypeAt(lm *model.LocalModel, dir string) string {

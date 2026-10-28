@@ -51,6 +51,38 @@ func TestModelInfoFromRemote_EmbeddingModel(t *testing.T) {
 	}
 }
 
+func TestModelInfoFromRemote_TypedDecisionsModel(t *testing.T) {
+	info, ok := modelInfoFromRemote(remoteModel{
+		ID:   "jev-1.13",
+		Task: "typed-decisions",
+	})
+	if !ok {
+		t.Fatal("expected typed-decisions model to be included")
+	}
+	if !info.TypedDecisions || !info.DecisionOnly {
+		t.Fatalf("typed-decisions model info = %#v", info)
+	}
+	if info.PipelineTag != "text-generation" {
+		t.Fatalf("PipelineTag = %q, want text-generation", info.PipelineTag)
+	}
+}
+
+func TestModelInfoFromRemote_ChatModelWithTypedDecisionsTask(t *testing.T) {
+	info, ok := modelInfoFromRemote(remoteModel{
+		ID:   "jev-1.13",
+		Task: "text-generation,typed-decisions",
+	})
+	if !ok {
+		t.Fatal("expected chat model to be included")
+	}
+	if !info.TypedDecisions || info.DecisionOnly {
+		t.Fatalf("chat model with typed-decisions task = %#v", info)
+	}
+	if info.PipelineTag != "text-generation" {
+		t.Fatalf("PipelineTag = %q, want text-generation", info.PipelineTag)
+	}
+}
+
 func TestModelInfoFromRemote_LabelFallsBackToID(t *testing.T) {
 	info, ok := modelInfoFromRemote(remoteModel{
 		ID:   "deepseek-v3.2",

@@ -383,12 +383,14 @@ type ModelInfo struct {
 	InputModalities   []string  `json:"input_modalities,omitempty"`
 	OutputModalities  []string  `json:"output_modalities,omitempty"`
 	HasMMProj         bool      `json:"has_mmproj,omitempty"`
-	// TypedDecisions marks a local model that answers typed decisions
-	// through POST /v1/decisions: a JEV model with its System 1 block, or a
-	// native decision model such as Laya.
+	// TypedDecisions marks a model that answers typed decisions through
+	// POST /v1/decisions: a local JEV model with its System 1 block, a
+	// native decision model such as Laya, or a cloud model the gateway
+	// lists with the typed-decisions task.
 	TypedDecisions bool `json:"typed_decisions,omitempty"`
-	// DecisionOnly marks a native decision model that cannot generate text
-	// (Laya and other encoder heads); it serves POST /v1/decisions only.
+	// DecisionOnly marks a decision model that cannot generate text (a
+	// native head such as Laya, or a cloud model whose only task is
+	// typed-decisions); it serves POST /v1/decisions only.
 	DecisionOnly  bool          `json:"decision_only,omitempty"`
 	ContextWindow int64         `json:"context_window,omitempty"`
 	MaxModelLen   int64         `json:"max_model_len,omitempty"`
