@@ -30,7 +30,7 @@ CSGLite 提供 Ollama 兼容的 REST API，通过 `csghub-lite serve` 启动。
 | `POST` | `/v1/images/generations`、`/v1/images/edits` | 文生图、图生图 | 同上 |
 | `POST` | `/v1/audio/transcriptions`、`/v1/audio/speech` | 语音识别、语音合成 | [实时语音](../guides/realtime-audio-api.md) |
 | `POST` / `GET` | `/v1/realtime/calls`、`/v1/realtime` | 实时语音（WebRTC / WebSocket） | 同上 |
-| `POST` | `/v1/decisions` | OpenAI Decisions API：predicate / choice / score 问题，返回校准概率；需要带 `jev` 或 `typed-decisions` 标签的模型 | [决策](../guides/typed-decisions.md) |
+| `POST` | `/v1/decisions` | OpenAI Decisions API：predicate / choice / score 问题，返回校准概率；需要本地带 `jev` 或 `typed-decisions` 标签的模型，或网关标记为 `typed-decisions` 的云端模型 | [决策](../guides/typed-decisions.md) |
 | `POST` / `GET` | `/v1/decide`、`/v1/decide/info` | JEV 原生格式的决策接口与模型能力查询 | 同上 |
 | `GET` | `/v1/models` | 列出模型 | 同上 |
 

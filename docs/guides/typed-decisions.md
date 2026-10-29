@@ -1,13 +1,15 @@
 # Decisions (OpenAI `/v1/decisions`)
 
 csghub-lite serves the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions)
-from two kinds of local models:
+from three kinds of models:
 
 - JEV models whose model card is tagged `jev` or `typed-decisions`, such as
   `autotrust/JEV-9B` and its GGUF quantizations, read through a decision LoRA
   (see [Setup](#setup)).
 - Native decision models whose decision head llama.cpp runs itself, such as
   `convaiinnovations/laya` (see [Native decision models](#native-decision-models)).
+- Cloud models the gateway lists with the `typed-decisions` task, such as
+  `jev-1.13` on OpenCSG (see [Cloud decision models](#cloud-decision-models)).
 
 A decision answers typed questions about shared input in one forward pass and
 returns calibrated probabilities instead of generated text:
@@ -147,6 +149,27 @@ questions and options to the token budget it was trained with. The state is
 not cut: Laya English was trained on 512-token inputs, and accuracy on much
 longer inputs is not guaranteed.
 
+## Cloud decision models
+
+A cloud model that the gateway lists with the `typed-decisions` task (for
+example `jev-1.13` on OpenCSG) answers `/v1/decisions` without being
+downloaded: csghub-lite forwards the request to the gateway's `/v1/systemone`
+with the same question translation as native models and translates the answer
+back. The model listing marks these models `typed_decisions`, and
+`decision_only` when `typed-decisions` is their only task.
+
+```sh
+curl http://localhost:11435/v1/decisions -H 'Content-Type: application/json' -d '{
+  "model": "jev-1.13",
+  "input": "I was charged twice.",
+  "questions": [{"type": "predicate", "name": "refund", "instructions": "Is this a refund request?"}]
+}'
+```
+
+A downloaded model always wins over a cloud model of the same name. A gateway
+older than the `/v1/systemone` route answers 404, which csghub-lite reports as
+a gateway that needs an update.
+
 ## JEV-compatible endpoint
 
 `POST /v1/decide` (JEV models only) keeps the hosted JEV API shape (`kind` noul / score 0-5 /
@@ -159,6 +182,8 @@ calibration temperatures.
 
 - `input_image` parts are refused: JEV-9B's decision head reads text, and
   csghub-lite does not yet pass images to native decision models.
-- Decisions run on local llama.cpp models only.
+- Decisions run on downloaded llama.cpp models or cloud models the gateway
+  lists with the `typed-decisions` task; `/v1/decide` and `/v1/decide/info`
+  need a downloaded local model.
 - On JEV-9B Q4_K_M the probabilities stay within about 0.05 of the model
   card's bf16 reference values.
