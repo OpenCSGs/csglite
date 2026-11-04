@@ -132,10 +132,32 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
-	// A downloaded model always wins over a cloud model of the same name.
-	if lm, err := s.manager.ResolveLocalModel(req.Model); err == nil {
-		s.handleLocalDecisions(w, r, req, lm)
+	source, err := effectiveRequestSource(r.Context(), req.Source)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
+	}
+	req.Source = source
+	routeSource := providerRouteSourceFromContext(r.Context())
+	if routeSource != "" &&
+		!strings.EqualFold(source, "local") &&
+		!strings.EqualFold(source, "cloud") {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
+			"decisions are only available for local and cloud models")
+		return
+	}
+	// A downloaded model always wins over a cloud model of the same name,
+	// except on a provider route that targets the cloud.
+	if !strings.EqualFold(routeSource, "cloud") {
+		if lm, err := s.manager.ResolveLocalModel(req.Model); err == nil {
+			s.handleLocalDecisions(w, r, req, lm)
+			return
+		}
+		if strings.EqualFold(routeSource, "local") {
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
+				fmt.Sprintf("model %q is not a downloaded local model", req.Model))
+			return
+		}
 	}
 	cloudModel, err := s.isCloudTypedDecisionModel(r.Context(), req.Model)
 	if err != nil {

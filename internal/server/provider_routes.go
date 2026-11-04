@@ -31,6 +31,7 @@ func (s *Server) registerProviderInferenceRoutes(mux *http.ServeMux) {
 	register("GET /providers/{providerID}/v1/responses", s.handleOpenAIResponsesUnsupported)
 	register("POST /providers/{providerID}/v1/chat/completions", s.withContextCompression(ctxcompress.ProtocolOpenAIChat, s.handleOpenAIChatCompletions))
 	register("POST /providers/{providerID}/v1/embeddings", s.handleOpenAIEmbeddings)
+	register("POST /providers/{providerID}/v1/decisions", s.handleDecisions)
 	register("POST /providers/{providerID}/v1/images/generations", s.handleOpenAIImagesGenerations)
 	register("POST /providers/{providerID}/v1/images/edits", s.handleOpenAIImagesEdits)
 	register("POST /providers/{providerID}/v1/audio/transcriptions", s.handleOpenAIAudioTranscriptions)

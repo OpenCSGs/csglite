@@ -40,6 +40,8 @@ type ManagedProvider = ThirdPartyProvider & { builtIn?: boolean; source?: "cloud
 type GatewayAPIInfoTarget = {
   targetID: string;
   model: ModelInfo;
+  /** Only the cloud provider card serves /v1/decisions; third-party providers and provider pools do not. */
+  decisionsSupported: boolean;
 };
 
 const activeGatewayTab = signal<GatewayTab>("apiKeys");
@@ -247,10 +249,11 @@ function providerCards(): ManagedProvider[] {
 	return cloud ? [cloud, ...providers.value] : [...providers.value];
 }
 
-function openGatewayAPIInfo(targetID: string, model: ModelInfo) {
+function openGatewayAPIInfo(targetID: string, model: ModelInfo, decisionsSupported: boolean) {
   gatewayAPIInfoTarget.value = {
     targetID,
     model,
+    decisionsSupported,
   };
 }
 
@@ -1104,6 +1107,8 @@ export function AIGateway() {
           isVision={isGatewayVisionModel(gatewayAPIInfoTarget.value.model)}
           isEmbedding={isGatewayEmbeddingModel(gatewayAPIInfoTarget.value.model)}
           isASR={isGatewayASRModel(gatewayAPIInfoTarget.value.model)}
+          isDecision={Boolean(gatewayAPIInfoTarget.value.decisionsSupported && gatewayAPIInfoTarget.value.model.typed_decisions)}
+          isDecisionOnly={Boolean(gatewayAPIInfoTarget.value.decisionsSupported && gatewayAPIInfoTarget.value.model.decision_only)}
           onClose={() => (gatewayAPIInfoTarget.value = null)}
         />
       )}
@@ -1572,7 +1577,7 @@ function ProvidersSection() {
                             <div class="flex shrink-0 items-center gap-1">
                               <button
                                 type="button"
-                                onClick={() => openGatewayAPIInfo(provider.id, model)}
+                                onClick={() => openGatewayAPIInfo(provider.id, model, provider.source === "cloud")}
                                 title={t("settings.providerCallMethod")}
                                 class="rounded border border-indigo-100 bg-white/70 px-2 py-1 text-[11px] text-indigo-700 transition-colors hover:bg-white"
                               >
@@ -1697,7 +1702,7 @@ function ProviderPoolsSection() {
                 ))}
               </div>
               <div class="mt-4 flex justify-end gap-2">
-                <button type="button" onClick={() => openGatewayAPIInfo(pool.id, providerPoolModelInfo(pool))} class="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs text-indigo-700 transition-colors hover:bg-indigo-50">
+                <button type="button" onClick={() => openGatewayAPIInfo(pool.id, providerPoolModelInfo(pool), false)} class="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs text-indigo-700 transition-colors hover:bg-indigo-50">
                   {t("settings.providerCallMethod")}
                 </button>
                 <button type="button" onClick={() => openProviderPoolDialog(pool)} class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 transition-colors hover:bg-gray-50">
