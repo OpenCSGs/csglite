@@ -288,3 +288,93 @@ func TestClusterProviderRouteRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderScopedDecisionsRoutesCloudModel(t *testing.T) {
+	g := &fakeSystemOneGateway{
+		models:        cloudDecisionModels,
+		systemOneBody: `{"answers":{"q000":{"type":"noul","noul":0.9}},"usage":{"input_tokens":12}}`,
+	}
+	s := newCloudDecisionTestServer(t, g)
+
+	req := httptest.NewRequest(http.MethodPost, "/providers/csghub/v1/decisions", bytes.NewBufferString(`{
+		"model":"jev-1.13",
+		"input":"I was charged twice.",
+		"questions":[{"type":"predicate","name":"refund","instructions":"Is this a refund request?"}]
+	}`))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if len(g.systemOneBodies) != 1 || !bytes.Contains([]byte(g.systemOneBodies[0]), []byte(`"model":"jev-1.13"`)) {
+		t.Fatalf("System One bodies = %q", g.systemOneBodies)
+	}
+}
+
+func TestProviderScopedDecisionsRejectsThirdPartyProvider(t *testing.T) {
+	s := newTestServer(t)
+	if err := config.SaveProviders([]config.ThirdPartyProvider{{
+		ID: "provider1", Name: "Provider One", BaseURL: "http://127.0.0.1:1/v1", APIKey: "test-key", Enabled: true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/providers/provider1/v1/decisions", bytes.NewBufferString(`{
+		"model":"jev-1.13",
+		"input":"x",
+		"questions":[{"type":"predicate","instructions":"q"}]
+	}`))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || !bytes.Contains(w.Body.Bytes(), []byte("only available for local and cloud")) {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestProviderScopedDecisionsRejectsProviderPool(t *testing.T) {
+	s := newTestServer(t)
+	if err := config.SaveProviderPools([]config.ProviderPool{{
+		ID: "pool-one", Name: "Pool One", Model: "public-model", Enabled: true,
+		Members: []config.ProviderPoolMember{{ID: "local", Source: "local", Model: "member-model"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/providers/pool-one/v1/decisions", bytes.NewBufferString(`{
+		"model":"public-model",
+		"input":"x",
+		"questions":[{"type":"predicate","instructions":"q"}]
+	}`))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || !bytes.Contains(w.Body.Bytes(), []byte("only available for local and cloud")) {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestProviderScopedDecisionsRejectsCloudModelOnLocalRoute(t *testing.T) {
+	g := &fakeSystemOneGateway{models: cloudDecisionModels}
+	s := newCloudDecisionTestServer(t, g)
+
+	req := httptest.NewRequest(http.MethodPost, "/providers/local/v1/decisions", bytes.NewBufferString(`{
+		"model":"jev-1.13",
+		"input":"x",
+		"questions":[{"type":"predicate","instructions":"q"}]
+	}`))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || !bytes.Contains(w.Body.Bytes(), []byte("not a downloaded local model")) {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	if len(g.systemOneBodies) != 0 {
+		t.Fatalf("local route forwarded to the gateway: %q", g.systemOneBodies)
+	}
+}

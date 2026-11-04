@@ -5971,6 +5971,98 @@
         }
       }
     },
+    "/providers/{providerID}/v1/decisions": {
+      "parameters": [
+        {
+          "name": "providerID",
+          "in": "path",
+          "required": true,
+          "description": "Stable routing ID. Decisions are served only for `local` and `csghub` (the legacy `cloud` alias remains accepted). Third-party Providers, Provider pools, cluster, and node sources return HTTP 400.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Compatibility"
+        ],
+        "summary": "OpenAI-compatible decisions",
+        "description": "Provider-scoped form of this operation. The path target ID is authoritative; a conflicting request-body `source` returns HTTP 400. Only local and cloud sources serve decisions: a downloaded JEV or native decision model answers through its System 1 head, and a cloud model the gateway lists with the typed-decisions task is forwarded to the gateway's /v1/systemone. Third-party Providers, Provider pools, cluster, and node sources return HTTP 400.",
+        "operationId": "providerScopedCreateDecision",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ROMAHost"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWID"
+          },
+          {
+            "$ref": "#/components/parameters/ROMAHWAppKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionCreateRequest"
+              },
+              "example": {
+                "model": "huggingface/mradermacher/JEV-9B-GGUF",
+                "input": "I was charged twice for my order.",
+                "questions": [
+                  {
+                    "type": "choice",
+                    "name": "department",
+                    "instructions": "Which department should handle this complaint?",
+                    "choices": [
+                      {
+                        "value": "billing",
+                        "description": "Payments, invoices, and refunds."
+                      },
+                      {
+                        "value": "technical",
+                        "description": "Problems using the product."
+                      },
+                      {
+                        "value": "shipping",
+                        "description": "Delivery and tracking."
+                      },
+                      {
+                        "value": "other",
+                        "description": "Requests outside these categories."
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Answers in question order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OpenAIBadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/OpenAIInternalError"
+          }
+        }
+      }
+    },
     "/v1/models": {
       "get": {
         "tags": [
