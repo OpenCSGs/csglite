@@ -11,32 +11,39 @@ function Emit-Progress([int]$Percent, [string]$Phase) {
     Write-Output "CSGHUB_PROGRESS|$Percent|$Phase"
 }
 
-function Find-CSGStudioExecutable {
+function Find-CSGLabExecutable {
+    $exeNames = @("CSGLab.exe", "CSGStudio.exe")
     $registryPaths = @(
         "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
         "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
         "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
     )
     foreach ($entry in Get-ItemProperty -Path $registryPaths -ErrorAction SilentlyContinue) {
-        if ([string]$entry.DisplayName -notmatch "CSGStudio") { continue }
+        if ([string]$entry.DisplayName -notmatch "CSGLab|CSGStudio") { continue }
         $icon = ([string]$entry.DisplayIcon).Trim('"')
         $icon = $icon -replace ',\d+$', ''
         if ($icon -and (Test-Path -LiteralPath $icon -PathType Leaf)) {
             return $icon
         }
         if ($entry.InstallLocation) {
-            $candidate = Join-Path ([string]$entry.InstallLocation) "CSGStudio.exe"
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+            foreach ($exeName in $exeNames) {
+                $candidate = Join-Path ([string]$entry.InstallLocation) $exeName
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+            }
         }
     }
 
     $dirs = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\CSGLab"),
+        (Join-Path $env:LOCALAPPDATA "CSGLab"),
         (Join-Path $env:LOCALAPPDATA "Programs\CSGStudio"),
         (Join-Path $env:LOCALAPPDATA "CSGStudio")
     )
     foreach ($dir in $dirs) {
-        $candidate = Join-Path $dir "CSGStudio.exe"
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+        foreach ($exeName in $exeNames) {
+            $candidate = Join-Path $dir $exeName
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+        }
     }
     return $null
 }
@@ -50,7 +57,7 @@ $archNames = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
 } elseif ([Environment]::Is64BitOperatingSystem) {
     @("x86_64", "amd64", "x64")
 } else {
-    throw "CSGStudio requires a 64-bit Windows"
+    throw "CSGLab requires a 64-bit Windows"
 }
 
 Emit-Progress 25 "resolving_latest"
@@ -62,7 +69,7 @@ $version = if ([string]::IsNullOrWhiteSpace($Target) -or $Target -eq "latest") {
 }
 $release = $manifest.versions.$version
 if (-not $release) {
-    throw "CSGStudio version $version was not found in $ManifestUrl"
+    throw "CSGLab version $version was not found in $ManifestUrl"
 }
 $artifact = $null
 foreach ($arch in $archNames) {
@@ -72,12 +79,12 @@ foreach ($arch in $archNames) {
     if ($artifact) { break }
 }
 if (-not $artifact -or -not $artifact.url) {
-    throw "CSGStudio $version does not publish a Windows $($archNames[0]) package"
+    throw "CSGLab $version does not publish a Windows $($archNames[0]) package"
 }
 $url = [string]$artifact.url
 $extension = [System.IO.Path]::GetExtension(([Uri]$url).AbsolutePath).ToLowerInvariant()
 if ($extension -ne ".exe" -and $extension -ne ".msi") {
-    throw "unsupported CSGStudio Windows package: $url"
+    throw "unsupported CSGLab Windows package: $url"
 }
 
 $workDir = Join-Path ([System.IO.Path]::GetTempPath()) ("csgstudio-install-" + [Guid]::NewGuid().ToString("N"))
@@ -86,7 +93,7 @@ try {
     New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 
     Emit-Progress 55 "downloading_archive"
-    Write-Output "INFO: downloading CSGStudio $version for Windows $($archNames[0])"
+    Write-Output "INFO: downloading CSGLab $version for Windows $($archNames[0])"
     Invoke-WebRequest -Uri $url -OutFile $installerPath -UseBasicParsing -TimeoutSec 3600
 
     Emit-Progress 75 "verifying_checksum"
@@ -106,13 +113,13 @@ try {
         Start-Process -FilePath $installerPath -Wait -PassThru
     }
     if ($process.ExitCode -ne 0) {
-        throw "CSGStudio installer exited with code $($process.ExitCode)"
+        throw "CSGLab installer exited with code $($process.ExitCode)"
     }
 
     Emit-Progress 95 "verifying_install"
-    $target = Find-CSGStudioExecutable
+    $target = Find-CSGLabExecutable
     if (-not $target) {
-        throw "installer completed but the CSGStudio executable was not found"
+        throw "installer completed but the CSGLab executable was not found"
     }
     New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
     Set-Content -LiteralPath (Join-Path $RuntimeRoot "version") -Value $version -Encoding ASCII
@@ -120,7 +127,7 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $RuntimeRoot "launch-target"), "$target`r`n", $utf8NoBom)
 
     Emit-Progress 100 "complete"
-    Write-Output "INFO: installed CSGStudio $version to $target"
+    Write-Output "INFO: installed CSGLab $version to $target"
 } finally {
     if (Test-Path -LiteralPath $workDir) {
         Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
