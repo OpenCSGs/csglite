@@ -89,6 +89,11 @@ type SummaryNode struct {
 	LoadedModels []string  `json:"loaded_models"`
 	ModelCount   int       `json:"model_count"`
 	Inflight     int       `json:"inflight"`
+	// Spans are the models this node runs across several machines, and
+	// SpanWorker says it is lending its memory to another node's. Both are
+	// reported here so the whole cluster can be seen from any node.
+	Spans      []SpanView `json:"spans,omitempty"`
+	SpanWorker bool       `json:"span_worker,omitempty"`
 }
 
 // Summary is GET /api/cluster/summary.
@@ -250,6 +255,8 @@ func (m *Manager) Summary(ctx context.Context) Summary {
 			n.DiskFree = st.Disk.Free
 			n.ModelCount = len(st.Models)
 			n.Inflight = st.Inflight
+			n.Spans = st.Spans
+			n.SpanWorker = st.SpanWorker
 			for _, ms := range st.Models {
 				if ms.Loaded || ms.Loading {
 					n.LoadedModels = append(n.LoadedModels, ms.ID)

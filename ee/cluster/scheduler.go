@@ -191,6 +191,16 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 			seconds += load / 2 // already part way through
 			r.Factors = append(r.Factors, "model is loading now")
 		default:
+			// A node lending its memory to a model split across machines holds
+			// tensors that belong to no model in its own inventory, so the
+			// free-memory check below would count that memory twice and load a
+			// second model on top of the first. Serving what it has already
+			// loaded is still fine; only a cold load is refused.
+			if st.SpanWorker {
+				r.Excluded = "node is lending its memory to a model split across machines"
+				out = append(out, r)
+				continue
+			}
 			load := perf.LoadSeconds
 			if load <= 0 {
 				mbps := defaultDiskMBps

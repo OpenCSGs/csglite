@@ -1091,3 +1091,14 @@ func TestPerfRatesMeasuresARequestThatGeneratesNoTokens(t *testing.T) {
 		t.Fatalf("a request with no tokens at all was recorded: %v", p)
 	}
 }
+
+// The fake host cannot split a model across machines: the tests that matter
+// for spanning drive the pieces directly, and a test host pretending it could
+// would only hide the error a real one gives when the worker is missing.
+func (h *fakeHost) RPCWorkerPath() (string, error) { return "", ErrSpanNotSupported }
+
+func (h *fakeHost) SpanModel(context.Context, string, []string, bool, int) error {
+	return ErrSpanNotSupported
+}
+
+func (h *fakeHost) LlamaBuildID() string { return "test" }

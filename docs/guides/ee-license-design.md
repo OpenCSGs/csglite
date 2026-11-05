@@ -140,6 +140,11 @@ var (
     FeatureAIApps          = FeatureDefinition{Key: "feature.lite.ai_apps",          Type: FeatureTypeBoolean, DefaultValue: true, NavItem: "ai-apps",       Since: "0.10.0"}
     FeatureRealtimeVoice   = FeatureDefinition{Key: "feature.lite.realtime_voice",   Type: FeatureTypeBoolean, DefaultValue: true, NavItem: "",              Since: "0.10.0"}
     FeatureImageGeneration = FeatureDefinition{Key: "feature.lite.image_generation", Type: FeatureTypeBoolean, DefaultValue: true, NavItem: "images",        Since: "0.10.0"}
+    FeatureLANCluster      = FeatureDefinition{Key: "feature.lite.lan_cluster",      Type: FeatureTypeBoolean, DefaultValue: true, NavItem: "cluster",       Since: "0.13.0"}
+
+    // 目前仅有的两个 Gated 条目：跨机分载功能，以及集群节点数上限。
+    FeatureClusterModelSpan = FeatureDefinition{Key: "feature.lite.cluster_model_span", Type: FeatureTypeBoolean, Gated: true, DefaultValue: true, Since: "0.13.0"}
+    QuotaMaxClusterNodes    = FeatureDefinition{Key: "quota.lite.max_cluster_nodes",    Type: FeatureTypeInt, Gated: true, DefaultValue: 0, CommunityValue: 2, Since: "0.13.0"}
 
     QuotaProviderPools     = FeatureDefinition{Key: "quota.lite.max_provider_pools", Type: FeatureTypeInt, DefaultValue: 0 /* 0 表示不限 */}
 )
@@ -150,7 +155,10 @@ var Catalog = []FeatureDefinition{ /* 以上全部 */ }
 **只有 `Gated: true` 的功能才受 License 控制；未标记的功能在社区版、开发
 构建和任何 License 状态下都始终开启。** 把一个功能收进 EE 的动作就是把它的
 `Gated` 改为 `true` 并包裹对应路由；在此之前注册表条目只是与签发端对齐名字，
-不影响任何行为。当前仓库里没有任何条目是 `Gated: true`。
+不影响任何行为。当前仓库里只有两个条目是 `Gated: true`：集群节点数上限
+（`quota.lite.max_cluster_nodes`，社区版 2 台）和跨机分载
+（`feature.lite.cluster_model_span`）。局域网集群本身不受门控——只有一套实现，
+不存在 CE/EE 两份代码。
 
 对 `Gated` 功能，取值语义与 CSGHub 的 `licenseProvider` 一致：
 
