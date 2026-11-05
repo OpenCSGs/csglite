@@ -126,7 +126,7 @@ fi
 url="$(json_field "$entry" url)"
 checksum="$(json_field "$entry" sha256)"
 if [[ -z "$version" || -z "$url" ]]; then
-  printf 'ERROR: CSGStudio %s does not publish a %s/%s package in %s\n' "${version:-latest}" "$platform" "${arch_names[0]}" "$MANIFEST_URL"
+  printf 'ERROR: CSGLab %s does not publish a %s/%s package in %s\n' "${version:-latest}" "$platform" "${arch_names[0]}" "$MANIFEST_URL"
   exit 1
 fi
 
@@ -134,7 +134,7 @@ WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/csgstudio-install.XXXXXX")"
 package_path="${WORKDIR}/$(basename "${url%%\?*}")"
 
 emit_progress 55 downloading_archive
-printf 'INFO: downloading CSGStudio %s for %s/%s\n' "$version" "$platform" "${arch_names[0]}"
+printf 'INFO: downloading CSGLab %s for %s/%s\n' "$version" "$platform" "${arch_names[0]}"
 curl --connect-timeout 15 --max-time 3600 --retry 3 --retry-delay 2 -fsSL "$url" -o "$package_path"
 
 emit_progress 75 verifying_checksum
@@ -156,7 +156,7 @@ case "$os" in
     hdiutil attach "$package_path" -nobrowse -readonly -mountpoint "$MOUNT_DIR" >/dev/null
     app_bundle="$(printf '%s\n' "$MOUNT_DIR"/*.app | sed -n '1p')"
     if [[ ! -d "$app_bundle" ]]; then
-      printf 'ERROR: CSGStudio app bundle was not found in the DMG\n'
+      printf 'ERROR: CSGLab app bundle was not found in the DMG\n'
       exit 1
     fi
 
@@ -184,13 +184,13 @@ case "$os" in
     case "$(printf '%s' "$package_path" | tr '[:upper:]' '[:lower:]')" in
       *.appimage) ;;
       *)
-        printf 'ERROR: unsupported CSGStudio Linux package: %s\n' "$(basename "$package_path")"
+        printf 'ERROR: unsupported CSGLab Linux package: %s\n' "$(basename "$package_path")"
         exit 1
         ;;
     esac
 
     emit_progress 90 installing_runtime
-    installed_target="${version_dir}/CSGStudio.AppImage"
+    installed_target="${version_dir}/CSGLab.AppImage"
     rm -rf "$version_dir"
     mkdir -p "$version_dir"
     cp "$package_path" "$installed_target"
@@ -206,4 +206,4 @@ if [[ "$os" == "linux" ]]; then
 fi
 
 emit_progress 100 complete
-printf 'INFO: installed CSGStudio %s to %s\n' "$version" "$installed_target"
+printf 'INFO: installed CSGLab %s to %s\n' "$version" "$installed_target"

@@ -30,4 +30,4 @@ rm -f "${runtime_root}/version" "${runtime_root}/launch-target" "${runtime_root}
 rmdir "$runtime_root" 2>/dev/null || true
 
 printf 'CSGHUB_PROGRESS|100|complete\n'
-printf 'INFO: removed the managed CSGStudio installation%s\n' "${managed_bundle:+ at ${managed_bundle}}"
+printf 'INFO: removed the managed CSGLab installation%s\n' "${managed_bundle:+ at ${managed_bundle}}"

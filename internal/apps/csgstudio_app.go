@@ -9,18 +9,19 @@ import (
 )
 
 const (
-	csgstudioAppID          = "csgstudio"
-	csgstudioAppBundleName  = "CSGStudio.app"
-	csgstudioManifestURL    = "https://opencsg-public-resource.oss-cn-beijing.aliyuncs.com/csgstudio/channels/release/downloads.json"
-	csgstudioManifestEnvVar = "CSGHUB_LITE_CSGSTUDIO_MANIFEST_URL"
+	csgstudioAppID               = "csgstudio"
+	csgstudioAppBundleName       = "CSGLab.app"
+	csgstudioLegacyAppBundleName = "CSGStudio.app"
+	csgstudioManifestURL         = "https://opencsg-public-resource.oss-cn-beijing.aliyuncs.com/csgstudio/channels/release/downloads.json"
+	csgstudioManifestEnvVar      = "CSGHUB_LITE_CSGSTUDIO_MANIFEST_URL"
 )
 
-// CSGStudioLaunchTarget resolves a managed or externally installed CSGStudio
+// CSGStudioLaunchTarget resolves a managed or externally installed CSGLab
 // target.
 func CSGStudioLaunchTarget() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return "", fmt.Errorf("CSGStudio is installed, but the user home directory was not found")
+		return "", fmt.Errorf("CSGLab is installed, but the user home directory was not found")
 	}
 	if target, ok := readCSGStudioLaunchTargetFile(home); ok {
 		return target, nil
@@ -28,7 +29,7 @@ func CSGStudioLaunchTarget() (string, error) {
 	if target, _, ok := findExternalCSGStudioTarget(home); ok {
 		return target, nil
 	}
-	return "", fmt.Errorf("CSGStudio is installed, but no launch target was found")
+	return "", fmt.Errorf("CSGLab is installed, but no launch target was found")
 }
 
 func SetCSGStudioLaunchTarget(target string) error {
@@ -98,17 +99,19 @@ func detectCSGStudioInstall() (string, string, bool) {
 func findExternalCSGStudioTarget(home string) (string, string, bool) {
 	switch runtime.GOOS {
 	case "darwin":
-		for _, bundle := range []string{
-			filepath.Join(home, "Applications", csgstudioAppBundleName),
-			filepath.Join(string(filepath.Separator), "Applications", csgstudioAppBundleName),
-		} {
-			if directoryExists(bundle) {
-				return bundle, readDarwinBundleShortVersion(bundle), true
+		for _, bundleName := range []string{csgstudioAppBundleName, csgstudioLegacyAppBundleName} {
+			for _, bundle := range []string{
+				filepath.Join(home, "Applications", bundleName),
+				filepath.Join(string(filepath.Separator), "Applications", bundleName),
+			} {
+				if directoryExists(bundle) {
+					return bundle, readDarwinBundleShortVersion(bundle), true
+				}
 			}
 		}
 	case "windows":
 		for _, entry := range readWindowsCodexUninstallEntries() {
-			if !strings.Contains(strings.ToLower(entry.DisplayName), "csgstudio") {
+			if !isCSGStudioDisplayName(entry.DisplayName) {
 				continue
 			}
 			version := strings.TrimSpace(entry.DisplayVersion)
@@ -132,19 +135,28 @@ func findExternalCSGStudioTarget(home string) (string, string, bool) {
 	return "", "", false
 }
 
+func isCSGStudioDisplayName(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.Contains(lower, "csglab") || strings.Contains(lower, "csgstudio")
+}
+
 func windowsCSGStudioDirCandidates(home string) []string {
 	var candidates []string
 	for _, base := range []string{os.Getenv("LOCALAPPDATA"), os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)")} {
 		if base == "" {
 			continue
 		}
-		candidates = append(candidates,
-			filepath.Join(base, "Programs", "CSGStudio"),
-			filepath.Join(base, "CSGStudio"),
-		)
+		for _, name := range []string{"CSGLab", "CSGStudio"} {
+			candidates = append(candidates,
+				filepath.Join(base, "Programs", name),
+				filepath.Join(base, name),
+			)
+		}
 	}
 	if home != "" {
-		candidates = append(candidates, filepath.Join(home, "AppData", "Local", "Programs", "CSGStudio"))
+		for _, name := range []string{"CSGLab", "CSGStudio"} {
+			candidates = append(candidates, filepath.Join(home, "AppData", "Local", "Programs", name))
+		}
 	}
 	return uniqueNonEmptyPaths(candidates)
 }
@@ -156,12 +168,16 @@ func findCSGStudioExeInDirs(dirs []string) (string, bool) {
 			continue
 		}
 		for _, entry := range entries {
-			if !entry.IsDir() && strings.EqualFold(entry.Name(), "csgstudio.exe") {
+			if !entry.IsDir() && isCSGStudioExecutableName(entry.Name()) {
 				return filepath.Join(dir, entry.Name()), true
 			}
 		}
 	}
 	return "", false
+}
+
+func isCSGStudioExecutableName(name string) bool {
+	return strings.EqualFold(name, "csglab.exe") || strings.EqualFold(name, "csgstudio.exe")
 }
 
 func csgstudioTargetVersion(target string) string {

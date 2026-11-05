@@ -7,7 +7,7 @@ function Emit-Progress([int]$Percent, [string]$Phase) {
 
 Emit-Progress 20 "stopping_services"
 Get-Process -ErrorAction SilentlyContinue | Where-Object {
-    $_.ProcessName -match "^csgstudio$"
+    $_.ProcessName -match "^(csglab|csgstudio)$"
 } | ForEach-Object {
     $_.CloseMainWindow() | Out-Null
 }
@@ -20,7 +20,7 @@ $registryPaths = @(
     "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
 )
 foreach ($entry in Get-ItemProperty -Path $registryPaths -ErrorAction SilentlyContinue) {
-    if ([string]$entry.DisplayName -match "CSGStudio") {
+    if ([string]$entry.DisplayName -match "CSGLab|CSGStudio") {
         $uninstallCommand = if ($entry.QuietUninstallString) { [string]$entry.QuietUninstallString } else { [string]$entry.UninstallString }
         if ($uninstallCommand) { break }
     }
@@ -29,10 +29,10 @@ foreach ($entry in Get-ItemProperty -Path $registryPaths -ErrorAction SilentlyCo
 if ($uninstallCommand) {
     $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/d", "/s", "/c", $uninstallCommand -Wait -PassThru
     if ($process.ExitCode -ne 0) {
-        throw "CSGStudio uninstaller exited with code $($process.ExitCode)"
+        throw "CSGLab uninstaller exited with code $($process.ExitCode)"
     }
 } else {
-    throw "CSGStudio uninstaller was not found"
+    throw "CSGLab uninstaller was not found"
 }
 
 Emit-Progress 85 "removing_runtime"
@@ -41,4 +41,4 @@ if (Test-Path -LiteralPath $runtimeRoot) {
 }
 
 Emit-Progress 100 "complete"
-Write-Output "INFO: CSGStudio uninstallation complete"
+Write-Output "INFO: CSGLab uninstallation complete"

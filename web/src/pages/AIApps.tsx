@@ -1854,6 +1854,9 @@ function installModeLabel(mode: AIAppInstallMode): string {
 }
 
 function statusLabel(state: AIAppRuntimeState): string {
+  if (state.disabled) {
+    return t("aiApps.disabled");
+  }
   if (state.status === "installing" || state.status === "uninstalling") {
     return phaseLabel(state.phase);
   }
