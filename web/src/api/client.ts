@@ -23,9 +23,16 @@ export interface ModelInfo {
   input_modalities?: string[];
   output_modalities?: string[];
   has_mmproj?: boolean;
-  /** Local model that answers the OpenAI Decisions API (POST /v1/decisions). */
+  /**
+   * Model that answers the OpenAI Decisions API (POST /v1/decisions): a
+   * local JEV model, a native decision model such as Laya, or a cloud model
+   * the gateway lists with the typed-decisions task.
+   */
   typed_decisions?: boolean;
-  /** Native decision model (e.g. Laya) that answers decisions only and cannot chat. */
+  /**
+   * Decision model that cannot generate text (a native head such as Laya, or
+   * a cloud model whose only task is typed-decisions).
+   */
   decision_only?: boolean;
   /** Whether and how a downloaded local model runs on this machine. */
   local_inference?: LocalInferenceSupport;

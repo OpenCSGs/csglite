@@ -77,6 +77,10 @@ type cloudTaskSpec struct {
 	PipelineTag      string
 	InputModalities  []string
 	OutputModalities []string
+	// TypedDecisions and DecisionOnly mark models that answer the OpenAI
+	// Decisions API (/v1/decisions) instead of, or in addition to, chat.
+	TypedDecisions bool
+	DecisionOnly   bool
 }
 
 var supportedCloudTasks = map[string]cloudTaskSpec{
@@ -114,6 +118,16 @@ var supportedCloudTasks = map[string]cloudTaskSpec{
 		PipelineTag:      "feature-extraction",
 		InputModalities:  []string{"text"},
 		OutputModalities: []string{"embedding"},
+	},
+	// typed-decisions is deliberately absent from cloudTaskPriority: a model
+	// that also declares a chat task stays a chat model (with the decision
+	// flags set), and only a decision-only model falls through to this entry.
+	"typed-decisions": {
+		PipelineTag:      "text-generation",
+		InputModalities:  []string{"text"},
+		OutputModalities: []string{"text"},
+		TypedDecisions:   true,
+		DecisionOnly:     true,
 	},
 }
 
@@ -377,6 +391,8 @@ func modelInfoFromRemote(item remoteModel) (api.ModelInfo, bool) {
 		InputModalities:  cloneStringSlice(spec.InputModalities),
 		OutputModalities: cloneStringSlice(spec.OutputModalities),
 		HasMMProj:        hasCloudTask(item, "image-text-to-text"),
+		TypedDecisions:   spec.TypedDecisions || hasCloudTask(item, "typed-decisions"),
+		DecisionOnly:     spec.DecisionOnly,
 		ContextWindow:    int64(limits.MaxInputTokens),
 		LLMType:          llmType,
 		OwnedBy:          ownedBy,

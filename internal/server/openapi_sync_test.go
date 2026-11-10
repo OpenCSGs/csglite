@@ -60,6 +60,7 @@ func TestProviderScopedRouteFamilyIsDocumented(t *testing.T) {
 		"/providers/{providerID}/v1/messages":              {"post"},
 		"/providers/{providerID}/v1/messages/count_tokens": {"post"},
 		"/providers/{providerID}/v1/embeddings":            {"post"},
+		"/providers/{providerID}/v1/decisions":             {"post"},
 		"/providers/{providerID}/v1/images/generations":    {"post"},
 		"/providers/{providerID}/v1/images/edits":          {"post"},
 		"/providers/{providerID}/v1/audio/transcriptions":  {"post"},

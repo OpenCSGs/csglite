@@ -617,7 +617,7 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
   },
   {
     id: "csgstudio",
-    name: "CSGStudio",
+    name: "CSGLab",
     siteLabel: "@opencsg.com",
     website: "https://opencsg.com",
     detailsUrl: "https://opencsg.com",
@@ -630,8 +630,8 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     installMode: "script",
     progressMode: "percent",
     installHint: {
-      en: "Install CSGStudio for every platform published in its release channel. Platforms without a package stay disabled automatically.",
-      zh: "按 release channel 已发布的平台安装 CSGStudio，未提供安装包的平台会自动禁用。",
+      en: "Install CSGLab for every platform published in its release channel. Platforms without a package stay disabled automatically.",
+      zh: "按 release channel 已发布的平台安装 CSGLab，未提供安装包的平台会自动禁用。",
     },
     cnInstallHint: {
       en: "The installer selects the current platform package from the release-channel downloads manifest and verifies its checksum when one is published.",
@@ -642,16 +642,16 @@ export const aiAppsCatalog: AIAppCatalogEntry[] = [
     desktop: true,
     plannedSteps: [
       {
-        en: "Resolve the latest CSGStudio version and the package for this platform from downloads.json.",
-        zh: "从 downloads.json 解析最新 CSGStudio 版本及当前平台安装包。",
+        en: "Resolve the latest CSGLab version and the package for this platform from downloads.json.",
+        zh: "从 downloads.json 解析最新 CSGLab 版本及当前平台安装包。",
       },
       {
         en: "Download the macOS DMG, Windows installer, or Linux AppImage and install it for the current user.",
         zh: "下载 macOS DMG、Windows 安装程序或 Linux AppImage，并为当前用户安装。",
       },
       {
-        en: "Launch CSGStudio, which connects to CSGLite through its built-in local provider.",
-        zh: "启动 CSGStudio，通过内置的 CSGLite 本地 provider 连接 CSGLite。",
+        en: "Launch CSGLab, which connects to CSGLite through its built-in local provider.",
+        zh: "启动 CSGLab，通过内置的 CSGLite 本地 provider 连接 CSGLite。",
       },
     ],
     status: "idle",

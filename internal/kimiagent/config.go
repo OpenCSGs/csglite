@@ -51,6 +51,9 @@ func SyncConfig(serverURL, apiKey, selectedModelID string, models []api.ModelInf
 			tomlString(existing[key]) == ProviderID {
 			modelKey := strings.TrimSuffix(key, ".provider")
 			delete(existing, modelKey)
+			// Leaving the provider behind keeps a provider-only entry that
+			// kimi-code lists but cannot resolve to a wire model name.
+			delete(existing, modelKey+".provider")
 			delete(existing, modelKey+".model")
 			delete(existing, modelKey+".max_context_size")
 			delete(existing, modelKey+".max_output_size")
