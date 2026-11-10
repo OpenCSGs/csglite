@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/x/xpty v0.1.3
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/hashicorp/yamux v0.1.2-0.20220728231024-8f49b6f63f18
 	github.com/opencsgs/llama-cpp-assets v0.6.0
 	github.com/pion/mdns/v2 v2.2.0
 	github.com/pion/opus v0.1.1-0.20260914225119-00c5c6e17c7e

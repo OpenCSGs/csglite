@@ -71,6 +71,10 @@
     {
       "name": "Cluster",
       "description": "LAN compute cluster: discover CSGLite nodes on the local network, pair them, route inference to the node that holds the model and show every machine on the dashboard. Open to every edition; the Community edition may pair two nodes and an Enterprise license lifts the cap (quota.lite.max_cluster_nodes)."
+    },
+    {
+      "name": "Edge",
+      "description": "Serve approved local models to the CSGHub AI gateway through an outbound tunnel (Enterprise license required). The node needs no public address; only inference requests cross the tunnel, remote requests carry no caller identity and their content is never stored."
     }
   ],
   "paths": {
@@ -6808,6 +6812,482 @@
         }
       }
     },
+    "/api/edge": {
+      "get": {
+        "tags": [
+          "Edge"
+        ],
+        "summary": "Get edge serving status",
+        "description": "Connector state plus the local language models that can be offered to the gateway.",
+        "operationId": "getEdgeStatus",
+        "responses": {
+          "403": {
+            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgeStatus"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The gateway could not be reached or failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Edge serving is unavailable in this process.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Edge"
+        ],
+        "summary": "Turn edge serving on or off",
+        "description": "Remembered across restarts. Turning it off announces a drain to the gateway, lets in-flight requests finish, then closes the tunnel.",
+        "operationId": "setEdgeEnabled",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "enabled"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "403": {
+            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgeStatus"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The gateway could not be reached or failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Edge serving is unavailable in this process.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/edge/applications": {
+      "get": {
+        "tags": [
+          "Edge"
+        ],
+        "summary": "List my serving applications",
+        "description": "Proxied to the gateway as the signed-in user.",
+        "operationId": "listEdgeApplications",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "per",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "403": {
+            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgeGatewayData"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The gateway could not be reached or failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Edge serving is unavailable in this process.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Edge"
+        ],
+        "summary": "Apply to serve a local model",
+        "description": "Files an application for this node; nothing is served before the platform approves it. Gateway validation errors are passed through with their status.",
+        "operationId": "submitEdgeApplication",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EdgeSubmitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "403": {
+            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgeGatewayData"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The gateway could not be reached or failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Edge serving is unavailable in this process.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/edge/applications/{id}/withdraw": {
+      "post": {
+        "tags": [
+          "Edge"
+        ],
+        "summary": "Withdraw a serving application",
+        "description": "Stops serving the model at once.",
+        "operationId": "withdrawEdgeApplication",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "403": {
+            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgeGatewayData"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The gateway could not be reached or failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Edge serving is unavailable in this process.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/edge/earnings": {
+      "get": {
+        "tags": [
+          "Edge"
+        ],
+        "summary": "Get my monthly earnings",
+        "description": "The gateway's authoritative usage and earnings (cents) for a month; amounts are frozen per request at the approved price and commission.",
+        "operationId": "getEdgeEarnings",
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "description": "YYYY-MM, default current month.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "403": {
+            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgeGatewayData"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The gateway could not be reached or failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Edge serving is unavailable in this process.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/edge/statements": {
+      "get": {
+        "tags": [
+          "Edge"
+        ],
+        "summary": "List my monthly statements",
+        "description": "The signed-in user's monthly statements from CSGHub, newest first: requests, what callers paid, the platform commission and the owner's share in whole cents, and whether the month is open, awaiting settlement or settled (with the transfer reference).",
+        "operationId": "getEdgeStatements",
+        "responses": {
+          "403": {
+            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgeGatewayData"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The gateway could not be reached or failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Edge serving is unavailable in this process.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/edge/balance": {
+      "get": {
+        "tags": [
+          "Edge"
+        ],
+        "summary": "Get my earnings balance",
+        "description": "The signed-in user's earnings balance exactly as CSGHub records it, and the CSGHub page with their monthly statements and payee details.",
+        "operationId": "getEdgeBalance",
+        "responses": {
+          "403": {
+            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgeBalance"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The gateway could not be reached or failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Edge serving is unavailable in this process.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/cluster": {
       "get": {
         "tags": [
@@ -8216,6 +8696,132 @@
       }
     },
     "schemas": {
+      "EdgeModel": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "Whether this machine can run the model now."
+          },
+          "format": {
+            "type": "string"
+          },
+          "context_length": {
+            "type": "integer"
+          }
+        }
+      },
+      "EdgeStatus": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "signed_out",
+              "connecting",
+              "connected",
+              "error"
+            ]
+          },
+          "node_uuid": {
+            "type": "string"
+          },
+          "node_name": {
+            "type": "string"
+          },
+          "gateway_url": {
+            "type": "string"
+          },
+          "connected_since": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "reconnects": {
+            "type": "integer"
+          },
+          "applications_changed": {
+            "type": "integer",
+            "description": "Review decisions pushed by the gateway since start; refresh the application list when it changes."
+          },
+          "signed_in": {
+            "type": "boolean"
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EdgeModel"
+            }
+          }
+        }
+      },
+      "EdgeSubmitRequest": {
+        "type": "object",
+        "required": [
+          "model_name",
+          "local_model_id"
+        ],
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "description": "Public name under the owner's namespace; the gateway model ID becomes <owner>/<model_name>."
+          },
+          "local_model_id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "prompt_price": {
+            "type": "integer",
+            "description": "Cents per million prompt tokens."
+          },
+          "completion_price": {
+            "type": "integer",
+            "description": "Cents per million completion tokens."
+          },
+          "max_concurrency": {
+            "type": "integer"
+          }
+        }
+      },
+      "EdgeGatewayData": {
+        "type": "object",
+        "description": "Gateway response passed through unchanged.",
+        "properties": {
+          "data": {},
+          "total": {
+            "type": "integer"
+          }
+        }
+      },
+      "EdgeBalance": {
+        "type": "object",
+        "required": [
+          "balance",
+          "statements_url"
+        ],
+        "properties": {
+          "balance": {
+            "type": "object",
+            "description": "CSGHub's balance in whole cents: total, settled, unsettled (closed months awaiting payment) and current_month; total = settled + unsettled + current_month.",
+            "additionalProperties": true
+          },
+          "statements_url": {
+            "type": "string",
+            "description": "CSGHub page with the owner's monthly statements and payee details."
+          }
+        }
+      },
       "ApiError": {
         "type": "object",
         "additionalProperties": false,

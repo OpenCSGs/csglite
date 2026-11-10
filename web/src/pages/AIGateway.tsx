@@ -1,4 +1,5 @@
 import { Fragment } from "preact";
+import { useLocation } from "preact-iso";
 import { signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { t, locale } from "../i18n";
@@ -1490,6 +1491,7 @@ function EndpointCard({ label, value, example }: { label: string; value: string;
 }
 
 function ProvidersSection() {
+	const { route } = useLocation();
 	const cards = providerCards();
   return (
     <section class="rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -1536,6 +1538,18 @@ function ProvidersSection() {
 											<span class="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
 												{t("settings.providerBuiltIn")}
 											</span>
+										)}
+										{provider.id === "csghub" && (
+											<a
+												href="/pricing"
+												onClick={(event) => {
+													event.preventDefault();
+													route("/pricing");
+												}}
+												class="text-xs font-medium text-indigo-600 hover:underline"
+											>
+												{t("nav.pricing")}
+											</a>
 										)}
                     </div>
                     <p class="mt-1 truncate text-xs text-gray-500">{provider.base_url}</p>

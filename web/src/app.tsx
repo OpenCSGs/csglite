@@ -14,6 +14,7 @@ import { AIApps } from "./pages/AIApps";
 import { AIAppShell } from "./pages/AIAppShell";
 import { AIGateway } from "./pages/AIGateway";
 import { Cluster } from "./pages/Cluster";
+import { EdgeServing } from "./pages/EdgeServing";
 import { Observability, ObservabilityTraceDetailPage } from "./pages/Observability";
 
 export function App() {
@@ -45,6 +46,7 @@ function AppRoutes() {
         <Route path="/ai-apps" component={AIApps} />
         <Route path="/ai-gateway" component={AIGateway} />
         <Route path="/cluster" component={Cluster} />
+        <Route path="/edge" component={EdgeServing} />
         <Route path="/observability/traces/:traceID" component={ObservabilityTraceDetailPage} />
         <Route path="/observability" component={Observability} />
         <Route path="/settings" component={Settings} />

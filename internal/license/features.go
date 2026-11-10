@@ -51,8 +51,8 @@ type FeatureDefinition struct {
 	Since string
 }
 
-// Catalog entries. Only QuotaMaxClusterNodes is gated; every boolean is
-// enabled regardless of license. The ungated entries are declared so that the
+// Catalog entries. QuotaMaxClusterNodes and FeatureEdgeServing are gated;
+// every other boolean is enabled regardless of license. The ungated entries are declared so that the
 // issuer registry and this binary agree on the names before a feature moves
 // to EE.
 var (
@@ -101,6 +101,12 @@ var (
 		Key: quotaPrefix + "max_cluster_nodes", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
 		CommunityValue: 2, Since: "0.13.0",
 	}
+	// FeatureEdgeServing serves this machine's approved local models to the
+	// CSGHub AI gateway through an outbound tunnel (ee/edge). Enterprise only.
+	FeatureEdgeServing = FeatureDefinition{
+		Key: featurePrefix + "edge_serving", Type: FeatureTypeBoolean, Gated: true, DefaultValue: true,
+		NavItem: "edge", Since: "0.13.0",
+	}
 )
 
 var catalog = []FeatureDefinition{
@@ -113,6 +119,7 @@ var catalog = []FeatureDefinition{
 	QuotaMaxProviderPools,
 	FeatureLANCluster,
 	QuotaMaxClusterNodes,
+	FeatureEdgeServing,
 }
 
 // Catalog returns a copy of every registered feature definition.
