@@ -617,6 +617,36 @@ type LicenseState struct {
 	Source     string          `json:"source,omitempty"`
 	FilePath   string          `json:"file_path,omitempty"`
 	CheckedAt  time.Time       `json:"checked_at"`
+	// OfflineImport marks a response to a license import that was written
+	// without the server confirming the device write-off; the device is
+	// reported on a later start. Only import responses set it.
+	OfflineImport bool `json:"offline_import,omitempty"`
+}
+
+// LicenseCloudStatus is GET /api/license/cloud: what the local instance knows
+// about the customer's cloud license. It always answers 200 and expresses
+// failures in the fields, so the UI never has to handle an error for a status
+// check.
+type LicenseCloudStatus struct {
+	LoggedIn   bool   `json:"logged_in"`
+	Online     bool   `json:"online"`
+	Supported  bool   `json:"supported"`
+	State      string `json:"state"`
+	HasLicense bool   `json:"has_license"`
+	NotStarted bool   `json:"not_started"`
+	LicenseKey string `json:"license_key"`
+	// ExpireTime is the cloud license expiry; nil when there is none.
+	ExpireTime         *time.Time `json:"expire_time,omitempty"`
+	GraceUntil         string     `json:"grace_until"`
+	SubscriptionStatus string     `json:"subscription_status"`
+	Used               int        `json:"used"`
+	Limit              int        `json:"limit"`
+	// EnvManaged means the installed license comes from CSGHUB_LITE_LICENSE,
+	// so it cannot be replaced through the UI.
+	EnvManaged bool `json:"env_managed"`
+	// Reason explains an unavailable state: login_required, token_invalid,
+	// unreachable, unsupported or server_error.
+	Reason string `json:"reason,omitempty"`
 }
 
 // LicenseImportRequest carries the LICENSE KEY PEM text, as CSGHub's ImportLicenseReq does.

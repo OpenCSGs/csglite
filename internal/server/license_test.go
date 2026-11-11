@@ -23,14 +23,36 @@ func installTestLicenseKeys(t *testing.T, s *Server) *rsa.PrivateKey {
 	key := licensetest.NewKey(t)
 	root := t.TempDir()
 	s.license = license.NewManager(license.Options{
-		FilePath:      filepath.Join(root, license.FileName),
-		PublicKeys:    []*rsa.PublicKey{&key.PublicKey},
-		Version:       s.version,
-		Catalog:       gatedTestCatalog(),
-		LastCheckPath: filepath.Join(root, "license.lastcheck"),
+		FilePath:       filepath.Join(root, license.FileName),
+		PublicKeys:     []*rsa.PublicKey{&key.PublicKey},
+		Version:        s.version,
+		Catalog:        gatedTestCatalog(),
+		LastCheckPath:  filepath.Join(root, "license.lastcheck"),
+		ActivationPath: filepath.Join(root, "license.activation"),
 	})
 	s.license.Refresh()
+	// Installing over HTTP now claims a device against the hub. Point the
+	// server at a stub so the license tests never touch the network.
+	s.cfg.ServerURL = newLicenseHubStub(t)
 	return key
+}
+
+// newLicenseHubStub answers the CSGLite license endpoints used by the import
+// path and records nothing.
+func newLicenseHubStub(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/licenses/csglite/activations":
+			_, _ = w.Write([]byte(`{"code":"","msg":"OK","data":{"recorded":true,"used":1,"limit":10}}`))
+		case strings.HasSuffix(r.URL.Path, "/csglite/status"):
+			_, _ = w.Write([]byte(`{"code":"","msg":"OK","data":{"has_license":true,"state":"active","license_key":"test-license-key","used":1,"limit":10}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 // gatedTestCatalog gates every shipped entry so the tests exercise the
@@ -82,7 +104,7 @@ func TestRequireFeatureWithoutLicenseReturnsForbidden(t *testing.T) {
 	}
 }
 
-func TestRequireFeatureUngatedAlwaysPasses(t *testing.T) {
+func TestShippedCatalogKeepsGatedEntriesDisabled(t *testing.T) {
 	s := newTestServer(t)
 	installTestLicenseKeys(t, s)
 	for _, srv := range []*Server{s, {version: "test"}} { // with and without a manager
@@ -101,14 +123,15 @@ func TestRequireFeatureUngatedAlwaysPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range catalog {
-		if entry.Key == license.QuotaMaxClusterNodes.Key {
-			// The only shipped gated entry: an integer cap, never "enabled".
-			if !entry.Gated {
-				t.Fatalf("cluster node cap should be gated: %+v", entry)
+		if entry.Gated {
+			// Integer caps and other gated entries are never "enabled" without
+			// a license; that is the shipped Community state.
+			if entry.Enabled {
+				t.Fatalf("gated catalog entry %s should be disabled without a license: %+v", entry.Key, entry)
 			}
 			continue
 		}
-		if entry.Gated || !entry.Enabled {
+		if !entry.Enabled {
 			t.Fatalf("shipped catalog entry %s should be ungated and enabled: %+v", entry.Key, entry)
 		}
 	}
@@ -281,10 +304,19 @@ func TestLicenseImportRejectsBadInput(t *testing.T) {
 func TestLicenseRoutesAreLocalOnly(t *testing.T) {
 	s := newTestServer(t)
 	installTestLicenseKeys(t, s)
-	rec := httptest.NewRecorder()
-	s.externalAPIRoutes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/license", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("external API exposes /api/license: %d", rec.Code)
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/license"},
+		{http.MethodGet, "/api/license/cloud"},
+		{http.MethodPost, "/api/license/cloud/import"},
+	} {
+		rec := httptest.NewRecorder()
+		s.externalAPIRoutes().ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("external API exposes %s %s: %d", tc.method, tc.path, rec.Code)
+		}
 	}
 }
 

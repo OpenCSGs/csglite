@@ -14,6 +14,11 @@ const (
 	FeatureTypeInt     FeatureType = "int"
 )
 
+// CSGLiteMaxDevices is the device cap the server enforces for every CSGLite
+// license. The server ignores Extra overrides, so the local display uses this
+// constant rather than the signed payload's limits.
+const CSGLiteMaxDevices = 10
+
 const (
 	// Keys share one flat namespace with CSGHub's own features inside the
 	// issuer's registry, so every CSGLite key carries a product segment.
@@ -101,6 +106,14 @@ var (
 		Key: quotaPrefix + "max_cluster_nodes", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
 		CommunityValue: 2, Since: "0.13.0",
 	}
+	// QuotaMaxDevices is how many devices one CSGLite license may activate.
+	// The server enforces it per license key and never releases a seat; the
+	// value here is what Settings and the CLI show. Every subscription tier
+	// allows the same number, so the Community and default values match.
+	QuotaMaxDevices = FeatureDefinition{
+		Key: quotaPrefix + "max_devices", Type: FeatureTypeInt, Gated: true, DefaultValue: CSGLiteMaxDevices,
+		CommunityValue: CSGLiteMaxDevices, Since: "1.1.0",
+	}
 )
 
 var catalog = []FeatureDefinition{
@@ -113,6 +126,7 @@ var catalog = []FeatureDefinition{
 	QuotaMaxProviderPools,
 	FeatureLANCluster,
 	QuotaMaxClusterNodes,
+	QuotaMaxDevices,
 }
 
 // Catalog returns a copy of every registered feature definition.

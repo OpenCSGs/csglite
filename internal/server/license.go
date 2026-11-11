@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
+	"github.com/opencsgs/csglite/internal/csghub"
 	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/pkg/api"
 )
@@ -221,25 +223,137 @@ func (s *Server) handleLicenseVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.license.Verify(data).APIVerify())
 }
 
-// PUT /api/license -- install (replace) the license file
+// PUT /api/license -- install (replace) the license file.
+//
+// A valid license is claimed against the customer's device quota before it is
+// written. The validity rules are unchanged: only invalid and expired licenses
+// are rejected locally. When the hub cannot be reached the license is installed
+// anyway and the device is reported later, because an offline instance is
+// allowed to work without the quota.
 func (s *Server) handleLicenseImport(w http.ResponseWriter, r *http.Request) {
 	data, ok := readLicenseImportRequest(w, r)
 	if !ok {
 		return
 	}
-	state, err := s.license.Install(data)
-	if err != nil {
+	if s.licenseManagedByEnv() {
+		writeError(w, http.StatusConflict, fmt.Sprintf("%v: unset %s before installing a file", license.ErrManagedByEnv, license.EnvLicense))
+		return
+	}
+	// Keep the previous rejection path for unusable licenses: Install produces
+	// the same message and status as before.
+	verified := s.license.Verify(data)
+	if verified.Status == license.StatusInvalid || verified.Status == license.StatusExpired {
+		state, err := s.license.Install(data)
 		writeError(w, licenseWriteErrorStatus(state, err), err.Error())
 		return
 	}
-	// Install re-reads the source, so a concurrent delete can leave no
-	// payload behind even though the write succeeded.
+	licenseKey := "unknown"
+	if verified.Payload != nil {
+		licenseKey = verified.Payload.Key
+	}
+
+	deviceID, err := s.licenseDevice()
+	if err != nil {
+		// The license is usable, so install it; an unidentifiable device simply
+		// cannot be written off.
+		log.Printf("license: cannot determine the device id: %v", err)
+		state, installed := s.installLicense(w, data)
+		if !installed {
+			return
+		}
+		writeJSON(w, http.StatusOK, state.APIState(s.license.FilePath()))
+		return
+	}
+
+	result, err := s.activateLicense(r.Context(), data, deviceID, csghub.ActivationModeClaim)
+	if err != nil {
+		s.handleClaimFailure(w, data, deviceID, licenseKey, err)
+		return
+	}
+
+	state, installed := s.installAndMark(w, data, deviceID, license.ActivationReported, time.Time{}, false)
+	if !installed {
+		return
+	}
 	company := "unknown"
 	if state.Payload != nil {
 		company = state.Payload.Company
 	}
-	log.Printf("license: installed %s license for %s (status %s)", state.Edition(), company, state.Status)
-	writeJSON(w, http.StatusOK, state.APIState(s.license.FilePath()))
+	log.Printf("license: installed %s license for %s (status %s, devices %d/%d)",
+		state.Edition(), company, state.Status, result.Used, result.Limit)
+}
+
+// handleClaimFailure decides what to do when the activation call did not
+// succeed. Only a definitive refusal keeps the license out; a broken or
+// unreachable hub falls back to offline behaviour, while the automatic import
+// never does.
+func (s *Server) handleClaimFailure(w http.ResponseWriter, data, deviceID, licenseKey string, err error) {
+	switch classifyLicenseFailure(err) {
+	case licenseFailureDeviceLimit:
+		writeDeviceLimitError(w, err)
+	case licenseFailureExpired:
+		writeExpiredError(w, err)
+	case licenseFailureRateLimited:
+		writeLicenseError(w, http.StatusTooManyRequests, "too many requests", licenseCodeRateLimited, 0, 0)
+	case licenseFailureNotFound:
+		// The ledger does not know this license (admin-issued or historical).
+		s.installAndMark(w, data, deviceID, license.ActivationUnmanaged, time.Time{}, false)
+	case licenseFailureUnsupported:
+		// An older server has no activation route; report once it is upgraded.
+		s.installAndMark(w, data, deviceID, license.ActivationPending, time.Now().Add(licenseActivationRetryDelay), false)
+	case licenseFailureUnreachable, licenseFailureServer:
+		log.Printf("license: device write-off for key %s failed, will retry later: %v", licenseKeyLogPrefix(licenseKey), err)
+		s.installAndMark(w, data, deviceID, license.ActivationPending, time.Time{}, true)
+	default:
+		writeLicenseError(w, http.StatusBadGateway, err.Error(), licenseCodeBadRequest, 0, 0)
+	}
+}
+
+// installAndMark writes the license and records the write-off state. A state
+// write failure does not fail the request: the license is already installed
+// and the startup scan reports it again. offline marks a response whose device
+// was not confirmed by the server, so the UI can say the device is reported
+// later.
+func (s *Server) installAndMark(w http.ResponseWriter, data, deviceID string, status license.ActivationStatus, retryAt time.Time, offline bool) (license.State, bool) {
+	state, ok := s.installLicense(w, data)
+	if !ok {
+		return state, false
+	}
+	pendingReport := false
+	// Install re-reads the file, so a concurrent delete can leave no payload
+	// even though the write succeeded. The license is installed; there is just
+	// no key to record, and the startup scan handles the next import.
+	if state.Payload != nil {
+		store := s.license.Activations()
+		key := state.Payload.Key
+		var err error
+		switch status {
+		case license.ActivationReported:
+			err = store.MarkReported(key, deviceID)
+		case license.ActivationUnmanaged:
+			err = store.MarkUnmanaged(key, deviceID)
+		default:
+			// A report is still owed unless the record is already reported or
+			// unmanaged; EnsurePending never downgrades those terminal states.
+			// A failed write leaves pendingReport false: the response must not
+			// promise a report this process could not record.
+			var record license.Activation
+			record, err = store.EnsurePending(key, deviceID)
+			if err == nil {
+				pendingReport = record.Status == license.ActivationPending
+				if pendingReport && !retryAt.IsZero() {
+					err = store.MarkRetry(key, deviceID, retryAt)
+				}
+			}
+		}
+		if err != nil {
+			log.Printf("license: recording activation: %v", err)
+		}
+	}
+	apiState := state.APIState(s.license.FilePath())
+	apiState.OfflineImport = offline && pendingReport
+	writeJSON(w, http.StatusOK, apiState)
+	return state, true
 }
 
 // DELETE /api/license -- remove the license file
@@ -250,5 +364,6 @@ func (s *Server) handleLicenseDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("license: removed; running as %s edition", state.Edition())
+	s.invalidateLicenseCloudCache()
 	writeJSON(w, http.StatusOK, state.APIState(s.license.FilePath()))
 }

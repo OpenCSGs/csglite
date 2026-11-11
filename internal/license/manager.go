@@ -156,6 +156,8 @@ type Options struct {
 	GracePeriod time.Duration
 	// LastCheckPath stores the clock-rollback marker; empty disables it.
 	LastCheckPath string
+	// ActivationPath stores the device write-off state; empty disables it.
+	ActivationPath string
 }
 
 // DefaultOptions builds Options from the storage root and environment.
@@ -169,21 +171,25 @@ func DefaultOptions(storageRoot, version string) (Options, error) {
 		filePath = filepath.Join(storageRoot, FileName)
 	}
 	lastCheck := ""
+	activationPath := ""
 	if strings.TrimSpace(storageRoot) != "" {
 		lastCheck = filepath.Join(storageRoot, lastCheckFileName)
+		activationPath = filepath.Join(storageRoot, activationFileName)
 	}
 	return Options{
-		FilePath:      filePath,
-		Inline:        os.Getenv(EnvLicense),
-		PublicKeys:    keys,
-		Version:       version,
-		LastCheckPath: lastCheck,
+		FilePath:       filePath,
+		Inline:         os.Getenv(EnvLicense),
+		PublicKeys:     keys,
+		Version:        version,
+		LastCheckPath:  lastCheck,
+		ActivationPath: activationPath,
 	}, nil
 }
 
 // Manager loads, verifies and caches the license state.
 type Manager struct {
-	opts Options
+	opts        Options
+	activations *ActivationStore
 
 	mu    sync.RWMutex
 	state State
@@ -200,7 +206,13 @@ func NewManager(opts Options) *Manager {
 	if opts.GracePeriod <= 0 {
 		opts.GracePeriod = DefaultGracePeriod
 	}
-	return &Manager{opts: opts, state: State{Status: StatusNone}}
+	return &Manager{opts: opts, activations: NewActivationStore(opts.ActivationPath), state: State{Status: StatusNone}}
+}
+
+// ManagedByEnv reports whether CSGHUB_LITE_LICENSE supplies the license, so
+// installing or removing through the file is refused.
+func (m *Manager) ManagedByEnv() bool {
+	return m != nil && strings.TrimSpace(m.opts.Inline) != ""
 }
 
 // FilePath returns where Install writes the license.
@@ -307,7 +319,11 @@ func (m *Manager) Install(data string) (State, error) {
 	return m.Refresh(), nil
 }
 
-// Remove deletes the license file and refreshes.
+// Remove deletes the license file and the device write-off record, then
+// refreshes. The license file goes first: if the process dies in between, the
+// leftover activation record is an orphan the startup scan removes, whereas
+// the reverse order would look like an existing license that was never
+// reported and trigger a spurious write-off.
 func (m *Manager) Remove() (State, error) {
 	if m == nil {
 		return State{}, errors.New("license manager is not initialised")
@@ -320,7 +336,32 @@ func (m *Manager) Remove() (State, error) {
 			return m.State(), fmt.Errorf("removing license file: %w", err)
 		}
 	}
+	// The license file is already gone, so the removal succeeded. A leftover
+	// activation record is an orphan the startup scan removes; log the cleanup
+	// failure instead of reporting the whole removal as failed.
+	if err := m.activations.Delete(); err != nil {
+		log.Printf("license: removing activation state: %v", err)
+	}
 	return m.Refresh(), nil
+}
+
+// Activations returns the device write-off store. A manager built without an
+// activation path returns a disabled store; a nil manager returns nil.
+func (m *Manager) Activations() *ActivationStore {
+	if m == nil {
+		return nil
+	}
+	return m.activations
+}
+
+// Raw returns the license text exactly as stored, for the activation API which
+// verifies the signature itself. The payload alone is not enough.
+func (m *Manager) Raw() (string, error) {
+	if m == nil {
+		return "", errors.New("license manager is not initialised")
+	}
+	data, _, err := m.read()
+	return data, err
 }
 
 // Run refreshes periodically until ctx is done.

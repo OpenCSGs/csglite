@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/deviceid"
 	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/pkg/api"
 	"github.com/spf13/cobra"
@@ -70,17 +71,25 @@ func newLicenseClient(version string) (*licenseClient, error) {
 	return c, nil
 }
 
-func (c *licenseClient) local() (*license.Manager, error) {
-	if c.manager != nil {
-		return c.manager, nil
-	}
+func (c *licenseClient) storageRoot() (string, error) {
 	root := c.cfg.StorageDir()
 	if root == "" {
 		defaultRoot, err := config.DefaultStorageDir()
 		if err != nil {
-			return nil, fmt.Errorf("resolving storage directory: %w", err)
+			return "", fmt.Errorf("resolving storage directory: %w", err)
 		}
 		root = defaultRoot
+	}
+	return root, nil
+}
+
+func (c *licenseClient) local() (*license.Manager, error) {
+	if c.manager != nil {
+		return c.manager, nil
+	}
+	root, err := c.storageRoot()
+	if err != nil {
+		return nil, err
 	}
 	opts, err := license.DefaultOptions(root, c.version)
 	if err != nil {
@@ -89,6 +98,32 @@ func (c *licenseClient) local() (*license.Manager, error) {
 	c.manager = license.NewManager(opts)
 	c.manager.Refresh()
 	return c.manager, nil
+}
+
+// recordPendingActivation marks an offline install for the next startup, which
+// reports the device once it can reach the server. It reports whether a report
+// is still owed, so the caller only promises one when the record says so.
+func (c *licenseClient) recordPendingActivation(state license.State) bool {
+	if c.manager == nil || state.Payload == nil {
+		return false
+	}
+	root, err := c.storageRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: the device seat was not recorded: %v\n", err)
+		return false
+	}
+	deviceID, err := deviceid.Resolve(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: the device seat was not recorded: %v\n", err)
+		return false
+	}
+	store := c.manager.Activations()
+	record, err := store.EnsurePending(state.Payload.Key, deviceID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: the device seat was not recorded: %v\n", err)
+		return false
+	}
+	return record.Status == license.ActivationPending
 }
 
 func (c *licenseClient) do(method, path string, body any, out any) error {
@@ -269,10 +304,17 @@ func newLicenseInstallCmd(version string) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				// No server to claim against: record the device so the next
+				// online start reports it, and tell the user only when a report
+				// is actually owed.
 				st = installed.APIState(m.FilePath())
+				st.OfflineImport = c.recordPendingActivation(installed)
 			}
 			fmt.Println("License installed.")
 			printLicenseState(st, c.baseURL == "")
+			if st.OfflineImport {
+				fmt.Println("Note: the device seat will sync automatically when online.")
+			}
 			return nil
 		},
 	}
@@ -370,7 +412,12 @@ func printLicenseState(st api.LicenseState, offline bool) {
 		}
 		fmt.Fprintf(w, "Product:\t%s\n", l.Product)
 		fmt.Fprintf(w, "License ID:\t%s\n", l.Key)
-		fmt.Fprintf(w, "Seats:\t%d\n", l.MaxUser)
+		// MaxUser is a historical issuer field; what CSGLite enforces is the
+		// server-side device cap. The server ignores Extra overrides, so show
+		// the fixed cap rather than a value from the signed payload.
+		if st.Edition == license.EditionEnterprise {
+			fmt.Fprintf(w, "Devices:\t%d\n", license.CSGLiteMaxDevices)
+		}
 		fmt.Fprintf(w, "Valid from:\t%s\n", l.StartTime.Local().Format("2006-01-02"))
 		fmt.Fprintf(w, "Expires:\t%s\n", l.ExpireTime.Local().Format("2006-01-02"))
 		if st.GraceUntil != nil {

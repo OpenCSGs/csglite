@@ -308,6 +308,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) applyRuntimeSettingsUpdate(serverURLUpdated, aiGatewayURLUpdated, cloudTokenUpdated bool) {
 	if serverURLUpdated || cloudTokenUpdated {
 		clearMarketplaceCache()
+		s.invalidateLicenseCloudCache()
 		if s.cloud != nil {
 			s.cloud.SetAccessToken(s.cfg.Token)
 		}
