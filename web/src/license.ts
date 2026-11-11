@@ -136,7 +136,17 @@ export function cloudImportAvailability(
     // env-managed, so this branch only protects future callers.
     return { enabled: false, hintKey: "settings.licenseCloudHintEnv" };
   }
-  if (!cloud.has_license) return { enabled: false, hintKey: "settings.licenseCloudHintNoSubscription" };
+  if (!cloud.has_license) {
+    // An expired license still has a key and a state, so "no subscription"
+    // would be misleading: the row exists, it is just no longer usable.
+    return {
+      enabled: false,
+      hintKey:
+        cloud.state === "expired"
+          ? "settings.licenseCloudExpired"
+          : "settings.licenseCloudHintNoSubscription",
+    };
+  }
   if ((cloud.not_started || cloud.state === "not_started") && isLicensed(state)) {
     return { enabled: false, hintKey: "settings.licenseCloudHintNotStarted" };
   }

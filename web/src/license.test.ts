@@ -132,6 +132,12 @@ describe("cloud import availability", () => {
     expect(cloudImportAvailability(null, cloud({ has_license: false, state: "none" })).hintKey).toBe(
       "settings.licenseCloudHintNoSubscription",
     );
+    expect(
+      cloudImportAvailability(
+        null,
+        cloud({ has_license: false, state: "expired", license_key: "subscription:4:1" }),
+      ).hintKey,
+    ).toBe("settings.licenseCloudExpired");
   });
 
   it("disables the button for env-managed licenses and unstarted cloud licenses", () => {
