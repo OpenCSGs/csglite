@@ -56,6 +56,8 @@ type statusModel struct {
 	Ready bool   `json:"ready"`
 	// State is loaded, loading or sleeping (ready but not in memory).
 	State string `json:"state,omitempty"`
+	// ActiveRequests counts the requests this model is serving right now.
+	ActiveRequests int `json:"active_requests,omitempty"`
 }
 
 const maxControlLine = 1 << 20

@@ -53,6 +53,8 @@ type Model struct {
 	State         string `json:"state,omitempty"`
 	Format        string `json:"format,omitempty"`
 	ContextLength int64  `json:"context_length,omitempty"`
+	// ActiveRequests counts the requests this model is serving right now.
+	ActiveRequests int `json:"active_requests,omitempty"`
 }
 
 // Host is what the edge connector needs from the CSGLite server.
@@ -575,7 +577,12 @@ func (m *Manager) statusMessage(ctx context.Context) controlMessage {
 	models := m.host.Models(ctx)
 	out := make([]statusModel, 0, len(models))
 	for _, mod := range models {
-		out = append(out, statusModel{ID: mod.ID, Ready: mod.Ready, State: mod.State})
+		out = append(out, statusModel{
+			ID:             mod.ID,
+			Ready:          mod.Ready,
+			State:          mod.State,
+			ActiveRequests: mod.ActiveRequests,
+		})
 	}
 	return controlMessage{
 		Type:           msgStatus,

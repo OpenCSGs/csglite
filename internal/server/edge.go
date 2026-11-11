@@ -101,6 +101,7 @@ func (h edgeHost) Models(context.Context) []edge.Model {
 		return nil
 	}
 	states := h.engineStates()
+	active := h.modelActiveRequests()
 	out := make([]edge.Model, 0, len(infos))
 	for _, info := range infos {
 		if !edgeServableModel(info) {
@@ -116,12 +117,13 @@ func (h edgeHost) Models(context.Context) []edge.Model {
 		// the short inference ID it never changes when another model with
 		// the same name is downloaded, so an approval stays valid for good.
 		out = append(out, edge.Model{
-			ID:            info.ID,
-			Name:          info.Model,
-			Ready:         info.LocalInference != nil && info.LocalInference.Supported,
-			State:         state,
-			Format:        info.Format,
-			ContextLength: info.ContextWindow,
+			ID:             info.ID,
+			Name:           info.Model,
+			Ready:          info.LocalInference != nil && info.LocalInference.Supported,
+			State:          state,
+			Format:         info.Format,
+			ContextLength:  info.ContextWindow,
+			ActiveRequests: active[info.ID],
 		})
 	}
 	return out
@@ -169,6 +171,19 @@ func (h edgeHost) ActiveRequests() int {
 		n += me.activeRequests
 	}
 	return n
+}
+
+// modelActiveRequests maps model storage IDs to the requests their engine is
+// serving right now, so the gateway can tell a busy model from an idle one.
+func (h edgeHost) modelActiveRequests() map[string]int {
+	s := h.s
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]int, len(s.engines))
+	for key, me := range s.engines {
+		out[engineModelIDFromKey(key)] = me.activeRequests
+	}
+	return out
 }
 
 func (h edgeHost) Cloud() (string, string) {
