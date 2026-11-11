@@ -1,4 +1,8 @@
 {
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
   "permissions": {
     "allow": [
       "Bash(go build *)",
@@ -29,8 +33,8 @@
       "Bash(go run *)",
       "Bash(npx tsc *)",
       "Bash(ps *)",
-      "Bash(find /Users/james/git/csghub-lite/internal/server/static -mindepth 1 -delete)",
-      "Bash(cp -r /Users/james/git/csghub-lite/web/dist/. /Users/james/git/csghub-lite/internal/server/static/)",
+      "Bash(rm -rf /Users/james/git/csghub-lite/internal/server/static/*)",
+      "Bash(cp -r /Users/james/git/csghub-lite/web/dist/* /Users/james/git/csghub-lite/internal/server/static/)",
       "Bash(kill 40445)",
       "Bash(make package *)",
       "Bash(gh release *)",
