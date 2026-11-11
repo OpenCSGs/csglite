@@ -393,6 +393,11 @@ func (s *Server) reportLicenseActivation(ctx context.Context) {
 	if store == nil || store.Path() == "" {
 		return
 	}
+	if s.licenseManagedByEnv() {
+		// CSGHUB_LITE_LICENSE is read-only: the deployment supplies it, so it
+		// is never written off to the device ledger.
+		return
+	}
 	state := s.license.State()
 	if state.Status == license.StatusInvalid {
 		// Keep the record: it still says this device was written off, and a

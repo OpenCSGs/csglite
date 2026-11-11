@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/rsa"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -936,8 +934,8 @@ func TestLicenseCloudImportClaimNotFound(t *testing.T) {
 	}
 }
 
-// TestReportLicenseActivationSendsRawPEM covers the env-managed path: the
-// payload alone is not enough, the hub verifies the signature over the PEM.
+// TestReportLicenseActivationSendsRawPEM: a file-managed license is reported
+// with the original PEM because the hub verifies the signature over it.
 func TestReportLicenseActivationSendsRawPEM(t *testing.T) {
 	type activationRequest struct {
 		License string `json:"license"`
@@ -954,19 +952,11 @@ func TestReportLicenseActivationSendsRawPEM(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := newTestServer(t)
-	key := licensetest.NewKey(t)
+	s, key, _ := newLicenseCloudServer(t, srv.URL, "")
 	data := licensetest.Encode(t, key, licensetest.Payload(time.Now()))
-	root := t.TempDir()
-	s.license = license.NewManager(license.Options{
-		Inline:         data,
-		PublicKeys:     []*rsa.PublicKey{&key.PublicKey},
-		Version:        s.version,
-		Catalog:        gatedTestCatalog(),
-		ActivationPath: filepath.Join(root, "license.activation"),
-	})
-	s.license.Refresh()
-	s.cfg.ServerURL = srv.URL
+	if _, err := s.license.Install(data); err != nil {
+		t.Fatal(err)
+	}
 
 	s.reportLicenseActivation(t.Context())
 
@@ -985,8 +975,38 @@ func TestReportLicenseActivationSendsRawPEM(t *testing.T) {
 	if !ok || record.Status != license.ActivationReported {
 		t.Fatalf("activation = %+v ok=%v, want reported", record, ok)
 	}
-	if _, err := os.Stat(filepath.Join(root, license.FileName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("an env-managed license must not be written to disk: %v", err)
+}
+
+// TestReportLicenseActivationSkipsEnvManagedLicense: CSGHUB_LITE_LICENSE is
+// read-only, so it must not create a ledger record or call the hub.
+func TestReportLicenseActivationSkipsEnvManagedLicense(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		writeEnvelope(w, `{"recorded":true,"used":1,"limit":10}`)
+	}))
+	defer srv.Close()
+
+	s := newTestServer(t)
+	key := licensetest.NewKey(t)
+	root := t.TempDir()
+	s.license = license.NewManager(license.Options{
+		Inline:         licensetest.Encode(t, key, licensetest.Payload(time.Now())),
+		PublicKeys:     []*rsa.PublicKey{&key.PublicKey},
+		Version:        s.version,
+		Catalog:        gatedTestCatalog(),
+		ActivationPath: filepath.Join(root, "license.activation"),
+	})
+	s.license.Refresh()
+	s.cfg.ServerURL = srv.URL
+
+	s.reportLicenseActivation(t.Context())
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("hub calls = %d, want 0 for an env-managed license", got)
+	}
+	if record, ok := s.license.Activations().Load(); ok {
+		t.Fatalf("activation = %+v, want no record for an env-managed license", record)
 	}
 }
 
