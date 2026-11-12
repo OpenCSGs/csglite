@@ -27,6 +27,8 @@ type fakeHost struct {
 	gateway    string
 	token      string
 	unlicensed atomic.Bool
+	modelCalls atomic.Int32
+	cloudCalls atomic.Int32
 	mu         sync.Mutex
 	seen       []*http.Request
 }
@@ -41,10 +43,12 @@ func (h *fakeHost) InferenceHandler() http.Handler {
 }
 
 func (h *fakeHost) Models(context.Context) []Model {
+	h.modelCalls.Add(1)
 	return []Model{{ID: "Qwen3-8B-GGUF", Ready: true, Format: "gguf"}, {ID: "too-big", Ready: false}}
 }
 func (h *fakeHost) ActiveRequests() int { return 0 }
 func (h *fakeHost) Cloud() (string, string) {
+	h.cloudCalls.Add(1)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.gateway, h.token
@@ -582,5 +586,167 @@ func TestBalanceAndStatementsReadCSGHubAsTheSignedInUser(t *testing.T) {
 	}
 	if _, err := m.Statements(context.Background()); err == nil {
 		t.Fatal("statements without a CSGHub sign-in succeeded")
+	}
+}
+
+// Concurrent toggles must leave no loop or heartbeat running after the final
+// stop. Keep a real tunnel involved so both reconnect and session paths run.
+func TestManagerConcurrentEnableDisable(t *testing.T) {
+	g := newFakeGateway(t)
+	host := &fakeHost{gateway: g.server.URL, token: "user-token"}
+	m, err := New(host, t.TempDir(), "studio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+	if err := m.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	<-g.next(t).status
+
+	// Consume new sessions so the fake gateway cannot block during toggles.
+	consumeDone := make(chan struct{})
+	defer close(consumeDone)
+	go func() {
+		for {
+			select {
+			case <-g.sessions:
+			case <-consumeDone:
+				return
+			}
+		}
+	}()
+
+	start := make(chan struct{})
+	var toggles sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		toggles.Add(1)
+		go func() {
+			defer toggles.Done()
+			<-start
+			for i := 0; i < 10; i++ {
+				if err := m.SetEnabled(i%2 == 0); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	close(start)
+	done := make(chan struct{})
+	go func() {
+		toggles.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent toggles did not finish promptly")
+	}
+	if err := m.SetEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	m.Stop()
+	if st := m.Status(); st.State != StateDisabled || st.Enabled {
+		t.Fatalf("status after stop = %+v", st)
+	}
+	models, cloud, registers := host.modelCalls.Load(), host.cloudCalls.Load(), g.registers.Load()
+	// Longer than the gateway heartbeat and the first reconnect delay.
+	time.Sleep(1600 * time.Millisecond)
+	if host.modelCalls.Load() != models || host.cloudCalls.Load() != cloud || g.registers.Load() != registers {
+		t.Fatal("model reporting or reconnect continued after Stop returned")
+	}
+}
+
+type blockingModelsHost struct {
+	*fakeHost
+	entered chan struct{}
+	release chan struct{}
+	blockAt int32
+	calls   atomic.Int32
+}
+
+func (h *blockingModelsHost) Models(ctx context.Context) []Model {
+	if h.calls.Add(1) == h.blockAt {
+		close(h.entered)
+		<-h.release
+	}
+	return h.fakeHost.Models(ctx)
+}
+
+// A slow status report keeps the old loop alive during drain. Both another
+// Stop and a restart must wait, rather than return early or start a second loop.
+func TestManagerLifecycleWaitsForDrain(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		operation string
+		blockAt   int32
+	}{
+		{"stop_during_initial_report", "stop", 1},
+		{"start_during_initial_report", "start", 1},
+		{"stop_during_heartbeat", "stop", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newFakeGateway(t)
+			host := &blockingModelsHost{
+				fakeHost: &fakeHost{gateway: g.server.URL, token: "user-token"},
+				entered:  make(chan struct{}),
+				release:  make(chan struct{}),
+				blockAt:  tc.blockAt,
+			}
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(host.release) }) }
+			defer release()
+			m, err := New(host, t.TempDir(), "studio")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer m.Stop()
+			// Ensure failed assertions release Models before deferred Stop.
+			defer release()
+			if err := m.SetEnabled(true); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-host.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("model report did not start")
+			}
+			m.mu.Lock()
+			draining := m.draining
+			m.mu.Unlock()
+			stopped := make(chan struct{})
+			go func() {
+				m.Stop()
+				close(stopped)
+			}()
+			select {
+			case <-draining:
+			case <-time.After(time.Second):
+				t.Fatal("Stop did not begin draining")
+			}
+			completed := make(chan struct{})
+			go func() {
+				if tc.operation == "start" {
+					m.Start()
+				} else {
+					m.Stop()
+				}
+				close(completed)
+			}()
+			select {
+			case <-completed:
+				t.Fatalf("%s returned before the old loop drained", tc.operation)
+			case <-time.After(50 * time.Millisecond):
+			}
+			release()
+			for _, done := range []<-chan struct{}{stopped, completed} {
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					t.Fatal("lifecycle operation did not finish after release")
+				}
+			}
+		})
 	}
 }

@@ -162,12 +162,15 @@ type Manager struct {
 	nodeName  string
 	client    *http.Client
 
-	mu       sync.Mutex
-	state    persistedState
-	status   Status
-	cancel   context.CancelFunc
-	done     chan struct{}
-	draining chan struct{}
+	// lifecycleMu serializes starts and stops, including the drain wait.
+	// Workers only take mu, so they can finish while a stop holds lifecycleMu.
+	lifecycleMu sync.Mutex
+	mu          sync.Mutex
+	state       persistedState
+	status      Status
+	cancel      context.CancelFunc
+	done        chan struct{}
+	draining    chan struct{}
 }
 
 // New creates a manager keeping its state under dir.
@@ -227,6 +230,8 @@ func (m *Manager) save() error {
 
 // Start resumes serving if it was enabled before.
 func (m *Manager) Start() {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	m.mu.Lock()
 	enabled := m.state.Enabled
 	m.mu.Unlock()
@@ -237,6 +242,8 @@ func (m *Manager) Start() {
 
 // SetEnabled turns serving on or off and remembers the choice.
 func (m *Manager) SetEnabled(enabled bool) error {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	m.mu.Lock()
 	m.state.Enabled = enabled
 	m.status.Enabled = enabled
@@ -248,7 +255,7 @@ func (m *Manager) SetEnabled(enabled bool) error {
 	if enabled {
 		m.run()
 	} else {
-		m.Stop()
+		m.stop()
 	}
 	return nil
 }
@@ -272,6 +279,7 @@ func (m *Manager) setStatus(update func(*Status)) {
 	m.mu.Unlock()
 }
 
+// run starts a loop; callers hold lifecycleMu.
 func (m *Manager) run() {
 	m.mu.Lock()
 	if m.cancel != nil {
@@ -282,20 +290,27 @@ func (m *Manager) run() {
 	m.cancel = cancel
 	m.done = make(chan struct{})
 	m.draining = make(chan struct{})
-	done := m.done
+	done, draining := m.done, m.draining
 	m.mu.Unlock()
 	go func() {
 		defer close(done)
-		m.loop(ctx)
+		m.loop(ctx, draining)
 	}()
 }
 
 // Stop drains and closes the tunnel: the gateway stops routing first, then
 // in-flight requests get a short grace period to finish.
 func (m *Manager) Stop() {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+	m.stop()
+}
+
+// stop waits for the current loop to exit; callers hold lifecycleMu.
+func (m *Manager) stop() {
 	m.mu.Lock()
 	cancel, done, draining := m.cancel, m.done, m.draining
-	m.cancel = nil
+	m.cancel, m.done, m.draining = nil, nil, nil
 	m.mu.Unlock()
 	if cancel == nil {
 		return
@@ -321,20 +336,20 @@ const (
 	stableAfter = 30 * time.Second
 )
 
-func (m *Manager) loop(ctx context.Context) {
+func (m *Manager) loop(ctx context.Context, draining <-chan struct{}) {
 	backoff := minBackoff
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-m.draining:
+		case <-draining:
 			return
 		default:
 		}
 		started := time.Now()
-		err := m.session(ctx)
+		err := m.session(ctx, draining)
 		select {
-		case <-m.draining:
+		case <-draining:
 			return
 		default:
 		}
@@ -370,7 +385,7 @@ func (m *Manager) loop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-m.draining:
+		case <-draining:
 			return
 		case <-time.After(wait):
 		}
@@ -389,7 +404,7 @@ var (
 )
 
 // session runs one tunnel until it ends.
-func (m *Manager) session(ctx context.Context) error {
+func (m *Manager) session(ctx context.Context, draining <-chan struct{}) error {
 	if !m.host.Licensed() {
 		return errNotLicensed
 	}
@@ -443,15 +458,29 @@ func (m *Manager) session(ctx context.Context) error {
 
 	heartbeat := make(chan time.Duration, 1)
 	var changed atomic.Bool
-	go m.readControl(control, heartbeat)
-	go m.heartbeat(ctx, mux, control, heartbeat, func() bool {
-		gw, tk := m.host.Cloud()
-		if gatewayKey(gw) != gatewayKey(gatewayURL) || tk != token {
-			changed.Store(true)
-			return true
-		}
-		return false
-	})
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		m.readControl(control, heartbeat)
+	}()
+	go func() {
+		defer workers.Done()
+		m.heartbeat(ctx, mux, control, heartbeat, func() bool {
+			gw, tk := m.host.Cloud()
+			if gatewayKey(gw) != gatewayKey(gatewayURL) || tk != token {
+				changed.Store(true)
+				return true
+			}
+			return false
+		})
+	}()
+	defer func() {
+		// Closing the mux releases both workers. Join them before a new
+		// session starts or Stop returns, so no old heartbeat reports models.
+		_ = mux.Close()
+		workers.Wait()
+	}()
 
 	server := &http.Server{
 		Handler:           guard(m.host.InferenceHandler()),
@@ -463,7 +492,7 @@ func (m *Manager) session(ctx context.Context) error {
 	case err = <-serveErr:
 	case <-ctx.Done():
 		err = ctx.Err()
-	case <-m.draining:
+	case <-draining:
 		_ = control.write(controlMessage{Type: msgDrain})
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		_ = server.Shutdown(shutdownCtx)
