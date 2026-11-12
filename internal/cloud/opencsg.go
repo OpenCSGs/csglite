@@ -16,12 +16,13 @@ import (
 )
 
 const (
-	DefaultBaseURL        = "https://ai.space.opencsg.com"
-	DefaultLoginURL       = "https://iam.opencsg.com/login/oauth/authorize?client_id=d623c957e69976c8a7a8&response_type=code&redirect_uri=https://hub.opencsg.com/api/v1/callback/casdoor&scope=read&state=lite"
-	DefaultAccessTokenURL = "https://opencsg.com/settings/access-token"
-	defaultCacheTTL       = 5 * time.Minute
-	cloudModelListPage    = "1"
-	cloudModelListPer     = "40"
+	DefaultBaseURL         = "https://ai.space.opencsg.com"
+	DefaultLoginURL        = "https://iam.opencsg.com/login/oauth/authorize?client_id=d623c957e69976c8a7a8&response_type=code&redirect_uri=https://hub.opencsg.com/api/v1/callback/casdoor&scope=read&state=lite"
+	DefaultAccessTokenURL  = "https://opencsg.com/settings/access-token"
+	defaultCacheTTL        = 5 * time.Minute
+	cloudModelListPage     = "1"
+	cloudModelListPer      = "40"
+	cloudModelListMaxPages = 20
 )
 
 type Service struct {
@@ -52,8 +53,10 @@ type ClientEvent struct {
 }
 
 type modelListResponse struct {
-	Object string        `json:"object"`
-	Data   []remoteModel `json:"data"`
+	Object     string        `json:"object"`
+	Data       []remoteModel `json:"data"`
+	HasMore    bool          `json:"has_more"`
+	TotalCount int           `json:"total_count"`
 }
 
 type remoteModel struct {
@@ -301,9 +304,42 @@ func isUnauthorizedStatus(err error) bool {
 }
 
 func fetchCloudModels(ctx context.Context, client *http.Client, baseURL, token string) ([]api.ModelInfo, map[string]ModelTokenLimits, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models?page="+cloudModelListPage+"&per="+cloudModelListPer, nil)
+	models := make([]api.ModelInfo, 0)
+	limits := make(map[string]ModelTokenLimits)
+	seen := make(map[string]struct{})
+
+	for page := 1; page <= cloudModelListMaxPages; page++ {
+		payload, err := fetchCloudModelPage(ctx, client, baseURL, token, page)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, item := range payload.Data {
+			modelID := strings.TrimSpace(item.ID)
+			if modelID != "" {
+				if _, ok := seen[modelID]; ok {
+					continue
+				}
+				seen[modelID] = struct{}{}
+			}
+			info, ok := modelInfoFromRemote(item)
+			if !ok {
+				continue
+			}
+			models = append(models, info)
+			limits[strings.TrimSpace(info.Model)] = modelTokenLimitsFromRemote(item)
+		}
+		if !payload.HasMore || len(payload.Data) == 0 {
+			break
+		}
+	}
+
+	return models, limits, nil
+}
+
+func fetchCloudModelPage(ctx context.Context, client *http.Client, baseURL, token string, page int) (modelListResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models?page="+strconv.Itoa(page)+"&per="+cloudModelListPer, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating cloud model request: %w", err)
+		return modelListResponse{}, fmt.Errorf("creating cloud model request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	if token != "" {
@@ -312,13 +348,13 @@ func fetchCloudModels(ctx context.Context, client *http.Client, baseURL, token s
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("fetching cloud models: %w", err)
+		return modelListResponse{}, fmt.Errorf("fetching cloud models: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, nil, cloudModelListStatusError{
+		return modelListResponse{}, cloudModelListStatusError{
 			statusCode: resp.StatusCode,
 			body:       strings.TrimSpace(string(body)),
 		}
@@ -326,21 +362,9 @@ func fetchCloudModels(ctx context.Context, client *http.Client, baseURL, token s
 
 	var payload modelListResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, nil, fmt.Errorf("decoding cloud model list: %w", err)
+		return modelListResponse{}, fmt.Errorf("decoding cloud model list: %w", err)
 	}
-
-	models := make([]api.ModelInfo, 0, len(payload.Data))
-	limits := make(map[string]ModelTokenLimits, len(payload.Data))
-	for _, item := range payload.Data {
-		info, ok := modelInfoFromRemote(item)
-		if !ok {
-			continue
-		}
-		models = append(models, info)
-		limits[strings.TrimSpace(info.Model)] = modelTokenLimitsFromRemote(item)
-	}
-
-	return models, limits, nil
+	return payload, nil
 }
 
 func (s *Service) currentAccessToken() string {
