@@ -3660,7 +3660,7 @@ export interface EdgeStatement {
 
 /** Rejects with an ApiError, so a missing Enterprise license is recognisable (isFeatureNotLicensedError). */
 export function getEdgeStatus(): Promise<EdgeStatus> {
-  return fetchClusterJSON<EdgeStatus>("/api/edge");
+  return fetchJSONWithApiError<EdgeStatus>("/api/edge");
 }
 
 export function setEdgeEnabled(enabled: boolean): Promise<EdgeStatus> {
