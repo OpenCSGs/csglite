@@ -78,6 +78,11 @@ func (s *Server) saveCloudAccessToken(token string) error {
 	if s.cloud != nil {
 		s.cloud.SetAccessToken(token)
 	}
+	s.invalidateLicenseCloudCache()
+	// A fresh login is the second write-off trigger: a license imported while
+	// offline can now be reported. The server context lets shutdown cancel an
+	// in-flight report, as it does for the startup scan.
+	go s.reportLicenseActivation(s.engineLoadContext())
 	return nil
 }
 
@@ -121,6 +126,7 @@ func (s *Server) handleCloudAuthTokenDelete(w http.ResponseWriter, r *http.Reque
 	if s.cloud != nil {
 		s.cloud.SetAccessToken("")
 	}
+	s.invalidateLicenseCloudCache()
 
 	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))
 }

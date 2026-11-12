@@ -192,10 +192,16 @@ type Server struct {
 	appShells        *aiAppShellManager
 	cloud            *cloud.Service
 	license          *license.Manager
+	storageRoot      string // fallback device id and activation state live here
 	http             *http.Server
 	externalHTTP     *http.Server
 	authCallbackHTTP *http.Server
 	logBuf           *LogBuffer
+
+	// licenseCloudMu guards the short-lived cache of the customer's cloud
+	// license state, so the Settings page does not call the hub on every poll.
+	licenseCloudMu    sync.Mutex
+	licenseCloudCache map[string]licenseCloudCacheEntry
 
 	// modelSettingsMu guards cfg.Inference.Models. It is written by the
 	// model-config handler and read by every engine load, on different request
@@ -305,6 +311,7 @@ func New(cfg *config.Config, version string) *Server {
 		cfg:               cfg,
 		version:           version,
 		license:           newLicenseManager(storageRoot, version),
+		storageRoot:       storageRoot,
 		manager:           mgr,
 		datasetManager:    dsMgr,
 		appManager:        apps.NewManager(cfg),
@@ -451,6 +458,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go s.refreshCloudModelsOnStartup(ctx)
 	go s.warmLocalModelMetadata()
 	go s.license.Run(ctx, license.DefaultRefreshInterval)
+	go s.reportLicenseActivation(ctx)
 
 	errCh := make(chan error, 3)
 	if s.cfg.DesktopMode {

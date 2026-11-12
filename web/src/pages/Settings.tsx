@@ -13,7 +13,10 @@ import {
   deleteLicense,
   getImageRuntimeStatus,
   getCloudAuthStatus,
+  getLicenseCloud,
   importLicense,
+  importLicenseFromCloud,
+  isApiError,
   verifyLicense,
   getTags,
   installImageRuntime,
@@ -21,10 +24,21 @@ import {
   saveSettings,
   upgradeWithProgress,
 } from "../api/client";
-import type { AppSettings, ArtifactSource, CloudAuthStatus, ContextCompressionMode, LocalDirectoryBrowseResponse } from "../api/client";
+import type {
+  AppSettings,
+  ArtifactSource,
+  CloudAuthStatus,
+  ContextCompressionMode,
+  LicenseCloudStatus,
+  LocalDirectoryBrowseResponse,
+} from "../api/client";
 import { COMMUNITY_SITES, CUSTOM_SITE_ID, matchCommunitySite } from "../data/communitySites";
 import type { CommunitySite } from "../data/communitySites";
 import {
+  cloudDeviceUsage,
+  cloudImportAvailability,
+  cloudImportErrorMessage,
+  deviceLimitOf,
   editionOf,
   formatLicenseDate,
   isLicensed,
@@ -128,6 +142,8 @@ const isVerifyingLicense = signal(false);
 const isInstallingLicense = signal(false);
 const isRemovingLicense = signal(false);
 const licenseRemoveDialogOpen = signal(false);
+const licenseCloud = signal<LicenseCloudStatus | null>(null);
+const isImportingCloudLicense = signal(false);
 
 function normalizeObservabilityRetentionDays(days: number | undefined | null): number {
   const value = Math.max(0, Math.min(3650, Math.round(days ?? 30)));
@@ -379,6 +395,7 @@ function pollCloudAuthAfterLogin() {
       cloudAuth.value = status;
       if (status.authenticated && status.user) {
         cloudAuthError.value = "";
+        void loadLicenseCloud();
         return;
       }
     } catch (err: any) {
@@ -610,6 +627,9 @@ async function saveOpenCSGService() {
     notifyProvidersChanged();
     setCloudServiceFeedback("", t("settings.providerSaveSuccess", cloudServiceLabel("opencsg")));
     fetchCloudAuth();
+    // The saved server URL is a different hub, so the cached cloud license
+    // state no longer describes this instance.
+    void loadLicenseCloud();
   } catch (err: any) {
     setCloudServiceFeedback(err?.message || t("settings.serviceUrlsSaveFailed"), "");
   } finally {
@@ -854,6 +874,9 @@ async function persistCommunitySiteNow(requestID: number) {
     if (serverUrlInput.value.trim() !== serverURL || aiGatewayUrlInput.value.trim() !== gatewayURL) return;
     applySettings(data);
     notifyProvidersChanged();
+    // A saved server URL points at a different hub, so the cached cloud
+    // license state no longer describes this instance.
+    void loadLicenseCloud();
     const status = await getCloudAuthStatus();
     if (requestID !== communitySiteSaveID) return;
     cloudAuth.value = status;
@@ -956,6 +979,9 @@ async function openCloudLogin() {
     });
     applySettings(data);
     notifyProvidersChanged();
+    // A saved server URL points at a different hub, so the cached cloud
+    // license state no longer describes this instance.
+    void loadLicenseCloud();
     const status = await getCloudAuthStatus();
     cloudAuth.value = status;
     if (!status.login_url) throw new Error(t("chat.failedResp"));
@@ -980,6 +1006,7 @@ async function logoutCloudAccount() {
   cloudAuthError.value = "";
   try {
     cloudAuth.value = await clearCloudToken();
+    void loadLicenseCloud();
   } catch (err: any) {
     cloudAuthError.value = err?.message || t("chat.failedResp");
   } finally {
@@ -1176,9 +1203,16 @@ async function installLicenseInput() {
     const state = await importLicense(data);
     licenseState.value = state;
     closeLicenseForm();
-    licenseMessage.value = t("settings.licenseInstallSuccess", editionLabel(editionOf(state)));
+    licenseMessage.value = state.offline_import
+      ? t("settings.licenseOfflineImport")
+      : t("settings.licenseInstallSuccess", editionLabel(editionOf(state)));
+    void loadLicenseCloud();
   } catch (err: any) {
-    licenseError.value = err?.message || t("settings.licenseInstallFailed");
+    // A rejected online import carries the device quota, which the generic
+    // message does not include.
+    licenseError.value = isApiError(err)
+      ? cloudImportErrorMessage(err)
+      : err?.message || t("settings.licenseInstallFailed");
   } finally {
     isInstallingLicense.value = false;
   }
@@ -1192,11 +1226,44 @@ async function removeInstalledLicense() {
     licenseState.value = await deleteLicense();
     licenseRemoveDialogOpen.value = false;
     licenseMessage.value = t("settings.licenseRemoveSuccess");
+    void loadLicenseCloud();
   } catch (err: any) {
     licenseRemoveDialogOpen.value = false;
     licenseError.value = err?.message || t("settings.licenseRemoveFailed");
   } finally {
     isRemovingLicense.value = false;
+  }
+}
+
+async function loadLicenseCloud() {
+  try {
+    licenseCloud.value = await getLicenseCloud();
+  } catch {
+    // A failed status check disables the button; the page itself stays usable.
+    licenseCloud.value = null;
+  }
+}
+
+async function importCloudLicense() {
+  if (isImportingCloudLicense.value) return;
+  isImportingCloudLicense.value = true;
+  licenseMessage.value = "";
+  licenseError.value = "";
+  try {
+    const state = await importLicenseFromCloud();
+    licenseState.value = state;
+    closeLicenseForm();
+    licenseMessage.value = t("settings.licenseCloudImportSuccess");
+    void loadLicenseCloud();
+  } catch (err: any) {
+    if (isApiError(err) && err.code === "already_current") {
+      licenseMessage.value = t("settings.licenseCloudAlreadyCurrent");
+      void loadLicenseCloud();
+    } else {
+      licenseError.value = cloudImportErrorMessage(err);
+    }
+  } finally {
+    isImportingCloudLicense.value = false;
   }
 }
 
@@ -1207,6 +1274,11 @@ function LicenseSection() {
   const fromEnv = state?.source === "env";
   const summary = state?.license ?? null;
   const dateLocale = locale.value;
+  const cloud = licenseCloud.value;
+  const cloudAvailability = cloudImportAvailability(state, cloud);
+  const cloudUsage = cloudDeviceUsage(state, cloud);
+  const deviceLimit = deviceLimitOf(state);
+  const showDeviceRow = licensed && state?.edition === "Enterprise" && deviceLimit !== null;
   // Auto-expand the import form only when nothing is installed. An unreadable
   // or expired file keeps the buttons so the user can replace or remove it.
   const hasFile = state !== null && state.status !== "none";
@@ -1268,15 +1340,17 @@ function LicenseSection() {
                   <dd class="text-gray-900 text-right sm:text-left">{formatLicenseDate(summary.expire_time, dateLocale)}</dd>
                 </div>
                 <div class="flex justify-between gap-4 sm:block">
-                  <dt class="text-gray-500">{t("settings.licenseSeats")}</dt>
-                  <dd class="text-gray-900 text-right sm:text-left">{summary.max_user}</dd>
-                </div>
-                <div class="flex justify-between gap-4 sm:block">
                   <dt class="text-gray-500">{t("settings.licenseFeatures")}</dt>
                   <dd class="text-gray-900 text-right sm:text-left">
                     {state.features.length > 0 ? state.features.length : t("settings.licenseFeaturesNone")}
                   </dd>
                 </div>
+                {showDeviceRow && (
+                  <div class="flex justify-between gap-4 sm:block">
+                    <dt class="text-gray-500">{t("settings.licenseDevices")}</dt>
+                    <dd class="text-gray-900 text-right sm:text-left">{deviceLimit}</dd>
+                  </div>
+                )}
               </dl>
             )}
             {!summary && state.status === "none" && (
@@ -1285,6 +1359,11 @@ function LicenseSection() {
             {state.status === "grace" && state.grace_until && (
               <p class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 {t("settings.licenseGraceUntil", formatLicenseDate(state.grace_until, dateLocale))}
+              </p>
+            )}
+            {cloud && cloud.has_license && (cloud.subscription_status === "canceled" || cloud.subscription_status === "closed") && summary && cloud.license_key === summary.key && cloud.expire_time && (
+              <p class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {t("settings.licenseSubscriptionCanceled", formatLicenseDate(cloud.expire_time, dateLocale))}
               </p>
             )}
             {(state.status === "expired" || state.status === "invalid" || state.status === "not_started") && state.reason && (
@@ -1306,8 +1385,8 @@ function LicenseSection() {
               <p class="mt-3 text-sm text-gray-500">{t("settings.licenseFromEnv", licenseEnvVar)}</p>
             ) : (
               <>
-                {!showForm && (
-                  <div class="mt-4 flex flex-wrap gap-2">
+                <div class="mt-4 flex flex-wrap gap-2">
+                  {!showForm && (
                     <button
                       type="button"
                       onClick={openLicenseForm}
@@ -1315,18 +1394,39 @@ function LicenseSection() {
                     >
                       {hasFile ? t("settings.licenseReplace") : t("settings.licenseImport")}
                     </button>
-                    {hasFile && (
-                      <button
-                        type="button"
-                        onClick={() => (licenseRemoveDialogOpen.value = true)}
-                        disabled={isRemovingLicense.value}
-                        class="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {isRemovingLicense.value ? t("settings.licenseRemoving") : t("settings.licenseRemove")}
-                      </button>
-                    )}
-                  </div>
-                )}
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void importCloudLicense()}
+                    disabled={!cloudAvailability.enabled || isImportingCloudLicense.value}
+                    title={cloudAvailability.hintKey ? t(cloudAvailability.hintKey) : undefined}
+                    class="rounded-lg border border-indigo-200 bg-white px-3.5 py-1.5 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isImportingCloudLicense.value
+                      ? t("settings.licenseCloudImporting")
+                      : t("settings.licenseCloudImport")}
+                  </button>
+                  {cloudUsage && (
+                    <span class="self-center text-xs text-gray-500">
+                      {t("settings.licenseCloudUsage", cloudUsage.used, cloudUsage.limit)}
+                    </span>
+                  )}
+                  {cloudUsage?.overLimit && (
+                    <span class="self-center text-xs text-amber-700">
+                      {t("settings.licenseCloudOverLimit")}
+                    </span>
+                  )}
+                  {!showForm && hasFile && (
+                    <button
+                      type="button"
+                      onClick={() => (licenseRemoveDialogOpen.value = true)}
+                      disabled={isRemovingLicense.value}
+                      class="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isRemovingLicense.value ? t("settings.licenseRemoving") : t("settings.licenseRemove")}
+                    </button>
+                  )}
+                </div>
                 {showForm && (
                   <div class={hasFile ? "mt-4 border-t border-gray-100 pt-4" : "mt-3"}>
                     <textarea
@@ -1437,6 +1537,7 @@ export function Settings() {
     fetchSettings();
     fetchCloudAuth();
     void loadLicense();
+    void loadLicenseCloud();
     void fetchUpgradeInfo();
     void fetchDiffuserRuntimeStatus();
     contextIndex.value = loadContextIndex();

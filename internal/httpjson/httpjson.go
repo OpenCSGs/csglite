@@ -27,6 +27,9 @@ type Error struct {
 	// Limit and Current describe a quota that was reached.
 	Limit   int `json:"limit,omitempty"`
 	Current int `json:"current,omitempty"`
+	// Used is the license device count the server reported, so the UI can show
+	// "used/limit" for a rejected license import.
+	Used int `json:"used,omitempty"`
 }
 
 // Write encodes v as the response body. An encoding failure is deliberately

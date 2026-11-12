@@ -180,6 +180,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/license", s.handleLicenseDelete)
 	mux.HandleFunc("POST /api/license/verify", s.handleLicenseVerify)
 	mux.HandleFunc("GET /api/license/features", s.handleLicenseFeatures)
+	mux.HandleFunc("GET /api/license/cloud", s.handleLicenseCloudGet)
+	mux.HandleFunc("POST /api/license/cloud/import", s.handleLicenseCloudImport)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/apps", s.handleApps)

@@ -150,7 +150,16 @@ var Catalog = []FeatureDefinition{ /* 以上全部 */ }
 **只有 `Gated: true` 的功能才受 License 控制；未标记的功能在社区版、开发
 构建和任何 License 状态下都始终开启。** 把一个功能收进 EE 的动作就是把它的
 `Gated` 改为 `true` 并包裹对应路由；在此之前注册表条目只是与签发端对齐名字，
-不影响任何行为。当前仓库里没有任何条目是 `Gated: true`。
+不影响任何行为。
+
+当前受 License 控制的条目：
+
+- `quota.lite.max_cluster_nodes`：LAN 集群节点数，社区版 2，企业版默认不限。
+- `quota.lite.max_devices`：一个 License 可核销的设备数，所有档位都是 10。
+  该上限由服务端按 `license_key` 强制并忽略 Extra 覆盖，本地界面与 CLI 直接
+  显示服务端的固定值 10。
+- `feature.lite.edge_serving`：边缘算力（把本机已发布的模型通过出站隧道提供给
+  CSGHub AI gateway），仅企业版开启。
 
 对 `Gated` 功能，取值语义与 CSGHub 的 `licenseProvider` 一致：
 
@@ -214,7 +223,7 @@ type DataBody struct {
     Email      string    // 客户联系邮箱
     Product    string    // 产品，CSGLite 固定为 "CSGLite"
     Edition    string    // 套餐，首期固定为 "Enterprise"
-    MaxUser    int       // 席位数，签发端要求 >= 1；CSGLite 首期只展示不强制
+    MaxUser    int       // 历史字段，签发端要求 >= 1；CSGLite 不使用，设备上限见 5.3
     StartTime  time.Time // 生效时间
     ExpireTime time.Time // 到期时间
     Extra      string    // JSON：{"features": {...}, "limits": {...}}
@@ -233,7 +242,7 @@ type RSAInfo struct {
 |---|---|---|
 | `Product` | `"CSGHub"` | `"CSGLite"`。校验时 `Product` 不匹配即视为无效，防止拿 CSGHub 的 License 解锁 CSGLite |
 | `Edition` | `"Enterprise"` 等 | 首期只识别 `"Enterprise"`；其它值按 CE 处理并给出提示 |
-| `MaxUser` | 与注册用户数比较 | 仅在状态接口和 UI 中展示 |
+| `MaxUser` | 与注册用户数比较 | 历史字段，CSGLite 不使用；设备数上限见 5.3 |
 | `Extra` | `feature.*` / `quota.*` | 同规则，Key 带 `lite.` 段 |
 | `Version` | 自由文本 | 语义化版本，非空时要求当前 CSGLite 版本不低于该值 |
 
@@ -241,8 +250,9 @@ type RSAInfo struct {
 字段，且 `Extra` 严格只允许 `features` 与 `limits` 两个顶层键）：
 
 - 宽限期作为 CSGLite 侧的固定策略常量（14 天），见第 5 节。
-- 机器绑定暂不实现；若将来需要，在 starhub-server 的 `LicenseExtra` 中新增
-  顶层字段并同步放宽校验，属于第 13 节的后续项。
+- 机器绑定不进入载荷，改由服务端设备台账实现：导入时按 `license_key` 核销
+  `device_id`，名额永久累计、不解绑，见 5.3。若将来需要在载荷中携带设备策略，
+  再在 starhub-server 的 `LicenseExtra` 中新增顶层字段并同步放宽校验。
 
 ### 4.2 编码与签名
 
@@ -331,9 +341,38 @@ type State struct {
   的 License 可以被旧版 CSGLite 导入。
 - **时钟回拨**：在存储根记录最近一次成功校验的时间戳；当前时间早于该时间戳
   超过 24 小时视为异常，按 `grace` 处理并记日志，而不是直接判失效，避免误伤。
-- **在线校验**（第二阶段可选）：复用 `internal/cloud` 到 OpenCSG 的通道，
-  上报 `Key` 与 CSGLite 版本；服务端可依据台账返回吊销标记。网络不可达时
-  保持本地判定结果，不降级。
+- **在线校验**：复用 `internal/cloud` 到 OpenCSG 的通道做设备核销（见 5.3）。
+  核销只记账：已安装的 License 不会因为上报被吊销，离线期间也不影响本地判定。
+  导入时服务端按设备上限拒绝新设备，这是本方案唯一的在线强制点。
+
+### 5.3 设备核销
+
+一个 License 最多核销 10 台设备，按 `license_key` 永久累计、不解绑。名额由
+服务端强制，本地只负责两件事：在导入前询问是否还有名额，以及把本设备记进
+台账。
+
+- **设备标识**：`internal/deviceid` 从平台机器标识派生
+  （macOS `IOPlatformUUID`、Windows `MachineGuid`、Linux `/etc/machine-id`），
+  取 `sha256("csglite-device-v1|" + GOOS + "|" + 归一化后的原始值)`。同一台
+  机器的桌面版与 CLI、不同存储目录都得到同一个 `device_id`。取不到机器标识时
+  兜底为存储根目录下的 `device_id` 文件（只在缺失或非法时生成一次）。
+- **核销状态**：存储根目录下的 `license.activation`（默认
+  `~/.csghub-lite/license.activation`），字段为 `license_key`、
+  `device_id`、`status`（`pending` / `reported` / `unmanaged`）、`reported_at`、
+  `next_retry_at`。它和 License 本身的状态（`valid`/`grace`/…）是两个维度：
+  核销状态不改变 License 是否可用。
+- **在线导入**（自动或手动）：先调服务端 `POST /api/v1/licenses/csglite/activations`
+  （`mode=claim`）。服务端返回设备上限时**不安装**；返回成功时安装并记为
+  `reported`；服务端明确表示台账查不到（`LICENSE-ERR-5`）时安装并记为
+  `unmanaged`；服务端还没有该接口（框架 404）时安装并记为 `pending`，
+  24 小时后再补报。
+- **离线导入**：安装并记为 `pending`，响应带 `offline_import: true`（仅当该设备
+  仍欠一次补报），界面提示
+  「License 已导入，设备名额将在联网后自动同步」；下次启动或登录成功后调
+  `mode=report` 补报。补报本身不提示。补报成功、超限记账、业务 404 都会结束重试。
+- **存量用户**：启动时发现有效 License 但没有核销文件，按 `pending` 补报一次。
+- **删除 License**：同时删除核销文件；服务端名额不释放。
+- 已 `reported` 的设备不再重复上报；离线期间不核销，恢复联网后补记。
 
 ## 6. 后端门控
 
@@ -405,13 +444,13 @@ Content-Type: application/json
     "email": "admin@example.com",
     "product": "CSGLite",
     "edition": "Enterprise",
-    "max_user": 50,
+    "max_user": 1,
     "start_time": "2026-10-01T00:00:00Z",
     "expire_time": "2027-10-01T00:00:00Z",
     "grace_until": null
   },
   "features": ["feature.lite.provider_pools", "feature.lite.observability"],
-  "limits": {"quota.lite.max_provider_pools": 0},
+  "limits": {"quota.lite.max_provider_pools": 0, "quota.lite.max_devices": 10},
   "feature_catalog": [
     {"key": "feature.lite.observability", "type": "boolean", "nav_item": "observability"}
   ]
@@ -432,7 +471,7 @@ Content-Type: application/json
   `web/src/license.ts`。
 - `api/client.ts` 统一拦截 403 且 `error === "feature_not_licensed"` 的响应，
   抛出带 `feature` 字段的错误，页面据此渲染升级提示组件 `FeatureLocked`。
-- Settings 页新增“License”分区：显示状态、客户、到期时间、席位；提供粘贴或
+- Settings 页新增“License”分区：显示状态、客户、到期时间、设备数；提供粘贴或
   上传 License、删除 License；`grace`、`expired`、`invalid` 状态用醒目颜色
   提示并显示原因。
 - 所有文案走 i18n，遵守 `docs/agent-guidelines/frontend-i18n.md`。
@@ -445,8 +484,10 @@ Content-Type: application/json
 |---|---|---|
 | `GET` | `/api/license` | 返回当前 `State`（不含原始 License 文本） |
 | `POST` | `/api/license/verify` | 请求体 `{"data": "<文件内容>"}`，只校验不保存，返回解码后的载荷；对应 CSGHub 的 `POST /licenses/verify` |
-| `PUT` | `/api/license` | 请求体 `{"data": "<文件内容>"}`，校验通过后写入 `license.key` 并重新加载，失败返回 400 并说明原因；对应 CSGHub 的 `PUT /licenses/import` |
-| `DELETE` | `/api/license` | 删除文件并回退到 CE |
+| `PUT` | `/api/license` | 请求体 `{"data": "<文件内容>"}`，校验通过后先核销本设备再写入 `license.key`；不可用返回 400，设备超限/服务端判定过期/环境变量托管返回 409，限流返回 429，服务端异常返回 502，服务端不可达时降级为离线导入并返回 200；对应 CSGHub 的 `PUT /licenses/import` |
+| `DELETE` | `/api/license` | 删除文件并回退到 CE；同时清理设备核销状态 |
+| `GET` | `/api/license/cloud` | 返回云端 License 状态（登录、在线、可用、已用设备数），始终 200，用字段表达失败原因 |
+| `POST` | `/api/license/cloud/import` | 下载当前账号的 License，核销本设备后安装；未登录、超限、旧服务端等情况返回对应的错误码 |
 
 请求体字段名 `data` 与 CSGHub `ImportLicenseReq` 一致。以上仅在本地 API
 暴露，不进入 `externalAPIRoutes()`。同步更新 `openapi/local-api.json` 并运行
@@ -493,9 +534,13 @@ csghub-lite license features           # 列出 Catalog 及当前是否可用
 
 > 实施进度：阶段一、二（`internal/license`、`/api/license*`、CLI、OpenAPI）和
 > 阶段三的 License 管理部分（Settings 页导入/校验/删除、侧边栏 “CSGLite EE”
-> 标识）已完成；导航锁标与 `FeatureLocked` 组件随第一条被门控的路由一起做。
-> `Catalog` 已声明但没有任何条目 `Gated: true`，也未包裹路由，所有功能在所有版本
-> 下开启；等待产品确认初始划分（第 12 节问题 1）后逐条标记。
+> 标识）已完成；设备核销（`internal/deviceid`、`license.activation`、云端自动
+> 导入、Settings 的「从云端导入」按钮）已完成，见 5.3。
+> 导航锁标与 `FeatureLocked` 组件随第一条被门控的路由一起做。
+> `Catalog` 中已有三个 `Gated: true` 的条目（`quota.lite.max_cluster_nodes`、
+> `quota.lite.max_devices`、`feature.lite.edge_serving`）；边缘算力路由已用
+> `requireFeature` 包裹，两个配额条目仍无路由包裹，所有功能在所有版本下开启；
+> 等待产品确认初始划分（第 12 节问题 1）后逐条标记。
 
 
 | 阶段 | 内容 | 估时 |
@@ -508,14 +553,16 @@ csghub-lite license features           # 列出 Catalog 及当前是否可用
 | 六 | 文档：本设计、`docs/cli/license.md`、Docker 与配置指南更新、发布说明 | 0.5 天 |
 
 合计约 1.5 到 2 周，单人。阶段一至三可并行推进后端与前端；阶段五需要
-starhub-server 仓库的 MR 与发版配合。在线校验与席位强制不在本期范围。
+starhub-server 仓库的 MR 与发版配合。设备核销（导入时按 `license_key` 限制
+10 台）已包含在本期；运行期吊销不在本期范围。
 
 ## 12. 未决问题
 
 1. 初始 `Catalog` 划分需产品最终确认，尤其是图像生成和实时语音是否进入 EE。
 2. `ee/LICENSE` 法律文本需法务审阅；是否允许非商业生产使用需明确。
 3. 是否需要 `Edition = "Trial"`（例如 30 天全功能试用）以及试用 License 由谁签发。
-4. 席位 `MaxUser` 是否以及如何强制：按 API Key 数、按并发会话数，还是仅展示。
+4. ~~席位 `MaxUser` 是否以及如何强制~~：已确定。设备数上限 10，按
+   `license_key` 永久累计、不解绑；`MaxUser` 仅作为历史字段保留，不再展示。
 5. License 过期后可观测性等历史数据的只读策略需逐功能确认。
 6. 生产公钥的获取与轮换流程：由哪一方把 CSGHub 签发端公钥交付给 CSGLite 仓库，
    轮换时如何保证旧 License 继续有效。
@@ -524,7 +571,9 @@ starhub-server 仓库的 MR 与发版配合。在线校验与席位强制不在�
 
 CSGHub 已有完整的 License 体系，CSGLite 全部复用，两边只需要以下配合：
 
-### 13.1 已完成的 starhub-server 改动（MR !3054）
+### 13.1 已完成的 starhub-server 改动
+
+签发侧（MR !3054）：
 
 | 改动 | 位置 | 说明 |
 |---|---|---|
@@ -534,6 +583,15 @@ CSGHub 已有完整的 License 体系，CSGLite 全部复用，两边只需要�
 
 以后 CSGLite 新增 Key 时 starhub-server **不需要改动**；登记与 i18n 是可选的
 体验优化。
+
+设备核销（lite 端 issue #240 的配套改动）：
+
+| 改动 | 位置 | 说明 |
+|---|---|---|
+| 设备台账表 | `builder/store/database/migrations/*_create_customer_license_activations.go` | `(license_key, device_id)` 唯一；记录平台、架构、客户端版本、来源；名额永久累计、不解绑 |
+| `licenses.key` 唯一索引 | `builder/store/database/migrations/*_add_licenses_key_unique_index.go` | 部分唯一索引，按 key 幂等；不改变 License 的 PEM 格式 |
+| 设备核销接口 | `api/router/saas/licenseissuer/customer_license_saas.go` | `GET /licenses/csglite/status`、`GET /licenses/download/csglite`（均需登录）、`POST /licenses/csglite/activations`（`claim` / `report`，以 PEM 为凭证，不需要 access token） |
+| 错误码 | `common/errorx/error_license.go` | `LICENSE-ERR-5`（台账查不到该 License）、`LICENSE-ERR-7`（设备上限，附 `used` / `limit`） |
 
 ### 13.2 建议做的 starhub-server 改动
 

@@ -4224,7 +4224,7 @@
       "put": {
         "tags": ["License"],
         "summary": "Install or replace the license",
-        "description": "Verifies the LICENSE KEY PEM text against the embedded CSGHub issuer public key, writes it to the storage root and re-evaluates. A license that is invalid, issued for another product, or whose grace period has already ended is rejected and the installed state is left untouched. Installation is refused while `CSGHUB_LITE_LICENSE` supplies the license.",
+        "description": "Verifies the LICENSE KEY PEM text against the embedded CSGHub issuer public key and installs it. An invalid, expired, or wrong-product license is rejected and the installed state is left untouched. A usable license is claimed against the customer's device quota first: when the limit is reached the license is not installed (409 `LICENSE-ERR-7` with `used` and `limit`); when the hub is unreachable or answers 5xx, the license is installed anyway and the device is reported on a later start; `offline_import: true` marks a response that still owes that report. Installation is refused while `CSGHUB_LITE_LICENSE` supplies the license.",
         "operationId": "importLicense",
         "requestBody": {
           "required": true,
@@ -4254,10 +4254,37 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "409": {
-            "$ref": "#/components/responses/Conflict"
+            "description": "The license was not installed: `LICENSE-ERR-7` (device limit reached, with `used` and `limit`), `LICENSE-ERR-1` (the hub considers the license expired), or a message when `CSGHUB_LITE_LICENSE` supplies the license.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The hub rate limited the device claim (`rate_limited`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "413": {
             "description": "The license text exceeds 64 KiB.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The hub answered with an unexpected client error (`bad_request`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4292,6 +4319,106 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/license/cloud": {
+      "get": {
+        "tags": ["License"],
+        "summary": "Get the customer's cloud license state",
+        "description": "Reports what this instance knows about the signed-in customer's CSGLite license. Always answers 200: failures are expressed in `online`, `supported` and `reason`, so the Settings page never has to treat a status check as an error. The result is cached for 10 seconds and invalidated by login, logout, ServerURL or token settings changes, and license install or removal.",
+        "operationId": "getLicenseCloud",
+        "responses": {
+          "200": {
+            "description": "Cloud license state. `reason` is `login_required`, `token_invalid`, `unreachable`, `unsupported` or `server_error` when the state cannot be determined.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseCloudStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/license/cloud/import": {
+      "post": {
+        "tags": ["License"],
+        "summary": "Download and install the customer's license",
+        "description": "Checks the cloud license, downloads it, and claims one device seat before writing the license file. A license that is already installed and not newer is not imported again. When the device limit is reached nothing is written; when the server cannot be reached the import fails without falling back to offline installation.",
+        "operationId": "importLicenseFromCloud",
+        "responses": {
+          "200": {
+            "description": "License state after installation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in (`login_required`) or the access token was rejected (`token_invalid`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`no_license`, `already_current`, `cloud_not_started`, `env_managed`, `unsupported`, `LICENSE-ERR-7` (device limit reached, with `used` and `limit`) or `LICENSE-ERR-1` (license expired).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The hub rate limited the request (`rate_limited`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The hub answered with an unexpected client error (`bad_request`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The hub is unreachable or failed (`unreachable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The license could not be written, or this machine's device id could not be determined.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -8929,6 +9056,22 @@
             "type": "integer",
             "format": "int32",
             "example": 400
+          },
+          "code": {
+            "type": "string",
+            "description": "Machine-readable error code, such as `LICENSE-ERR-7` or `rate_limited`."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Quota limit when the error reports one."
+          },
+          "current": {
+            "type": "integer",
+            "description": "Current usage when the error reports one."
+          },
+          "used": {
+            "type": "integer",
+            "description": "Devices already written off when a license device limit was reached."
           }
         }
       },
@@ -12393,7 +12536,7 @@
           },
           "max_user": {
             "type": "integer",
-            "description": "Seat count from the issuer; displayed, not enforced."
+            "description": "Historical field from the issuer; CSGLite no longer displays it. The device cap is quota.lite.max_devices (10) and is enforced by the server."
           },
           "start_time": {
             "type": "string",
@@ -12470,6 +12613,71 @@
           "checked_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "offline_import": {
+            "type": "boolean",
+            "description": "Set on an import response whose device write-off was not confirmed by the server; the device is reported on a later start."
+          }
+        }
+      },
+      "LicenseCloudStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["logged_in", "online", "supported", "state", "has_license", "not_started", "license_key", "grace_until", "subscription_status", "used", "limit", "env_managed"],
+        "properties": {
+          "logged_in": {
+            "type": "boolean",
+            "description": "False when no access token is stored or the hub rejected it."
+          },
+          "online": {
+            "type": "boolean",
+            "description": "False when the hub could not be reached."
+          },
+          "supported": {
+            "type": "boolean",
+            "description": "False when the hub has no CSGLite license API, or when the capability cannot be determined because the customer is not signed in. Stays true when the hub is merely unreachable, so the UI shows the offline hint instead of an unsupported one."
+          },
+          "state": {
+            "type": "string",
+            "enum": ["", "none", "not_started", "active", "grace", "expired"],
+            "description": "Cloud license state, passed through from the hub. Empty when the state cannot be determined (not signed in, unreachable, unsupported or server error)."
+          },
+          "has_license": {
+            "type": "boolean",
+            "description": "True for `active`, `not_started` and `grace`."
+          },
+          "not_started": {
+            "type": "boolean"
+          },
+          "license_key": {
+            "type": "string"
+          },
+          "expire_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "grace_until": {
+            "type": "string"
+          },
+          "subscription_status": {
+            "type": "string"
+          },
+          "used": {
+            "type": "integer",
+            "description": "Devices already written off against this license."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Device limit, 10 for every CSGLite tier."
+          },
+          "env_managed": {
+            "type": "boolean",
+            "description": "True when `CSGHUB_LITE_LICENSE` supplies the installed license, which cannot be replaced from the UI."
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["login_required", "token_invalid", "unreachable", "unsupported", "server_error"],
+            "description": "Why the state cannot be used; absent when it is current."
           }
         }
       },

@@ -101,16 +101,22 @@ func TestRefreshWithoutFileIsCommunity(t *testing.T) {
 
 func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 	key := licensetest.NewKey(t)
-	// Shipped catalog: the cluster node cap and edge serving are gated.
+	// Shipped catalog: the cluster node cap, the device cap, and edge serving
+	// are gated.
 	m, _ := newManager(t, key, func(o *license.Options) { o.Catalog = license.Catalog() })
 	gated := license.GatedCatalog()
 	gatedKeys := map[string]bool{}
 	for _, def := range gated {
 		gatedKeys[def.Key] = true
 	}
-	if len(gated) != 2 || !gatedKeys[license.QuotaMaxClusterNodes.Key] || !gatedKeys[license.FeatureEdgeServing.Key] {
-		t.Fatalf("shipped catalog gates %v; only %s and %s are expected. Update this test and the docs deliberately",
-			gated, license.QuotaMaxClusterNodes.Key, license.FeatureEdgeServing.Key)
+	expected := []string{license.QuotaMaxClusterNodes.Key, license.QuotaMaxDevices.Key, license.FeatureEdgeServing.Key}
+	for _, key := range expected {
+		if !gatedKeys[key] {
+			t.Fatalf("shipped catalog gates %v; %s is expected too. Update this test and the docs deliberately", gated, key)
+		}
+	}
+	if len(gated) != len(expected) {
+		t.Fatalf("shipped catalog gates %v; only %v are expected. Update this test and the docs deliberately", gated, expected)
 	}
 	st := m.Refresh()
 	if st.Status != license.StatusNone {
@@ -142,6 +148,12 @@ func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 	}
 	if ent := m.Verify(licensetest.Encode(t, key, licensetest.Payload(testNow))); ent.Status != license.StatusValid || ent.Limit(license.QuotaMaxClusterNodes) != 0 {
 		t.Fatalf("enterprise cluster cap = %d (%s), want unlimited", ent.Limit(license.QuotaMaxClusterNodes), ent.Status)
+	}
+	// Every tier allows 10 devices; the limit is enforced by the server, the
+	// local value is only what Settings displays.
+	ent := m.Verify(licensetest.Encode(t, key, licensetest.Payload(testNow)))
+	if ent.Limit(license.QuotaMaxDevices) != 10 || st.Limit(license.QuotaMaxDevices) != 10 {
+		t.Fatalf("device limit = %d licensed / %d unlicensed, want 10", ent.Limit(license.QuotaMaxDevices), st.Limit(license.QuotaMaxDevices))
 	}
 
 	// A license that explicitly disables an ungated feature has no effect on it.
@@ -480,6 +492,32 @@ func TestValidateCatalogRejectsGatedLimitWithoutCommunityCap(t *testing.T) {
 	ungated.CommunityValue = 5
 	if err := license.ValidateCatalog([]license.FeatureDefinition{ungated}); err == nil {
 		t.Fatal("CommunityValue on an ungated feature is never used and must be rejected")
+	}
+}
+
+func TestRemoveRefreshesWhenActivationDeleteFails(t *testing.T) {
+	key := licensetest.NewKey(t)
+	activationPath := filepath.Join(t.TempDir(), "license.activation")
+	if err := os.MkdirAll(filepath.Join(activationPath, "keep"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := newManager(t, key, func(o *license.Options) { o.ActivationPath = activationPath })
+	if _, err := m.Install(licensetest.Encode(t, key, licensetest.Payload(testNow))); err != nil {
+		t.Fatal(err)
+	}
+	if m.State().Status != license.StatusValid {
+		t.Fatalf("state = %s, want valid", m.State().Status)
+	}
+
+	state, err := m.Remove()
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if state.Status != license.StatusNone {
+		t.Fatalf("state after a failed activation delete = %s, want none", state.Status)
+	}
+	if _, err := os.Stat(activationPath); err != nil {
+		t.Fatalf("the failed cleanup should leave the directory in place: %v", err)
 	}
 }
 
