@@ -394,6 +394,35 @@ export interface LicenseState {
   source?: string;
   file_path?: string;
   checked_at: string;
+  /**
+   * Set on an import response whose device write-off was not confirmed by the
+   * server; the device is reported on a later start.
+   */
+  offline_import?: boolean;
+}
+
+/**
+ * Cloud license state returned by GET /api/license/cloud. The endpoint always
+ * answers 200; `online`, `supported` and `reason` describe why a state may be
+ * missing.
+ */
+export interface LicenseCloudStatus {
+  logged_in: boolean;
+  online: boolean;
+  supported: boolean;
+  state: string;
+  has_license: boolean;
+  not_started: boolean;
+  license_key: string;
+  expire_time?: string;
+  grace_until: string;
+  subscription_status: string;
+  /** Devices already written off against the license. */
+  used: number;
+  /** Device limit; 10 for every CSGLite tier. */
+  limit: number;
+  env_managed: boolean;
+  reason?: string;
 }
 
 export interface LicenseVerifyResponse {
@@ -432,7 +461,9 @@ export function verifyLicense(data: string): Promise<LicenseVerifyResponse> {
 }
 
 export function importLicense(data: string): Promise<LicenseState> {
-  return fetchJSON<LicenseState>("/api/license", {
+  // The structured error carries code/used/limit, which the UI needs to show
+  // the device quota on a rejected import.
+  return fetchJSONWithApiError<LicenseState>("/api/license", {
     method: "PUT",
     body: JSON.stringify({ data }),
   });
@@ -444,6 +475,19 @@ export function deleteLicense(): Promise<LicenseState> {
 
 export function getLicenseFeatures(): Promise<LicenseFeatureDefinition[]> {
   return fetchJSON<LicenseFeatureDefinition[]>("/api/license/features");
+}
+
+export function getLicenseCloud(): Promise<LicenseCloudStatus> {
+  return fetchJSONWithApiError<LicenseCloudStatus>("/api/license/cloud");
+}
+
+/**
+ * Downloads the signed-in customer's license and installs it after claiming a
+ * device seat. Unlike the manual import it never falls back to an offline
+ * install: the button is only offered while the hub is reachable.
+ */
+export function importLicenseFromCloud(): Promise<LicenseState> {
+  return fetchJSONWithApiError<LicenseState>("/api/license/cloud/import", { method: "POST" });
 }
 
 export interface ObservabilitySettings {
@@ -3002,8 +3046,14 @@ export class ApiError extends Error {
   errorCode?: string;
   limit?: number;
   current?: number;
+  /** Devices already written off against a license whose limit was reached. */
+  used?: number;
 
-  constructor(message: string, status: number, details?: { code?: string; errorCode?: string; limit?: number; current?: number }) {
+  constructor(
+    message: string,
+    status: number,
+    details?: { code?: string; errorCode?: string; limit?: number; current?: number; used?: number },
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
@@ -3011,6 +3061,7 @@ export class ApiError extends Error {
     this.errorCode = details?.errorCode;
     this.limit = details?.limit;
     this.current = details?.current;
+    this.used = details?.used;
   }
 }
 
@@ -3034,12 +3085,19 @@ function parseApiError(body: string, contentType: string, status: number, fallba
   const message = extractErrorMessage(body, contentType, fallback);
   if (contentType.includes("application/json")) {
     try {
-      const parsed = JSON.parse(body) as { code?: unknown; errorCode?: unknown; limit?: unknown; current?: unknown };
+      const parsed = JSON.parse(body) as {
+        code?: unknown;
+        errorCode?: unknown;
+        limit?: unknown;
+        current?: unknown;
+        used?: unknown;
+      };
       return new ApiError(message, status, {
         code: typeof parsed.code === "string" ? parsed.code : undefined,
         errorCode: typeof parsed.errorCode === "string" ? parsed.errorCode : undefined,
         limit: typeof parsed.limit === "number" ? parsed.limit : undefined,
         current: typeof parsed.current === "number" ? parsed.current : undefined,
+        used: typeof parsed.used === "number" ? parsed.used : undefined,
       });
     } catch {
       /* fall through */
@@ -3048,7 +3106,7 @@ function parseApiError(body: string, contentType: string, status: number, fallba
   return new ApiError(message, status);
 }
 
-async function fetchClusterJSON<T>(url: string, init?: RequestInit): Promise<T> {
+async function fetchJSONWithApiError<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const resp = await fetch(url, withLocaleHeader({ ...init, headers }));
@@ -3332,58 +3390,58 @@ export interface ClusterSettingsUpdate {
 }
 
 export function getClusterSummary(): Promise<ClusterSummary> {
-  return fetchClusterJSON<ClusterSummary>("/api/cluster/summary", { cache: "no-store" });
+  return fetchJSONWithApiError<ClusterSummary>("/api/cluster/summary", { cache: "no-store" });
 }
 
 export function getCluster(): Promise<ClusterView> {
-  return fetchClusterJSON<ClusterView>("/api/cluster", { cache: "no-store" });
+  return fetchJSONWithApiError<ClusterView>("/api/cluster", { cache: "no-store" });
 }
 
 export function createCluster(name: string): Promise<ClusterCreateResponse> {
-  return fetchClusterJSON<ClusterCreateResponse>("/api/cluster", {
+  return fetchJSONWithApiError<ClusterCreateResponse>("/api/cluster", {
     method: "POST",
     body: JSON.stringify({ name: name.trim() }),
   });
 }
 
 export function leaveCluster(): Promise<ClusterView> {
-  return fetchClusterJSON<ClusterView>("/api/cluster", { method: "DELETE" });
+  return fetchJSONWithApiError<ClusterView>("/api/cluster", { method: "DELETE" });
 }
 
 export function joinCluster(token: string, address?: string): Promise<ClusterView> {
-  return fetchClusterJSON<ClusterView>("/api/cluster/join", {
+  return fetchJSONWithApiError<ClusterView>("/api/cluster/join", {
     method: "POST",
     body: JSON.stringify({ token: token.trim(), address: address?.trim() || undefined }),
   });
 }
 
 export function getClusterToken(): Promise<ClusterTokenResponse> {
-  return fetchClusterJSON<ClusterTokenResponse>("/api/cluster/token", { cache: "no-store" });
+  return fetchJSONWithApiError<ClusterTokenResponse>("/api/cluster/token", { cache: "no-store" });
 }
 
 export function rotateClusterToken(): Promise<ClusterTokenResponse> {
-  return fetchClusterJSON<ClusterTokenResponse>("/api/cluster/token/rotate", { method: "POST" });
+  return fetchJSONWithApiError<ClusterTokenResponse>("/api/cluster/token/rotate", { method: "POST" });
 }
 
 export function getClusterCode(): Promise<ClusterCodeResponse> {
-  return fetchClusterJSON<ClusterCodeResponse>("/api/cluster/code", { cache: "no-store" });
+  return fetchJSONWithApiError<ClusterCodeResponse>("/api/cluster/code", { cache: "no-store" });
 }
 
 export async function enableCluster(): Promise<ClusterView> {
-  return fetchClusterJSON<ClusterView>("/api/cluster/enable", { method: "POST" });
+  return fetchJSONWithApiError<ClusterView>("/api/cluster/enable", { method: "POST" });
 }
 
 export async function disableCluster(): Promise<ClusterView> {
-  return fetchClusterJSON<ClusterView>("/api/cluster/disable", { method: "POST" });
+  return fetchJSONWithApiError<ClusterView>("/api/cluster/disable", { method: "POST" });
 }
 
 export async function getDiscoveredClusterNodes(): Promise<DiscoveredClusterNode[]> {
-  const data = await fetchClusterJSON<{ nodes?: DiscoveredClusterNode[] }>("/api/cluster/discovered", { cache: "no-store" });
+  const data = await fetchJSONWithApiError<{ nodes?: DiscoveredClusterNode[] }>("/api/cluster/discovered", { cache: "no-store" });
   return data?.nodes ?? [];
 }
 
 export function inviteClusterNode(code: string, options?: { uuid?: string; address?: string }): Promise<ClusterNodeView> {
-  return fetchClusterJSON<ClusterNodeView>("/api/cluster/invite", {
+  return fetchJSONWithApiError<ClusterNodeView>("/api/cluster/invite", {
     method: "POST",
     body: JSON.stringify({
       code: code.trim(),
@@ -3394,14 +3452,14 @@ export function inviteClusterNode(code: string, options?: { uuid?: string; addre
 }
 
 export function updateClusterNode(uuid: string, patch: { name?: string; static_address?: string }): Promise<ClusterNodeView> {
-  return fetchClusterJSON<ClusterNodeView>(`/api/cluster/nodes/${encodeURIComponent(uuid)}`, {
+  return fetchJSONWithApiError<ClusterNodeView>(`/api/cluster/nodes/${encodeURIComponent(uuid)}`, {
     method: "PUT",
     body: JSON.stringify(patch),
   });
 }
 
 export function setClusterNodeState(uuid: string, state: ClusterNodeState): Promise<ClusterSettings> {
-  return fetchClusterJSON<ClusterSettings>(`/api/cluster/nodes/${encodeURIComponent(uuid)}/state`, {
+  return fetchJSONWithApiError<ClusterSettings>(`/api/cluster/nodes/${encodeURIComponent(uuid)}/state`, {
     method: "POST",
     body: JSON.stringify({ state }),
   });
@@ -3412,7 +3470,7 @@ export function pullClusterNodeModel(
   model: string,
   options?: { artifactSource?: ArtifactSource; revision?: string; quant?: string },
 ): Promise<PullJob> {
-  return fetchClusterJSON<PullJob>(`/api/cluster/nodes/${encodeURIComponent(uuid)}/models/pull`, {
+  return fetchJSONWithApiError<PullJob>(`/api/cluster/nodes/${encodeURIComponent(uuid)}/models/pull`, {
     method: "POST",
     body: JSON.stringify({
       model,
@@ -3424,12 +3482,12 @@ export function pullClusterNodeModel(
 }
 
 export async function getClusterModels(): Promise<ClusterModelDistribution[]> {
-  const data = await fetchClusterJSON<{ models?: ClusterModelDistribution[] }>("/api/cluster/models", { cache: "no-store" });
+  const data = await fetchJSONWithApiError<{ models?: ClusterModelDistribution[] }>("/api/cluster/models", { cache: "no-store" });
   return data?.models ?? [];
 }
 
 export function syncClusterModel(model: string, nodes: string[] | "all"): Promise<ClusterSyncResponse> {
-  return fetchClusterJSON<ClusterSyncResponse>("/api/cluster/models/sync", {
+  return fetchJSONWithApiError<ClusterSyncResponse>("/api/cluster/models/sync", {
     method: "POST",
     body: JSON.stringify({ model, nodes }),
   });
@@ -3442,16 +3500,16 @@ export function explainClusterScheduling(
   const query = new URLSearchParams({ model });
   if (options?.promptTokens !== undefined) query.set("prompt_tokens", String(options.promptTokens));
   if (options?.maxTokens !== undefined) query.set("max_tokens", String(options.maxTokens));
-  return fetchClusterJSON<ClusterExplainResponse>(`/api/cluster/explain?${query.toString()}`, { cache: "no-store" });
+  return fetchJSONWithApiError<ClusterExplainResponse>(`/api/cluster/explain?${query.toString()}`, { cache: "no-store" });
 }
 
 export async function getClusterRecommendations(): Promise<ClusterRecommendation[]> {
-  const data = await fetchClusterJSON<{ recommendations?: ClusterRecommendation[] }>("/api/cluster/recommendations", { cache: "no-store" });
+  const data = await fetchJSONWithApiError<{ recommendations?: ClusterRecommendation[] }>("/api/cluster/recommendations", { cache: "no-store" });
   return data?.recommendations ?? [];
 }
 
 export function updateClusterSettings(patch: ClusterSettingsUpdate): Promise<ClusterSettings> {
-  return fetchClusterJSON<ClusterSettings>("/api/cluster/settings", {
+  return fetchJSONWithApiError<ClusterSettings>("/api/cluster/settings", {
     method: "PUT",
     body: JSON.stringify(patch),
   });

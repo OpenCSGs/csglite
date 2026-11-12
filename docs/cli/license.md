@@ -29,6 +29,17 @@ csghub-lite license features           # 列出功能注册表；EE 列为 yes �
 - 没有运行中的服务时，直接读写存储根目录下的 `license.key`
   （默认 `~/.csghub-lite/license.key`），服务下次启动时读取。
 
+## 设备核销
+
+一个 License 最多可核销 10 台设备，名额按 License 永久累计，不提供解绑。
+CLI 安装分两种情况：
+
+- 有运行中的服务时，安装前会向服务端核销本机，名额已满时拒绝安装。
+- 没有运行中的服务时，CLI 直接处理本地 License 文件；设备名额会在服务下次
+  启动并联网后自动同步，不需要额外命令。已安装的 License 不会因为同步被吊销。
+
+删除 License 会同时清除本机的核销记录，但不会释放服务端已占用的名额。
+
 ## 状态说明
 
 | 状态 | 含义 |
@@ -63,7 +74,7 @@ Status:      valid
 Company:     某某科技有限公司
 Product:     CSGLite
 License ID:  8f2a5b1e-...
-Seats:       50
+Devices:     10
 Valid from:  2026-10-01
 Expires:     2027-10-01
 Grace until: 2027-10-15

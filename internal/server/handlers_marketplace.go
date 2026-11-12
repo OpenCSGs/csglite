@@ -624,8 +624,7 @@ func marketplaceErrorStatus(err error) int {
 			return statusErr.StatusCode
 		}
 	}
-	msg := err.Error()
-	if strings.Contains(msg, "API error 429") {
+	if httpErr, ok := csghub.AsHTTPError(err); ok && httpErr.StatusCode == http.StatusTooManyRequests {
 		return http.StatusTooManyRequests
 	}
 	return http.StatusBadGateway
