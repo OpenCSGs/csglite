@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	DefaultBaseURL         = "https://ai.space.opencsg.com"
+	DefaultBaseURL         = "https://opencsg.com/aigateway"
 	DefaultLoginURL        = "https://iam.opencsg.com/login/oauth/authorize?client_id=d623c957e69976c8a7a8&response_type=code&redirect_uri=https://hub.opencsg.com/api/v1/callback/casdoor&scope=read&state=lite"
 	DefaultAccessTokenURL  = "https://opencsg.com/settings/access-token"
 	defaultCacheTTL        = 5 * time.Minute

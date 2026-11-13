@@ -466,7 +466,7 @@ The CLI and Web UI expose a convenience `storage_dir` setting. When you set it, 
 |---|---|---|
 | `storage_dir` | `~/.csghub-lite` | Shared local storage root for models and datasets |
 | `server_url` | `https://hub.opencsg.com` | CSGHub platform URL |
-| `ai_gateway_url` | `https://ai.space.opencsg.com` | AI Gateway URL for cloud inference models |
+| `ai_gateway_url` | `https://opencsg.com/aigateway` | AI Gateway URL for cloud inference models |
 | `model_dir` | `~/.csghub-lite/models` | Effective local model storage directory |
 | `dataset_dir` | `~/.csghub-lite/datasets` | Effective local dataset storage directory |
 | `listen_addr` | `:11435` | API server listen address |
