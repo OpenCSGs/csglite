@@ -1060,6 +1060,12 @@ export function Chat() {
     const refreshAll = () => {
       refreshSettings();
       refreshModels();
+      void refreshCloudAuth().then((status) => {
+        if (!hasCloudAuth(status)) return;
+        showCloudAuthDialog.value = false;
+        cloudAuthError.value = "";
+        if (/\b401\b|AUTH-ERR-\d+/.test(chatError.value)) chatError.value = "";
+      }).catch(() => {});
     };
     const handleFocus = () => refreshAll();
     const handleProvidersChanged = () => {

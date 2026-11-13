@@ -3,12 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"github.com/opencsgs/csglite/ee/cluster"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/csghub"
 	"github.com/opencsgs/csglite/internal/inference"
@@ -29,6 +30,7 @@ type cloudAuthStatus struct {
 	Authenticated  bool           `json:"authenticated"`
 	LoginURL       string         `json:"login_url"`
 	AccessTokenURL string         `json:"access_token_url"`
+	RechargeURL    string         `json:"recharge_url"`
 	HasAPIKey      bool           `json:"has_api_key"`
 	APIKeySource   string         `json:"api_key_source,omitempty"`
 	APIKeyPrefix   string         `json:"api_key_prefix,omitempty"`
@@ -71,14 +73,15 @@ func (s *Server) handleCloudAuthTokenSave(w http.ResponseWriter, r *http.Request
 
 func (s *Server) saveCloudAccessToken(token string) error {
 	token = strings.TrimSpace(token)
+	previousToken, previousAPIKey := s.cfg.Token, s.cfg.OpenCSGAPIKey
 	s.cfg.Token = token
+	// A new account session must not inherit an older manual gateway key.
+	s.cfg.OpenCSGAPIKey = ""
 	if err := config.Save(s.cfg); err != nil {
+		s.cfg.Token, s.cfg.OpenCSGAPIKey = previousToken, previousAPIKey
 		return err
 	}
-	if s.cloud != nil {
-		s.cloud.SetAccessToken(token)
-	}
-	s.invalidateLicenseCloudCache()
+	s.refreshCloudCredentials()
 	// A fresh login is the second write-off trigger: a license imported while
 	// offline can now be reported. The server context lets shutdown cancel an
 	// in-flight report, as it does for the startup scan.
@@ -118,15 +121,15 @@ func writeCloudAuthCallbackPage(w http.ResponseWriter, success bool, errCode str
 }
 
 func (s *Server) handleCloudAuthTokenDelete(w http.ResponseWriter, r *http.Request) {
+	previousToken, previousAPIKey := s.cfg.Token, s.cfg.OpenCSGAPIKey
 	s.cfg.Token = ""
+	s.cfg.OpenCSGAPIKey = ""
 	if err := config.Save(s.cfg); err != nil {
+		s.cfg.Token, s.cfg.OpenCSGAPIKey = previousToken, previousAPIKey
 		writeError(w, http.StatusInternalServerError, "clearing token: "+err.Error())
 		return
 	}
-	if s.cloud != nil {
-		s.cloud.SetAccessToken("")
-	}
-	s.invalidateLicenseCloudCache()
+	s.refreshCloudCredentials()
 
 	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))
 }
@@ -149,6 +152,7 @@ func (s *Server) handleCloudAPIKeySave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "saving API key: "+err.Error())
 		return
 	}
+	s.refreshCloudCredentials()
 
 	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))
 }
@@ -159,8 +163,22 @@ func (s *Server) handleCloudAPIKeyDelete(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "clearing API key: "+err.Error())
 		return
 	}
+	s.refreshCloudCredentials()
 
 	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))
+}
+
+// Inference resolves the current account's key per request. Invalidate the
+// related model, marketplace and license caches together after credentials change.
+func (s *Server) refreshCloudCredentials() {
+	if s.cloud != nil {
+		s.cloud.SetAccessToken(s.cfg.Token)
+	}
+	clearMarketplaceCache()
+	s.invalidateLicenseCloudCache()
+	s.cloudRefreshMu.Lock()
+	s.cloudRefreshAt = time.Time{}
+	s.cloudRefreshMu.Unlock()
 }
 
 func (s *Server) cloudAuthStatus(ctx context.Context) cloudAuthStatus {
@@ -171,6 +189,7 @@ func (s *Server) cloudAuthStatus(ctx context.Context) cloudAuthStatus {
 		AuthMode:       "token",
 		LoginURL:       loginURL,
 		AccessTokenURL: displayURL + "/settings/access-token",
+		RechargeURL:    displayURL + "/settings/recharge-payment",
 	}
 	if apiKey := strings.TrimSpace(s.cfg.OpenCSGAPIKey); apiKey != "" {
 		status.HasAPIKey = true

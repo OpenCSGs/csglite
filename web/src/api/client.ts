@@ -1021,6 +1021,7 @@ export interface CloudAuthStatus {
   authenticated: boolean;
   login_url: string;
   access_token_url: string;
+  recharge_url?: string;
   has_api_key: boolean;
   api_key_source?: "manual" | "builtin" | string;
   api_key_prefix?: string;
@@ -1034,6 +1035,17 @@ export interface CloudAuthUser {
   email?: string;
   avatar?: string;
   uuid?: string;
+}
+
+export interface CloudAccountBalance {
+  /** Balance in the community's minor currency unit; null means unavailable. */
+  balance: number | null;
+  recharge_url: string;
+  user_uuid: string;
+}
+
+export async function getCloudAccountBalance(): Promise<CloudAccountBalance> {
+  return fetchJSON<CloudAccountBalance>("/api/cloud/balance", { cache: "no-store" });
 }
 
 export type ChatContent = string | ContentPart[];

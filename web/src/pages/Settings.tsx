@@ -1,6 +1,8 @@
 import { signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DocumentationLink } from "../components/DocumentationLink";
+import { cloudAuth, cloudUserLabel, communitySettings, invalidateCloudAuth, refreshCloudAuth } from "../cloudAccount";
 import { DirectoryPickerDialog } from "../components/DirectoryPickerDialog";
 import { UpgradeDialog, type UpgradeProgress } from "../components/UpgradeDialog";
 import { t, locale, setLocale } from "../i18n";
@@ -9,10 +11,8 @@ import {
   browseLocalDirectories,
   checkUpgrade,
   clearObservabilityData,
-  clearCloudToken,
   deleteLicense,
   getImageRuntimeStatus,
-  getCloudAuthStatus,
   getLicenseCloud,
   importLicense,
   importLicenseFromCloud,
@@ -27,13 +27,10 @@ import {
 import type {
   AppSettings,
   ArtifactSource,
-  CloudAuthStatus,
   ContextCompressionMode,
   LicenseCloudStatus,
   LocalDirectoryBrowseResponse,
 } from "../api/client";
-import { COMMUNITY_SITES, CUSTOM_SITE_ID, matchCommunitySite } from "../data/communitySites";
-import type { CommunitySite } from "../data/communitySites";
 import {
   cloudDeviceUsage,
   cloudImportAvailability,
@@ -72,9 +69,6 @@ const contextIndex = signal(1);
 const contextMode = signal<ContextLengthMode>("global");
 const parallelIndex = signal(0);
 const contextCompression = signal<ContextCompressionMode>("off");
-const cloudAuth = signal<CloudAuthStatus | null>(null);
-const cloudAuthError = signal("");
-const isClearingCloudToken = signal(false);
 const isSavingStorageDir = signal(false);
 const storageDirInput = signal("");
 const storageDirError = signal("");
@@ -91,18 +85,7 @@ const upgradeProgress = signal<UpgradeProgress>({
   message: "",
 });
 let upgradeReloadTimer: number | undefined;
-const serverUrlInput = signal("");
-const aiGatewayUrlInput = signal("");
-const communitySiteChoice = signal<string | null>(null);
-const isSavingCommunitySite = signal(false);
-let communitySiteSaveID = 0;
-let communitySiteSaveChain: Promise<void> = Promise.resolve();
-const savedServerUrl = signal("");
-const savedAiGatewayUrl = signal("");
-const isOpeningCloudLogin = signal(false);
 const cloudProviderNameInput = signal("");
-const defaultServerUrl = signal("");
-const defaultAiGatewayUrl = signal("");
 const defaultCloudProviderName = signal("");
 const huggingFaceEndpointInput = signal("");
 const huggingFaceTokenInput = signal("");
@@ -273,8 +256,6 @@ async function resetDefaults() {
   setCloudServiceFeedback("", "");
   try {
     const data = await saveSettings({
-      server_url: "",
-      ai_gateway_url: "",
       cloud_provider_name: "",
       llama_use_model_max_ctx: false,
       llama_num_parallel: 1,
@@ -284,7 +265,7 @@ async function resetDefaults() {
     notifyProvidersChanged();
     setCloudServiceFeedback("", t("settings.serviceUrlsResetSuccess"));
     resetDefaultsMessage.value = t("settings.resetDefaultsSuccess");
-    fetchCloudAuth();
+    void refreshCloudAuth();
   } catch (err: any) {
     const message = err?.message || t("settings.resetDefaultsFailed");
     setCloudServiceFeedback(message, "");
@@ -296,6 +277,12 @@ async function resetDefaults() {
 }
 
 function applySettings(data: AppSettings) {
+  const previousCommunity = communitySettings.value;
+  if (previousCommunity && (previousCommunity.server_url !== data.server_url || previousCommunity.ai_gateway_url !== data.ai_gateway_url)) {
+    invalidateCloudAuth();
+    void refreshCloudAuth();
+  }
+  communitySettings.value = data;
   setContextModeLocal(data.llama_use_model_max_ctx ? "model_max" : "global");
   parallelIndex.value = parallelIndexFor(data.llama_num_parallel);
   contextCompression.value = data.context_compression || "off";
@@ -303,14 +290,7 @@ function applySettings(data: AppSettings) {
   storageDirInput.value = data.storage_dir || "";
   modelDirectory.value = data.model_dir || "";
   datasetDirectory.value = data.dataset_dir || "";
-  serverUrlInput.value = data.server_url || "";
-  aiGatewayUrlInput.value = data.ai_gateway_url || "";
-  savedServerUrl.value = data.server_url || "";
-  savedAiGatewayUrl.value = data.ai_gateway_url || "";
-  communitySiteChoice.value = null;
   cloudProviderNameInput.value = data.cloud_provider_name || "";
-  defaultServerUrl.value = data.default_server_url || "";
-  defaultAiGatewayUrl.value = data.default_ai_gateway_url || "";
   defaultCloudProviderName.value = data.default_cloud_provider_name || "csghub";
   huggingFaceEndpointInput.value = data.huggingface_endpoint || "https://huggingface.co";
   huggingFaceTokenConfigured.value = data.huggingface_token_configured ?? false;
@@ -373,43 +353,6 @@ function fetchSettings() {
       storageDirError.value = "";
     })
     .catch(() => {});
-}
-
-async function fetchCloudAuth() {
-  try {
-    cloudAuth.value = await getCloudAuthStatus();
-    cloudAuthError.value = "";
-  } catch (err: any) {
-    cloudAuth.value = null;
-    cloudAuthError.value = err?.message || "";
-  }
-}
-
-function pollCloudAuthAfterLogin() {
-  const deadline = Date.now() + 5 * 60 * 1000;
-  let timer: number | undefined;
-
-  const poll = async () => {
-    try {
-      const status = await getCloudAuthStatus();
-      cloudAuth.value = status;
-      if (status.authenticated && status.user) {
-        cloudAuthError.value = "";
-        void loadLicenseCloud();
-        return;
-      }
-    } catch (err: any) {
-      cloudAuthError.value = err?.message || "";
-    }
-    if (Date.now() < deadline) {
-      timer = window.setTimeout(poll, 1500);
-    }
-  };
-
-  void poll();
-  return () => {
-    if (timer !== undefined) window.clearTimeout(timer);
-  };
 }
 
 async function fetchUpgradeInfo() {
@@ -619,17 +562,12 @@ async function saveOpenCSGService() {
   setCloudServiceFeedback("", "");
   try {
     const data = await saveSettings({
-      server_url: serverUrlInput.value,
-      ai_gateway_url: aiGatewayUrlInput.value,
       cloud_provider_name: cloudProviderNameInput.value,
     });
     applySettings(data);
     notifyProvidersChanged();
     setCloudServiceFeedback("", t("settings.providerSaveSuccess", cloudServiceLabel("opencsg")));
-    fetchCloudAuth();
-    // The saved server URL is a different hub, so the cached cloud license
-    // state no longer describes this instance.
-    void loadLicenseCloud();
+    void refreshCloudAuth();
   } catch (err: any) {
     setCloudServiceFeedback(err?.message || t("settings.serviceUrlsSaveFailed"), "");
   } finally {
@@ -755,16 +693,6 @@ function selectStorageDir(path: string) {
   closeStorageDirPicker();
 }
 
-function cloudUserLabel(status: CloudAuthStatus | null): string {
-  const user = status?.user;
-  return (user?.nickname || user?.username || "").trim();
-}
-
-function cloudUserInitial(status: CloudAuthStatus | null): string {
-  const label = cloudUserLabel(status);
-  return label ? label[0].toUpperCase() : "?";
-}
-
 function RegistryCredentialFields({
   endpoint,
   token,
@@ -820,297 +748,6 @@ function RegistryCredentialFields({
         >
           {t("settings.registryTokenClear")}
         </button>
-      )}
-    </div>
-  );
-}
-
-function selectedCommunitySite(): string {
-  if (communitySiteChoice.value === CUSTOM_SITE_ID) return CUSTOM_SITE_ID;
-  return matchCommunitySite(serverUrlInput.value, aiGatewayUrlInput.value, {
-    serverURL: defaultServerUrl.value,
-    gatewayURL: defaultAiGatewayUrl.value,
-  });
-}
-
-function selectCommunitySite(site: CommunitySite) {
-  communitySiteChoice.value = null;
-  serverUrlInput.value = site.id === "main"
-    ? (defaultServerUrl.value || site.serverURL)
-    : site.serverURL;
-  aiGatewayUrlInput.value = site.id === "main"
-    ? (defaultAiGatewayUrl.value || site.gatewayURL)
-    : site.gatewayURL;
-  persistCommunitySite();
-}
-
-// persistCommunitySite writes the selected community into config.json. The
-// dropdown is derived from those URLs on the next launch, so the choice
-// survives a refresh and a restart. Saves run one at a time; a newer choice
-// replaces an older one that has not been written yet.
-function persistCommunitySite() {
-  const requestID = ++communitySiteSaveID;
-  communitySiteSaveChain = communitySiteSaveChain
-    .then(() => persistCommunitySiteNow(requestID))
-    .catch(() => {});
-}
-
-async function persistCommunitySiteNow(requestID: number) {
-  if (requestID !== communitySiteSaveID) return;
-  if (!communitySiteChanged()) {
-    isSavingCommunitySite.value = false;
-    return;
-  }
-  const serverURL = serverUrlInput.value.trim();
-  const gatewayURL = aiGatewayUrlInput.value.trim();
-  isSavingCommunitySite.value = true;
-  cloudAuthError.value = "";
-  try {
-    const data = await saveSettings({
-      server_url: serverURL,
-      ai_gateway_url: gatewayURL,
-    });
-    if (requestID !== communitySiteSaveID) return;
-    if (serverUrlInput.value.trim() !== serverURL || aiGatewayUrlInput.value.trim() !== gatewayURL) return;
-    applySettings(data);
-    notifyProvidersChanged();
-    // A saved server URL points at a different hub, so the cached cloud
-    // license state no longer describes this instance.
-    void loadLicenseCloud();
-    const status = await getCloudAuthStatus();
-    if (requestID !== communitySiteSaveID) return;
-    cloudAuth.value = status;
-  } catch (err: any) {
-    if (requestID !== communitySiteSaveID) return;
-    cloudAuthError.value = err?.message || t("settings.serviceUrlsSaveFailed");
-  } finally {
-    if (requestID === communitySiteSaveID) isSavingCommunitySite.value = false;
-  }
-}
-
-function CommunitySiteSelect({ locked }: { locked: boolean }) {
-  const selected = selectedCommunitySite();
-  return (
-    <div class="space-y-4">
-      <label class="block">
-        <span class="text-sm font-medium text-gray-700">{t("settings.sitePicker")}</span>
-        <select
-          value={selected}
-          disabled={locked || isOpeningCloudLogin.value || isSavingCommunitySite.value}
-          onChange={(event) => {
-            const id = (event.currentTarget as HTMLSelectElement).value;
-            const site = COMMUNITY_SITES.find((item) => item.id === id);
-            if (site) selectCommunitySite(site);
-            else {
-              communitySiteSaveID += 1;
-              isSavingCommunitySite.value = false;
-              communitySiteChoice.value = CUSTOM_SITE_ID;
-            }
-          }}
-          class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500"
-        >
-          {COMMUNITY_SITES.map((site) => (
-            <option key={site.id} value={site.id}>{t(site.nameKey)}</option>
-          ))}
-          <option value={CUSTOM_SITE_ID}>{t("settings.siteCustom")}</option>
-        </select>
-        <span class="mt-1 block text-xs text-gray-400">
-          {locked ? t("settings.siteSwitchSignedIn") : t("settings.sitePickerHint")}
-        </span>
-      </label>
-      {selected === CUSTOM_SITE_ID && !locked && (
-        <>
-          <label class="block">
-            <span class="text-sm font-medium text-gray-700">{t("settings.serverUrl")}</span>
-            <input
-              type="url"
-              value={serverUrlInput.value}
-              onInput={(event) => {
-                serverUrlInput.value = (event.currentTarget as HTMLInputElement).value;
-              }}
-              onBlur={() => void persistCommunitySite()}
-              placeholder={defaultServerUrl.value}
-              class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            />
-          </label>
-          <label class="block">
-            <span class="text-sm font-medium text-gray-700">{t("settings.aiGatewayUrl")}</span>
-            <input
-              type="url"
-              value={aiGatewayUrlInput.value}
-              onInput={(event) => {
-                aiGatewayUrlInput.value = (event.currentTarget as HTMLInputElement).value;
-              }}
-              onBlur={() => void persistCommunitySite()}
-              placeholder={defaultAiGatewayUrl.value}
-              class="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-            />
-          </label>
-        </>
-      )}
-    </div>
-  );
-}
-
-function communitySiteChanged(): boolean {
-  return serverUrlInput.value.trim() !== savedServerUrl.value.trim()
-    || aiGatewayUrlInput.value.trim() !== savedAiGatewayUrl.value.trim();
-}
-
-// openCloudLogin signs in to the community picked in the dropdown. A changed
-// community is saved first so the backend returns that site's login URL; the
-// tab is opened before the save because browsers block popups opened after an
-// await.
-async function openCloudLogin() {
-  if (!communitySiteChanged()) {
-    openExternal(cloudAuth.value?.login_url);
-    pollCloudAuthAfterLogin();
-    return;
-  }
-  if (isOpeningCloudLogin.value) return;
-  isOpeningCloudLogin.value = true;
-  cloudAuthError.value = "";
-  const loginWindow = window.open("", "_blank");
-  try {
-    const data = await saveSettings({
-      server_url: serverUrlInput.value,
-      ai_gateway_url: aiGatewayUrlInput.value,
-      cloud_provider_name: cloudProviderNameInput.value,
-    });
-    applySettings(data);
-    notifyProvidersChanged();
-    // A saved server URL points at a different hub, so the cached cloud
-    // license state no longer describes this instance.
-    void loadLicenseCloud();
-    const status = await getCloudAuthStatus();
-    cloudAuth.value = status;
-    if (!status.login_url) throw new Error(t("chat.failedResp"));
-    if (loginWindow) {
-      loginWindow.opener = null;
-      loginWindow.location.href = status.login_url;
-    } else {
-      openExternal(status.login_url);
-    }
-    pollCloudAuthAfterLogin();
-  } catch (err: any) {
-    loginWindow?.close();
-    cloudAuthError.value = err?.message || t("settings.serviceUrlsSaveFailed");
-  } finally {
-    isOpeningCloudLogin.value = false;
-  }
-}
-
-async function logoutCloudAccount() {
-  if (isClearingCloudToken.value) return;
-  isClearingCloudToken.value = true;
-  cloudAuthError.value = "";
-  try {
-    cloudAuth.value = await clearCloudToken();
-    void loadLicenseCloud();
-  } catch (err: any) {
-    cloudAuthError.value = err?.message || t("chat.failedResp");
-  } finally {
-    isClearingCloudToken.value = false;
-  }
-}
-
-function OpenCSGAccountPanel() {
-  return (
-    <div class="rounded-xl border border-gray-100 bg-gray-50/60 p-4">
-      <div class="mb-3 flex items-center justify-between gap-2">
-        <p class="text-sm font-semibold text-gray-900">{t("settings.account")}</p>
-        {cloudAuth.value?.authenticated && cloudAuth.value.user && (
-          <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
-            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            {t("settings.signedIn")}
-          </span>
-        )}
-      </div>
-      {cloudAuth.value !== null && (
-        <div class="mb-4">
-          <CommunitySiteSelect locked={cloudAuth.value.has_token} />
-        </div>
-      )}
-      {cloudAuth.value === null ? (
-        <p class="text-sm text-gray-500">...</p>
-      ) : cloudAuth.value.authenticated && cloudAuth.value.user ? (
-        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div class="flex min-w-0 items-center gap-3">
-            {cloudAuth.value.user.avatar ? (
-              <img
-                src={cloudAuth.value.user.avatar}
-                alt={cloudUserLabel(cloudAuth.value)}
-                class="h-11 w-11 rounded-full border border-gray-200 bg-white object-cover"
-              />
-            ) : (
-              <div class="flex h-11 w-11 items-center justify-center rounded-full bg-[#169F95] text-base font-semibold text-white">
-                {cloudUserInitial(cloudAuth.value)}
-              </div>
-            )}
-            <div class="min-w-0">
-              <p class="truncate text-sm font-semibold text-gray-900">{cloudUserLabel(cloudAuth.value)}</p>
-              <p class="truncate text-xs text-gray-500">
-                @{cloudAuth.value.user.username}
-                {cloudAuth.value.user.email ? ` · ${cloudAuth.value.user.email}` : ""}
-              </p>
-            </div>
-          </div>
-          <div class="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void logoutCloudAccount()}
-              disabled={isClearingCloudToken.value}
-              class="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isClearingCloudToken.value ? t("settings.loggingOut") : t("settings.logout")}
-            </button>
-          </div>
-        </div>
-      ) : cloudAuth.value.has_token ? (
-        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p class="text-sm font-semibold text-gray-900">{t("settings.tokenSaved")}</p>
-            <p class="mt-0.5 text-xs text-gray-500">{t("settings.tokenSavedDesc")}</p>
-          </div>
-          <div class="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void openCloudLogin()}
-              disabled={isOpeningCloudLogin.value || isSavingCommunitySite.value}
-              class="rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {t("settings.login")}
-            </button>
-            <button
-              type="button"
-              onClick={() => void logoutCloudAccount()}
-              disabled={isClearingCloudToken.value}
-              class="rounded-lg border border-red-200 bg-white px-3.5 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isClearingCloudToken.value ? t("settings.loggingOut") : t("settings.logout")}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p class="text-sm font-semibold text-gray-900">{t("settings.loggedOut")}</p>
-            <p class="mt-0.5 text-xs text-gray-500">{t("settings.loggedOutDesc")}</p>
-          </div>
-          <div class="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void openCloudLogin()}
-              disabled={isOpeningCloudLogin.value || isSavingCommunitySite.value}
-              class="rounded-lg bg-[#169F95] px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#128a81] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isOpeningCloudLogin.value ? "..." : t("settings.login")}
-            </button>
-          </div>
-        </div>
-      )}
-      {cloudAuthError.value && (
-        <p class="mt-3 text-sm text-red-600">{cloudAuthError.value}</p>
       )}
     </div>
   );
@@ -1535,19 +1172,27 @@ export function Settings() {
 
   useEffect(() => {
     fetchSettings();
-    fetchCloudAuth();
+    void refreshCloudAuth();
     void loadLicense();
-    void loadLicenseCloud();
     void fetchUpgradeInfo();
     void fetchDiffuserRuntimeStatus();
     contextIndex.value = loadContextIndex();
     contextMode.value = loadContextMode();
   }, []);
 
+  useEffect(() => {
+    void loadLicenseCloud();
+  }, [cloudAuth.value?.authenticated, cloudAuth.value?.user?.username, communitySettings.value?.server_url]);
+
   return (
     <div class="page-shell">
-      <h1 class="text-2xl font-bold text-gray-900">{t("settings.title")}</h1>
-      <p class="text-gray-500 text-sm mt-1 mb-6">{t("settings.subtitle")}</p>
+      <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">{t("settings.title")}</h1>
+          <p class="mt-1 text-sm text-gray-500">{t("settings.subtitle")}</p>
+        </div>
+        <DocumentationLink />
+      </div>
 
       {/* Storage location */}
       <div class="mb-10">
@@ -1810,8 +1455,7 @@ export function Settings() {
             <p class="mb-5 text-sm leading-5 text-gray-500">{cloudServiceHint(cloudServiceTab.value)}</p>
               {cloudServiceTab.value === "opencsg" && (
                 <div class="space-y-5">
-                  <OpenCSGAccountPanel />
-                  <div class="space-y-4 border-t border-gray-100 pt-5">
+                  <div class="space-y-4">
                     <label class="block">
                       <span class="text-sm font-medium text-gray-700">{t("settings.cloudProviderName")}</span>
                       <input

@@ -148,6 +148,7 @@ func TestHandleSettingsUpdateServiceURLs(t *testing.T) {
 	s := newTestServer(t)
 	s.cfg.ServerURL = config.DefaultServerURL
 	s.cfg.Token = "old-token"
+	s.cfg.OpenCSGAPIKey = "old-server-key"
 
 	serverURL := " https://opencsg-stg.com "
 	aiGatewayURL := " https://gateway.example.com "
@@ -174,6 +175,9 @@ func TestHandleSettingsUpdateServiceURLs(t *testing.T) {
 	}
 	if s.cfg.Token != "" {
 		t.Fatalf("Token = %q, want cleared after server URL change", s.cfg.Token)
+	}
+	if s.cfg.OpenCSGAPIKey != "" {
+		t.Fatal("switching servers retained the old server's API key")
 	}
 	if s.cfg.AIGatewayURL != "https://gateway.example.com" {
 		t.Fatalf("AIGatewayURL = %q, want custom gateway", s.cfg.AIGatewayURL)
@@ -226,6 +230,43 @@ func TestHandleSettingsUpdateServiceURLsRestoreDefaults(t *testing.T) {
 	}
 	if got := s.cloud.BaseURL(); got != cloud.DefaultBaseURL {
 		t.Fatalf("cloud base URL = %q, want default %q", got, cloud.DefaultBaseURL)
+	}
+}
+
+func TestGatewayChangeClearsManualKeyButKeepsAccountToken(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		name := "unchanged"
+		if changed {
+			name = "changed"
+		}
+		t.Run(name, func(t *testing.T) {
+			s := newTestServer(t)
+			s.cfg.Token = "account-token"
+			s.cfg.OpenCSGAPIKey = "gateway-specific-key"
+			s.cfg.AIGatewayURL = "https://first.example"
+			gatewayURL := s.cfg.AIGatewayURL
+			if changed {
+				gatewayURL = "https://second.example"
+			}
+			body, err := json.Marshal(api.SettingsUpdateRequest{AIGatewayURL: &gatewayURL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			s.handleSettingsUpdate(w, httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body)))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", w.Code)
+			}
+			if s.cfg.Token != "account-token" {
+				t.Fatal("a gateway-only update cleared the account token")
+			}
+			if changed && s.cfg.OpenCSGAPIKey != "" {
+				t.Fatal("new gateway inherited the previous gateway's key")
+			}
+			if !changed && s.cfg.OpenCSGAPIKey != "gateway-specific-key" {
+				t.Fatal("unchanged gateway lost its explicit manual key")
+			}
+		})
 	}
 }
 

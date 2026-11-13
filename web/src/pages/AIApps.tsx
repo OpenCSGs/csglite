@@ -730,7 +730,12 @@ function LiveLogsDrawer({
     loadModels(true);
 
     const handleFocus = () => loadModels();
-    const handleProvidersChanged = () => loadModels();
+    const handleProvidersChanged = () => {
+      loadModels();
+      getCloudAuthStatus().then((status) => {
+        if (!disposed) setCloudAuth(status);
+      }).catch(() => {});
+    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         loadModels();

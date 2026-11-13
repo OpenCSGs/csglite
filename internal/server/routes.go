@@ -135,6 +135,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/provider-pools/{id}", s.handleProviderPoolUpdate)
 	mux.HandleFunc("DELETE /api/provider-pools/{id}", s.handleProviderPoolDelete)
 	mux.HandleFunc("GET /api/cloud/auth", s.handleCloudAuthStatus)
+	mux.HandleFunc("GET /api/cloud/balance", s.handleCloudAccountBalance)
 	mux.HandleFunc("POST /api/cloud/auth/token", s.handleCloudAuthTokenSave)
 	mux.HandleFunc("DELETE /api/cloud/auth/token", s.handleCloudAuthTokenDelete)
 	mux.HandleFunc("POST /api/cloud/api-key", s.handleCloudAPIKeySave)

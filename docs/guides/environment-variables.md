@@ -25,7 +25,7 @@ csghub-lite serve
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `CSGHUB_LITE_SERVER_URL` | `https://hub.opencsg.com` | CSGHub 服务地址。仅在配置文件未设置 `server_url` 时作为默认值。 |
-| `CSGHUB_LITE_AI_GATEWAY_URL` | `https://ai.space.opencsg.com` | AI Gateway 地址。仅在配置文件未设置 `ai_gateway_url` 时作为默认值。 |
+| `CSGHUB_LITE_AI_GATEWAY_URL` | `https://opencsg.com/aigateway` | AI Gateway 地址。仅在配置文件未设置 `ai_gateway_url` 时作为默认值。 |
 | `CSGHUB_LITE_CLOUD_PROVIDER_NAME` | `csghub` | 云端模型 provider 名称。仅在配置文件未设置时生效。 |
 | `CSGHUB_LITE_OPENAI_STREAM_DEFAULT` | `false` | OpenAI Chat Completions 请求未传 `stream` 时是否默认使用流式响应。请求参数优先。 |
 | `CSGHUB_LITE_HIDDEN_NAV_ITEMS` | 空 | 用逗号分隔要隐藏的 Web UI 导航项。可用节点 ID 与说明见 [配置指南：隐藏左侧导航节点](configuration.md#隐藏左侧导航节点)。只隐藏入口，不禁用 URL。 |
