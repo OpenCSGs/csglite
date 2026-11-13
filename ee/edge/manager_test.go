@@ -26,7 +26,6 @@ import (
 type fakeHost struct {
 	gateway    string
 	token      string
-	unlicensed atomic.Bool
 	modelCalls atomic.Int32
 	cloudCalls atomic.Int32
 	mu         sync.Mutex
@@ -61,7 +60,6 @@ func (h *fakeHost) configure(gateway, token string) {
 	h.mu.Unlock()
 }
 func (h *fakeHost) Version() string { return "test" }
-func (h *fakeHost) Licensed() bool  { return !h.unlicensed.Load() }
 func (h *fakeHost) requests() []*http.Request {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -322,53 +320,6 @@ func TestManagerKeepsTokenWhenNodeDisabled(t *testing.T) {
 	time.Sleep(3500 * time.Millisecond) // two more attempts at 1s and 2s backoff
 	if g.registers.Load() != 1 {
 		t.Fatalf("registrations = %d, want 1: a disabled node must not re-register", g.registers.Load())
-	}
-}
-
-func TestManagerRequiresLicense(t *testing.T) {
-	g := newFakeGateway(t)
-	host := &fakeHost{gateway: g.server.URL, token: "user-token"}
-	host.unlicensed.Store(true)
-	m, err := New(host, t.TempDir(), "studio")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := m.SetEnabled(true); err != nil {
-		t.Fatal(err)
-	}
-	defer m.Stop()
-	waitState(t, m, StateUnlicensed)
-	if g.registers.Load() != 0 {
-		t.Fatal("an unlicensed node must not register with the gateway")
-	}
-
-	// Once licensed it connects; when the license lapses it drains and
-	// closes the tunnel at the next heartbeat (1s here).
-	host.unlicensed.Store(false)
-	sess := g.next(t)
-	<-sess.status
-	host.unlicensed.Store(true)
-	drained := false
-	for msg := range sess.status {
-		if msg.Type == msgDrain {
-			drained = true
-			break
-		}
-	}
-	if !drained {
-		t.Fatal("tunnel closed without a drain after the license lapsed")
-	}
-	waitState(t, m, StateUnlicensed)
-}
-
-func waitState(t *testing.T, m *Manager, want string) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for m.Status().State != want {
-		if time.Now().After(deadline) {
-			t.Fatalf("state = %s, want %s", m.Status().State, want)
-		}
-		time.Sleep(20 * time.Millisecond)
 	}
 }
 

@@ -69,15 +69,11 @@ type Host interface {
 	// token, empty when signed out.
 	Cloud() (gatewayURL, token string)
 	Version() string
-	// Licensed reports whether an Enterprise license enables edge serving;
-	// the connector neither connects nor keeps a tunnel open without one.
-	Licensed() bool
 }
 
 // State values reported by Status.
 const (
 	StateDisabled   = "disabled"
-	StateUnlicensed = "unlicensed"
 	StateSignedOut  = "signed_out"
 	StateConnecting = "connecting"
 	StateConnected  = "connected"
@@ -362,11 +358,8 @@ func (m *Manager) loop(ctx context.Context, draining <-chan struct{}) {
 			continue
 		}
 		state := StateError
-		switch {
-		case errors.Is(err, errSignedOut):
+		if errors.Is(err, errSignedOut) {
 			state = StateSignedOut
-		case errors.Is(err, errNotLicensed):
-			state = StateUnlicensed
 		}
 		m.setStatus(func(s *Status) {
 			s.State = state
@@ -397,7 +390,6 @@ var (
 	errSignedOut    = errors.New("sign in to OpenCSG to serve models")
 	errUnauthorized = errors.New("gateway rejected the node token")
 	errNodeDisabled = errors.New("this node was disabled by the platform")
-	errNotLicensed  = errors.New("edge serving requires a CSGLite Enterprise license")
 	// errGatewayChanged ends a tunnel because the user configured another
 	// gateway or signed in as someone else; the connector reconnects at once.
 	errGatewayChanged = errors.New("the configured gateway or account changed")
@@ -405,9 +397,6 @@ var (
 
 // session runs one tunnel until it ends.
 func (m *Manager) session(ctx context.Context, draining <-chan struct{}) error {
-	if !m.host.Licensed() {
-		return errNotLicensed
-	}
 	gatewayURL, token := m.host.Cloud()
 	if strings.TrimSpace(token) == "" {
 		return errSignedOut
@@ -587,9 +576,9 @@ func (m *Manager) heartbeat(ctx context.Context, mux *yamux.Session, control *co
 		case d := <-interval:
 			ticker.Reset(d)
 		case <-ticker.C:
-			// A license that lapses, or a change of gateway or account,
-			// ends this tunnel at the next heartbeat.
-			if !m.host.Licensed() || stale() {
+			// A change of gateway or account ends this tunnel at the next
+			// heartbeat.
+			if stale() {
 				_ = control.write(controlMessage{Type: msgDrain})
 				_ = mux.Close()
 				return

@@ -3517,7 +3517,7 @@ export function updateClusterSettings(patch: ClusterSettingsUpdate): Promise<Clu
 
 // ---- edge serving ------------------------------------------------------------
 
-export type EdgeState = "disabled" | "unlicensed" | "signed_out" | "connecting" | "connected" | "error";
+export type EdgeState = "disabled" | "signed_out" | "connecting" | "connected" | "error";
 
 /** A ready model is served even while asleep (not in memory); its first request loads it. */
 export type EdgeModelState = "loaded" | "loading" | "sleeping";
@@ -3564,6 +3564,8 @@ export interface EdgeStatus {
   applications_changed: number;
   signed_in: boolean;
   models: EdgeModel[];
+  /** How many models this edition may contribute; 0 means unlimited. */
+  model_limit: number;
 }
 
 export type EdgeApplicationStatus = "pending" | "approved" | "rejected" | "suspended" | "revoked" | "withdrawn";

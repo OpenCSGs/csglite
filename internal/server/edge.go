@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -192,8 +193,14 @@ func (h edgeHost) Cloud() (string, string) {
 
 func (h edgeHost) Version() string { return h.s.version }
 
-func (h edgeHost) Licensed() bool {
-	return h.s.license != nil && h.s.license.Enabled(license.FeatureEdgeServing)
+// edgeModelLimit is how many models this edition may contribute to the
+// gateway: one in the Community edition, unlimited (0) under an Enterprise
+// license.
+func (s *Server) edgeModelLimit() int {
+	if s.license == nil {
+		return license.QuotaMaxEdgeModels.CommunityValue
+	}
+	return s.license.Limit(license.QuotaMaxEdgeModels)
 }
 
 // ---- local API ----
@@ -202,8 +209,9 @@ func (h edgeHost) Licensed() bool {
 // can be offered to the gateway.
 type edgeStatusResponse struct {
 	edge.Status
-	SignedIn bool         `json:"signed_in"`
-	Models   []edge.Model `json:"models"`
+	SignedIn   bool         `json:"signed_in"`
+	Models     []edge.Model `json:"models"`
+	ModelLimit int          `json:"model_limit"`
 }
 
 func (s *Server) withEdge(next func(http.ResponseWriter, *http.Request, *edge.Manager)) http.HandlerFunc {
@@ -222,7 +230,7 @@ func (s *Server) handleEdgeStatus(w http.ResponseWriter, r *http.Request, m *edg
 	if models == nil {
 		models = []edge.Model{}
 	}
-	writeJSON(w, http.StatusOK, edgeStatusResponse{Status: m.Status(), SignedIn: token != "", Models: models})
+	writeJSON(w, http.StatusOK, edgeStatusResponse{Status: m.Status(), SignedIn: token != "", Models: models, ModelLimit: s.edgeModelLimit()})
 }
 
 func (s *Server) handleEdgeSetEnabled(w http.ResponseWriter, r *http.Request, m *edge.Manager) {
@@ -257,12 +265,59 @@ func (s *Server) handleEdgeSubmit(w http.ResponseWriter, r *http.Request, m *edg
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	limit := s.edgeModelLimit()
+	if limit > 0 {
+		live, err := s.edgeLiveApplications(r.Context(), m)
+		if err != nil {
+			writeEdgeError(w, r, err)
+			return
+		}
+		if live >= limit {
+			writeError(w, http.StatusForbidden, edgeModelLimitMessage(r, limit))
+			return
+		}
+	}
 	data, err := m.Submit(r.Context(), req)
 	if err != nil {
 		writeEdgeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
+// edgeLiveApplications counts the applications that still hold a model on
+// the gateway: pending, approved and suspended ones. Withdrawn, rejected and
+// revoked applications are history and do not use a slot.
+func (s *Server) edgeLiveApplications(ctx context.Context, m *edge.Manager) (int, error) {
+	data, _, err := m.Applications(ctx, 1, 100)
+	if err != nil {
+		return 0, err
+	}
+	var apps []struct {
+		Status string `json:"status"`
+	}
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &apps); err != nil {
+			// A shape this build does not understand must not lock the user
+			// out of applying; the gateway still enforces its own rules.
+			return 0, nil
+		}
+	}
+	live := 0
+	for _, app := range apps {
+		switch app.Status {
+		case "pending", "approved", "suspended":
+			live++
+		}
+	}
+	return live, nil
+}
+
+func edgeModelLimitMessage(r *http.Request, limit int) string {
+	if strings.HasPrefix(requestLocale(r), "zh") {
+		return fmt.Sprintf("当前版本最多贡献 %d 个模型；导入企业版 License 可解除限制。", limit)
+	}
+	return fmt.Sprintf("This edition can contribute %d model(s). Import an Enterprise license to lift the limit.", limit)
 }
 
 func (s *Server) handleEdgeWithdraw(w http.ResponseWriter, r *http.Request, m *edge.Manager) {

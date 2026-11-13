@@ -101,15 +101,15 @@ func TestRefreshWithoutFileIsCommunity(t *testing.T) {
 
 func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 	key := licensetest.NewKey(t)
-	// Shipped catalog: the cluster node cap, the device cap, and edge serving
-	// are gated.
+	// Shipped catalog: the cluster node cap, the device cap, and the edge model
+	// cap are gated.
 	m, _ := newManager(t, key, func(o *license.Options) { o.Catalog = license.Catalog() })
 	gated := license.GatedCatalog()
 	gatedKeys := map[string]bool{}
 	for _, def := range gated {
 		gatedKeys[def.Key] = true
 	}
-	expected := []string{license.QuotaMaxClusterNodes.Key, license.QuotaMaxDevices.Key, license.FeatureEdgeServing.Key}
+	expected := []string{license.QuotaMaxClusterNodes.Key, license.QuotaMaxDevices.Key, license.QuotaMaxEdgeModels.Key}
 	for _, key := range expected {
 		if !gatedKeys[key] {
 			t.Fatalf("shipped catalog gates %v; %s is expected too. Update this test and the docs deliberately", gated, key)
@@ -138,8 +138,8 @@ func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 			}
 		}
 	}
-	if got := len(st.EnabledKeys()); got != 7 {
-		t.Fatalf("EnabledKeys = %d, want all 7 ungated booleans", got)
+	if got := len(st.EnabledKeys()); got != 8 {
+		t.Fatalf("EnabledKeys = %d, want all 8 ungated booleans", got)
 	}
 	// The Community edition may cluster two machines; an Enterprise license
 	// with no explicit tier lifts the cap entirely.

@@ -5,7 +5,6 @@ import (
 
 	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/ctxcompress"
-	"github.com/opencsgs/csglite/internal/license"
 )
 
 func (s *Server) routes() http.Handler {
@@ -141,16 +140,16 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/cloud/api-key", s.handleCloudAPIKeySave)
 	mux.HandleFunc("DELETE /api/cloud/api-key", s.handleCloudAPIKeyDelete)
 	// Edge serving: offer approved local models to the CSGHub AI gateway
-	// through an outbound tunnel. Enterprise only.
-	edge := s.requireFeature(license.FeatureEdgeServing)
-	mux.HandleFunc("GET /api/edge", edge(s.withEdge(s.handleEdgeStatus)))
-	mux.HandleFunc("PUT /api/edge", edge(s.withEdge(s.handleEdgeSetEnabled)))
-	mux.HandleFunc("GET /api/edge/applications", edge(s.withEdge(s.handleEdgeApplications)))
-	mux.HandleFunc("POST /api/edge/applications", edge(s.withEdge(s.handleEdgeSubmit)))
-	mux.HandleFunc("POST /api/edge/applications/{id}/withdraw", edge(s.withEdge(s.handleEdgeWithdraw)))
-	mux.HandleFunc("GET /api/edge/earnings", edge(s.withEdge(s.handleEdgeEarnings)))
-	mux.HandleFunc("GET /api/edge/balance", edge(s.withEdge(s.handleEdgeBalance)))
-	mux.HandleFunc("GET /api/edge/statements", edge(s.withEdge(s.handleEdgeStatements)))
+	// through an outbound tunnel. Every edition may use it; how many models
+	// may be contributed is capped by quota.lite.max_edge_models.
+	mux.HandleFunc("GET /api/edge", s.withEdge(s.handleEdgeStatus))
+	mux.HandleFunc("PUT /api/edge", s.withEdge(s.handleEdgeSetEnabled))
+	mux.HandleFunc("GET /api/edge/applications", s.withEdge(s.handleEdgeApplications))
+	mux.HandleFunc("POST /api/edge/applications", s.withEdge(s.handleEdgeSubmit))
+	mux.HandleFunc("POST /api/edge/applications/{id}/withdraw", s.withEdge(s.handleEdgeWithdraw))
+	mux.HandleFunc("GET /api/edge/earnings", s.withEdge(s.handleEdgeEarnings))
+	mux.HandleFunc("GET /api/edge/balance", s.withEdge(s.handleEdgeBalance))
+	mux.HandleFunc("GET /api/edge/statements", s.withEdge(s.handleEdgeStatements))
 	// LAN compute cluster. The feature is open to every edition; the member
 	// cap is what the license controls (quota.lite.max_cluster_nodes), checked
 	// where a node joins or is invited.

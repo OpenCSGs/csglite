@@ -7040,16 +7040,6 @@
         "description": "Connector state plus the local language models that can be offered to the gateway.",
         "operationId": "getEdgeStatus",
         "responses": {
-          "403": {
-            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "200": {
             "description": "OK",
             "content": {
@@ -7108,16 +7098,6 @@
           }
         },
         "responses": {
-          "403": {
-            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "200": {
             "description": "OK",
             "content": {
@@ -7176,16 +7156,6 @@
           }
         ],
         "responses": {
-          "403": {
-            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "200": {
             "description": "OK",
             "content": {
@@ -7236,22 +7206,22 @@
           }
         },
         "responses": {
-          "403": {
-            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "200": {
             "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EdgeGatewayData"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This edition's model contribution limit is reached (see `model_limit` on GET /api/edge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -7298,16 +7268,6 @@
           }
         ],
         "responses": {
-          "403": {
-            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "200": {
             "description": "OK",
             "content": {
@@ -7360,16 +7320,6 @@
           }
         ],
         "responses": {
-          "403": {
-            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "200": {
             "description": "OK",
             "content": {
@@ -7412,16 +7362,6 @@
         "description": "The signed-in user's monthly statements from CSGHub, newest first: requests, what callers paid, the platform commission and the owner's share in whole cents, and whether the month is open, awaiting settlement or settled (with the transfer reference).",
         "operationId": "getEdgeStatements",
         "responses": {
-          "403": {
-            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "200": {
             "description": "OK",
             "content": {
@@ -7464,16 +7404,6 @@
         "description": "The signed-in user's earnings balance exactly as CSGHub records it, and the CSGHub page with their monthly statements and payee details.",
         "operationId": "getEdgeBalance",
         "responses": {
-          "403": {
-            "description": "Edge serving requires a CSGLite Enterprise license (`code: feature_not_licensed`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "200": {
             "description": "OK",
             "content": {
@@ -8980,6 +8910,10 @@
             "items": {
               "$ref": "#/components/schemas/EdgeModel"
             }
+          },
+          "model_limit": {
+            "type": "integer",
+            "description": "How many models this edition may contribute to the gateway; 0 means unlimited."
           }
         }
       },

@@ -49,7 +49,6 @@ export function edgeStateTone(state: EdgeState): string {
     case "connected":
       return "bg-emerald-500";
     case "connecting":
-    case "unlicensed":
       return "bg-amber-400";
     case "error":
     case "signed_out":

@@ -1,7 +1,6 @@
 import { useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import {
-  isFeatureNotLicensedError,
   getEdgeApplications,
   getEdgeEarnings,
   getEdgeBalance,
@@ -45,8 +44,6 @@ const activeTab = signal<EdgeTab>("overview");
 
 const status = signal<EdgeStatus | null>(null);
 const statusError = signal("");
-/** Set while the instance has no Enterprise license (403 feature_not_licensed). */
-const locked = signal(false);
 const toggling = signal(false);
 
 const applications = signal<EdgeApplication[]>([]);
@@ -78,17 +75,11 @@ async function loadStatus() {
     const next = await getEdgeStatus();
     status.value = next;
     statusError.value = "";
-    locked.value = false;
     if (next.signed_in && next.applications_changed !== lastChanged.value) {
       lastChanged.value = next.applications_changed;
       void loadApplications();
     }
   } catch (e) {
-    if (isFeatureNotLicensedError(e)) {
-      locked.value = true;
-      status.value = null;
-      return;
-    }
     statusError.value = (e as Error).message;
   }
 }
@@ -138,7 +129,15 @@ async function toggle() {
   }
 }
 
+/** Applications that still hold a model on the gateway, against this edition's cap. */
+function modelQuota(): { used: number; limit: number; reached: boolean } {
+  const limit = status.value?.model_limit ?? 0;
+  const used = applications.value.filter((a) => isLiveApplication(a.status)).length;
+  return { used, limit, reached: limit > 0 && used >= limit };
+}
+
 function openApply() {
+  if (modelQuota().reached) return;
   submitError.value = "";
   applyOpen.value = true;
 }
@@ -237,9 +236,7 @@ export function EdgeServing() {
         {current && <StatusControl status={current} />}
       </div>
 
-      {locked.value ? (
-        <LockedNotice />
-      ) : !current ? (
+      {!current ? (
         <section class="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-400">
           {statusError.value ? <span class="text-red-600">{statusError.value}</span> : t("edge.loading")}
         </section>
@@ -269,24 +266,6 @@ export function EdgeServing() {
         onCancel={() => (withdrawTarget.value = null)}
       />
     </div>
-  );
-}
-
-/** Shown instead of the feature when no Enterprise license is installed. */
-function LockedNotice() {
-  return (
-    <section class="rounded-2xl border border-gray-200 bg-white px-8 py-12 text-center">
-      <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
-        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-        </svg>
-      </div>
-      <h2 class="mt-4 text-lg font-semibold text-gray-900">{t("edge.locked.title")}</h2>
-      <p class="mx-auto mt-2 max-w-lg text-sm leading-6 text-gray-600">{t("edge.locked.desc")}</p>
-      <a href="/settings#license" class="mt-6 inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
-        {t("edge.locked.action")}
-      </a>
-    </section>
   );
 }
 
@@ -405,6 +384,7 @@ function ModelsTab() {
   const live = all.filter((a) => isLiveApplication(a.status));
   const history = all.length - live.length;
   const rows = showHistory.value ? all : live;
+  const quota = modelQuota();
   return (
     <section class="rounded-xl border border-gray-200 bg-white">
       <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-6 py-4">
@@ -422,7 +402,18 @@ function ModelsTab() {
           <button type="button" class="text-sm text-gray-500 hover:text-gray-800" onClick={() => void loadApplications()}>
             {t("edge.refresh")}
           </button>
-          <button type="button" class="rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700" onClick={openApply}>
+          {quota.limit > 0 && (
+            <span class={`text-xs ${quota.reached ? "text-amber-600" : "text-gray-500"}`} title={quota.reached ? t("edge.apps.quotaHint", quota.limit) : undefined}>
+              {t("edge.apps.quota", quota.used, quota.limit)}
+            </span>
+          )}
+          <button
+            type="button"
+            class="rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={quota.reached}
+            title={quota.reached ? t("edge.apps.quotaHint", quota.limit) : undefined}
+            onClick={openApply}
+          >
             {t("edge.apps.apply")}
           </button>
         </div>
@@ -431,9 +422,13 @@ function ModelsTab() {
       {rows.length === 0 ? (
         <div class="px-6 py-12 text-center">
           <p class="text-sm text-gray-500">{t("edge.apps.empty")}</p>
-          <button type="button" class="mt-3 text-sm font-medium text-indigo-600 hover:text-indigo-800" onClick={openApply}>
-            {t("edge.apps.applyFirst")}
-          </button>
+          {quota.reached ? (
+            <p class="mt-3 text-xs text-gray-500">{t("edge.apps.quotaHint", quota.limit)}</p>
+          ) : (
+            <button type="button" class="mt-3 text-sm font-medium text-indigo-600 hover:text-indigo-800" onClick={openApply}>
+              {t("edge.apps.applyFirst")}
+            </button>
+          )}
         </div>
       ) : (
         <div class="overflow-x-auto">

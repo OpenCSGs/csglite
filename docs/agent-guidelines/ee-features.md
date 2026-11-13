@@ -15,7 +15,7 @@ which features are active. Licenses are issued by the CSGHub license issuer
   its routes; adding a catalog entry alone changes nothing.
   `TestUngatedFeaturesIgnoreTheLicense` pins exactly which catalog entries
   are gated (today `quota.lite.max_cluster_nodes`,
-  `quota.lite.max_devices`, and `feature.lite.edge_serving`); update it
+  `quota.lite.max_devices`, and `quota.lite.max_edge_models`); update it
   deliberately when gating changes.
 - Boolean keys are `feature.lite.<name>`, integer limits are
   `quota.lite.<name>`. `ValidateCatalog` and `TestCatalogIsValid` enforce this.
