@@ -6,6 +6,7 @@ import { cloudAuth, cloudUserLabel, communitySettings, invalidateCloudAuth, refr
 import { DirectoryPickerDialog } from "../components/DirectoryPickerDialog";
 import { UpgradeDialog, type UpgradeProgress } from "../components/UpgradeDialog";
 import { t, locale, setLocale } from "../i18n";
+import { restoreApplicationDefaults } from "../settingsDefaults";
 import type { Locale } from "../i18n";
 import {
   browseLocalDirectories,
@@ -255,17 +256,11 @@ async function resetDefaults() {
   contextCompression.value = "off";
   setCloudServiceFeedback("", "");
   try {
-    const data = await saveSettings({
-      cloud_provider_name: "",
-      llama_use_model_max_ctx: false,
-      llama_num_parallel: 1,
-      context_compression: "off",
-    });
-    applySettings(data);
+    const { settings, message } = await restoreApplicationDefaults();
+    applySettings(settings);
     notifyProvidersChanged();
-    setCloudServiceFeedback("", t("settings.serviceUrlsResetSuccess"));
-    resetDefaultsMessage.value = t("settings.resetDefaultsSuccess");
-    void refreshCloudAuth();
+    setCloudServiceFeedback("", message);
+    resetDefaultsMessage.value = message;
   } catch (err: any) {
     const message = err?.message || t("settings.resetDefaultsFailed");
     setCloudServiceFeedback(message, "");
@@ -567,7 +562,6 @@ async function saveOpenCSGService() {
     applySettings(data);
     notifyProvidersChanged();
     setCloudServiceFeedback("", t("settings.providerSaveSuccess", cloudServiceLabel("opencsg")));
-    void refreshCloudAuth();
   } catch (err: any) {
     setCloudServiceFeedback(err?.message || t("settings.serviceUrlsSaveFailed"), "");
   } finally {

@@ -12,6 +12,8 @@ export const communitySettings = signal<AppSettings | null>(null);
 export const savingCommunity = signal(false);
 let revision = 0;
 let pending: Promise<CloudAuthStatus | null> | null = null;
+const authRefreshInterval = 30_000;
+let lastAttemptAt: number | null = null;
 let communitySave: Promise<AppSettings | null> = Promise.resolve(null);
 
 export async function waitForCommunitySelection() {
@@ -34,7 +36,7 @@ export function saveCommunitySelection(
         settings.ai_gateway_url === gatewayURL
       )
         return settings;
-      const auth = await refreshCloudAuth();
+      const auth = await refreshCloudAuth({ force: true });
       if (!auth) throw new Error(t("account.loadFailed"));
       if (auth.has_token) throw new Error(t("settings.siteSwitchSignedIn"));
       const saved = await saveSettings({
@@ -58,6 +60,7 @@ export function saveCommunitySelection(
 export function invalidateCloudAuth() {
   revision += 1;
   pending = null;
+  lastAttemptAt = null;
 }
 
 export function setCloudAuth(status: CloudAuthStatus) {
@@ -66,8 +69,20 @@ export function setCloudAuth(status: CloudAuthStatus) {
   cloudAuthError.value = "";
 }
 
-export function refreshCloudAuth(): Promise<CloudAuthStatus | null> {
+export function refreshCloudAuth({
+  force = false,
+}: { force?: boolean } = {}): Promise<CloudAuthStatus | null> {
+  // All consumers, including forced login polls, share an in-flight request.
   if (pending) return pending;
+  // Throttle automatic mount/focus refreshes, including failed attempts. Login
+  // polling, explicit retries and provider changes can bypass this interval.
+  if (
+    !force &&
+    lastAttemptAt !== null &&
+    Date.now() - lastAttemptAt < authRefreshInterval
+  )
+    return Promise.resolve(cloudAuthError.value ? null : cloudAuth.value);
+  lastAttemptAt = Date.now();
   const requestRevision = revision;
   const request = getCloudAuthStatus()
     .then((status) => {

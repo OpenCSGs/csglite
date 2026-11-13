@@ -56,7 +56,9 @@ csghub-lite config set ai_gateway_url https://my-gateway.example.com
 
 核实依据为各站首页公开的 `CSGHUB_SERVER`、`AI_GATEWAY_HOST` 配置，以及只读模型列表接口。模型列表可用不代表端侧服务已部署：本次核实的四个可访问站点，其 `/aigateway/api/v1/edge/applications` 均返回网关通用 404 页面。端侧节点注册需要站点服务端部署对应接口。
 
-重新登录或退出账号会清除之前手动填写的 OpenCSG API Key，并重置相关缓存；登录后使用当前账号的 built-in API Key。切换 Server 会清除旧账号 Token 与手动 Key；切换 AI Gateway 会清除旧网关的手动 Key。第三方 Provider 的独立 Key 不受影响。
+重新登录或退出账号会清除之前手动填写的 OpenCSG API Key，并重置相关缓存；登录后使用当前账号的 built-in API Key。切换 Server 会清除旧账号 Token 与手动 Key；切换 AI Gateway 会清除旧网关的手动 Key。第三方 Provider 的独立 Key 不受影响。上述凭据清理规则同时适用于 Web 设置和 CLI 的 `config set` / `config unset`。
+
+设置页的「恢复默认设置」恢复应用选项（云服务显示名称、上下文模式、并发数和上下文压缩），保留当前社区的 Server / AI Gateway 地址及登录状态。切换社区需先退出登录，再在导航底部的登录弹窗中选择站点。
 
 ### huggingface_endpoint
 

@@ -2,7 +2,7 @@ import MarkdownIt from "markdown-it";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { signal, computed } from "@preact/signals";
 import {
-  getPs, streamChat, getCloudAuthStatus,
+  getPs, streamChat,
   listConversations, searchConversations, getConversation, createConversation, updateConversation, deleteConversation,
   getSettings, createImageGenerationJob, getImageGenerationJob, cancelImageGenerationJob, getASRRuntimeStatus, transcribeAudioStream,
   getTTSRuntimeStatus, getTTSVoices, synthesizeSpeech, createDecision,
@@ -13,6 +13,7 @@ import type {
   ChatMessageMeta, WebSearchResult, DecisionQuestionType,
 } from "../api/client";
 import { t, locale } from "../i18n";
+import { cloudAuth, refreshCloudAuth } from "../cloudAccount";
 import { RealtimeVoiceDialog } from "../components/RealtimeVoiceDialog";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PromptDialog } from "../components/PromptDialog";
@@ -42,7 +43,6 @@ const showSettings = signal(false);
 const showSidebar = signal(true);
 const showCloudAuthDialog = signal(false);
 const openConversationMenuId = signal("");
-const cloudAuth = signal<CloudAuthStatus | null>(null);
 const cloudAuthError = signal("");
 const webSearchEnabled = signal(true);
 const webSearchAvailable = signal(false);
@@ -65,9 +65,9 @@ function pollCloudAuthAfterLogin(applyStatus: (status: CloudAuthStatus) => void)
 
   const poll = async () => {
     try {
-      const status = await getCloudAuthStatus();
-      applyStatus(status);
-      if (status.authenticated && status.user) {
+      const status = await refreshCloudAuth({ force: true });
+      if (status) applyStatus(status);
+      if (status?.authenticated && status.user) {
         return;
       }
     } catch {
@@ -970,17 +970,11 @@ export function Chat() {
   const recordingAudioContextRef = useRef<AudioContext | null>(null);
   void locale.value;
 
-  const refreshCloudAuth = async (): Promise<CloudAuthStatus> => {
-    const status = await getCloudAuthStatus();
-    cloudAuth.value = status;
-    return status;
-  };
-
   const openCloudAuthDialog = async (message = "") => {
     cloudAuthError.value = message;
     showCloudAuthDialog.value = true;
     try {
-      await refreshCloudAuth();
+      await refreshCloudAuth({ force: true });
     } catch {
       /* ignore */
     }
@@ -1022,9 +1016,7 @@ export function Chat() {
         saveSelectedModelKey(selectedModelKey.value);
       }
     }).catch(() => {});
-    getCloudAuthStatus().then((status) => {
-      cloudAuth.value = status;
-    }).catch(() => {});
+    void refreshCloudAuth();
     const refreshSettings = () => {
       getSettings().then((settings) => {
         cloudProviderName.value = settings.cloud_provider_name || settings.default_cloud_provider_name || "";
@@ -1057,10 +1049,10 @@ export function Chat() {
       }
     })();
 
-    const refreshAll = () => {
+    const refreshAll = (forceAuth = false) => {
       refreshSettings();
       refreshModels();
-      void refreshCloudAuth().then((status) => {
+      void refreshCloudAuth({ force: forceAuth }).then((status) => {
         if (!hasCloudAuth(status)) return;
         showCloudAuthDialog.value = false;
         cloudAuthError.value = "";
@@ -1069,7 +1061,7 @@ export function Chat() {
     };
     const handleFocus = () => refreshAll();
     const handleProvidersChanged = () => {
-      refreshAll();
+      refreshAll(true);
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
@@ -2560,7 +2552,6 @@ export function Chat() {
                 onClick={() => {
                   openExternalURL(cloudAuth.value?.login_url);
                   const stop = pollCloudAuthAfterLogin((status) => {
-                    cloudAuth.value = status;
                     if (status.authenticated && status.user) {
                       cloudAuthError.value = "";
                       showCloudAuthDialog.value = false;

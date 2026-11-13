@@ -167,9 +167,17 @@ export function SidebarAccount({
     const onFocus = () => {
       void refreshCloudAuth();
     };
+    const onProvidersChanged = () => {
+      void refreshCloudAuth({ force: true });
+    };
     window.addEventListener("focus", onFocus);
+    window.addEventListener("csghub:providers-changed", onProvidersChanged);
     return () => {
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener(
+        "csghub:providers-changed",
+        onProvidersChanged,
+      );
       loginAttempt.current += 1;
     };
   }, []);
@@ -221,7 +229,7 @@ export function SidebarAccount({
     let timer: number | undefined;
     const deadline = Date.now() + 5 * 60 * 1000;
     const poll = async () => {
-      const status = await refreshCloudAuth();
+      const status = await refreshCloudAuth({ force: true });
       if (!active) return;
       if (status?.authenticated && status.user) {
         setWaiting(false);
@@ -357,7 +365,7 @@ export function SidebarAccount({
       if (changingCommunity) {
         await saveCommunitySelection(server, gateway);
       }
-      const status = await refreshCloudAuth();
+      const status = await refreshCloudAuth({ force: true });
       if (attempt !== loginAttempt.current) {
         tab?.close();
         return;
@@ -395,7 +403,7 @@ export function SidebarAccount({
 
   async function retry() {
     setRetrying(true);
-    await refreshCloudAuth();
+    await refreshCloudAuth({ force: true });
     setRetrying(false);
   }
 
