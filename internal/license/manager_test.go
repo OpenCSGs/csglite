@@ -101,12 +101,22 @@ func TestRefreshWithoutFileIsCommunity(t *testing.T) {
 
 func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 	key := licensetest.NewKey(t)
-	// Shipped catalog: the cluster node cap and the device cap are gated.
+	// Shipped catalog: the cluster node cap, the device cap, and the edge model
+	// cap are gated.
 	m, _ := newManager(t, key, func(o *license.Options) { o.Catalog = license.Catalog() })
 	gated := license.GatedCatalog()
-	if len(gated) != 2 || gated[0].Key != license.QuotaMaxClusterNodes.Key || gated[1].Key != license.QuotaMaxDevices.Key {
-		t.Fatalf("shipped catalog gates %v; only %s and %s are expected. Update this test and the docs deliberately",
-			gated, license.QuotaMaxClusterNodes.Key, license.QuotaMaxDevices.Key)
+	gatedKeys := map[string]bool{}
+	for _, def := range gated {
+		gatedKeys[def.Key] = true
+	}
+	expected := []string{license.QuotaMaxClusterNodes.Key, license.QuotaMaxDevices.Key, license.QuotaMaxEdgeModels.Key}
+	for _, key := range expected {
+		if !gatedKeys[key] {
+			t.Fatalf("shipped catalog gates %v; %s is expected too. Update this test and the docs deliberately", gated, key)
+		}
+	}
+	if len(gated) != len(expected) {
+		t.Fatalf("shipped catalog gates %v; only %v are expected. Update this test and the docs deliberately", gated, expected)
 	}
 	st := m.Refresh()
 	if st.Status != license.StatusNone {
@@ -115,8 +125,8 @@ func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 	for _, def := range license.Catalog() {
 		switch def.Type {
 		case license.FeatureTypeBoolean:
-			if !st.Enabled(def) {
-				t.Errorf("%s must be enabled without a license", def.Key)
+			if st.Enabled(def) == def.Gated {
+				t.Errorf("%s enabled=%v without a license, want %v", def.Key, st.Enabled(def), !def.Gated)
 			}
 		case license.FeatureTypeInt:
 			want := 0
@@ -128,8 +138,8 @@ func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 			}
 		}
 	}
-	if got := len(st.EnabledKeys()); got != 7 {
-		t.Fatalf("EnabledKeys = %d, want all 7 ungated booleans", got)
+	if got := len(st.EnabledKeys()); got != 8 {
+		t.Fatalf("EnabledKeys = %d, want all 8 ungated booleans", got)
 	}
 	// The Community edition may cluster two machines; an Enterprise license
 	// with no explicit tier lifts the cap entirely.
@@ -433,7 +443,7 @@ func TestAPIViewsMirrorState(t *testing.T) {
 		}
 	}
 	full := st.APIState("")
-	if full.GraceUntil == nil || len(full.Features) != 6 {
+	if full.GraceUntil == nil || len(full.Features) != 7 {
 		t.Fatalf("state view %+v", full)
 	}
 	verify.Limits["quota.lite.max_provider_pools"] = 99

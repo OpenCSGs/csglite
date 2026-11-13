@@ -56,10 +56,10 @@ type FeatureDefinition struct {
 	Since string
 }
 
-// Catalog entries. Only QuotaMaxClusterNodes is gated; every boolean is
-// enabled regardless of license. The ungated entries are declared so that the
-// issuer registry and this binary agree on the names before a feature moves
-// to EE.
+// Catalog entries. QuotaMaxClusterNodes, QuotaMaxDevices and
+// QuotaMaxEdgeModels are gated; every other boolean is enabled regardless of
+// license. The ungated entries are declared so that the issuer registry and
+// this binary agree on the names before a feature moves to EE.
 var (
 	FeatureProviderPools = FeatureDefinition{
 		Key: featurePrefix + "provider_pools", Type: FeatureTypeBoolean, Gated: false, DefaultValue: true,
@@ -106,6 +106,21 @@ var (
 		Key: quotaPrefix + "max_cluster_nodes", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
 		CommunityValue: 2, Since: "0.13.0",
 	}
+	// FeatureEdgeServing serves this machine's approved local models to the
+	// CSGHub AI gateway through an outbound tunnel (ee/edge). Every edition
+	// may use it; QuotaMaxEdgeModels caps how many models Community may offer.
+	FeatureEdgeServing = FeatureDefinition{
+		Key: featurePrefix + "edge_serving", Type: FeatureTypeBoolean, Gated: false, DefaultValue: true,
+		NavItem: "edge", Since: "0.13.0",
+	}
+	// QuotaMaxEdgeModels caps how many models this machine may contribute to
+	// the CSGHub AI gateway. The Community edition may contribute one; an
+	// Enterprise license lifts the cap (0 = unlimited) or sets a tier in
+	// Extra.limits.
+	QuotaMaxEdgeModels = FeatureDefinition{
+		Key: quotaPrefix + "max_edge_models", Type: FeatureTypeInt, Gated: true, DefaultValue: 0,
+		CommunityValue: 1, Since: "0.13.0",
+	}
 	// QuotaMaxDevices is how many devices one CSGLite license may activate.
 	// The server enforces it per license key and never releases a seat; the
 	// value here is what Settings and the CLI show. Every subscription tier
@@ -126,6 +141,8 @@ var catalog = []FeatureDefinition{
 	QuotaMaxProviderPools,
 	FeatureLANCluster,
 	QuotaMaxClusterNodes,
+	FeatureEdgeServing,
+	QuotaMaxEdgeModels,
 	QuotaMaxDevices,
 }
 

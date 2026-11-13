@@ -559,3 +559,51 @@ func TestReportClientEventsPostsEvents(t *testing.T) {
 		t.Fatalf("ReportClientEvents returned error: %v", err)
 	}
 }
+
+func TestRefreshChatModelsFollowsPagination(t *testing.T) {
+	var pages []string
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		pages = append(pages, page)
+		w.Header().Set("Content-Type", "application/json")
+		switch page {
+		case "1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"object":      "list",
+				"has_more":    true,
+				"total_count": 2,
+				"data": []map[string]any{
+					{"id": "first/model", "task": "text-generation"},
+				},
+			})
+		case "2":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"object":      "list",
+				"has_more":    false,
+				"total_count": 2,
+				"data": []map[string]any{
+					{"id": "second/model", "task": "text-generation"},
+				},
+			})
+		default:
+			t.Fatalf("unexpected page query %q", page)
+		}
+	}))
+	defer apiServer.Close()
+
+	svc := NewService(apiServer.URL)
+	models, err := svc.RefreshChatModels(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshChatModels returned error: %v", err)
+	}
+	if !slices.Equal(pages, []string{"1", "2"}) {
+		t.Fatalf("pages = %#v, want [1 2]", pages)
+	}
+	got := make([]string, 0, len(models))
+	for _, model := range models {
+		got = append(got, model.Model)
+	}
+	if !slices.Equal(got, []string{"first/model", "second/model"}) {
+		t.Fatalf("models = %#v, want first/model and second/model", got)
+	}
+}

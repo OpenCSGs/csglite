@@ -3514,3 +3514,189 @@ export function updateClusterSettings(patch: ClusterSettingsUpdate): Promise<Clu
     body: JSON.stringify(patch),
   });
 }
+
+// ---- edge serving ------------------------------------------------------------
+
+export type EdgeState = "disabled" | "signed_out" | "connecting" | "connected" | "error";
+
+/** A ready model is served even while asleep (not in memory); its first request loads it. */
+export type EdgeModelState = "loaded" | "loading" | "sleeping";
+
+/** What the gateway last recorded for an application's model: a ready state, or why it is not served. */
+export type EdgeRuntimeState = EdgeModelState | "unavailable" | "offline";
+
+export interface EdgeModel {
+  /** Storage ID ([source/]namespace/name): the stable key an application binds. */
+  id: string;
+  /** Inference ID shown to people. */
+  name?: string;
+  ready: boolean;
+  state?: EdgeModelState;
+  format?: string;
+  context_length?: number;
+}
+
+/** How an application served over the last `window_days` days. */
+export interface EdgeServingStats {
+  window_days: number;
+  requests: number;
+  failed: number;
+  success_rate: number;
+  avg_ttft_ms: number;
+  /** Upper bound of the TTFT bucket holding the median (500/1000/2000/5000, -1 above). */
+  p50_ttft_ms: number;
+  p90_ttft_ms: number;
+  avg_latency_ms: number;
+  tokens_per_second: number;
+  online_seconds: number;
+  uptime_ratio: number;
+}
+
+export interface EdgeStatus {
+  enabled: boolean;
+  state: EdgeState;
+  node_uuid?: string;
+  node_name?: string;
+  gateway_url?: string;
+  connected_since?: string;
+  last_error?: string;
+  reconnects: number;
+  applications_changed: number;
+  signed_in: boolean;
+  models: EdgeModel[];
+  /** How many models this edition may contribute; 0 means unlimited. */
+  model_limit: number;
+}
+
+export type EdgeApplicationStatus = "pending" | "approved" | "rejected" | "suspended" | "revoked" | "withdrawn";
+
+export interface EdgeApplication {
+  id: number;
+  node_uuid: string;
+  node_name: string;
+  model_name: string;
+  public_model_id: string;
+  local_model_id: string;
+  prompt_price: number;
+  completion_price: number;
+  currency: string;
+  max_concurrency: number;
+  status: EdgeApplicationStatus;
+  commission_rate: number;
+  review_msg?: string;
+  reviewed_at?: string;
+  node_status: "online" | "offline";
+  model_state?: EdgeRuntimeState;
+  stats?: EdgeServingStats;
+  created_at: string;
+}
+
+export interface EdgeSubmitRequest {
+  model_name: string;
+  local_model_id: string;
+  description?: string;
+  /** Cents per million prompt tokens. */
+  prompt_price: number;
+  /** Cents per million completion tokens. */
+  completion_price: number;
+  max_concurrency?: number;
+}
+
+export interface EdgeEarningRow {
+  application_id: number;
+  public_model_id: string;
+  node_uuid: string;
+  requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  amount: number;
+  owner_earning: number;
+  platform_earning: number;
+  currency: string;
+}
+
+export interface EdgeEarnings {
+  month: string;
+  requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  amount: number;
+  owner_earning: number;
+  platform_earning: number;
+  currency: string;
+  rows: EdgeEarningRow[];
+}
+
+/** The owner's earnings as CSGHub records them, in whole cents: total = settled + unsettled + current_month. */
+export interface EdgeBalance {
+  total: number;
+  /** Closed months the platform marked paid. */
+  settled: number;
+  /** Closed months awaiting payment. */
+  unsettled: number;
+  /** The open month so far. */
+  current_month: number;
+  month: string;
+  currency: string;
+}
+
+export interface EdgeBalanceResponse {
+  balance: EdgeBalance;
+  /** CSGHub page with the monthly statements and payee details. */
+  statements_url: string;
+}
+
+export type EdgeStatementStatus = "open" | "unsettled" | "settled";
+
+/** One month's bill, in whole cents: amount = owner_amount + platform_amount. */
+export interface EdgeStatement {
+  month: string;
+  requests: number;
+  amount: number;
+  owner_amount: number;
+  platform_amount: number;
+  currency: string;
+  status: EdgeStatementStatus;
+  settlement?: { reference: string; settled_at: string };
+}
+
+/** Rejects with an ApiError, so a missing Enterprise license is recognisable (isFeatureNotLicensedError). */
+export function getEdgeStatus(): Promise<EdgeStatus> {
+  return fetchJSONWithApiError<EdgeStatus>("/api/edge");
+}
+
+export function setEdgeEnabled(enabled: boolean): Promise<EdgeStatus> {
+  return fetchJSON<EdgeStatus>("/api/edge", { method: "PUT", body: JSON.stringify({ enabled }) });
+}
+
+export async function getEdgeApplications(): Promise<EdgeApplication[]> {
+  const resp = await fetchJSON<{ data: EdgeApplication[] | null }>("/api/edge/applications?per=100");
+  return resp.data ?? [];
+}
+
+export async function submitEdgeApplication(req: EdgeSubmitRequest): Promise<EdgeApplication> {
+  const resp = await fetchJSON<{ data: EdgeApplication }>("/api/edge/applications", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+  return resp.data;
+}
+
+export async function withdrawEdgeApplication(id: number): Promise<EdgeApplication> {
+  const resp = await fetchJSON<{ data: EdgeApplication }>(`/api/edge/applications/${id}/withdraw`, { method: "POST" });
+  return resp.data;
+}
+
+export async function getEdgeEarnings(month: string): Promise<EdgeEarnings> {
+  const resp = await fetchJSON<{ data: EdgeEarnings }>(`/api/edge/earnings?month=${encodeURIComponent(month)}`);
+  return resp.data;
+}
+
+export function getEdgeBalance(): Promise<EdgeBalanceResponse> {
+  return fetchJSON<EdgeBalanceResponse>("/api/edge/balance");
+}
+
+export async function getEdgeStatements(): Promise<EdgeStatement[]> {
+  const resp = await fetchJSON<{ data: EdgeStatement[] | null }>("/api/edge/statements");
+  return resp.data ?? [];
+}

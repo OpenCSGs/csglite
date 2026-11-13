@@ -271,11 +271,22 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 		if key, ok := authenticatedAPIKey(r.WithContext(ctx)); ok {
 			keyID, keyName = key.ID, key.Name
 		}
+		// A request served to the CSGHub gateway belongs to a remote caller:
+		// keep only its metadata, never its prompt or completion.
+		edgeID, fromEdge := edgeRequestID(r.Context())
+		if fromEdge {
+			keyID, keyName = edgeAPIKeyID, edgeAPIKeyName
+			values.RequestID = edgeID
+			capturedRequest, requestTruncated = nil, false
+		}
 		status := "completed"
 		if ow.status >= http.StatusBadRequest {
 			status = "failed"
 		}
 		responseBody := sanitizeObservationBody(ow.body.Bytes())
+		if fromEdge {
+			responseBody = nil
+		}
 		responseUsage := observationResponseUsageFromBodies(ow.body.Bytes(), ow.usageTail)
 		hasMeaningfulTokenUsage := responseUsage.inputTokens > 0 ||
 			responseUsage.outputTokens > 0 ||

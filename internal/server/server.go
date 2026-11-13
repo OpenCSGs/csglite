@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/ee/cluster"
+	"github.com/opencsgs/csglite/ee/edge"
 	"github.com/opencsgs/csglite/internal/apps"
 	"github.com/opencsgs/csglite/internal/asr"
 	"github.com/opencsgs/csglite/internal/chathistory"
@@ -269,6 +270,7 @@ type Server struct {
 	// cluster is the LAN compute cluster manager, nil when disabled for this
 	// process. It is started in Run once the API port is bound.
 	cluster       *cluster.Manager
+	edge          *edge.Manager
 	loadDurMu     sync.Mutex
 	loadDurations map[string]time.Duration
 
@@ -382,6 +384,7 @@ func New(cfg *config.Config, version string) *Server {
 		}
 	}
 	s.cluster = newClusterManager(s, storageRoot)
+	s.edge = newEdgeManager(s, storageRoot)
 	inference.SetDecisionLoRAResolver(s.resolveDecisionLoRA)
 	return s
 }
@@ -450,6 +453,7 @@ func (s *Server) Run(ctx context.Context) error {
 	s.mu.Unlock()
 
 	s.startCluster(ctx)
+	s.startEdge()
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)
 	go s.warmLocalModelMetadata()
@@ -584,6 +588,7 @@ func validateDesktopConfig(cfg *config.Config) error {
 }
 
 func (s *Server) shutdownRuntime() {
+	s.stopEdge()
 	s.stopCluster()
 	if s.appShells != nil {
 		s.appShells.CloseAll()

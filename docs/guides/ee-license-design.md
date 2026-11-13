@@ -152,12 +152,16 @@ var Catalog = []FeatureDefinition{ /* 以上全部 */ }
 `Gated` 改为 `true` 并包裹对应路由；在此之前注册表条目只是与签发端对齐名字，
 不影响任何行为。
 
-当前受 License 控制的配额条目：
+当前受 License 控制的条目：
 
 - `quota.lite.max_cluster_nodes`：LAN 集群节点数，社区版 2，企业版默认不限。
 - `quota.lite.max_devices`：一个 License 可核销的设备数，所有档位都是 10。
   该上限由服务端按 `license_key` 强制并忽略 Extra 覆盖，本地界面与 CLI 直接
   显示服务端的固定值 10。
+- `quota.lite.max_edge_models`：边缘算力可贡献的模型数，社区版 1，企业版默认
+  不限（0）。边缘算力功能本身（`feature.lite.edge_serving`）不再受 License
+  控制，所有版本都能把本机已发布的模型通过出站隧道提供给 CSGHub AI gateway，
+  只按该配额限制数量；配额在 lite 提交申请时由服务端强制。
 
 对 `Gated` 功能，取值语义与 CSGHub 的 `licenseProvider` 一致：
 
@@ -535,9 +539,11 @@ csghub-lite license features           # 列出 Catalog 及当前是否可用
 > 标识）已完成；设备核销（`internal/deviceid`、`license.activation`、云端自动
 > 导入、Settings 的「从云端导入」按钮）已完成，见 5.3。
 > 导航锁标与 `FeatureLocked` 组件随第一条被门控的路由一起做。
-> `Catalog` 中已有两个 `Gated: true` 的配额条目（`quota.lite.max_cluster_nodes`、
-> `quota.lite.max_devices`），但还没有路由用 `requireFeature` 包裹，所有功能在所有
-> 版本下开启；等待产品确认初始划分（第 12 节问题 1）后逐条标记。
+> `Catalog` 中已有三个 `Gated: true` 的条目（`quota.lite.max_cluster_nodes`、
+> `quota.lite.max_devices`、`quota.lite.max_edge_models`）；边缘算力路由对所有
+> 版本开放，仅由 `quota.lite.max_edge_models` 限制可贡献的模型数，该配额在
+> 提交申请时由服务端强制。两个集群/设备配额仍无路由包裹；等待产品确认初始
+> 划分（第 12 节问题 1）后逐条标记。
 
 
 | 阶段 | 内容 | 估时 |

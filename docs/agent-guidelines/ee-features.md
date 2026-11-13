@@ -13,8 +13,10 @@ which features are active. Licenses are issued by the CSGHub license issuer
   is always enabled, in every edition and in development builds. Moving a
   feature to EE means setting `Gated: true` on its catalog entry and wrapping
   its routes; adding a catalog entry alone changes nothing.
-  `TestUngatedFeaturesIgnoreTheLicense` asserts the shipped catalog gates
-  nothing; update it deliberately when the first feature is gated.
+  `TestUngatedFeaturesIgnoreTheLicense` pins exactly which catalog entries
+  are gated (today `quota.lite.max_cluster_nodes`,
+  `quota.lite.max_devices`, and `quota.lite.max_edge_models`); update it
+  deliberately when gating changes.
 - Boolean keys are `feature.lite.<name>`, integer limits are
   `quota.lite.<name>`. `ValidateCatalog` and `TestCatalogIsValid` enforce this.
 - The CSGHub issuer accepts any well-formed `feature.lite.*` / `quota.lite.*`
