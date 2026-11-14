@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { clearCloudToken, getSettings, openExternalURL } from "../api/client";
+import { clearCloudToken, getSettings, openExternalURL, saveCloudToken } from "../api/client";
 import type { AppSettings } from "../api/client";
 import {
   cloudAuth,
@@ -21,13 +21,17 @@ import {
 } from "../data/communitySites";
 import { locale, t } from "../i18n";
 import { AccountBalance } from "./AccountBalance";
+import { consoleSession, consoleSessionError, refreshConsoleSession } from "../consoleAccess";
+import { logoutPublicSession } from "../utils/publicSession";
 
 function AccountIcon({
   kind,
 }: {
-  kind: "user" | "login" | "settings" | "chevron" | "external";
+  kind: "user" | "login" | "settings" | "chevron" | "external" | "shield" | "unlink";
 }) {
   const paths = {
+    shield: "M12 3 4 6v6c0 4 4 7 8 9 4-2 8-5 8-9V6l-8-3Zm-3 9 2 2 4-4",
+    unlink: "M8 10 5.5 12.5a4 4 0 0 0 6 6L14 16M16 14l2.5-2.5a4 4 0 0 0-6-6L10 8M3 3l18 18",
     user: "M20 21v-2a7 7 0 00-14 0v2M17 7a4 4 0 11-8 0 4 4 0 018 0",
     login: "M10 17l5-5-5-5M15 12H3M13 3h6a2 2 0 012 2v14a2 2 0 01-2 2h-6",
     settings:
@@ -136,19 +140,18 @@ const fieldClass =
 const primaryClass =
   "inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60";
 
-export function SidebarAccount({
-  showSettings,
-  onSettings,
-}: {
-  showSettings: boolean;
-  onSettings: () => void;
-}) {
+export function SidebarAccount() {
   void locale.value;
   const auth = cloudAuth.value;
   const settings = communitySettings.value;
   const hasAccount = !!auth?.has_token;
+  const session = consoleSession.value;
+  const [consoleError, setConsoleError] = useState("");
+  const [leavingConsole, setLeavingConsole] = useState(false);
+  const [platformToken, setPlatformToken] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [dialog, setDialog] = useState<"login" | "account" | null>(null);
+  const [dialog, setDialog] = useState<"login" | "account" | "disconnect" | null>(null);
+  const [disconnectReturn, setDisconnectReturn] = useState<"account" | null>(null);
   const [siteID, setSiteID] = useState("main");
   const [serverURL, setServerURL] = useState("");
   const [gatewayURL, setGatewayURL] = useState("");
@@ -164,15 +167,20 @@ export function SidebarAccount({
 
   useEffect(() => {
     void refreshCloudAuth();
+    void refreshConsoleSession();
     const onFocus = () => {
       void refreshCloudAuth();
+      void refreshConsoleSession();
     };
     const onProvidersChanged = () => {
       void refreshCloudAuth({ force: true });
     };
+    const onConnect = () => { void openLogin(); };
+    window.addEventListener("csghub:connect", onConnect);
     window.addEventListener("focus", onFocus);
     window.addEventListener("csghub:providers-changed", onProvidersChanged);
     return () => {
+      window.removeEventListener("csghub:connect", onConnect);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener(
         "csghub:providers-changed",
@@ -331,6 +339,7 @@ export function SidebarAccount({
     if (dialog === "login" && siteID === CUSTOM_SITE_ID)
       void persistSelection(serverURL, gatewayURL);
     setDialog(null);
+    setPlatformToken("");
     requestAnimationFrame(() => triggerRef.current?.focus());
   }
 
@@ -347,6 +356,18 @@ export function SidebarAccount({
         throw new Error();
     } catch {
       setError(t("account.invalidURL"));
+      return;
+    }
+    if (session?.access_mode !== "local") {
+      if (!platformToken.trim()) { setError(t("access.platformTokenRequired")); return; }
+      setOpening(true); setError("");
+      try {
+        if (server !== settings.server_url || gateway !== settings.ai_gateway_url) await saveCommunitySelection(server, gateway);
+        setCloudAuth(await saveCloudToken(platformToken.trim()));
+        setPlatformToken(""); setDialog(null);
+        window.dispatchEvent(new Event("csghub:providers-changed"));
+      } catch { setError(t("account.loginFailed")); }
+      finally { setOpening(false); }
       return;
     }
     // Reserve a browser tab before awaiting settings/auth; WebViews use the system browser.
@@ -383,6 +404,19 @@ export function SidebarAccount({
     }
   }
 
+  function requestDisconnect() {
+    setDisconnectReturn(dialog === "account" ? "account" : null);
+    setMenuOpen(false);
+    setError("");
+    setDialog("disconnect");
+  }
+
+  function cancelDisconnect() {
+    setError("");
+    setDialog(disconnectReturn);
+    if (!disconnectReturn) requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+
   async function logout() {
     if (loggingOut) return;
     setLoggingOut(true);
@@ -414,145 +448,70 @@ export function SidebarAccount({
 
   return (
     <div class="relative" ref={menuRef}>
-      {hasAccount ? (
-        <>
-          <button
-            ref={triggerRef}
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            aria-controls="sidebar-account-menu"
-            onClick={() => setMenuOpen(!menuOpen)}
-            class={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2.5 text-left transition-colors ${menuOpen ? "bg-indigo-50" : "hover:bg-gray-50"}`}
-          >
-            <AccountAvatar />
-            <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm font-medium text-gray-900">
-                {label}
-              </span>
-              <span class="mt-0.5 block truncate text-[11px] text-gray-500">
-                {communityName()}
-              </span>
-            </span>
-            <svg
-              class="h-3.5 w-3.5 shrink-0 text-gray-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d={menuOpen ? "m6 15 6-6 6 6" : "m6 9 6 6 6-6"}
-              />
-            </svg>
-          </button>
-          {menuOpen && (
-            <div
-              id="sidebar-account-menu"
-              ref={menuItemsRef}
-              role="menu"
-              aria-label={t("account.menu")}
-              class="absolute bottom-full left-0 z-40 mb-2 w-64 max-w-[calc(100vw-1.5rem)] rounded-xl border border-gray-200 bg-white p-2 shadow-xl"
-            >
-              <div class="border-b border-gray-100 px-3 pb-3 pt-2">
-                <p class="truncate text-sm font-semibold text-gray-900">
-                  {label}
-                </p>
-                <p class="mt-1 truncate text-xs text-gray-400">
-                  {auth?.user?.username ? `@${auth.user.username} · ` : ""}
-                  {communityName()}
-                </p>
-              </div>
-              <button
-                type="button"
-                role="menuitem"
-                class={`${menuClass} mt-1`}
-                onClick={() => {
-                  setMenuOpen(false);
-                  setError("");
-                  setDialog("account");
-                }}
-              >
-                <AccountIcon kind="user" />
-                <span class="flex-1">{t("account.info")}</span>
-                <AccountIcon kind="chevron" />
-              </button>
-              {showSettings && (
-                <button
-                  type="button"
-                  role="menuitem"
-                  class={menuClass}
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onSettings();
-                  }}
-                >
-                  <AccountIcon kind="settings" />
-                  <span class="flex-1">{t("nav.settings")}</span>
-                  <AccountIcon kind="chevron" />
-                </button>
-              )}
-              {!auth?.authenticated && (
-                <button
-                  type="button"
-                  role="menuitem"
-                  class={menuClass}
-                  onClick={() => void openLogin()}
-                >
-                  <AccountIcon kind="login" />
-                  {t("account.signInAgain")}
-                </button>
-              )}
-              {accountError && (
-                <p class="px-3 py-2 text-xs text-red-600" role="alert">
-                  {accountError}
-                </p>
-              )}
-              <div class="mt-1 border-t border-gray-100 pt-1">
-                <button
-                  type="button"
-                  role="menuitem"
-                  class={`${menuClass} text-red-600 hover:bg-red-50`}
-                  disabled={loggingOut}
-                  onClick={() => void logout()}
-                >
-                  <AccountIcon kind="login" />
-                  {t(loggingOut ? "settings.loggingOut" : "settings.logout")}
-                </button>
-              </div>
+      <button ref={triggerRef} type="button" aria-haspopup="menu" aria-expanded={menuOpen}
+        aria-controls="sidebar-account-menu" onClick={() => setMenuOpen(!menuOpen)}
+        class={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors ${menuOpen ? "bg-indigo-50" : "hover:bg-gray-50"}`}>
+        <span class="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600"><AccountIcon kind="shield" /></span>
+        <span class="min-w-0 flex-1">
+          <span class="block text-sm font-medium text-gray-900">{t("access.title")}</span>
+          <span class="mt-0.5 block truncate text-[11px] text-gray-500">{session ? t(`access.${session.access_mode}`) : t("access.loading")}</span>
+        </span>
+        <AccountIcon kind="chevron" />
+      </button>
+      {menuOpen && (
+        <div id="sidebar-account-menu" ref={menuItemsRef} role="menu" aria-label={t("access.title")}
+          class="absolute bottom-full left-0 z-40 mb-2 max-h-[calc(100dvh-7rem)] w-80 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-2xl border border-gray-200/80 bg-white p-2 shadow-xl shadow-gray-200/60">
+          <section class="rounded-xl bg-gray-50 px-4 py-3.5">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-xs font-medium text-gray-500">{t("access.console")}</p>
+              <span class="text-gray-400"><AccountIcon kind="shield" /></span>
             </div>
-          )}
-        </>
-      ) : auth ? (
-        <button
-          ref={triggerRef}
-          type="button"
-          onClick={() => void openLogin()}
-          class="flex w-full items-center gap-2.5 rounded-lg py-1.5 pl-5 pr-3 text-sm font-normal leading-5 text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900 focus-visible:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
-        >
-          <AccountIcon kind="login" />
-          {t(waiting ? "account.waiting" : "account.login")}
-        </button>
-      ) : cloudAuthError.value ? (
-        <button
-          type="button"
-          title={cloudAuthError.value}
-          onClick={() => void retry()}
-          disabled={retrying}
-          class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-gray-500 hover:bg-gray-50"
-        >
-          <AccountIcon kind="user" />
-          {t(retrying ? "account.loading" : "account.retry")}
-        </button>
-      ) : (
-        <div
-          role="status"
-          aria-label={t("account.loading")}
-          class="h-10 animate-pulse rounded-lg bg-gray-50"
-        />
+            <p class="mt-2 truncate text-sm font-semibold text-gray-900">{session?.instance_name || t("access.loading")}</p>
+            {session && <p class="mt-1 text-xs text-gray-500">{t(`access.${session.access_mode}`)}</p>}
+            {session?.expires_at && <p class="mt-2 text-xs text-gray-400">{t("access.expires", new Date(session.expires_at).toLocaleString(locale.value === "zh" ? "zh-CN" : "en-US"))}</p>}
+            {consoleSessionError.value && <button role="menuitem" class={menuClass} onClick={() => void refreshConsoleSession()}>{t("access.retry")}</button>}
+            {session?.access_mode === "token" && <button role="menuitem" type="button" class={`${menuClass} mt-2`} disabled={leavingConsole}
+              onClick={async () => { setLeavingConsole(true); setConsoleError(""); try { await logoutPublicSession(); } catch { setConsoleError(t("publicLogin.logoutFailed")); } finally { setLeavingConsole(false); } }}>
+              <AccountIcon kind="login" />{t(leavingConsole ? "access.leaving" : "publicLogin.signOut")}
+            </button>}
+            {consoleError && <p class="mt-2 text-xs text-red-600" role="alert">{consoleError}</p>}
+          </section>
+          <section class="px-3 pb-3 pt-5">
+            <div class="flex items-center justify-between gap-2">
+              <p class="min-w-0 truncate text-sm font-semibold text-gray-900">{communityName()}</p>
+              <span class={`inline-flex items-center gap-1.5 text-[11px] ${auth?.authenticated ? "text-emerald-600" : "text-gray-400"}`}>
+                <span class="h-1.5 w-1.5 rounded-full bg-current" />
+                {t(auth?.authenticated ? "access.connected" : hasAccount ? "access.unverified" : "access.disconnected")}
+              </span>
+            </div>
+            {hasAccount && <div class="mt-3 flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-3"><AccountAvatar /><div class="min-w-0"><p class="truncate text-sm font-medium text-gray-900">{label}</p><p class="truncate text-xs text-gray-500">{auth?.user?.username ? `@${auth.user.username}` : t("access.unverified")}</p></div></div>}
+            <p class="mb-3 mt-3 text-xs leading-5 text-gray-400">{t("access.instanceShared")}</p>
+            {hasAccount && <div class="flex items-center gap-2">
+              <button role="menuitem" type="button" class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2 py-2 text-xs font-medium text-gray-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500" onClick={() => { setMenuOpen(false); setError(""); setDialog("account"); }}>{t("access.details")}</button>
+              <button role="menuitem" type="button" class="flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs font-medium text-gray-500 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500" aria-label={t("access.disconnect")} disabled={loggingOut} onClick={requestDisconnect}><AccountIcon kind="unlink" />{t("access.disconnectShort")}</button>
+            </div>}
+            {(!hasAccount || !auth?.authenticated) && <button role="menuitem" type="button" class={menuClass} onClick={() => void openLogin()}><AccountIcon kind="login" />{t(hasAccount ? "account.signInAgain" : "account.login")}</button>}
+            {accountError && <div class="mt-2"><p class="text-xs text-red-600" role="alert">{accountError}</p><button role="menuitem" class={menuClass} disabled={retrying} onClick={() => void retry()}>{t(retrying ? "account.loading" : "account.retry")}</button></div>}
+          </section>
+        </div>
+      )}
+
+      {dialog === "disconnect" && (
+        <AccountDialog title={t("access.disconnectTitle")} onClose={cancelDisconnect}>
+          <div class="p-6">
+            <div class="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+              <AccountAvatar />
+              <div class="min-w-0"><p class="truncate text-sm font-semibold text-gray-900">{label}</p><p class="mt-0.5 truncate text-xs text-gray-500">{communityName()}</p></div>
+            </div>
+            <p class="mt-5 text-sm leading-6 text-gray-600">{t("access.disconnectImpact")}</p>
+            <p class="mt-3 rounded-lg bg-indigo-50/70 px-3 py-2.5 text-xs leading-5 text-indigo-700">{t("access.consoleRetained")}</p>
+            {error && <p class="mt-4 text-sm text-red-600" role="alert">{error}</p>}
+            <div class="mt-6 flex justify-end gap-3">
+              <button type="button" disabled={loggingOut} onClick={cancelDisconnect} class="rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-50">{t("access.keepConnection")}</button>
+              <button type="button" disabled={loggingOut} onClick={() => void logout()} class="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:cursor-wait disabled:opacity-50"><AccountIcon kind="unlink" />{t(loggingOut ? "access.disconnecting" : "access.confirmDisconnect")}</button>
+            </div>
+          </div>
+        </AccountDialog>
       )}
 
       {dialog === "login" && (
@@ -640,6 +599,7 @@ export function SidebarAccount({
                     </label>
                   </>
                 )}
+                {session?.access_mode !== "local" && <label class="block"><span class="text-sm font-medium text-gray-700">{t("access.platformToken")}</span><input type="password" autoComplete="off" required class={fieldClass} value={platformToken} onInput={(event) => setPlatformToken(event.currentTarget.value)} /><span class="mt-2 block text-xs text-gray-400">{t("access.platformTokenHint")}</span></label>}
                 <button
                   type="submit"
                   class={`${primaryClass} w-full`}
@@ -652,12 +612,12 @@ export function SidebarAccount({
                         ? "account.savingCommunity"
                         : waiting
                           ? "account.waiting"
-                          : "account.continue",
+                          : session?.access_mode === "local" ? "account.continue" : "account.login",
                   )}
                   <AccountIcon kind="external" />
                 </button>
                 <p class="text-center text-xs leading-5 text-gray-400">
-                  {t("account.browserHint")}
+                  {t(session?.access_mode === "local" ? "account.browserHint" : "access.platformTokenHint")}
                 </p>
               </>
             ) : (
@@ -705,7 +665,7 @@ export function SidebarAccount({
               >
                 {t(
                   auth?.authenticated
-                    ? "settings.signedIn"
+                    ? "access.connected"
                     : "account.unverified",
                 )}
               </span>
@@ -768,11 +728,11 @@ export function SidebarAccount({
             <div class="flex justify-between border-t border-gray-100 pt-5">
               <button
                 type="button"
-                onClick={() => void logout()}
+                onClick={requestDisconnect}
                 disabled={loggingOut}
                 class="rounded-lg border border-red-200 px-4 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-60"
               >
-                {t(loggingOut ? "settings.loggingOut" : "settings.logout")}
+                {t(loggingOut ? "access.disconnecting" : "access.disconnect")}
               </button>
               <button type="button" onClick={closeDialog} class={primaryClass}>
                 {t("account.done")}

@@ -46,7 +46,9 @@ func newClusterTestServer(t *testing.T, bus *cluster.MemoryBus) *Server {
 		t.Fatal("cluster manager was not created")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s.startCluster(ctx)
+	if err := s.startCluster(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if s.cluster.Active() {
 		t.Fatal("a fresh node must start dormant")
 	}

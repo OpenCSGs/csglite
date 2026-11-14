@@ -61,6 +61,7 @@ func (c *Config) TempDir() string {
 type Config struct {
 	ServerURL                string                             `json:"server_url"`
 	AIGatewayURL             string                             `json:"ai_gateway_url,omitempty"`
+	CloudProviderEnabled     *bool                              `json:"cloud_provider_enabled,omitempty"`
 	CloudProviderName        string                             `json:"cloud_provider_name,omitempty"`
 	Token                    string                             `json:"token,omitempty"`
 	OpenCSGAPIKey            string                             `json:"opencsg_api_key,omitempty"`
@@ -271,7 +272,14 @@ const DefaultRealtimeMaxSessions = 4
 // find each other over the network and form one cluster without any create
 // or join step; the secret is the credential, so keep it private.
 type ClusterConfig struct {
-	Secret string `json:"secret,omitempty"`
+	// Mode is empty/lan, gateway or worker. Existing configs remain LAN.
+	Mode             string `json:"mode,omitempty"`
+	PublicListenAddr string `json:"public_listen_addr,omitempty"`
+	GatewayURL       string `json:"gateway_url,omitempty"`
+	TLSCertFile      string `json:"tls_cert_file,omitempty"`
+	TLSKeyFile       string `json:"tls_key_file,omitempty"`
+	TLSCAFile        string `json:"tls_ca_file,omitempty"`
+	Secret           string `json:"secret,omitempty"`
 	// Name is the display name given to an automatically formed cluster.
 	Name string `json:"name,omitempty"`
 }
@@ -728,4 +736,9 @@ func Reset() {
 	defer configMu.Unlock()
 	globalConfig = nil
 	configOnce = sync.Once{}
+}
+
+// IsCloudProviderEnabled defaults legacy configurations to enabled.
+func (c *Config) IsCloudProviderEnabled() bool {
+	return c == nil || c.CloudProviderEnabled == nil || *c.CloudProviderEnabled
 }

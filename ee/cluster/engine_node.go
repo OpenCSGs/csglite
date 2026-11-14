@@ -40,6 +40,9 @@ func (e *nodeEngine) PrefersNativeAnthropicMessages() bool { return true }
 // forward posts body to the member's forwarded-inference path and returns the
 // raw response; non-2xx answers become errors carrying the status.
 func (e *nodeEngine) forward(ctx context.Context, path string, body []byte, headers http.Header) (*http.Response, error) {
+	if e.m.opts.Mode == "gateway" {
+		return e.m.publicForward(ctx, e.mem.UUID, path, body, headers)
+	}
 	addrs := e.m.dir.Candidates(e.mem.UUID)
 	if len(addrs) == 0 {
 		return nil, &routeError{status: 0, err: errors.New("node has no known address")}
@@ -153,9 +156,10 @@ func (m *Manager) newNodeEngine(mem Member, model string, toolStreaming bool) *n
 
 // routeError classifies a failed hop for failover decisions.
 type routeError struct {
-	status int
-	body   string
-	err    error
+	noRetry bool
+	status  int
+	body    string
+	err     error
 	// retryAfter is the peer's Retry-After header on a 429, so the caller can
 	// hold that node out for as long as it asked rather than trying it again
 	// on the very next request.
@@ -184,6 +188,9 @@ func (e *routeError) modelSpecific() bool {
 
 // retryable reports whether another node should be tried.
 func (e *routeError) retryable() bool {
+	if e.noRetry {
+		return false
+	}
 	switch {
 	case e.status == 0:
 		return true // transport

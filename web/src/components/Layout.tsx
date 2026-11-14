@@ -4,7 +4,7 @@ import { useLocation } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
 import { getSettings } from "../api/client";
 import { SidebarAccount } from "./SidebarAccount";
-import { cloudAuth, communitySettings } from "../cloudAccount";
+import { communitySettings } from "../cloudAccount";
 import { t, locale } from "../i18n";
 import { isLicensed, licenseState, loadLicense, productTitle } from "../license";
 
@@ -142,14 +142,14 @@ export function Layout({ children }: { children: ComponentChildren }) {
           })}
         </nav>
         <div class="space-y-0.5 border-t border-gray-100 px-3 py-2">
-          {!cloudAuth.value?.has_token && showNavItem("settings") && (
+          {showNavItem("settings") && (
             <NavLink
               item={{ id: "settings", path: "/settings", key: "nav.settings", icon: SettingsIcon }}
               path={path}
               onNavigate={route}
             />
           )}
-          <SidebarAccount showSettings={showNavItem("settings")} onSettings={() => route("/settings")} />
+          <SidebarAccount />
         </div>
       </aside>
       <main class="flex min-h-0 flex-1 flex-col overflow-hidden bg-gray-50">

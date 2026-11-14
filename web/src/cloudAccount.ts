@@ -10,6 +10,11 @@ export const cloudAuth = signal<CloudAuthStatus | null>(null);
 export const cloudAuthError = signal("");
 export const communitySettings = signal<AppSettings | null>(null);
 export const savingCommunity = signal(false);
+
+// Pages open the same connection dialog hosted by the application sidebar.
+export function openCloudConnection() {
+  window.dispatchEvent(new Event("csghub:connect"));
+}
 let revision = 0;
 let pending: Promise<CloudAuthStatus | null> | null = null;
 const authRefreshInterval = 30_000;

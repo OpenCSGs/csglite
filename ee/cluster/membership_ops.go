@@ -22,12 +22,26 @@ import (
 
 // CreateCluster founds a cluster of one and returns the join token.
 func (m *Manager) CreateCluster(name string) (ClusterInfo, string, error) {
+	if m.opts.Mode == "worker" {
+		return ClusterInfo{}, "", errors.New("a public worker joins a gateway; it cannot create a cluster")
+	}
 	if err := m.Activate(); err != nil {
 		return ClusterInfo{}, "", err
 	}
-	info, token, err := m.store.Create(name)
+	topology := ""
+	gateway := ""
+	if m.opts.Mode == "gateway" {
+		topology = "public"
+		gateway = m.identity.UUID
+	}
+	info, token, err := m.store.create(name, topology, gateway)
 	if err != nil {
 		return ClusterInfo{}, "", err
+	}
+	if m.opts.Mode == "gateway" {
+		if _, err := m.store.UpdateSettings(func(s *Settings) { s.AcceptWork = false; s.RoutingMode = RoutingBalanced }); err != nil {
+			return ClusterInfo{}, "", err
+		}
 	}
 	m.dir.Reset()
 	m.reannounce()
@@ -37,6 +51,9 @@ func (m *Manager) CreateCluster(name string) (ClusterInfo, string, error) {
 
 // JoinToken returns the current token (minted this process) or rotates one.
 func (m *Manager) JoinToken(rotate bool) (string, error) {
+	if m.opts.Mode == "worker" {
+		return "", errors.New("join tokens are managed on the public gateway")
+	}
 	if !m.store.InCluster() {
 		return "", ErrNotClustered
 	}
@@ -53,6 +70,12 @@ func (m *Manager) JoinToken(rotate bool) (string, error) {
 
 // Join contacts a member of the cluster named by token and joins.
 func (m *Manager) Join(ctx context.Context, token, address string) (ClusterInfo, error) {
+	if m.opts.Mode == "worker" {
+		return m.joinPublic(ctx, token, address)
+	}
+	if m.opts.Mode == "gateway" {
+		return ClusterInfo{}, errors.New("a public gateway creates its own cluster")
+	}
 	if m.store.InCluster() {
 		return ClusterInfo{}, ErrAlreadyClustered
 	}
@@ -308,6 +331,9 @@ func (m *Manager) Invite(ctx context.Context, nodeUUID, code, address string) (M
 // secret-provisioned node it also pauses automatic formation, otherwise the
 // node would rejoin within seconds; creating or joining a cluster resumes it.
 func (m *Manager) Leave(ctx context.Context) error {
+	if m.opts.Mode != "" {
+		return m.leavePublic(ctx)
+	}
 	if !m.store.InCluster() {
 		return ErrNotClustered
 	}
@@ -381,10 +407,20 @@ func (m *Manager) RemoveMember(ctx context.Context, nodeUUID string) error {
 		return fmt.Errorf("node %s is not a member", shortUUID(nodeUUID))
 	}
 	addrs := m.dir.Candidates(nodeUUID)
+	// Revoke outstanding public invitations as well as this node's identity.
+	// Other admitted nodes reconnect with their own certificate, not this token.
+	if m.opts.Mode == "gateway" {
+		if _, err := m.store.RotateJoinToken(); err != nil {
+			return err
+		}
+	}
 	if _, err := m.store.Remove(nodeUUID); err != nil {
 		return err
 	}
 	m.forgetNode(nodeUUID)
+	if m.opts.Mode != "" {
+		return nil
+	}
 	if len(addrs) > 0 {
 		attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -419,6 +455,9 @@ func (m *Manager) UpdateSettings(fn func(*Settings)) (Settings, error) {
 
 // PullOnNode asks a member to download a model from its own model source.
 func (m *Manager) PullOnNode(ctx context.Context, nodeUUID string, body json.RawMessage) (json.RawMessage, error) {
+	if m.opts.Mode != "" {
+		return nil, errors.New("public workers prepare their models locally; remote model downloads are not exposed")
+	}
 	mem, ok := m.store.Member(nodeUUID)
 	if !ok {
 		return nil, fmt.Errorf("node %s is not a member", shortUUID(nodeUUID))

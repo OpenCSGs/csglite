@@ -210,6 +210,14 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/upgrade", s.handleUpgrade)
 
 	// Static files: serve embedded web UI or dev fallback
+	mux.HandleFunc("GET /auth/session", func(w http.ResponseWriter, r *http.Request) {
+		// Desktop requests have already passed desktopAuthMiddleware.
+		if !s.cfg.DesktopMode {
+			writeError(w, 401, "console session required")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"authenticated": true, "access_mode": "local", "role": "administrator", "instance_name": consoleInstanceName()})
+	})
 	if hasEmbeddedStatic() {
 		mux.Handle("GET /", staticHandler())
 	} else {

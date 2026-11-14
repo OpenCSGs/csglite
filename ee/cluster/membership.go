@@ -63,14 +63,19 @@ const (
 
 // ClusterInfo names the cluster this node belongs to.
 type ClusterInfo struct {
-	UUID      string    `json:"uuid"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	GatewayUUID string    `json:"gateway_uuid,omitempty"`
+	Topology    string    `json:"topology,omitempty"`
+	UUID        string    `json:"uuid"`
+	Name        string    `json:"name"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Settings are the operator-tunable knobs; they live next to the member table
 // so one file is the single source of truth for cluster state.
 type Settings struct {
+	// SharedModels is explicit owner consent for outbound public workers.
+	// LAN sharing retains its existing behavior. Empty means share nothing.
+	SharedModels     []string    `json:"shared_models,omitempty"`
 	AcceptWork       bool        `json:"accept_work"`
 	State            NodeState   `json:"state"`
 	Weight           int         `json:"weight"`
@@ -253,6 +258,7 @@ func (st *Store) Settings() Settings {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	s := st.data.Settings
+	s.SharedModels = append([]string(nil), s.SharedModels...)
 	s.StaticAddresses = copyMap(s.StaticAddresses)
 	return s
 }
@@ -262,6 +268,7 @@ func (st *Store) UpdateSettings(fn func(*Settings)) (Settings, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	s := st.data.Settings
+	s.SharedModels = append([]string(nil), s.SharedModels...)
 	s.StaticAddresses = copyMap(s.StaticAddresses)
 	fn(&s)
 	s.normalize()
@@ -270,6 +277,7 @@ func (st *Store) UpdateSettings(fn func(*Settings)) (Settings, error) {
 		return Settings{}, err
 	}
 	out := s
+	out.SharedModels = append([]string(nil), s.SharedModels...)
 	out.StaticAddresses = copyMap(s.StaticAddresses)
 	return out, nil
 }
@@ -334,12 +342,16 @@ var ErrNotClustered = errors.New("this node does not belong to a cluster")
 
 // Create founds a new cluster of one. The join token is returned once.
 func (st *Store) Create(name string) (ClusterInfo, string, error) {
+	return st.create(name, "", "")
+}
+
+func (st *Store) create(name, topology, gateway string) (ClusterInfo, string, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if st.data.Cluster != nil {
 		return ClusterInfo{}, "", ErrAlreadyClustered
 	}
-	info := ClusterInfo{UUID: uuid.NewString(), Name: strings.TrimSpace(name), CreatedAt: time.Now().UTC()}
+	info := ClusterInfo{UUID: uuid.NewString(), Name: strings.TrimSpace(name), CreatedAt: time.Now().UTC(), Topology: topology, GatewayUUID: gateway}
 	if info.Name == "" {
 		info.Name = "CSGLite Cluster"
 	}

@@ -36,7 +36,7 @@ import type {
 } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { t, locale } from "../i18n";
-import { fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, shortVersion, stateKey } from "../cluster";
+import { clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, shortVersion, stateKey } from "../cluster";
 
 type ClusterTab = "overview" | "discovered" | "models" | "settings";
 
@@ -436,6 +436,7 @@ async function saveSettings() {
   settingsSaved.value = false;
   try {
     const saved = await updateClusterSettings({
+	  shared_models: form.shared_models?.map((id) => id.trim()).filter(Boolean),
       accept_work: form.accept_work,
       prefer_local: form.prefer_local,
       routing_mode: form.routing_mode,
@@ -495,17 +496,26 @@ export function Cluster() {
   }, []);
 
   const current = view.value;
+	const publicMode = current?.mode === "gateway" || current?.mode === "worker";
 
   return (
     <div class="page-shell space-y-6">
       <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p class="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-500">{t("cluster.eyebrow")}</p>
+          <p class="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-500">{t(publicMode ? "cluster.publicEyebrow" : "cluster.eyebrow")}</p>
           <h1 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">{t("cluster.title")}</h1>
-          <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t("cluster.subtitle")}</p>
+          <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t(publicMode ? "cluster.publicSubtitle" : "cluster.subtitle")}</p>
         </div>
         {current?.cluster && <HeaderStats view={current} />}
       </div>
+
+      {current?.mode && current.mode !== "lan" && (
+        <section class="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">
+          <p class="font-semibold">{t(current.mode === "gateway" ? "cluster.publicGateway" : "cluster.publicWorker")}</p>
+          <p class="mt-1">{t(current.mode === "gateway" ? "cluster.publicGatewayDesc" : "cluster.publicWorkerDesc")}</p>
+          <p class="mt-2 font-mono">{current.gateway_url || current.public_listen_addr}</p>
+        </section>
+      )}
 
       {featureDisabled.value ? (
         <section class="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
@@ -655,7 +665,7 @@ function NotInCluster({ view }: { view: ClusterView }) {
       <AutoFormNotice view={view} />
       <div class="grid gap-6 lg:grid-cols-2">
         {/* Create */}
-        <section class="bg-white rounded-xl border border-gray-200 p-6">
+        {view.mode !== "worker" && <section class="bg-white rounded-xl border border-gray-200 p-6">
           <h2 class="text-lg font-bold text-gray-900">{t("cluster.createTitle")}</h2>
           <p class="mt-1 text-sm text-gray-500">{t("cluster.createDesc")}</p>
           {createdToken.value ? (
@@ -698,10 +708,10 @@ function NotInCluster({ view }: { view: ClusterView }) {
               </button>
             </div>
           )}
-        </section>
+        </section>}
 
         {/* Join */}
-        <section class="bg-white rounded-xl border border-gray-200 p-6">
+        {view.mode !== "gateway" && <section class="bg-white rounded-xl border border-gray-200 p-6">
           <h2 class="text-lg font-bold text-gray-900">{t("cluster.joinTitle")}</h2>
           <p class="mt-1 text-sm text-gray-500">{t("cluster.joinDesc")}</p>
           <div class="mt-4 space-y-3">
@@ -738,9 +748,10 @@ function NotInCluster({ view }: { view: ClusterView }) {
               {joining.value ? t("cluster.joining") : t("cluster.joinAction")}
             </button>
           </div>
-        </section>
+        </section>}
       </div>
 
+      {(!view.mode || view.mode === "lan") && <>
       {/* Admission code */}
       <section class="bg-white rounded-xl border border-gray-200 p-6">
         <div class="flex flex-wrap items-center justify-between gap-4">
@@ -765,6 +776,7 @@ function NotInCluster({ view }: { view: ClusterView }) {
       </section>
 
       <DiscoveredSection readOnly />
+      </>}
     </>
   );
 }
@@ -782,12 +794,12 @@ function InCluster({ view }: { view: ClusterView }) {
       <CapBanner />
       <div class="inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
         <TabButton tab="overview" label={t("cluster.tabOverview")} onSelect={() => (activeTab.value = "overview")} />
-        <TabButton
+        {(!view.mode || view.mode === "lan") && <TabButton
           tab="discovered"
           label={t("cluster.tabDiscovered")}
           badge={view.discovered_count > 0 ? String(view.discovered_count) : ""}
           onSelect={() => (activeTab.value = "discovered")}
-        />
+        />}
         <TabButton
           tab="models"
           label={t("cluster.tabModels")}
@@ -858,7 +870,6 @@ function OverviewSection({ view }: { view: ClusterView }) {
       <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
           <h2 class="text-lg font-bold text-gray-900">{view.cluster?.name}</h2>
-          <p class="text-xs text-gray-400 font-mono">{view.cluster?.uuid}</p>
         </div>
         <span class="text-sm text-gray-400">{t("dash.updates")}</span>
       </div>
@@ -870,6 +881,7 @@ function OverviewSection({ view }: { view: ClusterView }) {
           <thead>
             <tr class="border-b border-gray-100 text-left text-gray-500 whitespace-nowrap">
               <th class="pb-3 pr-4 font-medium">{t("cluster.colNode")}</th>
+              <th class="pb-3 pr-4 font-medium">{t("cluster.colRole")}</th>
               <th class="pb-3 pr-4 font-medium">{t("cluster.colStatus")}</th>
               <th class="pb-3 pr-4 font-medium">{t("cluster.colGPU")}</th>
               <th class="pb-3 pr-4 font-medium">{t("cluster.colCPURAM")}</th>
@@ -977,6 +989,11 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
           )
         )}
       </td>
+      <td class="py-3 pr-4 whitespace-nowrap">
+        <span class={`inline-flex rounded-md px-2 py-1 text-xs font-medium ${clusterNodeRole(node.uuid, view.cluster) === "master" ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-600"}`}>
+          {t(`cluster.role.${clusterNodeRole(node.uuid, view.cluster)}`)}
+        </span>
+      </td>
       <td class="py-3 pr-4">
         <div class="flex items-center gap-1.5 whitespace-nowrap" title={node.last_error || undefined}>
           <span class={`h-2 w-2 rounded-full ${healthDotClass[tone]}`} />
@@ -1071,6 +1088,8 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
             <option value="drain">{t("cluster.stateDrain")}</option>
             <option value="maintenance">{t("cluster.stateMaintenance")}</option>
           </select>
+        ) : view.mode && view.mode !== "lan" ? (
+          <span class="text-xs text-gray-500">{t("cluster.publicTunnel")}</span>
         ) : (
           <button type="button" class="text-xs text-indigo-600 hover:underline" onClick={() => startStaticEdit(node)}>
             {t("cluster.setStaticAddress")}
@@ -1119,7 +1138,6 @@ function DiscoveredSection({ readOnly = false }: { readOnly?: boolean }) {
                 <tr key={n.uuid} class="border-b border-gray-50">
                   <td class="py-3 pr-3">
                     <div class="font-medium text-gray-900">{n.name}</div>
-                    <div class="font-mono text-[11px] text-gray-400">{n.uuid}</div>
                   </td>
                   <td class="py-3 pr-3 font-mono text-xs text-gray-600">
                     {n.addr}
@@ -1132,7 +1150,7 @@ function DiscoveredSection({ readOnly = false }: { readOnly?: boolean }) {
                   </td>
                   <td class="py-3 text-right">
                     {n.cluster_uuid ? (
-                      <span class="text-xs text-gray-400" title={n.cluster_uuid}>{t("cluster.inAnotherCluster")}</span>
+                      <span class="text-xs text-gray-400" title={t("cluster.inAnotherCluster")}>{t("cluster.inAnotherCluster")}</span>
                     ) : readOnly ? (
                       <span class="text-xs text-gray-400">{t("cluster.notPaired")}</span>
                     ) : (
@@ -1261,7 +1279,7 @@ function ModelsSection({ view }: { view: ClusterView }) {
                 <tr class="border-b border-gray-100 text-left text-gray-500">
                   <th class="pb-3 pr-3 font-medium">{t("cluster.colModel")}</th>
                   {columns.map((c) => (
-                    <th key={c.uuid} class={`pb-3 px-3 text-center font-medium ${c.online ? "" : "text-gray-300"}`} title={c.uuid}>
+                    <th key={c.uuid} class={`pb-3 px-3 text-center font-medium ${c.online ? "" : "text-gray-300"}`} title={c.name}>
                       <div class="truncate max-w-[9rem]">{c.name}</div>
                       {c.local && <div class="text-[10px] uppercase tracking-wide text-indigo-500">{t("cluster.thisNode")}</div>}
                     </th>
@@ -1302,7 +1320,7 @@ function ModelsSection({ view }: { view: ClusterView }) {
                         <td class="py-3 text-right whitespace-nowrap">
                           <button
                             type="button"
-                            disabled={syncBusy.value !== ""}
+                            disabled={syncBusy.value !== "" || Boolean(view.mode && view.mode !== "lan")}
                             onClick={() => void handleSync(label, "all", key)}
                             class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:opacity-60"
                           >
@@ -1320,7 +1338,7 @@ function ModelsSection({ view }: { view: ClusterView }) {
       </section>
 
       <div class="grid gap-6 lg:grid-cols-2">
-        <RecommendationsCard />
+        {(!view.mode || view.mode === "lan") && <RecommendationsCard />}
         <ExplainCard models={list} />
       </div>
     </>
@@ -1501,7 +1519,7 @@ function SettingsSection({ view }: { view: ClusterView }) {
   return (
     <div class="space-y-6">
       {/* Join token */}
-      <section class="bg-white rounded-xl border border-gray-200 p-6">
+      {view.mode !== "worker" && <section class="bg-white rounded-xl border border-gray-200 p-6">
         <h2 class="text-lg font-bold text-gray-900">{t("cluster.tokenTitle")}</h2>
         <p class="mt-1 text-sm text-gray-500">{t("cluster.tokenDesc")}</p>
         <div class="mt-4">
@@ -1539,7 +1557,7 @@ function SettingsSection({ view }: { view: ClusterView }) {
           )}
           <p class="mt-2 text-xs text-gray-400">{t("cluster.rotateHint")}</p>
         </div>
-      </section>
+      </section>}
 
       {/* Routing & node */}
       <section class="bg-white rounded-xl border border-gray-200 p-6">
@@ -1547,6 +1565,18 @@ function SettingsSection({ view }: { view: ClusterView }) {
         <p class="mt-1 text-sm text-gray-500">{t("cluster.routingDesc")}</p>
 
         <div class="mt-5 space-y-5">
+          {view.mode === "worker" && (
+            <div>
+              <label class="block text-sm font-medium text-gray-700">{t("cluster.sharedModels")}</label>
+              <p class="mt-1 text-xs text-gray-500">{t("cluster.sharedModelsDesc")}</p>
+              <textarea
+                class="mt-2 min-h-28 w-full rounded-lg border border-gray-200 px-3 py-2 font-mono text-sm"
+                value={(form.shared_models ?? []).join("\n")}
+                placeholder={t("cluster.sharedModelsPlaceholder")}
+                onInput={(e) => update({ shared_models: (e.target as HTMLTextAreaElement).value.split("\n") })}
+              />
+            </div>
+          )}
           <div>
             <div class="text-sm font-medium text-gray-700">{t("cluster.routingMode")}</div>
             <div class="mt-2 grid gap-2 sm:grid-cols-2">

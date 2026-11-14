@@ -81,6 +81,9 @@ func newServeCmd(version string) *cobra.Command {
 				aligned := make(chan struct{})
 				go func() {
 					defer close(aligned)
+					if cfg.Cluster.Mode == "gateway" {
+						return
+					}
 					if err := upgrade.AlignLlamaRuntime(alignContext, cfg.TempDir()); err != nil {
 						log.Printf("LLAMA: runtime alignment failed: %v", err)
 					}

@@ -42,6 +42,12 @@ csghub-lite config set server_url https://my-csghub.example.com
 csghub-lite config set ai_gateway_url https://my-gateway.example.com
 ```
 
+### cloud_provider_enabled
+
+内置 CSGHub 模型 Provider 的开关，默认开启。可在「网关 → 模型 Provider」卡片上切换，关闭后立即从可调用模型列表移除云端模型，并拒绝云端推理请求；已有请求不强制中断。账号连接、模型下载、端侧共享、API Key 和已选择的模型配置均保留，重新开启即可恢复。
+
+该布尔配置与现有的 `cloud_provider_name`、`ai_gateway_url` 一起保存在 `config.json`；未设置时视为 `true`，兼容旧配置。现有 `providers.json` 仅保存第三方 Provider，模型选择文件仅管理模型清单，均不承担内置 Provider 的启停状态，因此使用此独立字段作为唯一状态来源。
+
 ### 社区站点地址
 
 选择社区时，客户端会同时保存现有的 `server_url` 和 `ai_gateway_url`，不单独存储另一份站点配置。地址使用根基地址，不额外添加 `/api/v1` 或 `/v1`。
