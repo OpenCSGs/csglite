@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -80,13 +81,20 @@ func newClusterManager(s *Server, storageRoot string) *cluster.Manager {
 		addr = clusterTestHooks.listenAddr
 	}
 	m, err := cluster.New(cluster.Options{
-		Dir:           filepath.Join(storageRoot, clusterStorageDir),
-		Host:          &clusterHost{s: s},
-		Discoverer:    disc,
-		ListenAddr:    addr,
-		Seeds:         seeds,
-		JoinToken:     strings.TrimSpace(os.Getenv(EnvClusterJoinToken)),
-		AdvertiseHost: strings.TrimSpace(os.Getenv(EnvClusterAdvertiseHost)),
+		Mode:             s.cfg.Cluster.Mode,
+		PublicListenAddr: s.cfg.Cluster.PublicListenAddr,
+		GatewayURL:       s.cfg.Cluster.GatewayURL,
+		TLSCertFile:      s.cfg.Cluster.TLSCertFile,
+		TLSKeyFile:       s.cfg.Cluster.TLSKeyFile,
+		TLSCAFile:        s.cfg.Cluster.TLSCAFile,
+		PublicInference:  s.publicClusterWebRoutes(storageRoot),
+		Dir:              filepath.Join(storageRoot, clusterStorageDir),
+		Host:             &clusterHost{s: s},
+		Discoverer:       disc,
+		ListenAddr:       addr,
+		Seeds:            seeds,
+		JoinToken:        strings.TrimSpace(os.Getenv(EnvClusterJoinToken)),
+		AdvertiseHost:    strings.TrimSpace(os.Getenv(EnvClusterAdvertiseHost)),
 		// The shared secret comes from config.json (installer or
 		// `config set cluster_secret`), with CSGHUB_LITE_CLUSTER_SECRET
 		// applied on top by config.ApplyEnvironmentDefaults.
@@ -110,14 +118,21 @@ func envTruthy(v string) bool {
 }
 
 // startCluster opens the peer listener once the API port is known.
-func (s *Server) startCluster(ctx context.Context) {
+func (s *Server) startCluster(ctx context.Context) error {
 	if s.cluster == nil {
-		return
+		if s.cfg.Cluster.Mode != "" && s.cfg.Cluster.Mode != "lan" {
+			return fmt.Errorf("public cluster initialization failed; check cluster configuration and preceding log")
+		}
+		return nil
 	}
 	if err := s.cluster.Start(ctx); err != nil {
 		log.Printf("cluster: %v; the cluster feature is unavailable in this process", err)
 		s.cluster = nil
+		if s.cfg.Cluster.Mode != "" && s.cfg.Cluster.Mode != "lan" {
+			return err
+		}
 	}
+	return nil
 }
 
 func (s *Server) stopCluster() {

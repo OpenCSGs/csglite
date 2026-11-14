@@ -4,49 +4,72 @@
 package cluster
 
 import (
+	"context"
 	"net/netip"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
+	"sync"
+	"time"
 )
 
-// hostnameShort returns the machine's host name without a domain suffix.
-func hostnameShort() (string, error) {
-	h, err := os.Hostname()
-	if err != nil {
-		return "", err
+// Cache the system name for this process so status polling does not repeatedly
+// invoke platform utilities. An explicit operator rename is stored separately.
+var systemHostname = sync.OnceValues(func() (string, error) {
+	host, err := os.Hostname()
+	if name := usableHostname(host); name != "" {
+		return name, nil
 	}
-	h = strings.TrimSpace(h)
-	if i := strings.IndexByte(h, '.'); i > 0 {
-		h = h[:i]
+	// DHCP can set a Mac's Unix hostname to its IP address. LocalHostName is
+	// the stable system name shown in macOS Sharing settings.
+	if runtime.GOOS == "darwin" {
+		for _, key := range []string{"LocalHostName", "ComputerName"} {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			out, commandErr := exec.CommandContext(ctx, "/usr/sbin/scutil", "--get", key).Output()
+			cancel()
+			if commandErr == nil {
+				if name := usableHostname(string(out)); name != "" {
+					return name, nil
+				}
+			}
+		}
 	}
-	return h, nil
+	return "", err
+})
+
+func hostnameShort() (string, error) { return systemHostname() }
+
+func usableHostname(host string) string {
+	host = strings.TrimSpace(host)
+	if _, err := netip.ParseAddr(host); err == nil {
+		return ""
+	}
+	if i := strings.IndexByte(host, '.'); i > 0 {
+		host = host[:i]
+	}
+	if strings.Trim(host, "0123456789.:") == "" {
+		return ""
+	}
+	return host
 }
 
-// defaultNodeName is the display name a node gets on first start: the host
-// name when it is a real name, otherwise a generic one (a host named after
-// its IP address, as some appliances are, would otherwise show up as "192").
 const genericNodeName = "csglite-node"
 
 func defaultNodeName() string {
-	h, err := hostnameShort()
-	if err != nil || h == "" {
+	name, _ := hostnameShort()
+	if name == "" {
 		return genericNodeName
 	}
-	full, _ := os.Hostname()
-	if _, err := netip.ParseAddr(strings.TrimSpace(full)); err == nil {
-		return genericNodeName
-	}
-	allDigits := true
-	for _, r := range h {
-		if r < '0' || r > '9' {
-			allDigits = false
-			break
-		}
-	}
-	if allDigits {
-		return genericNodeName
-	}
-	return h
+	return name
+}
+
+// Only migrate generated names that belong to this identity; custom names are
+// preserved, and the UUID and certificate remain unchanged.
+func isGeneratedNodeName(name, nodeUUID string) bool {
+	return name == genericNodeName || name == defaultShortName(nodeUUID) ||
+		name == "csglite-node-"+nodeUUID ||
+		name == "csglite-node-"+strings.TrimPrefix(defaultShortName(nodeUUID), "node-")
 }
 
 // defaultShortName is the generated name for a node without a usable host

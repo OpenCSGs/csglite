@@ -367,6 +367,9 @@ func New(cfg *config.Config, version string) *Server {
 	}
 
 	handler := s.routes()
+	if !cfg.DesktopMode {
+		handler = s.consoleWebRoutes(storageRoot, true)
+	}
 	s.http = &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
@@ -410,6 +413,9 @@ func (s *Server) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	s.shutdownCancel = stop
+	if _, err := s.cfg.EffectiveConsoleAuthMode(); err != nil {
+		return err
+	}
 
 	if s.cfg.DesktopMode {
 		if err := validateDesktopConfig(s.cfg); err != nil {
@@ -417,6 +423,9 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	listenAddr := s.cfg.EffectiveListenAddr()
+	if err := validatePublicManagementListener(s.cfg.Cluster.Mode, listenAddr); err != nil {
+		return err
+	}
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("port %s is already in use; try a different port with --listen :PORT\n  %w", listenAddr, err)
@@ -452,7 +461,9 @@ func (s *Server) Run(ctx context.Context) error {
 	s.loadCtx = ctx
 	s.mu.Unlock()
 
-	s.startCluster(ctx)
+	if err := s.startCluster(ctx); err != nil {
+		return err
+	}
 	s.startEdge()
 	go s.startEvictor(ctx)
 	go s.refreshCloudModelsOnStartup(ctx)

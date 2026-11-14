@@ -210,6 +210,23 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/upgrade", s.handleUpgrade)
 
 	// Static files: serve embedded web UI or dev fallback
+	if s.cfg.DesktopMode {
+		// Public login assets are bundled with the shared frontend, but the
+		// desktop shell always establishes its session through bootstrap.
+		for _, path := range []string{"/login", "/login.html"} {
+			mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "/", http.StatusSeeOther)
+			})
+		}
+	}
+	mux.HandleFunc("GET /auth/session", func(w http.ResponseWriter, r *http.Request) {
+		// Desktop requests have already passed desktopAuthMiddleware.
+		if !s.cfg.DesktopMode {
+			writeError(w, 401, "console session required")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"authenticated": true, "access_mode": "local", "role": "administrator", "instance_name": consoleInstanceName()})
+	})
 	if hasEmbeddedStatic() {
 		mux.Handle("GET /", staticHandler())
 	} else {

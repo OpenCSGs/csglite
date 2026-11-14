@@ -10,9 +10,11 @@ vi.hoisted(() => {
 vi.mock("./api/client", () => ({
   getCloudAuthStatus: vi.fn(),
   saveSettings: vi.fn(),
+  saveCloudAPIKey: vi.fn(),
+  clearCloudAPIKey: vi.fn(),
 }));
 
-import { getCloudAuthStatus, saveSettings } from "./api/client";
+import { clearCloudAPIKey, getCloudAuthStatus, saveCloudAPIKey, saveSettings } from "./api/client";
 import {
   cloudAuth,
   cloudAuthError,
@@ -22,6 +24,8 @@ import {
   saveCommunitySelection,
   savingCommunity,
   setCloudAuth,
+  hasCloudConnection,
+  updateManualCloudAPIKey,
 } from "./cloudAccount";
 
 const signedOut: CloudAuthStatus = {
@@ -42,6 +46,8 @@ const signedIn: CloudAuthStatus = {
 beforeEach(() => {
   vi.mocked(getCloudAuthStatus).mockReset().mockResolvedValue(signedOut);
   vi.mocked(saveSettings).mockReset();
+  vi.mocked(saveCloudAPIKey).mockReset();
+  vi.mocked(clearCloudAPIKey).mockReset();
   vi.stubGlobal("window", { dispatchEvent: vi.fn() });
   communitySettings.value = null;
   setCloudAuth(signedOut);
@@ -52,6 +58,27 @@ afterEach(() => {
 });
 
 describe("shared community account", () => {
+  it("recognizes, replaces and clears a manual API key without requiring account login", async () => {
+    const manual = { ...signedOut, has_api_key: true, api_key_source: "manual", api_key_prefix: "sk-test" };
+    expect(hasCloudConnection(manual)).toBe(true);
+    expect(hasCloudConnection(signedOut)).toBe(false);
+    vi.mocked(saveCloudAPIKey).mockResolvedValueOnce(manual);
+    await updateManualCloudAPIKey("replacement-key");
+    expect(saveCloudAPIKey).toHaveBeenCalledWith("replacement-key");
+    expect(cloudAuth.value).toEqual(manual);
+    expect(window.dispatchEvent).toHaveBeenCalled();
+    vi.mocked(clearCloudAPIKey).mockResolvedValueOnce(signedOut);
+    await updateManualCloudAPIKey(null);
+    expect(clearCloudAPIKey).toHaveBeenCalledOnce();
+    expect(hasCloudConnection(cloudAuth.value)).toBe(false);
+  });
+
+  it("does not discard a manual key when switching platforms", async () => {
+    vi.mocked(getCloudAuthStatus).mockResolvedValueOnce({ ...signedOut, has_api_key: true, api_key_source: "manual" });
+    await expect(saveCommunitySelection("https://other.example", "https://other.example/aigateway")).rejects.toThrow();
+    expect(saveSettings).not.toHaveBeenCalled();
+  });
+
   it("persists a community choice without requiring a login", async () => {
     const settings = {
       server_url: "https://sanxia.opencsg.com",
