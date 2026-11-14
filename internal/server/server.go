@@ -413,6 +413,9 @@ func (s *Server) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	s.shutdownCancel = stop
+	if _, err := s.cfg.EffectiveConsoleAuthMode(); err != nil {
+		return err
+	}
 
 	if s.cfg.DesktopMode {
 		if err := validateDesktopConfig(s.cfg); err != nil {

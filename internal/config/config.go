@@ -83,6 +83,7 @@ type Config struct {
 	Observability            ObservabilityConfig                `json:"observability,omitempty"`
 	Inference                InferenceConfig                    `json:"inference,omitempty"`
 	Realtime                 RealtimeConfig                     `json:"realtime,omitempty"`
+	Console                  ConsoleConfig                      `json:"console,omitempty"`
 	// Cluster holds the LAN compute cluster settings that must survive
 	// however the service is launched (systemd, launchd, `csghub-lite
 	// start`): the shared secret that forms the cluster automatically.

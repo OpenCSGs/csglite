@@ -16,6 +16,20 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("console session and cloud account isolation", () => {
+  it("returns HTTPS localhost sessions to login when forced authentication expires", async () => {
+    vi.stubGlobal("window", { fetch: window.fetch, location: { href: "https://localhost/", origin: "https://localhost", replace } });
+    nativeFetch.mockResolvedValue(new Response(null, { status: 401 }));
+    await window.fetch("/api/settings");
+    expect(replace).toHaveBeenCalledWith("/login");
+  });
+  it("never sends the desktop into the public login flow even with a stale public cookie", async () => {
+    const { consoleAccessMode } = await import("./consoleAuth");
+    consoleAccessMode.value = "desktop";
+    nativeFetch.mockResolvedValue(new Response(null, { status: 401 }));
+    await window.fetch("/api/settings");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
   it("keeps console access when the cloud balance credential expires", async () => {
     const unauthorized = new Response(null, { status: 401 });
     nativeFetch.mockResolvedValueOnce(unauthorized).mockResolvedValueOnce(new Response(null, { status: 200 }));

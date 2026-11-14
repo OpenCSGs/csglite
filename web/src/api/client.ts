@@ -1,5 +1,6 @@
 import { stripReasoningText } from "../reasoning";
 import { locale } from "../i18n";
+import { publicSessionHeaders } from "../utils/consoleAuth";
 
 export interface ModelInfo {
   name: string;
@@ -1439,7 +1440,9 @@ function uploadLocalModelChunk(
     params.set("path", path);
     params.set("filename", item.file.name);
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", `/api/models/upload/${encodeURIComponent(uploadID)}/file?${params.toString()}`);
+    const url = `/api/models/upload/${encodeURIComponent(uploadID)}/file?${params.toString()}`;
+    xhr.open("PUT", url);
+    publicSessionHeaders(url, "PUT").forEach((value, name) => xhr.setRequestHeader(name, value));
     if (total > 0) {
       xhr.setRequestHeader("Content-Range", `bytes ${offset}-${offset + chunk.size - 1}/${total}`);
     }

@@ -509,11 +509,11 @@ export function Cluster() {
         {current?.cluster && <HeaderStats view={current} />}
       </div>
 
-      {current?.mode && current.mode !== "lan" && (
+      {current?.mode === "gateway" && clusterNodeRole(current.node.uuid, current.cluster) === "master" && (
         <section class="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">
-          <p class="font-semibold">{t(current.mode === "gateway" ? "cluster.publicGateway" : "cluster.publicWorker")}</p>
-          <p class="mt-1">{t(current.mode === "gateway" ? "cluster.publicGatewayDesc" : "cluster.publicWorkerDesc")}</p>
-          <p class="mt-2 font-mono">{current.gateway_url || current.public_listen_addr}</p>
+          <p class="font-semibold">{t("cluster.publicGateway")}</p>
+          <p class="mt-1">{t("cluster.publicGatewayDesc")}</p>
+          <p class="mt-2 font-mono">{current.public_listen_addr}</p>
         </section>
       )}
 

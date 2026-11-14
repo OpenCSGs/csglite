@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import { consoleAccessMode, shouldUsePublicLogin } from "./utils/consoleAuth";
 
 export interface ConsoleSession {
   authenticated: boolean;
@@ -17,9 +18,11 @@ export function refreshConsoleSession(): Promise<void> {
   pending = (async () => {
     try {
       const response = await fetch("/auth/session", { cache: "no-store" });
-      if (response.status === 401) { window.location.replace("/login"); return; }
+      if (response.status === 401 && shouldUsePublicLogin()) { window.location.replace("/login"); return; }
       if (!response.ok) throw new Error("session unavailable");
-      consoleSession.value = await response.json();
+      const session: ConsoleSession = await response.json();
+      consoleSession.value = session;
+      if (consoleAccessMode.value !== "desktop") consoleAccessMode.value = session.access_mode;
       consoleSessionError.value = false;
     } catch { consoleSessionError.value = true; }
     finally { pending = null; }

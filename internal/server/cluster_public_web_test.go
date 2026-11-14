@@ -61,7 +61,7 @@ func TestConsoleGatePreservesInferenceAPIKeyAuthority(t *testing.T) {
 		}
 		w.WriteHeader(204)
 	})
-	h := publicClusterWebHandler(clusterpublic.NewAdminAuth(clusterpublic.AdminTokenPath(root)), management, s.consoleInferenceKeyRequired(management), true)
+	h := publicClusterWebHandler(clusterpublic.NewAdminAuth(clusterpublic.AdminTokenPath(root)), management, s.consoleInferenceKeyRequired(management), true, false)
 	for _, path := range []string{"/v1/images/generations", "/v1/audio/speech", "/providers/test/v1/chat/completions", "/anthropic/messages"} {
 		for _, authorized := range []bool{false, true} {
 			r := httptest.NewRequest("POST", "https://gateway.example"+path, nil)
@@ -91,7 +91,7 @@ func TestConsoleGatePreservesInferenceAPIKeyAuthority(t *testing.T) {
 func TestLocalConsoleSessionAndOrigin(t *testing.T) {
 	a := clusterpublic.NewAdminAuth(clusterpublic.AdminTokenPath(t.TempDir()))
 	management := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
-	h := publicClusterWebHandler(a, management, management, true)
+	h := publicClusterWebHandler(a, management, management, true, false)
 	r := httptest.NewRequest("GET", "http://localhost:11435/auth/session", nil)
 	r.RemoteAddr = "127.0.0.1:1234"
 	w := httptest.NewRecorder()
@@ -145,7 +145,7 @@ func TestPublicWebManagementRequiresIndependentAdminSession(t *testing.T) {
 		}
 		w.WriteHeader(204)
 	}))
-	h := publicClusterWebHandler(clusterpublic.NewAdminAuth(path), admin, s.publicClusterInferenceRoutes(), false)
+	h := publicClusterWebHandler(clusterpublic.NewAdminAuth(path), admin, s.publicClusterInferenceRoutes(), false, false)
 	for _, tc := range []struct {
 		path, key string
 		status    int

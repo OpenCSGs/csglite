@@ -5,6 +5,7 @@ import { useEffect, useState } from "preact/hooks";
 import { getSettings } from "../api/client";
 import { SidebarAccount } from "./SidebarAccount";
 import { communitySettings } from "../cloudAccount";
+import { consoleAccessMode } from "../utils/consoleAuth";
 import { t, locale } from "../i18n";
 import { isLicensed, licenseState, loadLicense, productTitle } from "../license";
 
@@ -98,6 +99,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
       .then((settings) => {
         if (active) {
           communitySettings.value = settings;
+          if (settings.desktop_mode) consoleAccessMode.value = "desktop";
           setHiddenNavItems(new Set(settings.hidden_nav_items ?? []));
         }
       })

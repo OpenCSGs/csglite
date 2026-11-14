@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	clusterpublic "github.com/opencsgs/csglite/ee/cluster/public"
+	"github.com/opencsgs/csglite/internal/config"
 )
 
 type publicAdminContextKey struct{}
@@ -29,7 +30,10 @@ func (s *Server) consoleWebRoutes(storageRoot string, allowPlainLocal bool) http
 		// image and audio routes). Only the dedicated cluster listener narrows it.
 		inference = s.consoleInferenceKeyRequired(management)
 	}
-	return publicClusterWebHandler(auth, management, inference, allowPlainLocal)
+	mode, err := s.cfg.EffectiveConsoleAuthMode()
+	// Run rejects invalid settings before listening; handlers also fail closed.
+	requireLogin := err != nil || mode == config.ConsoleAuthRequired
+	return publicClusterWebHandler(auth, management, inference, allowPlainLocal, requireLogin)
 }
 
 func (s *Server) consoleInferenceKeyRequired(next http.Handler) http.Handler {
@@ -104,17 +108,28 @@ func consoleInstanceName() string {
 	return name
 }
 
-func publicClusterWebHandler(auth *clusterpublic.AdminAuth, management, inference http.Handler, allowPlainLocal bool) http.Handler {
+func isConsoleInferencePath(path string) bool {
+	path = providerRouteLegacyPath(path)
+	return strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/anthropic/") ||
+		path == "/api/chat" || path == "/api/generate" || path == "/api/load" || path == "/api/stop" ||
+		isReadOnlyArtifactPath(path)
+}
+
+func publicClusterWebHandler(auth *clusterpublic.AdminAuth, management, inference http.Handler, allowPlainLocal, requireLogin bool) http.Handler {
 	static := staticHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		access := localConsoleAccess(r, allowPlainLocal)
+		networkAccess := localConsoleAccess(r, allowPlainLocal)
+		access := networkAccess
+		if requireLogin {
+			access = ""
+		}
 		// Network access still rejects cross-origin browser requests, including
 		// mutations and WebSocket upgrades, without demanding a login cookie.
-		if access != "" && r.Header.Get("Origin") != "" {
+		if networkAccess != "" && r.Header.Get("Origin") != "" {
 			u, err := url.Parse(r.Header.Get("Origin"))
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !strings.EqualFold(u.Host, r.Host) || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 				writeError(w, 403, "same origin required")
@@ -155,11 +170,29 @@ func publicClusterWebHandler(auth *clusterpublic.AdminAuth, management, inferenc
 			return
 		}
 		if access != "" || auth.Authenticate(r) {
+			// Local console access does not authorize native inference clients.
+			// Only a same-origin browser request (validated above) inherits the
+			// console exemption. Other local callers retain the ordinary API-key
+			// policy; the dedicated public listener always requires a key.
+			consoleBrowser := r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") == "same-origin"
+			if access != "" && isConsoleInferencePath(r.URL.Path) && !consoleBrowser {
+				if allowPlainLocal {
+					management.ServeHTTP(w, r)
+				} else {
+					inference.ServeHTTP(w, r)
+				}
+				return
+			}
 			management.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), publicAdminContextKey{}, true)))
 			return
 		}
-		inferencePath := providerRouteLegacyPath(r.URL.Path)
-		if strings.HasPrefix(inferencePath, "/v1/") || strings.HasPrefix(inferencePath, "/anthropic/") || inferencePath == "/api/chat" || inferencePath == "/api/generate" {
+		if isConsoleInferencePath(r.URL.Path) {
+			// Requiring console login does not change the ordinary listener's
+			// independent inference API-key policy for direct local callers.
+			if allowPlainLocal && networkAccess != "" {
+				management.ServeHTTP(w, r)
+				return
+			}
 			inference.ServeHTTP(w, r)
 			return
 		}

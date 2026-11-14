@@ -920,7 +920,7 @@
           "Models"
         ],
         "summary": "Upload a file to a model upload session",
-        "description": "Uploads a model file as raw bytes. For large files, send sequential chunks with `Content-Range: bytes start-end/total`; the server validates and returns the next accepted offset. Omitting `Content-Range` preserves whole-file PUT compatibility.",
+        "description": "Uploads a model file as raw bytes. For large files, send sequential chunks with `Content-Range: bytes start-end/total`; the server validates and returns the next accepted offset. Omitting `Content-Range` preserves whole-file PUT compatibility. Public management sessions must include the session cookie, a same-origin Origin and the X-CSGLite-CSRF header on every chunk, including XMLHttpRequest uploads.",
         "operationId": "uploadModelSessionFile",
         "parameters": [
           {
@@ -952,6 +952,15 @@
             "in": "header",
             "required": false,
             "description": "Byte range for this chunk, for example `bytes 0-33554431/1073741824`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-CSGLite-CSRF",
+            "in": "header",
+            "required": false,
+            "description": "Required for public management session writes; use the __Host-csglite_csrf cookie value. Desktop/local access does not require this header.",
             "schema": {
               "type": "string"
             }
@@ -987,6 +996,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "401": {
+            "description": "Missing or expired public management session, or missing CSRF token."
           }
         }
       }
@@ -9450,7 +9462,7 @@
         "tags": [
           "Public management"
         ],
-        "description": "Returns server-verified console access. Direct loopback/private/link-local clients using a local host address may access without a management token. Forwarded requests do not inherit this exemption. Public listener plaintext proxy traffic never inherits the exemption. Remote sessions require the management token and HTTPS. CSGHub account credentials belong to the instance and are independent of console sessions.",
+        "description": "Returns server-verified console access. Direct loopback/private/link-local clients using a local host address may access without a management token. Forwarded requests do not inherit this exemption. Public listener plaintext proxy traffic never inherits the exemption. Remote sessions require the management token and HTTPS. CSGHub account credentials belong to the instance and are independent of console sessions. Desktop clients establish their sidecar session automatically and do not use public login. Console access is runtime metadata, not an inference API-key exemption for native LAN clients; native LAN calls still follow the API-key setting, and the dedicated public inference listener always requires a key. Recognized keys remain attributable for usage even on console requests. Console login policy is configured by console.auth_mode (auto by default), overridden by CSGHUB_LITE_CONSOLE_AUTH_MODE. required disables local/LAN management exemptions on both console listeners; pages and management APIs require a Token session over HTTPS. Desktop automatic authentication and inference API-key policy remain independent. Changes require restart.",
         "responses": {
           "200": {
             "description": "Success",

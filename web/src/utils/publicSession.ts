@@ -1,7 +1,9 @@
+import { publicCSRFToken, publicSessionHeaders, shouldUsePublicLogin } from "./consoleAuth";
+
 // The login token never enters browser storage. Only the server's HttpOnly
 // session cookie and its separate CSRF cookie are used after login.
 export function hasPublicSession(): boolean {
-  return document.cookie.split(";").some((entry) => entry.trim().startsWith("__Host-csglite_csrf="));
+  return !!publicCSRFToken();
 }
 
 const nativeFetch = window.fetch.bind(window);
@@ -24,20 +26,19 @@ window.fetch = async (input, init) => {
   if (publicSession) {
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
     if (method !== "GET" && method !== "HEAD") {
-      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-      const cookie = document.cookie.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith("__Host-csglite_csrf="));
-      if (cookie) headers.set("X-CSGLite-CSRF", cookie.slice("__Host-csglite_csrf=".length));
+      const headers = publicSessionHeaders(url.href, method, init?.headers ?? (input instanceof Request ? input.headers : undefined));
       init = { ...init, headers };
     }
   }
   const response = await nativeFetch(input, init);
   if (publicSession && response.status === 401 && !url.pathname.startsWith("/auth/")) {
-    if (await consoleSessionExpired()) window.location.replace("/login");
+    if (await consoleSessionExpired() && shouldUsePublicLogin()) window.location.replace("/login");
   }
   return response;
 };
 
 export async function logoutPublicSession(): Promise<void> {
+  if (!shouldUsePublicLogin()) return;
   const response = await fetch("/auth/logout", { method: "POST" });
   if (response.ok || response.status === 401) window.location.replace("/login");
   else throw new Error("logout failed");
