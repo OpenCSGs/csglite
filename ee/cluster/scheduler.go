@@ -131,8 +131,10 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 			r.Excluded = "node not reached yet"
 		case !st.Licensed:
 			r.Excluded = "node exceeds its license node cap"
-		case !st.AcceptWork || st.State != NodeStateActive:
+		case st.State != NodeStateActive:
 			r.Excluded = "node state is " + string(st.State)
+		case !st.AcceptWork:
+			r.Excluded = "node is not accepting work"
 		case c.Breaker:
 			r.Excluded = "model failed on this node recently"
 		case c.Cooling:

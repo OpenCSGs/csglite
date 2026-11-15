@@ -70,6 +70,30 @@ func TestRankHardFilters(t *testing.T) {
 	}
 }
 
+func TestRankExplainsAdmissionAndStateSeparately(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		state  NodeState
+		accept bool
+		want   string
+	}{
+		{"not accepting", NodeStateActive, false, "node is not accepting work"},
+		{"draining", NodeStateDrain, false, "node state is drain"},
+		{"maintenance", NodeStateMaintenance, false, "node state is maintenance"},
+		{"missing model", NodeStateActive, true, "model not present"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := nodeWithModel("node", ModelStatus{ID: "other"}, func(s *Status) {
+				s.State, s.AcceptWork = tc.state, tc.accept
+			})
+			_, ex := Rank(RankRequest{Model: "m"}, []Candidate{c})
+			if got := ex.Candidates[0].Excluded; got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRankAllowsOneEvictionWhenNothingFits(t *testing.T) {
 	a := nodeWithModel("a", ModelStatus{ID: "m", Size: 30 * gb}, func(s *Status) { s.GPUs[0].VRAMUsed = 20 * gb })
 	b := nodeWithModel("b", ModelStatus{ID: "m", Size: 30 * gb}, func(s *Status) { s.GPUs[0].VRAMUsed = 10 * gb })
