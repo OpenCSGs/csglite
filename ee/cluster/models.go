@@ -38,7 +38,10 @@ type ModelSync struct {
 
 // ClusterModel is one model with the nodes holding it.
 type ClusterModel struct {
-	ID string `json:"id"`
+	HasMMProj      bool   `json:"has_mmproj,omitempty"`
+	TypedDecisions bool   `json:"typed_decisions,omitempty"`
+	DecisionOnly   bool   `json:"decision_only,omitempty"`
+	ID             string `json:"id"`
 	// Repository is the library name (namespace/name). Copies from different
 	// registries share it, so the distribution view treats them as one model.
 	Repository  string      `json:"repository,omitempty"`
@@ -77,6 +80,9 @@ func (m *Manager) Models(ctx context.Context) []ClusterModel {
 				group.model = ClusterModel{Size: ms.Size, Format: ms.Format, PipelineTag: ms.PipelineTag, Category: ms.Category}
 				byKey[key] = group
 			}
+			group.model.TypedDecisions = group.model.TypedDecisions || ms.TypedDecisions
+			group.model.DecisionOnly = group.model.DecisionOnly || ms.DecisionOnly
+			group.model.HasMMProj = group.model.HasMMProj || ms.HasMMProj
 			if repo := normalizeRepo(ms.Repo); repo != "" {
 				group.model.Repository = repo
 			}
@@ -202,6 +208,9 @@ func modelGroupForPull(byKey map[string]*modelGroup, pull PullStatus) *modelGrou
 // modelIdentity is the library name when the node reported a repository, and
 // the public inference id otherwise.
 func modelIdentity(ms ModelStatus) string {
+	if ms.DeploymentID != "" {
+		return DeploymentModelPrefix + ms.DeploymentID
+	}
 	if repo := normalizeRepo(ms.Repo); repo != "" {
 		return repo
 	}

@@ -4,6 +4,7 @@ import { deleteModel, getModelConfig, getModelManifest, getPs, loadModel, search
 import type { ArtifactSource, LoadModelOptions, LocalModelUploadFile, ModelConfigResponse, ModelFileEntry, ModelInfo, RunningModel } from "../api/client";
 import { locale, t } from "../i18n";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useLocalDeployments } from "../components/LocalDeploymentModels";
 import { DownloadProgressCell } from "../components/DownloadProgressPanel";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../components/Pagination";
@@ -12,6 +13,9 @@ import { isImageGenerationModel } from "../utils/imageModels";
 import { formatLoadStep } from "../utils/loadSteps";
 import { getDownloadTask, getDownloadTasks, clearDownloadTask, pauseDownload, startDownload, compareDownloadTasks, downloadRowTime, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
+import { deploymentLibraryRows, mergeDeploymentLibraryRows } from "../libraryDeployments";
+import type { LibraryModelRow } from "../libraryDeployments";
+import { deploymentPhaseKey } from "../deploymentModels";
 import { downloadRowOriginKey, modelOriginKey } from "../artifactOrigin";
 import { displayLocalModelID } from "../modelIds";
 import { formatTableDateTime } from "../utils/tableDateTime";
@@ -31,11 +35,7 @@ type RunModelParams = {
   specDraftNMax: string;
   specDraftPMin: string;
 };
-type ModelTableRow = {
-  model: ModelInfo;
-  task?: DownloadTask;
-  downloadOnly: boolean;
-};
+type ModelTableRow = LibraryModelRow;
 type UploadMode = "archive" | "directory" | "files";
 
 const RUN_PARAMS_STORAGE_KEY = "csghub-lite-run-params";
@@ -588,6 +588,9 @@ function loadRunningModels() {
 
 export function Library() {
   void locale.value;
+  const managed = useLocalDeployments();
+  const hasManaged = useRef(false);
+  hasManaged.current = managed.tasks.length > 0;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -596,12 +599,17 @@ export function Library() {
     // Poll /api/ps while a model is loading so the current conversion step
     // stays visible even after a page reload (issue #73).
     const interval = window.setInterval(() => {
-      if (loadingRun.value || runningModels.value.some((m) => m.status === "loading")) {
+      if (hasManaged.current || loadingRun.value || runningModels.value.some((m) => m.status === "loading")) {
         loadRunningModels();
       }
     }, 3000);
     return () => window.clearInterval(interval);
   }, []);
+
+  // Receipts announce when a downloaded/converted artifact becomes available
+  // in the normal library. Refresh its real metadata once per phase change.
+  const deploymentPhases = managed.tasks.map(d => `${d.id}:${d.status.phase}`).join("|");
+  useEffect(() => { void loadModels(); }, [deploymentPhases]);
 
   useEffect(() => {
     if (downloadCompletionVersion.value > 0) void loadModels();
@@ -851,8 +859,9 @@ export function Library() {
   const runningStatus = (name: string) => runningModels.value.find((m) => m.name === name)?.status || "";
   const hasActiveFilters = searchQuery.value.trim().length > 0 || formatFilter.value !== "all";
   const uploadDisabled = uploadBusy.value;
-  const rows = sortModelRows(modelRows(allModels.value));
-  const pagedRows = paginate(rows, currentPage.value, pageSize.value);
+  const rows = sortModelRows(mergeDeploymentLibraryRows(modelRows(allModels.value), deploymentLibraryRows(managed.tasks, runningModels.value, searchQuery.value, formatFilter.value, allModels.value)));
+  const effectivePage = clampPage(currentPage.value, rows.length, pageSize.value);
+  const pagedRows = paginate(rows, effectivePage, pageSize.value);
 
   return (
     <div class="page-shell">
@@ -870,12 +879,12 @@ export function Library() {
         </button>
       </div>
 
-      {libraryError.value && (
+      {(libraryError.value || managed.error) && (
         <div class="mt-4 flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">
           <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <span class="whitespace-pre-line flex-1">{libraryError.value}</span>
+          <span class="whitespace-pre-line flex-1">{libraryError.value || `${t("cluster.workerTasksError")} ${managed.error}`}</span>
           <button onClick={() => (libraryError.value = "")} class="ml-auto text-red-400 hover:text-red-600 flex-shrink-0">&#x2715;</button>
         </div>
       )}
@@ -952,12 +961,12 @@ export function Library() {
                 </td>
               </tr>
             ) : (
-              pagedRows.map(({ model: m, task, downloadOnly }) => (
-                <tr key={`${m.artifact_source || "opencsg"}:${m.name}`} class="border-b border-gray-50 hover:bg-gray-50/50">
+              pagedRows.map(({ model: m, task, downloadOnly, deployment }) => (
+                <tr data-deployment-id={deployment?.id} key={`${m.artifact_source || "opencsg"}:${m.name}`} class="border-b border-gray-50 hover:bg-gray-50/50">
                   <td class="px-4 py-3 min-w-0">
                     <a
                       href={downloadOnly ? undefined : modelDetailHref(m.model)}
-                      title={displayLocalModelID(m)}
+                      title={deployment ? `${displayLocalModelID(m)} · ${deployment.name} · ${t("deployments.controllerAction")}` : displayLocalModelID(m)}
                       class={`block max-w-[25ch] truncate font-medium ${downloadOnly ? "text-gray-400 cursor-not-allowed" : "text-indigo-600 hover:text-indigo-800 hover:underline"}`}
                     >
                       {displayLocalModelID(m)}
@@ -984,7 +993,7 @@ export function Library() {
                     </span>
                   </td>
                   <td class="px-4 py-3 min-w-0">
-                    <DownloadProgressCell task={task} completeWhenMissing={!downloadOnly} />
+                    <div title={deployment ? [task?.currentFile, task?.error].filter(Boolean).join(" · ") : undefined}><DownloadProgressCell task={task} completeWhenMissing={!downloadOnly} /></div>
                   </td>
                   <td class="px-4 py-3 text-gray-500 whitespace-nowrap" title={formatTableDateTime(m.modified_at)}>
                     {formatTableDateTime(m.modified_at)}
@@ -992,13 +1001,19 @@ export function Library() {
                   <td class="px-4 py-3 min-w-0">
                     <div class="flex min-w-0 max-w-full items-center justify-end gap-3 whitespace-nowrap">
                       <button
-                        disabled={!downloadOnly && (task?.status === "downloading" || task?.status === "queued")}
+                        disabled={!!deployment || (!downloadOnly && (task?.status === "downloading" || task?.status === "queued"))}
+                        title={deployment ? t("deployments.controllerAction") : undefined}
                         onClick={() => requestDelete(m.name, m.id, displayLocalModelID(m), task, downloadOnly)}
                         class="shrink-0 text-gray-500 hover:text-red-600 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {t("lib.delete")}
                       </button>
-                      {task?.status === "downloading" || task?.status === "queued" ? (
+                      {deployment ? (
+                        <button type="button" disabled title={t("deployments.controllerAction")}
+                          class="inline-flex shrink-0 items-center justify-center min-w-16 px-3 py-1 text-xs rounded bg-gray-50 text-gray-400 font-medium cursor-not-allowed">
+                          {t(deploymentPhaseKey(deployment.status.phase))}
+                        </button>
+                      ) : task?.status === "downloading" || task?.status === "queued" ? (
                         <button
                           onClick={() => pauseDownload(task.kind, task.name, { artifactSource: task.artifactSource, revision: task.revision })}
                           class="inline-flex shrink-0 items-center justify-center w-16 px-3 py-1 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-700 transition-colors font-medium"
@@ -1082,7 +1097,7 @@ export function Library() {
           <Pagination
             total={rows.length}
             totalLabel={t("lib.totalCount", rows.length)}
-            page={currentPage.value}
+            page={effectivePage}
             pageSize={pageSize.value}
             onPageChange={(page) => (currentPage.value = clampPage(page, rows.length, pageSize.value))}
             onPageSizeChange={(size) => {

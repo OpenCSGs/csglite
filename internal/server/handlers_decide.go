@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
 
+	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/cloud"
 	"github.com/opencsgs/csglite/internal/decision"
 	"github.com/opencsgs/csglite/internal/inference"
@@ -20,7 +22,7 @@ import (
 // model. It returns an error suitable for a 400 response when the model is
 // not a typed-decision model or its System 1 block is not downloaded.
 func (s *Server) decisionProfileForModel(modelID string) (*decision.Profile, error) {
-	lm, err := s.manager.ResolveLocalModel(modelID)
+	lm, err := s.resolveDecisionModel(modelID)
 	if err != nil {
 		return nil, fmt.Errorf("typed decisions need a downloaded local model: %w", err)
 	}
@@ -66,7 +68,7 @@ func (s *Server) locateLocalRepo(repo string) (string, bool) {
 // resolveDecisionLoRA is the inference.DecisionLoRAResolver: llama engines
 // for typed-decision models load the converted System 1 adapter.
 func (s *Server) resolveDecisionLoRA(modelName string) (string, error) {
-	lm, err := s.manager.ResolveLocalModel(modelName)
+	lm, err := s.resolveDecisionModel(modelName)
 	if err != nil {
 		return "", nil
 	}
@@ -110,6 +112,7 @@ func (s *Server) handleDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.touchEngine(req.Model)
+	defer s.retainDecisionEngine(req.Model)()
 
 	resp, err := question.Run(r.Context(), scorer, req.Model)
 	if err != nil {
@@ -138,6 +141,39 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Source = source
+	if cluster.IsClusterSource(source) {
+		data, _ := json.Marshal(req)
+		body, contentType, _ := inference.RewriteModelRequest(data, "application/json", req.Model, "local")
+		headers := make(http.Header)
+		headers.Set("Accept", r.Header.Get("Accept"))
+		headers.Set("Content-Type", contentType)
+		if s.cluster == nil {
+			writeOpenAIError(w, 503, "server_error", "cluster is not available")
+			return
+		}
+		response, routeErr := s.cluster.RouteRaw(r.Context(), req.Model, source, "/v1/decisions", body, headers)
+		var choice *cluster.LocalChoice
+		if errors.As(routeErr, &choice) {
+			defer choice.Release()
+			req.Source = "local"
+			r = r.WithContext(withProviderRouteSourceContext(r.Context(), "local"))
+		} else {
+			if routeErr != nil {
+				writeOpenAIInferenceError(w, routeErr)
+				return
+			}
+			defer response.Body.Close()
+			copyClusterNodeHeaders(w, response.Header)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(response.StatusCode)
+			_, _ = io.Copy(w, response.Body)
+			return
+		}
+	}
+	if strings.HasPrefix(req.Model, cluster.DeploymentModelPrefix) && (s.cluster == nil || !s.cluster.DeploymentReady(req.Model)) {
+		writeOpenAIError(w, 503, "server_error", "deployment is not ready")
+		return
+	}
 	routeSource := providerRouteSourceFromContext(r.Context())
 	if routeSource != "" &&
 		!strings.EqualFold(source, "local") &&
@@ -148,8 +184,8 @@ func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
 	}
 	// A downloaded model always wins over a cloud model of the same name,
 	// except on a provider route that targets the cloud.
-	if !strings.EqualFold(routeSource, "cloud") {
-		if lm, err := s.manager.ResolveLocalModel(req.Model); err == nil {
+	if !strings.EqualFold(source, "cloud") && !strings.EqualFold(routeSource, "cloud") {
+		if lm, err := s.resolveDecisionModel(req.Model); err == nil {
 			s.handleLocalDecisions(w, r, req, lm)
 			return
 		}
@@ -197,6 +233,7 @@ func (s *Server) handleLocalDecisions(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	defer s.touchEngine(req.Model)
+	defer s.retainDecisionEngine(req.Model)()
 
 	resp, err := questions.Run(r.Context(), scorer, req.Model)
 	if err != nil {
@@ -222,6 +259,7 @@ func (s *Server) handleNativeDecisions(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	defer s.touchEngine(req.Model)
+	defer s.retainDecisionEngine(req.Model)()
 	answerer, ok := eng.(inference.SystemOneAnswerer)
 	if !ok || answerer.NativeDecisionType() == "" {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
@@ -343,8 +381,38 @@ func (s *Server) decisionScorer(r *http.Request, modelID, source string) (infere
 		if scorer.HasDecisionAdapter() {
 			return scorer, nil
 		}
+		if strings.HasPrefix(modelID, cluster.DeploymentModelPrefix) {
+			return nil, inference.NewHTTPStatusError(503, "managed model has no decision adapter; restart it on the Master")
+		}
 		log.Printf("DECIDE %s: loaded engine has no typed-decision adapter; reloading", modelID)
 		s.closeEngineKey(engineCacheKey(s.resolveLocalModelStorageID(modelID), engineModeChat))
 	}
 	return nil, inference.NewHTTPStatusError(http.StatusServiceUnavailable, "the typed-decision adapter could not be loaded; see the server log")
+}
+
+// Runtime aliases resolve to the same canonical artifact used by the library.
+// Readiness is enforced by inference handlers, while load-time LoRA resolution
+// must be able to inspect an assignment before its runtime is published.
+func (s *Server) resolveDecisionModel(id string) (*model.LocalModel, error) {
+	if strings.HasPrefix(id, cluster.DeploymentModelPrefix) {
+		if s.cluster != nil {
+			for _, d := range s.cluster.LocalDeployments() {
+				if d.ModelID() == id {
+					return s.manager.Get(deploymentArtifactID(d))
+				}
+			}
+		}
+		return nil, fmt.Errorf("deployment artifact not found")
+	}
+	return s.manager.ResolveLocalModel(id)
+}
+func (s *Server) retainDecisionEngine(id string) func() {
+	key := engineCacheKey(s.resolveLocalModelStorageID(id), engineModeChat)
+	s.mu.RLock()
+	me := s.engines[key]
+	s.mu.RUnlock()
+	if me == nil {
+		return func() {}
+	}
+	return s.beginEngineUse(id, engineModeChat, me.engine)
 }

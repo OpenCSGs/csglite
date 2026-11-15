@@ -4,6 +4,7 @@ export type ApiExampleMode =
   | "embedding"
   | "asr"
   | "decision"
+  | "tts"
   | "text-to-image"
   | "image-to-image";
 
@@ -15,6 +16,10 @@ export interface ApiExamples {
 
 export function apiExampleModeFromPipelineTag(pipelineTag?: string, isVision?: boolean): ApiExampleMode {
   switch (pipelineTag) {
+    case "typed-decisions":
+    case "decision":return "decision";
+    case "text-to-speech":
+    case "text-to-audio":return "tts";
     case "text-to-image":
       return "text-to-image";
     case "image-to-image":
@@ -35,6 +40,27 @@ export function apiExampleModeFromPipelineTag(pipelineTag?: string, isVision?: b
 
 function buildExamples(baseUrl: string, model: string, mode: ApiExampleMode): ApiExamples {
   switch (mode) {
+    case "tts":
+      return {
+        curl: `curl ${baseUrl}/v1/audio/speech \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"${model}","input":"Hello","response_format":"wav"}' \\
+  --output speech.wav`,
+        python: `from openai import OpenAI
+
+client = OpenAI(base_url="${baseUrl}/v1", api_key="YOUR_API_KEY")
+with client.audio.speech.with_streaming_response.create(
+    model="${model}", input="Hello", voice="", response_format="wav"
+) as response:
+    response.stream_to_file("speech.wav")`,
+        javascript: `const response = await fetch("${baseUrl}/v1/audio/speech", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ model: "${model}", input: "Hello", response_format: "wav" })
+});
+const audio = await response.blob();`,
+      };
+
     case "asr":
       return {
         curl: `curl ${baseUrl}/v1/audio/transcriptions \\

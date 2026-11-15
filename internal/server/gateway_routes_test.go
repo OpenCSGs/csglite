@@ -80,7 +80,7 @@ func TestGatewayListsOnlyPublishedServicesAndProtectsEveryProtocol(t *testing.T)
 	s, key := gatewayFixture(t)
 	for name, h := range map[string]http.Handler{"main": s.routes(), "external": s.externalAPIRoutes(), "public": s.publicClusterInferenceRoutes()} {
 		t.Run(name, func(t *testing.T) {
-			for _, path := range []string{"models", "chat/completions", "embeddings", "responses", "messages", "messages/count_tokens"} {
+			for _, path := range []string{"models", "chat/completions", "embeddings", "responses", "messages", "messages/count_tokens", "decisions", "images/generations", "images/edits", "audio/transcriptions", "audio/speech"} {
 				method := "POST"
 				if path == "models" {
 					method = "GET"
@@ -177,6 +177,8 @@ func TestGatewayRouteFamilyIsDocumented(t *testing.T) {
 	for path, methods := range map[string][]string{
 		"/ai-gateway/v1/models": {"get"}, "/ai-gateway/v1/chat/completions": {"post"}, "/ai-gateway/v1/embeddings": {"post"},
 		"/ai-gateway/v1/responses": {"get", "post"}, "/ai-gateway/v1/messages": {"post"}, "/ai-gateway/v1/messages/count_tokens": {"post"},
+		"/ai-gateway/v1/decisions": {"post"}, "/ai-gateway/v1/images/generations": {"post"}, "/ai-gateway/v1/images/edits": {"post"},
+		"/ai-gateway/v1/audio/transcriptions": {"post"}, "/ai-gateway/v1/audio/speech": {"post"},
 		"/ai-gateway/realtime/calls": {"post"}, "/ai-gateway/realtime/calls/{call_id}": {"delete"},
 		"/ai-gateway/providers/{providerID}/v1/audio/speech": {"post"},
 	} {

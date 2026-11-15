@@ -72,6 +72,8 @@ export interface LocalModelSearchResponse {
 }
 
 export interface RunningModel {
+	display_name?: string;
+	repository?: string;
   name: string;
   model: string;
   size: number;
@@ -2972,6 +2974,10 @@ export interface ProviderPoolMember {
 }
 
 export interface ProviderPool {
+  inference_protocols?: string[];
+  typed_decisions?: boolean;
+  decision_only?: boolean;
+  vision?: boolean;
   id: string;
   name: string;
   model: string;
@@ -3206,6 +3212,7 @@ export interface ClusterSummary {
 }
 
 export interface ClusterSettings {
+  managed_by?: string;
 	shared_models?: string[];
   accept_work: boolean;
   state: ClusterNodeState;
@@ -3232,7 +3239,12 @@ export interface ClusterGPUStatus {
 }
 
 export interface ClusterNodeModelStatus {
+  typed_decisions?: boolean;
+  decision_only?: boolean;
   id: string;
+  repo?: string;
+  source?: string;
+  deployment_id?: string;
   size: number;
   format?: string;
   pipeline_tag?: string;
@@ -3250,9 +3262,13 @@ export interface ClusterNodeModelStatus {
     load_seconds?: number;
     samples?: number;
   };
+  has_mmproj?: boolean;
 }
 
 export interface ClusterNodeStatus {
+  model_management?: boolean;
+  managed_by?: string;
+  deployment_capable?: boolean;
   uuid: string;
   name: string;
   version: string;
@@ -3418,6 +3434,7 @@ export interface ClusterRecommendation {
 }
 
 export interface ClusterSettingsUpdate {
+  managed_by?: string;
 	shared_models?: string[];
   accept_work?: boolean;
   prefer_local?: boolean;
@@ -3745,4 +3762,30 @@ export async function createEmbeddings(model: string, input: string, source?: st
   method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ model, input, source, encoding_format: "float" }), signal,
  });
+}
+
+export interface ClusterDeploymentSpec {
+  name: string; node_uuid: string; repository: string; artifact_source: string;
+  revision: string; quant: string; kind: "chat" | "embedding";
+  num_ctx: number; num_parallel: number; n_gpu_layers: number;
+}
+export interface ClusterDeployment extends ClusterDeploymentSpec {
+  id: string; controller_uuid: string; generation: number; desired: "running" | "stopped" | "deleted";
+  created_at: string;
+  status: { phase: string; error?: string; detail?: string; completed_bytes?: number; total_bytes?: number; size?: number; updated_at: string };
+}
+export function getClusterDeployments(): Promise<{ deployments: ClusterDeployment[]; assignments: ClusterDeployment[] }> {
+  return fetchJSONWithApiError("/api/cluster/deployments", { cache: "no-store" });
+}
+export function createClusterDeployment(spec: ClusterDeploymentSpec): Promise<ClusterDeployment> {
+  return fetchJSONWithApiError("/api/cluster/deployments", { method: "POST", body: JSON.stringify(spec) });
+}
+export function updateClusterDeployment(id: string, desired: "running" | "stopped" | "deleted"): Promise<ClusterDeployment> {
+  return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ desired }) });
+}
+
+export function manageClusterNodeModel(uuid: string, model: ClusterNodeModelStatus, action: "unload" | "delete"): Promise<{status: string}> {
+  return fetchJSONWithApiError(`/api/cluster/nodes/${encodeURIComponent(uuid)}/models/action`, {
+    method: "POST", body: JSON.stringify({ model: model.id, repository: model.repo, artifact_source: model.source || "opencsg", action }),
+  });
 }

@@ -9,11 +9,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -31,6 +29,8 @@ func AdminTokenPath(storageRoot string) string {
 }
 
 type adminCredential struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name,omitempty"`
 	Hash      string     `json:"token_hash"`
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -49,52 +49,17 @@ func tokenHash(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// GenerateAdminToken rotates the credential atomically. The plaintext is returned
-// once to the CLI and is never written to the application's credential store.
+// GenerateAdminToken appends a credential without revoking any existing token
+// or browser session. The plaintext is returned once and never persisted.
 func GenerateAdminToken(path string) (string, error) {
 	return GenerateAdminTokenWithTTL(path, 0)
 }
 
 // GenerateAdminTokenWithTTL bounds both token use and sessions authenticated by
-// it. Zero preserves the lifetime of existing credentials; negative TTLs fail
-// before rotation so an invalid CLI argument cannot revoke a working token.
+// it. Zero means no expiry. Existing tokens retain their own expiry dates.
 func GenerateAdminTokenWithTTL(path string, ttl time.Duration) (string, error) {
-	if ttl < 0 {
-		return "", fmt.Errorf("token TTL must not be negative")
-	}
-	secret, err := randomSecret()
-	if err != nil {
-		return "", err
-	}
-	token := "csgadmin_" + secret
-	credential := adminCredential{Hash: tokenHash(token), CreatedAt: time.Now().UTC()}
-	if ttl > 0 {
-		expires := credential.CreatedAt.Add(ttl)
-		credential.ExpiresAt = &expires
-	}
-	data, err := json.MarshalIndent(credential, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return "", err
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".public-admin-*")
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(f.Name())
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Rename(f.Name(), path); err != nil {
-		return "", err
-	}
-	return token, nil
+	_, token, err := CreateAdminToken(path, "", ttl)
+	return token, err
 }
 
 type adminSession struct {
@@ -116,24 +81,6 @@ type AdminAuth struct {
 
 func NewAdminAuth(path string) *AdminAuth {
 	return &AdminAuth{path: path, sessions: make(map[string]adminSession), attempts: make(map[string]loginAttempt)}
-}
-
-func (a *AdminAuth) credential() (adminCredential, error) {
-	data, err := os.ReadFile(a.path)
-	if err != nil {
-		return adminCredential{}, err
-	}
-	var c adminCredential
-	if err := json.Unmarshal(data, &c); err != nil {
-		return adminCredential{}, err
-	}
-	if len(c.Hash) != 64 {
-		return adminCredential{}, fmt.Errorf("invalid administrative credential")
-	}
-	if c.ExpiresAt != nil && !time.Now().Before(*c.ExpiresAt) {
-		return adminCredential{}, fmt.Errorf("administrative credential expired")
-	}
-	return c, nil
 }
 
 func equalSecret(a, b string) bool {
@@ -190,8 +137,9 @@ func (a *AdminAuth) Login(w http.ResponseWriter, r *http.Request) {
 		adminJSON(w, 400, map[string]string{"error": "invalid request"})
 		return
 	}
-	credential, err := a.credential()
-	if err != nil || !equalSecret(tokenHash(strings.TrimSpace(body.Token)), credential.Hash) {
+	credentials, err := loadAdminCredentials(a.path)
+	credential, ok := credentials.find(tokenHash(strings.TrimSpace(body.Token)), time.Now())
+	if err != nil || !ok {
 		adminJSON(w, 401, map[string]string{"error": "invalid login token"})
 		return
 	}
@@ -213,7 +161,8 @@ func (a *AdminAuth) Login(w http.ResponseWriter, r *http.Request) {
 	maxAge := adminCookieMaxAge(time.Until(expires))
 	a.mu.Lock()
 	for key, session := range a.sessions {
-		if now.After(session.Expires) || session.Credential != credential.Hash {
+		_, active := credentials.find(session.Credential, now)
+		if !now.Before(session.Expires) || !active {
 			delete(a.sessions, key)
 		}
 	}
@@ -248,16 +197,22 @@ func (a *AdminAuth) Authenticate(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	credential, err := a.credential()
+	credentials, err := loadAdminCredentials(a.path)
 	if err != nil {
 		return false
 	}
 	a.mu.Lock()
 	session, ok := a.sessions[tokenHash(cookie.Value)]
-	if !ok || time.Now().After(session.Expires) || !equalSecret(session.Credential, credential.Hash) {
+	now := time.Now()
+	credential, active := credentials.find(session.Credential, now)
+	if !ok || !now.Before(session.Expires) || !active {
 		delete(a.sessions, tokenHash(cookie.Value))
 		a.mu.Unlock()
 		return false
+	}
+	if credential.ExpiresAt != nil && credential.ExpiresAt.Before(session.Expires) {
+		session.Expires = *credential.ExpiresAt
+		a.sessions[tokenHash(cookie.Value)] = session
 	}
 	a.mu.Unlock()
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {

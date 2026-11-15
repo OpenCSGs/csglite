@@ -3,10 +3,14 @@ package server
 import (
 	"strings"
 
+	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/model"
 )
 
 func (s *Server) resolveLocalModelStorageID(modelID string) string {
+	if strings.HasPrefix(strings.TrimSpace(modelID), cluster.DeploymentModelPrefix) {
+		return strings.TrimSpace(modelID)
+	}
 	if s == nil || s.manager == nil {
 		return strings.TrimSpace(modelID)
 	}
@@ -18,6 +22,9 @@ func (s *Server) resolveLocalModelStorageID(modelID string) string {
 }
 
 func (s *Server) localInferenceModelID(modelID string) string {
+	if strings.HasPrefix(strings.TrimSpace(modelID), cluster.DeploymentModelPrefix) {
+		return strings.TrimSpace(modelID)
+	}
 	if s == nil || s.manager == nil {
 		return strings.TrimSpace(modelID)
 	}

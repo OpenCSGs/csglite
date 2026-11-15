@@ -4,6 +4,7 @@
 package public
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -228,6 +229,24 @@ func (g *Gateway) RoundTrip(node string, r *http.Request) (*http.Response, error
 		return nil, err
 	}
 	defer out.Body.Close()
+	return g.roundTrip(node, out)
+}
+
+// AssignDeployment cannot proxy arbitrary URLs, methods, headers or management APIs.
+func (g *Gateway) AssignDeployment(ctx context.Context, node string, data []byte) (*http.Response, error) {
+	if len(data) > 1<<20 || !json.Valid(data) {
+		return nil, errors.New("invalid deployment assignment")
+	}
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://cluster-node"+DeploymentPath, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	r.Header.Set("Content-Type", "application/json")
+	r.GetBody = nil
+	return g.roundTrip(node, r)
+}
+
+func (g *Gateway) roundTrip(node string, out *http.Request) (*http.Response, error) {
 	g.mu.RLock()
 	sess := g.sessions[node]
 	ready := sess != nil && !sess.draining && !sess.mux.IsClosed() && time.Since(sess.lastSeen) < 3*g.opts.Heartbeat
@@ -262,4 +281,18 @@ func (g *Gateway) Close() error {
 		sess.transport.CloseIdleConnections()
 	}
 	return nil
+}
+
+// ManageModel forwards only the typed model lifecycle path; it cannot proxy URLs.
+func (g *Gateway) ManageModel(ctx context.Context, node string, data []byte) (*http.Response, error) {
+	if len(data) > 4096 || !json.Valid(data) {
+		return nil, errors.New("invalid model action")
+	}
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://cluster-node"+ModelActionPath, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	r.Header.Set("Content-Type", "application/json")
+	r.GetBody = nil
+	return g.roundTrip(node, r)
 }

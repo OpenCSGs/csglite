@@ -1,4 +1,4 @@
-import type { ClusterInfo, ClusterNodeHealth, ClusterNodeState } from "./api/client";
+import type { ClusterInfo, ClusterNodeHealth, ClusterNodeState, ClusterSettings } from "./api/client";
 
 /**
  * Pure helpers shared by the Dashboard cluster section and the Cluster page.
@@ -163,4 +163,9 @@ export function clusterNodeRole(uuid: string, cluster: ClusterInfo | null): "mas
   if (cluster.topology !== "public") return "peer";
   if (!cluster.gateway_uuid) return "unknown";
   return uuid === cluster.gateway_uuid ? "master" : "slave";
+}
+
+/** Older workers could pause via accept_work; present that as maintenance. */
+export function workerNodeState(settings: Pick<ClusterSettings, "state" | "accept_work">): ClusterNodeState {
+  return settings.state === "active" && !settings.accept_work ? "maintenance" : settings.state;
 }

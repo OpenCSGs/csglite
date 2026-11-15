@@ -116,6 +116,9 @@ type Options struct {
 
 // Manager runs the cluster on one node.
 type Manager struct {
+	deploymentWG       sync.WaitGroup
+	deployments        *deploymentStore
+	deploymentWake     chan struct{}
 	publicConnectionMu sync.Mutex
 	publicConnection   *publicGatewayConnection
 	publicGateway      *publictunnel.Gateway
@@ -203,6 +206,11 @@ func New(opts Options) (*Manager, error) {
 		discoverer:   opts.Discoverer,
 		observedIPs:  map[string]time.Time{},
 	}
+	m.deployments, err = openDeploymentStore(opts.Dir)
+	if err != nil {
+		return nil, fmt.Errorf("open deployments: %w", err)
+	}
+	m.deploymentWake = make(chan struct{}, 1)
 	if err := m.preparePublic(); err != nil {
 		return nil, err
 	}
@@ -257,6 +265,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.startedAt = time.Now()
 	m.started = true
+	m.startDeploymentLoopsLocked()
 	m.mu.Unlock()
 	if m.shouldActivateAtStart() {
 		return m.Activate()
@@ -291,6 +300,7 @@ func (m *Manager) Activate() error {
 	if m.ctx == nil {
 		m.ctx, m.cancel = context.WithCancel(context.Background())
 		m.started = true
+		m.startDeploymentLoopsLocked()
 	}
 	runCtx, runCancel := context.WithCancel(m.ctx)
 	ln, srv, err := listenPeer(m.opts.ListenAddr, m.identity, m.Peers().peerMux())
@@ -382,6 +392,7 @@ func (m *Manager) Stop() {
 	if cancel != nil {
 		cancel()
 	}
+	m.deploymentWG.Wait()
 	m.perf.flush()
 }
 

@@ -306,12 +306,14 @@ type PsResponse struct {
 }
 
 type RunningModel struct {
-	Name      string    `json:"name"`
-	Model     string    `json:"model"`
-	Size      int64     `json:"size"`
-	Format    string    `json:"format"`
-	Status    string    `json:"status,omitempty"`
-	ExpiresAt time.Time `json:"expires_at"`
+	DisplayName string    `json:"display_name,omitempty"`
+	Repository  string    `json:"repository,omitempty"`
+	Name        string    `json:"name"`
+	Model       string    `json:"model"`
+	Size        int64     `json:"size"`
+	Format      string    `json:"format"`
+	Status      string    `json:"status,omitempty"`
+	ExpiresAt   time.Time `json:"expires_at"`
 	// Step describes the current load/conversion step for models whose
 	// status is "loading" (e.g. "Installing CPU PyTorch for model conversion").
 	Step        string `json:"step,omitempty"`
@@ -1426,14 +1428,18 @@ type ThirdPartyProviderUpdateRequest struct {
 
 // ProviderPool exposes one public model ID and selects one of its members.
 type ProviderPool struct {
-	ID           string               `json:"id"`
-	Name         string               `json:"name"`
-	Model        string               `json:"model"`
-	Enabled      bool                 `json:"enabled"`
-	Policy       string               `json:"policy"`
-	Category     string               `json:"category,omitempty"`
-	SourceStates map[string]string    `json:"source_states,omitempty"`
-	Members      []ProviderPoolMember `json:"members"`
+	InferenceProtocols []string             `json:"inference_protocols"`
+	TypedDecisions     bool                 `json:"typed_decisions,omitempty"`
+	DecisionOnly       bool                 `json:"decision_only,omitempty"`
+	Vision             bool                 `json:"vision,omitempty"`
+	ID                 string               `json:"id"`
+	Name               string               `json:"name"`
+	Model              string               `json:"model"`
+	Enabled            bool                 `json:"enabled"`
+	Policy             string               `json:"policy"`
+	Category           string               `json:"category,omitempty"`
+	SourceStates       map[string]string    `json:"source_states,omitempty"`
+	Members            []ProviderPoolMember `json:"members"`
 }
 
 type ProviderPoolMember struct {

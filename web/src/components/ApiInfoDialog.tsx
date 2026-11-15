@@ -1,7 +1,8 @@
+import { clusterMode } from "../clusterAccess";
 import { useEffect, useState } from "preact/hooks";
 import { getProviderPools } from "../api/client";
 import type { ProviderPool } from "../api/client";
-import { serviceConfigured } from "../utils/modelServices";
+import { serviceConfigured, servicePipelineTag } from "../utils/modelServices";
 import { signal } from "@preact/signals";
 import { t } from "../i18n";
 import { apiExampleModeFromPipelineTag, buildApiExamples } from "../utils/apiExamples";
@@ -38,10 +39,10 @@ function ServiceApiInfoDialog({
       ? "embedding"
       : apiExampleModeFromPipelineTag(pipelineTag, isVision);
   const examples = buildApiExamples(resolvedBaseUrl, model, mode);
-  const decisionExamples = isDecision ? buildApiExamples(resolvedBaseUrl, model, "decision") : null;
+  const decisionExamples = (isDecision || mode === "decision") ? buildApiExamples(resolvedBaseUrl, model, "decision") : null;
   // A decision-only model cannot chat. The chat heading only separates the
   // two sections, so it shows when decision examples come first.
-  const showChatExamples = !(decisionExamples && isDecisionOnly);
+  const showChatExamples = mode !== "decision" && !(decisionExamples && isDecisionOnly);
   const showChatHeading = Boolean(decisionExamples) && showChatExamples;
   const isTextToImage = mode === "text-to-image";
   const isImageToImage = mode === "image-to-image";
@@ -144,14 +145,15 @@ export function ApiInfoDialog(props: Parameters<typeof ServiceApiInfoDialog>[0] 
     return () => { active = false; };
   }, [props.baseUrl, props.source, props.model]);
   if (props.baseUrl) return <ServiceApiInfoDialog {...props} />;
+  const service = services.find(p => p.model === selected);
   return <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={e => { if (e.target === e.currentTarget) props.onClose(); }}>
     {selected && !loading ? <div>
-      <ServiceApiInfoDialog {...props} model={selected} isDecision={false} isDecisionOnly={false} />
+      <ServiceApiInfoDialog {...props} model={selected} pipelineTag={service ? servicePipelineTag(service) : props.pipelineTag} isEmbedding={service?.category === "embedding"} isASR={service?.category === "asr"} isVision={service?.vision} isDecision={service?.typed_decisions} isDecisionOnly={service?.decision_only} />
       {services.length > 1 && <div class="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-lg bg-white p-3 shadow-lg"><label class="text-sm">{t("services.service")} <select value={selected} onChange={e => setSelected(e.currentTarget.value)}>{services.map(p => <option key={p.id} value={p.model}>{p.name} · {p.model}</option>)}</select></label></div>}
     </div> : <div class="mx-4 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
       <h3 class="font-semibold">{t("dash.apiTitle")}</h3>
       <p class="mt-3 text-sm text-gray-600">{error || t(loading ? "services.loading" : "services.publishBeforeAPI")}</p>
-      <div class="mt-5 flex justify-end gap-4"><button onClick={props.onClose}>{t("services.close")}</button>{!loading && <a class="text-indigo-600" href="/ai-gateway" onClick={props.onClose}>{t("services.title")}</a>}</div>
+      <div class="mt-5 flex justify-end gap-4"><button onClick={props.onClose}>{t("services.close")}</button>{!loading && clusterMode.value !== "worker" && <a class="text-indigo-600" href="/ai-gateway" onClick={props.onClose}>{t("services.title")}</a>}</div>
     </div>}
   </div>;
 }

@@ -1,4 +1,4 @@
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { useLocation } from "preact-iso";
 import { signal } from "@preact/signals";
 import {
@@ -7,6 +7,8 @@ import {
   getCluster,
   getClusterCode,
   getClusterModels,
+  getClusterDeployments,
+  getProviderPools,
   getClusterRecommendations,
   getClusterToken,
   getDiscoveredClusterNodes,
@@ -22,6 +24,7 @@ import {
   updateClusterSettings, enableCluster } from "../api/client";
 import type {
   ClusterCodeResponse,
+  ClusterDeployment,
   ClusterExplainResponse,
   ClusterModelDistribution,
   ClusterModelSync,
@@ -33,10 +36,18 @@ import type {
   ClusterTokenResponse,
   ClusterView,
   DiscoveredClusterNode,
+  ProviderPool,
 } from "../api/client";
+import { clusterMode, navigationMode } from "../clusterAccess";
+import { filterModelInstances, isManagedModelInstance, mergeClusterDeployments, modelInstanceCategory, modelInstanceRows, modelRowState, modelNodeState, measuredRate, modelPublication } from "../clusterModels";
+import { ClusterModelActions } from "../components/ClusterModelActions";
+import { ClusterWorkerOverview } from "../components/ClusterWorkerOverview";
+import { ClusterDeploymentControls } from "../components/ClusterDeployments";
+import { deploymentProgress } from "../deploymentModels";
+import type { ModelInstanceFilter } from "../clusterModels";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { t, locale } from "../i18n";
-import { clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, shortVersion, stateKey } from "../cluster";
+import { workerNodeState, clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, shortVersion, stateKey } from "../cluster";
 
 type ClusterTab = "overview" | "discovered" | "models" | "settings";
 
@@ -89,8 +100,12 @@ const overviewError = signal("");
 
 // ---- models ----------------------------------------------------------------
 const models = signal<ClusterModelDistribution[]>([]);
+const modelDeployments = signal<ClusterDeployment[]>([]);
+const modelPublications = signal<ProviderPool[] | null>(null);
+const publicationError = signal("");
 const modelsLoading = signal(false);
 const modelsError = signal("");
+let modelsRefreshPending: Promise<void> | undefined;
 const syncBusy = signal("");
 const recommendations = signal<ClusterRecommendation[]>([]);
 const applyBusy = signal("");
@@ -142,7 +157,13 @@ async function loadView() {
   if (featureDisabled.value) return;
   try {
     const next = await getCluster();
+    if (next.mode === "worker" && activeTab.value !== "overview" && activeTab.value !== "settings") activeTab.value = "overview";
+    if (view.value?.node.uuid !== next.node.uuid || view.value?.cluster?.uuid !== next.cluster?.uuid || view.value?.mode !== next.mode) {
+      models.value = []; modelDeployments.value = []; recommendations.value = []; modelsError.value = "";
+      modelPublications.value = null; publicationError.value = "";
+    }
     view.value = next;
+    clusterMode.value = navigationMode(next);
     viewError.value = "";
     if (!next.cluster) {
       // Leaving resets everything that only makes sense inside a cluster.
@@ -160,7 +181,7 @@ async function loadView() {
 }
 
 async function loadDiscovered() {
-  if (featureDisabled.value) return;
+  if (featureDisabled.value || !view.value || (view.value.mode && view.value.mode !== "lan")) return;
   try {
     discovered.value = await getDiscoveredClusterNodes();
   } catch {
@@ -171,7 +192,7 @@ async function loadDiscovered() {
 }
 
 async function loadAdmissionCode() {
-  if (featureDisabled.value) return;
+  if (featureDisabled.value || !view.value || (view.value.mode && view.value.mode !== "lan")) return;
   if (view.value?.cluster) return;
   try {
     admissionCode.value = await getClusterCode();
@@ -191,15 +212,33 @@ async function loadModels() {
 }
 
 async function refreshModels() {
-  try {
-    const [list, recs] = await Promise.all([getClusterModels(), getClusterRecommendations().catch(() => [])]);
-    models.value = list;
-    recommendations.value = recs;
-    modelsError.value = "";
-    if (!explainModel.value && list.length > 0) explainModel.value = list[0].id;
-  } catch (err) {
-    modelsError.value = errorMessage(err);
-  }
+  const current = view.value;
+  if (!current || current.mode === "worker") return;
+  if (modelsRefreshPending) return modelsRefreshPending;
+  const sameCluster = () => view.value?.node.uuid === current.node.uuid
+    && view.value?.cluster?.uuid === current.cluster?.uuid && view.value?.mode === current.mode;
+  modelsRefreshPending = (async () => {
+    const publications = getProviderPools().then(pools => {
+      if (sameCluster()) { modelPublications.value = pools; publicationError.value = ""; }
+    }).catch(err => { if (sameCluster()) publicationError.value = errorMessage(err); });
+    try {
+      const [list, tasks, recs] = await Promise.all([
+        getClusterModels(), getClusterDeployments(),
+        (!current.mode || current.mode === "lan") ? getClusterRecommendations().catch(() => []) : Promise.resolve([]),
+      ]);
+      if (!sameCluster()) return;
+      models.value = list;
+      modelDeployments.value = mergeClusterDeployments(tasks.deployments, tasks.assignments);
+      recommendations.value = recs;
+      modelsError.value = "";
+      if (!explainModel.value && list.length > 0) explainModel.value = list[0].id;
+    } catch (err) {
+      if (sameCluster()) modelsError.value = errorMessage(err);
+    }
+    await publications;
+  })();
+  try { await modelsRefreshPending; }
+  finally { modelsRefreshPending = undefined; }
 }
 
 async function loadToken() {
@@ -341,7 +380,9 @@ async function changeLocalState(uuid: string, state: ClusterNodeState) {
   stateSaving.value = true;
   overviewError.value = "";
   try {
-    const settings = await setClusterNodeState(uuid, state);
+    const settings = view.value?.mode === "worker"
+      ? await updateClusterSettings({ state, accept_work: true })
+      : await setClusterNodeState(uuid, state);
     if (view.value) view.value = { ...view.value, settings };
     await loadView();
   } catch (err) {
@@ -420,7 +461,7 @@ function openSettingsTab(current: ClusterSettings | undefined) {
   settingsSaved.value = false;
   settingsError.value = "";
   if (current) settingsForm.value = { ...current };
-  void loadToken();
+  if (view.value?.mode !== "worker") void loadToken();
 }
 
 async function saveSettings() {
@@ -437,10 +478,12 @@ async function saveSettings() {
   try {
     const saved = await updateClusterSettings({
 	  shared_models: form.shared_models?.map((id) => id.trim()).filter(Boolean),
+      managed_by: view.value?.mode === "worker" ? undefined : form.managed_by,
       accept_work: form.accept_work,
-      prefer_local: form.prefer_local,
-      routing_mode: form.routing_mode,
-      affinity_max_queue: Math.max(0, Math.round(Number(form.affinity_max_queue) || 0)),
+      state: view.value?.mode === "worker" ? form.state : undefined,
+      prefer_local: view.value?.mode === "worker" ? undefined : form.prefer_local,
+      routing_mode: view.value?.mode === "worker" ? undefined : form.routing_mode,
+      affinity_max_queue: view.value?.mode === "worker" ? undefined : Math.max(0, Math.round(Number(form.affinity_max_queue) || 0)),
       disk_reserve_gb: Math.max(0, Number(form.disk_reserve_gb) || 0),
       weight: Math.round(weight),
     });
@@ -503,11 +546,13 @@ export function Cluster() {
       <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-500">{t(publicMode ? "cluster.publicEyebrow" : "cluster.eyebrow")}</p>
-          <h1 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">{t("cluster.title")}</h1>
-          <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t(publicMode ? "cluster.publicSubtitle" : "cluster.subtitle")}</p>
+          <h1 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">{t(current?.mode === "worker" ? "cluster.workerTitle" : "cluster.title")}</h1>
+          <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t(current?.mode === "worker" ? "cluster.workerSubtitle" : publicMode ? "cluster.publicSubtitle" : "cluster.subtitle")}</p>
         </div>
-        {current?.cluster && <HeaderStats view={current} />}
+        {current?.cluster && current.mode !== "worker" && <HeaderStats view={current} />}
       </div>
+
+      {current && viewError.value && <p role="alert" class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{t("cluster.staleView")} {viewError.value}</p>}
 
       {current?.mode === "gateway" && clusterNodeRole(current.node.uuid, current.cluster) === "master" && (
         <section class="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">
@@ -541,7 +586,7 @@ export function Cluster() {
 function HeaderStats({ view }: { view: ClusterView }) {
   const limit = nodeLimitLabel(view.members.length, view.node_limit);
   const online = view.members.filter((m) => m.online).length;
-  const vram = view.members.reduce(
+  const vram = view.members.filter(m => m.online).reduce(
     (acc, m) => {
       for (const gpu of m.status?.gpus ?? []) {
         acc.total += gpu.vram_total;
@@ -551,15 +596,16 @@ function HeaderStats({ view }: { view: ClusterView }) {
     },
     { total: 0, used: 0 },
   );
-  const inflight = view.members.reduce((sum, m) => sum + (m.status?.inflight ?? 0), 0);
+  const inflight = view.members.filter(m => m.online).reduce((sum, m) => sum + (m.status?.inflight ?? 0), 0);
   const nodesValue = view.node_limit > 0 ? `${view.members.length} / ${view.node_limit}` : String(view.members.length);
   const nodesHint = view.node_limit > 0 ? (limit.atLimit ? t("cluster.capHintShort") : "") : t("cluster.nodesUnlimitedHint");
   return (
-    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5" data-cluster-summary>
       <Stat label={t("cluster.statOnline")} value={`${online} / ${view.members.length}`} />
       <Stat label={t("cluster.statNodes")} value={nodesValue} hint={nodesHint} tone={limit.atLimit ? "warn" : "normal"} />
-      <Stat label={t("cluster.statVRAM")} value={fmtGBPairShort(vram.used, vram.total)} />
+      <Stat label={t("cluster.statVRAM")} value={fmtGBPairShort(vram.used, vram.total)} hint={t("cluster.onlineResources")} />
       <Stat label={t("cluster.statInflight")} value={String(inflight)} />
+      <Stat label={t("cluster.statRole")} value={t(`cluster.role.${clusterNodeRole(view.node.uuid, view.cluster)}`)} />
     </div>
   );
 }
@@ -713,7 +759,7 @@ function NotInCluster({ view }: { view: ClusterView }) {
         {/* Join */}
         {view.mode !== "gateway" && <section class="bg-white rounded-xl border border-gray-200 p-6">
           <h2 class="text-lg font-bold text-gray-900">{t("cluster.joinTitle")}</h2>
-          <p class="mt-1 text-sm text-gray-500">{t("cluster.joinDesc")}</p>
+          <p class="mt-1 text-sm text-gray-500">{t(view.mode === "worker" ? "cluster.workerJoinDesc" : "cluster.joinDesc")}</p>
           <div class="mt-4 space-y-3">
             <div>
               <label class="mb-1 block text-sm font-medium text-gray-700">{t("cluster.joinToken")}</label>
@@ -727,16 +773,16 @@ function NotInCluster({ view }: { view: ClusterView }) {
               />
             </div>
             <div>
-              <label class="mb-1 block text-sm font-medium text-gray-700">{t("cluster.joinAddress")}</label>
+              <label class="mb-1 block text-sm font-medium text-gray-700">{t(view.mode === "worker" ? "cluster.masterAddress" : "cluster.joinAddress")}</label>
               <input
                 class="w-full rounded-lg border border-gray-200 px-3 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={joinAddress.value}
-                placeholder={t("cluster.joinAddressPlaceholder")}
+                placeholder={view.mode === "worker" ? view.gateway_url : t("cluster.joinAddressPlaceholder")}
                 disabled={joining.value}
                 spellcheck={false}
                 onInput={(e) => (joinAddress.value = (e.target as HTMLInputElement).value)}
               />
-              <p class="mt-1 text-xs text-gray-400">{t("cluster.joinAddressHint")}</p>
+              <p class="mt-1 text-xs text-gray-400">{t(view.mode === "worker" ? "cluster.masterAddressHint" : "cluster.joinAddressHint")}</p>
             </div>
             {joinError.value && <p class="text-sm text-red-600">{joinError.value}</p>}
             <button
@@ -785,51 +831,52 @@ function NotInCluster({ view }: { view: ClusterView }) {
 
 function InCluster({ view }: { view: ClusterView }) {
   return (
-    <>
-      {view.model_source_mixed && (
+    <div class="space-y-6">
+      {view.model_source_mixed && (!view.mode || view.mode === "lan") && (
         <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <span class="font-semibold">{t("cluster.mixedSourceTitle")}</span> {t("cluster.mixedSourceDesc")}
         </div>
       )}
-      <CapBanner />
+      {view.mode !== "worker" && <CapBanner />}
+      {view.mode === "worker" && <MasterConnection view={view} />}
       <div class="inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
-        <TabButton tab="overview" label={t("cluster.tabOverview")} onSelect={() => (activeTab.value = "overview")} />
+        <TabButton tab="overview" label={t(view.mode === "worker" ? "cluster.workerOverviewTab" : "cluster.tabOverview")} onSelect={() => (activeTab.value = "overview")} />
         {(!view.mode || view.mode === "lan") && <TabButton
           tab="discovered"
           label={t("cluster.tabDiscovered")}
           badge={view.discovered_count > 0 ? String(view.discovered_count) : ""}
           onSelect={() => (activeTab.value = "discovered")}
         />}
-        <TabButton
+        {view.mode !== "worker" && <TabButton
           tab="models"
-          label={t("cluster.tabModels")}
+          label={t("cluster.modelManagement")}
           onSelect={() => {
             activeTab.value = "models";
             void loadModels();
           }}
-        />
-        <TabButton tab="settings" label={t("cluster.tabSettings")} onSelect={() => openSettingsTab(view.settings)} />
+        />}
+        <TabButton tab="settings" label={t(view.mode === "worker" ? "cluster.workerSettingsTab" : "cluster.tabSettings")} onSelect={() => openSettingsTab(view.settings)} />
       </div>
 
-      {activeTab.value === "overview" && <OverviewSection view={view} />}
-      {activeTab.value === "discovered" && <DiscoveredSection />}
-      {activeTab.value === "models" && <ModelsSection view={view} />}
+      {activeTab.value === "overview" && (view.mode === "worker" ? <ClusterWorkerOverview view={view} onSettings={() => openSettingsTab(view.settings)} /> : <OverviewSection view={view} />)}
+      {activeTab.value === "discovered" && (!view.mode || view.mode === "lan") && <DiscoveredSection />}
+      {activeTab.value === "models" && view.mode !== "worker" && <ModelsSection view={view} />}
       {activeTab.value === "settings" && <SettingsSection view={view} />}
 
       <InviteDialog />
       <ConfirmDialog
         open={leaveOpen.value}
-        title={t("cluster.leaveTitle")}
+        title={t(view.mode === "gateway" ? "cluster.masterLeaveTitle" : "cluster.leaveTitle")}
         name={view.cluster?.name}
-        description={t("cluster.leaveDesc")}
-        confirmLabel={t("cluster.leaveConfirm")}
+        description={t(view.mode === "worker" ? "cluster.workerLeaveDesc" : view.mode === "gateway" ? "cluster.masterLeaveDesc" : "cluster.leaveDesc")}
+        confirmLabel={t(view.mode === "gateway" ? "cluster.masterLeaveTitle" : "cluster.leaveConfirm")}
         busy={leaving.value}
         onConfirm={() => void confirmLeave()}
         onCancel={() => {
           if (!leaving.value) leaveOpen.value = false;
         }}
       />
-    </>
+    </div>
   );
 }
 
@@ -1079,10 +1126,10 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
         {node.local ? (
           <select
             class="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            value={view.settings.state}
+            value={view.mode === "worker" ? workerNodeState(view.settings) : view.settings.state}
             disabled={stateSaving.value}
             onChange={(e) => void changeLocalState(node.uuid, (e.target as HTMLSelectElement).value as ClusterNodeState)}
-            title={t("cluster.stateSelectorHint")}
+            title={t(view.mode === "worker" ? "cluster.workerStateOverviewHint" : "cluster.stateSelectorHint")}
           >
             <option value="active">{t("cluster.stateActive")}</option>
             <option value="drain">{t("cluster.stateDrain")}</option>
@@ -1245,104 +1292,89 @@ function InviteDialog() {
 // ---- models ----------------------------------------------------------------
 
 function ModelsSection({ view }: { view: ClusterView }) {
-  const columns = sortMembers(view.members);
+  const [query, setQuery] = useState("");
+  const [machine, setMachine] = useState("");
+  const [stateFilter, setStateFilter] = useState<ModelInstanceFilter>("all");
+  const canSync = !view.mode || view.mode === "lan";
   const list = models.value;
+  const allRows = modelInstanceRows(view.members, list, modelDeployments.value);
+  const rows = filterModelInstances(allRows, query, machine, stateFilter);
+  const machines = new Map(view.members.map(node => [node.uuid, node]));
+  for (const row of allRows) if (!machines.has(row.node.uuid)) machines.set(row.node.uuid, row.node);
   useEffect(() => {
     const timer = window.setInterval(() => void refreshModels(), 2000);
     return () => window.clearInterval(timer);
   }, []);
-  return (
-    <>
-      <section class="bg-white rounded-xl border border-gray-200 p-6">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div>
-            <h2 class="text-lg font-bold text-gray-900">{t("cluster.modelsTitle")}</h2>
-            <p class="mt-1 text-sm text-gray-500">{t("cluster.modelsDesc")}</p>
-          </div>
-          <div class="flex items-center gap-4 text-xs text-gray-500">
-            <span class="flex items-center gap-1.5"><span class="inline-block h-3 w-3 rounded bg-indigo-600" />{t("cluster.cellLoaded")}</span>
-            <span class="flex items-center gap-1.5"><span class="font-semibold text-indigo-600" aria-hidden="true">✓</span>{t("cluster.cellPresent")}</span>
-            <span class="flex items-center gap-1.5"><span class="inline-block h-1.5 w-3 rounded-full bg-indigo-600" />{t("cluster.cellSyncing")}</span>
-            <span class="flex items-center gap-1.5"><span class="inline-block w-3 text-center text-gray-300">—</span>{t("cluster.cellAbsent")}</span>
-            <button type="button" class="text-indigo-600 hover:underline" disabled={modelsLoading.value} onClick={() => void loadModels()}>
-              {modelsLoading.value ? t("cluster.refreshing") : t("cluster.refresh")}
-            </button>
+  const changed = async () => { await loadView(); await refreshModels(); };
+  const secondaryButton = "shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-40";
+  const publications = publicationError.value ? null : modelPublications.value;
+  const stale = !!modelsError.value || !!viewError.value;
+  return <ClusterDeploymentControls view={view} deployments={modelDeployments.value} publications={publications} stale={stale} onChanged={changed}>
+    {controls => <>
+      <section class="overflow-hidden rounded-xl border border-gray-200 bg-white" data-cluster-model-management>
+        <div class="flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 p-5">
+          <div><h2 class="text-lg font-semibold text-gray-900">{t("cluster.modelManagement")}</h2><p class="mt-1 max-w-2xl text-sm leading-6 text-gray-500">{t("cluster.modelManagementHint")}</p></div>
+          <div class="flex shrink-0 gap-2">
+            <button type="button" class={secondaryButton} disabled={modelsLoading.value} onClick={() => void loadModels()}>{t(modelsLoading.value ? "cluster.refreshing" : "cluster.refresh")}</button>
+            <button type="button" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40" disabled={stale || controls.busy || !controls.hasTargets} onClick={controls.create}>{t("deployments.create")}</button>
           </div>
         </div>
-        {modelsError.value && <p class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{modelsError.value}</p>}
-        {list.length === 0 ? (
-          <p class="text-sm text-gray-400 py-2">{modelsLoading.value ? t("cluster.loading") : t("cluster.modelsEmpty")}</p>
-        ) : (
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-gray-100 text-left text-gray-500">
-                  <th class="pb-3 pr-3 font-medium">{t("cluster.colModel")}</th>
-                  {columns.map((c) => (
-                    <th key={c.uuid} class={`pb-3 px-3 text-center font-medium ${c.online ? "" : "text-gray-300"}`} title={c.name}>
-                      <div class="truncate max-w-[9rem]">{c.name}</div>
-                      {c.local && <div class="text-[10px] uppercase tracking-wide text-indigo-500">{t("cluster.thisNode")}</div>}
-                    </th>
-                  ))}
-                  <th class="pb-3 font-medium text-right">{t("cluster.colActions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((m) => {
-                  const label = m.repository || m.id;
-                  const key = `${label}::all`;
-                  return (
-                    <>
-                      <tr key={label} class="border-b border-gray-50">
-                        <td class="py-3 pr-3">
-                          <div class="font-medium text-gray-900 break-all">{label}</div>
-                          <div class="text-xs text-gray-400">
-                            {fmtGB(m.size)} GB{m.format ? ` · ${m.format}` : ""}{m.pipeline_tag ? ` · ${m.pipeline_tag}` : ""}
-                          </div>
-                        </td>
-                        {columns.map((c) => {
-                          const cell = m.nodes.find((n) => n.uuid === c.uuid);
-                          const sync = m.syncs?.find((item) => item.uuid === c.uuid);
-                          return (
-                            <td key={c.uuid} class="py-3 px-3 text-center">
-                              {cell?.loaded ? (
-                                <span class="inline-block rounded bg-indigo-600 px-2 py-0.5 text-[11px] font-medium text-white">{t("cluster.cellLoaded")}</span>
-                              ) : cell ? (
-                                <span class="text-base font-semibold leading-none text-indigo-600" title={t("cluster.cellPresent")} aria-label={t("cluster.cellPresent")}>✓</span>
-                              ) : sync ? (
-                                <SyncProgress sync={sync} />
-                              ) : (
-                                <span class="text-gray-300">—</span>
-                              )}
-                            </td>
-                          );
-                        })}
-                        <td class="py-3 text-right whitespace-nowrap">
-                          <button
-                            type="button"
-                            disabled={syncBusy.value !== "" || Boolean(view.mode && view.mode !== "lan")}
-                            onClick={() => void handleSync(label, "all", key)}
-                            class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:opacity-60"
-                          >
-                            {syncBusy.value === key ? t("cluster.syncing") : t("cluster.syncAll")}
-                          </button>
-                        </td>
-                      </tr>
-                    </>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {!controls.hasTargets && <p class="px-5 pt-4 text-sm text-amber-700">{t("deployments.noTargets")}</p>}
+        {modelsError.value && <p role="alert" class="mx-5 mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{t("cluster.modelRefreshFailed")} {modelsError.value}</p>}
+        {publicationError.value && <p role="alert" class="mx-5 mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{t("cluster.publicationRefreshFailed")}</p>}
+        <div class="flex flex-wrap items-center gap-3 px-5 py-4">
+          <input type="search" class="min-w-48 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" value={query} aria-label={t("cluster.modelSearch")} placeholder={t("cluster.modelSearch")} onInput={e => setQuery(e.currentTarget.value)} />
+          <select class="max-w-56 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600" value={machine} aria-label={t("cluster.instanceMachine")} onChange={e => setMachine(e.currentTarget.value)}>
+            <option value="">{t("cluster.modelAllMachines")}</option>{[...machines.values()].map(node => <option key={node.uuid} value={node.uuid}>{node.name || t("deployments.unknownNode")}</option>)}
+          </select>
+          <select class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600" value={stateFilter} aria-label={t("cluster.colStatus")} onChange={e => setStateFilter(e.currentTarget.value as ModelInstanceFilter)}>
+            {(["all", "running", "preparing", "inactive", "failed", "offline"] as const).map(state => <option value={state} key={state}>{t(`cluster.modelFilter.${state}`)}</option>)}
+          </select>
+          <span class="text-xs text-gray-400">{t("cluster.modelRowCount", rows.length, allRows.length)}</span>
+        </div>
+        {!rows.length ? <p class="px-5 py-12 text-center text-sm text-gray-400">{t(modelsLoading.value ? "cluster.loading" : modelsError.value && !allRows.length ? "cluster.modelRefreshFailed" : allRows.length ? "cluster.modelNoMatches" : "cluster.modelManagementEmpty")}</p> : <div class="overflow-x-auto px-5">
+          <table class="w-full text-left text-sm">
+            <thead><tr class="border-b border-gray-200 text-xs text-gray-500">
+              {["cluster.instanceModelID", "cluster.instanceMachine", "cluster.runtimeStatus", "cluster.publicationStatus", "cluster.instanceSpeed", "cluster.instanceSize", "cluster.colActions"].map(key => <th key={key} class="px-3 py-3 first:pl-0 font-medium whitespace-nowrap">{t(key)}</th>)}
+            </tr></thead>
+            <tbody>{rows.map(row => {
+              const { model, node, sync, deployment } = row;
+              const label = model.repo || model.id;
+              const syncKey = `${label}::all`;
+              const publication = modelPublication(row, view, publications);
+              const state = modelRowState(row);
+              const kind = modelInstanceCategory(row);
+              const progress = deployment ? deploymentProgress(deployment.status) : null;
+              return <tr key={row.key} data-model-instance={row.key} data-deployment-id={deployment?.id} class="border-b border-gray-100 align-top last:border-0 hover:bg-gray-50/60">
+                <td class="max-w-xs py-4 pr-3">
+                  <p class="break-all font-mono text-xs font-medium text-gray-900">{label}</p>
+                  <div class="mt-2 flex flex-wrap gap-1.5 text-[11px]"><span class={`rounded px-1.5 py-0.5 ${isManagedModelInstance(row) ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-500"}`}>{t(isManagedModelInstance(row) ? "cluster.modelManaged" : "cluster.modelExisting")}</span>{!row.synthetic && kind !== "unsupported" && <span class="rounded bg-gray-50 px-1.5 py-0.5 text-gray-500">{t(`services.${kind}`)}</span>}</div>
+                  {deployment && <details class="mt-2 text-xs text-gray-400"><summary class="cursor-pointer hover:text-gray-600">{deployment.name}</summary><p class="mt-2 break-all">{deployment.artifact_source} · {deployment.revision}{deployment.quant ? ` · ${deployment.quant}` : ""}</p><p class="mt-1 break-all font-mono">{model.id}</p></details>}
+                  {!deployment && model.id !== label && <p class="mt-1 break-all text-xs text-gray-400">{model.id}</p>}
+                </td>
+                <td class="max-w-[12rem] px-3 py-4"><p class="break-words font-medium text-gray-800">{node.name || t("deployments.unknownNode")}</p><p class="mt-1 text-xs text-gray-400">{t(`cluster.role.${clusterNodeRole(node.uuid, view.cluster)}`)}{node.local ? ` · ${t("cluster.thisNode")}` : ""}</p></td>
+                <td class="min-w-36 max-w-64 px-3 py-4">
+                  <span class={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-xs ${!node.online ? "bg-gray-100 text-gray-500" : state === "deployments.phase.failed" ? "bg-red-50 text-red-700" : modelNodeState(row) ? "bg-amber-50 text-amber-700" : state === "cluster.instanceRunning" ? "bg-emerald-50 text-emerald-700" : model.loading || sync || state === "deployments.phase.downloading" ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-600"}`}>{t(state)}</span>
+                  {modelNodeState(row) && <p class="mt-2 text-xs text-amber-700" title={t("cluster.nodePausedHint")}>{t(modelNodeState(row))}</p>}
+                  {deployment?.status.phase === "downloading" && progress && <div class="mt-2 text-xs text-indigo-600"><progress class="block h-1.5 w-28" value={progress.percent ?? undefined} max={100} aria-label={t("deployments.phase.downloading")} />{progress.percent !== null && <p class="mt-1">{progress.percent}%</p>}</div>}
+                  {deployment?.status.error && <p class="mt-2 break-words text-xs text-red-600">{deployment.status.error}</p>}
+                  {deployment?.status.detail && !deployment.status.error && <p class="mt-2 break-all text-xs text-gray-400">{deployment.status.detail}</p>}
+                  {node.online && sync && <div class="mt-2"><SyncProgress sync={sync} /></div>}
+                </td>
+                <td class="px-3 py-4" title={publication.services.map(service => service.model).join("\n")}><span class={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-xs ${publication.state === "published" ? "bg-indigo-50 text-indigo-700" : publication.state === "disabled" ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-500"}`}>{t(`cluster.publication.${publication.state}`)}</span>{publication.services.length > 1 && <p class="mt-1 text-xs text-gray-400">{t("cluster.publicationServices", publication.services.length)}</p>}</td>
+                <td class="whitespace-nowrap px-3 py-4 tabular-nums" title={t("cluster.instanceSpeedHint")}><span class="font-medium text-gray-900">{measuredRate(row)}</span>{measuredRate(row) !== "—" && <span class="ml-1 text-xs text-gray-400">tok/s</span>}</td>
+                <td class="whitespace-nowrap px-3 py-4 text-gray-600">{model.size > 0 ? `${fmtGB(model.size)} GB` : "—"}{model.format && <p class="mt-1 text-xs text-gray-400">{model.format}</p>}</td>
+                <td class="min-w-44 px-3 py-4"><ClusterModelActions row={row} rows={allRows} view={view} publication={publication} stale={stale} busy={controls.busy} onPublish={() => controls.publish(row)} onChanged={changed}
+                  onSync={canSync ? () => void handleSync(label, "all", syncKey) : undefined} syncBusy={syncBusy.value !== ""} /></td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>}
+        <div class="border-t border-gray-100 px-5 py-4"><p class="text-xs leading-5 text-gray-400">{t("cluster.modelStateLegend")}</p></div>
       </section>
-
-      <div class="grid gap-6 lg:grid-cols-2">
-        {(!view.mode || view.mode === "lan") && <RecommendationsCard />}
-        <ExplainCard models={list} />
-      </div>
-    </>
-  );
+      <details class="rounded-xl border border-gray-200 bg-white p-5"><summary class="cursor-pointer text-sm font-medium text-gray-600">{t("cluster.instanceDiagnostics")}</summary><div class="mt-5 grid gap-6 lg:grid-cols-2">{canSync && <RecommendationsCard />}<ExplainCard models={list} /></div></details>
+    </>}
+  </ClusterDeploymentControls>;
 }
 
 function SyncProgress({ sync }: { sync: ClusterModelSync }) {
@@ -1503,12 +1535,28 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
   );
 }
 
+function MasterConnection({ view }: { view: ClusterView }) {
+  const master = view.members.find(node => node.uuid === view.cluster?.gateway_uuid);
+  return (<section class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-6">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-sm font-semibold text-gray-900">{t("cluster.masterConnection")}</h2>
+          <span class={`rounded-full px-2.5 py-1 text-xs font-medium ${master?.online ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>{t(master?.online ? "cluster.masterOnline" : "cluster.masterOffline")}</span>
+        </div>
+        {activeTab.value === "settings" && <p class="mt-2 text-sm text-gray-600">{t("cluster.masterControlDesc")}</p>}
+        <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+          <div><dt class="text-gray-500">{t("cluster.masterName")}</dt><dd class="mt-1 font-medium text-gray-900">{master?.name || t("cluster.masterName")}</dd></div>
+          <div><dt class="text-gray-500">{t("cluster.masterAddress")}</dt><dd class="mt-1 break-all font-mono text-gray-900">{view.gateway_url}</dd></div>
+        </dl>
+        {!master?.online && <p role="status" class="mt-4 text-sm text-amber-800">{t("cluster.workerDisconnected")}</p>}
+      </section>);
+}
+
 function SettingsSection({ view }: { view: ClusterView }) {
   useEffect(() => {
     // The tab is remembered across navigations; refresh what it shows on mount.
     settingsForm.value = { ...view.settings };
     settingsSaved.value = false;
-    void loadToken();
+    if (view.mode !== "worker") void loadToken();
   }, []);
   const form = settingsForm.value ?? view.settings;
   const update = (patch: Partial<ClusterSettings>) => {
@@ -1518,6 +1566,17 @@ function SettingsSection({ view }: { view: ClusterView }) {
   const token = tokenInfo.value;
   return (
     <div class="space-y-6">
+      {(!view.mode || view.mode === "lan") && <section class="rounded-xl border border-gray-200 bg-white p-6">
+        <h2 class="text-lg font-bold text-gray-900">{t("deployments.management")}</h2>
+        <p class="mt-1 text-sm text-gray-500">{t("deployments.managementHint")}</p>
+        <label class="mt-4 block text-sm text-gray-700">{t("deployments.controller")}
+          <select class="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={form.managed_by || ""} disabled={settingsSaving.value} onChange={event => update({ managed_by: event.currentTarget.value })}>
+            <option value="">{t("deployments.sharingOnly")}</option>
+            {view.members.filter(n => !n.local).map(n => <option key={n.uuid} value={n.uuid}>{n.name}</option>)}
+          </select>
+        </label>
+        <p class="mt-2 text-xs text-gray-500">{t("deployments.authorizationSaveHint")}</p>
+      </section>}
       {/* Join token */}
       {view.mode !== "worker" && <section class="bg-white rounded-xl border border-gray-200 p-6">
         <h2 class="text-lg font-bold text-gray-900">{t("cluster.tokenTitle")}</h2>
@@ -1561,22 +1620,30 @@ function SettingsSection({ view }: { view: ClusterView }) {
 
       {/* Routing & node */}
       <section class="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 class="text-lg font-bold text-gray-900">{t("cluster.routingTitle")}</h2>
-        <p class="mt-1 text-sm text-gray-500">{t("cluster.routingDesc")}</p>
+        <h2 class="text-lg font-bold text-gray-900">{t(view.mode === "worker" ? "deployments.workerSettings" : "cluster.routingTitle")}</h2>
+        <p class="mt-1 text-sm text-gray-500">{t(view.mode === "worker" ? "deployments.workerSettingsHint" : "cluster.routingDesc")}</p>
 
         <div class="mt-5 space-y-5">
-          {view.mode === "worker" && (
-            <div>
-              <label class="block text-sm font-medium text-gray-700">{t("cluster.sharedModels")}</label>
-              <p class="mt-1 text-xs text-gray-500">{t("cluster.sharedModelsDesc")}</p>
-              <textarea
-                class="mt-2 min-h-28 w-full rounded-lg border border-gray-200 px-3 py-2 font-mono text-sm"
-                value={(form.shared_models ?? []).join("\n")}
-                placeholder={t("cluster.sharedModelsPlaceholder")}
-                onInput={(e) => update({ shared_models: (e.target as HTMLTextAreaElement).value.split("\n") })}
-              />
-            </div>
-          )}
+          {view.mode === "worker" && <div class="space-y-2">
+            <div class="text-sm font-medium text-gray-700">{t("cluster.workerNodeName")}</div>
+            {nameEditing.value ? <div class="flex flex-wrap items-center gap-2">
+              <input aria-label={t("cluster.workerNodeName")} class="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm" value={nameDraft.value} disabled={nameSaving.value} onInput={e => (nameDraft.value = e.currentTarget.value)} />
+              <button type="button" class="text-sm text-indigo-600" disabled={nameSaving.value} onClick={() => void saveName(view.node.uuid)}>{t("cluster.save")}</button>
+              <button type="button" class="text-sm text-gray-500" disabled={nameSaving.value} onClick={() => (nameEditing.value = false)}>{t("confirm.cancel")}</button>
+            </div> : <div class="flex items-center gap-3"><span class="text-sm text-gray-900">{view.node.name}</span><button type="button" class="text-xs text-indigo-600" onClick={() => startNameEdit(view.node.name)}>{t("cluster.rename")}</button></div>}
+            {overviewError.value && <p role="alert" class="text-sm text-red-600">{overviewError.value}</p>}
+          </div>}
+          {view.mode === "worker" && <div>
+            <label class="block text-sm font-medium text-gray-700" for="worker-state">{t("cluster.workerState")}</label>
+            <select id="worker-state" class="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={workerNodeState(form)} disabled={settingsSaving.value}
+              onChange={event => update({ state: event.currentTarget.value as ClusterNodeState, accept_work: true })}>
+              <option value="active">{t("cluster.stateActive")}</option>
+              <option value="drain">{t("cluster.stateDrain")}</option>
+              <option value="maintenance">{t("cluster.stateMaintenance")}</option>
+            </select>
+            <p class="mt-2 text-xs text-gray-500">{t("cluster.workerStateHint")}</p>
+          </div>}
+          {view.mode !== "worker" && <>
           <div>
             <div class="text-sm font-medium text-gray-700">{t("cluster.routingMode")}</div>
             <div class="mt-2 grid gap-2 sm:grid-cols-2">
@@ -1615,15 +1682,16 @@ function SettingsSection({ view }: { view: ClusterView }) {
             <Toggle checked={form.prefer_local} onChange={(v) => update({ prefer_local: v })} />
           </div>
 
-          <div class="flex items-start justify-between gap-4 border-t border-gray-100 pt-4">
+          </>}
+          {view.mode !== "worker" && <div class="flex items-start justify-between gap-4 border-t border-gray-100 pt-4">
             <div>
               <div class="text-sm font-medium text-gray-700">{t("cluster.acceptWork")}</div>
               <div class="text-xs text-gray-500">{t("cluster.acceptWorkDesc")}</div>
             </div>
             <Toggle checked={form.accept_work} onChange={(v) => update({ accept_work: v })} />
-          </div>
+          </div>}
 
-          <div class="grid gap-4 border-t border-gray-100 pt-4 sm:grid-cols-3">
+          <div class={`grid gap-4 border-t border-gray-100 pt-4 ${view.mode === "worker" ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
             <div>
               <label class="block text-sm font-medium text-gray-700">{t("cluster.weight")}</label>
               <input
@@ -1634,9 +1702,9 @@ function SettingsSection({ view }: { view: ClusterView }) {
                 value={form.weight}
                 onInput={(e) => update({ weight: Number((e.target as HTMLInputElement).value) })}
               />
-              <p class="mt-1 text-xs text-gray-400">{t("cluster.weightDesc")}</p>
+              <p class="mt-1 text-xs text-gray-400">{t(view.mode === "worker" ? "cluster.workerWeightDesc" : "cluster.weightDesc")}</p>
             </div>
-            <div>
+            {view.mode !== "worker" && <div>
               <label class="block text-sm font-medium text-gray-700">{t("cluster.affinityMaxQueue")}</label>
               <input
                 type="number"
@@ -1646,7 +1714,7 @@ function SettingsSection({ view }: { view: ClusterView }) {
                 onInput={(e) => update({ affinity_max_queue: Number((e.target as HTMLInputElement).value) })}
               />
               <p class="mt-1 text-xs text-gray-400">{t("cluster.affinityMaxQueueDesc")}</p>
-            </div>
+            </div>}
             <div>
               <label class="block text-sm font-medium text-gray-700">{t("cluster.diskReserve")}</label>
               <input
@@ -1660,6 +1728,19 @@ function SettingsSection({ view }: { view: ClusterView }) {
               <p class="mt-1 text-xs text-gray-400">{t("cluster.diskReserveDesc")}</p>
             </div>
           </div>
+
+          {view.mode === "worker" && (
+            <details class="rounded-xl border border-gray-200 p-4">
+              <summary class="cursor-pointer text-sm font-medium text-gray-700">{t("cluster.sharedModels")}</summary>
+              <p class="mt-1 text-xs text-gray-500">{t("cluster.sharedModelsDesc")}</p>
+              <textarea
+                class="mt-2 min-h-28 w-full rounded-lg border border-gray-200 px-3 py-2 font-mono text-sm"
+                value={(form.shared_models ?? []).join("\n")}
+                placeholder={t("cluster.sharedModelsPlaceholder")}
+                onInput={(e) => update({ shared_models: (e.target as HTMLTextAreaElement).value.split("\n") })}
+              />
+            </details>
+          )}
 
           <div class="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-4">
             <button
@@ -1680,15 +1761,15 @@ function SettingsSection({ view }: { view: ClusterView }) {
       <section class="rounded-xl border border-red-200 bg-white p-6">
         <div class="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 class="text-lg font-bold text-red-700">{t("cluster.leaveTitle")}</h2>
-            <p class="mt-1 text-sm text-gray-500">{t("cluster.leaveDesc")}</p>
+            <h2 class="text-lg font-bold text-red-700">{t(view.mode === "gateway" ? "cluster.masterLeaveTitle" : "cluster.leaveTitle")}</h2>
+            <p class="mt-1 text-sm text-gray-500">{t(view.mode === "worker" ? "cluster.workerLeaveDesc" : view.mode === "gateway" ? "cluster.masterLeaveDesc" : "cluster.leaveDesc")}</p>
           </div>
           <button
             type="button"
             onClick={() => (leaveOpen.value = true)}
             class="rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
           >
-            {t("cluster.leaveAction")}
+            {t(view.mode === "gateway" ? "cluster.masterLeaveTitle" : "cluster.leaveAction")}
           </button>
         </div>
       </section>

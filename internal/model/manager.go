@@ -41,6 +41,22 @@ func (m *Manager) Pull(ctx context.Context, modelID string, quants []string, pro
 // PullFrom downloads a model from an artifact registry. Empty source preserves
 // the historical OpenCSG behavior.
 func (m *Manager) PullFrom(ctx context.Context, modelID, sourceValue, revision string, quants []string, progress csghub.SnapshotProgressFunc) (*LocalModel, error) {
+	source, err := modelregistry.NormalizeSource(sourceValue)
+	if err != nil {
+		return nil, err
+	}
+	id := modelID
+	if source != modelregistry.SourceOpenCSG {
+		id = string(source) + "/" + modelID
+	}
+	unlock, err := m.LockArtifact(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return m.pullFrom(ctx, modelID, sourceValue, revision, quants, progress)
+}
+func (m *Manager) pullFrom(ctx context.Context, modelID, sourceValue, revision string, quants []string, progress csghub.SnapshotProgressFunc) (*LocalModel, error) {
 	namespace, name, err := parseSafeLocalModelID(modelID)
 	if err != nil {
 		return nil, err
@@ -305,6 +321,9 @@ func (m *Manager) GetWithFileEntries(modelID string) (*LocalModel, error) {
 
 // Remove deletes a locally downloaded model.
 func (m *Manager) Remove(modelID string) error {
+	return m.RemoveWhen(context.Background(), modelID, nil)
+}
+func (m *Manager) remove(modelID string) error {
 	source, namespace, name, err := parseStorageModelID(modelID)
 	if err != nil {
 		return err
@@ -347,6 +366,22 @@ func (m *Manager) Exists(modelID string) bool {
 // RemovePartial removes an incomplete registry download without touching an
 // installed model. It returns the removed directory for user-facing diagnostics.
 func (m *Manager) RemovePartial(modelID, sourceValue string) (string, error) {
+	source, err := modelregistry.NormalizeSource(sourceValue)
+	if err != nil {
+		return "", err
+	}
+	id := modelID
+	if source != modelregistry.SourceOpenCSG {
+		id = string(source) + "/" + modelID
+	}
+	unlock, err := m.LockArtifact(context.Background(), id)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	return m.removePartial(modelID, sourceValue)
+}
+func (m *Manager) removePartial(modelID, sourceValue string) (string, error) {
 	namespace, name, err := parseSafeLocalModelID(modelID)
 	if err != nil {
 		return "", err

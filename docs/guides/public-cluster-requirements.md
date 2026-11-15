@@ -28,17 +28,17 @@ flowchart LR
 |---|---|
 | 独立公网网关 | 同一 Lite 二进制，单独配置 gateway 角色和公网监听器 |
 | 出站工作节点 | worker 角色不启动 mDNS、集群直连监听器或成员 gossip |
-| 令牌加入 | 沿用现有 cluster create 和 join，经验证的 HTTPS 完成首次配对 |
+| 令牌加入 | 沿用现有 cluster create 和 join，经验证的 HTTPS 完成首次配对；加入即接受 Master 部署控制 |
 | 已加入节点重连 | 用原有节点私钥签署新的连接证明，无需重新注册或消耗配额 |
-| 模型共享 | 默认不共享；由工作节点所有者明确选择本地模型 |
+| 模型共享 | Master 托管模型自动上报；可额外选择已有本地模型，额外共享默认空列表 |
 | 调度 | 复用现有模型、加载状态、负载、实测速度、会话亲和和节点隔离 |
 | 流式推理 | 隧道多路复用，逐段返回内容，取消请求会传播到执行节点 |
 | 节点管理 | 保留现有 CLI、私有管理 API 和集群页面；公网可用管理 Token 登录 |
 | 权限隔离 | 推理 API Key、节点加入令牌与管理 Token 分离；公网管理必须先登录 |
 
 第一期为单网关星形结构。一个实例选择 LAN、gateway 或 worker 角色，不同时
-运行 LAN 与公网两套成员网络。多网关高可用、跨机器模型切分、音频和图像请求、
-公网模型文件分发不属于本版本。
+运行 LAN 与公网两套成员网络。多网关高可用、跨机器模型切分、音频和图像请求不在当前范围内。
+公网的原有模型同步接口仍不分发文件。新增的[托管模型部署](cluster-model-deployments.md)由主节点向已加入的工作节点下发部署目标（加入即接受 Master 管理，无需再次授权），工作节点使用自己的仓库配置下载并运行模型。
 
 ## 部署网关
 
@@ -67,7 +67,8 @@ csghub-lite cluster create --name team
 
 ## 接入工作节点
 
-工作节点提前准备模型和推理引擎，再配置网关地址。
+工作节点准备推理引擎，再配置网关地址。托管模型由 Master 下发并在节点下载；
+希望额外共享的已有模型需提前下载。
 
 ```sh
 csghub-lite cluster configure-public \
@@ -83,8 +84,10 @@ csghub-lite cluster share Qwen2-0.5B-Instruct-GGUF
 证书必须匹配目标域名或 IP；不支持关闭证书校验。加入地址必须与配置的网关 URL
 一致，不能通过一次请求偷偷改写连接目标。
 
+`cluster share` 是额外共享已有模型的可选步骤，不是接受 Master 部署控制的前置条件。
 共享参数使用本机准确的推理模型 ID，可在本机集群状态或模型列表中查看。
-也可在工作节点集群页面的设置中编辑共享模型，每行一个 ID，保存后生效。
+也可在工作节点集群页面设置的“额外共享的本地模型”中编辑，每行一个 ID，保存后生效。
+Master 托管部署自动上报，不需要加入此列表。
 
 ```sh
 csghub-lite cluster unshare Qwen2-0.5B-Instruct-GGUF
@@ -95,7 +98,8 @@ csghub-lite cluster leave
 
 停止共享和 drain 在工作节点入口再次检查，网关即使暂时持有旧目录，也不能继续
 发起未经允许的新推理。已开始的请求允许完成。退出会清除本机共享列表；普通
-进程重启保留身份、加入关系和共享选择。
+进程重启保留身份、加入关系和共享选择。维护/排空只暂停工作，不解除 Master 管理；
+退出集群才解除控制。旧版本的独立托管授权在升级时移除，由既有成员关系决定控制节点。
 
 ## 调用接口
 
@@ -157,7 +161,7 @@ Responses 的后台任务和 `previous_response_id` 延续不支持。具体模�
 在公网主节点执行：
 
 ```sh
-csghub-lite cluster login-token --ttl 168h
+csghub-lite cluster login-token --name market --ttl 168h
 ```
 
 `--ttl 168h` 生成 7 天有效的 Token，省略参数或使用 `--ttl 0` 保留不自动过期的兼容行为。Token 到期后，服务端拒绝新登录及其已有会话；单次会话仍最长 8 小时，且不会超过 Token 到期时间。
@@ -171,11 +175,32 @@ csghub-lite cluster login-token --ttl 168h
 
 登录后使用 8 小时有效的 Secure、HttpOnly、SameSite=Strict 会话 Cookie，原始
 管理 Token 不保存在浏览器存储。写操作还校验同源和 CSRF Token；退出登录立即
-撤销该会话。服务器重启需要重新登录。再次运行 `cluster login-token` 会立即撤销
-旧管理 Token 及所有旧会话，无需重启服务器。
+撤销该会话。服务器重启需要重新登录，但所有未过期、未撤销的 Token 均可再次登录。
+每次运行 `cluster login-token` 都是**新增 Token**，不会影响已有 Token 或其他浏览器会话，无需重启服务器。
+同一浏览器切换 Token 只替换该浏览器当前会话。每个 Token 单独设置有效期，到期或被撤销时只影响它建立的会话。
+
+管理多个 Token：
+
+```sh
+# 分别生成两个独立 Token，明文仍各只输出一次
+csghub-lite cluster login-token --name market --ttl 168h
+csghub-lite cluster login-token --name operations --ttl 168h
+
+# 只列出 ID、名称、创建/到期时间和状态，不显示 Token 或摘要
+csghub-lite cluster login-token list
+csghub-lite cluster login-token list --json
+
+# 使用列表中的 ID 撤销一个 Token，其他 Token 及其会话保持有效
+csghub-lite cluster login-token revoke <id>
+```
+
+所有管理 Token 都拥有现有的实例管理员权限，名称用于标识用途，不创建独立 CSGHub 账号。
+升级自动兼容原单 Token 文件；首次新增或撤销时迁移为带版本的 Token 列表，保留原 Token 的摘要和到期时间。
+升级前已被旧版生成命令覆盖的 Token 无法恢复，需要重新生成。
 
 磁盘仅保存管理 Token 的 SHA-256 摘要，文件为存储目录下的
-`cluster/public_admin.json`，权限为 0600。它属于管理身份，现有推理 API Key 和
+`cluster/public_admin.json`，权限为 0600。新增与撤销使用进程间文件锁和原子替换，多个 CLI 进程不会互相覆盖。
+它属于管理身份，现有推理 API Key 和
 集群加入凭证不能表达该权限，因此单独存储；不在 `config.json` 增加重复配置。
 未初始化或无法读取该凭证时，公网管理拒绝登录，推理与节点连接继续正常运行。
 

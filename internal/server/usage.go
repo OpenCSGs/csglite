@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/csghub"
 	"github.com/opencsgs/csglite/internal/model"
@@ -70,6 +71,7 @@ const (
 	apiUsageSourceCloud    = "cloud"
 	apiUsageSourceProvider = "provider"
 	apiUsageSourcePool     = "pool"
+	apiUsageSourceCluster  = "cluster"
 	apiUsageSourceUnknown  = "unknown"
 	apiUsageBuiltinKeyID   = "builtin:lite-chat"
 	apiUsageBuiltinKeyName = "Lite Chat / Local API"
@@ -232,6 +234,9 @@ func (s *Server) recordResolvedUsage(r *http.Request, model, source string, real
 }
 
 func (s *Server) recordAPIUsage(r *http.Request, model, source string, inputTokens, outputTokens int) {
+	if skip, _ := r.Context().Value(skipMemberUsageKey{}).(bool); skip {
+		return
+	}
 	memberSource, pool := providerPoolUsageCaptureFromContext(r.Context()).get()
 	if memberSource != "" {
 		source = memberSource
@@ -332,6 +337,21 @@ func (s *Server) resolveAPIUsageSource(ctx context.Context, model, source string
 		return apiUsageSourceLocal, apiUsageSourceLocal, ""
 	case apiUsageSourceCloud:
 		return apiUsageSourceCloud, apiUsageSourceCloud, "OpenCSG"
+	}
+	if cluster.IsClusterSource(source) {
+		name := ""
+		if s != nil && s.cluster != nil {
+			if node := cluster.NodeUUIDFromSource(source); node != "" {
+				if node == s.cluster.Identity().UUID {
+					name = s.cluster.Identity().Name
+				} else if member, ok := s.cluster.Store().Member(node); ok {
+					name = member.Name
+				}
+			} else if current := s.cluster.Store().Cluster(); current != nil {
+				name = current.Name
+			}
+		}
+		return source, apiUsageSourceCluster, name
 	}
 
 	if s.isLocalAPIUsageModel(model) {

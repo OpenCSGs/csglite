@@ -38,6 +38,10 @@ func (m *Manager) LocalStatus(ctx context.Context) Status {
 		st.UptimeSec = int64(time.Since(m.startedAt).Seconds())
 	}
 	st.Time = time.Now().UTC()
+	st.ManagedBy = m.deploymentController()
+	_, st.DeploymentCapable = m.opts.Host.(DeploymentHost)
+	_, st.ModelManagement = m.opts.Host.(ModelActionHost)
+	st.Models = append(st.Models, m.deploymentModels()...)
 	st.Net.Addrs = m.localAddrs()
 	// Merge this node's own perf samples so peers see them in status.
 	for i := range st.Models {

@@ -1,0 +1,82 @@
+import type { ArtifactSource, ClusterDeployment, ClusterView, LocalInferenceSupport, MarketplaceModel } from "./api/client";
+
+const deploymentPhases = new Set(["pending", "downloading", "loading", "ready", "stopping", "stopped", "failed", "blocked", "unreachable", "deleting", "deleted"]);
+export function deploymentPhaseKey(phase: string): string {
+  return `deployments.phase.${deploymentPhases.has(phase) ? phase : "pending"}`;
+}
+
+export function workerDeploymentAssignments(assignments: ClusterDeployment[], node: string, master?: string): ClusterDeployment[] {
+  if (!master) return [];
+  return assignments.filter(task => task.status.phase !== "deleted" && task.node_uuid === node && task.controller_uuid === master);
+}
+
+export type DeploymentModelKind = "chat" | "embedding" | "image" | "asr" | "tts" | "unknown";
+
+export function deploymentModelKind(model: MarketplaceModel, support?: LocalInferenceSupport): DeploymentModelKind {
+  // Classify by machine-readable task metadata, never by repository names or
+  // translated display labels. Unknown tasks require an explicit choice.
+  const task = (model.provider?.huggingface?.pipeline_tag
+    || model.provider?.modelscope?.tasks?.[0]
+    || model.tags?.find(tag => tag.category === "task")?.name || "").trim().toLowerCase();
+  switch (task) {
+    case "text-generation": case "text2text-generation": case "image-text-to-text": return "chat";
+    case "sentence-similarity": case "feature-extraction": case "text-embedding": return "embedding";
+    case "text-to-image": case "image-to-image": return "image";
+    case "automatic-speech-recognition": return "asr";
+    case "text-to-speech": case "text-to-audio": return "tts";
+    default:
+      // The detail endpoint also inspects model configuration and runtime support.
+      if (support?.supported) {
+        switch (support.mode) {
+          case "direct": case "convert": return "chat";
+          case "embedding": return "embedding";
+          case "image": return "image";
+          case "asr": return "asr";
+          case "tts": return "tts";
+        }
+      }
+      return "unknown";
+  }
+}
+
+export function deploymentRevision(model: MarketplaceModel | undefined, source: ArtifactSource): string {
+  // A metadata response may contain a resolved commit in revision. New UI
+  // deployments follow the default branch, not that historical snapshot.
+  return model?.default_branch?.trim() || (source === "modelscope" ? "master" : "main");
+}
+
+export function deploymentTargets(view: ClusterView) {
+  return view.members.filter(n => n.online && n.status?.deployment_capable && n.status.licensed
+    && n.status.accept_work && n.status.state === "active"
+    && (n.uuid === view.node.uuid || n.status.managed_by === view.node.uuid));
+}
+
+export function deploymentName(model: string, existing: string[]): string {
+  const base = (model.split("/").pop() || model).slice(0, 100);
+  const names = new Set(existing.map(name => name.toLowerCase()));
+  let candidate = base;
+  for (let i = 2; names.has(candidate.toLowerCase()); i++) {
+    const suffix = `-${i}`;
+    candidate = base.slice(0, 100 - suffix.length) + suffix;
+  }
+  return candidate;
+}
+
+export function isLlamaDeployment(kind: DeploymentModelKind): kind is "chat" | "embedding" {
+  return kind === "chat" || kind === "embedding";
+}
+
+/** Only execution receipts on this machine and from its current controller. */
+export function localDeploymentAssignments(assignments: ClusterDeployment[], view: ClusterView): ClusterDeployment[] {
+  if (!view.cluster) return [];
+  const controllers = view.mode === "worker"
+    ? [view.cluster.gateway_uuid].filter(Boolean)
+    : [view.node.uuid, view.settings.managed_by].filter(Boolean);
+  return assignments.filter(task => task.node_uuid === view.node.uuid && task.status.phase !== "deleted" && controllers.includes(task.controller_uuid));
+}
+
+export function deploymentProgress(status: ClusterDeployment["status"]): { completed: number; total: number | null; percent: number | null } {
+  const completed = Number.isFinite(status.completed_bytes) ? Math.max(0, status.completed_bytes!) : 0;
+  const total = Number.isFinite(status.total_bytes) && status.total_bytes! > 0 ? status.total_bytes! : null;
+  return { completed, total, percent: total === null ? null : Math.min(100, Math.floor(completed / total * 1000) / 10) };
+}

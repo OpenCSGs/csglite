@@ -30,6 +30,10 @@ type WorkerOptions struct {
 	ConnectionChanged func(bool)
 	// Handler must execute locally. It must not route to another cluster/cloud.
 	Handler http.Handler
+	// DeploymentHandler accepts only a typed assignment on the private tunnel.
+	// The host must independently check explicit worker management consent.
+	DeploymentHandler  http.Handler
+	ModelActionHandler http.Handler
 	// Dialer may supply a private CA or enterprise proxy; TLS verification stays on.
 	Dialer *websocket.Dialer
 }
@@ -164,6 +168,20 @@ func (e *HandshakeError) Error() string {
 
 func (w *Worker) handler() http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		controlHandler := w.opts.DeploymentHandler
+		if r.URL.Path == ModelActionPath {
+			controlHandler = w.opts.ModelActionHandler
+		}
+		if (r.URL.Path == DeploymentPath || r.URL.Path == ModelActionPath) && controlHandler != nil {
+			if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.URL.RawPath != "" {
+				http.Error(rw, "invalid deployment request", 400)
+				return
+			}
+			r.Body = http.MaxBytesReader(rw, r.Body, 1<<20)
+			r.Header = make(http.Header)
+			controlHandler.ServeHTTP(rw, r)
+			return
+		}
 		out, err := inferenceRequest(r, w.opts.AllowModel)
 		if err != nil {
 			status := http.StatusBadRequest

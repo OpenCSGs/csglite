@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"regexp"
@@ -154,6 +153,8 @@ type observationResponseWriter struct {
 	body       bytes.Buffer
 	usageTail  []byte
 	truncated  bool
+	omitBody   bool
+	bytes      int64
 }
 
 func (w *observationResponseWriter) WriteHeader(status int) {
@@ -175,6 +176,10 @@ func (w *observationResponseWriter) Write(p []byte) (int, error) {
 }
 
 func (w *observationResponseWriter) capture(p []byte) {
+	w.bytes += int64(len(p))
+	if w.omitBody && w.status < http.StatusBadRequest {
+		return
+	}
 	w.captureUsageTail(p)
 	remaining := observabilityBodyLimit - w.body.Len()
 	if remaining <= 0 {
@@ -222,7 +227,7 @@ func (w *observationResponseWriter) Unwrap() http.ResponseWriter {
 
 func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isObservedTextGenerationRequest(r) {
+		if !isObservedRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -239,21 +244,18 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 		correlation.ApplyResponseHeaders(w.Header(), values)
 		w.Header().Set(observabilityRequestIDHeader, requestID)
 
-		requestBody, err := io.ReadAll(r.Body)
-		if err != nil {
-			r.Body = io.NopCloser(bytes.NewReader(requestBody))
-			next.ServeHTTP(w, r)
-			return
-		}
-		r.Body = io.NopCloser(bytes.NewReader(requestBody))
-		sanitizedRequest := sanitizeObservationBody(requestBody)
-		capturedRequest, requestTruncated := limitedBody(sanitizedRequest)
-
+		requestCapture := captureObservationRequest(r)
+		defer requestCapture.finish()
+		protocol := observationProtocol(r.URL.Path)
 		metadata := &observationMetadata{}
 		ctx := context.WithValue(r.Context(), observationContextKey{}, metadata)
 		ctx, cacheCollector := inference.WithCacheUsageCollector(ctx)
-		ow := &observationResponseWriter{ResponseWriter: w}
+		ow := &observationResponseWriter{ResponseWriter: w, omitBody: observationOmitsResponsePayload(protocol)}
 		next.ServeHTTP(ow, r.WithContext(ctx))
+		requestCapture.finish()
+		requestBody := requestCapture.body.Bytes()
+		capturedRequest, requestTruncated := limitedBody(sanitizeObservationBody(requestBody))
+		requestTruncated = requestTruncated || requestCapture.truncated
 
 		completedAt := time.Now().UTC()
 		if ow.status == 0 {
@@ -284,6 +286,9 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			status = "failed"
 		}
 		responseBody := sanitizeObservationBody(ow.body.Bytes())
+		if ow.omitBody && ow.status < http.StatusBadRequest {
+			responseBody, _ = json.Marshal(map[string]any{"content_type": ow.Header().Get("Content-Type"), "bytes": ow.bytes, "payload_omitted": true})
+		}
 		if fromEdge {
 			responseBody = nil
 		}
@@ -323,10 +328,10 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			CompletedAt:           completedAt,
 			Method:                r.Method,
 			Path:                  r.URL.Path,
-			Protocol:              observationProtocol(r.URL.Path),
+			Protocol:              protocol,
 			Status:                status,
 			StatusCode:            ow.status,
-			Stream:                observationRequestStreams(requestBody),
+			Stream:                observationRequestStreams(requestBody) || strings.HasPrefix(ow.Header().Get("Content-Type"), "text/event-stream"),
 			Model:                 snapshot.model,
 			Source:                snapshot.source,
 			SourceType:            snapshot.sourceType,
@@ -356,7 +361,7 @@ func (s *Server) observabilityMiddleware(next http.Handler) http.Handler {
 			ContextBytesAfter:       snapshot.compression.bytesAfter,
 			ContextTokensSaved:      snapshot.compression.tokensSaved,
 		}
-		if !ow.firstWrite.IsZero() {
+		if !ow.firstWrite.IsZero() && observationHasTextTokens(record.Protocol) {
 			record.FirstTokenLatencyMS = ow.firstWrite.Sub(startedAt).Milliseconds()
 		}
 		if snapshot.pool != nil {
@@ -400,23 +405,37 @@ func (s *Server) addObservation(record observability.RequestRecord) error {
 	return nil
 }
 
-func isObservedTextGenerationRequest(r *http.Request) bool {
+func isObservedRequest(r *http.Request) bool {
 	if r == nil || r.Method != http.MethodPost {
 		return false
 	}
 	switch providerRouteLegacyPath(r.URL.Path) {
 	case "/api/chat", "/api/generate", "/v1/chat/completions", "/v1/responses",
-		"/v1/messages", "/anthropic/messages", "/anthropic/v1/messages":
+		"/v1/messages", "/anthropic/messages", "/anthropic/v1/messages", "/v1/decisions", "/v1/decide",
+		"/v1/embeddings", "/v1/images/generations", "/v1/images/edits", "/v1/audio/transcriptions", "/v1/audio/speech":
 		return true
 	}
 	return strings.HasPrefix(r.URL.Path, "/providers/") &&
 		(strings.HasSuffix(r.URL.Path, "/v1/chat/completions") ||
 			strings.HasSuffix(r.URL.Path, "/v1/responses") ||
-			strings.HasSuffix(r.URL.Path, "/v1/messages"))
+			strings.HasSuffix(r.URL.Path, "/v1/messages") ||
+			strings.HasSuffix(r.URL.Path, "/v1/decisions"))
 }
 
 func observationProtocol(path string) string {
 	switch {
+	case strings.HasSuffix(path, "/decisions"), strings.HasSuffix(path, "/decide"):
+		return "decisions"
+	case strings.HasSuffix(path, "/embeddings"):
+		return "embeddings"
+	case strings.HasSuffix(path, "/images/generations"):
+		return "images/generations"
+	case strings.HasSuffix(path, "/images/edits"):
+		return "images/edits"
+	case strings.HasSuffix(path, "/audio/transcriptions"):
+		return "audio/transcriptions"
+	case strings.HasSuffix(path, "/audio/speech"):
+		return "audio/speech"
 	case strings.HasSuffix(path, "/chat/completions"):
 		return "openai"
 	case strings.HasSuffix(path, "/responses"):
@@ -622,9 +641,11 @@ func sanitizeObservationBody(body []byte) []byte {
 	return sanitized
 }
 
-var observationSecretPattern = regexp.MustCompile(`(?i)("(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|client[_-]?secret|secret)"\s*:\s*)"[^"]*"`)
+var observationSecretPattern = regexp.MustCompile(`(?i)("(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|client[_-]?secret|secret)"\s*:\s*)"[^"]*(?:"|$)`)
+var observationMediaPattern = regexp.MustCompile(`(?i)("(?:b64_json|image|audio|image_data|audio_data)"\s*:\s*)"[^"]*(?:"|$)`)
+var observationMediaDataURLPattern = regexp.MustCompile(`(?i)data:(?:image|audio)/[^;\s",]+;base64,[A-Za-z0-9+/=\r\n]*`)
 var observationInlineSecretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?:gk_[A-Za-z0-9_-]{16,}|sk-(?:proj-)?[A-Za-z0-9_-]{16,})`),
+	regexp.MustCompile(`(?:gk_[A-Za-z0-9_-]{16,}|sk-(?:proj-)?[A-Za-z0-9_-]{16,}|csgadmin_[A-Fa-f0-9]{16,})`),
 	regexp.MustCompile(`(?:gh[pousr]_[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{16,}|AKIA[A-Z0-9]{16})`),
 	regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._-]{12,}`),
 	regexp.MustCompile(`(?i)(?:api[_ -]?key|access[_ -]?token|secret[_ -]?key)\s*[:=]\s*['"]?[A-Za-z0-9._/-]{12,}`),
@@ -633,6 +654,8 @@ var observationInlineSecretPatterns = []*regexp.Regexp{
 
 func redactObservationText(body []byte) []byte {
 	value := observationSecretPattern.ReplaceAll(body, []byte(`${1}"[REDACTED]"`))
+	value = observationMediaPattern.ReplaceAll(value, []byte(`${1}"[MEDIA OMITTED]"`))
+	value = observationMediaDataURLPattern.ReplaceAll(value, []byte("[MEDIA OMITTED]"))
 	for _, pattern := range observationInlineSecretPatterns {
 		replacement := []byte("<redacted-secret>")
 		if pattern.NumSubexp() == 1 {
@@ -647,11 +670,19 @@ func redactObservationValue(value any) {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
+			if key == "b64_json" || key == "image_data" || key == "audio_data" || key == "image" || key == "images" || key == "audio" {
+				typed[key] = "[MEDIA OMITTED]"
+				continue
+			}
 			if isSensitiveObservationKey(key) {
 				typed[key] = "[REDACTED]"
 				continue
 			}
 			if text, ok := child.(string); ok {
+				if strings.HasPrefix(text, "data:image/") || strings.HasPrefix(text, "data:audio/") {
+					typed[key] = "[MEDIA OMITTED]"
+					continue
+				}
 				typed[key] = string(redactObservationText([]byte(text)))
 				continue
 			}
@@ -671,7 +702,7 @@ func redactObservationValue(value any) {
 func isSensitiveObservationKey(key string) bool {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "-", "_"), " ", "_"))
 	switch normalized {
-	case "authorization", "api_key", "apikey", "access_token", "refresh_token", "password", "secret", "client_secret":
+	case "authorization", "api_key", "apikey", "token", "access_token", "refresh_token", "password", "secret", "client_secret":
 		return true
 	default:
 		return strings.HasSuffix(normalized, "_api_key") || strings.HasSuffix(normalized, "_token")

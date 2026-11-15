@@ -852,6 +852,8 @@ func providerPoolActualTokens(body []byte, fallback int) int {
 			TotalTokens      int `json:"total_tokens"`
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
+			InputTokens      int `json:"input_tokens"`
+			OutputTokens     int `json:"output_tokens"`
 		} `json:"usage"`
 	}
 	if json.Unmarshal(body, &payload) != nil {
@@ -861,6 +863,9 @@ func providerPoolActualTokens(body []byte, fallback int) int {
 		return payload.Usage.TotalTokens
 	}
 	if total := payload.Usage.PromptTokens + payload.Usage.CompletionTokens; total > 0 {
+		return total
+	}
+	if total := payload.Usage.InputTokens + payload.Usage.OutputTokens; total > 0 {
 		return total
 	}
 	return fallback

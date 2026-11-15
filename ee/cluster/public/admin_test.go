@@ -100,15 +100,35 @@ func TestAdminTokenSessions(t *testing.T) {
 	}
 	w = request("POST", token, "https://gateway.example")
 	cookies = w.Result().Cookies()
-	_, err = GenerateAdminToken(path)
+	secondToken, err := GenerateAdminToken(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !auth.Authenticate(makeRequest("GET")) {
+		t.Fatal("adding a token invalidated another token's session")
+	}
+	if got := request("POST", token, "https://gateway.example").Code; got != 200 {
+		t.Fatal("existing token no longer logs in")
+	}
+	secondLogin := request("POST", secondToken, "https://gateway.example")
+	if secondLogin.Code != 200 {
+		t.Fatal("second token cannot log in")
+	}
+	if deleted, err := RevokeAdminToken(path, tokenHash(token)[:16]); err != nil || !deleted {
+		t.Fatal(deleted, err)
+	}
 	if auth.Authenticate(makeRequest("GET")) {
-		t.Fatal("rotation did not invalidate session")
+		t.Fatal("revoked token retained session")
 	}
 	if got := request("POST", token, "https://gateway.example").Code; got != 401 {
-		t.Fatal("old token accepted")
+		t.Fatal("revoked token still logs in")
+	}
+	secondRequest := httptest.NewRequest("GET", "https://gateway.example/api/cluster", nil)
+	for _, cookie := range secondLogin.Result().Cookies() {
+		secondRequest.AddCookie(cookie)
+	}
+	if !auth.Authenticate(secondRequest) {
+		t.Fatal("revoking first token invalidated second session")
 	}
 }
 
@@ -161,10 +181,11 @@ func TestAdminTokenExpiryBoundsLoginAndSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var credential adminCredential
-	if err := json.Unmarshal(data, &credential); err != nil {
+	var credentials adminCredentialState
+	if err := json.Unmarshal(data, &credentials); err != nil {
 		t.Fatal(err)
 	}
+	credential := &credentials.Tokens[0]
 	if credential.ExpiresAt == nil || credential.ExpiresAt.Sub(credential.CreatedAt) != time.Hour {
 		t.Fatal("token expiry was not persisted")
 	}
@@ -206,7 +227,7 @@ func TestAdminTokenExpiryBoundsLoginAndSessions(t *testing.T) {
 	// session immediately, including after restarting the auth handler.
 	past := time.Now().Add(-time.Second)
 	credential.ExpiresAt = &past
-	data, _ = json.Marshal(credential)
+	data, _ = json.Marshal(credentials)
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -76,8 +76,15 @@ function prettyBody(value?: string): string {
   }
 }
 
+function hasTextTokenLatency(request: Pick<ObservabilityRequest, "protocol">): boolean {
+  return ["lite", "openai", "responses", "anthropic"].includes(request.protocol);
+}
+
 function sourceLabel(record: Pick<ObservabilityRequest, "source" | "source_name" | "pool_name" | "member_model">): string {
   if (record.pool_name) {
+    if (record.source === "cluster" || record.source?.startsWith("node:")) {
+      return `${record.pool_name} → ${record.source_name || t("settings.apiUsageSourceCluster")}`;
+    }
     return record.member_model ? `${record.pool_name} → ${record.member_model}` : record.pool_name;
   }
   return record.source_name || record.source || "—";
@@ -455,7 +462,7 @@ function RequestTable({ data, loading, onOpen, onOpenTrace }: {
               </td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">
                 {formatObservabilityDuration(row.duration_ms)}
-                {row.stream && <span class="block text-[11px] text-gray-400">TTFT {formatObservabilityDuration(row.first_token_latency_ms)}</span>}
+                {row.stream && hasTextTokenLatency(row) && <span class="block text-[11px] text-gray-400">TTFT {formatObservabilityDuration(row.first_token_latency_ms)}</span>}
               </td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatRequestCost(row)}</td>
               <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.total_tokens)}</td>
@@ -911,7 +918,7 @@ function RequestDetail({ request, onOpenTrace }: { request: ObservabilityRequest
     [t("observability.columnPolicy"), providerPoolPolicyLabel(request.pool_policy)],
     [t("observability.columnEndpoint"), `${request.method} ${request.path}`],
     [t("observability.columnLatency"), formatObservabilityDuration(request.duration_ms)],
-    ["TTFT", formatObservabilityDuration(request.first_token_latency_ms)],
+    ...(hasTextTokenLatency(request) ? [["TTFT", formatObservabilityDuration(request.first_token_latency_ms)]] : []),
     [t("observability.inputTokens"), formatNumber(request.input_tokens)],
     [t("observability.outputTokens"), formatNumber(request.output_tokens)],
     [t("observability.columnCacheRead"), formatCacheTokens(request, request.cache_read_input_tokens)],
@@ -1226,7 +1233,7 @@ function TraceDetail({ trace }: { trace: ObservabilityTraceDetailResponse }) {
                   {selectedRequest.request_id && <CopyableID label={t("observability.correlationRequestID")} value={selectedRequest.request_id} />}
                   {selectedRequest.b3_trace_id && <CopyableID label={t("observability.b3TraceID")} value={selectedRequest.b3_trace_id} />}
                   <TraceDetailField label={t("observability.columnLatency")} value={formatObservabilityDuration(selectedRequest.duration_ms)} />
-                  <TraceDetailField label="TTFT" value={formatObservabilityDuration(selectedRequest.first_token_latency_ms)} />
+                  {hasTextTokenLatency(selectedRequest) && <TraceDetailField label="TTFT" value={formatObservabilityDuration(selectedRequest.first_token_latency_ms)} />}
                   <TraceDetailField
                     label={t("observability.columnTokens")}
                     value={`${t("observability.inputTokens")}: ${formatNumber(selectedRequest.input_tokens)} · ${t("observability.outputTokens")}: ${formatNumber(selectedRequest.output_tokens)}`}

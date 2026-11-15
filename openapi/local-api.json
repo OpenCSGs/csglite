@@ -3,7 +3,7 @@
   "info": {
     "title": "CSGLite Local API",
     "version": "0.1.0",
-    "description": "Structured documentation for the local `/api/*` and `/v1/*` endpoints served by `csghub-lite`.\n\nRequest correlation: every API response includes `X-Request-ID` and `X-B3-TraceId`. Callers may provide `X-Request-ID` using up to 128 alphanumeric or `-_.:` characters and may provide a non-zero 16- or 32-hex-character `X-B3-TraceId`; invalid values are replaced. Text-generation requests also accept `X-CSGLite-Trace-ID` and `X-CSGLite-Thread-ID`. A valid CSGLite trace ID remains the logical Observability grouping key, while B3 identifies the distributed path through trusted inference services.\n\nMaintenance note: whenever you add, remove, or rename an `/api/*` or `/v1/*` route in `internal/server/routes.go`, update this file and run the OpenAPI sync test before merging."
+    "description": "Structured documentation for the local `/api/*` and `/v1/*` endpoints served by `csghub-lite`.\n\nRequest correlation: every API response includes `X-Request-ID` and `X-B3-TraceId`. Callers may provide `X-Request-ID` using up to 128 alphanumeric or `-_.:` characters and may provide a non-zero 16- or 32-hex-character `X-B3-TraceId`; invalid values are replaced. Observed inference requests also accept `X-CSGLite-Trace-ID` and `X-CSGLite-Thread-ID`. A valid CSGLite trace ID remains the logical Observability grouping key, while B3 identifies the distributed path through trusted inference services.\n\nMaintenance note: whenever you add, remove, or rename an `/api/*` or `/v1/*` route in `internal/server/routes.go`, update this file and run the OpenAPI sync test before merging."
   },
   "servers": [
     {
@@ -814,7 +814,7 @@
           "Models"
         ],
         "summary": "Upload a local model",
-        "description": "Imports a local model from multipart form data. Use `mode=archive` for a single `.zip`, `.tar`, `.tar.gz`, or `.tgz` file; use `mode=files` or `mode=directory` with one or more files and matching `paths` values.",
+        "description": "Imports a local model from multipart form data. Use `mode=archive` for a single `.zip`, `.tar`, `.tar.gz`, or `.tgz` file; use `mode=files` or `mode=directory` with one or more files and matching `paths` values. Models referenced by managed deployments cannot be deleted or overwritten through ordinary library operations; use the Master deployment controls first.",
         "operationId": "uploadModel",
         "requestBody": {
           "required": true,
@@ -878,6 +878,21 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "409": {
+            "description": "Model files are referenced by a managed deployment or runtime.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -1220,7 +1235,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Lists runtime instances actually present on this host, including isolated Master-managed deployments. It does not list models running on remote members. A draining managed runtime remains listed until its active requests finish and the engine closes. Optional display_name and repository identify managed instances without changing existing model identifiers."
       }
     },
     "/api/show": {
@@ -1461,7 +1477,7 @@
           "Models"
         ],
         "summary": "Eagerly load a model",
-        "description": "Loads a model into memory and optionally streams progress while conversions are running.",
+        "description": "Loads a model into memory and optionally streams progress while conversions are running. Managed deployment IDs must use the controller deployment API; local load/stop returns 403.",
         "operationId": "loadModel",
         "requestBody": {
           "required": true,
@@ -1505,6 +1521,9 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
           }
         }
       }
@@ -1548,8 +1567,12 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
           }
-        }
+        },
+        "description": " Managed deployment IDs must use the controller deployment API; local load/stop returns 403."
       }
     },
     "/api/delete": {
@@ -1591,8 +1614,24 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Model files are referenced by a managed deployment or runtime.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
-        }
+        },
+        "description": " Models referenced by managed deployments cannot be deleted or overwritten through ordinary library operations; use the Master deployment controls first."
       }
     },
     "/api/generate": {
@@ -3506,7 +3545,7 @@
         "tags": [
           "System"
         ],
-        "summary": "List text-generation request history",
+        "summary": "List inference request history",
         "operationId": "listObservabilityRequests",
         "parameters": [
           {
@@ -3616,7 +3655,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Includes successful and failed text/vision generation, typed decisions, embeddings, image generation/editing, speech transcription and speech synthesis requests on console, external API, public gateway and worker HTTP listeners. Records preserve public service IDs, member routing and available usage. Uploaded files and generated media/embedding vectors are omitted; multipart metadata is retained. Real-time WebSocket/WebRTC sessions and asynchronous image jobs use separate execution lifecycles and are not counted as completed HTTP inference. Only requests captured after support was enabled are available."
       }
     },
     "/api/observability/requests/{id}": {
@@ -8104,7 +8144,7 @@
           "Cluster"
         ],
         "summary": "Create a cluster",
-        "description": "Founds a cluster of one on this node and returns the join token once. Other nodes join with `csghub-lite cluster join <token>`, `POST /api/cluster/join`, or automatically at first start when CSGHUB_LITE_CLUSTER_JOIN_TOKEN is set.",
+        "description": "Founds a cluster of one on this node and returns the join token once. Other nodes join with `csghub-lite cluster join <token>`, `POST /api/cluster/join`, or automatically at first start when CSGHUB_LITE_CLUSTER_JOIN_TOKEN is set. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available.",
         "operationId": "createCluster",
         "requestBody": {
           "required": true,
@@ -8163,6 +8203,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
           }
         }
       },
@@ -8455,7 +8498,7 @@
           "Cluster"
         ],
         "summary": "Rotate the join token",
-        "description": "Mints a new join token; already paired members are unaffected.",
+        "description": "Mints a new join token; already paired members are unaffected. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available.",
         "operationId": "rotateClusterToken",
         "responses": {
           "200": {
@@ -8499,6 +8542,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
           }
         }
       }
@@ -8509,7 +8555,7 @@
           "Cluster"
         ],
         "summary": "Get this node's admission code",
-        "description": "An 8-digit code, valid for ten minutes and for one use, that a member enters to invite this unpaired node (`POST /api/cluster/invite` there).",
+        "description": "An 8-digit code, valid for ten minutes and for one use, that a member enters to invite this unpaired node (`POST /api/cluster/invite` there). Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available.",
         "operationId": "getClusterCode",
         "responses": {
           "200": {
@@ -8554,6 +8600,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
           }
         }
       }
@@ -8606,7 +8655,7 @@
           "Cluster"
         ],
         "summary": "Invite a discovered node",
-        "description": "Pairs an unpaired node using the admission code shown on it. The handshake is authenticated with the code and the inviting node's certificate; the invited node adopts this cluster's member table.",
+        "description": "Pairs an unpaired node using the admission code shown on it. The handshake is authenticated with the code and the inviting node's certificate; the invited node adopts this cluster's member table. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available.",
         "operationId": "inviteClusterNode",
         "requestBody": {
           "required": true,
@@ -8698,7 +8747,7 @@
           "Cluster"
         ],
         "summary": "Update a node",
-        "description": "Renames this node (`name`, own uuid only) or pins a static cluster endpoint for a member (`static_address`) on networks without multicast.",
+        "description": "Renames this node (`name`, own uuid only) or pins a static cluster endpoint for a member (`static_address`) on networks without multicast. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available.",
         "operationId": "updateClusterNode",
         "parameters": [
           {
@@ -8769,6 +8818,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
           }
         }
       },
@@ -8777,7 +8829,7 @@
           "Cluster"
         ],
         "summary": "Remove a member",
-        "description": "Drops the member, tells it, and lets gossip carry a tombstone so it is not re-added by a stale peer. Use DELETE /api/cluster to remove this node itself.",
+        "description": "Drops the member, tells it, and lets gossip carry a tombstone so it is not re-added by a stale peer. Use DELETE /api/cluster to remove this node itself. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available.",
         "operationId": "removeClusterNode",
         "parameters": [
           {
@@ -8830,6 +8882,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
           }
         }
       }
@@ -8916,7 +8971,7 @@
           "Cluster"
         ],
         "summary": "Start a model download on a member",
-        "description": "Creates a pull job on the named node from that node's own model source. Same body as POST /api/pull/jobs.",
+        "description": "Creates a pull job on the named node from that node's own model source. Same body as POST /api/pull/jobs. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available.",
         "operationId": "pullModelOnClusterNode",
         "parameters": [
           {
@@ -8979,6 +9034,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
           }
         }
       }
@@ -8989,7 +9047,7 @@
           "Cluster"
         ],
         "summary": "List models across the cluster",
-        "description": "Union of every member's models with the nodes holding each one and whether it is loaded there. Copies of the same repository from different registries are one row, and a node that holds any copy is shown as having the model. A node that is still downloading a model reports that progress on the same row.",
+        "description": "Union of every member's models with the nodes holding each one and whether it is loaded there. Copies of the same repository from different registries are one row, and a node that holds any copy is shown as having the model. A node that is still downloading a model reports that progress on the same row. Managed deployment instances retain their own identity even when they use the same repository; only ready deployments are advertised.",
         "operationId": "listClusterModels",
         "responses": {
           "200": {
@@ -9032,7 +9090,7 @@
           "Cluster"
         ],
         "summary": "Sync a model to nodes",
-        "description": "Asks each target node to pull the model from its own model source (the on-prem CSGHub in the intended deployment). Nodes that already hold the same repository, including under another registry id, are skipped. Refused while members use different model sources.",
+        "description": "Asks each target node to pull the model from its own model source (the on-prem CSGHub in the intended deployment). Nodes that already hold the same repository, including under another registry id, are skipped. Refused while members use different model sources. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available.",
         "operationId": "syncClusterModel",
         "requestBody": {
           "required": true,
@@ -9099,6 +9157,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
           }
         }
       }
@@ -9266,8 +9327,12 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Master-only cluster routing setting."
           }
-        }
+        },
+        "description": " Public Slave workers may update their own resources and authorization, but changing routing_mode, prefer_local or affinity_max_queue returns 403 master_required. Public workers are controlled by the joined Master automatically. managed_by is derived, not a separate opt-in. Legacy empty/current-Master values are ignored, other values return 400. accept_work and state pause execution without revoking control; leaving the cluster ends control."
       }
     },
     "/cluster/v1/join": {
@@ -9447,11 +9512,11 @@
     },
     "/auth/login": {
       "post": {
-        "summary": "Exchange a CLI-generated public management token for an 8-hour browser session",
+        "summary": "Exchange any active management token for a browser session (maximum 8 hours)",
         "tags": [
           "Public management"
         ],
-        "description": "Available on the public gateway HTTPS listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Cookies are Secure, HttpOnly (session only), SameSite=Strict. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Token rotation invalidates all sessions. Management tokens generated with --ttl expire server-side. Session lifetime is at most 8 hours and never exceeds the token expiry; an expired token invalidates existing sessions.",
+        "description": "Available on the public gateway HTTPS listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Cookies are Secure, HttpOnly (session only), SameSite=Strict. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration. Management tokens generated with --ttl expire server-side. Session lifetime is at most 8 hours and never exceeds the token expiry; an expired token invalidates only sessions created by that token.",
         "responses": {
           "200": {
             "description": "Success"
@@ -9494,7 +9559,7 @@
         "tags": [
           "Public management"
         ],
-        "description": "Returns server-verified console access. Direct loopback/private/link-local clients using a local host address may access without a management token. Forwarded requests do not inherit this exemption. Public listener plaintext proxy traffic never inherits the exemption. Remote sessions require the management token and HTTPS. CSGHub account credentials belong to the instance and are independent of console sessions. Desktop clients establish their sidecar session automatically and do not use public login. Console access is runtime metadata, not an inference API-key exemption for native LAN clients; native LAN calls still follow the API-key setting, and the dedicated public inference listener always requires a key. Recognized keys remain attributable for usage even on console requests. Console login policy is configured by console.auth_mode (auto by default), overridden by CSGHUB_LITE_CONSOLE_AUTH_MODE. required disables local/LAN management exemptions on both console listeners; pages and management APIs require a Token session over HTTPS. Desktop automatic authentication and inference API-key policy remain independent. Changes require restart. Management tokens generated with --ttl expire server-side. Session lifetime is at most 8 hours and never exceeds the token expiry; an expired token invalidates existing sessions.",
+        "description": "Returns server-verified console access. Direct loopback/private/link-local clients using a local host address may access without a management token. Forwarded requests do not inherit this exemption. Public listener plaintext proxy traffic never inherits the exemption. Remote sessions require the management token and HTTPS. CSGHub account credentials belong to the instance and are independent of console sessions. Desktop clients establish their sidecar session automatically and do not use public login. Console access is runtime metadata, not an inference API-key exemption for native LAN clients; native LAN calls still follow the API-key setting, and the dedicated public inference listener always requires a key. Recognized keys remain attributable for usage even on console requests. Console login policy is configured by console.auth_mode (auto by default), overridden by CSGHUB_LITE_CONSOLE_AUTH_MODE. required disables local/LAN management exemptions on both console listeners; pages and management APIs require a Token session over HTTPS. Desktop automatic authentication and inference API-key policy remain independent. Changes require restart. Management tokens generated with --ttl expire server-side. Session lifetime is at most 8 hours and never exceeds the token expiry; an expired token invalidates only sessions created by that token. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration.",
         "responses": {
           "200": {
             "description": "Success",
@@ -9557,7 +9622,7 @@
         "tags": [
           "Public management"
         ],
-        "description": "Available on the public gateway HTTPS listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Cookies are Secure, HttpOnly (session only), SameSite=Strict. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Token rotation invalidates all sessions.",
+        "description": "Available on the public gateway HTTPS listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Cookies are Secure, HttpOnly (session only), SameSite=Strict. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration.",
         "responses": {
           "200": {
             "description": "Success"
@@ -11028,7 +11093,7 @@
           "Compatibility"
         ],
         "summary": "OpenAI-compatible image generation",
-        "description": "AI Gateway auxiliary inference endpoint. Preserves the model/source contract; not exposed on the public cluster listener. Compatibility layer for local text-to-image generation. The Diffusers runtime is checked lazily when this endpoint is called.",
+        "description": "Published model service endpoint, available on console, desktop and authenticated public cluster listeners. Set model to the published service ID; source must be omitted or identify that service. Member routing, limits, failover and usage attribution are shared with text services. Remote members execute through the existing cluster transport, preserving multipart files and audio bytes. Console and desktop listeners retain legacy direct model/source calls when no service matches. Compatibility layer for local text-to-image generation. The Diffusers runtime is checked lazily when this endpoint is called.",
         "operationId": "gateway_openAIImagesGenerations",
         "requestBody": {
           "required": true,
@@ -11038,7 +11103,7 @@
                 "$ref": "#/components/schemas/OpenAIImagesGenerationRequest"
               },
               "example": {
-                "model": "Qwen/Qwen-Image",
+                "model": "published-model-service",
                 "prompt": "A watercolor cat reading a book",
                 "size": "1024x1024",
                 "response_format": "b64_json"
@@ -11072,6 +11137,9 @@
           },
           "500": {
             "$ref": "#/components/responses/OpenAIInternalError"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
           }
         }
       }
@@ -11082,7 +11150,7 @@
           "Compatibility"
         ],
         "summary": "OpenAI-compatible image edit",
-        "description": "AI Gateway auxiliary inference endpoint. Preserves the model/source contract; not exposed on the public cluster listener. OpenAI-compatible image editing endpoint. Accepts multipart/form-data with one or more input images and an edit prompt. Local Diffusers models such as Qwen-Image-Edit are supported through the shared image runtime.",
+        "description": "Published model service endpoint, available on console, desktop and authenticated public cluster listeners. Set model to the published service ID; source must be omitted or identify that service. Member routing, limits, failover and usage attribution are shared with text services. Remote members execute through the existing cluster transport, preserving multipart files and audio bytes. Console and desktop listeners retain legacy direct model/source calls when no service matches. OpenAI-compatible image editing endpoint. Accepts multipart/form-data with one or more input images and an edit prompt. Local Diffusers models such as Qwen-Image-Edit are supported through the shared image runtime.",
         "operationId": "gateway_openAIImagesEdits",
         "requestBody": {
           "required": true,
@@ -11120,6 +11188,9 @@
           },
           "500": {
             "$ref": "#/components/responses/OpenAIInternalError"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
           }
         }
       }
@@ -11130,7 +11201,7 @@
           "Compatibility"
         ],
         "summary": "OpenAI-compatible decisions",
-        "description": "AI Gateway auxiliary inference endpoint. Preserves the model/source contract; not exposed on the public cluster listener. OpenAI Decisions API: answers predicate, choice and score questions about shared input with calibrated probabilities. Served by local JEV models tagged jev or typed-decisions through their System 1 head: predicate uses the yes/no head, choice and score use the choice head (more than 16 options run as a tournament), and score is the probability-weighted level index. Native decision models such as Laya are answered by llama.cpp's /v1/systemone (predicate as noul; score takes 2-10 levels). Cloud models the gateway lists with the typed-decisions task are forwarded to the gateway's /v1/systemone. Confidence is the gap between the two most likely options. Input images are not supported.",
+        "description": "Published model service endpoint, available on console, desktop and authenticated public cluster listeners. Set model to the published service ID; source must be omitted or identify that service. Member routing, limits, failover and usage attribution are shared with text services. Remote members execute through the existing cluster transport, preserving multipart files and audio bytes. Console and desktop listeners retain legacy direct model/source calls when no service matches. OpenAI Decisions API: answers predicate, choice and score questions about shared input with calibrated probabilities. Served by local JEV models tagged jev or typed-decisions through their System 1 head: predicate uses the yes/no head, choice and score use the choice head (more than 16 options run as a tournament), and score is the probability-weighted level index. Native decision models such as Laya are answered by llama.cpp's /v1/systemone (predicate as noul; score takes 2-10 levels). Cloud models the gateway lists with the typed-decisions task are forwarded to the gateway's /v1/systemone. Confidence is the gap between the two most likely options. Input images are not supported.",
         "operationId": "gateway_createDecision",
         "parameters": [
           {
@@ -11151,7 +11222,7 @@
                 "$ref": "#/components/schemas/DecisionCreateRequest"
               },
               "example": {
-                "model": "huggingface/mradermacher/JEV-9B-GGUF",
+                "model": "published-model-service",
                 "input": "I was charged twice for my order.",
                 "questions": [
                   {
@@ -11323,10 +11394,10 @@
     "/ai-gateway/v1/audio/transcriptions": {
       "post": {
         "tags": [
-          "OpenAI Compatibility"
+          "Compatibility"
         ],
         "summary": "Create audio transcription",
-        "description": "AI Gateway auxiliary inference endpoint. Preserves the model/source contract; not exposed on the public cluster listener. OpenAI-compatible audio transcription endpoint served by the local ASR runtime.",
+        "description": "Published model service endpoint, available on console, desktop and authenticated public cluster listeners. Set model to the published service ID; source must be omitted or identify that service. Member routing, limits, failover and usage attribution are shared with text services. Remote members execute through the existing cluster transport, preserving multipart files and audio bytes. Console and desktop listeners retain legacy direct model/source calls when no service matches. OpenAI-compatible audio transcription endpoint served by the local ASR runtime.",
         "operationId": "gateway_createAudioTranscription",
         "requestBody": {
           "required": true,
@@ -11359,6 +11430,9 @@
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
           }
         }
       }
@@ -11366,10 +11440,10 @@
     "/ai-gateway/v1/audio/speech": {
       "post": {
         "tags": [
-          "OpenAI Compatibility"
+          "Compatibility"
         ],
         "summary": "Create speech",
-        "description": "AI Gateway auxiliary inference endpoint. Preserves the model/source contract; not exposed on the public cluster listener. OpenAI-compatible speech synthesis served by the local Python text-to-speech runtime. Speech models never run through llama.cpp: the vocoder or codec decoder that turns model output into a waveform only exists in the model's own inference stack. Set stream to receive the audio as it is synthesised.",
+        "description": "Published model service endpoint, available on console, desktop and authenticated public cluster listeners. Set model to the published service ID; source must be omitted or identify that service. Member routing, limits, failover and usage attribution are shared with text services. Remote members execute through the existing cluster transport, preserving multipart files and audio bytes. Console and desktop listeners retain legacy direct model/source calls when no service matches. OpenAI-compatible speech synthesis served by the local Python text-to-speech runtime. Speech models never run through llama.cpp: the vocoder or codec decoder that turns model output into a waveform only exists in the model's own inference stack. Set stream to receive the audio as it is synthesised.",
         "operationId": "gateway_createSpeech",
         "requestBody": {
           "required": true,
@@ -11424,6 +11498,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/OpenAIUnauthorized"
           }
         }
       }
@@ -11704,6 +11781,388 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cluster/deployments": {
+      "get": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "List model deployments and local assignments",
+        "operationId": "listClusterDeployments",
+        "description": "Controller-owned desired deployments and worker execution receipts. Status is the last observed worker response; unreachable does not mean stopped.",
+        "responses": {
+          "200": {
+            "description": "Deployments and assignments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "deployments",
+                    "assignments"
+                  ],
+                  "properties": {
+                    "deployments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ClusterDeployment"
+                      }
+                    },
+                    "assignments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ClusterDeployment"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or controller authorization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Management login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Deployment not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cluster is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Deploy a model to a specific managed node",
+        "operationId": "createClusterDeployment",
+        "description": "Downloads and runs an isolated chat or embedding instance using target-node registry credentials. Joining a public cluster grants its Master deployment control automatically; LAN peers select their controller in settings. The target must report deployment capability and the matching controller. No automatic publication, replicas, or rescheduling. Public Slave workers cannot perform controller operations (403 master_required).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClusterDeploymentSpec"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Desired deployment saved; progress is asynchronous.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterDeployment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or controller authorization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Management login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Deployment not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cluster is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
+          }
+        }
+      }
+    },
+    "/api/cluster/deployments/{id}": {
+      "put": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Start, unload, retry or delete a deployment",
+        "operationId": "updateClusterDeployment",
+        "description": "Increments the durable generation. Use running to retry a failed deployment. Stop retains cached model files and fences new inference before draining the runtime. Artifact and runtime specification are immutable. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available. Desired deleted fences inference, cancels preparation, drains requests and removes shared library model files only when no other deployment references them and no local runtime still uses them. Other references retain the files and are reported in status.detail. Terminal tombstones reject resurrection. Retry failed deletion with deleted; gateway routes are retained.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "desired"
+                ],
+                "properties": {
+                  "desired": {
+                    "type": "string",
+                    "enum": [
+                      "running",
+                      "stopped",
+                      "deleted"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Desired state saved; execution is asynchronous.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterDeployment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or controller authorization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Management login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Deployment not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cluster is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
+          }
+        }
+      }
+    },
+    "/api/cluster/nodes/{uuid}/models/action": {
+      "post": {
+        "tags": [
+          "Cluster"
+        ],
+        "operationId": "manageClusterNodeModel",
+        "summary": "Unload or delete a model on a controlled node",
+        "description": "Controller-only typed action over the authenticated tunnel or LAN mTLS. Requires current Master authorization and node capability. Model, repository and artifact source must match exactly. Active requests and loading/downloads are refused, including text, image, ASR and TTS runtimes. Unload keeps files and permits future automatic wake; delete removes files on this node. For managed deployments use the deployment desired-state API instead. Gateway routes are not removed. No automatic retry or deferred offline execution.",
+        "parameters": [
+          {
+            "name": "uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "repository",
+                  "artifact_source",
+                  "action"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string"
+                  },
+                  "repository": {
+                    "type": "string"
+                  },
+                  "artifact_source": {
+                    "type": "string",
+                    "enum": [
+                      "opencsg",
+                      "huggingface",
+                      "modelscope"
+                    ]
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "unload",
+                      "delete"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Operation completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "completed"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid action.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Management login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Master operation required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Node offline, unauthorized, busy, unsupported, identity mismatch or operation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cluster disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
                 }
               }
             }
@@ -12474,9 +12933,14 @@
             "type": "string",
             "enum": [
               "chat",
-              "embedding"
+              "embedding",
+              "image",
+              "asr",
+              "tts",
+              "decision",
+              "mixed"
             ],
-            "description": "Service capability. Omission preserves legacy chat listing behavior."
+            "description": "Service capability. Omitted legacy configuration defaults to chat. Responses derive capability from current member metadata, including native decision-only models; mixed member capabilities are not interchangeable."
           },
           "source_states": {
             "type": "object",
@@ -12490,6 +12954,40 @@
               ]
             },
             "description": "Derived configuration status by member ID. Configured is not a live inference health check."
+          },
+          "inference_protocols": {
+            "type": "array",
+            "readOnly": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "chat/completions",
+                "responses",
+                "messages",
+                "embeddings",
+                "decisions",
+                "images/generations",
+                "images/edits",
+                "audio/transcriptions",
+                "audio/speech"
+              ]
+            },
+            "description": "Supported POST endpoint suffixes under /ai-gateway/v1, derived from the intersection of enabled members and existing source adapters. Empty means no compatible test endpoint. Not persisted."
+          },
+          "typed_decisions": {
+            "type": "boolean",
+            "readOnly": true,
+            "description": "All enabled members support typed decisions."
+          },
+          "decision_only": {
+            "type": "boolean",
+            "readOnly": true,
+            "description": "All enabled members are decision-only models and cannot generate text."
+          },
+          "vision": {
+            "type": "boolean",
+            "readOnly": true,
+            "description": "All enabled members accept image input for chat."
           }
         }
       },
@@ -12549,9 +13047,13 @@
             "type": "string",
             "enum": [
               "chat",
-              "embedding"
+              "embedding",
+              "image",
+              "asr",
+              "tts",
+              "decision"
             ],
-            "description": "Service capability. Omission preserves legacy chat listing behavior."
+            "description": "Service capability. Omitted legacy configuration defaults to chat. Responses derive capability from current member metadata, including native decision-only models; mixed member capabilities are not interchangeable."
           }
         }
       },
@@ -12591,9 +13093,13 @@
             "type": "string",
             "enum": [
               "chat",
-              "embedding"
+              "embedding",
+              "image",
+              "asr",
+              "tts",
+              "decision"
             ],
-            "description": "Service capability. Omission preserves legacy chat listing behavior."
+            "description": "Service capability. Omitted legacy configuration defaults to chat. Responses derive capability from current member metadata, including native decision-only models; mixed member capabilities are not interchangeable."
           }
         }
       },
@@ -13179,6 +13685,7 @@
               "cloud",
               "provider",
               "pool",
+              "cluster",
               "unknown"
             ]
           },
@@ -13253,6 +13760,7 @@
               "cloud",
               "provider",
               "pool",
+              "cluster",
               "unknown"
             ]
           },
@@ -13510,8 +14018,15 @@
               "lite",
               "openai",
               "responses",
-              "anthropic"
-            ]
+              "anthropic",
+              "decisions",
+              "embeddings",
+              "images/generations",
+              "images/edits",
+              "audio/transcriptions",
+              "audio/speech"
+            ],
+            "description": "Inference protocol: openai, responses, anthropic, lite, decisions, embeddings, images/generations, images/edits, audio/transcriptions, or audio/speech. Includes supported direct, gateway and provider-scoped routes."
           },
           "status": {
             "type": "string",
@@ -13530,13 +14045,16 @@
             "type": "string"
           },
           "source": {
-            "type": "string"
+            "type": "string",
+            "description": "Resolved execution source, including node:<uuid> or cluster for cluster requests."
           },
           "source_type": {
-            "type": "string"
+            "type": "string",
+            "description": "Execution source type: local, cloud, provider, pool, cluster, or unknown."
           },
           "source_name": {
-            "type": "string"
+            "type": "string",
+            "description": "Display name of the resolved provider or executing cluster node, when available."
           },
           "api_key_id": {
             "type": "string"
@@ -15272,6 +15790,14 @@
           },
           "step_total": {
             "type": "integer"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Optional human-readable deployment name; name and model remain the inference identifier."
+          },
+          "repository": {
+            "type": "string",
+            "description": "Optional original model repository for an isolated managed deployment."
           }
         }
       },
@@ -19414,6 +19940,7 @@
               "cloud",
               "provider",
               "pool",
+              "cluster",
               "unknown"
             ]
           },
@@ -19629,7 +20156,11 @@
             "items": {
               "type": "string"
             },
-            "description": "Exact local inference model IDs explicitly shared by an outbound public worker. Empty or omitted shares nothing."
+            "description": "Additional existing local models shared by a public worker. Managed deployments are reported automatically and do not need entries here. An empty list does not revoke Master control or hide managed deployments."
+          },
+          "managed_by": {
+            "type": "string",
+            "description": "Deployment controller UUID. For public workers this is derived from the joined cluster Master (gateway_uuid), including existing memberships; no separate authorization is needed and it is not persisted in settings. LAN peers may explicitly select a controller; empty means sharing only there. Legacy public-worker updates with an empty value or the current Master are accepted without changing control; another UUID is rejected. Leave the public cluster to end Master control."
           }
         }
       },
@@ -19685,7 +20216,7 @@
       },
       "ClusterModelPerf": {
         "type": "object",
-        "description": "Measured throughput of a model on a node (exponential moving averages).",
+        "description": "Measured throughput of a model on a node (exponential moving averages). Management views include measurements recorded by this entry node. decode_tps uses full request duration for non-streaming responses; load_seconds is not time to first token.",
         "properties": {
           "decode_tps": {
             "type": "number"
@@ -19751,6 +20282,23 @@
           },
           "perf": {
             "$ref": "#/components/schemas/ClusterModelPerf"
+          },
+          "deployment_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Deployment runtime identity; independently deployed copies are never grouped by repository."
+          },
+          "typed_decisions": {
+            "type": "boolean",
+            "description": "Supports typed decisions."
+          },
+          "decision_only": {
+            "type": "boolean",
+            "description": "Native decision model; cannot generate chat text."
+          },
+          "has_mmproj": {
+            "type": "boolean",
+            "description": "Supports local vision image input."
           }
         }
       },
@@ -19945,6 +20493,18 @@
           "time": {
             "type": "string",
             "format": "date-time"
+          },
+          "managed_by": {
+            "type": "string",
+            "description": "Deployment controller UUID. For public workers this is derived from the joined cluster Master (gateway_uuid), including existing memberships; no separate authorization is needed and it is not persisted in settings. LAN peers may explicitly select a controller; empty means sharing only there. Legacy public-worker updates with an empty value or the current Master are accepted without changing control; another UUID is rejected. Leave the public cluster to end Master control."
+          },
+          "deployment_capable": {
+            "type": "boolean",
+            "description": "The worker supports typed deployment assignments."
+          },
+          "model_management": {
+            "type": "boolean",
+            "description": "Node supports typed remote unload/delete actions authorized by its current controller."
           }
         }
       },
@@ -20371,6 +20931,18 @@
             "items": {
               "$ref": "#/components/schemas/ClusterModelSync"
             }
+          },
+          "typed_decisions": {
+            "type": "boolean",
+            "description": "Supports typed decisions."
+          },
+          "decision_only": {
+            "type": "boolean",
+            "description": "Native decision model; cannot generate chat text."
+          },
+          "has_mmproj": {
+            "type": "boolean",
+            "description": "Supports local vision image input."
           }
         }
       },
@@ -20643,9 +21215,174 @@
               "type": "string",
               "maxLength": 512
             },
-            "description": "Replace this worker owner’s shared local model IDs. An empty list withdraws all models."
+            "description": "Additional existing local models shared by a public worker. Managed deployments are reported automatically and do not need entries here. An empty list does not revoke Master control or hide managed deployments."
+          },
+          "managed_by": {
+            "type": "string",
+            "description": "Deployment controller UUID. For public workers this is derived from the joined cluster Master (gateway_uuid), including existing memberships; no separate authorization is needed and it is not persisted in settings. LAN peers may explicitly select a controller; empty means sharing only there. Legacy public-worker updates with an empty value or the current Master are accepted without changing control; another UUID is rejected. Leave the public cluster to end Master control."
           }
         }
+      },
+      "ClusterDeploymentSpec": {
+        "type": "object",
+        "required": [
+          "name",
+          "node_uuid",
+          "repository"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "node_uuid": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "repository": {
+            "type": "string",
+            "description": "namespace/name; artifact identity is independent from the public service ID."
+          },
+          "artifact_source": {
+            "type": "string",
+            "enum": [
+              "opencsg",
+              "huggingface",
+              "modelscope"
+            ],
+            "default": "opencsg"
+          },
+          "revision": {
+            "type": "string",
+            "default": "main",
+            "description": "Explicit revision requested from the worker registry; immutable after creation. Prefer a commit for reproducible deployment."
+          },
+          "quant": {
+            "type": "string",
+            "description": "Optional GGUF quantization/runtime dtype."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "embedding"
+            ],
+            "default": "chat"
+          },
+          "num_ctx": {
+            "type": "integer",
+            "minimum": 512,
+            "maximum": 131072,
+            "default": 4096
+          },
+          "num_parallel": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16,
+            "default": 1
+          },
+          "n_gpu_layers": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 999,
+            "default": -1
+          }
+        }
+      },
+      "ClusterDeploymentStatus": {
+        "type": "object",
+        "required": [
+          "phase",
+          "updated_at"
+        ],
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "downloading",
+              "loading",
+              "ready",
+              "stopping",
+              "stopped",
+              "failed",
+              "blocked",
+              "unreachable",
+              "deleting",
+              "deleted"
+            ]
+          },
+          "error": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "completed_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ClusterDeployment": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ClusterDeploymentSpec"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "controller_uuid",
+              "generation",
+              "desired",
+              "created_at",
+              "status"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "controller_uuid": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "generation": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1
+              },
+              "desired": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "stopped",
+                  "deleted"
+                ]
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "status": {
+                "$ref": "#/components/schemas/ClusterDeploymentStatus"
+              }
+            }
+          }
+        ]
       }
     }
   }
