@@ -3266,6 +3266,7 @@ export interface ClusterNodeModelStatus {
 }
 
 export interface ClusterNodeStatus {
+  node_state_management?: boolean;
   model_management?: boolean;
   managed_by?: string;
   deployment_capable?: boolean;

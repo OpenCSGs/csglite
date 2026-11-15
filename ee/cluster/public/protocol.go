@@ -24,6 +24,7 @@ import (
 )
 
 const (
+	NodeStatePath   = "/cluster/v1/node/state"
 	ModelActionPath = "/cluster/v1/models/action"
 	DeploymentPath  = "/cluster/v1/deployments/assign"
 	ConnectPath     = "/cluster/v1/connect"

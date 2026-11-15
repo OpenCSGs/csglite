@@ -5,6 +5,7 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -148,6 +149,30 @@ func TestPublicClusterReusesMembershipAndScheduler(t *testing.T) {
 		}
 		if eligible != shared {
 			t.Fatalf("gateway scheduler not synchronized after shared=%v: %+v", shared, ex)
+		}
+	}
+
+	for _, state := range []NodeState{NodeStateMaintenance, NodeStateDrain, NodeStateActive} {
+		req := httptest.NewRequest(http.MethodPost, "/api/cluster/nodes/worker/state", strings.NewReader(`{"state":"`+string(state)+`"}`))
+		req.SetPathValue("uuid", worker.identity.UUID)
+		w := httptest.NewRecorder()
+		gateway.Admin().HandleNodeState(w, req)
+		if w.Code != 200 {
+			t.Fatalf("remote state %s: %d %s", state, w.Code, w.Body.String())
+		}
+		var settings Settings
+		if err := json.Unmarshal(w.Body.Bytes(), &settings); err != nil || settings.State != state || worker.store.Settings().State != state {
+			t.Fatalf("state not applied: %s", w.Body.String())
+		}
+		st := gateway.candidateStatus(worker.identity.UUID)
+		if st.State != state || st.AcceptWork != (state == NodeStateActive) {
+			t.Fatalf("scheduler stale after state %s: %+v", state, st)
+		}
+		if len(st.Net.Addrs) != 0 {
+			t.Fatal("state receipt exposed worker network addresses")
+		}
+		if _, ok := st.Model("private-model"); ok {
+			t.Fatal("state receipt leaked a private model")
 		}
 	}
 

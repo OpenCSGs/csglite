@@ -97,3 +97,9 @@ Status updates are pushed when sharing or admission settings change. A gateway
 advertises `status_ack` in its hello and acknowledges a numbered update only after
 publishing it to the scheduler. Older peers continue using periodic heartbeats.
 Disconnected workers retain settings and publish them when they reconnect.
+
+The current Master may also send `POST /cluster/v1/node/state` with only
+`active`, `drain` or `maintenance`. Workers validate controller membership on
+each call. The operation is unavailable to inference API keys and to the general
+inference allowlist. LAN peers require the same explicit controller used for
+deployment control; older nodes advertise no `node_state_management` capability.

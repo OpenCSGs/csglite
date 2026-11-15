@@ -47,7 +47,7 @@ import { deploymentProgress } from "../deploymentModels";
 import type { ModelInstanceFilter } from "../clusterModels";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { t, locale } from "../i18n";
-import { workerNodeState, clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, shortVersion, stateKey } from "../cluster";
+import { canManageNodeState, workerNodeState, clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, shortVersion, stateKey } from "../cluster";
 
 type ClusterTab = "overview" | "discovered" | "models" | "settings";
 
@@ -376,14 +376,14 @@ async function saveStaticAddress() {
   }
 }
 
-async function changeLocalState(uuid: string, state: ClusterNodeState) {
+async function changeNodeState(uuid: string, state: ClusterNodeState) {
   stateSaving.value = true;
   overviewError.value = "";
   try {
     const settings = view.value?.mode === "worker"
       ? await updateClusterSettings({ state, accept_work: true })
       : await setClusterNodeState(uuid, state);
-    if (view.value) view.value = { ...view.value, settings };
+    if (view.value && uuid === view.value.node.uuid) view.value = { ...view.value, settings };
     await loadView();
   } catch (err) {
     overviewError.value = errorMessage(err);
@@ -1123,12 +1123,12 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
         {shortVersion(st?.version)}
       </td>
       <td class="py-3 text-right whitespace-nowrap">
-        {node.local ? (
+        {canManageNodeState(view, node) ? (
           <select
             class="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            value={view.mode === "worker" ? workerNodeState(view.settings) : view.settings.state}
-            disabled={stateSaving.value}
-            onChange={(e) => void changeLocalState(node.uuid, (e.target as HTMLSelectElement).value as ClusterNodeState)}
+            value={node.local ? (view.mode === "worker" ? workerNodeState(view.settings) : view.settings.state) : st?.state ?? "active"}
+            disabled={stateSaving.value || !node.online}
+            onChange={(e) => void changeNodeState(node.uuid, (e.target as HTMLSelectElement).value as ClusterNodeState)}
             title={t(view.mode === "worker" ? "cluster.workerStateOverviewHint" : "cluster.stateSelectorHint")}
           >
             <option value="active">{t("cluster.stateActive")}</option>

@@ -39,6 +39,7 @@ func (m *Manager) LocalStatus(ctx context.Context) Status {
 	}
 	st.Time = time.Now().UTC()
 	st.ManagedBy = m.deploymentController()
+	st.NodeStateManagement = true
 	_, st.DeploymentCapable = m.opts.Host.(DeploymentHost)
 	_, st.ModelManagement = m.opts.Host.(ModelActionHost)
 	st.Models = append(st.Models, m.deploymentModels()...)

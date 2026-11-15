@@ -310,3 +310,17 @@ func (g *Gateway) ManageModel(ctx context.Context, node string, data []byte) (*h
 	r.GetBody = nil
 	return g.roundTrip(node, r)
 }
+
+// SetNodeState carries only node admission state on the authenticated tunnel.
+func (g *Gateway) SetNodeState(ctx context.Context, node string, data []byte) (*http.Response, error) {
+	if len(data) > 1024 || !json.Valid(data) {
+		return nil, errors.New("invalid node state")
+	}
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://cluster-node"+NodeStatePath, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	r.Header.Set("Content-Type", "application/json")
+	r.GetBody = nil
+	return g.roundTrip(node, r)
+}

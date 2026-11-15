@@ -1,4 +1,4 @@
-import type { ClusterInfo, ClusterNodeHealth, ClusterNodeState, ClusterSettings } from "./api/client";
+import type { ClusterInfo, ClusterView, ClusterNodeView, ClusterNodeHealth, ClusterNodeState, ClusterSettings } from "./api/client";
 
 /**
  * Pure helpers shared by the Dashboard cluster section and the Cluster page.
@@ -168,4 +168,8 @@ export function clusterNodeRole(uuid: string, cluster: ClusterInfo | null): "mas
 /** Older workers could pause via accept_work; present that as maintenance. */
 export function workerNodeState(settings: Pick<ClusterSettings, "state" | "accept_work">): ClusterNodeState {
   return settings.state === "active" && !settings.accept_work ? "maintenance" : settings.state;
+}
+
+export function canManageNodeState(view: ClusterView, node: ClusterNodeView): boolean {
+ return node.local || (view.mode !== "worker" && node.status?.node_state_management === true && node.status.managed_by === view.node.uuid);
 }

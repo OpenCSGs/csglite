@@ -8895,7 +8895,7 @@
           "Cluster"
         ],
         "summary": "Set this node's admission state",
-        "description": "`drain` finishes in-flight requests and takes no new ones; `maintenance` also excludes the node from sync. A node's state is set on the node itself.",
+        "description": "Set active, drain or maintenance on this node or a member managed by this Master. Remote control uses its authenticated tunnel or pinned LAN peer, requires node_state_management support and does not change the Master's settings. Existing local-node requests remain compatible.",
         "operationId": "setClusterNodeState",
         "parameters": [
           {
@@ -8961,6 +8961,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Remote node unavailable, not controlled by this Master, or unable to apply the requested state."
           }
         }
       }
@@ -20505,6 +20508,10 @@
           "model_management": {
             "type": "boolean",
             "description": "Node supports typed remote unload/delete actions authorized by its current controller."
+          },
+          "node_state_management": {
+            "type": "boolean",
+            "description": "Supports authenticated state control by its current managed_by Master; optional for older peers."
           }
         }
       },

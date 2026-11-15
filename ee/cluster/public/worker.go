@@ -37,6 +37,7 @@ type WorkerOptions struct {
 	// The host must independently check explicit worker management consent.
 	DeploymentHandler  http.Handler
 	ModelActionHandler http.Handler
+	NodeStateHandler   http.Handler
 	// Dialer may supply a private CA or enterprise proxy; TLS verification stays on.
 	Dialer *websocket.Dialer
 }
@@ -229,7 +230,10 @@ func (w *Worker) handler() http.Handler {
 		if r.URL.Path == ModelActionPath {
 			controlHandler = w.opts.ModelActionHandler
 		}
-		if (r.URL.Path == DeploymentPath || r.URL.Path == ModelActionPath) && controlHandler != nil {
+		if r.URL.Path == NodeStatePath {
+			controlHandler = w.opts.NodeStateHandler
+		}
+		if (r.URL.Path == DeploymentPath || r.URL.Path == ModelActionPath || r.URL.Path == NodeStatePath) && controlHandler != nil {
 			if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.URL.RawPath != "" {
 				http.Error(rw, "invalid deployment request", 400)
 				return

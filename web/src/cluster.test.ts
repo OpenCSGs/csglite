@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canManageNodeState,
   workerNodeState,
   clusterNodeRole,
   fmtGB,
@@ -114,4 +115,16 @@ describe("workerNodeState", () => {
     expect(workerNodeState({ state: "drain", accept_work: false })).toBe("drain");
     expect(workerNodeState({ state: "maintenance", accept_work: true })).toBe("maintenance");
   });
+});
+
+describe("remote node state authority", () => {
+ const view = { mode: "gateway", node: {uuid: "master"} } as import("./api/client").ClusterView;
+ const node = { local: false, online: true, status: { managed_by: "master", node_state_management: true } } as import("./api/client").ClusterNodeView;
+ it("offers controls only for nodes accepting this Master", () => {
+  expect(canManageNodeState(view, node)).toBe(true);
+  expect(canManageNodeState({...view, mode: "worker"}, node)).toBe(false);
+  expect(canManageNodeState(view, {...node, status: {...node.status!, managed_by: "other"}})).toBe(false);
+  expect(canManageNodeState(view, {...node, status: {...node.status!, node_state_management: undefined}})).toBe(false);
+  expect(canManageNodeState(view, {...node, status: undefined})).toBe(false);
+ });
 });

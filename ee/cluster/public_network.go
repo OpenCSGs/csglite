@@ -383,7 +383,7 @@ func (m *Manager) publicWorkerLoop(ctx context.Context) {
 			return
 		}
 		transport := m.publicClient.Transport.(*http.Transport)
-		worker, err := publictunnel.NewWorker(publictunnel.WorkerOptions{GatewayURL: m.opts.GatewayURL, NodeUUID: m.identity.UUID, Token: proof, ConnectionChanged: m.observePublicGateway(gateway), StatusUpdates: m.publicStatusUpdates, Status: m.publicWorkerStatus, AllowModel: m.publicModelAllowed, Handler: m.opts.Host.InferenceHandler(), DeploymentHandler: m.deploymentHandler(gateway), ModelActionHandler: m.modelActionHandler(gateway), Dialer: &websocket.Dialer{Proxy: http.ProxyFromEnvironment, TLSClientConfig: transport.TLSClientConfig.Clone(), HandshakeTimeout: 15 * time.Second}})
+		worker, err := publictunnel.NewWorker(publictunnel.WorkerOptions{GatewayURL: m.opts.GatewayURL, NodeUUID: m.identity.UUID, Token: proof, ConnectionChanged: m.observePublicGateway(gateway), StatusUpdates: m.publicStatusUpdates, Status: m.publicWorkerStatus, AllowModel: m.publicModelAllowed, Handler: m.opts.Host.InferenceHandler(), DeploymentHandler: m.deploymentHandler(gateway), ModelActionHandler: m.modelActionHandler(gateway), NodeStateHandler: m.nodeStateHandler(gateway), Dialer: &websocket.Dialer{Proxy: http.ProxyFromEnvironment, TLSClientConfig: transport.TLSClientConfig.Clone(), HandshakeTimeout: 15 * time.Second}})
 		if err != nil {
 			m.logf("cluster: invalid public worker: %v", err)
 			return
