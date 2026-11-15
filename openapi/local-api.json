@@ -20337,7 +20337,7 @@
           },
           "licensed": {
             "type": "boolean",
-            "description": "False when the node's own license does not cover a cluster of the current size; such a node is not scheduled."
+            "description": "Whether the current cluster size fits this node's node quota, in either edition. False means quota exceeded, not Community edition. The field name is retained for compatibility."
           },
           "node_limit": {
             "type": "integer"
@@ -20624,7 +20624,8 @@
             "description": "Licensed member cap including this node; 0 means unlimited."
           },
           "licensed": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether this instance has an Enterprise license; distinct from a node status licensed field, which reports node quota eligibility."
           },
           "join_token_available": {
             "type": "boolean",
@@ -20711,7 +20712,8 @@
             "type": "string"
           },
           "licensed": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the current cluster size fits this node's node quota, in either edition. False means quota exceeded, not Community edition. The field name is retained for compatibility."
           },
           "version": {
             "type": "string"
@@ -20799,7 +20801,8 @@
             "type": "integer"
           },
           "licensed": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether this instance has an Enterprise license; distinct from a node status licensed field, which reports node quota eligibility."
           },
           "vram_total": {
             "type": "integer"

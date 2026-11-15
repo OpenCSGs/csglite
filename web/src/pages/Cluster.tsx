@@ -1057,8 +1057,8 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
         {!node.online && lastSeen && !Number.isNaN(lastSeen.getTime()) && (
           <div class="text-[11px] text-gray-400">{t("cluster.lastSeen", lastSeen.toLocaleString())}</div>
         )}
-        {st && !st.licensed && view.node_limit > 0 && (
-          <div class="text-[11px] text-gray-400">{t("cluster.communityNode")}</div>
+        {st && !st.licensed && (
+          <div class="text-[11px] text-gray-400">{t("cluster.nodeQuotaExceeded")}</div>
         )}
         {st && st.inflight > 0 && <div class="text-[11px] text-indigo-600 whitespace-nowrap">{t("cluster.inflightCount", st.inflight)}</div>}
       </td>
