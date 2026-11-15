@@ -1,8 +1,10 @@
+import { gatewayInferencePath } from "../utils/gateway";
 import { stripReasoningText } from "../reasoning";
-import { locale } from "../i18n";
+import { locale, t } from "../i18n";
 import { publicSessionHeaders } from "../utils/consoleAuth";
 
 export interface ModelInfo {
+  nodes?: ClusterModelNode[];
   name: string;
   model: string;
   /** Unique on-disk storage ID of a local model ([source/]namespace/name). */
@@ -1562,7 +1564,7 @@ export async function getTTSVoices(model: string): Promise<SpeechVoicesResponse>
 
 // Returns an object URL for the synthesised audio; callers must revoke it.
 export async function synthesizeSpeech(req: AudioSpeechRequest, signal?: AbortSignal): Promise<{ url: string; mime: string }> {
-  const resp = await fetch("/v1/audio/speech", withLocaleHeader({
+  const resp = await fetch(gatewayInferencePath("audio/speech", req.source), withLocaleHeader({
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -1613,7 +1615,7 @@ export interface Decision {
 
 /** POST /v1/decisions (OpenAI Decisions API). */
 export async function createDecision(req: CreateDecisionRequest, signal?: AbortSignal): Promise<Decision> {
-  const resp = await fetch("/v1/decisions", withLocaleHeader({
+  const resp = await fetch(gatewayInferencePath("decisions", req.source), withLocaleHeader({
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
@@ -1662,7 +1664,7 @@ export async function startRealtimeCall(offer: string, options: RealtimeSessionO
   const form = new FormData();
   form.append("sdp", offer);
   form.append("session", JSON.stringify(session));
-  const resp = await fetch("/v1/realtime/calls", withLocaleHeader({
+  const resp = await fetch("/ai-gateway/v1/realtime/calls", withLocaleHeader({
     method: "POST",
     headers: { Accept: "application/sdp" },
     body: form,
@@ -1677,7 +1679,7 @@ export async function startRealtimeCall(offer: string, options: RealtimeSessionO
 
 export async function endRealtimeCall(callId: string): Promise<void> {
   if (!callId) return;
-  await fetch(`/v1/realtime/calls/${encodeURIComponent(callId)}`, withLocaleHeader({ method: "DELETE" }));
+  await fetch(`/ai-gateway/v1/realtime/calls/${encodeURIComponent(callId)}`, withLocaleHeader({ method: "DELETE" }));
 }
 
 export async function transcribeAudio(req: AudioTranscriptionRequest, signal?: AbortSignal): Promise<AudioTranscriptionResponse> {
@@ -1692,7 +1694,7 @@ export async function transcribeAudio(req: AudioTranscriptionRequest, signal?: A
   if (req.hotwords && req.hotwords.length > 0) form.set("hotwords", JSON.stringify(req.hotwords));
   if (typeof req.itn === "boolean") form.set("itn", String(req.itn));
 
-  const resp = await fetch("/v1/audio/transcriptions", withLocaleHeader({
+  const resp = await fetch(gatewayInferencePath("audio/transcriptions", req.source), withLocaleHeader({
     method: "POST",
     body: form,
     signal,
@@ -1733,7 +1735,7 @@ export function transcribeAudioStream(
   if (typeof req.itn === "boolean") form.set("itn", String(req.itn));
 
   return new Promise((resolve, reject) => {
-    fetch("/v1/audio/transcriptions", withLocaleHeader({
+    fetch(gatewayInferencePath("audio/transcriptions", req.source), withLocaleHeader({
       method: "POST",
       headers: { Accept: "text/event-stream" },
       body: form,
@@ -1796,7 +1798,7 @@ export function transcribeAudioStream(
 }
 
 export async function generateImage(req: ImageGenerationRequest): Promise<ImageGenerationResponse> {
-  return fetchJSON<ImageGenerationResponse>("/v1/images/generations", {
+  return fetchJSON<ImageGenerationResponse>(gatewayInferencePath("images/generations", req.source), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...req, response_format: req.response_format || "b64_json" }),
@@ -2236,28 +2238,27 @@ export function streamChat(
   }
 
   return new Promise((resolve, reject) => {
-    fetch("/api/chat", {
+    const endpoint = gatewayInferencePath("chat/completions", options.source);
+    fetch(endpoint, {
       method: "POST",
-      headers: {
+      headers: publicSessionHeaders(endpoint, "POST", {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
         "X-CSGHUB-Stream": "sse",
         "X-CSGHUB-Disable-Thinking": "true",
         ...(options.thread_id ? { "X-CSGLite-Thread-ID": options.thread_id } : {}),
         ...(options.trace_id ? { "X-CSGLite-Trace-ID": options.trace_id } : {}),
-      },
+      }),
       body: JSON.stringify({
         model,
         source: options.source,
         messages: msgs,
         stream: true,
         web_search: options.web_search,
-        options: {
-          temperature: options.temperature,
-          top_p: options.top_p,
-          max_tokens: options.max_tokens,
-          num_ctx: options.num_ctx,
-        },
+        temperature: options.temperature,
+        top_p: options.top_p,
+        max_tokens: options.max_tokens,
+        num_ctx: options.num_ctx,
       }),
       signal,
     })
@@ -2275,10 +2276,12 @@ export function streamChat(
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
+        let completed = false;
 
         function read(): Promise<void> {
           return reader.read().then(({ done, value }) => {
             if (done) {
+              if (!completed) { reject(new Error(t("services.streamInterrupted"))); return; }
               resolve();
               return;
             }
@@ -2287,8 +2290,12 @@ export function streamChat(
             buf = lines.pop() || "";
             for (const line of lines) {
               if (line.startsWith("data: ")) {
+                if (line.slice(6).trim() === "[DONE]") { if (!completed) { completed = true; onToken("", true); } continue; }
                 try {
                   const data = JSON.parse(line.slice(6));
+                  if (data.error) { reject(new Error(typeof data.error === "string" ? data.error : data.error.message)); void reader.cancel(); return; }
+                  const content = data.choices?.[0]?.delta?.content;
+                  if (typeof content === "string" && content) onToken(content, false);
                   if (data.search_route && onSearchRoute) {
                     onSearchRoute(data.search_route);
                   } else if (data.search_planning && onSearchPlanning) {
@@ -2304,7 +2311,8 @@ export function streamChat(
                   } else if (data.message?.content) {
                     onToken(data.message.content, false);
                   }
-                  if (data.done) {
+                  if ((data.done || data.choices?.[0]?.finish_reason) && !completed) {
+                    completed = true;
                     onToken("", true);
                   }
                 } catch {
@@ -2953,6 +2961,7 @@ export interface ThirdPartyProviderValidateResponse {
 
 export interface ProviderPoolMember {
   id: string;
+  disabled?: boolean;
   source: string;
   model: string;
   priority?: number;
@@ -2968,10 +2977,14 @@ export interface ProviderPool {
   model: string;
   enabled: boolean;
   policy?: string;
+  category?: string;
+  source_states?: Record<string, string>;
   members: ProviderPoolMember[];
 }
 
 export interface ProviderPoolCreateRequest {
+  policy?: string;
+  category?: string;
   name: string;
   model: string;
   enabled?: boolean;
@@ -2979,6 +2992,8 @@ export interface ProviderPoolCreateRequest {
 }
 
 export interface ProviderPoolUpdateRequest {
+  policy?: string;
+  category?: string;
   name?: string;
   model?: string;
   enabled?: boolean;
@@ -3723,4 +3738,11 @@ export function getEdgeBalance(): Promise<EdgeBalanceResponse> {
 export async function getEdgeStatements(): Promise<EdgeStatement[]> {
   const resp = await fetchJSON<{ data: EdgeStatement[] | null }>("/api/edge/statements");
   return resp.data ?? [];
+}
+
+export async function createEmbeddings(model: string, input: string, source?: string, signal?: AbortSignal): Promise<unknown> {
+ return fetchJSON(gatewayInferencePath("embeddings", source), {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ model, input, source, encoding_format: "float" }), signal,
+ });
 }

@@ -23,7 +23,7 @@ by another machine on your network, or by a provider.
 - **Local inference** via llama.cpp (GGUF models, SafeTensors auto-converted)
 - **Interactive chat** with streaming output
 - **REST API** compatible with Ollama's API format
-- **OpenAI-compatible API** — Chat Completions (including `logprobs`, `top_logprobs`, `logit_bias`, and `response_format`), Responses, Embeddings, Images, Audio, Realtime, and the Decisions API (`POST /v1/decisions`); the official OpenAI SDKs work with `base_url` pointed at CSGLite
+- **OpenAI-compatible API** — Chat Completions (including `logprobs`, `top_logprobs`, `logit_bias`, and `response_format`), Responses, Embeddings, Images, Audio, Realtime, and the Decisions API (`POST /ai-gateway/v1/decisions`); the official OpenAI SDKs work with `base_url` pointed at CSGLite
 - **Cross-platform** — macOS, Linux, Windows
 - **Resume downloads** — interrupted downloads resume where they left off
 - **Pause/Resume** — pause ongoing downloads and resume later
@@ -37,7 +37,7 @@ by another machine on your network, or by a provider.
 
 - **Model Library** — manage local models with download progress, pause/resume, and one-click run
 - **Marketplace** — browse and download models/datasets from CSGHub
-- **Chat Interface** — interactive chat with local and cloud models
+- **Inference testing** — open an interactive test dialog from AI Gateway for local, cloud and published model services
 - **AI Apps** — install and launch AI applications with one-click configuration
 - **Settings** — configure storage, third-party providers, and access tokens
 
@@ -163,7 +163,7 @@ currently supported for local inference.
 
 ### Image models
 
-Image requests use `POST /v1/images/generations` and `POST /v1/images/edits`.
+Image requests use `POST /ai-gateway/v1/images/generations` and `POST /ai-gateway/v1/images/edits`.
 NVIDIA, AMD, and CPU machines run Diffusers checkpoints. Apple Silicon uses
 MFLUX for MLX Qwen-Image-2.1 checkpoints and Diffusers for the other image
 families. Other MLX image checkpoints are unsupported on every platform,
@@ -184,7 +184,7 @@ downloaded model that cannot run locally.
 
 Speech synthesis runs in its own Python runtime, never through llama.cpp: the
 vocoder or codec decoder that turns model output into a waveform only exists in
-the model's own inference stack. Synthesize with `POST /v1/audio/speech`, or
+the model's own inference stack. Synthesize with `POST /ai-gateway/v1/audio/speech`, or
 select a text-to-speech model in Chat and send text to hear it.
 
 | Model | Size | Voices | Notes |
@@ -205,10 +205,10 @@ same recognition and synthesis runtimes:
 
 | Transport | Endpoint | Audio |
 | --- | --- | --- |
-| WebRTC | `POST /v1/realtime/calls` (SDP offer in, SDP answer out) | Media tracks: Opus in, PCMU out; events on the `oai-events` DataChannel |
-| WebSocket | `GET /v1/realtime` | Base64 PCM16 in `input_audio_buffer.append` and `response.output_audio.delta` |
+| WebRTC | `POST /ai-gateway/v1/realtime/calls` (SDP offer in, SDP answer out) | Media tracks: Opus in, PCMU out; events on the `oai-events` DataChannel |
+| WebSocket | `GET /ai-gateway/v1/realtime` | Base64 PCM16 in `input_audio_buffer.append` and `response.output_audio.delta` |
 
-`GET /v1/realtime/transcription` opens a recognition-only session. Recognition
+`GET /ai-gateway/v1/realtime/transcription` opens a recognition-only session. Recognition
 streams partial transcripts as you speak, synthesis starts playing before the
 sentence is finished, and `response.cancel` stops playback for barge-in. Set
 defaults and limits in the `realtime` section of `config.json`
@@ -220,7 +220,7 @@ measured latencies are in
 ### Decisions
 
 CSGLite implements the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions),
-`POST /v1/decisions`, for local decision models: JEV models tagged `jev` or
+`POST /ai-gateway/v1/decisions`, for local decision models: JEV models tagged `jev` or
 `typed-decisions` (for example `autotrust/JEV-9B` and its GGUF quantizations)
 and native decision models whose head llama.cpp runs directly (for example
 `convaiinnovations/laya` and `laya-typed-decisions`). A request shares one
@@ -245,7 +245,7 @@ OpenJev, Lev, Kev, Nimble, Clef, Perplexity Decider, LFM2-D1) are recognized
 from their GGUF metadata and served the same way.
 
 ```bash
-curl http://localhost:11435/v1/decisions -H "Content-Type: application/json" -d '{
+curl http://localhost:11435/ai-gateway/v1/decisions -H "Content-Type: application/json" -d '{
   "model": "huggingface/mradermacher/JEV-9B-GGUF",
   "input": "I was charged twice for my order.",
   "questions": [{
@@ -258,14 +258,14 @@ curl http://localhost:11435/v1/decisions -H "Content-Type: application/json" -d 
 ```
 
 The OpenAI SDKs' `client.decisions.create(...)` works unchanged with
-`base_url="http://localhost:11435/v1"`. GGUF quantizations ship only the base
+`base_url="http://localhost:11435/ai-gateway/v1"`. GGUF quantizations ship only the base
 weights, so also pull the original repository (`autotrust/JEV-9B`) that holds
 the decision adapter; CSGLite converts and loads it automatically, and the same
 model keeps answering ordinary chat. Laya is a ModernBERT encoder with a
 decision head: CSGLite converts it to GGUF on first use, it answers decisions
 only, and Chat opens it straight in **Decide** mode. For other models, pick the
 model in Chat and switch the composer to **Decide**. Text input only: `input_image` parts are
-refused. `POST /v1/decide` remains available for clients written against the
+refused. `POST /ai-gateway/v1/decide` remains available for clients written against the
 JEV API. Details: [docs/guides/typed-decisions.md](docs/guides/typed-decisions.md).
 
 ## Integrations
@@ -430,19 +430,19 @@ End a line with `\` for multiline input. Press Ctrl+D to exit.
 
 The server listens on `localhost:11435` by default.
 
-OpenAI-compatible endpoints (point any OpenAI SDK at `http://localhost:11435/v1`):
+OpenAI-compatible endpoints (point any OpenAI SDK at `http://localhost:11435/ai-gateway/v1`, using a published model service ID):
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /v1/chat/completions` | Chat completions, streaming, tools, `logprobs` / `top_logprobs`, `logit_bias`, `response_format` |
-| `POST /v1/responses` | Responses API |
-| `POST /v1/messages` | Anthropic Messages API |
-| `POST /v1/embeddings` | Embeddings |
-| `POST /v1/images/generations`, `POST /v1/images/edits` | Image generation and editing |
-| `POST /v1/audio/transcriptions`, `POST /v1/audio/speech` | Speech recognition and synthesis |
-| `POST /v1/realtime/calls`, `GET /v1/realtime` | Realtime voice over WebRTC or WebSocket |
-| `POST /v1/decisions` | Decisions API: predicate, choice, and score questions |
-| `GET /v1/models` | List models |
+| `POST /ai-gateway/v1/chat/completions` | Chat completions, streaming, tools, `logprobs` / `top_logprobs`, `logit_bias`, `response_format` |
+| `POST /ai-gateway/v1/responses` | Responses API |
+| `POST /ai-gateway/v1/messages` | Anthropic Messages API |
+| `POST /ai-gateway/v1/embeddings` | Embeddings |
+| `POST /ai-gateway/v1/images/generations`, `POST /ai-gateway/v1/images/edits` | Image generation and editing |
+| `POST /ai-gateway/v1/audio/transcriptions`, `POST /ai-gateway/v1/audio/speech` | Speech recognition and synthesis |
+| `POST /ai-gateway/v1/realtime/calls`, `GET /ai-gateway/v1/realtime` | Realtime voice over WebRTC or WebSocket |
+| `POST /ai-gateway/v1/decisions` | Decisions API: predicate, choice, and score questions |
+| `GET /ai-gateway/v1/models` | List models |
 
 For full endpoint details and examples, see the [REST API Reference](docs/api/overview.md).
 

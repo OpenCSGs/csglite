@@ -89,6 +89,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /anthropic/v1/messages", s.withContextCompression(ctxcompress.ProtocolAnthropic, s.handleAnthropicMessages))
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
 	s.registerProviderInferenceRoutes(mux)
+	s.registerGatewayInferenceRoutes(mux)
+	s.registerGatewayToolRoutes(mux)
+	mux.HandleFunc("POST /ai-gateway/realtime/calls", s.handleRealtimeCalls)
+	mux.HandleFunc("DELETE /ai-gateway/realtime/calls/{call_id}", s.handleRealtimeCallDelete)
 
 	// New: marketplace, system, logs, settings
 	mux.HandleFunc("GET /api/marketplace/models", s.handleMarketplaceModels)
@@ -283,6 +287,10 @@ func (s *Server) externalAPIRoutes() http.Handler {
 	mux.HandleFunc("POST /anthropic/v1/messages", s.withContextCompression(ctxcompress.ProtocolAnthropic, s.handleAnthropicMessages))
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", s.handleAnthropicCountTokens)
 	s.registerProviderInferenceRoutes(mux)
+	s.registerGatewayInferenceRoutes(mux)
+	s.registerGatewayToolRoutes(mux)
+	mux.HandleFunc("POST /ai-gateway/realtime/calls", s.handleRealtimeCalls)
+	mux.HandleFunc("DELETE /ai-gateway/realtime/calls/{call_id}", s.handleRealtimeCallDelete)
 
 	return correlationMiddleware(LogMiddleware(
 		desktopExternalAPIMiddleware(s.apiAuthMiddleware(

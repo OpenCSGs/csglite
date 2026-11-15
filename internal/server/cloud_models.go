@@ -130,6 +130,10 @@ func (s *Server) listAvailableModelsForProvider(ctx context.Context, provider st
 				continue
 			}
 			label := pool.Model + " [" + pool.Name + "]"
+			category, pipeline := "chat", "text-generation"
+			if pool.Category == "embedding" {
+				category, pipeline = "embedding", "feature-extraction"
+			}
 			appendUnique(api.ModelInfo{
 				Name:        pool.Model,
 				Model:       pool.Model,
@@ -138,8 +142,8 @@ func (s *Server) listAvailableModelsForProvider(ctx context.Context, provider st
 				Format:      "api",
 				Source:      poolSource(pool.ID),
 				Provider:    pool.Name,
-				Category:    "chat",
-				PipelineTag: "text-generation",
+				Category:    category,
+				PipelineTag: pipeline,
 			})
 		}
 	}

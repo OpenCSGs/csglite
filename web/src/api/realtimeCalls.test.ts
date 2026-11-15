@@ -13,7 +13,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function sdpResponse(body = "v=0 answer", location = "/v1/realtime/calls/sess_abc") {
+function sdpResponse(body = "v=0 answer", location = "/ai-gateway/v1/realtime/calls/sess_abc") {
   return new Response(body, {
     status: 200,
     headers: { "Content-Type": "application/sdp", Location: location },
@@ -38,7 +38,7 @@ describe("realtime call client", () => {
 
     expect(call).toEqual({ answer: "v=0 answer", callId: "sess_abc" });
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/v1/realtime/calls");
+    expect(url).toBe("/ai-gateway/v1/realtime/calls");
     expect(init.method).toBe("POST");
     const form = init.body as FormData;
     expect(form.get("sdp")).toBe("v=0 offer");
@@ -86,7 +86,7 @@ describe("realtime call client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await endRealtimeCall("sess_abc");
-    expect(fetchMock).toHaveBeenCalledWith("/v1/realtime/calls/sess_abc", expect.objectContaining({ method: "DELETE" }));
+    expect(fetchMock).toHaveBeenCalledWith("/ai-gateway/v1/realtime/calls/sess_abc", expect.objectContaining({ method: "DELETE" }));
 
     fetchMock.mockClear();
     await endRealtimeCall("");

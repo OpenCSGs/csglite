@@ -413,11 +413,11 @@ func (e *providerPoolEngine) runChat(ctx context.Context, inputTokens, estimated
 		}
 	}
 	if lastErr == nil {
-		if len(e.members) > 0 {
+		if len(skips) > 0 {
 			lastErr = providerPoolExhaustedError(skips)
 			return "", lastErr
 		}
-		lastErr = fmt.Errorf("provider pool has no available members")
+		lastErr = inference.NewHTTPStatusError(http.StatusServiceUnavailable, "model service has no available sources")
 	}
 	return "", lastErr
 }
@@ -488,11 +488,11 @@ func (e *providerPoolEngine) runProxy(ctx context.Context, estimatedTokens int, 
 		}
 	}
 	if lastErr == nil {
-		if len(e.members) > 0 {
+		if len(skips) > 0 {
 			lastErr = providerPoolExhaustedError(skips)
 			return nil, lastErr
 		}
-		lastErr = fmt.Errorf("provider pool has no available members")
+		lastErr = inference.NewHTTPStatusError(http.StatusServiceUnavailable, "model service has no available sources")
 	}
 	return nil, lastErr
 }
@@ -867,11 +867,26 @@ func providerPoolActualTokens(body []byte, fallback int) int {
 }
 
 func (e *providerPoolEngine) orderedMembers() []providerPoolEngineMember {
-	members := append([]providerPoolEngineMember{}, e.members...)
+	members := make([]providerPoolEngineMember, 0, len(e.members))
+	for _, member := range e.members {
+		if !member.member.Disabled {
+			members = append(members, member)
+		}
+	}
+	if e.policy == config.ProviderPoolPolicyFixed {
+		// A disabled first source must never switch to a different source.
+		if len(e.members) == 0 || e.members[0].member.Disabled {
+			return nil
+		}
+		return e.members[:1]
+	}
 	sort.SliceStable(members, func(i, j int) bool {
 		return members[i].member.Priority < members[j].member.Priority
 	})
 	if len(members) < 2 {
+		return members
+	}
+	if e.policy == config.ProviderPoolPolicyFailover {
 		return members
 	}
 	if affinityMember := e.preferredMemberID(); affinityMember != "" {
@@ -884,7 +899,7 @@ func (e *providerPoolEngine) orderedMembers() []providerPoolEngineMember {
 	}
 	firstPriority := members[0].member.Priority
 	end := 0
-	for end < len(members) && members[end].member.Priority == firstPriority {
+	for end < len(members) && (e.policy == config.ProviderPoolPolicyWeighted || members[end].member.Priority == firstPriority) {
 		end++
 	}
 	e.mu.Lock()
@@ -917,6 +932,9 @@ func (s *Server) newProviderPoolChatEngine(ctx context.Context, pool config.Prov
 	members := make([]providerPoolEngineMember, 0, len(pool.Members))
 	for _, member := range pool.Members {
 		member := member
+		if s.providerPoolSourceState(member) != "configured" {
+			member.Disabled = true
+		}
 		members = append(members, providerPoolEngineMember{
 			member: member,
 			new: func() (inference.Engine, error) {
@@ -938,6 +956,9 @@ func (s *Server) newProviderPoolEmbeddingEngine(ctx context.Context, pool config
 	members := make([]providerPoolEngineMember, 0, len(pool.Members))
 	for _, member := range pool.Members {
 		member := member
+		if s.providerPoolSourceState(member) != "configured" {
+			member.Disabled = true
+		}
 		members = append(members, providerPoolEngineMember{
 			member: member,
 			new: func() (inference.Engine, error) {

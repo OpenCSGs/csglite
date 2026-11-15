@@ -23,8 +23,14 @@ const (
 type providerRouteSourceContextKey struct{}
 
 func (s *Server) registerProviderInferenceRoutes(mux *http.ServeMux) {
+	s.registerProviderInferenceRoutesAt(mux, "")
+	s.registerProviderInferenceRoutesAt(mux, gatewayPrefix)
+}
+
+func (s *Server) registerProviderInferenceRoutesAt(mux *http.ServeMux, prefix string) {
 	register := func(pattern string, handler http.HandlerFunc) {
-		mux.HandleFunc(pattern, s.withProviderRouteSource(handler))
+		method, path, _ := strings.Cut(pattern, " ")
+		mux.HandleFunc(method+" "+prefix+path, s.withProviderRouteSource(handler))
 	}
 
 	register("GET /providers/{providerID}/v1/models", s.handleModels)
@@ -35,6 +41,9 @@ func (s *Server) registerProviderInferenceRoutes(mux *http.ServeMux) {
 	register("POST /providers/{providerID}/v1/images/generations", s.handleOpenAIImagesGenerations)
 	register("POST /providers/{providerID}/v1/images/edits", s.handleOpenAIImagesEdits)
 	register("POST /providers/{providerID}/v1/audio/transcriptions", s.handleOpenAIAudioTranscriptions)
+	if prefix != "" {
+		register("POST /providers/{providerID}/v1/audio/speech", s.handleOpenAIAudioSpeech)
+	}
 	register("POST /providers/{providerID}/v1/responses", s.withContextCompression(ctxcompress.ProtocolResponses, s.handleOpenAIResponses))
 	register("POST /providers/{providerID}/v1/messages", s.withContextCompression(ctxcompress.ProtocolAnthropic, s.handleAnthropicMessages))
 	register("POST /providers/{providerID}/v1/messages/count_tokens", s.handleAnthropicCountTokens)
@@ -42,8 +51,8 @@ func (s *Server) registerProviderInferenceRoutes(mux *http.ServeMux) {
 	notFound := func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "provider inference endpoint not found")
 	}
-	mux.HandleFunc("GET /providers/{providerID}/{rest...}", notFound)
-	mux.HandleFunc("POST /providers/{providerID}/{rest...}", notFound)
+	mux.HandleFunc("GET "+prefix+"/providers/{providerID}/{rest...}", notFound)
+	mux.HandleFunc("POST "+prefix+"/providers/{providerID}/{rest...}", notFound)
 }
 
 func (s *Server) withProviderRouteSource(next http.HandlerFunc) http.HandlerFunc {
@@ -89,7 +98,7 @@ func (s *Server) withProviderRouteSource(next http.HandlerFunc) http.HandlerFunc
 				return
 			}
 		}
-		ctx := context.WithValue(r.Context(), providerRouteSourceContextKey{}, source)
+		ctx := withProviderRouteSourceContext(r.Context(), source)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
@@ -136,6 +145,10 @@ func providerRouteSource(providerID string) (string, error) {
 		}
 		return "", fmt.Errorf("provider or provider pool not found")
 	}
+}
+
+func withProviderRouteSourceContext(ctx context.Context, source string) context.Context {
+	return context.WithValue(ctx, providerRouteSourceContextKey{}, source)
 }
 
 func providerRouteSourceFromContext(ctx context.Context) string {
@@ -201,7 +214,11 @@ func providerScopedBaseURL(baseURL, source string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/providers/" + url.PathEscape(providerID), nil
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/") + gatewayPrefix
+	if poolIDFromSource(source) != "" {
+		return base, nil
+	}
+	return base + "/providers/" + url.PathEscape(providerID), nil
 }
 
 func filterModelsByProviderRoute(models []api.ModelInfo, source string) []api.ModelInfo {

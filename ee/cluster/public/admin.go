@@ -31,8 +31,9 @@ func AdminTokenPath(storageRoot string) string {
 }
 
 type adminCredential struct {
-	Hash      string    `json:"token_hash"`
-	CreatedAt time.Time `json:"created_at"`
+	Hash      string     `json:"token_hash"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 func randomSecret() (string, error) {
@@ -51,12 +52,27 @@ func tokenHash(token string) string {
 // GenerateAdminToken rotates the credential atomically. The plaintext is returned
 // once to the CLI and is never written to the application's credential store.
 func GenerateAdminToken(path string) (string, error) {
+	return GenerateAdminTokenWithTTL(path, 0)
+}
+
+// GenerateAdminTokenWithTTL bounds both token use and sessions authenticated by
+// it. Zero preserves the lifetime of existing credentials; negative TTLs fail
+// before rotation so an invalid CLI argument cannot revoke a working token.
+func GenerateAdminTokenWithTTL(path string, ttl time.Duration) (string, error) {
+	if ttl < 0 {
+		return "", fmt.Errorf("token TTL must not be negative")
+	}
 	secret, err := randomSecret()
 	if err != nil {
 		return "", err
 	}
 	token := "csgadmin_" + secret
-	data, err := json.MarshalIndent(adminCredential{tokenHash(token), time.Now().UTC()}, "", "  ")
+	credential := adminCredential{Hash: tokenHash(token), CreatedAt: time.Now().UTC()}
+	if ttl > 0 {
+		expires := credential.CreatedAt.Add(ttl)
+		credential.ExpiresAt = &expires
+	}
+	data, err := json.MarshalIndent(credential, "", "  ")
 	if err != nil {
 		return "", err
 	}
@@ -102,19 +118,22 @@ func NewAdminAuth(path string) *AdminAuth {
 	return &AdminAuth{path: path, sessions: make(map[string]adminSession), attempts: make(map[string]loginAttempt)}
 }
 
-func (a *AdminAuth) credential() (string, error) {
+func (a *AdminAuth) credential() (adminCredential, error) {
 	data, err := os.ReadFile(a.path)
 	if err != nil {
-		return "", err
+		return adminCredential{}, err
 	}
 	var c adminCredential
 	if err := json.Unmarshal(data, &c); err != nil {
-		return "", err
+		return adminCredential{}, err
 	}
 	if len(c.Hash) != 64 {
-		return "", fmt.Errorf("invalid administrative credential")
+		return adminCredential{}, fmt.Errorf("invalid administrative credential")
 	}
-	return c.Hash, nil
+	if c.ExpiresAt != nil && !time.Now().Before(*c.ExpiresAt) {
+		return adminCredential{}, fmt.Errorf("administrative credential expired")
+	}
+	return c, nil
 }
 
 func equalSecret(a, b string) bool {
@@ -171,8 +190,8 @@ func (a *AdminAuth) Login(w http.ResponseWriter, r *http.Request) {
 		adminJSON(w, 400, map[string]string{"error": "invalid request"})
 		return
 	}
-	hash, err := a.credential()
-	if err != nil || !equalSecret(tokenHash(strings.TrimSpace(body.Token)), hash) {
+	credential, err := a.credential()
+	if err != nil || !equalSecret(tokenHash(strings.TrimSpace(body.Token)), credential.Hash) {
 		adminJSON(w, 401, map[string]string{"error": "invalid login token"})
 		return
 	}
@@ -187,9 +206,17 @@ func (a *AdminAuth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expires := now.Add(8 * time.Hour)
+	if credential.ExpiresAt != nil && credential.ExpiresAt.Before(expires) {
+		expires = *credential.ExpiresAt
+	}
+	// Round up cookie Max-Age; the server still enforces the exact deadline.
+	maxAge := int(time.Until(expires).Seconds()) + 1
+	if maxAge < 1 {
+		maxAge = 1
+	}
 	a.mu.Lock()
 	for key, session := range a.sessions {
-		if now.After(session.Expires) || session.Credential != hash {
+		if now.After(session.Expires) || session.Credential != credential.Hash {
 			delete(a.sessions, key)
 		}
 	}
@@ -202,11 +229,11 @@ func (a *AdminAuth) Login(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(AdminCookie); err == nil {
 		delete(a.sessions, tokenHash(cookie.Value))
 	}
-	a.sessions[tokenHash(secret)] = adminSession{hash, csrf, expires}
+	a.sessions[tokenHash(secret)] = adminSession{credential.Hash, csrf, expires}
 	delete(a.attempts, ip)
 	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: AdminCookie, Value: secret, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 8 * 3600, Expires: expires})
-	http.SetCookie(w, &http.Cookie{Name: CSRFCookie, Value: csrf, Path: "/", Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: 8 * 3600, Expires: expires})
+	http.SetCookie(w, &http.Cookie{Name: AdminCookie, Value: secret, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Expires: expires})
+	http.SetCookie(w, &http.Cookie{Name: CSRFCookie, Value: csrf, Path: "/", Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Expires: expires})
 	adminJSON(w, 200, map[string]any{"authenticated": true, "expires_at": expires})
 }
 
@@ -215,13 +242,13 @@ func (a *AdminAuth) Authenticate(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	hash, err := a.credential()
+	credential, err := a.credential()
 	if err != nil {
 		return false
 	}
 	a.mu.Lock()
 	session, ok := a.sessions[tokenHash(cookie.Value)]
-	if !ok || time.Now().After(session.Expires) || !equalSecret(session.Credential, hash) {
+	if !ok || time.Now().After(session.Expires) || !equalSecret(session.Credential, credential.Hash) {
 		delete(a.sessions, tokenHash(cookie.Value))
 		a.mu.Unlock()
 		return false

@@ -131,7 +131,7 @@ func TestProviderPoolRejectsDuplicateModelAndUnavailableProvider(t *testing.T) {
 	}
 }
 
-func TestProviderPoolRejectsExistingProviderModelAndDoesNotHijackRouting(t *testing.T) {
+func TestProviderPoolAllowsExistingProviderModelAndDoesNotHijackLegacyRouting(t *testing.T) {
 	s := newTestServer(t)
 	if err := config.SaveProviders([]config.ThirdPartyProvider{{
 		ID: "provider1", Name: "Provider", BaseURL: "https://example.com/v1", APIKey: "secret", Enabled: true,
@@ -149,14 +149,14 @@ func TestProviderPoolRejectsExistingProviderModelAndDoesNotHijackRouting(t *test
 	}`))
 	w := httptest.NewRecorder()
 	s.handleProviderPoolCreate(w, req)
-	if w.Code != http.StatusBadRequest {
+	if w.Code != http.StatusCreated {
 		t.Fatalf("create status = %d body=%s", w.Code, w.Body.String())
 	}
 
-	// Old or manually-edited configuration can still contain a conflict. In
-	// that case unscoped requests must retain the existing model route.
+	// Unscoped legacy requests retain the existing direct model route, even
+	// when a new service uses the same ID for a different source.
 	if err := config.SaveProviderPools([]config.ProviderPool{{
-		ID: "conflict", Name: "Conflict", Model: "shared-model", Enabled: true,
+		ID: "conflict", Name: "Conflict", Model: "shared-model", Enabled: true, Policy: "fixed",
 		Members: []config.ProviderPoolMember{{ID: "local", Source: "local", Model: "fallback-model"}},
 	}}); err != nil {
 		t.Fatalf("save conflicting pool: %v", err)

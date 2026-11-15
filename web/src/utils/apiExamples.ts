@@ -33,7 +33,7 @@ export function apiExampleModeFromPipelineTag(pipelineTag?: string, isVision?: b
   }
 }
 
-export function buildApiExamples(baseUrl: string, model: string, mode: ApiExampleMode): ApiExamples {
+function buildExamples(baseUrl: string, model: string, mode: ApiExampleMode): ApiExamples {
   switch (mode) {
     case "asr":
       return {
@@ -45,7 +45,7 @@ export function buildApiExamples(baseUrl: string, model: string, mode: ApiExampl
 
 client = OpenAI(
     base_url="${baseUrl}/v1",
-    api_key="unused"
+    api_key="YOUR_API_KEY"
 )
 
 with open("audio.mp3", "rb") as audio:
@@ -92,7 +92,7 @@ console.log(data.text);`,
 
 client = OpenAI(
     base_url="${baseUrl}/v1",
-    api_key="unused"
+    api_key="YOUR_API_KEY"
 )
 
 decision = client.decisions.create(
@@ -117,7 +117,7 @@ answer = decision.answers[0]
 print(f"Department: {answer.choice} (confidence: {answer.confidence})")`,
         javascript: `import OpenAI from "openai";
 
-const client = new OpenAI({ baseURL: "${baseUrl}/v1", apiKey: "unused" });
+const client = new OpenAI({ baseURL: "${baseUrl}/v1", apiKey: "YOUR_API_KEY" });
 const decision = await client.decisions.create({
   model: "${model}",
   input: "I was charged twice for my order.",
@@ -152,7 +152,7 @@ console.log(\`Department: \${answer.choice} (confidence: \${answer.confidence})\
 
 client = OpenAI(
     base_url="${baseUrl}/v1",
-    api_key="unused"
+    api_key="YOUR_API_KEY"
 )
 
 response = client.embeddings.create(
@@ -188,7 +188,7 @@ console.log(data.data[0].embedding);`,
 
 client = OpenAI(
     base_url="${baseUrl}/v1",
-    api_key="unused"
+    api_key="YOUR_API_KEY"
 )
 
 response = client.images.generate(
@@ -221,7 +221,7 @@ console.log(data.data[0].b64_json);`,
 
 client = OpenAI(
     base_url="${baseUrl}/v1",
-    api_key="unused"
+    api_key="YOUR_API_KEY"
 )
 
 with open("input.png", "rb") as image:
@@ -264,7 +264,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="${baseUrl}/v1",
-    api_key="unused"
+    api_key="YOUR_API_KEY"
 )
 
 with open("image.png", "rb") as f:
@@ -328,7 +328,7 @@ console.log(data.choices[0].message.content);`,
 
 client = OpenAI(
     base_url="${baseUrl}/v1",
-    api_key="unused"
+    api_key="YOUR_API_KEY"
 )
 
 response = client.chat.completions.create(
@@ -361,4 +361,16 @@ const data = await response.json();
 console.log(data.choices[0].message.content);`,
       };
   }
+}
+
+export function buildApiExamples(baseUrl: string, model: string, mode: ApiExampleMode): ApiExamples {
+  const examples = buildExamples(baseUrl, model, mode);
+  // Authentication is optional on loopback but required for the public gateway.
+  // Keep the same copyable examples valid when served from a remote origin.
+  examples.curl = examples.curl.replace("\n", '\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n');
+  examples.javascript = examples.javascript.replace(/headers: \{/g, 'headers: { "Authorization": "Bearer YOUR_API_KEY",');
+  if (examples.javascript.includes('fetch(') && !examples.javascript.includes('"Authorization"')) {
+    examples.javascript = examples.javascript.replace('method: "POST",', 'method: "POST",\n  headers: { "Authorization": "Bearer YOUR_API_KEY" },');
+  }
+  return examples;
 }

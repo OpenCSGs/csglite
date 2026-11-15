@@ -1,3 +1,5 @@
+import { modelHotIcon } from "../utils/modelOptions";
+import { ModelServices } from "../components/ModelServices";
 import { Fragment } from "preact";
 import { useLocation } from "preact-iso";
 import { signal } from "@preact/signals";
@@ -5,18 +7,14 @@ import { useEffect } from "preact/hooks";
 import { t, locale } from "../i18n";
 import { formatNumber, formatDateTime, formatChartDate, chartXAxisLabels } from "../utils/format";
 import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
-import { modelHotIcon } from "../utils/modelOptions";
 import { ProviderModelModalityBadges, providerModelLabel, defaultProviderModelDisplayName } from "../components/ProviderModelBadges";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import {
   createProvider,
-  createProviderPool,
   createLocalAPIKey,
   deleteProvider,
-  deleteProviderPool,
   deleteLocalAPIKey,
   getSettings,
-  getTags,
   getLocalAPIKeys,
   getLocalAPIUsage,
   getProviderManageTags,
@@ -26,12 +24,11 @@ import {
   replaceProviderManageTags,
   saveSettings,
   updateProvider,
-  updateProviderPool,
   updateProviderManageTag,
   validateProvider,
   updateLocalAPIKeySettings,
 } from "../api/client";
-import type { LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
+import type { LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
 
 type GatewayTab = "apiKeys" | "providers" | "pools" | "usage";
 type UsagePeriod = "week" | "month" | "year";
@@ -43,7 +40,7 @@ type GatewayAPIInfoTarget = {
   decisionsSupported: boolean;
 };
 
-const activeGatewayTab = signal<GatewayTab>("apiKeys");
+const activeGatewayTab = signal<GatewayTab>("pools");
 type ProtocolTab = "openai" | "anthropic" | "responses";
 const activeProtocolTab = signal<ProtocolTab>("openai");
 const localAPIKeys = signal<LocalAPIKeysResponse | null>(null);
@@ -62,23 +59,10 @@ const localAPIUsageProvider = signal("");
 const localAPIUsageExpandedKeys = signal<Record<string, boolean>>({});
 const providers = signal<ThirdPartyProvider[]>([]);
 const providerPools = signal<ProviderPool[]>([]);
-const providerPoolModels = signal<ModelInfo[]>([]);
+const serviceCatalogSource = signal({ source: "local", serial: 0 });
 const cloudManagedProvider = signal<ManagedProvider | null>(null);
 const providersLoading = signal(false);
 const providersError = signal("");
-const isProviderPoolDialogOpen = signal(false);
-const editingProviderPool = signal<ProviderPool | null>(null);
-const providerPoolFormName = signal("");
-const providerPoolFormModel = signal("");
-const providerPoolFormEnabled = signal(true);
-const providerPoolFormMembers = signal<ProviderPoolMember[]>([]);
-const providerPoolFormError = signal("");
-const providerPoolFormSaving = signal(false);
-const providerPoolDialogStep = signal<"basics" | "members">("basics");
-const providerPoolSourceFilter = signal("local");
-const providerPoolModelSearch = signal("");
-const providerPoolMemberConfigIndex = signal<number | null>(null);
-const providerPoolMemberConfigDraft = signal<ProviderPoolMember | null>(null);
 const gatewayAPIInfoTarget = signal<GatewayAPIInfoTarget | null>(null);
 const copiedSnippet = signal("");
 const isProviderDialogOpen = signal(false);
@@ -166,12 +150,12 @@ async function fetchProviderOptions() {
   providersLoading.value = true;
   providersError.value = "";
   try {
-		const [list, settings, pools, models] = await Promise.all([getProviders(), getSettings(), getProviderPools(), getTags()]);
+		const [list, settings, pools] = await Promise.all([getProviders(), getSettings(), getProviderPools()]);
 		const cloudProvider = cloudProviderFromSettings(settings);
 		cloudManagedProvider.value = cloudProvider;
     providers.value = list;
     providerPools.value = pools;
-    providerPoolModels.value = models;
+
 		const managedProviders = [cloudProvider, ...list];
     const entries = await Promise.all(
 			managedProviders.map(async (provider) => {
@@ -212,32 +196,6 @@ function openGatewayAPIInfo(targetID: string, model: ModelInfo, decisionsSupport
     targetID,
     model,
     decisionsSupported,
-  };
-}
-
-function providerPoolModelInfo(pool: ProviderPool): ModelInfo {
-  const primaryMember = sortProviderPoolMembers(pool.members)[0];
-  const primaryModel = primaryMember && providerPoolModels.value.find((model) =>
-    model.source === primaryMember.source && model.model === primaryMember.model
-  );
-  if (primaryModel) {
-    return {
-      ...primaryModel,
-      name: pool.model,
-      model: pool.model,
-      source: `pool:${pool.id}`,
-      provider: pool.name,
-    };
-  }
-  return {
-    name: pool.model,
-    model: pool.model,
-    size: 0,
-    format: "api",
-    modified_at: "",
-    source: `pool:${pool.id}`,
-    category: "chat",
-    pipeline_tag: "text-generation",
   };
 }
 
@@ -440,10 +398,6 @@ async function saveProviderModelEdit() {
   }
 }
 
-function providerConfiguredHeaderModel(provider: ManagedProvider): string {
-  return provider.headers?.find((header) => header.name.trim().toLowerCase() === "x-model")?.value.trim() || "";
-}
-
 async function loadProviderDialogModels(provider: ManagedProvider, defaultModelID = "") {
   providerModelsLoading.value = true;
   providerModelsError.value = "";
@@ -558,10 +512,8 @@ async function saveProviderForm() {
     }
     await fetchProviderOptions();
     notifyProvidersChanged();
-    editingProvider.value = savedProvider;
-    providerModelTarget.value = savedProvider;
-    providerDialogStep.value = "models";
-    await loadProviderDialogModels(savedProvider, providerConfiguredHeaderModel(savedProvider));
+    isProviderDialogOpen.value = false;
+    openServiceCatalog(savedProvider);
   } catch (err: any) {
     providerFormError.value = err?.message || t("settings.providerSaveFailed");
   } finally {
@@ -659,205 +611,7 @@ async function removeProvider(provider: ThirdPartyProvider) {
   }
 }
 
-// sortProviderPoolMembers orders members by priority ascending (lower priority
-// is tried first, matching the backend's orderedMembers() call order), then by
-// weight descending within the same priority. The weight tiebreaker is purely
-// visual — within a priority, members are load-split by weight ratio, not call
-// order — but listing higher-weight members first matches the intuition that
-// they carry more of the traffic.
-function sortProviderPoolMembers(members: ProviderPoolMember[]): ProviderPoolMember[] {
-  return [...members].sort((a, b) => {
-    const pa = a.priority ?? 0;
-    const pb = b.priority ?? 0;
-    if (pa !== pb) return pa - pb;
-    return (b.weight ?? 100) - (a.weight ?? 100);
-  });
-}
 
-function newProviderPoolMember(index = providerPoolFormMembers.value.length): ProviderPoolMember {
-  return {
-    id: `member-${Date.now()}-${index}`,
-    source: "local",
-    model: "",
-    priority: 0,
-    weight: 100,
-    requests_per_minute: 0,
-    tokens_per_minute: 0,
-    max_concurrent: 0,
-  };
-}
-
-function openProviderPoolDialog(pool?: ProviderPool) {
-  editingProviderPool.value = pool || null;
-  providerPoolFormName.value = pool?.name || "";
-  providerPoolFormModel.value = pool?.model || "";
-  providerPoolFormEnabled.value = pool?.enabled ?? true;
-  providerPoolFormMembers.value = sortProviderPoolMembers(pool?.members.map((member) => ({ ...member })) || []);
-  providerPoolFormError.value = "";
-  providerPoolDialogStep.value = "basics";
-  providerPoolSourceFilter.value = "local";
-  providerPoolModelSearch.value = "";
-  isProviderPoolDialogOpen.value = true;
-}
-
-function closeProviderPoolDialog() {
-  if (providerPoolFormSaving.value) return;
-  isProviderPoolDialogOpen.value = false;
-  editingProviderPool.value = null;
-  providerPoolFormError.value = "";
-  providerPoolDialogStep.value = "basics";
-  providerPoolModelSearch.value = "";
-  closeProviderPoolMemberConfigDialog();
-}
-
-function continueProviderPoolDialog() {
-  if (!providerPoolFormName.value.trim() || !providerPoolFormModel.value.trim()) {
-    providerPoolFormError.value = t("settings.providerPoolNameModelRequired");
-    return;
-  }
-  providerPoolFormError.value = "";
-  providerPoolDialogStep.value = "members";
-}
-
-function backProviderPoolDialog() {
-  providerPoolFormError.value = "";
-  providerPoolDialogStep.value = "basics";
-}
-
-function updateProviderPoolMember(index: number, patch: Partial<ProviderPoolMember>) {
-  providerPoolFormMembers.value = providerPoolFormMembers.value.map((member, memberIndex) =>
-    memberIndex === index ? { ...member, ...patch } : member
-  );
-}
-
-function openProviderPoolMemberConfigDialog(index: number) {
-  const member = providerPoolFormMembers.value[index];
-  if (!member) return;
-  providerPoolMemberConfigIndex.value = index;
-  providerPoolMemberConfigDraft.value = {
-    ...member,
-    priority: member.priority ?? 0,
-    weight: member.weight ?? 100,
-    requests_per_minute: member.requests_per_minute ?? 0,
-    tokens_per_minute: member.tokens_per_minute ?? 0,
-    max_concurrent: member.max_concurrent ?? 0,
-  };
-}
-
-function closeProviderPoolMemberConfigDialog() {
-  providerPoolMemberConfigIndex.value = null;
-  providerPoolMemberConfigDraft.value = null;
-}
-
-function saveProviderPoolMemberConfigDialog() {
-  const index = providerPoolMemberConfigIndex.value;
-  const member = providerPoolMemberConfigDraft.value;
-  if (index === null || !member) return;
-  updateProviderPoolMember(index, {
-    priority: member.priority ?? 0,
-    weight: member.weight ?? 100,
-    requests_per_minute: member.requests_per_minute ?? 0,
-    tokens_per_minute: member.tokens_per_minute ?? 0,
-    max_concurrent: member.max_concurrent ?? 0,
-  });
-  // Re-sort so the list reflects the updated call priority (priority ascending,
-  // matching the backend's orderedMembers() order).
-  providerPoolFormMembers.value = sortProviderPoolMembers(providerPoolFormMembers.value);
-  closeProviderPoolMemberConfigDialog();
-}
-
-function updateProviderPoolMemberConfigDraft(
-  key: "priority" | "weight" | "requests_per_minute" | "tokens_per_minute" | "max_concurrent",
-  value: string,
-) {
-  const member = providerPoolMemberConfigDraft.value;
-  if (!member) return;
-  const number = Number.parseInt(value, 10);
-  providerPoolMemberConfigDraft.value = {
-    ...member,
-    [key]: Number.isFinite(number) ? number : undefined,
-  };
-}
-
-function toggleProviderPoolSourceModel(source: string, model: string, checked: boolean) {
-  const memberIndex = providerPoolFormMembers.value.findIndex(
-    (member) => member.source === source && member.model === model
-  );
-  if (checked && memberIndex === -1) {
-    providerPoolFormMembers.value = sortProviderPoolMembers([
-      ...providerPoolFormMembers.value,
-      { ...newProviderPoolMember(providerPoolFormMembers.value.length), source, model },
-    ]);
-  } else if (!checked && memberIndex !== -1) {
-    providerPoolFormMembers.value = providerPoolFormMembers.value.filter((_, index) => index !== memberIndex);
-  }
-}
-
-function providerPoolSourceLabel(source: string): string {
-  const value = source.trim();
-  if (value === "local") return t("settings.providerPoolSourceLocal");
-  if (value === "cloud") return cloudManagedProvider.value?.name || t("settings.providerPoolSourceCloud");
-  if (value.startsWith("provider:")) {
-    const providerID = value.slice("provider:".length);
-    return providers.value.find((provider) => provider.id === providerID)?.name || value;
-  }
-  return value;
-}
-
-async function saveProviderPoolForm() {
-  const name = providerPoolFormName.value.trim();
-  const model = providerPoolFormModel.value.trim();
-  const members = providerPoolFormMembers.value.map((member) => ({
-    ...member,
-    id: member.id.trim(),
-    source: member.source.trim(),
-    model: member.model.trim(),
-  }));
-  if (!name || !model) {
-    providerPoolFormError.value = t("settings.providerPoolNameModelRequired");
-    return;
-  }
-  if (members.length === 0 || members.some((member) => !member.id || !member.source || !member.model)) {
-    providerPoolFormError.value = t("settings.providerPoolMemberRequired");
-    return;
-  }
-
-  providerPoolFormSaving.value = true;
-  providerPoolFormError.value = "";
-  try {
-    const payload = {
-      name,
-      model,
-      enabled: providerPoolFormEnabled.value,
-      members,
-    };
-    if (editingProviderPool.value) {
-      await updateProviderPool(editingProviderPool.value.id, payload);
-    } else {
-      await createProviderPool(payload);
-    }
-    await fetchProviderOptions();
-    notifyProvidersChanged();
-    providerPoolFormSaving.value = false;
-    closeProviderPoolDialog();
-  } catch (err: any) {
-    providerPoolFormError.value = err?.message || t("settings.providerPoolSaveFailed");
-  } finally {
-    providerPoolFormSaving.value = false;
-  }
-}
-
-async function removeProviderPool(pool: ProviderPool) {
-  if (!confirm(t("settings.providerPoolDeleteConfirm", pool.name))) return;
-  providersError.value = "";
-  try {
-    await deleteProviderPool(pool.id);
-    providerPools.value = providerPools.value.filter((item) => item.id !== pool.id);
-    notifyProvidersChanged();
-  } catch (err: any) {
-    providersError.value = err?.message || t("settings.providerPoolDeleteFailed");
-  }
-}
 
 function toggleLocalAPIUsageKey(keyID: string) {
   const expanded = localAPIUsageExpandedKeys.value;
@@ -886,7 +640,6 @@ function copySnippet(value: string) {
 
 export function AIGateway() {
   void locale.value;
-  const runtimeAPIOrigin = useRuntimeAPIOrigin();
 
   useEffect(() => {
     void fetchLocalAPIKeys();
@@ -908,15 +661,15 @@ export function AIGateway() {
       </div>
 
       <div class="mb-6 inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
-        <GatewayTabButton tab="apiKeys" label={t("settings.tabAPIKeys")} />
+        <GatewayTabButton tab="pools" label={t("services.title")} />
         <GatewayTabButton tab="providers" label={t("gateway.tabProviders")} />
-        <GatewayTabButton tab="pools" label={t("settings.providerPools")} />
+        <GatewayTabButton tab="apiKeys" label={t("settings.tabAPIKeys")} />
         <GatewayTabButton tab="usage" label={t("settings.tabUsage")} />
       </div>
 
       {activeGatewayTab.value === "apiKeys" && <LocalAPIKeysSection />}
       {activeGatewayTab.value === "providers" && <ProvidersSection />}
-      {activeGatewayTab.value === "pools" && <ProviderPoolsSection />}
+      {activeGatewayTab.value === "pools" && <ModelServices providers={providerCards()} catalogRequest={serviceCatalogSource.value} onChanged={async () => { await fetchProviderOptions(); notifyProvidersChanged(); }} />}
       {activeGatewayTab.value === "usage" && <UsageStatisticsSection />}
       <LocalAPIKeyDialog
         open={isLocalAPIKeyDialogOpen.value}
@@ -985,37 +738,9 @@ export function AIGateway() {
         onChangeDisplayName={(value) => (providerModelEditDisplayName.value = value)}
         onChangeDescription={(value) => (providerModelEditDescription.value = value)}
       />
-      <ProviderPoolDialog
-        open={isProviderPoolDialogOpen.value}
-        editing={!!editingProviderPool.value}
-        step={providerPoolDialogStep.value}
-        name={providerPoolFormName.value}
-        model={providerPoolFormModel.value}
-        enabled={providerPoolFormEnabled.value}
-        members={providerPoolFormMembers.value}
-        models={providerPoolModels.value}
-        error={providerPoolFormError.value}
-        saving={providerPoolFormSaving.value}
-        onClose={closeProviderPoolDialog}
-        onNext={continueProviderPoolDialog}
-        onBack={backProviderPoolDialog}
-        onSave={() => void saveProviderPoolForm()}
-        onChangeName={(value) => (providerPoolFormName.value = value)}
-        onChangeModel={(value) => (providerPoolFormModel.value = value)}
-        onChangeEnabled={(value) => (providerPoolFormEnabled.value = value)}
-        onToggleSourceModel={toggleProviderPoolSourceModel}
-      />
-      <ProviderPoolMemberConfigDialog
-        open={providerPoolMemberConfigIndex.value !== null}
-        member={providerPoolMemberConfigDraft.value}
-        saving={providerPoolFormSaving.value}
-        onClose={closeProviderPoolMemberConfigDialog}
-        onSave={saveProviderPoolMemberConfigDialog}
-        onChange={updateProviderPoolMemberConfigDraft}
-      />
       {gatewayAPIInfoTarget.value && (
         <ApiInfoDialog
-          baseUrl={`${runtimeAPIOrigin.replace(/\/+$/, "")}/providers/${encodeURIComponent(gatewayAPIInfoTarget.value.targetID)}`}
+          source={gatewayAPIInfoTarget.value.targetID === "csghub" ? "cloud" : gatewayAPIInfoTarget.value.targetID === "local" ? "local" : `provider:${gatewayAPIInfoTarget.value.targetID}`}
           model={gatewayAPIInfoTarget.value.model.model}
           pipelineTag={gatewayAPIInfoTarget.value.model.pipeline_tag}
           isVision={isGatewayVisionModel(gatewayAPIInfoTarget.value.model)}
@@ -1056,7 +781,7 @@ function GatewayTabButton({ tab, label }: { tab: GatewayTab; label: string }) {
   return (
     <button
       type="button"
-      onClick={() => (activeGatewayTab.value = tab)}
+      onClick={() => { activeGatewayTab.value = tab; serviceCatalogSource.value = { ...serviceCatalogSource.value, serial: 0 }; }}
       class={`rounded-xl px-5 py-2 text-sm font-medium transition-colors ${
         active
           ? "bg-indigo-600 text-white shadow-sm"
@@ -1089,21 +814,21 @@ function LocalAPIKeysSection() {
   const keys = localAPIKeys.value?.keys || [];
   const authEnabled = localAPIKeys.value?.auth_enabled || false;
   const origin = useRuntimeAPIOrigin();
-  const openAIBaseURL = `${origin}/v1`;
-  const anthropicBaseURL = `${origin}/anthropic`;
+  const openAIBaseURL = `${origin}/ai-gateway/v1`;
+  const anthropicBaseURL = `${origin}/ai-gateway`;
   const openAICurl = `curl ${openAIBaseURL}/chat/completions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer <API_KEY>" \\
-  -d '{"model":"<MODEL>","messages":[{"role":"user","content":"Hello"}]}'`;
+  -d '{"model":"<SERVICE_ID>","messages":[{"role":"user","content":"Hello"}]}'`;
   const anthropicCurl = `curl ${anthropicBaseURL}/v1/messages \\
   -H "Content-Type: application/json" \\
   -H "x-api-key: <API_KEY>" \\
-  -d '{"model":"<MODEL>","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'`;
-  const responsesBaseURL = `${origin}/v1`;
+  -d '{"model":"<SERVICE_ID>","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'`;
+  const responsesBaseURL = `${origin}/ai-gateway/v1`;
   const responsesCurl = `curl ${responsesBaseURL}/responses \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer <API_KEY>" \\
-  -d '{"model":"<MODEL>","input":"Hello"}'`;
+  -d '{"model":"<SERVICE_ID>","input":"Hello"}'`;
 
   return (
     <div class="space-y-6">
@@ -1360,6 +1085,7 @@ function ProvidersSection() {
         ) : (
 					cards.map((provider) => {
             const selectedModels = providerSelectedModels.value[provider.id] || [];
+            const actionsDisabled = !provider.enabled || !!providerTogglePending.value[provider.id];
             return (
               <div key={provider.id} class="rounded-2xl border border-gray-100 bg-gray-50 p-4">
                 <div class="flex items-start justify-between gap-3">
@@ -1402,7 +1128,10 @@ function ProvidersSection() {
 										<div class="h-5 w-9 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300" />
 									</label>
                 </div>
+                <fieldset disabled={actionsDisabled} title={actionsDisabled ? t("settings.providerEnableFirst") : undefined} class="min-w-0 [&_button:disabled]:cursor-not-allowed [&_button:disabled]:opacity-40">
                 <div class="mt-4 rounded-xl bg-white p-3">
+                  <p class="mb-3 text-xs text-gray-500">{t("services.providerUsage", providerPools.value.filter(pool => pool.members.some(member => member.source === (provider.builtIn ? "cloud" : `provider:${provider.id}`))).length)}</p>
+                  <details><summary class="cursor-pointer text-xs text-gray-500">{t("services.legacyModels", selectedModels.length)}</summary>
                   <div class="mb-2 flex items-center justify-between gap-2">
                     <span class="text-xs font-medium text-gray-400">{t("gateway.providerModels")}</span>
                     <span class="text-xs text-gray-400">{selectedModels.length}</span>
@@ -1448,14 +1177,16 @@ function ProvidersSection() {
                       ))}
                     </div>
                   )}
+                  </details>
                 </div>
-                <div class="mt-4 flex justify-end gap-2">
+                <div class="mt-4 flex flex-wrap justify-end gap-2">
+                  <button type="button" onClick={() => openServiceCatalog(provider)} class="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs text-white">{t("services.publishModels")}</button>
                   <button
                     type="button"
 									onClick={() => openProviderModelsDialog(provider)}
                     class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 transition-colors hover:bg-gray-50"
                   >
-									{t("settings.providerModelsManage")}
+									{t("services.legacyManage")}
                   </button>
 								{!provider.builtIn && (
 									<>
@@ -1476,90 +1207,12 @@ function ProvidersSection() {
 									</>
 								)}
                 </div>
+                </fieldset>
               </div>
             );
           })
         )}
       </div>
-    </section>
-  );
-}
-
-function ProviderPoolsSection() {
-  const pools = providerPools.value;
-  return (
-    <section class="rounded-2xl border border-gray-200 bg-white shadow-sm">
-      <div class="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-5 py-5">
-        <div>
-          <h2 class="text-base font-semibold text-gray-900">{t("settings.providerPools")}</h2>
-          <p class="mt-1 text-sm text-gray-500">{t("settings.providerPoolsDesc")}</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => openProviderPoolDialog()}
-          class="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-700"
-        >
-          {t("settings.providerPoolAdd")}
-        </button>
-      </div>
-      {providersLoading.value ? (
-        <p class="p-5 text-sm text-gray-500">...</p>
-      ) : pools.length === 0 ? (
-        <div class="p-5 text-center">
-          <p class="text-sm font-medium text-gray-700">{t("settings.providerPoolsEmpty")}</p>
-          <p class="mt-1 text-sm text-gray-500">{t("settings.providerPoolsHint")}</p>
-        </div>
-      ) : (
-        <div class="grid gap-4 p-5 lg:grid-cols-2">
-          {pools.map((pool) => (
-            <div key={pool.id} class="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <h3 class="truncate text-sm font-semibold text-gray-900">{pool.name}</h3>
-                    <span class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${pool.enabled ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
-                      {pool.enabled ? t("settings.providerEnabled") : t("settings.providerDisabled")}
-                    </span>
-                  </div>
-                  <p class="mt-1 truncate font-mono text-xs text-gray-500">{pool.model}</p>
-                </div>
-                <span class="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
-                  {t("settings.providerPoolMembers", pool.members.length)}
-                </span>
-              </div>
-              <div class="mt-4 space-y-2">
-                {sortProviderPoolMembers(pool.members).map((member) => (
-                  <div key={member.id} class="rounded-lg bg-white px-3 py-2 text-xs text-gray-600">
-                    <div class="flex min-w-0 justify-between gap-2">
-                      <span class="truncate font-medium text-gray-800">{member.model}</span>
-                      <span class="shrink-0 text-gray-400">{providerPoolSourceLabel(member.source)}</span>
-                    </div>
-                    <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      <span class="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700" title={t("settings.providerPoolMemberPriority")}>
-                        {t("settings.providerPoolMemberPriority")} {member.priority ?? 0}
-                      </span>
-                      <span class="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600" title={t("settings.providerPoolMemberWeight")}>
-                        {t("settings.providerPoolMemberWeight")} {member.weight ?? 100}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div class="mt-4 flex justify-end gap-2">
-                <button type="button" onClick={() => openGatewayAPIInfo(pool.id, providerPoolModelInfo(pool), false)} class="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs text-indigo-700 transition-colors hover:bg-indigo-50">
-                  {t("settings.providerCallMethod")}
-                </button>
-                <button type="button" onClick={() => openProviderPoolDialog(pool)} class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 transition-colors hover:bg-gray-50">
-                  {t("settings.providerEdit")}
-                </button>
-                <button type="button" onClick={() => void removeProviderPool(pool)} class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs text-red-600 transition-colors hover:bg-red-50">
-                  {t("settings.providerDelete")}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </section>
   );
 }
@@ -1666,9 +1319,6 @@ function UsageStatisticsSection() {
                     </td>
                     <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">
                       {formatNumber(row.requests)}
-                      {row.estimated_requests ? (
-                        <span class="ml-1 text-xs text-amber-500">{t("settings.apiUsageEstimated")}</span>
-                      ) : null}
                     </td>
                     <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.input_tokens)}</td>
                     <td class="whitespace-nowrap px-4 py-3 tabular-nums text-gray-600">{formatNumber(row.output_tokens)}</td>
@@ -1744,9 +1394,6 @@ function UsageKeyBreakdown({ usage }: { usage: LocalAPIUsageResponse | null }) {
                         </td>
                         <td class="whitespace-nowrap px-4 py-2 text-xs tabular-nums text-gray-500">
                           {formatNumber(row.requests)}
-                          {row.estimated_requests ? (
-                            <span class="ml-1 text-xs text-amber-500">{t("settings.apiUsageEstimated")}</span>
-                          ) : null}
                         </td>
                         <td class="whitespace-nowrap px-4 py-2 text-xs text-gray-300">—</td>
                         <td class="whitespace-nowrap px-4 py-2 text-xs tabular-nums text-gray-500">{formatNumber(row.input_tokens)}</td>
@@ -2184,346 +1831,6 @@ function ProviderDialog({
   );
 }
 
-function ProviderPoolDialog({
-  open,
-  editing,
-  step,
-  name,
-  model,
-  enabled,
-  members,
-  models,
-  error,
-  saving,
-  onClose,
-  onNext,
-  onBack,
-  onSave,
-  onChangeName,
-  onChangeModel,
-  onChangeEnabled,
-  onToggleSourceModel,
-}: {
-  open: boolean;
-  editing: boolean;
-  step: "basics" | "members";
-  name: string;
-  model: string;
-  enabled: boolean;
-  members: ProviderPoolMember[];
-  models: ModelInfo[];
-  error: string;
-  saving: boolean;
-  onClose: () => void;
-  onNext: () => void;
-  onBack: () => void;
-  onSave: () => void;
-  onChangeName: (value: string) => void;
-  onChangeModel: (value: string) => void;
-  onChangeEnabled: (value: boolean) => void;
-  onToggleSourceModel: (source: string, model: string, checked: boolean) => void;
-}) {
-  if (!open) return null;
-  const sources = [
-    { value: "local", label: t("settings.providerPoolSourceLocal") },
-    { value: "cloud", label: providerPoolSourceLabel("cloud") },
-    ...providers.value.filter((provider) => provider.enabled).map((provider) => ({
-      value: `provider:${provider.id}`,
-      label: provider.name,
-    })),
-  ];
-  const sourceLabel = (source: string) => sources.find((item) => item.value === source)?.label || source;
-  const modelLabel = (source: string, modelID: string) => {
-    const item = models.find((candidate) => candidate.source === source && candidate.model === modelID);
-    return item?.display_name || item?.label || modelID;
-  };
-  const activeSource = sources.some((source) => source.value === providerPoolSourceFilter.value)
-    ? providerPoolSourceFilter.value
-    : sources[0]?.value || "local";
-  const search = providerPoolModelSearch.value.trim().toLocaleLowerCase();
-  const catalog = models
-    .filter((item) => item.source === activeSource && item.model)
-    .map((item) => ({
-      value: item.model,
-      label: item.display_name || item.label || item.model,
-    }))
-    .filter((item, index, items) => items.findIndex((candidate) => candidate.value === item.value) === index)
-    .filter((item) => !search || item.value.toLocaleLowerCase().includes(search) || item.label.toLocaleLowerCase().includes(search));
-  const basicsValid = !!name.trim() && !!model.trim();
-  return (
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 p-3 sm:p-6" onClick={onClose}>
-      <div class="flex max-h-[calc(100vh-1.5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:max-h-[calc(100vh-3rem)]" onClick={(event) => event.stopPropagation()}>
-        <div class="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
-          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 class="text-lg font-semibold text-gray-950">{editing ? t("settings.providerPoolEditTitle") : t("settings.providerPoolAddTitle")}</h2>
-              <p class="mt-1 text-sm text-gray-500">{t("settings.providerPoolDialogDesc")}</p>
-            </div>
-            <div class="flex shrink-0 items-center gap-2" aria-label={t("settings.providerPoolProgress")}>
-              {(["basics", "members"] as const).map((item, index) => {
-                const active = step === item;
-                const complete = item === "basics" && step === "members";
-                return (
-                  <div key={item} class="flex items-center gap-2">
-                    {index > 0 && <span class="h-px w-5 bg-gray-200 sm:w-8" />}
-                    <span class={`inline-flex items-center gap-2 text-xs font-medium ${active ? "text-indigo-700" : complete ? "text-emerald-700" : "text-gray-400"}`}>
-                      <span class={`inline-flex h-6 w-6 items-center justify-center rounded-full ${active ? "bg-indigo-600 text-white" : complete ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
-                        {index + 1}
-                      </span>
-                      {item === "basics" ? t("settings.providerPoolStepBasics") : t("settings.providerPoolStepMembers")}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-        {step === "basics" ? (
-          <div class="flex-1 overflow-y-auto px-5 py-6 sm:px-7">
-            <div class="mx-auto max-w-2xl">
-              <div class="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
-                <h3 class="text-sm font-semibold text-indigo-950">{t("settings.providerPoolBasicsTitle")}</h3>
-                <p class="mt-1 text-sm leading-6 text-indigo-700">{t("settings.providerPoolBasicsDesc")}</p>
-              </div>
-              <div class="mt-6 space-y-5">
-                <div>
-                  <label class="mb-1.5 block text-sm font-medium text-gray-700">{t("settings.providerPoolName")}</label>
-                  <input
-                    class="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={name}
-                    onInput={(event) => onChangeName((event.target as HTMLInputElement).value)}
-                    placeholder={t("settings.providerPoolNamePlaceholder")}
-                    disabled={saving}
-                  />
-                  <p class="mt-1.5 text-xs text-gray-500">{t("settings.providerPoolNameHint")}</p>
-                </div>
-                <div>
-                  <label class="mb-1.5 block text-sm font-medium text-gray-700">{t("settings.providerPoolModel")}</label>
-                  <input
-                    class="w-full rounded-xl border border-gray-200 px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={model}
-                    onInput={(event) => onChangeModel((event.target as HTMLInputElement).value)}
-                    placeholder={t("settings.providerPoolModelPlaceholder")}
-                    disabled={saving}
-                  />
-                  <p class="mt-1.5 text-xs text-gray-500">{t("settings.providerPoolModelHint")}</p>
-                </div>
-                <div class="flex items-center justify-between gap-4 rounded-xl border border-gray-200 px-4 py-3">
-                  <div>
-                    <p class="text-sm font-medium text-gray-800">{t("settings.providerPoolEnabledLabel")}</p>
-                    <p class="mt-0.5 text-xs text-gray-500">{t("settings.providerPoolEnabledHint")}</p>
-                  </div>
-                  <label class="relative inline-flex shrink-0 cursor-pointer items-center">
-                    <input type="checkbox" checked={enabled} onChange={(event) => onChangeEnabled((event.target as HTMLInputElement).checked)} disabled={saving} class="peer sr-only" />
-                    <div class="h-6 w-11 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:shadow-sm after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300 peer-disabled:opacity-60" />
-                  </label>
-                </div>
-              </div>
-              {error && <p class="mt-4 text-sm text-red-600">{error}</p>}
-            </div>
-          </div>
-        ) : (
-          <div class="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-5 sm:px-7">
-            <div class="mb-4">
-              <h3 class="text-sm font-semibold text-gray-900">{t("settings.providerPoolMembersTitle")}</h3>
-              <p class="mt-1 text-xs leading-5 text-gray-500">{t("settings.providerPoolMembersWizardDesc")}</p>
-            </div>
-            <div class="grid min-h-0 flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
-              <div class="flex min-h-[24rem] min-w-0 flex-col overflow-hidden rounded-2xl border border-gray-200">
-                <div class="border-b border-gray-100 bg-gray-50/70 p-3">
-                  <div class="flex gap-2 overflow-x-auto pb-1">
-                    {sources.map((source) => {
-                      const selectedCount = members.filter((member) => member.source === source.value).length;
-                      return (
-                        <button
-                          key={source.value}
-                          type="button"
-                          onClick={() => {
-                            providerPoolSourceFilter.value = source.value;
-                            providerPoolModelSearch.value = "";
-                          }}
-                          class={`shrink-0 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${activeSource === source.value ? "bg-indigo-600 text-white shadow-sm" : "bg-white text-gray-600 hover:bg-gray-100"}`}
-                        >
-                          {source.label}
-                          {selectedCount > 0 && <span class={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${activeSource === source.value ? "bg-white/20 text-white" : "bg-indigo-50 text-indigo-700"}`}>{selectedCount}</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div class="relative mt-2">
-                    <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <circle cx="11" cy="11" r="7" />
-                      <path d="m20 20-3.5-3.5" />
-                    </svg>
-                    <input
-                      type="search"
-                      value={providerPoolModelSearch.value}
-                      onInput={(event) => (providerPoolModelSearch.value = (event.target as HTMLInputElement).value)}
-                      placeholder={t("settings.providerPoolSearchPlaceholder")}
-                      aria-label={t("settings.providerPoolSearchLabel")}
-                      class="w-full rounded-lg border border-gray-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                </div>
-                <div class="min-h-0 flex-1 overflow-y-auto p-3">
-                  {catalog.length === 0 ? (
-                    <div class="flex h-full min-h-48 flex-col items-center justify-center px-6 text-center">
-                      <p class="text-sm font-medium text-gray-600">{search ? t("settings.providerPoolSearchEmpty") : t("settings.providerPoolSourceEmpty")}</p>
-                      <p class="mt-1 text-xs text-gray-400">{search ? t("settings.providerPoolSearchEmptyHint") : t("settings.providerPoolSourceEmptyHint")}</p>
-                    </div>
-                  ) : (
-                    <div class="grid gap-2 sm:grid-cols-2">
-                      {catalog.map((item) => {
-                        const selected = members.some((member) => member.source === activeSource && member.model === item.value);
-                        return (
-                          <label key={item.value} class={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors ${selected ? "border-indigo-200 bg-indigo-50/60" : "border-gray-100 hover:border-gray-200 hover:bg-gray-50"}`}>
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              onChange={(event) => onToggleSourceModel(activeSource, item.value, (event.target as HTMLInputElement).checked)}
-                              disabled={saving}
-                              class="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                            />
-                            <span class="min-w-0">
-                              <span class="block truncate text-sm font-medium text-gray-900">{item.label}</span>
-                              <span class="mt-0.5 block truncate font-mono text-xs text-gray-500">{item.value}</span>
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <aside class="flex min-h-[18rem] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-gray-50/70 lg:sticky lg:top-0 lg:max-h-[calc(100vh-15rem)]">
-                <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-                  <div>
-                    <h4 class="text-sm font-semibold text-gray-900">{t("settings.providerPoolSelectedTitle")}</h4>
-                    <p class="mt-0.5 text-xs text-gray-500">{t("settings.providerPoolSelectedHint")}</p>
-                  </div>
-                  <span class="rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-700">{members.length}</span>
-                </div>
-                <div class="min-h-0 flex-1 overflow-y-auto p-3">
-                  {members.length === 0 ? (
-                    <div class="flex h-full min-h-36 items-center justify-center px-5 text-center text-sm text-gray-400">{t("settings.providerPoolSelectedEmpty")}</div>
-                  ) : (
-                    <div class="space-y-2">
-                      {members.map((member, memberIndex) => (
-                        <div key={member.id} class="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-                          <div class="flex items-start justify-between gap-2">
-                            <div class="min-w-0">
-                              <p class="truncate text-sm font-medium text-gray-900">{modelLabel(member.source, member.model)}</p>
-                              <p class="mt-0.5 truncate font-mono text-xs text-gray-500">{member.model}</p>
-                              <div class="mt-2 flex flex-wrap items-center gap-1.5">
-                                <span class="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700" title={t("settings.providerPoolMemberPriority")}>
-                                  {t("settings.providerPoolMemberPriority")} {member.priority ?? 0}
-                                </span>
-                                <span class="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600" title={t("settings.providerPoolMemberWeight")}>
-                                  {t("settings.providerPoolMemberWeight")} {member.weight ?? 100}
-                                </span>
-                                <span class="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{sourceLabel(member.source)}</span>
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => onToggleSourceModel(member.source, member.model, false)}
-                              disabled={saving}
-                              aria-label={t("settings.providerPoolMemberRemove")}
-                              title={t("settings.providerPoolMemberRemove")}
-                              class="shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-60"
-                            >
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4" aria-hidden="true">
-                                <path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 11v6m4-6v6" />
-                              </svg>
-                            </button>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => openProviderPoolMemberConfigDialog(memberIndex)}
-                            disabled={saving}
-                            class="mt-3 w-full rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-60"
-                          >
-                            {t("settings.providerPoolMemberConfigure")}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </aside>
-            </div>
-            {error && <p class="mt-4 text-sm text-red-600">{error}</p>}
-          </div>
-        )}
-        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 bg-white px-5 py-4 sm:px-7">
-          <button type="button" onClick={onClose} disabled={saving} class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60">{t("upgrade.cancel")}</button>
-          <div class="flex items-center gap-3">
-            {step === "members" && (
-              <button type="button" onClick={onBack} disabled={saving} class="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60">{t("settings.providerPoolBack")}</button>
-            )}
-            {step === "basics" ? (
-              <button type="button" onClick={onNext} disabled={saving || !basicsValid} class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{t("settings.providerPoolNext")}</button>
-            ) : (
-              <button type="button" onClick={onSave} disabled={saving || members.length === 0} class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{saving ? t("settings.providerPoolSaving") : t("settings.providerPoolSave")}</button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ProviderPoolMemberConfigDialog({
-  open,
-  member,
-  saving,
-  onClose,
-  onSave,
-  onChange,
-}: {
-  open: boolean;
-  member: ProviderPoolMember | null;
-  saving: boolean;
-  onClose: () => void;
-  onSave: () => void;
-  onChange: (key: "priority" | "weight" | "requests_per_minute" | "tokens_per_minute" | "max_concurrent", value: string) => void;
-}) {
-  if (!open || !member) return null;
-  return (
-    <div class="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/40 px-4" onClick={onClose}>
-      <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
-        <div class="border-b border-gray-100 px-6 py-5">
-          <h2 class="text-lg font-semibold text-gray-900">{t("settings.providerPoolMemberConfigureTitle")}</h2>
-          <p class="mt-1 truncate font-mono text-sm text-gray-500">{member.model}</p>
-        </div>
-        <div class="space-y-4 px-6 py-5">
-          <p class="text-sm text-gray-500">{t("settings.providerPoolMemberConfigureDesc")}</p>
-          <div class="grid gap-4 sm:grid-cols-2">
-            <PoolNumberInput label={t("settings.providerPoolMemberPriority")} value={member.priority} disabled={saving} onChange={(value) => onChange("priority", value)} />
-            <PoolNumberInput label={t("settings.providerPoolMemberWeight")} value={member.weight} disabled={saving} onChange={(value) => onChange("weight", value)} />
-            <PoolNumberInput label={t("settings.providerPoolMemberRPM")} value={member.requests_per_minute} disabled={saving} onChange={(value) => onChange("requests_per_minute", value)} />
-            <PoolNumberInput label={t("settings.providerPoolMemberTPM")} value={member.tokens_per_minute} disabled={saving} onChange={(value) => onChange("tokens_per_minute", value)} />
-            <PoolNumberInput label={t("settings.providerPoolMemberMaxConcurrent")} value={member.max_concurrent} disabled={saving} onChange={(value) => onChange("max_concurrent", value)} />
-          </div>
-        </div>
-        <div class="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">
-          <button type="button" onClick={onClose} disabled={saving} class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60">{t("upgrade.cancel")}</button>
-          <button type="button" onClick={onSave} disabled={saving} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white transition-colors hover:bg-indigo-700 disabled:opacity-60">{t("settings.providerPoolMemberConfigureSave")}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PoolNumberInput({ label, value, disabled, onChange }: { label: string; value?: number; disabled: boolean; onChange: (value: string) => void }) {
-  return (
-    <label>
-      <span class="mb-1 block text-xs font-medium text-gray-600">{label}</span>
-      <input type="number" min="0" value={value ?? ""} onInput={(event) => onChange((event.target as HTMLInputElement).value)} disabled={disabled} class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-    </label>
-  );
-}
-
 function ProviderModelEditDialog({
   open,
   modelID,
@@ -2614,4 +1921,9 @@ function ProviderModelEditDialog({
       </div>
     </div>
   );
+}
+
+function openServiceCatalog(provider: ManagedProvider) {
+ activeGatewayTab.value = "pools";
+ serviceCatalogSource.value = { source: provider.builtIn ? "cloud" : `provider:${provider.id}`, serial: serviceCatalogSource.value.serial + 1 };
 }

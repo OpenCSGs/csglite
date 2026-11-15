@@ -188,12 +188,12 @@ func (s *Server) sourceSwitchManagedValidator(group string) func([]byte) bool {
 	allowedURLs := []string{serverURL}
 	for _, source := range []string{"local", "cloud"} {
 		if value, err := providerScopedBaseURL(serverURL, source); err == nil {
-			allowedURLs = append(allowedURLs, value)
+			allowedURLs = append(allowedURLs, value, strings.Replace(value, gatewayPrefix, "", 1))
 		}
 	}
 	for _, provider := range config.GetProviders() {
 		if value, err := providerScopedBaseURL(serverURL, providerSource(provider.ID)); err == nil {
-			allowedURLs = append(allowedURLs, value)
+			allowedURLs = append(allowedURLs, value, strings.Replace(value, gatewayPrefix, "", 1))
 		}
 	}
 	for _, pool := range config.GetProviderPools() {
@@ -201,13 +201,14 @@ func (s *Server) sourceSwitchManagedValidator(group string) func([]byte) bool {
 			continue
 		}
 		if value, err := providerScopedBaseURL(serverURL, poolSource(pool.ID)); err == nil {
-			allowedURLs = append(allowedURLs, value)
+			allowedURLs = append(allowedURLs, serverURL+"/providers/"+pool.ID)
+			allowedURLs = append(allowedURLs, value, strings.Replace(value, gatewayPrefix, "", 1))
 		}
 	}
 	for _, appID := range []string{"codex", "codex-app", "claude-code"} {
 		if source := s.preferredAIAppModelSource(appID); source != "" {
 			if value, err := providerScopedBaseURL(serverURL, source); err == nil {
-				allowedURLs = append(allowedURLs, value)
+				allowedURLs = append(allowedURLs, value, strings.Replace(value, gatewayPrefix, "", 1))
 			}
 		}
 	}

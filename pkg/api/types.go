@@ -1426,16 +1426,19 @@ type ThirdPartyProviderUpdateRequest struct {
 
 // ProviderPool exposes one public model ID and selects one of its members.
 type ProviderPool struct {
-	ID      string               `json:"id"`
-	Name    string               `json:"name"`
-	Model   string               `json:"model"`
-	Enabled bool                 `json:"enabled"`
-	Policy  string               `json:"policy"`
-	Members []ProviderPoolMember `json:"members"`
+	ID           string               `json:"id"`
+	Name         string               `json:"name"`
+	Model        string               `json:"model"`
+	Enabled      bool                 `json:"enabled"`
+	Policy       string               `json:"policy"`
+	Category     string               `json:"category,omitempty"`
+	SourceStates map[string]string    `json:"source_states,omitempty"`
+	Members      []ProviderPoolMember `json:"members"`
 }
 
 type ProviderPoolMember struct {
 	ID            string `json:"id"`
+	Disabled      bool   `json:"disabled,omitempty"`
 	Source        string `json:"source"`
 	Model         string `json:"model"`
 	Priority      int    `json:"priority,omitempty"`
@@ -1450,19 +1453,21 @@ type ProviderPoolsResponse struct {
 }
 
 type ProviderPoolCreateRequest struct {
-	Name    string               `json:"name"`
-	Model   string               `json:"model"`
-	Enabled *bool                `json:"enabled,omitempty"`
-	Policy  string               `json:"policy,omitempty"`
-	Members []ProviderPoolMember `json:"members"`
+	Name     string               `json:"name"`
+	Model    string               `json:"model"`
+	Enabled  *bool                `json:"enabled,omitempty"`
+	Policy   string               `json:"policy,omitempty"`
+	Category string               `json:"category,omitempty"`
+	Members  []ProviderPoolMember `json:"members"`
 }
 
 type ProviderPoolUpdateRequest struct {
-	Name    *string               `json:"name,omitempty"`
-	Model   *string               `json:"model,omitempty"`
-	Enabled *bool                 `json:"enabled,omitempty"`
-	Policy  *string               `json:"policy,omitempty"`
-	Members *[]ProviderPoolMember `json:"members,omitempty"`
+	Name     *string               `json:"name,omitempty"`
+	Model    *string               `json:"model,omitempty"`
+	Enabled  *bool                 `json:"enabled,omitempty"`
+	Policy   *string               `json:"policy,omitempty"`
+	Category *string               `json:"category,omitempty"`
+	Members  *[]ProviderPoolMember `json:"members,omitempty"`
 }
 
 type ProviderTagModelRequest struct {

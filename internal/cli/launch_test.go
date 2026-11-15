@@ -170,17 +170,17 @@ func TestLaunchProviderScopedBaseURLUsesCSGHubForCloud(t *testing.T) {
 	if err != nil {
 		t.Fatalf("launchProviderScopedBaseURL() error: %v", err)
 	}
-	if got != "http://localhost:11435/providers/csghub" {
+	if got != "http://localhost:11435/ai-gateway/providers/csghub" {
 		t.Fatalf("launchProviderScopedBaseURL() = %q", got)
 	}
 }
 
-func TestLaunchProviderScopedBaseURLKeepsPoolUnscoped(t *testing.T) {
+func TestLaunchProviderScopedBaseURLUsesUnifiedGatewayForPool(t *testing.T) {
 	got, err := launchProviderScopedBaseURL("http://localhost:11435/", "pool:production")
 	if err != nil {
 		t.Fatalf("launchProviderScopedBaseURL() error: %v", err)
 	}
-	if got != "http://localhost:11435" {
+	if got != "http://localhost:11435/ai-gateway" {
 		t.Fatalf("launchProviderScopedBaseURL() = %q", got)
 	}
 }

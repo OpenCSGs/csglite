@@ -743,3 +743,73 @@ func TestProviderPoolUsageMiddlewareAttributesFailedRequest(t *testing.T) {
 		t.Fatalf("successful request observation = %#v", succeeded)
 	}
 }
+
+func TestModelServicePoliciesAndDisabledSources(t *testing.T) {
+	for _, policy := range []string{config.ProviderPoolPolicyFixed, config.ProviderPoolPolicyFailover, config.ProviderPoolPolicyWeighted} {
+		t.Run(policy, func(t *testing.T) {
+			now := time.Now()
+			calls := []string{}
+			member := func(id string, priority, weight int, fail bool) providerPoolEngineMember {
+				return providerPoolEngineMember{member: config.ProviderPoolMember{ID: id, Priority: priority, Weight: weight}, new: func() (inference.Engine, error) {
+					calls = append(calls, id)
+					if fail {
+						return nil, inference.NewHTTPStatusError(503, "temporarily unavailable")
+					}
+					return &poolRuntimeTestEngine{proxy: func() (*http.Response, error) { return poolRuntimeResponse(`{}`), nil }}, nil
+				}}
+			}
+			engine := newPoolRuntimeTestEngine(&now, member("primary", 0, 1, true), member("backup", 1, 1, false))
+			engine.policy = policy
+			response, err := engine.ChatCompletion(t.Context(), map[string]interface{}{})
+			if policy == config.ProviderPoolPolicyFixed {
+				if err == nil || len(calls) != 1 {
+					t.Fatalf("fixed source fell back: %v, %v", calls, err)
+				}
+			} else {
+				if err != nil || len(calls) != 2 {
+					t.Fatalf("fallback failed: %v, %v", calls, err)
+				}
+				_ = response.Body.Close()
+			}
+			calls = nil
+			engine.members[0].member.Disabled = true
+			response, err = engine.ChatCompletion(t.Context(), map[string]interface{}{})
+			if policy == config.ProviderPoolPolicyFixed {
+				if inference.HTTPStatusCode(err) != 503 || len(calls) != 0 {
+					t.Fatalf("disabled fixed source must return 503: %v %v", calls, err)
+				}
+			} else {
+				if err != nil || len(calls) != 1 || calls[0] != "backup" {
+					t.Fatalf("disabled source was used: %v %v", calls, err)
+				}
+				_ = response.Body.Close()
+			}
+		})
+	}
+}
+
+func TestModelServiceFailoverIgnoresWeightAndAffinity(t *testing.T) {
+	now := time.Now()
+	engine := newPoolRuntimeTestEngine(&now,
+		providerPoolEngineMember{member: config.ProviderPoolMember{ID: "primary", Priority: 0, Weight: 1}},
+		providerPoolEngineMember{member: config.ProviderPoolMember{ID: "backup", Priority: 1, Weight: 100}},
+	)
+	engine.policy = config.ProviderPoolPolicyFailover
+	engine.affinityKey = "thread"
+	engine.rememberAffinity("backup")
+	for range 5 {
+		if engine.orderedMembers()[0].member.ID != "primary" {
+			t.Fatal("failover changed its primary")
+		}
+	}
+	engine.policy = config.ProviderPoolPolicyWeighted
+	engine.affinityKey = ""
+	engine.members[1].member.Weight = 3
+	counts := map[string]int{}
+	for range 8 {
+		counts[engine.orderedMembers()[0].member.ID]++
+	}
+	if counts["primary"] != 2 || counts["backup"] != 6 {
+		t.Fatalf("weighted must include different priority groups: %v", counts)
+	}
+}

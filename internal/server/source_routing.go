@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/opencsgs/csglite/ee/cluster"
+	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
 )
 
@@ -56,6 +57,13 @@ func (s *Server) routeForSource(modelID, source string, wantsCluster bool) (sour
 			return 0, "", inference.NewHTTPStatusError(http.StatusNotFound, "the cluster feature is disabled on this node")
 		}
 		return routeCluster, source, nil
+	}
+	// Newly published services own their unique alias. Resolve before network
+	// catalog discovery, which may be unavailable on an offline installation.
+	if pool, ok := providerPoolForRequest(modelID, source); ok && pool.Policy != config.ProviderPoolPolicyPriorityWeight && pool.Policy != "" {
+		if !s.hasDirectModelID(modelID) {
+			return routeProviderPool, "", nil
+		}
 	}
 	// Nothing named: the LAN cluster still takes the request when a peer holds
 	// a model this node lacks, or for every model in balanced mode. A model

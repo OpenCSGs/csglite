@@ -202,6 +202,17 @@ func (s *Service) RefreshChatModels(ctx context.Context) ([]api.ModelInfo, error
 	return s.refresh(ctx)
 }
 
+// KnownChatModels returns the last discovered catalog without performing I/O.
+// Expired entries still reserve their public IDs until the next discovery.
+func (s *Service) KnownChatModels() []api.ModelInfo {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneModels(s.cached)
+}
+
 func (s *Service) InvalidateChatModels() {
 	if s == nil {
 		return

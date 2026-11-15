@@ -44,7 +44,7 @@ func TestProviderScopedBaseURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "http://localhost:11435/providers/csghub" {
+	if got != "http://localhost:11435/ai-gateway/providers/csghub" {
 		t.Fatalf("providerScopedBaseURL = %q", got)
 	}
 }
@@ -60,7 +60,7 @@ func TestProviderScopedBaseURLSupportsProviderPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "http://localhost:11435/providers/pool-one" {
+	if got != "http://localhost:11435/ai-gateway" {
 		t.Fatalf("providerScopedBaseURL = %q", got)
 	}
 }
@@ -257,8 +257,8 @@ func TestProviderNamesAreUniqueCaseInsensitively(t *testing.T) {
 func TestProviderScopedBaseURLAcceptsClusterSources(t *testing.T) {
 	const uuid = "8a27c5f0-1c2b-4a77-9f1e-0c3b8d2f4a61"
 	for _, tc := range []struct{ source, want string }{
-		{cluster.SourceCluster, "http://localhost:11435/providers/cluster"},
-		{cluster.SourceNodePrefix + uuid, "http://localhost:11435/providers/node:" + uuid},
+		{cluster.SourceCluster, "http://localhost:11435/ai-gateway/providers/cluster"},
+		{cluster.SourceNodePrefix + uuid, "http://localhost:11435/ai-gateway/providers/node:" + uuid},
 	} {
 		got, err := providerScopedBaseURL("http://localhost:11435/", tc.source)
 		if err != nil {

@@ -404,7 +404,7 @@ func isObservedTextGenerationRequest(r *http.Request) bool {
 	if r == nil || r.Method != http.MethodPost {
 		return false
 	}
-	switch r.URL.Path {
+	switch providerRouteLegacyPath(r.URL.Path) {
 	case "/api/chat", "/api/generate", "/v1/chat/completions", "/v1/responses",
 		"/v1/messages", "/anthropic/messages", "/anthropic/v1/messages":
 		return true

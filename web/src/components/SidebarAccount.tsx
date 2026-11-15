@@ -22,22 +22,22 @@ import {
 } from "../data/communitySites";
 import { locale, t } from "../i18n";
 import { AccountBalance } from "./AccountBalance";
-import { CloudAPIKeySettings } from "./CloudAPIKeySettings";
 import { consoleSession, consoleSessionError, refreshConsoleSession } from "../consoleAccess";
 import { logoutPublicSession } from "../utils/publicSession";
 
 function AccountIcon({
   kind,
 }: {
-  kind: "user" | "login" | "settings" | "chevron" | "external" | "shield" | "unlink";
+  kind: "user" | "login" | "chevron" | "external" | "shield" | "unlink" | "monitor" | "cloud" | "close";
 }) {
   const paths = {
+    monitor: "M4 4h16v12H4zM8 20h8M12 16v4",
+    cloud: "M7 18a5 5 0 0 1-1-9.9A7 7 0 0 1 19.5 10a4 4 0 0 1-.5 8H7Z",
+    close: "m6 6 12 12M6 18 18 6",
     shield: "M12 3 4 6v6c0 4 4 7 8 9 4-2 8-5 8-9V6l-8-3Zm-3 9 2 2 4-4",
     unlink: "M8 10 5.5 12.5a4 4 0 0 0 6 6L14 16M16 14l2.5-2.5a4 4 0 0 0-6-6L10 8M3 3l18 18",
     user: "M20 21v-2a7 7 0 00-14 0v2M17 7a4 4 0 11-8 0 4 4 0 018 0",
     login: "M10 17l5-5-5-5M15 12H3M13 3h6a2 2 0 012 2v14a2 2 0 01-2 2h-6",
-    settings:
-      "M12 8a4 4 0 100 8 4 4 0 000-8M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z",
     chevron: "m9 5 7 7-7 7",
     external:
       "M14 3h7v7m0-7L10 14M10 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-5",
@@ -153,7 +153,7 @@ export function SidebarAccount() {
   const [leavingConsole, setLeavingConsole] = useState(false);
   const [platformToken, setPlatformToken] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [dialog, setDialog] = useState<"login" | "account" | "disconnect" | "apiKey" | null>(null);
+  const [dialog, setDialog] = useState<"login" | "account" | "disconnect" | null>(null);
   const [disconnectReturn, setDisconnectReturn] = useState<"account" | null>(null);
   const [siteID, setSiteID] = useState("main");
   const [serverURL, setServerURL] = useState("");
@@ -225,7 +225,7 @@ export function SidebarAccount() {
       }
       if (event.key === "Tab") setMenuOpen(false);
     };
-    menuItemsRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    (menuItemsRef.current?.querySelector<HTMLButtonElement>("[data-access-primary]") || menuItemsRef.current?.querySelector<HTMLButtonElement>("button"))?.focus({ preventScroll: true });
     window.addEventListener("pointerdown", outside);
     window.addEventListener("keydown", keyboard);
     return () => {
@@ -463,44 +463,46 @@ export function SidebarAccount() {
       </button>
       {menuOpen && (
         <div id="sidebar-account-menu" ref={menuItemsRef} role="menu" aria-label={t("access.title")}
-          class="absolute bottom-full left-0 z-40 mb-2 max-h-[calc(100dvh-7rem)] w-80 max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-2xl border border-gray-200/80 bg-white p-2 shadow-xl shadow-gray-200/60">
-          <section class="rounded-xl bg-gray-50 px-4 py-3.5">
-            <div class="flex items-center justify-between gap-2">
-              <p class="text-xs font-medium text-gray-500">{t("access.console")}</p>
-              <span class="text-gray-400"><AccountIcon kind="shield" /></span>
+          class="absolute bottom-full left-0 z-40 mb-2 max-h-[calc(100dvh-7rem)] w-[22rem] max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-2xl border border-gray-200 bg-white shadow-xl shadow-gray-900/10">
+          <div class="flex items-center justify-between border-b border-gray-100 px-5 py-3.5">
+            <h2 class="text-sm font-semibold text-gray-900">{t("access.title")}</h2>
+            <button role="menuitem" type="button" aria-label={t("services.close")} onClick={() => { setMenuOpen(false); triggerRef.current?.focus(); }} class="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"><AccountIcon kind="close" /></button>
+          </div>
+          <section class="border-b border-gray-100 px-5 py-4" aria-label={t("access.consoleTitle")}>
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <h3 class="text-xs font-medium text-gray-500">{t("access.consoleTitle")}</h3>
+              <span class="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{session ? t(session.access_mode === "token" ? "access.tokenShort" : `access.${session.access_mode}`) : t("access.loading")}</span>
             </div>
-            <p class="mt-2 truncate text-sm font-semibold text-gray-900">{session?.instance_name || t("access.loading")}</p>
-            {session && <p class="mt-1 text-xs text-gray-500">{t(`access.${session.access_mode}`)}</p>}
-            {session?.expires_at && <p class="mt-2 text-xs text-gray-400">{t("access.expires", new Date(session.expires_at).toLocaleString(locale.value === "zh" ? "zh-CN" : "en-US"))}</p>}
-            {consoleSessionError.value && <><p role="alert" class="mt-2 text-xs text-amber-700">{t("access.connectionLost")}</p><button role="menuitem" class={menuClass} onClick={() => void refreshConsoleSession()}>{t("access.retry")}</button></>}
-            {session?.access_mode === "token" && <button role="menuitem" type="button" class={`${menuClass} mt-2`} disabled={leavingConsole}
-              onClick={async () => { setLeavingConsole(true); setConsoleError(""); try { await logoutPublicSession(); } catch { setConsoleError(t("publicLogin.logoutFailed")); } finally { setLeavingConsole(false); } }}>
-              <AccountIcon kind="login" />{t(leavingConsole ? "access.leaving" : "publicLogin.signOut")}
-            </button>}
+            <div class="flex items-center gap-3">
+              <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gray-100 text-gray-500"><AccountIcon kind="monitor" /></span>
+              <div class="min-w-0 flex-1"><p title={session?.instance_name} class="truncate text-sm font-medium text-gray-900">{session?.instance_name || t("access.loading")}</p><p class="mt-0.5 text-xs text-gray-400">{t(!session ? "access.loading" : session.access_mode === "token" ? "access.consoleAdmin" : "access.consoleTrusted")}</p></div>
+            </div>
+            {session?.access_mode === "token" && <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+              {session.expires_at && <p class="text-[11px] text-gray-400">{t("access.expires", new Date(session.expires_at).toLocaleString(locale.value === "zh" ? "zh-CN" : "en-US"))}</p>}
+              <button role="menuitem" type="button" class="ml-auto text-xs text-gray-500 hover:text-gray-900 disabled:opacity-50" disabled={leavingConsole}
+                onClick={async () => { setLeavingConsole(true); setConsoleError(""); try { await logoutPublicSession(); } catch { setConsoleError(t("access.connectionLost")); } finally { setLeavingConsole(false); } }}>{t(leavingConsole ? "access.leaving" : "publicLogin.signOut")}</button>
+            </div>}
+            {consoleSessionError.value && <div class="mt-3 rounded-lg bg-amber-50 p-3"><p class="text-xs leading-5 text-amber-700">{t("access.connectionLost")}</p><button role="menuitem" class={`${menuClass} mt-1`} onClick={() => void refreshConsoleSession()}>{t("account.retry")}</button></div>}
             {consoleError && <p class="mt-2 text-xs text-red-600" role="alert">{consoleError}</p>}
           </section>
-          <section class="px-3 pb-3 pt-5">
-            <div class="flex items-center justify-between gap-2">
-              <p class="min-w-0 truncate text-sm font-semibold text-gray-900">{communityName()}</p>
-              <span class={`inline-flex items-center gap-1.5 text-[11px] ${connected ? "text-emerald-600" : "text-gray-400"}`}>
-                <span class="h-1.5 w-1.5 rounded-full bg-current" />
-                {t(auth?.authenticated ? "access.connected" : auth?.has_api_key ? "access.apiKeyConfigured" : hasAccount ? "access.unverified" : "access.disconnected")}
-              </span>
+          <section class="px-5 py-4" aria-label={t("access.platformTitle")}>
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <h3 title={t("access.instanceShared")} class="text-xs font-medium text-gray-500">{t("access.platformTitle")}</h3>
+              <span class={`inline-flex items-center gap-1.5 text-[11px] ${connected ? "text-emerald-600" : hasAccount ? "text-amber-600" : "text-gray-400"}`}><span class="h-1.5 w-1.5 rounded-full bg-current" />{t(auth?.authenticated ? "access.connected" : auth?.has_api_key ? "access.apiKeyConfigured" : hasAccount ? "access.unverified" : "access.disconnected")}</span>
             </div>
-            {hasAccount && <div class="mt-3 flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50/60 px-3 py-3"><AccountAvatar /><div class="min-w-0"><p class="truncate text-sm font-medium text-gray-900">{label}</p><p class="truncate text-xs text-gray-500">{auth?.user?.username ? `@${auth.user.username}` : auth?.has_api_key ? auth.api_key_prefix : t("access.unverified")}</p></div></div>}
-            <p class="mb-3 mt-3 text-xs leading-5 text-gray-400">{t("access.instanceShared")}</p>
-            {hasAccount && <div class="flex items-center gap-2">
-              <button role="menuitem" type="button" class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2 py-2 text-xs font-medium text-gray-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500" onClick={() => { setMenuOpen(false); setError(""); setDialog("account"); }}>{t("access.details")}</button>
-              <button role="menuitem" type="button" class="flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs font-medium text-gray-500 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500" aria-label={t("access.disconnect")} disabled={loggingOut} onClick={requestDisconnect}><AccountIcon kind="unlink" />{t("access.disconnectShort")}</button>
+            <div class="flex items-center gap-3">
+              {hasAccount ? <AccountAvatar /> : <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-500"><AccountIcon kind="cloud" /></span>}
+              <div class="min-w-0 flex-1"><p title={communityName()} class="truncate text-sm font-medium text-gray-900">{communityName()}</p><p class="mt-0.5 truncate text-xs text-gray-400">{hasAccount ? (auth?.user?.username ? (label === auth.user.username ? `@${auth.user.username}` : `${label} · @${auth.user.username}`) : label) : t("access.platformEmpty")}</p></div>
+            </div>
+            {(!hasAccount || (!auth?.authenticated && !auth?.has_api_key)) && <button data-access-primary role="menuitem" type="button" disabled={opening} class="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:opacity-50" onClick={() => void openLogin()}><AccountIcon kind="login" />{t(hasAccount ? "account.signInAgain" : "access.connectPlatform")}</button>}
+            {hasAccount && <div class="mt-4 flex items-center justify-between gap-3">
+              <button data-access-primary role="menuitem" type="button" class="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2.5 py-2 text-xs font-medium text-indigo-600 hover:bg-indigo-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500" onClick={() => { setMenuOpen(false); setError(""); setDialog("account"); }}>{t("access.details")}<AccountIcon kind="chevron" /></button>
+              <button role="menuitem" type="button" class="inline-flex items-center gap-1.5 rounded-lg px-2 py-2 text-xs text-gray-500 hover:bg-red-50 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 disabled:opacity-50" aria-label={t("access.disconnect")} disabled={loggingOut} onClick={requestDisconnect}><AccountIcon kind="unlink" />{t("access.disconnectShort")}</button>
             </div>}
-            {(!hasAccount || !auth?.authenticated) && <button role="menuitem" type="button" class={menuClass} onClick={() => void openLogin()}><AccountIcon kind="login" />{t(auth?.has_token ? "account.signInAgain" : "account.login")}</button>}
-            <button role="menuitem" type="button" class={menuClass} onClick={() => { setMenuOpen(false); setDialog("apiKey"); }}><AccountIcon kind="settings" />{t("settings.cloudAPIKey", settings?.cloud_provider_name || communityName())}</button>
-            {accountError && <div class="mt-2"><p class="text-xs text-red-600" role="alert">{accountError}</p><button role="menuitem" class={menuClass} disabled={retrying} onClick={() => void retry()}>{t(retrying ? "account.loading" : "account.retry")}</button></div>}
+            {accountError && <div class="mt-3 rounded-lg bg-amber-50 p-3"><p class="text-xs leading-5 text-amber-700" role="alert">{accountError}</p><button role="menuitem" class={`${menuClass} mt-1`} disabled={retrying} onClick={() => void retry()}>{t(retrying ? "account.loading" : "account.retry")}</button></div>}
           </section>
         </div>
       )}
-
-      {dialog === "apiKey" && <AccountDialog title={t("settings.cloudAPIKey", settings?.cloud_provider_name || communityName())} onClose={closeDialog}><CloudAPIKeySettings /></AccountDialog>}
 
       {dialog === "disconnect" && (
         <AccountDialog title={t("access.disconnectTitle")} onClose={cancelDisconnect}>
