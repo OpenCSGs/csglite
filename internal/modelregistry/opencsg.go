@@ -40,24 +40,27 @@ func (r *openCSGRegistry) ListModels(ctx context.Context, options ListOptions) (
 }
 
 func (r *openCSGRegistry) GetModel(ctx context.Context, repoID, revision string) (*csghub.Model, error) {
-	if strings.TrimSpace(revision) != "" {
-		return nil, fmt.Errorf("OpenCSG custom revisions are not supported by the local API")
-	}
 	namespace, name, err := ParseRepoID(repoID)
 	if err != nil {
 		return nil, err
 	}
 	model, err := r.client.GetModel(ctx, namespace, name)
-	if err == nil {
-		model.ArtifactSource = string(SourceOpenCSG)
-		model.Revision = model.DefaultBranch
+	if err != nil {
+		return nil, err
 	}
-	return model, err
+	// The upstream API follows the default branch implicitly. Deployments may
+	// name that branch explicitly, but other branches/tags/commits are unsupported.
+	if requested := strings.TrimSpace(revision); requested != "" && requested != strings.TrimSpace(model.DefaultBranch) {
+		return nil, fmt.Errorf("OpenCSG custom revisions are not supported by the local API")
+	}
+	model.ArtifactSource = string(SourceOpenCSG)
+	model.Revision = model.DefaultBranch
+	return model, nil
 }
 
 func (r *openCSGRegistry) ListFiles(ctx context.Context, repoID, revision string) ([]csghub.RepoFile, string, error) {
-	if strings.TrimSpace(revision) != "" {
-		return nil, "", fmt.Errorf("OpenCSG custom revisions are not supported by the local API")
+	if err := r.checkRevision(ctx, repoID, revision); err != nil {
+		return nil, "", err
 	}
 	namespace, name, err := ParseRepoID(repoID)
 	if err != nil {
@@ -68,8 +71,8 @@ func (r *openCSGRegistry) ListFiles(ctx context.Context, repoID, revision string
 }
 
 func (r *openCSGRegistry) ReadFile(ctx context.Context, repoID, revision, filePath string) (string, error) {
-	if strings.TrimSpace(revision) != "" {
-		return "", fmt.Errorf("OpenCSG custom revisions are not supported by the local API")
+	if err := r.checkRevision(ctx, repoID, revision); err != nil {
+		return "", err
 	}
 	namespace, name, err := ParseRepoID(repoID)
 	if err != nil {
@@ -79,8 +82,8 @@ func (r *openCSGRegistry) ReadFile(ctx context.Context, repoID, revision, filePa
 }
 
 func (r *openCSGRegistry) DownloadSnapshot(ctx context.Context, repoID, revision, destDir string, quants []string, progress csghub.SnapshotProgressFunc) ([]csghub.RepoFile, string, error) {
-	if strings.TrimSpace(revision) != "" {
-		return nil, "", fmt.Errorf("OpenCSG custom revisions are not supported by the local API")
+	if err := r.checkRevision(ctx, repoID, revision); err != nil {
+		return nil, "", err
 	}
 	namespace, name, err := ParseRepoID(repoID)
 	if err != nil {
@@ -88,6 +91,14 @@ func (r *openCSGRegistry) DownloadSnapshot(ctx context.Context, repoID, revision
 	}
 	files, err := r.client.SnapshotDownload(ctx, namespace, name, destDir, quants, progress)
 	return files, "", err
+}
+
+func (r *openCSGRegistry) checkRevision(ctx context.Context, repoID, revision string) error {
+	if strings.TrimSpace(revision) == "" {
+		return nil
+	}
+	_, err := r.GetModel(ctx, repoID, revision)
+	return err
 }
 
 func firstNonEmpty(values ...string) string {

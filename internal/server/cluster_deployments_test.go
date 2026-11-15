@@ -27,6 +27,52 @@ type countedDeploymentEngine struct {
 
 func (e *countedDeploymentEngine) Close() error { e.closed.Add(1); return nil }
 
+func TestPrepareOpenCSGEmbeddingDeploymentDownloadsDefaultBranch(t *testing.T) {
+	const repo = "Qwen/Qwen3-Embedding-0.6B"
+	var downloads atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/models/" + repo:
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"path": repo, "default_branch": "main"}})
+		case "/api/v1/models/" + repo + "/tree":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"type": "file", "name": "model.safetensors", "path": "model.safetensors", "size": 4}}})
+		case "/api/v1/models/" + repo + "/raw/model.safetensors":
+			downloads.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": "test"})
+		default:
+			t.Errorf("unexpected model request: %s", r.URL)
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+	s := newTestServer(t)
+	s.cfg.ServerURL = upstream.URL
+	h := &clusterHost{s: s}
+	d := cluster.Deployment{ID: uuid.NewString(), DeploymentSpec: cluster.DeploymentSpec{
+		Name: "Qwen embedding", Repository: repo, ArtifactSource: "opencsg", Revision: "main", Kind: "embedding",
+	}}
+	for range 2 {
+		size, err := h.PrepareDeployment(context.Background(), d, func(cluster.DeploymentStatus) {})
+		if err != nil || size != 4 {
+			t.Fatalf("PrepareDeployment: size=%d, error=%v", size, err)
+		}
+	}
+	if downloads.Load() != 1 {
+		t.Fatalf("model downloaded %d times, want one shared snapshot", downloads.Load())
+	}
+	lm, err := s.manager.Get(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lm.ArtifactSource != "opencsg" || lm.RequestedRevision != "main" || lm.ResolvedRevision != "main" {
+		t.Fatalf("downloaded snapshot metadata: %+v", lm)
+	}
+	d.Revision = "different-commit"
+	if _, err := h.PrepareDeployment(context.Background(), d, func(cluster.DeploymentStatus) {}); err == nil {
+		t.Fatal("mismatched deployment revision reused the shared snapshot")
+	}
+}
+
 func deploymentRuntimeFixture(t *testing.T) (*Server, *clusterHost, cluster.Deployment) {
 	t.Helper()
 	s := newTestServer(t)
