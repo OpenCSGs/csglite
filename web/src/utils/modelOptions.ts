@@ -1,4 +1,5 @@
-import { getTags, type ModelInfo } from "../api/client";
+import { serviceConfigured } from "./modelServices";
+import { getProviderPools, getTags, type ProviderPool, type ModelInfo } from "../api/client";
 import { t } from "../i18n";
 
 export function modelOptionKey(model: { model?: string; name?: string; source?: string }): string {
@@ -55,8 +56,9 @@ export function normalizeModelOptions(models: ModelInfo[]): ModelInfo[] {
   return out;
 }
 
-export async function loadModelOptions(options?: { refresh?: boolean }): Promise<ModelInfo[]> {
-  return normalizeModelOptions(await getTags(options));
+export async function loadModelOptions(options?: { refresh?: boolean; preserveKey?: string }): Promise<ModelInfo[]> {
+  const [models, pools] = await Promise.all([getTags(options), getProviderPools()]);
+  return preferModelServices(normalizeModelOptions(models), pools, options?.preserveKey);
 }
 
 export function modelOptionProviderName(model: ModelInfo): string {
@@ -88,11 +90,30 @@ export function modelHotIcon(model: { hot?: boolean }): string {
 // sortHotModelsFirst keeps hot models at the top without changing the order of
 // the remaining models.
 export function sortHotModelsFirst(models: ModelInfo[]): ModelInfo[] {
+  const services: ModelInfo[] = [];
   const hot: ModelInfo[] = [];
   const rest: ModelInfo[] = [];
   for (const model of models) {
-    if (model.hot) hot.push(model);
+    if (model.source?.startsWith("pool:")) services.push(model);
+    else if (model.hot) hot.push(model);
     else rest.push(model);
   }
-  return hot.concat(rest);
+  return services.concat(hot, rest);
+}
+
+// Hide only exact, enabled source/model bindings; unrelated names stay distinct.
+// The API catalog itself retains every source for existing callers.
+export function preferModelServices(models: ModelInfo[], pools: ProviderPool[], preserveKey?: string): ModelInfo[] {
+ const published = pools.filter(serviceConfigured);
+ const poolIDs = new Set(published.map(pool => `pool:${pool.id}`));
+ const bound = new Set(published.flatMap(pool => pool.members.filter(member => !member.disabled && (!pool.source_states || pool.source_states[member.id] === "configured")).map(modelOptionKey)));
+ return [
+  ...models.filter(model => poolIDs.has(model.source || "")),
+  ...models.filter(model => {
+   if (model.source?.startsWith("pool:")) return false;
+   if (modelOptionKey(model) === preserveKey) return true;
+   const remoteAlias = model.origin && (model.source === "cloud" || model.source?.startsWith("provider:"));
+   return !bound.has(modelOptionKey(model)) && !(remoteAlias && bound.has(modelOptionKey({ source: model.source, model: model.origin })));
+  }),
+ ];
 }

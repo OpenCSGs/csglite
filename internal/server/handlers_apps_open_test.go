@@ -1608,7 +1608,7 @@ func TestPrepareAIAppShellLaunchConfiguresOpenCodeReview(t *testing.T) {
 		t.Fatalf("unexpected provider/model: %#v", payload)
 	}
 	provider := payload.CustomProviders["csghub-lite"]
-	if provider.URL != "http://127.0.0.1:11435/providers/local/v1" || provider.Protocol != "openai" {
+	if provider.URL != "http://127.0.0.1:11435/ai-gateway/providers/local/v1" || provider.Protocol != "openai" {
 		t.Fatalf("unexpected provider endpoint: %#v", provider)
 	}
 	if provider.APIKey == "" || provider.Model != "Qwen/Qwen3.5-2B" {
@@ -1861,7 +1861,7 @@ func TestPrepareAIAppShellLaunchUsesPiProviderConfig(t *testing.T) {
 	if !ok {
 		t.Fatalf("Pi csghub-lite provider missing: %#v", payload.Providers)
 	}
-	if provider.BaseURL != "http://127.0.0.1:11435/providers/local/v1" {
+	if provider.BaseURL != "http://127.0.0.1:11435/ai-gateway/providers/local/v1" {
 		t.Fatalf("provider baseUrl = %q, want provider-scoped local v1 URL", provider.BaseURL)
 	}
 	if got := collectOpenClawModelIDs(provider.Models); !sameStrings(got, []string{"Qwen/Qwen3.5-2B", "minimax-m2.5"}) {
@@ -1920,7 +1920,7 @@ func TestPrepareAIAppShellLaunchUsesProviderPoolURL(t *testing.T) {
 	if err := json.Unmarshal(data, &payload); err != nil {
 		t.Fatalf("decode Pi models: %v", err)
 	}
-	if got := payload.Providers["csghub-lite"].BaseURL; got != "http://127.0.0.1:11435/providers/pool-one/v1" {
+	if got := payload.Providers["csghub-lite"].BaseURL; got != "http://127.0.0.1:11435/ai-gateway/v1" {
 		t.Fatalf("provider baseUrl = %q, want provider-pool-scoped v1 URL", got)
 	}
 }

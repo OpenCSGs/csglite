@@ -234,7 +234,7 @@ func launchProviderScopedBaseURL(serverURL, source string) (string, error) {
 		providerID = config.DefaultCloudProviderName
 	default:
 		if strings.HasPrefix(source, "pool:") {
-			return strings.TrimRight(serverURL, "/"), nil
+			return strings.TrimRight(serverURL, "/") + "/ai-gateway", nil
 		}
 		if strings.HasPrefix(source, "provider:") {
 			providerID = strings.TrimPrefix(source, "provider:")
@@ -243,7 +243,7 @@ func launchProviderScopedBaseURL(serverURL, source string) (string, error) {
 	if strings.TrimSpace(providerID) == "" {
 		return "", fmt.Errorf("model provider source is empty")
 	}
-	return strings.TrimRight(serverURL, "/") + "/providers/" + url.PathEscape(providerID), nil
+	return strings.TrimRight(serverURL, "/") + "/ai-gateway/providers/" + url.PathEscape(providerID), nil
 }
 
 func getLaunchProviderPool(serverURL, requested string) (api.ProviderPool, error) {
@@ -280,6 +280,7 @@ func unscopedLaunchServerURL(serverURL string) string {
 	if len(parts) >= 2 && parts[len(parts)-2] == "providers" {
 		parsed.Path = "/" + strings.Join(parts[:len(parts)-2], "/")
 	}
+	parsed.Path = strings.TrimSuffix(strings.TrimRight(parsed.Path, "/"), "/ai-gateway")
 	return strings.TrimRight(parsed.String(), "/")
 }
 

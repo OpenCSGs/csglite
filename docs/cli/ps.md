@@ -28,12 +28,12 @@ $ csghub-lite ps
 NAME                   FORMAT   SIZE       UNTIL
 Qwen/Qwen3-0.6B-GGUF   gguf     609.8 MB   forever
 
-OpenAI API:
-  GET  http://localhost:11435/v1/models
-  POST http://localhost:11435/v1/chat/completions
-  curl http://localhost:11435/v1/chat/completions \
+AI Gateway (publish a model service at /ai-gateway; use its service ID):
+  GET  http://localhost:11435/ai-gateway/v1/models
+  POST http://localhost:11435/ai-gateway/v1/chat/completions
+  curl http://localhost:11435/ai-gateway/v1/chat/completions \
     -H "Content-Type: application/json" \
-    -d '{"model":"Qwen/Qwen3-0.6B-GGUF","messages":[{"role":"user","content":"Hello!"}]}'
+    -d '{"model":"<service-id>","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 没有运行中的模型时：
@@ -42,12 +42,12 @@ OpenAI API:
 $ csghub-lite ps
 No models currently running.
 
-OpenAI API:
-  GET  http://localhost:11435/v1/models
-  POST http://localhost:11435/v1/chat/completions
-  curl http://localhost:11435/v1/chat/completions \
+AI Gateway (publish a model service at /ai-gateway; use its service ID):
+  GET  http://localhost:11435/ai-gateway/v1/models
+  POST http://localhost:11435/ai-gateway/v1/chat/completions
+  curl http://localhost:11435/ai-gateway/v1/chat/completions \
     -H "Content-Type: application/json" \
-    -d '{"model":"<model-id>","messages":[{"role":"user","content":"Hello!"}]}'
+    -d '{"model":"<service-id>","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 服务器未启动时：

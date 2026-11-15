@@ -97,7 +97,7 @@ function Prewarm-OpenClawRuntime([string]$Registry) {
             --auth-choice custom-api-key `
             --custom-provider-id opencsg `
             --custom-compatibility openai `
-            --custom-base-url http://127.0.0.1:11435/v1 `
+            --custom-base-url http://127.0.0.1:11435/ai-gateway/v1 `
             --custom-model-id Qwen/Qwen3-0.6B `
             --custom-api-key csghub-lite `
             --accept-risk `

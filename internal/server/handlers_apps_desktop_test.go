@@ -320,7 +320,7 @@ func TestEnsureCodexAppLaunchConfigWritesSharedCodexConfig(t *testing.T) {
 	for _, want := range []string{
 		`model = "Qwen3.5-2B"`,
 		`model_provider = "csghub_lite"`,
-		`base_url = "http://127.0.0.1:11435/providers/local/v1"`,
+		`base_url = "http://127.0.0.1:11435/ai-gateway/providers/local/v1"`,
 	} {
 		if !strings.Contains(configText, want) {
 			t.Fatalf("config missing %q:\n%s", want, configText)
@@ -387,7 +387,7 @@ func TestEnsureZCodeLaunchConfigWritesLocalProvider(t *testing.T) {
 		t.Fatal("csghub-lite provider missing from ZCode config")
 	}
 	if provider.Kind != "openai-compatible" ||
-		provider.Options.BaseURL != "http://127.0.0.1:11435/providers/local/v1" ||
+		provider.Options.BaseURL != "http://127.0.0.1:11435/ai-gateway/providers/local/v1" ||
 		provider.Options.APIKey != "test-token" {
 		t.Fatalf("provider = %#v", provider)
 	}
@@ -437,7 +437,7 @@ func TestHandleAppModelSaveImmediatelySyncsZCodeConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(data), `"baseURL": "http://127.0.0.1:11435/providers/local/v1"`) ||
+	if !strings.Contains(string(data), `"baseURL": "http://127.0.0.1:11435/ai-gateway/providers/local/v1"`) ||
 		!strings.Contains(string(data), `"Qwen3.5-2B"`) {
 		t.Fatalf("saved model was not synced to ZCode config:\n%s", data)
 	}

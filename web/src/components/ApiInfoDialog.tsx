@@ -1,9 +1,13 @@
+import { useEffect, useState } from "preact/hooks";
+import { getProviderPools } from "../api/client";
+import type { ProviderPool } from "../api/client";
+import { serviceConfigured } from "../utils/modelServices";
 import { signal } from "@preact/signals";
 import { t } from "../i18n";
 import { apiExampleModeFromPipelineTag, buildApiExamples } from "../utils/apiExamples";
 import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
 
-export function ApiInfoDialog({
+function ServiceApiInfoDialog({
   model,
   baseUrl,
   pipelineTag,
@@ -27,7 +31,7 @@ export function ApiInfoDialog({
   onClose: () => void;
 }) {
   const runtimeBaseUrl = useRuntimeAPIOrigin();
-  const resolvedBaseUrl = (baseUrl || runtimeBaseUrl).replace(/\/+$/, "");
+  const resolvedBaseUrl = (baseUrl || `${runtimeBaseUrl}/ai-gateway`).replace(/\/+$/, "");
   const mode = isASR
     ? "asr"
     : isEmbedding
@@ -63,6 +67,7 @@ export function ApiInfoDialog({
           </div>
         </div>
         <div class="flex-1 overflow-auto px-6 py-4 space-y-5">
+          <p class="text-xs text-gray-500">{t("services.apiKeyHint")}</p>
           {decisionExamples && (
             <>
               <h4 class="text-sm font-semibold text-gray-900">{t("dash.apiDecisionSection")}</h4>
@@ -118,4 +123,35 @@ function CodeBlock({ title, code }: { title: string; code: string }) {
       </pre>
     </div>
   );
+}
+
+// Raw model screens resolve their published service before offering copyable API
+// examples. Never advertise a provider-specific URL or an unpublished model ID.
+export function ApiInfoDialog(props: Parameters<typeof ServiceApiInfoDialog>[0] & { source?: string }) {
+  const [services, setServices] = useState<ProviderPool[]>([]);
+  const [selected, setSelected] = useState("");
+  const [loading, setLoading] = useState(!props.baseUrl);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (props.baseUrl) return;
+    let active = true;
+    setLoading(true); setError("");
+    void getProviderPools().then(pools => {
+      if (!active) return;
+      const matches = pools.filter(p => serviceConfigured(p) && p.members.some(m => !m.disabled && m.source === (props.source || "local") && m.model === props.model));
+      setServices(matches); setSelected(matches[0]?.model || "");
+    }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [props.baseUrl, props.source, props.model]);
+  if (props.baseUrl) return <ServiceApiInfoDialog {...props} />;
+  return <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={e => { if (e.target === e.currentTarget) props.onClose(); }}>
+    {selected && !loading ? <div>
+      <ServiceApiInfoDialog {...props} model={selected} isDecision={false} isDecisionOnly={false} />
+      {services.length > 1 && <div class="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-lg bg-white p-3 shadow-lg"><label class="text-sm">{t("services.service")} <select value={selected} onChange={e => setSelected(e.currentTarget.value)}>{services.map(p => <option key={p.id} value={p.model}>{p.name} · {p.model}</option>)}</select></label></div>}
+    </div> : <div class="mx-4 w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+      <h3 class="font-semibold">{t("dash.apiTitle")}</h3>
+      <p class="mt-3 text-sm text-gray-600">{error || t(loading ? "services.loading" : "services.publishBeforeAPI")}</p>
+      <div class="mt-5 flex justify-end gap-4"><button onClick={props.onClose}>{t("services.close")}</button>{!loading && <a class="text-indigo-600" href="/ai-gateway" onClick={props.onClose}>{t("services.title")}</a>}</div>
+    </div>}
+  </div>;
 }

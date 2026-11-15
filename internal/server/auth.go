@@ -170,6 +170,9 @@ func requiresRemoteAPIAuth(r *http.Request) bool {
 	if r.Method == http.MethodOptions {
 		return false
 	}
+	if strings.HasPrefix(r.URL.Path, gatewayPrefix+"/v1/") || strings.HasPrefix(r.URL.Path, gatewayPrefix+"/providers/") || strings.HasPrefix(r.URL.Path, gatewayPrefix+"/realtime/") {
+		return true
+	}
 	path := providerRouteLegacyPath(r.URL.Path)
 	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && isReadOnlyArtifactPath(path) {
 		return true
@@ -190,6 +193,13 @@ func requiresRemoteAPIAuth(r *http.Request) bool {
 }
 
 func providerRouteLegacyPath(path string) string {
+	if strings.HasPrefix(path, gatewayPrefix+"/realtime/") {
+		return "/v1" + strings.TrimPrefix(path, gatewayPrefix)
+	}
+	path = strings.TrimPrefix(path, gatewayPrefix+"/")
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
 	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 3)
 	if len(parts) == 3 && parts[0] == "providers" && strings.HasPrefix(parts[2], "v1/") {
 		return "/" + parts[2]

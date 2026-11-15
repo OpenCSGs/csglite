@@ -150,3 +150,140 @@ func TestAdminLogoutAndRateLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminTokenExpiryBoundsLoginAndSessions(t *testing.T) {
+	path := AdminTokenPath(t.TempDir())
+	token, err := GenerateAdminTokenWithTTL(path, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var credential adminCredential
+	if err := json.Unmarshal(data, &credential); err != nil {
+		t.Fatal(err)
+	}
+	if credential.ExpiresAt == nil || credential.ExpiresAt.Sub(credential.CreatedAt) != time.Hour {
+		t.Fatal("token expiry was not persisted")
+	}
+	if strings.Contains(string(data), token) {
+		t.Fatal("plaintext token persisted")
+	}
+	auth := NewAdminAuth(path)
+	login := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "https://gateway.example/auth/login", strings.NewReader(`{"token":"`+token+`"}`))
+		r.Header.Set("Origin", "https://gateway.example")
+		w := httptest.NewRecorder()
+		auth.Login(w, r)
+		return w
+	}
+	w := login()
+	if w.Code != 200 {
+		t.Fatalf("valid expiring token rejected: %d %s", w.Code, w.Body)
+	}
+	var session struct {
+		Expires time.Time `json:"expires_at"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	if !session.Expires.Equal(*credential.ExpiresAt) {
+		t.Fatal("session outlives token")
+	}
+	request := httptest.NewRequest("GET", "https://gateway.example/api/cluster", nil)
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.MaxAge <= 0 || cookie.MaxAge > 3600 || !cookie.Expires.Equal(credential.ExpiresAt.Truncate(time.Second)) {
+			t.Fatalf("cookie outlives token: %+v", cookie)
+		}
+		request.AddCookie(cookie)
+	}
+	if !auth.Authenticate(request) {
+		t.Fatal("valid session rejected")
+	}
+	// The same hash remains on disk: expiry alone must invalidate an existing
+	// session immediately, including after restarting the auth handler.
+	past := time.Now().Add(-time.Second)
+	credential.ExpiresAt = &past
+	data, _ = json.Marshal(credential)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if auth.Authenticate(request) {
+		t.Fatal("expired credential retained an authenticated session")
+	}
+	if w := login(); w.Code != 401 {
+		t.Fatalf("expired token logged in: %d", w.Code)
+	}
+	auth = NewAdminAuth(path)
+	if w := login(); w.Code != 401 {
+		t.Fatalf("restart extended token expiry: %d", w.Code)
+	}
+}
+
+func TestAdminCookieMaxAge(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		remaining time.Duration
+		want      int
+	}{
+		{"eight_hours_exact", 8 * time.Hour, 8 * 3600},
+		{"eight_hours_minus_nanosecond", 8*time.Hour - time.Nanosecond, 8 * 3600},
+		{"one_hour_exact", time.Hour, 3600},
+		{"one_second_exact", time.Second, 1},
+		{"one_second_plus_nanosecond", time.Second + time.Nanosecond, 2},
+		{"subsecond", time.Nanosecond, 1},
+		// Zero means a browser-session cookie and negative values delete it.
+		// Keep Max-Age positive; authentication enforces the exact deadline.
+		{"zero", 0, 1},
+		{"expired", -time.Second, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := adminCookieMaxAge(tt.remaining); got != tt.want {
+				t.Fatalf("Max-Age for %s = %d, want %d", tt.remaining, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAdminTokenTTLCompatibilityAndInvalidDuration(t *testing.T) {
+	path := AdminTokenPath(t.TempDir())
+	if _, err := GenerateAdminToken(path); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(original), "expires_at") {
+		t.Fatal("default generation unexpectedly changed token lifetime")
+	}
+	if _, err := GenerateAdminTokenWithTTL(path, -time.Second); err == nil {
+		t.Fatal("negative TTL accepted")
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != string(original) {
+		t.Fatal("invalid TTL revoked the existing token")
+	}
+	token, err := GenerateAdminTokenWithTTL(path, 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := NewAdminAuth(path)
+	r := httptest.NewRequest("POST", "https://gateway.example/auth/login", strings.NewReader(`{"token":"`+token+`"}`))
+	r.Header.Set("Origin", "https://gateway.example")
+	w := httptest.NewRecorder()
+	auth.Login(w, r)
+	if w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.MaxAge > 8*3600 {
+			t.Fatal("week-long token extended session beyond eight hours")
+		}
+	}
+}

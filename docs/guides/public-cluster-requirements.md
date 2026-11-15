@@ -99,16 +99,16 @@ csghub-lite cluster leave
 
 ## 调用接口
 
-使用推理 API Key 的客户端仅可调用以下路径。登录后的管理员另外具有管理界面的权限。
+对外统一推荐 `https://<主节点地址>:8080/ai-gateway/v1`。先把集群或指定节点的模型发布为模型服务，客户端通过服务 ID 和推理 API Key 调用。登录后的管理员另外具有管理界面的权限。旧 `/v1/*` 仅用于兼容，不再推荐。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/v1/models` | 当前能够调度的模型列表 |
-| POST | `/v1/chat/completions` | OpenAI 兼容对话及流式输出 |
-| POST | `/v1/embeddings` | 已支持模型的嵌入推理 |
-| POST | `/v1/responses` | 现有无持久会话的 Responses 用法 |
-| POST | `/v1/messages` | Anthropic 兼容消息 |
-| POST | `/v1/messages/count_tokens` | 对应模型的 token 计数 |
+| GET | `/ai-gateway/v1/models` | 已启用且配置了来源的模型服务列表 |
+| POST | `/ai-gateway/v1/chat/completions` | OpenAI 兼容对话及流式输出 |
+| POST | `/ai-gateway/v1/embeddings` | 已支持模型的嵌入推理 |
+| POST | `/ai-gateway/v1/responses` | 现有无持久会话的 Responses 用法 |
+| POST | `/ai-gateway/v1/messages` | Anthropic 兼容消息 |
+| POST | `/ai-gateway/v1/messages/count_tokens` | 对应模型的 token 计数 |
 | POST | `/api/chat`、`/api/generate` | Ollama 兼容接口 |
 
 客户端使用自己的 API Key；代码示例、日志和共享文档中不得放入真实 Key。
@@ -157,8 +157,10 @@ Responses 的后台任务和 `previous_response_id` 延续不支持。具体模�
 在公网主节点执行：
 
 ```sh
-csghub-lite cluster login-token
+csghub-lite cluster login-token --ttl 168h
 ```
+
+`--ttl 168h` 生成 7 天有效的 Token，省略参数或使用 `--ttl 0` 保留不自动过期的兼容行为。Token 到期后，服务端拒绝新登录及其已有会话；单次会话仍最长 8 小时，且不会超过 Token 到期时间。
 
 命令生成 256 位随机管理 Token，并仅在终端输出一次。打开网关的 HTTPS 地址
 （例如 `https://gateway.example.com:8080`），会跳转到登录页；粘贴 Token 后进入

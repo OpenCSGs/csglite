@@ -5,7 +5,7 @@ import { Marketplace } from "./pages/Marketplace";
 import { Library } from "./pages/Library";
 import { LibraryModelDetail } from "./pages/LibraryModelDetail";
 import { Datasets } from "./pages/Datasets";
-import { Chat } from "./pages/Chat";
+import { useEffect } from "preact/hooks";
 import { ImageGeneration } from "./pages/ImageGeneration";
 import { ImageHistory } from "./pages/ImageHistory";
 import { Settings } from "./pages/Settings";
@@ -40,7 +40,7 @@ function AppRoutes() {
         <Route path="/library/detail/:model" component={LibraryModelDetail} />
         <Route path="/library" component={Library} />
         <Route path="/datasets" component={Datasets} />
-        <Route path="/chat" component={Chat} />
+        <Route path="/chat" component={LegacyChatRedirect} />
         <Route path="/images/history" component={ImageHistory} />
         <Route path="/images" component={ImageGeneration} />
         <Route path="/ai-apps" component={AIApps} />
@@ -54,4 +54,10 @@ function AppRoutes() {
       </Router>
     </Layout>
   );
+}
+
+function LegacyChatRedirect() {
+ const { route } = useLocation();
+ useEffect(() => { route("/ai-gateway", true); }, []);
+ return null;
 }

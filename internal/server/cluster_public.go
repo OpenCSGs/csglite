@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/opencsgs/csglite/ee/cluster"
@@ -23,6 +24,7 @@ func validatePublicManagementListener(mode, addr string) error {
 // It never uses the main API's loopback authentication exemption.
 func (s *Server) publicClusterInferenceRoutes() http.Handler {
 	mux := http.NewServeMux()
+	s.registerGatewayInferenceRoutes(mux)
 	mux.HandleFunc("GET /v1/models", func(w http.ResponseWriter, r *http.Request) {
 		models := []map[string]any{}
 		if s.cluster != nil {
@@ -88,24 +90,27 @@ func (s *Server) publicClusterInferenceRoutes() http.Handler {
 				writeError(w, 400, "a JSON object is required")
 				return
 			}
-			var source string
-			if value, exists := body["source"]; exists && json.Unmarshal(value, &source) != nil {
-				writeError(w, 400, "invalid model source")
-				return
+			if !strings.HasPrefix(r.URL.Path, gatewayPrefix+"/v1/") {
+				var source string
+				if value, exists := body["source"]; exists && json.Unmarshal(value, &source) != nil {
+					writeError(w, 400, "invalid model source")
+					return
+				}
+				if source == "" {
+					source = cluster.SourceCluster
+				}
+				if source != "local" && !cluster.IsClusterSource(source) {
+					writeError(w, 400, "public gateway accepts local, cluster or node sources")
+					return
+				}
+				if s.cluster != nil && (source == "local" || cluster.NodeUUIDFromSource(source) == s.cluster.Identity().UUID) && !s.cluster.Store().Settings().AcceptWork {
+					writeError(w, 403, "gateway local inference is disabled")
+					return
+				}
+				body["source"], _ = json.Marshal(source)
+
 			}
-			if source == "" {
-				source = cluster.SourceCluster
-			}
-			if source != "local" && !cluster.IsClusterSource(source) {
-				writeError(w, 400, "public gateway accepts local, cluster or node sources")
-				return
-			}
-			if s.cluster != nil && (source == "local" || cluster.NodeUUIDFromSource(source) == s.cluster.Identity().UUID) && !s.cluster.Store().Settings().AcceptWork {
-				writeError(w, 403, "gateway local inference is disabled")
-				return
-			}
-			body["source"], _ = json.Marshal(source)
-			if r.URL.Path == "/v1/responses" {
+			if providerRouteLegacyPath(r.URL.Path) == "/v1/responses" {
 				var background bool
 				if v, exists := body["background"]; exists && (json.Unmarshal(v, &background) != nil || background) {
 					writeError(w, 400, "background responses are not supported")

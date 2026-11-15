@@ -500,8 +500,8 @@ func (s *Server) Run(ctx context.Context) error {
 		log.Printf("csghub-lite server listening on %s", boundAddr)
 		log.Printf("  Web UI: %s", "http://"+addr+"/")
 		log.Printf("  Ollama API: %s", "http://"+addr+"/api/chat")
-		log.Printf("  OpenAI API: %s", "http://"+addr+"/v1/chat/completions")
-		log.Printf("  Anthropic API: %s", "http://"+addr+"/v1/messages")
+		log.Printf("  OpenAI API: %s", "http://"+addr+"/ai-gateway/v1/chat/completions")
+		log.Printf("  Anthropic API: %s", "http://"+addr+"/ai-gateway/v1/messages")
 		if err := s.http.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

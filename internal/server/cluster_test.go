@@ -18,6 +18,7 @@ import (
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
+	"github.com/opencsgs/csglite/internal/observability"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -207,6 +208,63 @@ func TestClusterRoutesRequestToTheNodeHoldingTheModel(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("stranger pin %d %s", rec.Code, rec.Body)
 	}
+	// A published alias must retain its configured cluster/node source through
+	// both normal and public gateways, including streaming and usage attribution.
+	previousPools := config.GetProviderPools()
+	t.Cleanup(func() { _ = config.SaveProviderPools(previousPools) })
+	_, key, err := b.apiKeys.Create("cluster-gateway-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"cluster", "node:" + a.cluster.Identity().UUID} {
+		pool := config.ProviderPool{ID: "cluster-service", Name: "Cluster service", Model: publicID, Enabled: true, Policy: "fixed", Category: "chat", Members: []config.ProviderPoolMember{{ID: "worker", Source: source, Model: publicID}}}
+		if err := config.SaveProviderPools([]config.ProviderPool{pool}); err != nil {
+			t.Fatal(err)
+		}
+		for name, handler := range map[string]http.Handler{"console": b.routes(), "public": b.publicClusterInferenceRoutes()} {
+			list := gatewayRequest(handler, "GET", "/ai-gateway/v1/models", "", key)
+			if list.Code != 200 || !strings.Contains(list.Body.String(), publicID) {
+				t.Fatalf("%s service discovery: %d %s", name, list.Code, list.Body)
+			}
+			for _, stream := range []bool{false, true} {
+				body, _ := json.Marshal(map[string]any{"model": publicID, "stream": stream, "messages": []map[string]string{{"role": "user", "content": "hello"}}})
+				response := gatewayRequest(handler, "POST", "/ai-gateway/v1/chat/completions", string(body), key)
+				if response.Code != 200 || !strings.Contains(response.Body.String(), "served by A") || (stream && !strings.Contains(response.Body.String(), "[DONE]")) {
+					t.Fatalf("%s %s stream=%v: %d %s", name, source, stream, response.Code, response.Body)
+				}
+				if got := response.Header().Get(cluster.NodeHeader); got != a.cluster.Identity().UUID {
+					t.Fatalf("gateway lost execution node: %q", got)
+				}
+				if got := response.Header().Get(providerPoolMemberSourceHeader); got != source {
+					t.Fatalf("gateway lost pool source: %q", got)
+				}
+			}
+		}
+	}
+	b.observabilityMu.RLock()
+	page, err := b.observability.ListRequests(t.Context(), observability.RequestFilter{})
+	b.observabilityMu.RUnlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundUsage := false
+	for _, item := range page.Items {
+		if item.PoolID == "cluster-service" && item.APIKeyName == "cluster-gateway-test" {
+			foundUsage = true
+		}
+	}
+	if !foundUsage {
+		t.Fatal("cluster gateway usage missing service/key attribution")
+	}
+	// A missing pinned node never falls back to another node with the same model.
+	if err := config.SaveProviderPools([]config.ProviderPool{{ID: "missing-node", Name: "Missing node", Model: "pinned-unavailable", Enabled: true, Policy: "fixed", Members: []config.ProviderPoolMember{{ID: "missing", Source: "node:00000000-0000-0000-0000-000000000000", Model: publicID}}}}); err != nil {
+		t.Fatal(err)
+	}
+	response := gatewayRequest(b.routes(), "POST", "/ai-gateway/v1/chat/completions", `{"model":"pinned-unavailable","messages":[{"role":"user","content":"hello"}]}`, key)
+	if response.Code < 400 || strings.Contains(response.Body.String(), "served by A") {
+		t.Fatalf("pinned node escaped: %d %s", response.Code, response.Body)
+	}
+
 }
 
 func TestClusterLocalStatusReportsLoadedModels(t *testing.T) {

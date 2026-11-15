@@ -24,7 +24,6 @@ const navGroups: { id: string; key: string; items: NavItem[] }[] = [
     key: "nav.groupWorkspace",
     items: [
       { id: "dashboard", path: "/", key: "nav.dashboard", icon: DashboardIcon },
-      { id: "chat", path: "/chat", key: "nav.chat", icon: ChatIcon },
       { id: "ai-apps", path: "/ai-apps", key: "nav.aiApps", icon: AIAppsIcon },
     ],
   },
@@ -192,14 +191,6 @@ function DatasetsIcon() {
   return (
     <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
       <path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-    </svg>
-  );
-}
-
-function ChatIcon() {
-  return (
-    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
     </svg>
   );
 }

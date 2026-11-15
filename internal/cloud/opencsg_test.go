@@ -607,3 +607,17 @@ func TestRefreshChatModelsFollowsPagination(t *testing.T) {
 		t.Fatalf("models = %#v, want first/model and second/model", got)
 	}
 }
+
+func TestKnownChatModelsKeepsExpiredIDsWithoutDiscovery(t *testing.T) {
+	svc := NewService("http://invalid.invalid")
+	svc.cached = []api.ModelInfo{{Model: "reserved-model"}}
+	svc.cachedAt = time.Now().Add(-24 * time.Hour)
+	got := svc.KnownChatModels()
+	if len(got) != 1 || got[0].Model != "reserved-model" {
+		t.Fatalf("known catalog: %v", got)
+	}
+	got[0].Model = "mutated"
+	if svc.KnownChatModels()[0].Model != "reserved-model" {
+		t.Fatal("caller mutated cached model identity")
+	}
+}

@@ -71,7 +71,7 @@ func runPs(cmd *cobra.Command, args []string) error {
 	if err := w.Flush(); err != nil {
 		return err
 	}
-	fmt.Print(psOpenAIAPIUsage(serverURL, psResp.Models[0].Model))
+	fmt.Print(psOpenAIAPIUsage(serverURL, ""))
 	return nil
 }
 
@@ -84,11 +84,12 @@ func formatPsRequestError(serverURL string, err error) error {
 }
 
 func psOpenAIAPIUsage(serverURL, modelID string) string {
+	serverURL = strings.TrimRight(serverURL, "/") + "/ai-gateway"
 	if strings.TrimSpace(modelID) == "" {
-		modelID = "<model-id>"
+		modelID = "<service-id>"
 	}
 	return fmt.Sprintf(
-		"\nOpenAI API:\n  GET  %s/v1/models\n  POST %s/v1/chat/completions\n  curl %s/v1/chat/completions \\\n    -H \"Content-Type: application/json\" \\\n    -d '{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello!\"}]}'\n",
+		"\nAI Gateway (publish a model service at /ai-gateway; use its service ID):\n  GET  %s/v1/models\n  POST %s/v1/chat/completions\n  curl %s/v1/chat/completions \\\n    -H \"Content-Type: application/json\" \\\n    -d '{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello!\"}]}'\n",
 		serverURL,
 		serverURL,
 		serverURL,

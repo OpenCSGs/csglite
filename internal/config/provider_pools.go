@@ -12,22 +12,29 @@ import (
 // credentials so existing providers.json remains backward compatible.
 const ProviderPoolsFile = "provider_pools.json"
 
-const ProviderPoolPolicyPriorityWeight = "priority_weight"
+const (
+	ProviderPoolPolicyPriorityWeight = "priority_weight"
+	ProviderPoolPolicyFixed          = "fixed"
+	ProviderPoolPolicyFailover       = "failover"
+	ProviderPoolPolicyWeighted       = "weighted"
+)
 
 // ProviderPool exposes one public model ID and routes it to member models.
 type ProviderPool struct {
-	ID      string               `json:"id"`
-	Name    string               `json:"name"`
-	Model   string               `json:"model"`
-	Enabled bool                 `json:"enabled"`
-	Policy  string               `json:"policy,omitempty"`
-	Members []ProviderPoolMember `json:"members"`
+	ID       string               `json:"id"`
+	Name     string               `json:"name"`
+	Model    string               `json:"model"`
+	Enabled  bool                 `json:"enabled"`
+	Policy   string               `json:"policy,omitempty"`
+	Category string               `json:"category,omitempty"`
+	Members  []ProviderPoolMember `json:"members"`
 }
 
 // ProviderPoolMember identifies a concrete model source. Source is local,
-// cloud, or provider:<provider-id>; Model is the model ID sent upstream.
+// cloud, cluster, node:<uuid>, or provider:<provider-id>; Model is the concrete model ID.
 type ProviderPoolMember struct {
 	ID            string `json:"id"`
+	Disabled      bool   `json:"disabled,omitempty"`
 	Source        string `json:"source"`
 	Model         string `json:"model"`
 	Priority      int    `json:"priority,omitempty"`
@@ -160,10 +167,15 @@ func normalizeProviderPools(pools []ProviderPool) []ProviderPool {
 	return out
 }
 
-// NormalizeProviderPoolPolicy returns the only supported routing policy.
+// NormalizeProviderPoolPolicy preserves supported policies and legacy defaults.
 // Pools saved with the removed "semantic" policy load as priority_weight.
-func NormalizeProviderPoolPolicy(string) string {
-	return ProviderPoolPolicyPriorityWeight
+func NormalizeProviderPoolPolicy(policy string) string {
+	switch strings.TrimSpace(policy) {
+	case ProviderPoolPolicyFixed, ProviderPoolPolicyFailover, ProviderPoolPolicyWeighted:
+		return strings.TrimSpace(policy)
+	default:
+		return ProviderPoolPolicyPriorityWeight
+	}
 }
 
 func normalizeProviderPoolMembers(members []ProviderPoolMember) []ProviderPoolMember {

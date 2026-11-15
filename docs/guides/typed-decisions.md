@@ -1,4 +1,4 @@
-# Decisions (OpenAI `/v1/decisions`)
+# Decisions (OpenAI `/ai-gateway/v1/decisions`)
 
 csghub-lite serves the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions)
 from three kinds of models:
@@ -20,7 +20,7 @@ returns calibrated probabilities instead of generated text:
 | `choice` | pick one of 2-255 typed values (string or boolean) | `choice`, `probabilities`, `confidence` |
 | `score` | rate against ordered `levels` | `score` (probability-weighted level index), `probabilities`, `confidence` |
 
-A JEV model keeps serving ordinary chat through `/v1/chat/completions`.
+A JEV model keeps serving ordinary chat through `/ai-gateway/v1/chat/completions`.
 
 ## Setup
 
@@ -43,7 +43,7 @@ decision requests enable it.
 ## Request
 
 ```sh
-curl http://localhost:11435/v1/decisions -H 'Content-Type: application/json' -d '{
+curl http://localhost:11435/ai-gateway/v1/decisions -H 'Content-Type: application/json' -d '{
   "model": "huggingface/mradermacher/JEV-9B-GGUF",
   "input": "I was charged twice for my order.",
   "questions": [{
@@ -101,7 +101,7 @@ question's `name` (or `null`).
 ## Native decision models
 
 llama.cpp runs some decision models natively and answers them at its
-TypeSafe-compatible `/v1/systemone` endpoint: Laya and Julia (ModernBERT
+TypeSafe-compatible `/ai-gateway/v1/systemone` endpoint: Laya and Julia (ModernBERT
 encoders with a decision head), OpenJev, Lev, Kev, Nimble, Clef, Perplexity
 Decider and LFM2-D1. csghub-lite recognizes them by the
 `<arch>.decision.type` metadata of their GGUF, or for a Laya-style checkpoint
@@ -111,7 +111,7 @@ separate adapter.
 
 ```sh
 csghub-lite pull convaiinnovations/laya
-curl http://localhost:11435/v1/decisions -H 'Content-Type: application/json' -d '{
+curl http://localhost:11435/ai-gateway/v1/decisions -H 'Content-Type: application/json' -d '{
   "model": "huggingface/convaiinnovations/laya",
   "input": "Customer message: I was charged twice and nobody has replied.",
   "questions": [
@@ -131,7 +131,7 @@ in one pass. llama.cpp sizes its output buffers to that batch, so memory grows
 with hidden size times context: about 10 MB for Laya (1,024 hidden, 8,192
 context), but Kev and Clef have Qwen-sized hidden states and can need a few
 hundred MB more at a 16K context. Lower the model's context length in its
-settings if that matters; inputs longer than it are then refused. csghub-lite translates each request to `/v1/systemone`:
+settings if that matters; inputs longer than it are then refused. csghub-lite translates each request to `/ai-gateway/v1/systemone`:
 `predicate` becomes `noul`, `choice` keeps its values as option keys with their
 descriptions, and `score` passes the levels as `label: description`. The
 probabilities are the model's own, scaled by the temperatures stored in the
@@ -139,7 +139,7 @@ GGUF; `confidence` is again the gap between the two most likely options.
 
 Laya, Kev, Clef and LFM2-D1-Omni read hidden states rather than logits, so
 they cannot generate text: chat requests are refused with a pointer to
-`/v1/decisions`, the model listing marks them `decision_only`, and the Web UI
+`/ai-gateway/v1/decisions`, the model listing marks them `decision_only`, and the Web UI
 opens them in **Decide** mode without a Chat option. OpenJev, Lev, Nimble,
 Perplexity Decider and LFM2-D1 still chat.
 
@@ -152,14 +152,14 @@ longer inputs is not guaranteed.
 ## Cloud decision models
 
 A cloud model that the gateway lists with the `typed-decisions` task (for
-example `jev-1.13` on OpenCSG) answers `/v1/decisions` without being
-downloaded: csghub-lite forwards the request to the gateway's `/v1/systemone`
+example `jev-1.13` on OpenCSG) answers `/ai-gateway/v1/decisions` without being
+downloaded: csghub-lite forwards the request to the gateway's `/ai-gateway/v1/systemone`
 with the same question translation as native models and translates the answer
 back. The model listing marks these models `typed_decisions`, and
 `decision_only` when `typed-decisions` is their only task.
 
 ```sh
-curl http://localhost:11435/v1/decisions -H 'Content-Type: application/json' -d '{
+curl http://localhost:11435/ai-gateway/v1/decisions -H 'Content-Type: application/json' -d '{
   "model": "jev-1.13",
   "input": "I was charged twice.",
   "questions": [{"type": "predicate", "name": "refund", "instructions": "Is this a refund request?"}]
@@ -167,15 +167,15 @@ curl http://localhost:11435/v1/decisions -H 'Content-Type: application/json' -d 
 ```
 
 A downloaded model always wins over a cloud model of the same name. A gateway
-older than the `/v1/systemone` route answers 404, which csghub-lite reports as
+older than the `/ai-gateway/v1/systemone` route answers 404, which csghub-lite reports as
 a gateway that needs an update.
 
 ## JEV-compatible endpoint
 
-`POST /v1/decide` (JEV models only) keeps the hosted JEV API shape (`kind` noul / score 0-5 /
+`POST /ai-gateway/v1/decide` (JEV models only) keeps the hosted JEV API shape (`kind` noul / score 0-5 /
 choice, `state`, `question`, `options`; response `probabilities`, `choice`,
 `choice_index`) for clients written against JEV, and `GET
-/v1/decide/info?model=...` reports the head's protocol, slot counts and
+/ai-gateway/v1/decide/info?model=...` reports the head's protocol, slot counts and
 calibration temperatures.
 
 ## Limits
@@ -183,7 +183,7 @@ calibration temperatures.
 - `input_image` parts are refused: JEV-9B's decision head reads text, and
   csghub-lite does not yet pass images to native decision models.
 - Decisions run on downloaded llama.cpp models or cloud models the gateway
-  lists with the `typed-decisions` task; `/v1/decide` and `/v1/decide/info`
+  lists with the `typed-decisions` task; `/ai-gateway/v1/decide` and `/ai-gateway/v1/decide/info`
   need a downloaded local model.
 - On JEV-9B Q4_K_M the probabilities stay within about 0.05 of the model
   card's bf16 reference values.

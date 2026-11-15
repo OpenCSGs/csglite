@@ -195,7 +195,7 @@ func runImage(cmd *cobra.Command, modelID string, opts imageOptions) error {
 
 func generateImages(ctx context.Context, serverURL string, req api.OpenAIImagesGenerationRequest) (*api.OpenAIImagesGenerationResponse, error) {
 	body, _ := json.Marshal(req)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL+"/v1/images/generations", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL+"/ai-gateway/v1/images/generations", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +246,7 @@ func editImages(ctx context.Context, serverURL string, req api.OpenAIImagesGener
 	if err := writer.Close(); err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL+"/v1/images/edits", &body)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, serverURL+"/ai-gateway/v1/images/edits", &body)
 	if err != nil {
 		return nil, err
 	}
