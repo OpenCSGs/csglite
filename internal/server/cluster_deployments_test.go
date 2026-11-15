@@ -47,6 +47,11 @@ func TestPrepareOpenCSGEmbeddingDeploymentDownloadsDefaultBranch(t *testing.T) {
 	defer upstream.Close()
 	s := newTestServer(t)
 	s.cfg.ServerURL = upstream.URL
+	// This four-byte fixture tests revision handling, not disk capacity. The
+	// production 50 GB reserve can exceed a Windows CI runner's available space.
+	if _, err := s.cluster.UpdateSettings(func(settings *cluster.Settings) { settings.DiskReserveGB = 0 }); err != nil {
+		t.Fatal(err)
+	}
 	h := &clusterHost{s: s}
 	d := cluster.Deployment{ID: uuid.NewString(), DeploymentSpec: cluster.DeploymentSpec{
 		Name: "Qwen embedding", Repository: repo, ArtifactSource: "opencsg", Revision: "main", Kind: "embedding",
