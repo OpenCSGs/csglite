@@ -35,12 +35,30 @@ csghub-lite config set server_url https://my-csghub.example.com
 
 云端推理模型使用的 AI Gateway 地址。
 
-- 默认值: `https://ai.space.opencsg.com`
+- 默认值: `https://opencsg.com/aigateway`
 - 用途: 覆盖默认的云端模型网关地址，适用于私有化或代理部署
 
 ```bash
 csghub-lite config set ai_gateway_url https://my-gateway.example.com
 ```
+
+### 社区站点地址
+
+选择社区时，客户端会同时保存现有的 `server_url` 和 `ai_gateway_url`，不单独存储另一份站点配置。地址使用根基地址，不额外添加 `/api/v1` 或 `/v1`。
+
+| 社区 | Server API 基地址 | AI Gateway 基地址 | 核实结果（2026-11-13） |
+| --- | --- | --- | --- |
+| [OpenCSG 主站](https://opencsg.com) | `https://hub.opencsg.com` | `https://opencsg.com/aigateway` | 两类模型列表均返回 JSON；主站网页公布的 Server 地址 `https://opencsg.com` 也是可用入口 |
+| [三峡传神社区](https://sanxia.opencsg.com) | `https://sanxia.opencsg.com` | `https://sanxia.opencsg.com/aigateway` | 网页配置与两类模型列表均已核实 |
+| 龙数产业生态服务平台 | `https://modelhub.lgdg.cc` | `https://modelhub.lgdg.cc/aigateway` | 保留已有映射；当前 TLS 连接失败，尚未完成在线核实 |
+| [开放东方社区](https://openeast.opencsg.com) | `https://openeast.opencsg.com` | `https://openeast.opencsg.com/aigateway` | 网页配置与两类模型列表均已核实 |
+| [OpenCSG 新加坡站](https://opencsg.io) | `https://opencsg.io` | `https://opencsg.io/aigateway` | 网页配置与两类模型列表均已核实 |
+
+核实依据为各站首页公开的 `CSGHUB_SERVER`、`AI_GATEWAY_HOST` 配置，以及只读模型列表接口。模型列表可用不代表端侧服务已部署：本次核实的四个可访问站点，其 `/aigateway/api/v1/edge/applications` 均返回网关通用 404 页面。端侧节点注册需要站点服务端部署对应接口。
+
+重新登录或退出账号会清除之前手动填写的 OpenCSG API Key，并重置相关缓存；登录后使用当前账号的 built-in API Key。切换 Server 会清除旧账号 Token 与手动 Key；切换 AI Gateway 会清除旧网关的手动 Key。第三方 Provider 的独立 Key 不受影响。上述凭据清理规则同时适用于 Web 设置和 CLI 的 `config set` / `config unset`。
+
+设置页的「恢复默认设置」恢复应用选项（云服务显示名称、上下文模式、并发数和上下文压缩），保留当前社区的 Server / AI Gateway 地址及登录状态。切换社区需先退出登录，再在导航底部的登录弹窗中选择站点。
 
 ### huggingface_endpoint
 

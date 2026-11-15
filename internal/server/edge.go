@@ -230,7 +230,11 @@ func (s *Server) handleEdgeStatus(w http.ResponseWriter, r *http.Request, m *edg
 	if models == nil {
 		models = []edge.Model{}
 	}
-	writeJSON(w, http.StatusOK, edgeStatusResponse{Status: m.Status(), SignedIn: token != "", Models: models, ModelLimit: s.edgeModelLimit()})
+	status := m.Status()
+	if strings.Contains(status.LastError, edge.ErrGatewayUnreachable.Error()) {
+		status.LastError = edgeUnreachableMessage(r)
+	}
+	writeJSON(w, http.StatusOK, edgeStatusResponse{Status: status, SignedIn: token != "", Models: models, ModelLimit: s.edgeModelLimit()})
 }
 
 func (s *Server) handleEdgeSetEnabled(w http.ResponseWriter, r *http.Request, m *edge.Manager) {
@@ -375,7 +379,7 @@ func (s *Server) handleEdgeStatements(w http.ResponseWriter, r *http.Request, m 
 
 // writeEdgeError passes gateway API failures on with their status so the UI
 // can show the gateway's message (for example a review conflict). The
-// gateway's own 404 page is reported as unreachable, in the caller's language.
+// gateway's own 404 page is reported as a missing edge API in the caller's language.
 func writeEdgeError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, edge.ErrGatewayUnreachable) {
 		writeError(w, http.StatusBadGateway, edgeUnreachableMessage(r))
@@ -395,7 +399,7 @@ func writeEdgeError(w http.ResponseWriter, r *http.Request, err error) {
 
 func edgeUnreachableMessage(r *http.Request) string {
 	if strings.HasPrefix(requestLocale(r), "zh") {
-		return "不能连接 CSGHub AI 网关"
+		return "当前 AI 网关未提供端侧服务接口（HTTP 404）。请确认网关地址及服务端部署。"
 	}
-	return "Cannot connect to the CSGHub AI gateway."
+	return "This AI gateway does not provide the edge serving API (HTTP 404). Check the gateway address and server deployment."
 }

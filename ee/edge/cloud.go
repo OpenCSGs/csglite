@@ -20,10 +20,9 @@ import (
 	"strings"
 )
 
-// ErrGatewayUnreachable means the CSGHub AI gateway did not answer the edge
-// API. The usual case is the gateway's own 404 page, which is not an
-// application error the UI should show.
-var ErrGatewayUnreachable = errors.New("cannot connect to the CSGHub AI gateway")
+// ErrGatewayUnreachable identifies the gateway's generic missing-route page.
+// A working inference gateway may not deploy the edge serving API at all.
+var ErrGatewayUnreachable = errors.New("the CSGHub AI gateway does not provide the edge serving API (HTTP 404)")
 
 // APIError is a gateway API failure, carrying the HTTP status so the local
 // API can pass it on.

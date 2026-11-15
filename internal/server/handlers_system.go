@@ -186,8 +186,9 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		if serverURL == "" {
 			serverURL = config.DefaultServerURL
 		}
-		if serverURL != strings.TrimSpace(s.cfg.ServerURL) && strings.TrimSpace(s.cfg.Token) != "" {
+		if serverURL != strings.TrimSpace(s.cfg.ServerURL) {
 			s.cfg.Token = ""
+			s.cfg.OpenCSGAPIKey = ""
 			cloudTokenUpdated = true
 		}
 		serverURLUpdated = serverURL != strings.TrimSpace(s.cfg.ServerURL)
@@ -200,6 +201,10 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 			aiGatewayURL = cloud.DefaultBaseURL
 		}
 		aiGatewayURLUpdated = aiGatewayURL != strings.TrimSpace(s.cfg.AIGatewayURL)
+		if aiGatewayURLUpdated {
+			s.cfg.OpenCSGAPIKey = ""
+			cloudTokenUpdated = true
+		}
 		s.cfg.AIGatewayURL = aiGatewayURL
 		configUpdated = true
 	}
@@ -307,11 +312,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) applyRuntimeSettingsUpdate(serverURLUpdated, aiGatewayURLUpdated, cloudTokenUpdated bool) {
 	if serverURLUpdated || cloudTokenUpdated {
-		clearMarketplaceCache()
-		s.invalidateLicenseCloudCache()
-		if s.cloud != nil {
-			s.cloud.SetAccessToken(s.cfg.Token)
-		}
+		s.refreshCloudCredentials()
 	}
 	if aiGatewayURLUpdated {
 		if s.cloud != nil {

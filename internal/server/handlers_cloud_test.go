@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -178,6 +179,7 @@ func TestHandleCloudAuthTokenSaveAndDelete(t *testing.T) {
 
 	s := newTestServer(t)
 	s.cfg.ServerURL = api.URL
+	s.cfg.OpenCSGAPIKey = "previous-account-key"
 
 	saveReq := httptest.NewRequest(http.MethodPost, "/api/cloud/auth/token", strings.NewReader(`{"token":" test-token "}`))
 	w := httptest.NewRecorder()
@@ -188,6 +190,20 @@ func TestHandleCloudAuthTokenSaveAndDelete(t *testing.T) {
 	}
 	if s.cfg.Token != "test-token" {
 		t.Fatalf("saved token = %q, want %q", s.cfg.Token, "test-token")
+	}
+	if s.cfg.OpenCSGAPIKey != "" {
+		t.Fatal("new login retained the previous account's manual key")
+	}
+	cfgPath, err := config.ConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "previous-account-key") {
+		t.Fatal("previous account's key was retained in config.json")
 	}
 
 	var saveResp cloudAuthStatus
@@ -201,6 +217,7 @@ func TestHandleCloudAuthTokenSaveAndDelete(t *testing.T) {
 		t.Fatalf("saved user = %#v, want alice", saveResp.User)
 	}
 
+	s.cfg.OpenCSGAPIKey = "session-manual-key"
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/cloud/auth/token", nil)
 	w = httptest.NewRecorder()
 	s.handleCloudAuthTokenDelete(w, deleteReq)
@@ -210,6 +227,9 @@ func TestHandleCloudAuthTokenSaveAndDelete(t *testing.T) {
 	}
 	if s.cfg.Token != "" {
 		t.Fatalf("token after delete = %q, want empty", s.cfg.Token)
+	}
+	if s.cfg.OpenCSGAPIKey != "" {
+		t.Fatal("logout retained the session's manual key")
 	}
 
 	var deleteResp cloudAuthStatus
@@ -222,6 +242,9 @@ func TestHandleCloudAuthTokenSaveAndDelete(t *testing.T) {
 	if deleteResp.Authenticated {
 		t.Fatalf("Authenticated after delete = true, want false")
 	}
+	if deleteResp.HasAPIKey {
+		t.Fatal("signed-out status still reports an API key")
+	}
 }
 
 func TestHandleCloudAuthCallback(t *testing.T) {
@@ -233,6 +256,7 @@ func TestHandleCloudAuthCallback(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 
 	s := newTestServer(t)
+	s.cfg.OpenCSGAPIKey = "previous-account-key"
 
 	saveReq := httptest.NewRequest(http.MethodGet, "/api/cloud/auth/callback?token=%20test-token%20", nil)
 	w := httptest.NewRecorder()
@@ -252,6 +276,9 @@ func TestHandleCloudAuthCallback(t *testing.T) {
 	}
 	if s.cfg.Token != "test-token" {
 		t.Fatalf("saved token = %q, want %q", s.cfg.Token, "test-token")
+	}
+	if s.cfg.OpenCSGAPIKey != "" {
+		t.Fatal("SSO callback retained the previous account's manual key")
 	}
 }
 
@@ -365,7 +392,10 @@ func TestNewCloudEngineUsesBuiltinAPIKey(t *testing.T) {
 
 	s := newTestServer(t)
 	s.cfg.ServerURL = authServer.URL
-	s.cfg.Token = "access-token"
+	s.cfg.OpenCSGAPIKey = "stale-key-that-would-return-401"
+	if err := s.saveCloudAccessToken("access-token"); err != nil {
+		t.Fatal(err)
+	}
 	s.cloud = cloud.NewService(modelServer.URL)
 
 	eng, err := s.newCloudEngine(context.Background(), "cloud/model")

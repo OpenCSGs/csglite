@@ -101,6 +101,7 @@ func TestRunConfigSetServerURLClearsTokenWhenChanged(t *testing.T) {
 		t.Fatalf("config.Load() error: %v", err)
 	}
 	cfg.Token = "existing-token"
+	cfg.OpenCSGAPIKey = "old-manual-key"
 	if err := config.Save(cfg); err != nil {
 		t.Fatalf("config.Save() error: %v", err)
 	}
@@ -117,6 +118,9 @@ func TestRunConfigSetServerURLClearsTokenWhenChanged(t *testing.T) {
 	if cfg.ServerURL != "https://opencsg-stg.com" {
 		t.Fatalf("ServerURL = %q, want staging URL", cfg.ServerURL)
 	}
+	if cfg.OpenCSGAPIKey != "" {
+		t.Fatal("old manual API key survived server_url change")
+	}
 	if cfg.Token != "" {
 		t.Fatalf("Token = %q, want empty after server_url change", cfg.Token)
 	}
@@ -130,6 +134,7 @@ func TestRunConfigSetServerURLKeepsTokenWhenUnchanged(t *testing.T) {
 	}
 	cfg.ServerURL = "https://opencsg-stg.com"
 	cfg.Token = "existing-token"
+	cfg.OpenCSGAPIKey = "old-manual-key"
 	if err := config.Save(cfg); err != nil {
 		t.Fatalf("config.Save() error: %v", err)
 	}
@@ -142,6 +147,9 @@ func TestRunConfigSetServerURLKeepsTokenWhenUnchanged(t *testing.T) {
 	cfg, err = config.Load()
 	if err != nil {
 		t.Fatalf("config.Load() after set error: %v", err)
+	}
+	if cfg.OpenCSGAPIKey != "old-manual-key" {
+		t.Fatal("unchanged server_url cleared the manual API key")
 	}
 	if cfg.Token != "existing-token" {
 		t.Fatalf("Token = %q, want existing-token", cfg.Token)
@@ -156,6 +164,7 @@ func TestRunConfigUnsetServerURLRestoresDefaultAndClearsToken(t *testing.T) {
 	}
 	cfg.ServerURL = "https://opencsg-stg.com"
 	cfg.Token = "existing-token"
+	cfg.OpenCSGAPIKey = "old-manual-key"
 	if err := config.Save(cfg); err != nil {
 		t.Fatalf("config.Save() error: %v", err)
 	}
@@ -171,6 +180,9 @@ func TestRunConfigUnsetServerURLRestoresDefaultAndClearsToken(t *testing.T) {
 	}
 	if cfg.ServerURL != config.DefaultServerURL {
 		t.Fatalf("ServerURL = %q, want %q", cfg.ServerURL, config.DefaultServerURL)
+	}
+	if cfg.OpenCSGAPIKey != "" {
+		t.Fatal("old manual API key survived server_url change")
 	}
 	if cfg.Token != "" {
 		t.Fatalf("Token = %q, want cleared token", cfg.Token)
@@ -207,6 +219,66 @@ func TestRunConfigUnsetAIGatewayURLUsesDefault(t *testing.T) {
 	})
 	if strings.TrimSpace(getOutput) != cloud.DefaultBaseURL {
 		t.Fatalf("config get ai_gateway_url = %q, want %q", strings.TrimSpace(getOutput), cloud.DefaultBaseURL)
+	}
+}
+
+func TestRunConfigURLCredentialChanges(t *testing.T) {
+	const customServer = "https://community.example.com"
+	const customGateway = "https://gateway.example.com"
+	for _, tt := range []struct {
+		name      string
+		key       string
+		before    string
+		after     string
+		unset     bool
+		token     string
+		wantToken string
+		wantKey   string
+	}{
+		{name: "server change with manual key only", key: "server_url", before: config.DefaultServerURL, after: customServer},
+		{name: "server unset with manual key only", key: "server_url", before: customServer, unset: true},
+		{name: "unchanged default server", key: "server_url", before: config.DefaultServerURL, unset: true, token: "token", wantToken: "token", wantKey: "manual-key"},
+		{name: "empty server means same default", key: "server_url", before: config.DefaultServerURL, after: " ", token: "token", wantToken: "token", wantKey: "manual-key"},
+		{name: "changed gateway", key: "ai_gateway_url", before: customGateway, after: cloud.DefaultBaseURL, token: "token", wantToken: "token"},
+		{name: "unchanged gateway", key: "ai_gateway_url", before: customGateway, after: " " + customGateway + " ", token: "token", wantToken: "token", wantKey: "manual-key"},
+		{name: "unset custom gateway", key: "ai_gateway_url", before: customGateway, unset: true, token: "token", wantToken: "token"},
+		{name: "unchanged implicit gateway", key: "ai_gateway_url", unset: true, token: "token", wantToken: "token", wantKey: "manual-key"},
+		{name: "set gateway with manual key only", key: "ai_gateway_url", after: customGateway},
+		{name: "unset gateway with manual key only", key: "ai_gateway_url", before: customGateway, unset: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			setupCLIConfigHome(t)
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.key == "server_url" {
+				cfg.ServerURL = tt.before
+			} else {
+				cfg.AIGatewayURL = tt.before
+			}
+			cfg.Token = tt.token
+			cfg.OpenCSGAPIKey = "manual-key"
+			if err := config.Save(cfg); err != nil {
+				t.Fatal(err)
+			}
+			if tt.unset {
+				err = runConfigUnset(nil, []string{tt.key})
+			} else {
+				err = runConfigSet(nil, []string{tt.key, tt.after})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			config.Reset()
+			cfg, err = config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Token != tt.wantToken || cfg.OpenCSGAPIKey != tt.wantKey {
+				t.Fatalf("credential reset mismatch: token retained = %t, manual key retained = %t", cfg.Token != "", cfg.OpenCSGAPIKey != "")
+			}
+		})
 	}
 }
 

@@ -2,21 +2,11 @@ import { ComponentChildren } from "preact";
 import type { JSX } from "preact";
 import { useLocation } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
-import { getSettings, openExternalURL } from "../api/client";
+import { getSettings } from "../api/client";
+import { SidebarAccount } from "./SidebarAccount";
+import { cloudAuth, communitySettings } from "../cloudAccount";
 import { t, locale } from "../i18n";
 import { isLicensed, licenseState, loadLicense, productTitle } from "../license";
-
-const helpURL = "https://opencsg.com/docs/csghub/101/function/csghub-lite/intro";
-
-async function openHelp(event: MouseEvent) {
-  event.preventDefault();
-  try {
-    if (await openExternalURL(helpURL)) return;
-  } catch (error) {
-    console.error("failed to open help in the system browser", error);
-  }
-  window.open(helpURL, "_blank", "noopener,noreferrer");
-}
 
 type NavItem = {
   id: string;
@@ -92,14 +82,6 @@ function SettingsIcon() {
   );
 }
 
-function HelpIcon() {
-  return (
-    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
-}
-
 export function Layout({ children }: { children: ComponentChildren }) {
   const { path, route } = useLocation();
   const [hiddenNavItems, setHiddenNavItems] = useState<Set<string> | null>(null);
@@ -114,7 +96,10 @@ export function Layout({ children }: { children: ComponentChildren }) {
     let active = true;
     getSettings()
       .then((settings) => {
-        if (active) setHiddenNavItems(new Set(settings.hidden_nav_items ?? []));
+        if (active) {
+          communitySettings.value = settings;
+          setHiddenNavItems(new Set(settings.hidden_nav_items ?? []));
+        }
       })
       .catch(() => {
         if (active) setHiddenNavItems(new Set());
@@ -157,25 +142,14 @@ export function Layout({ children }: { children: ComponentChildren }) {
           })}
         </nav>
         <div class="space-y-0.5 border-t border-gray-100 px-3 py-2">
-          {showNavItem("settings") && (
+          {!cloudAuth.value?.has_token && showNavItem("settings") && (
             <NavLink
               item={{ id: "settings", path: "/settings", key: "nav.settings", icon: SettingsIcon }}
               path={path}
               onNavigate={route}
             />
           )}
-          {showNavItem("help") && (
-            <a
-              href={helpURL}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={openHelp}
-              class="flex items-center gap-2.5 rounded-lg py-1.5 pl-5 pr-3 text-sm leading-5 font-normal text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
-            >
-              <HelpIcon />
-              {t("nav.help")}
-            </a>
-          )}
+          <SidebarAccount showSettings={showNavItem("settings")} onSettings={() => route("/settings")} />
         </div>
       </aside>
       <main class="flex min-h-0 flex-1 flex-col overflow-hidden bg-gray-50">

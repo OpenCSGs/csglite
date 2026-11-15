@@ -78,6 +78,26 @@ func (c *Client) GetCurrentUser(ctx context.Context) (*User, error) {
 	return user, nil
 }
 
+// GetAccountBalance reads the personal account balance in the community's minor
+// currency unit (the portal divides this value by 100 for display).
+func (c *Client) GetAccountBalance(ctx context.Context, userUUID string) (float64, error) {
+	userUUID = strings.TrimSpace(userUUID)
+	if userUUID == "" {
+		return 0, fmt.Errorf("missing account UUID")
+	}
+	var resp APIResponse[struct {
+		Balance *float64 `json:"balance"`
+	}]
+	path := "/api/v1/accounting/credit/" + url.PathEscape(userUUID) + "/balance"
+	if err := c.getJSON(ctx, path, &resp); err != nil {
+		return 0, fmt.Errorf("getting account balance: %w", err)
+	}
+	if resp.Data.Balance == nil {
+		return 0, fmt.Errorf("account balance missing from response")
+	}
+	return *resp.Data.Balance, nil
+}
+
 // GetBuiltinAPIKey returns the built-in AI Gateway API key for a user or organization namespace.
 func (c *Client) GetBuiltinAPIKey(ctx context.Context, namespace string) (string, error) {
 	namespace = strings.TrimSpace(namespace)

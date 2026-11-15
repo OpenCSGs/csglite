@@ -34,7 +34,7 @@ csghub-lite config set <key> <value>
 |-----|--------|------|
 | `storage_dir` | `~/.csghub-lite` | 模型和数据集共用的本地存储根目录，推荐优先设置 |
 | `server_url` | `https://hub.opencsg.com` | CSGHub 平台地址 |
-| `ai_gateway_url` | `https://ai.space.opencsg.com` | 云端推理模型使用的 AI Gateway 地址 |
+| `ai_gateway_url` | `https://opencsg.com/aigateway` | 云端推理模型使用的 AI Gateway 地址 |
 | `model_dir` | `~/.csghub-lite/models` | 实际模型存储目录，通常由 `storage_dir` 自动派生 |
 | `dataset_dir` | `~/.csghub-lite/datasets` | 实际数据集存储目录，通常由 `storage_dir` 自动派生 |
 | `listen_addr` | `:11435` | API 服务监听地址 |

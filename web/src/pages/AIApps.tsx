@@ -4,7 +4,6 @@ import { useLocation } from "preact-iso";
 import { useEffect, useRef, useState } from "preact/hooks";
 import {
   getAIApps,
-  getCloudAuthStatus,
   installAIApp,
   openAIApp,
   saveAIAppModel,
@@ -31,6 +30,7 @@ import {
   type AIAppRuntimeState,
 } from "../data/aiApps";
 import { locale, t, type Locale } from "../i18n";
+import { cloudAuth as sharedCloudAuth, refreshCloudAuth } from "../cloudAccount";
 import {
   formatModelOptionLabel,
   loadModelOptions,
@@ -642,7 +642,7 @@ function LiveLogsDrawer({
   const [xiaozhiSaveNotice, setXiaozhiSaveNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [copiedXiaozhiCredentials, setCopiedXiaozhiCredentials] = useState(false);
   const [copiedModel, setCopiedModel] = useState(false);
-  const [cloudAuth, setCloudAuth] = useState<CloudAuthStatus | null>(null);
+  const cloudAuth = sharedCloudAuth.value;
   const [showCloudAuthDialog, setShowCloudAuthDialog] = useState(false);
   const [cloudAuthError, setCloudAuthError] = useState("");
   const [manualPathInput, setManualPathInput] = useState("");
@@ -730,7 +730,10 @@ function LiveLogsDrawer({
     loadModels(true);
 
     const handleFocus = () => loadModels();
-    const handleProvidersChanged = () => loadModels();
+    const handleProvidersChanged = () => {
+      loadModels();
+      void refreshCloudAuth({ force: true });
+    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         loadModels();
@@ -749,25 +752,7 @@ function LiveLogsDrawer({
   }, [app.id, canLoadModels]);
 
   useEffect(() => {
-    if (!canLoadModels) {
-      setCloudAuth(null);
-      return;
-    }
-
-    let disposed = false;
-    getCloudAuthStatus()
-      .then((status) => {
-        if (!disposed) {
-          setCloudAuth(status);
-        }
-      })
-      .catch(() => {
-        /* ignore */
-      });
-
-    return () => {
-      disposed = true;
-    };
+    if (canLoadModels) void refreshCloudAuth();
   }, [app.id, canLoadModels]);
 
   useEffect(() => {
@@ -903,17 +888,11 @@ function LiveLogsDrawer({
     }
   };
 
-  const refreshCloudAuth = async (): Promise<CloudAuthStatus> => {
-    const status = await getCloudAuthStatus();
-    setCloudAuth(status);
-    return status;
-  };
-
   const openCloudAuthDialog = async (message = "") => {
     setCloudAuthError(message);
     setShowCloudAuthDialog(true);
     try {
-      await refreshCloudAuth();
+      await refreshCloudAuth({ force: true });
     } catch {
       /* ignore */
     }
@@ -925,9 +904,8 @@ function LiveLogsDrawer({
 
     const poll = async () => {
       try {
-        const status = await getCloudAuthStatus();
-        setCloudAuth(status);
-        if (status.authenticated && status.user) {
+        const status = await refreshCloudAuth({ force: true });
+        if (status?.authenticated && status.user) {
           setCloudAuthError("");
           setShowCloudAuthDialog(false);
           loadModelOptions({ refresh: true }).then(setModels).catch(() => {});

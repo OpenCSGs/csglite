@@ -145,13 +145,21 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	switch key {
 	case "server_url":
 		serverURL := strings.TrimSpace(value)
-		if serverURL != strings.TrimSpace(cfg.ServerURL) && strings.TrimSpace(cfg.Token) != "" {
+		if serverURL == "" {
+			serverURL = config.DefaultServerURL
+		}
+		if serverURL != strings.TrimSpace(cfg.ServerURL) {
+			syncToken = strings.TrimSpace(cfg.Token) != ""
 			cfg.Token = ""
-			syncToken = true
+			cfg.OpenCSGAPIKey = ""
 		}
 		cfg.ServerURL = serverURL
 	case "ai_gateway_url":
-		cfg.AIGatewayURL = strings.TrimSpace(value)
+		gatewayURL := strings.TrimSpace(value)
+		if gatewayURL != strings.TrimSpace(cfg.AIGatewayURL) {
+			cfg.OpenCSGAPIKey = ""
+		}
+		cfg.AIGatewayURL = gatewayURL
 	case "storage_dir":
 		dir, err := requiredPathValue(value)
 		if err != nil {
@@ -226,12 +234,16 @@ func runConfigUnset(cmd *cobra.Command, args []string) error {
 	syncToken := false
 	switch key {
 	case "server_url":
-		if strings.TrimSpace(cfg.ServerURL) != config.DefaultServerURL && strings.TrimSpace(cfg.Token) != "" {
+		if strings.TrimSpace(cfg.ServerURL) != config.DefaultServerURL {
+			syncToken = strings.TrimSpace(cfg.Token) != ""
 			cfg.Token = ""
-			syncToken = true
+			cfg.OpenCSGAPIKey = ""
 		}
 		cfg.ServerURL = config.DefaultServerURL
 	case "ai_gateway_url":
+		if strings.TrimSpace(cfg.AIGatewayURL) != "" {
+			cfg.OpenCSGAPIKey = ""
+		}
 		cfg.AIGatewayURL = ""
 	case "cluster_secret":
 		cfg.Cluster.Secret = ""

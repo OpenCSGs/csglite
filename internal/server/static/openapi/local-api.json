@@ -4025,6 +4025,31 @@
         }
       }
     },
+    "/api/cloud/balance": {
+      "get": {
+        "tags": [
+          "CloudAuth"
+        ],
+        "summary": "Get the current community account balance",
+        "description": "Reads only the signed-in personal account through the configured community Server API. Balance is in minor currency units (divide by 100 for display); null means billing is unavailable, not a zero balance. Recharge URL points to the current community website. Never performs a recharge.",
+        "operationId": "getCloudAccountBalance",
+        "responses": {
+          "200": {
+            "description": "Current balance and community recharge URL. The response is not cached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudAccountBalance"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/cloud/auth": {
       "get": {
         "tags": [
@@ -4052,7 +4077,7 @@
           "CloudAuth"
         ],
         "summary": "Complete the OpenCSG SSO login redirect",
-        "description": "Browser redirect target for the lite SSO flow. Persists the access token carried in the token query parameter and returns a confirmation page.",
+        "description": "Browser redirect target for the lite SSO flow. Persists the access token carried in the token query parameter, clears any previous manual OpenCSG API key and cloud caches, and returns a confirmation page.",
         "operationId": "completeCloudAuthCallback",
         "parameters": [
           {
@@ -4086,6 +4111,7 @@
         ],
         "summary": "Save or replace the OpenCSG access token",
         "operationId": "saveCloudAuthToken",
+        "description": "Starts a new account session, clears the previous manual OpenCSG API key, and invalidates cloud model, marketplace and license caches.",
         "requestBody": {
           "required": true,
           "content": {
@@ -4124,6 +4150,7 @@
         ],
         "summary": "Clear the saved OpenCSG access token",
         "operationId": "deleteCloudAuthToken",
+        "description": "Clears both the access token and the manual OpenCSG API key, and invalidates cloud account caches.",
         "responses": {
           "200": {
             "description": "Updated auth status after clearing the token.",
@@ -12389,6 +12416,31 @@
           }
         }
       },
+      "CloudAccountBalance": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "balance",
+          "recharge_url",
+          "user_uuid"
+        ],
+        "properties": {
+          "user_uuid": {
+            "type": "string",
+            "description": "The personal account UUID used for this balance, so clients can discard responses from a previous login."
+          },
+          "balance": {
+            "type": "number",
+            "nullable": true,
+            "description": "Balance in the community currency minor unit; divide by 100 to display. Null means unavailable. Zero and negative balances are valid."
+          },
+          "recharge_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Recharge page on the configured community website, without credentials."
+          }
+        }
+      },
       "CloudAuthStatus": {
         "type": "object",
         "additionalProperties": false,
@@ -12415,6 +12467,11 @@
           },
           "access_token_url": {
             "type": "string"
+          },
+          "recharge_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Recharge page on the current community website. Contains no credentials."
           },
           "has_api_key": {
             "type": "boolean",

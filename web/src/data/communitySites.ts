@@ -8,8 +8,9 @@ export interface CommunitySite {
   gatewayAliases?: string[];
 }
 
-/** Communities whose user service accepts CSGLite login (`state=lite`) and
- * whose AI Gateway is reachable. Hong Kong OCC and Whale Intelligence are
+/** Community mappings; public portal configuration and model APIs were checked
+ * on 2026-11-13. Longshu's TLS endpoint was unavailable during that check.
+ * Hong Kong OCC and Whale Intelligence are
  * omitted: their token APIs do not match this client. */
 export const COMMUNITY_SITES: CommunitySite[] = [
   {
@@ -17,9 +18,9 @@ export const COMMUNITY_SITES: CommunitySite[] = [
     nameKey: "settings.siteMain",
     descKey: "settings.siteMainDesc",
     serverURL: "https://hub.opencsg.com",
-    gatewayURL: "https://ai.space.opencsg.com",
+    gatewayURL: "https://opencsg.com/aigateway",
     serverAliases: ["https://opencsg.com"],
-    gatewayAliases: ["https://opencsg.com/aigateway"],
+    gatewayAliases: ["https://ai.space.opencsg.com"],
   },
   {
     id: "sx",
@@ -62,8 +63,9 @@ export function matchCommunitySite(
   gatewayURL: string,
   defaults: { serverURL?: string; gatewayURL?: string } = {},
 ): string {
-  const server = normalizeServiceURL(serverURL);
-  const gateway = normalizeServiceURL(gatewayURL);
+  const main = COMMUNITY_SITES[0];
+  const server = normalizeServiceURL(serverURL.trim() || defaults.serverURL || main.serverURL);
+  const gateway = normalizeServiceURL(gatewayURL.trim() || defaults.gatewayURL || main.gatewayURL);
   for (const site of COMMUNITY_SITES) {
     const servers = new Set([site.serverURL, ...(site.serverAliases ?? [])].map(normalizeServiceURL));
     const gateways = new Set([site.gatewayURL, ...(site.gatewayAliases ?? [])].map(normalizeServiceURL));

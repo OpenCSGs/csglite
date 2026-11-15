@@ -71,7 +71,7 @@ func TestWriteEdgeErrorRewritesGatewayNotFound(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "Cannot connect to the CSGHub AI gateway.") || strings.Contains(rec.Body.String(), "404 page not found") {
+	if !strings.Contains(rec.Body.String(), "does not provide the edge serving API (HTTP 404)") || strings.Contains(rec.Body.String(), "404 page not found") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 
@@ -79,7 +79,7 @@ func TestWriteEdgeErrorRewritesGatewayNotFound(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/edge/applications", nil)
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
 	writeEdgeError(rec, req, edge.ErrGatewayUnreachable)
-	if !strings.Contains(rec.Body.String(), "不能连接 CSGHub AI 网关") {
+	if !strings.Contains(rec.Body.String(), "未提供端侧服务接口") {
 		t.Fatalf("zh body = %s", rec.Body.String())
 	}
 }
