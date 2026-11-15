@@ -14,6 +14,7 @@ import type { EdgeApplication, EdgeBalanceResponse, EdgeEarnings, EdgeStatement,
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { MonthPicker } from "../components/MonthPicker";
 import { t, locale } from "../i18n";
+import { openCloudConnection } from "../cloudAccount";
 import {
   applicationTone,
   canWithdraw,
@@ -219,7 +220,12 @@ export function EdgeServing() {
       }
     });
     const timer = setInterval(() => void loadStatus(), 3000);
-    return () => clearInterval(timer);
+    const onConnectionChanged = () => { void loadStatus(); };
+    window.addEventListener("csghub:providers-changed", onConnectionChanged);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("csghub:providers-changed", onConnectionChanged);
+    };
   }, []);
 
   const current = status.value;
@@ -241,7 +247,10 @@ export function EdgeServing() {
           {statusError.value ? <span class="text-red-600">{statusError.value}</span> : t("edge.loading")}
         </section>
       ) : !current.signed_in ? (
-        <section class="rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">{t("edge.signInFirst")}</section>
+        <section class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+          <p>{t("edge.signInFirst")}</p>
+          <button type="button" onClick={openCloudConnection} class="shrink-0 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500">{t("account.login")}</button>
+        </section>
       ) : (
         <>
           <div class="inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">

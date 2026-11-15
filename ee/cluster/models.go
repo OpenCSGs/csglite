@@ -379,6 +379,9 @@ func (p *PeerModel) ExtrasSize() int64 {
 // returns its bundle. Members are tried in scheduler order (idle, fast disk
 // first); nil is returned when no member has the model.
 func (m *Manager) FindPeerModel(ctx context.Context, modelID string) (*PeerModel, error) {
+	if m.opts.Mode != "" {
+		return nil, nil
+	}
 	var lastErr error
 	for _, rt := range m.dir.Snapshot() {
 		if !rt.Online() || rt.Status == nil {
@@ -474,6 +477,9 @@ func modelIDOfManifest(pm *PeerModel) string {
 // runs its normal handler; the response of a remote node is streamed back
 // as-is with the node headers set.
 func (m *Manager) RouteRaw(ctx context.Context, modelID, source, path string, body []byte, headers http.Header) (*http.Response, error) {
+	if m.opts.Mode == "worker" {
+		return nil, inference.NewHTTPStatusError(400, "use the public gateway address for cluster inference")
+	}
 	pinned := NodeUUIDFromSource(source)
 	if pinned != "" && pinned == m.identity.UUID {
 		return nil, &LocalChoice{release: m.dir.Reserve(m.identity.UUID)}

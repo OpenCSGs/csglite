@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clusterNodeRole,
   fmtGB,
   fmtGBPair,
   fmtSeconds,
@@ -89,5 +90,18 @@ describe("admission code", () => {
     expect(isValidAdmissionCode("12345678")).toBe(true);
     expect(isValidAdmissionCode("1234567")).toBe(false);
     expect(isValidAdmissionCode("abcd1234")).toBe(false);
+  });
+});
+
+describe("cluster node roles", () => {
+  const publicCluster = { uuid: "cluster", name: "Public", created_at: "", topology: "public" as const, gateway_uuid: "gateway" };
+  it("identifies the gateway independently of which node serves the UI", () => {
+    expect(clusterNodeRole("gateway", publicCluster)).toBe("master");
+    expect(clusterNodeRole("worker", publicCluster)).toBe("slave");
+  });
+  it("does not invent master/slave roles for peer or standalone nodes", () => {
+    expect(clusterNodeRole("node", { uuid: "lan", name: "LAN", created_at: "" })).toBe("peer");
+    expect(clusterNodeRole("node", null)).toBe("standalone");
+    expect(clusterNodeRole("node", { ...publicCluster, gateway_uuid: undefined })).toBe("unknown");
   });
 });

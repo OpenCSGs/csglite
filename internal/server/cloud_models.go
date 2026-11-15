@@ -26,7 +26,7 @@ func requestWantsModelRefresh(r *http.Request) bool {
 }
 
 func (s *Server) refreshCloudModelsOnStartup(parent context.Context) {
-	if s == nil || s.cloud == nil {
+	if s == nil || s.cloud == nil || !s.cfg.IsCloudProviderEnabled() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(parent, startupCloudModelRefreshTimeout)
@@ -178,6 +178,9 @@ func (s *Server) listCloudModelCatalog(ctx context.Context, refresh bool) ([]api
 }
 
 func (s *Server) listCloudModels(ctx context.Context, refresh bool) ([]api.ModelInfo, error) {
+	if s != nil && !s.cfg.IsCloudProviderEnabled() {
+		return nil, nil
+	}
 	models, err := s.listCloudModelCatalog(ctx, refresh)
 	if err != nil {
 		return models, err
@@ -185,6 +188,20 @@ func (s *Server) listCloudModels(ctx context.Context, refresh bool) ([]api.Model
 	models = s.applyCloudProviderModelSelections(models)
 	s.rememberModelPricing(models)
 	return models, nil
+}
+
+// A requested model missing from the cache needs an immediate refresh, even
+// within the normal catalog refresh interval. Disabled providers never refresh
+// through inference discovery; catalog management remains available separately.
+func (s *Server) refreshCloudModelsAfterMiss(ctx context.Context) ([]api.ModelInfo, error) {
+	if s == nil || s.cloud == nil || !s.cfg.IsCloudProviderEnabled() {
+		return nil, nil
+	}
+	models, err := s.cloud.RefreshChatModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.applyCloudProviderModelSelections(s.withConfiguredCloudProvider(models)), nil
 }
 
 func (s *Server) refreshCloudChatModels(ctx context.Context) ([]api.ModelInfo, error) {

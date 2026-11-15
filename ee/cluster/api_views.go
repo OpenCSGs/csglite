@@ -42,6 +42,9 @@ type SelfView struct {
 
 // ClusterView is GET /api/cluster.
 type ClusterView struct {
+	Mode               string       `json:"mode,omitempty"`
+	GatewayURL         string       `json:"gateway_url,omitempty"`
+	PublicListenAddr   string       `json:"public_listen_addr,omitempty"`
 	Node               SelfView     `json:"node"`
 	Cluster            *ClusterInfo `json:"cluster"`
 	NodeLimit          int          `json:"node_limit"`
@@ -173,6 +176,7 @@ func (m *Manager) memberViews(ctx context.Context, withStatus bool) []NodeView {
 		if withStatus {
 			v.Status = rt.Status
 		}
+		m.publicGatewayView(&v)
 		views = append(views, v)
 	}
 	sort.SliceStable(views[1:], func(i, j int) bool { return views[i+1].Name+views[i+1].UUID < views[j+1].Name+views[j+1].UUID })
@@ -183,6 +187,9 @@ func (m *Manager) memberViews(ctx context.Context, withStatus bool) []NodeView {
 func (m *Manager) View(ctx context.Context) ClusterView {
 	members := m.memberViews(ctx, true)
 	v := ClusterView{
+		Mode:               m.opts.Mode,
+		GatewayURL:         m.opts.GatewayURL,
+		PublicListenAddr:   m.opts.PublicListenAddr,
 		Node:               m.selfView(),
 		Cluster:            m.store.Cluster(),
 		NodeLimit:          m.NodeLimit(),

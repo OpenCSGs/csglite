@@ -53,6 +53,10 @@ func (s *Server) withProviderRouteSource(next http.HandlerFunc) http.HandlerFunc
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
+		if source == "cloud" && !s.cfg.IsCloudProviderEnabled() {
+			writeError(w, http.StatusForbidden, "cloud provider is disabled")
+			return
+		}
 		if poolID := poolIDFromSource(source); poolID != "" {
 			pool, ok := providerPoolByID(poolID)
 			if !ok {

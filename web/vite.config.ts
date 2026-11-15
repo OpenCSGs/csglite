@@ -38,6 +38,7 @@ export default defineConfig(({ mode, command }) => {
       rollupOptions: {
         input: {
           main: resolve(__dirname, "index.html"),
+          login: resolve(__dirname, "login.html"),
           apiDocs: resolve(__dirname, "api-docs.html"),
         },
       },

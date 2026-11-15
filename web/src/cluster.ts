@@ -1,4 +1,4 @@
-import type { ClusterNodeHealth, ClusterNodeState } from "./api/client";
+import type { ClusterInfo, ClusterNodeHealth, ClusterNodeState } from "./api/client";
 
 /**
  * Pure helpers shared by the Dashboard cluster section and the Cluster page.
@@ -155,4 +155,12 @@ export function fmtSeconds(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
   return `${m}m ${String(s).padStart(2, "0")}s`;
+}
+
+/** Public roles come from the persisted gateway identity, not row order or liveness. */
+export function clusterNodeRole(uuid: string, cluster: ClusterInfo | null): "master" | "slave" | "peer" | "standalone" | "unknown" {
+  if (!cluster) return "standalone";
+  if (cluster.topology !== "public") return "peer";
+  if (!cluster.gateway_uuid) return "unknown";
+  return uuid === cluster.gateway_uuid ? "master" : "slave";
 }

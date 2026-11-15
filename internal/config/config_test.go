@@ -832,3 +832,36 @@ func TestClusterConfigRoundTripAndEnvOverride(t *testing.T) {
 		t.Fatalf("env override %+v", loaded.Cluster)
 	}
 }
+
+func TestPublicClusterConfigRoundTrip(t *testing.T) {
+	dir := setupTestDir(t)
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	want := ClusterConfig{Mode: "worker", GatewayURL: "https://gateway.example.com:8080", TLSCAFile: filepath.Join(dir, "gateway-ca.pem"), PublicListenAddr: "127.0.0.1:11439"}
+	cfg := &Config{ModelDir: filepath.Join(dir, "models"), Cluster: want}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	path, err := ConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded Config
+	if err = json.Unmarshal(raw, &loaded); err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Cluster != want {
+		t.Fatalf("public cluster settings changed on save/load: %+v", loaded.Cluster)
+	}
+	var legacy Config
+	if err = json.Unmarshal([]byte(`{"cluster":{"name":"existing LAN","secret":"existing-secret"}}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Cluster.Mode != "" || legacy.Cluster.Name != "existing LAN" {
+		t.Fatal("legacy cluster no longer defaults to LAN")
+	}
+}

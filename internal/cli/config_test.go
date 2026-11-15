@@ -12,6 +12,57 @@ import (
 	"github.com/opencsgs/csglite/internal/config"
 )
 
+func TestConsoleAuthConfigCommands(t *testing.T) {
+	setupCLIConfigHome(t)
+	t.Setenv(config.EnvConsoleAuthMode, "")
+	if err := runConfigSet(nil, []string{"console_auth_mode", "required"}); err != nil {
+		t.Fatal(err)
+	}
+	config.Reset()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Console.AuthMode != config.ConsoleAuthRequired {
+		t.Fatal("mode not persisted")
+	}
+	if err := runConfigSet(nil, []string{"console_auth_mode", "off"}); err == nil {
+		t.Fatal("invalid policy accepted")
+	}
+	t.Setenv(config.EnvConsoleAuthMode, "auto")
+	output := captureCLIStdout(t, func() {
+		if err := runConfigGet(nil, []string{"console_auth_mode"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.TrimSpace(output) != "auto" {
+		t.Fatal(output)
+	}
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	config.Reset()
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Console.AuthMode != config.ConsoleAuthRequired {
+		t.Fatal("override changed persisted setting")
+	}
+	if err := runConfigUnset(nil, []string{"console_auth_mode"}); err != nil {
+		t.Fatal(err)
+	}
+	config.Reset()
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.EnvConsoleAuthMode, "")
+	if mode, err := cfg.EffectiveConsoleAuthMode(); err != nil || mode != config.ConsoleAuthAuto {
+		t.Fatalf("%q %v", mode, err)
+	}
+}
+
 func TestRunConfigSetStorageDir(t *testing.T) {
 	home := setupCLIConfigHome(t)
 	root := filepath.Join(home, "shared-storage")

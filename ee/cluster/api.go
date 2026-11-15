@@ -312,6 +312,7 @@ func (a *adminAPI) HandleRecommendations(w http.ResponseWriter, r *http.Request)
 // HandleSettingsUpdate is PUT /api/cluster/settings.
 func (a *adminAPI) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		SharedModels     *[]string    `json:"shared_models"`
 		AcceptWork       *bool        `json:"accept_work"`
 		PreferLocal      *bool        `json:"prefer_local"`
 		RoutingMode      *RoutingMode `json:"routing_mode"`
@@ -332,7 +333,30 @@ func (a *adminAPI) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "state must be active, drain or maintenance")
 		return
 	}
+	if req.SharedModels != nil {
+		if len(*req.SharedModels) > 128 {
+			writeError(w, 400, "at most 128 shared models are allowed")
+			return
+		}
+		clean := []string{}
+		seen := map[string]bool{}
+		for _, id := range *req.SharedModels {
+			id = strings.TrimSpace(id)
+			if len(id) > 512 {
+				writeError(w, 400, "model ID is too long")
+				return
+			}
+			if id != "" && !seen[id] {
+				clean = append(clean, id)
+				seen[id] = true
+			}
+		}
+		req.SharedModels = &clean
+	}
 	s, err := a.m.UpdateSettings(func(s *Settings) {
+		if req.SharedModels != nil {
+			s.SharedModels = append([]string{}, (*req.SharedModels)...)
+		}
 		if req.AcceptWork != nil {
 			s.AcceptWork = *req.AcceptWork
 		}
@@ -368,6 +392,10 @@ func (a *adminAPI) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) 
 // the model from its own model source (the on-prem CSGHub in the intended
 // deployment).
 func (a *adminAPI) HandleModelSync(w http.ResponseWriter, r *http.Request) {
+	if a.m.opts.Mode != "" {
+		writeError(w, 409, "public cluster models are prepared locally on each worker; model distribution is not enabled")
+		return
+	}
 	var req struct {
 		Model          string          `json:"model"`
 		Nodes          json.RawMessage `json:"nodes"`

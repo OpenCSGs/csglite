@@ -52,6 +52,10 @@ func newClusterCmd() *cobra.Command {
 		}, "\n"),
 	}
 	cmd.AddCommand(
+		newClusterLoginTokenCmd(),
+		newClusterPublicConfigureCmd(),
+		newClusterShareCmd(false),
+		newClusterShareCmd(true),
 		newClusterStatusCmd(),
 		newClusterCreateCmd(),
 		newClusterJoinCmd(),
@@ -313,17 +317,37 @@ func newClusterCreateCmd() *cobra.Command {
 
 func newClusterJoinCmd() *cobra.Command {
 	var address string
+	var tokenStdin bool
 	cmd := &cobra.Command{
-		Use:   "join <token>",
+		Use:   "join [token]",
 		Short: "Join the cluster named by a join token",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var token string
+			if tokenStdin {
+				if len(args) != 0 {
+					return fmt.Errorf("use a token argument or --token-stdin")
+				}
+				raw, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), 4097))
+				if err != nil {
+					return err
+				}
+				if len(raw) > 4096 {
+					return fmt.Errorf("join token is too long")
+				}
+				token = strings.TrimSpace(string(raw))
+			} else if len(args) == 1 {
+				token = strings.TrimSpace(args[0])
+			}
+			if token == "" {
+				return fmt.Errorf("a join token is required; use --token-stdin to read it safely")
+			}
 			c, err := newClusterClient()
 			if err != nil {
 				return err
 			}
 			var v cluster.ClusterView
-			if err := c.do(http.MethodPost, "/api/cluster/join", map[string]string{"token": strings.TrimSpace(args[0]), "address": address}, &v); err != nil {
+			if err := c.do(http.MethodPost, "/api/cluster/join", map[string]string{"token": token, "address": address}, &v); err != nil {
 				return err
 			}
 			if v.Cluster != nil {
@@ -333,6 +357,7 @@ func newClusterJoinCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&address, "address", "", "cluster endpoint (host or host:port) of a member when it cannot be discovered")
+	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false, "read the join token from standard input")
 	return cmd
 }
 

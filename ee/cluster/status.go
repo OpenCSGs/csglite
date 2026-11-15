@@ -69,6 +69,7 @@ func (m *Manager) NodeLimit() int { return m.opts.Host.NodeLimit() }
 
 func (m *Manager) card() nodeCard {
 	return nodeCard{
+		NodeLimit:   m.NodeLimit(),
 		UUID:        m.identity.UUID,
 		Name:        m.identity.DisplayName(),
 		CertPEM:     m.identity.CertPEM(),

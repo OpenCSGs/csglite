@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	publictunnel "github.com/opencsgs/csglite/ee/cluster/public"
 	"github.com/opencsgs/csglite/internal/inference"
 )
 
@@ -81,10 +82,19 @@ type EngineOptions struct {
 
 // Options configure a Manager.
 type Options struct {
-	Dir        string
-	Host       Host
-	Discoverer Discoverer
-	ListenAddr string
+	// Public roles share membership and scheduling with LAN, but use outbound
+	// tunnels instead of peer listeners. Empty means the existing LAN mode.
+	Mode             string
+	PublicListenAddr string
+	GatewayURL       string
+	TLSCertFile      string
+	TLSKeyFile       string
+	TLSCAFile        string
+	PublicInference  http.Handler
+	Dir              string
+	Host             Host
+	Discoverer       Discoverer
+	ListenAddr       string
 	// Seeds are static cluster endpoints (host:port) to probe when
 	// multicast is unavailable.
 	Seeds []string
@@ -106,14 +116,23 @@ type Options struct {
 
 // Manager runs the cluster on one node.
 type Manager struct {
-	opts     Options
-	logf     func(string, ...any)
-	identity *Identity
-	store    *Store
-	dir      *Directory
-	affinity *Affinity
-	perf     *perfStore
-	peers    *peerClientCache
+	publicConnectionMu sync.Mutex
+	publicConnection   *publicGatewayConnection
+	publicGateway      *publictunnel.Gateway
+	publicHTTP         *http.Server
+	publicClient       *http.Client
+	publicWake         chan struct{}
+	publicProofMu      sync.Mutex
+	publicJoinMu       sync.Mutex
+	publicProofs       map[string]time.Time
+	opts               Options
+	logf               func(string, ...any)
+	identity           *Identity
+	store              *Store
+	dir                *Directory
+	affinity           *Affinity
+	perf               *perfStore
+	peers              *peerClientCache
 
 	mu          sync.RWMutex
 	ctx         context.Context
@@ -159,28 +178,33 @@ func New(opts Options) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	if name := id.DisplayName(); name == genericNodeName || strings.HasPrefix(name, "csglite-node-") {
-		// Several appliances with IP-style host names would otherwise all be
-		// called the same; a short UUID prefix tells them apart without
-		// wrapping in tables. Names from the earlier long scheme are shortened.
-		_ = id.SaveName(defaultShortName(id.UUID))
+	if name := id.DisplayName(); isGeneratedNodeName(name, id.UUID) && name != defaultNodeName() {
+		if err := id.SaveName(defaultNodeName()); err != nil {
+			return nil, fmt.Errorf("cluster: update generated node name: %w", err)
+		}
 	}
+
 	store, err := OpenStore(opts.Dir)
 	if err != nil {
 		return nil, err
 	}
 	m := &Manager{
-		opts:        opts,
-		logf:        logf,
-		identity:    id,
-		store:       store,
-		dir:         NewDirectory(),
-		affinity:    NewAffinity(),
-		perf:        newPerfStore(filepath.Join(opts.Dir, "perf.json")),
-		peers:       newPeerClientCache(id),
-		gossipWake:  make(chan struct{}, 1),
-		discoverer:  opts.Discoverer,
-		observedIPs: map[string]time.Time{},
+		publicWake:   make(chan struct{}, 1),
+		publicProofs: make(map[string]time.Time),
+		opts:         opts,
+		logf:         logf,
+		identity:     id,
+		store:        store,
+		dir:          NewDirectory(),
+		affinity:     NewAffinity(),
+		perf:         newPerfStore(filepath.Join(opts.Dir, "perf.json")),
+		peers:        newPeerClientCache(id),
+		gossipWake:   make(chan struct{}, 1),
+		discoverer:   opts.Discoverer,
+		observedIPs:  map[string]time.Time{},
+	}
+	if err := m.preparePublic(); err != nil {
+		return nil, err
 	}
 	for _, mem := range store.Members() {
 		m.dir.Track(mem.UUID, m.seedAddressesFor(mem))
@@ -203,6 +227,11 @@ func (m *Manager) Directory() *Directory { return m.dir }
 // without the other would leave a client trusting a certificate for a node
 // that is no longer a member.
 func (m *Manager) forgetNode(nodeUUID string) {
+	if m.opts.Mode == "gateway" {
+		if g := m.publicHub(); g != nil {
+			g.Disconnect(nodeUUID)
+		}
+	}
 	m.dir.Forget(nodeUUID)
 	m.peers.forget(nodeUUID)
 }
@@ -237,7 +266,7 @@ func (m *Manager) Start(ctx context.Context) error {
 }
 
 func (m *Manager) shouldActivateAtStart() bool {
-	return m.AutoFormEnabled() || strings.TrimSpace(m.opts.JoinToken) != "" || m.store.InCluster() || m.store.Settings().Enabled
+	return m.opts.Mode != "" || m.AutoFormEnabled() || strings.TrimSpace(m.opts.JoinToken) != "" || m.store.InCluster() || m.store.Settings().Enabled
 }
 
 // Active reports whether the listener and discovery are running.
@@ -251,6 +280,9 @@ func (m *Manager) Active() bool {
 // loops, and remembers the choice so the node comes up active next time.
 // It is idempotent.
 func (m *Manager) Activate() error {
+	if m.opts.Mode != "" {
+		return m.activatePublic()
+	}
 	m.mu.Lock()
 	if m.active {
 		m.mu.Unlock()
@@ -319,6 +351,7 @@ func (m *Manager) deactivate() {
 		return
 	}
 	cancel := m.runCancel
+	publicHTTP, publicGateway := m.publicHTTP, m.publicGateway
 	m.active = false
 	m.listenPort = 0
 	m.peerServer = nil
@@ -326,6 +359,12 @@ func (m *Manager) deactivate() {
 	m.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if publicGateway != nil {
+		_ = publicGateway.Close()
+	}
+	if publicHTTP != nil {
+		_ = publicHTTP.Close()
 	}
 	_ = m.discoverer.Close()
 	m.dir.Reset()

@@ -9,14 +9,12 @@ import { modelHotIcon } from "../utils/modelOptions";
 import { ProviderModelModalityBadges, providerModelLabel, defaultProviderModelDisplayName } from "../components/ProviderModelBadges";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import {
-  clearCloudAPIKey,
   createProvider,
   createProviderPool,
   createLocalAPIKey,
   deleteProvider,
   deleteProviderPool,
   deleteLocalAPIKey,
-  getCloudAuthStatus,
   getSettings,
   getTags,
   getLocalAPIKeys,
@@ -26,14 +24,14 @@ import {
   getProviderSelectedTags,
   getProviders,
   replaceProviderManageTags,
-  saveCloudAPIKey,
+  saveSettings,
   updateProvider,
   updateProviderPool,
   updateProviderManageTag,
   validateProvider,
   updateLocalAPIKeySettings,
 } from "../api/client";
-import type { CloudAuthStatus, LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
+import type { LocalAPIKeysResponse, LocalAPIUsageResponse, LocalAPIUsageTotalSummary, ModelInfo, ProviderHeader, ProviderPool, ProviderPoolMember, ProviderTagModelSelection, ThirdPartyProvider } from "../api/client";
 
 type GatewayTab = "apiKeys" | "providers" | "pools" | "usage";
 type UsagePeriod = "week" | "month" | "year";
@@ -82,13 +80,6 @@ const providerPoolModelSearch = signal("");
 const providerPoolMemberConfigIndex = signal<number | null>(null);
 const providerPoolMemberConfigDraft = signal<ProviderPoolMember | null>(null);
 const gatewayAPIInfoTarget = signal<GatewayAPIInfoTarget | null>(null);
-const cloudAuth = signal<CloudAuthStatus | null>(null);
-const cloudAPIKeyInput = signal("");
-const cloudAPIKeyError = signal("");
-const cloudProviderName = signal("");
-const cloudGatewayURL = signal("");
-const isClearingCloudAPIKey = signal(false);
-const isSavingCloudAPIKey = signal(false);
 const copiedSnippet = signal("");
 const isProviderDialogOpen = signal(false);
 const editingProvider = signal<ThirdPartyProvider | null>(null);
@@ -171,46 +162,12 @@ function notifyProvidersChanged() {
   window.dispatchEvent(new Event(providersChangedEvent));
 }
 
-function openExternal(url?: string) {
-  if (url) {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-}
-
-function fetchCloudAuth() {
-  getCloudAuthStatus()
-    .then((status) => {
-      cloudAuth.value = status;
-      cloudAPIKeyError.value = "";
-    })
-    .catch((err: any) => {
-      cloudAuth.value = null;
-      cloudAPIKeyError.value = err?.message || "";
-    });
-}
-
-function fetchCloudSettings() {
-  getSettings()
-    .then((settings) => {
-      cloudProviderName.value = settings.cloud_provider_name || settings.default_cloud_provider_name || "";
-      cloudGatewayURL.value = settings.ai_gateway_url || settings.default_ai_gateway_url || "";
-			cloudManagedProvider.value = cloudProviderFromSettings(settings);
-    })
-    .catch(() => {
-      cloudProviderName.value = "";
-      cloudGatewayURL.value = "";
-			cloudManagedProvider.value = null;
-    });
-}
-
 async function fetchProviderOptions() {
   providersLoading.value = true;
   providersError.value = "";
   try {
 		const [list, settings, pools, models] = await Promise.all([getProviders(), getSettings(), getProviderPools(), getTags()]);
 		const cloudProvider = cloudProviderFromSettings(settings);
-		cloudProviderName.value = settings.cloud_provider_name || settings.default_cloud_provider_name || "";
-		cloudGatewayURL.value = settings.ai_gateway_url || settings.default_ai_gateway_url || "";
 		cloudManagedProvider.value = cloudProvider;
     providers.value = list;
     providerPools.value = pools;
@@ -239,7 +196,7 @@ function cloudProviderFromSettings(settings: Awaited<ReturnType<typeof getSettin
 		name: settings.cloud_provider_name || settings.default_cloud_provider_name || "csghub",
 		base_url: settings.ai_gateway_url || settings.default_ai_gateway_url || "",
 		provider: "csghub",
-		enabled: true,
+		enabled: settings.cloud_provider_enabled ?? true,
 		builtIn: true,
 		source: "cloud",
 	};
@@ -299,39 +256,6 @@ function isGatewayASRModel(model: ModelInfo): boolean {
   return (model.pipeline_tag || "").toLowerCase() === "automatic-speech-recognition" ||
     Boolean(model.input_modalities?.includes("audio")) ||
     Boolean(model.output_modalities?.includes("transcription"));
-}
-
-async function saveCloudAPIKeyForm() {
-  const apiKey = cloudAPIKeyInput.value.trim();
-  if (!apiKey) {
-    cloudAPIKeyError.value = t("chat.cloudApiKeyEmpty");
-    return;
-  }
-
-  isSavingCloudAPIKey.value = true;
-  cloudAPIKeyError.value = "";
-  try {
-    cloudAuth.value = await saveCloudAPIKey(apiKey);
-    cloudAPIKeyInput.value = "";
-  } catch (err: any) {
-    cloudAPIKeyError.value = err?.message || t("chat.failedResp");
-  } finally {
-    isSavingCloudAPIKey.value = false;
-  }
-}
-
-async function clearCloudAPIKeyForm() {
-  if (isClearingCloudAPIKey.value) return;
-  isClearingCloudAPIKey.value = true;
-  cloudAPIKeyError.value = "";
-  try {
-    cloudAuth.value = await clearCloudAPIKey();
-    cloudAPIKeyInput.value = "";
-  } catch (err: any) {
-    cloudAPIKeyError.value = err?.message || t("chat.failedResp");
-  } finally {
-    isClearingCloudAPIKey.value = false;
-  }
 }
 
 async function toggleLocalAPIAuth(enabled: boolean) {
@@ -699,16 +623,27 @@ function changeProviderModelDisplayName(modelID: string, value: string) {
   };
 }
 
-async function toggleProviderEnabled(provider: ThirdPartyProvider) {
+const providerTogglePending = signal<Record<string, boolean>>({});
+
+async function toggleProviderEnabled(provider: ManagedProvider) {
+  if (providerTogglePending.value[provider.id]) return;
+  providerTogglePending.value = { ...providerTogglePending.value, [provider.id]: true };
   providersError.value = "";
   try {
-    await updateProvider(provider.id, { enabled: !provider.enabled });
-    providers.value = providers.value.map((p) =>
-      p.id === provider.id ? { ...p, enabled: !p.enabled } : p
-    );
+    if (provider.builtIn) {
+      const settings = await saveSettings({ cloud_provider_enabled: !provider.enabled });
+      cloudManagedProvider.value = cloudProviderFromSettings(settings);
+    } else {
+      await updateProvider(provider.id, { enabled: !provider.enabled });
+      providers.value = providers.value.map((p) =>
+        p.id === provider.id ? { ...p, enabled: !p.enabled } : p
+      );
+    }
     notifyProvidersChanged();
   } catch (err: any) {
     providersError.value = err?.message || t("settings.providerSaveFailed");
+  } finally {
+    providerTogglePending.value = { ...providerTogglePending.value, [provider.id]: false };
   }
 }
 
@@ -949,26 +884,6 @@ function copySnippet(value: string) {
   }, 1500);
 }
 
-function hasManualCloudAPIKey(status: CloudAuthStatus | null | undefined): boolean {
-  return status?.api_key_source === "manual";
-}
-
-function cloudAPIKeyStatus(status: CloudAuthStatus | null | undefined): string {
-  if (!status) return "...";
-  const suffix = status.api_key_prefix ? ` (${status.api_key_prefix})` : "";
-  if (status.api_key_source === "manual") {
-    return t("settings.cloudAPIKeyManualStatus", suffix);
-  }
-  if (status.api_key_source === "builtin") {
-    return t("settings.cloudAPIKeyBuiltinStatus", suffix);
-  }
-  return t("settings.cloudAPIKeyMissingStatus");
-}
-
-function configuredCloudProviderName(): string {
-  return cloudProviderName.value || t("chat.cloud");
-}
-
 export function AIGateway() {
   void locale.value;
   const runtimeAPIOrigin = useRuntimeAPIOrigin();
@@ -976,8 +891,6 @@ export function AIGateway() {
   useEffect(() => {
     void fetchLocalAPIKeys();
     void fetchLocalAPIUsage();
-    fetchCloudAuth();
-    fetchCloudSettings();
     void fetchProviderOptions();
   }, []);
 
@@ -1001,7 +914,7 @@ export function AIGateway() {
         <GatewayTabButton tab="usage" label={t("settings.tabUsage")} />
       </div>
 
-      {activeGatewayTab.value === "apiKeys" && <APIKeysSection />}
+      {activeGatewayTab.value === "apiKeys" && <LocalAPIKeysSection />}
       {activeGatewayTab.value === "providers" && <ProvidersSection />}
       {activeGatewayTab.value === "pools" && <ProviderPoolsSection />}
       {activeGatewayTab.value === "usage" && <UsageStatisticsSection />}
@@ -1169,89 +1082,6 @@ function ProtocolTabButton({ tab, label }: { tab: ProtocolTab; label: string }) 
     >
       {label}
     </button>
-  );
-}
-
-function APIKeysSection() {
-  return (
-    <div class="space-y-6">
-      <LocalAPIKeysSection />
-      <CloudAPIKeySection />
-    </div>
-  );
-}
-
-function CloudAPIKeySection() {
-  return (
-    <section class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-      <div class="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-        <div class="max-w-2xl">
-          <div class="inline-flex rounded-full bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700">
-            {t("gateway.cloudKeyBadge", configuredCloudProviderName())}
-          </div>
-          <h2 class="mt-3 text-base font-semibold text-gray-900">{t("settings.cloudAPIKey", configuredCloudProviderName())}</h2>
-          <p class="mt-1 text-sm leading-6 text-gray-500">{t("settings.cloudAPIKeyDesc", configuredCloudProviderName())}</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => openExternal("https://opencsg.com/settings/api-keys")}
-          class="rounded-xl border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
-        >
-          {t("settings.openAPIKeyPage")}
-        </button>
-      </div>
-      <div class="mt-5 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
-        <div class="rounded-xl border border-gray-100 bg-gray-50 p-4">
-          <p class="text-xs font-medium uppercase tracking-wide text-gray-400">{t("chat.cloudGatewayLabel")}</p>
-          <p class="mt-1 text-sm font-semibold text-gray-900">{cloudGatewayURL.value || t("chat.cloudGatewayValue")}</p>
-          <div class="mt-4 rounded-lg bg-white px-3 py-2">
-            <p class="text-xs font-medium text-gray-400">{t("gateway.authStatus")}</p>
-            <p class="mt-1 text-sm font-semibold text-gray-900">{cloudAPIKeyStatus(cloudAuth.value)}</p>
-          </div>
-          {hasManualCloudAPIKey(cloudAuth.value) && (
-            <button
-              type="button"
-              onClick={() => void clearCloudAPIKeyForm()}
-              disabled={isClearingCloudAPIKey.value}
-              class="mt-4 rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isClearingCloudAPIKey.value ? t("settings.clearingAPIKey") : t("settings.clearAPIKey")}
-            </button>
-          )}
-        </div>
-        <div class="rounded-xl border border-gray-100 p-4">
-          <label class="mb-2 block text-sm font-medium text-gray-700">{t("chat.cloudApiKeyLabel")}</label>
-          <p class="mb-3 text-sm text-gray-500">{t("settings.cloudAPIKeyInputHint")}</p>
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div class="flex-1">
-              <input
-                type="password"
-                autoComplete="off"
-                spellcheck={false}
-                class="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder={t("chat.cloudApiKeyPlaceholder")}
-                value={cloudAPIKeyInput.value}
-                onInput={(e) => (cloudAPIKeyInput.value = (e.target as HTMLInputElement).value)}
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => void saveCloudAPIKeyForm()}
-              disabled={isSavingCloudAPIKey.value}
-              class="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isSavingCloudAPIKey.value ? t("chat.cloudApiKeySaving") : t("chat.cloudApiKeySave")}
-            </button>
-          </div>
-          {cloudAuth.value?.api_key_error && (
-            <p class="mt-3 text-sm text-amber-700">{cloudAuth.value.api_key_error}</p>
-          )}
-          {cloudAPIKeyError.value && (
-            <p class="mt-3 text-sm text-red-600">{cloudAPIKeyError.value}</p>
-          )}
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -1560,17 +1390,17 @@ function ProvidersSection() {
                     <p class="mt-1 truncate text-xs text-gray-500">{provider.base_url}</p>
                     <p class="mt-1 text-[11px] uppercase tracking-wide text-gray-400">{provider.provider || "openai"}</p>
                   </div>
-								{!provider.builtIn && (
 									<label class="relative inline-flex shrink-0 cursor-pointer items-center">
 										<input
 											type="checkbox"
 											checked={provider.enabled}
+                      disabled={providerTogglePending.value[provider.id]}
+                      aria-label={t("settings.providerToggle", provider.name)}
 											onChange={() => void toggleProviderEnabled(provider)}
 											class="peer sr-only"
 										/>
 										<div class="h-5 w-9 rounded-full bg-gray-200 transition-all after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-300" />
 									</label>
-								)}
                 </div>
                 <div class="mt-4 rounded-xl bg-white p-3">
                   <div class="mb-2 flex items-center justify-between gap-2">

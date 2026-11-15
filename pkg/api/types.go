@@ -555,6 +555,7 @@ type SettingsResponse struct {
 	DatasetDir               string                `json:"dataset_dir"`
 	ServerURL                string                `json:"server_url"`
 	AIGatewayURL             string                `json:"ai_gateway_url"`
+	CloudProviderEnabled     bool                  `json:"cloud_provider_enabled"`
 	CloudProviderName        string                `json:"cloud_provider_name"`
 	DefaultCloudProviderName string                `json:"default_cloud_provider_name"`
 	DefaultServerURL         string                `json:"default_server_url"`
@@ -684,6 +685,7 @@ type SettingsUpdateRequest struct {
 	DatasetDir               string                 `json:"dataset_dir,omitempty"`
 	ServerURL                *string                `json:"server_url,omitempty"`
 	AIGatewayURL             *string                `json:"ai_gateway_url,omitempty"`
+	CloudProviderEnabled     *bool                  `json:"cloud_provider_enabled,omitempty"`
 	CloudProviderName        *string                `json:"cloud_provider_name,omitempty"`
 	HuggingFaceEndpoint      *string                `json:"huggingface_endpoint,omitempty"`
 	HuggingFaceToken         *string                `json:"huggingface_token,omitempty"`

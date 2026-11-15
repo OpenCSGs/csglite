@@ -18,6 +18,7 @@ type configKeySpec struct {
 }
 
 var configKeySpecs = []configKeySpec{
+	{name: "console_auth_mode", description: "Console login policy: auto (local/LAN exempt) or required; restart to apply"},
 	{
 		name:        "server_url",
 		description: "CSGHub server URL for model marketplace (default: " + config.DefaultServerURL + ")",
@@ -191,6 +192,12 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if err := ensureDir(cfg.DatasetDir); err != nil {
 			return fmt.Errorf("creating dataset directory: %w", err)
 		}
+	case "console_auth_mode":
+		mode, err := config.ParseConsoleAuthMode(value)
+		if err != nil {
+			return err
+		}
+		cfg.Console.AuthMode = mode
 	case "listen_addr":
 		cfg.ListenAddr = strings.TrimSpace(value)
 	case "token":
@@ -218,8 +225,8 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Set %s = %s\n", key, displayConfigValue(cfg, key))
-	if key == "cluster_secret" || key == "cluster_name" {
-		fmt.Println("Restart the server for the cluster settings to take effect: csghub-lite restart")
+	if key == "cluster_secret" || key == "cluster_name" || key == "console_auth_mode" {
+		fmt.Println("Restart the server for the settings to take effect: csghub-lite restart")
 	}
 	return nil
 }
@@ -245,12 +252,14 @@ func runConfigUnset(cmd *cobra.Command, args []string) error {
 			cfg.OpenCSGAPIKey = ""
 		}
 		cfg.AIGatewayURL = ""
+	case "console_auth_mode":
+		cfg.Console.AuthMode = ""
 	case "cluster_secret":
 		cfg.Cluster.Secret = ""
 	case "cluster_name":
 		cfg.Cluster.Name = ""
 	default:
-		return fmt.Errorf("config key %q cannot be unset (valid: server_url, ai_gateway_url, cluster_secret, cluster_name)", key)
+		return fmt.Errorf("config key %q cannot be unset (valid: server_url, ai_gateway_url, cluster_secret, cluster_name, console_auth_mode)", key)
 	}
 
 	if err := config.Save(cfg); err != nil {
@@ -282,6 +291,12 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 		fmt.Println(cfg.ModelDir)
 	case "dataset_dir":
 		fmt.Println(cfg.DatasetDir)
+	case "console_auth_mode":
+		mode, err := cfg.EffectiveConsoleAuthMode()
+		if err != nil {
+			return err
+		}
+		fmt.Println(mode)
 	case "listen_addr":
 		fmt.Println(cfg.ListenAddr)
 	case "token":
@@ -302,6 +317,11 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	mode, err := cfg.EffectiveConsoleAuthMode()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("console_auth_mode: %s\n", mode)
 	fmt.Printf("server_url:      %s\n", cfg.ServerURL)
 	fmt.Printf("ai_gateway_url:  %s\n", effectiveAIGatewayURL(cfg))
 	fmt.Printf("storage_dir:     %s\n", cfg.StorageDir())
@@ -364,6 +384,12 @@ func effectiveAIGatewayURL(cfg *config.Config) string {
 
 func displayConfigValue(cfg *config.Config, key string) string {
 	switch key {
+	case "console_auth_mode":
+		mode, err := config.ParseConsoleAuthMode(cfg.Console.AuthMode)
+		if err != nil {
+			return cfg.Console.AuthMode
+		}
+		return mode
 	case "storage_dir":
 		return cfg.StorageDir()
 	case "model_dir":

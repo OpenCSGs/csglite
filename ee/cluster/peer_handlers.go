@@ -158,6 +158,10 @@ func (a *peerAPI) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusUnauthorized, "join token is not valid for this cluster", "bad_token")
 		return
 	}
+	if a.m.opts.Mode == "gateway" {
+		a.m.publicJoinMu.Lock()
+		defer a.m.publicJoinMu.Unlock()
+	}
 	if _, already := a.m.store.Member(mem.UUID); !already {
 		if !a.m.withinNodeLimit(len(a.m.store.Members()) + 2) {
 			writeJSON(w, http.StatusForbidden, errorResponse{
@@ -166,6 +170,23 @@ func (a *peerAPI) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
 				Limit: a.m.NodeLimit(), Current: len(a.m.store.Members()) + 1,
 			})
 			return
+		}
+		if a.m.opts.Mode == "gateway" && req.Node.NodeLimit > 0 && len(a.m.store.Members())+2 > req.Node.NodeLimit {
+			writeJSON(w, 403, errorResponse{Error: "joining node license cannot cover the cluster size", Code: "feature_not_licensed", Limit: req.Node.NodeLimit, Current: len(a.m.store.Members()) + 1})
+			return
+		}
+		if a.m.opts.Mode == "gateway" {
+			for _, existing := range a.m.store.Members() {
+				st, _, err := a.m.publicStatus(existing.UUID)
+				if err != nil {
+					writeError(w, 409, "bring existing workers online before expanding the public cluster")
+					return
+				}
+				if st.NodeLimit > 0 && len(a.m.store.Members())+2 > st.NodeLimit {
+					writeJSON(w, 403, errorResponse{Error: "an existing worker license cannot cover the expanded cluster", Code: "feature_not_licensed", Limit: st.NodeLimit, Current: len(a.m.store.Members()) + 1})
+					return
+				}
+			}
 		}
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
@@ -182,7 +203,11 @@ func (a *peerAPI) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
 	a.m.dir.DropDiscovered(mem.UUID)
 	a.m.wakeGossip()
 	a.m.logf("cluster: node %s (%s) joined via this node", shortUUID(mem.UUID), mem.Name)
-	writeJSON(w, http.StatusOK, joinResponse{clusterView: a.m.view(), Responder: a.m.card()})
+	reply := joinResponse{clusterView: a.m.view(), Responder: a.m.card()}
+	if a.m.opts.Mode == "gateway" {
+		reply.JoinTokenHash = ""
+	}
+	writeJSON(w, http.StatusOK, reply)
 }
 
 // POST /cluster/v1/invite

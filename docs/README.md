@@ -44,11 +44,15 @@ CSGLite 是一个轻量级的本地大语言模型运行工具，基于 [CSGHub]
 - [模型格式](guides/model-formats.md) — GGUF / SafeTensors 格式说明与转换
 - [打包与发布](guides/packaging.md) — GoReleaser、Homebrew（主要面向 macOS）、安装脚本
 - [架构设计](guides/architecture.md) — 项目结构与模块设计
-- [Access Control Roadmap](guides/access-control-roadmap.md) — 参考 LiteLLM 的用户、团队、资源授权及预算管理，梳理现有缺口、分期计划和验收标准
+- [Access Control Roadmap](guides/access-control-roadmap.md) — 用户、团队、OIDC 登录、资源授权及预算管理的分期计划和验收标准
 - [决策 API](guides/typed-decisions.md) — 兼容 OpenAI Decisions API 的 `/v1/decisions`：predicate / choice / score 问题返回校准概率，由带 `jev` / `typed-decisions` 标签的模型（如 JEV-9B）在本地提供
 - [实时语音 API 设计](guides/realtime-audio-api.md) — 语音合成（已支持的后端与选型判据）、以及 ASR + TTS 全双工、兼容 OpenAI Realtime 的接口设计与分期计划
 - [企业版 License 功能门控设计](guides/ee-license-design.md) — 同一仓库、单一二进制，用签名 License 区分 CE / EE 功能：功能注册表、License 格式、后端与前端门控、目录与许可证约定
 - [推理引擎可选安装与可插拔设计](guides/inference-engine-install-design.md) — 安装时可选 llama.cpp 或不装推理引擎，`csghub-lite engine` 子命令、`/api/engines`、安装清单，以及后续接入 vLLM / MLX 等引擎的约定与分期计划
 - [局域网算力集群设计（EE）](guides/lan-cluster-design.md) — 多台算力盒子安装时指定共享密钥即自动组网（也支持令牌 / 准入码配对）、mTLS 节点间转发，按模型、负载、磁盘与实测吞吐调度请求；会话亲和与故障切换；节点身份与 IP 分离，重启换 IP 自动恢复；以私有化 CSGHub 为内网模型源；CE 2 节点、EE 配额；NVIDIA PAIR 等方案调研与分期计划
-- [公网算力集群需求与方案设计](guides/public-cluster-requirements.md) — 评审草案：Lite 公网网关、跨网络节点主动出站隧道、准入审批、统一推理入口、故障语义与验收；参考 starhub-server 已有边缘算力隧道
-- [企业算力协同三种部署模式](guides/ee-compute-modes-overview.md) — 面向市场宣传：公网入口、内网协同、CSGHub 算力共享的模式说明、架构图、功能点与适用场景
+- [公网算力集群使用指南](guides/public-cluster-requirements.md) — 网关与工作节点部署、出站隧道、共享模型和管理 Token 登录；隧道基础见 [实现说明](../ee/cluster/public/README.md)
+
+### 方案与宣传材料归档
+
+- [公网算力集群初期设计草案](guides/public-cluster-design-draft.md) — 保留实现前的需求、拟议契约与验收目标；当前功能以[公网集群使用指南](guides/public-cluster-requirements.md)为准
+- [企业算力协同三种部署模式](guides/ee-compute-modes-overview.md)（[HTML](guides/ee-compute-modes-overview.html)、[PDF](guides/ee-compute-modes-overview.pdf)）— 2026-11-13 宣传材料快照，包含公网入口、内网协同和 CSGHub 算力共享架构图；公网能力的规划状态早于当前实现，使用时参照最新指南

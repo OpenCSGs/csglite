@@ -234,6 +234,7 @@ func (s *Status) VRAMTotal() uint64 {
 
 // nodeCard is how a node introduces itself in handshakes and gossip.
 type nodeCard struct {
+	NodeLimit   int      `json:"node_limit,omitempty"`
 	UUID        string   `json:"uuid"`
 	Name        string   `json:"name"`
 	CertPEM     string   `json:"cert_pem,omitempty"`

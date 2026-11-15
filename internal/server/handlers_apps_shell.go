@@ -824,7 +824,7 @@ func refreshRequestedCloudModel(ctx context.Context, s *Server, requestedModel s
 	if s == nil || s.cloud == nil {
 		return false
 	}
-	cloudModels, err := s.cloud.RefreshChatModels(ctx)
+	cloudModels, err := s.refreshCloudModelsAfterMiss(ctx)
 	if err != nil {
 		return false
 	}

@@ -208,6 +208,10 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		s.cfg.AIGatewayURL = aiGatewayURL
 		configUpdated = true
 	}
+	if req.CloudProviderEnabled != nil {
+		s.cfg.CloudProviderEnabled = req.CloudProviderEnabled
+		configUpdated = true
+	}
 	if req.CloudProviderName != nil {
 		s.cfg.CloudProviderName = config.NormalizeCloudProviderName(*req.CloudProviderName)
 		configUpdated = true
@@ -338,6 +342,7 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		DatasetDir:               cfg.DatasetDir,
 		ServerURL:                strings.TrimSpace(cfg.ServerURL),
 		AIGatewayURL:             resolveCloudURL(cfg),
+		CloudProviderEnabled:     cfg.IsCloudProviderEnabled(),
 		CloudProviderName:        config.NormalizeCloudProviderName(cfg.CloudProviderName),
 		DefaultCloudProviderName: config.DefaultCloudProviderName,
 		DefaultServerURL:         config.DefaultServerURL,

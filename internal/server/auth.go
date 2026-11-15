@@ -91,6 +91,10 @@ func isAllowedDesktopOrigin(r *http.Request) bool {
 
 func (s *Server) apiAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if authenticated, _ := r.Context().Value(publicAdminContextKey{}).(bool); authenticated {
+			next.ServeHTTP(w, s.requestWithIdentifiedAPIKey(r))
+			return
+		}
 		if s.apiKeys == nil {
 			next.ServeHTTP(w, r)
 			return

@@ -1,5 +1,5 @@
 import { signal } from "@preact/signals";
-import { getCloudAuthStatus, saveSettings } from "./api/client";
+import { clearCloudAPIKey, getCloudAuthStatus, saveCloudAPIKey, saveSettings } from "./api/client";
 import type { AppSettings, CloudAuthStatus } from "./api/client";
 import { COMMUNITY_SITES, matchCommunitySite } from "./data/communitySites";
 import { t } from "./i18n";
@@ -10,6 +10,22 @@ export const cloudAuth = signal<CloudAuthStatus | null>(null);
 export const cloudAuthError = signal("");
 export const communitySettings = signal<AppSettings | null>(null);
 export const savingCommunity = signal(false);
+
+export function hasCloudConnection(status: CloudAuthStatus | null): boolean {
+  return !!(status?.has_token || status?.has_api_key);
+}
+
+export async function updateManualCloudAPIKey(apiKey: string | null): Promise<void> {
+  await waitForCommunitySelection();
+  const status = apiKey === null ? await clearCloudAPIKey() : await saveCloudAPIKey(apiKey);
+  setCloudAuth(status);
+  window.dispatchEvent(new Event("csghub:providers-changed"));
+}
+
+// Pages open the same connection dialog hosted by the application sidebar.
+export function openCloudConnection() {
+  window.dispatchEvent(new Event("csghub:connect"));
+}
 let revision = 0;
 let pending: Promise<CloudAuthStatus | null> | null = null;
 const authRefreshInterval = 30_000;
@@ -38,7 +54,7 @@ export function saveCommunitySelection(
         return settings;
       const auth = await refreshCloudAuth({ force: true });
       if (!auth) throw new Error(t("account.loadFailed"));
-      if (auth.has_token) throw new Error(t("settings.siteSwitchSignedIn"));
+      if (hasCloudConnection(auth)) throw new Error(t("settings.siteSwitchSignedIn"));
       const saved = await saveSettings({
         server_url: serverURL,
         ai_gateway_url: gatewayURL,

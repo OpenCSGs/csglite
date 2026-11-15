@@ -291,7 +291,7 @@ func (s *Server) getChatEngine(ctx context.Context, modelID, source string, numC
 	if s.cloud == nil {
 		return nil, err
 	}
-	models, cloudErr = s.cloud.RefreshChatModels(ctx)
+	models, cloudErr = s.refreshCloudModelsAfterMiss(ctx)
 	if cloudErr != nil {
 		if providerSource := s.thirdPartyProviderSourceForModel(ctx, modelID); providerSource != "" {
 			return newThirdPartyProviderEngine(providerSource, modelID)
@@ -393,10 +393,13 @@ func (s *Server) hasCloudCredential() bool {
 	if s == nil || s.cfg == nil {
 		return false
 	}
-	return strings.TrimSpace(s.cfg.OpenCSGAPIKey) != "" || strings.TrimSpace(s.cfg.Token) != ""
+	return s.cfg.IsCloudProviderEnabled() && (strings.TrimSpace(s.cfg.OpenCSGAPIKey) != "" || strings.TrimSpace(s.cfg.Token) != "")
 }
 
 func (s *Server) cloudAPIKey(ctx context.Context) (string, error) {
+	if s != nil && !s.cfg.IsCloudProviderEnabled() {
+		return "", inference.NewHTTPStatusError(http.StatusForbidden, "cloud provider is disabled")
+	}
 	if s == nil || s.cfg == nil {
 		return "", inference.NewHTTPStatusError(http.StatusUnauthorized, "Cloud login required. Please sign in to OpenCSG or save an API Key.")
 	}
@@ -479,7 +482,7 @@ func (s *Server) cloudModelListContainsMatching(ctx context.Context, modelID str
 	if s == nil || s.cloud == nil {
 		return false
 	}
-	models, err = s.cloud.RefreshChatModels(ctx)
+	models, err = s.refreshCloudModelsAfterMiss(ctx)
 	return err == nil && contains(models)
 }
 

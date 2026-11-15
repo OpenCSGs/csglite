@@ -1,5 +1,6 @@
 import { stripReasoningText } from "../reasoning";
 import { locale } from "../i18n";
+import { publicSessionHeaders } from "../utils/consoleAuth";
 
 export interface ModelInfo {
   name: string;
@@ -338,6 +339,7 @@ export interface AppSettings {
   dataset_dir: string;
   server_url: string;
   ai_gateway_url: string;
+  cloud_provider_enabled?: boolean;
   cloud_provider_name: string;
   default_server_url: string;
   default_ai_gateway_url: string;
@@ -1438,7 +1440,9 @@ function uploadLocalModelChunk(
     params.set("path", path);
     params.set("filename", item.file.name);
     const xhr = new XMLHttpRequest();
-    xhr.open("PUT", `/api/models/upload/${encodeURIComponent(uploadID)}/file?${params.toString()}`);
+    const url = `/api/models/upload/${encodeURIComponent(uploadID)}/file?${params.toString()}`;
+    xhr.open("PUT", url);
+    publicSessionHeaders(url, "PUT").forEach((value, name) => xhr.setRequestHeader(name, value));
     if (total > 0) {
       xhr.setRequestHeader("Content-Range", `bytes ${offset}-${offset + chunk.size - 1}/${total}`);
     }
@@ -1835,6 +1839,7 @@ export async function saveSettings(patch: {
   dataset_dir?: string;
   server_url?: string;
   ai_gateway_url?: string;
+  cloud_provider_enabled?: boolean;
   cloud_provider_name?: string;
   huggingface_endpoint?: string;
   huggingface_token?: string;
@@ -3186,6 +3191,7 @@ export interface ClusterSummary {
 }
 
 export interface ClusterSettings {
+	shared_models?: string[];
   accept_work: boolean;
   state: ClusterNodeState;
   weight: number;
@@ -3276,12 +3282,17 @@ export interface ClusterNodeView {
 }
 
 export interface ClusterInfo {
+	topology?: "public";
+	gateway_uuid?: string;
   uuid: string;
   name: string;
   created_at: string;
 }
 
 export interface ClusterView {
+	mode?: "gateway" | "worker" | "lan";
+	gateway_url?: string;
+	public_listen_addr?: string;
   node: { uuid: string; name: string; version: string; cluster_port: number; api_port: number };
   cluster: ClusterInfo | null;
   node_limit: number;
@@ -3392,6 +3403,7 @@ export interface ClusterRecommendation {
 }
 
 export interface ClusterSettingsUpdate {
+	shared_models?: string[];
   accept_work?: boolean;
   prefer_local?: boolean;
   routing_mode?: ClusterRoutingMode;
