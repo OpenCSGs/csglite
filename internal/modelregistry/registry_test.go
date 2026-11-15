@@ -55,14 +55,6 @@ func TestRegistryUsesChinaHuggingFaceMirrorForDomesticRegion(t *testing.T) {
 	}
 }
 
-func TestOpenCSGRegistryRejectsCustomRevisionBeforeNetworkCall(t *testing.T) {
-	registry := NewOpenCSG("", "")
-	if _, err := registry.GetModel(context.Background(), "acme/demo", "main"); err == nil ||
-		!strings.Contains(err.Error(), "custom revisions are not supported") {
-		t.Fatalf("GetModel() error = %v", err)
-	}
-}
-
 func TestRegistryHTTPClientSetsUserAgentAndExplainsAuthentication(t *testing.T) {
 	var userAgent string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

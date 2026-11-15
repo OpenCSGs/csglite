@@ -94,6 +94,10 @@ flowchart LR
 
 ## 配置和存储
 
+OpenCSG 部署使用仓库实际默认分支（通常为 `main`），不支持自定义分支、标签或提交。
+部署请求中的默认分支名称会与仓库元数据核对后，使用 OpenCSG 的默认分支接口下载；
+Hugging Face 和 ModelScope 仍支持显式指定版本。已有失败部署可在执行节点更新后重试。
+
 公网控制关系复用 `cluster/cluster.json` 中的 `cluster.gateway_uuid`，不增加第二份可写授权。
 API 和心跳中的 `managed_by` 返回派生的 Master UUID；旧版公网 `settings.managed_by` 在加载时迁移移除。
 旧客户端提交空值或当前 Master 不改变控制关系，提交其他 UUID 返回 400。

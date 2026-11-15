@@ -21255,7 +21255,7 @@
           "revision": {
             "type": "string",
             "default": "main",
-            "description": "Explicit revision requested from the worker registry; immutable after creation. Prefer a commit for reproducible deployment."
+            "description": "Explicit revision requested from the worker registry; immutable after creation. OpenCSG accepts only the repository's actual default branch (usually main); custom branches, tags and commits are unsupported. Hugging Face and ModelScope accept custom revisions; prefer a commit for reproducible deployment."
           },
           "quant": {
             "type": "string",
