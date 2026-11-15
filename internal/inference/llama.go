@@ -391,6 +391,43 @@ func ResolveEmbeddingPooling(modelName string) string {
 	if v := strings.TrimSpace(os.Getenv("CSGHUB_LITE_LLAMA_EMBEDDING_POOLING")); v != "" {
 		return v
 	}
+	if pooling := embeddingPoolingForModelName(modelName); pooling != "" {
+		return pooling
+	}
+	return "mean"
+}
+
+// Deployment aliases identify runtimes, not model families. Read the artifact
+// metadata first so an alias cannot change how embeddings are pooled.
+func resolveEmbeddingPoolingForModel(modelPath, modelName string) string {
+	if v := strings.TrimSpace(os.Getenv("CSGHUB_LITE_LLAMA_EMBEDDING_POOLING")); v != "" {
+		return v
+	}
+	if metadata, err := ggufmeta.ReadFile(modelPath); err == nil {
+		if architecture, ok := metadata.String("general.architecture"); ok {
+			if pooling, ok := metadata.PositiveInt(architecture + ".pooling_type"); ok {
+				switch pooling {
+				case 1:
+					return "mean"
+				case 2:
+					return "cls"
+				case 3:
+					return "last"
+				case 4:
+					return "rank"
+				}
+			}
+		}
+	}
+	for _, name := range []string{filepath.Base(filepath.Dir(modelPath)), filepath.Base(modelPath), modelName} {
+		if pooling := embeddingPoolingForModelName(name); pooling != "" {
+			return pooling
+		}
+	}
+	return "mean"
+}
+
+func embeddingPoolingForModelName(modelName string) string {
 	normalized := normalizeEmbeddingModelName(modelName)
 
 	switch {
@@ -407,7 +444,7 @@ func ResolveEmbeddingPooling(modelName string) string {
 		strings.Contains(normalized, "jinaembeddingsv2"):
 		return "mean"
 	default:
-		return "mean"
+		return ""
 	}
 }
 
@@ -595,7 +632,7 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 	}
 	if embedding {
 		args = append(args, "--embedding")
-		if pooling := ResolveEmbeddingPooling(modelName); pooling != "" {
+		if pooling := resolveEmbeddingPoolingForModel(modelPath, modelName); pooling != "" {
 			args = append(args, "--pooling", pooling)
 		}
 	}
