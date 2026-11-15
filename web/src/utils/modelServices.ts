@@ -11,4 +11,3 @@ export function candidateCategory(model: ModelInfo): string {
   if (model.pipeline_tag && !["text-generation", "image-text-to-text", "text2text-generation"].includes(model.pipeline_tag)) return "unsupported";
   return "chat";
 }
-
