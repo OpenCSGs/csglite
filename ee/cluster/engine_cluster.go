@@ -97,7 +97,7 @@ func (e *clusterEngine) rank(promptTokens, maxTokens int) ([]Ranked, Explain) {
 func (e *clusterEngine) dispatch(ctx context.Context, promptTokens, maxTokens int, attempt func(target Ranked) (*http.Response, error)) (*http.Response, error) {
 	ranked, ex := e.rank(promptTokens, maxTokens)
 	if len(ranked) == 0 {
-		return nil, inference.NewHTTPStatusError(http.StatusServiceUnavailable, (&ErrNoNode{Model: e.model, Ex: ex}).Error())
+		return nil, inference.NewHTTPStatusErrorWithCause(http.StatusServiceUnavailable, &ErrNoNode{Model: e.model, Ex: ex})
 	}
 	var tried []string
 	var lastErr error
@@ -170,7 +170,7 @@ func (e *clusterEngine) dispatch(ctx context.Context, promptTokens, maxTokens in
 			status = re.status
 		}
 	}
-	return nil, inference.NewHTTPStatusError(status, err.Error())
+	return nil, inference.NewHTTPStatusErrorWithCause(status, err)
 }
 
 func (e *clusterEngine) hopEngine(ctx context.Context, target Ranked) (inference.Engine, error) {

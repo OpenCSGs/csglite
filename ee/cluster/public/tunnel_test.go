@@ -437,3 +437,23 @@ func TestSharingUpdatesAreAcknowledgedBeforeNextHeartbeat(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerSharingDenialIsStructuredPermissionError(t *testing.T) {
+	w := &Worker{opts: WorkerOptions{AllowModel: func(string) bool { return false }, Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("unshared inference reached local engine") })}}
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"private"}`))
+	rw := httptest.NewRecorder()
+	w.handler().ServeHTTP(rw, r)
+	var body struct {
+		Code  string `json:"code"`
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rw.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if rw.Code != 403 || body.Code != "cluster_model_not_shared" || body.Error.Type != "permission_error" || body.Error.Message != "model is not shared by this node" {
+		t.Fatalf("denial=%d %s", rw.Code, rw.Body.String())
+	}
+}

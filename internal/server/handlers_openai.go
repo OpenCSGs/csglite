@@ -584,27 +584,33 @@ func writeOpenAIInferenceError(w http.ResponseWriter, err error) {
 	switch status {
 	case http.StatusBadRequest:
 		errType = "invalid_request_error"
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized:
 		errType = "authentication_error"
+	case http.StatusForbidden:
+		errType = "permission_error"
 	case http.StatusNotFound:
 		errType = "model_not_found"
 	case http.StatusTooManyRequests:
 		errType = "rate_limit_error"
 	}
 
-	writeOpenAIError(w, status, errType, inference.HTTPErrorMessage(err))
+	payload := openAIErrorPayload(status, errType, inference.HTTPErrorMessage(err))
+	addClusterInferenceErrorDetails(payload, err)
+	writeJSON(w, status, payload)
 }
 
 func writeOpenAIError(w http.ResponseWriter, status int, errType, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, status, openAIErrorPayload(status, errType, msg))
+}
+
+func openAIErrorPayload(status int, errType, msg string) map[string]any {
+	return map[string]any{
 		"errorCode": status,
 		"error": map[string]interface{}{
 			"message": msg,
 			"type":    errType,
 		},
-	})
+	}
 }
 
 func openAIInferenceStatus(err error) int {

@@ -17929,6 +17929,10 @@
           },
           "type": {
             "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "description": "Optional cluster failure code, also repeated at the envelope root for local API compatibility."
           }
         }
       },
@@ -17947,6 +17951,17 @@
           },
           "error": {
             "$ref": "#/components/schemas/OpenAIError"
+          },
+          "code": {
+            "type": "string",
+            "description": "Optional machine-readable cluster failure code, such as cluster_no_available_node or cluster_model_not_shared."
+          },
+          "tried": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Cluster node UUIDs attempted before a routing failure; empty when no candidate was available."
           }
         }
       },
@@ -19765,6 +19780,10 @@
           },
           "message": {
             "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "description": "Optional cluster failure code, also repeated at the envelope root for local API compatibility."
           }
         }
       },
@@ -19790,6 +19809,17 @@
           },
           "error": {
             "$ref": "#/components/schemas/AnthropicErrorObject"
+          },
+          "code": {
+            "type": "string",
+            "description": "Optional machine-readable cluster failure code, such as cluster_no_available_node or cluster_model_not_shared."
+          },
+          "tried": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Cluster node UUIDs attempted before a routing failure; empty when no candidate was available."
           }
         }
       },

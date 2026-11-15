@@ -250,7 +250,18 @@ func (w *Worker) handler() http.Handler {
 			if errors.As(err, &re) {
 				status = re.status
 			}
-			http.Error(rw, err.Error(), status)
+			errType := "invalid_request_error"
+			code := ""
+			if status == http.StatusForbidden {
+				errType, code = "permission_error", "cluster_model_not_shared"
+			}
+			payload := map[string]any{"errorCode": status, "error": map[string]any{"message": strings.TrimSpace(err.Error()), "type": errType}}
+			if code != "" {
+				payload["code"] = code
+			}
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(status)
+			_ = json.NewEncoder(rw).Encode(payload)
 			return
 		}
 		defer out.Body.Close()
