@@ -3777,13 +3777,16 @@ export interface ClusterDeployment extends ClusterDeploymentSpec {
   status: { phase: string; error?: string; detail?: string; completed_bytes?: number; total_bytes?: number; size?: number; updated_at: string };
 }
 export function getClusterDeployments(): Promise<{ deployments: ClusterDeployment[]; assignments: ClusterDeployment[] }> {
-  return fetchJSONWithApiError("/api/cluster/deployments", { cache: "no-store" });
+  return fetchJSONWithApiError("/api/cluster/deployments?include_deleted=false", { cache: "no-store" });
 }
 export function createClusterDeployment(spec: ClusterDeploymentSpec): Promise<ClusterDeployment> {
   return fetchJSONWithApiError("/api/cluster/deployments", { method: "POST", body: JSON.stringify(spec) });
 }
 export function updateClusterDeployment(id: string, desired: "running" | "stopped" | "deleted"): Promise<ClusterDeployment> {
   return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ desired }) });
+}
+export function deleteClusterDeployment(id: string): Promise<ClusterDeployment> {
+  return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export function manageClusterNodeModel(uuid: string, model: ClusterNodeModelStatus, action: "unload" | "delete"): Promise<{status: string}> {

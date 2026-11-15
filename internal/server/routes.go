@@ -178,6 +178,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/cluster/deployments", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleDeploymentCreate }))
 	mux.HandleFunc("POST /api/cluster/nodes/{uuid}/models/action", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleModelAction }))
 	mux.HandleFunc("PUT /api/cluster/deployments/{id}", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleDeploymentUpdate }))
+	mux.HandleFunc("DELETE /api/cluster/deployments/{id}", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleDeploymentDelete }))
 	mux.HandleFunc("GET /api/cluster/models", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleModels }))
 	mux.HandleFunc("POST /api/cluster/models/sync", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleModelSync }))
 	mux.HandleFunc("GET /api/cluster/explain", s.withCluster(func(m *cluster.Manager) http.HandlerFunc { return m.Admin().HandleExplain }))

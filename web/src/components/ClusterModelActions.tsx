@@ -1,7 +1,7 @@
 import { createPortal } from "preact/compat";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { ClusterView } from "../api/client";
-import { manageClusterNodeModel, updateClusterDeployment } from "../api/client";
+import { deleteClusterDeployment, manageClusterNodeModel, updateClusterDeployment } from "../api/client";
 import type { ModelInstanceRow } from "../clusterModels";
 import { canPublishModelInstance, modelActionAvailability, modelPublication } from "../clusterModels";
 import { t } from "../i18n";
@@ -47,7 +47,10 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
     if (!actions[action] || busy) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      if (d) await updateClusterDeployment(d.id, action === "unload" ? "stopped" : action === "delete" ? "deleted" : "running");
+      if (d) {
+        if (action === "delete") await deleteClusterDeployment(d.id);
+        else await updateClusterDeployment(d.id, action === "unload" ? "stopped" : "running");
+      }
       else if (action !== "start") await manageClusterNodeModel(row.node.uuid, row.model, action);
       setConfirm(null); setNotice(t("cluster.modelActionSubmitted")); await onChanged();
     } catch (e) { setConfirm(null); setError((e as Error).message); }

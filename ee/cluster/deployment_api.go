@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,7 +125,46 @@ func (m *Manager) deploymentControllerLoop(ctx context.Context) {
 func (a *adminAPI) HandleDeployments(w http.ResponseWriter, r *http.Request) {
 	owned := a.m.deployments.list(true)
 	assigned := a.m.deployments.list(false)
+	if value := r.URL.Query().Get("include_deleted"); value != "" {
+		include, err := strconv.ParseBool(value)
+		if err != nil {
+			writeError(w, 400, "include_deleted must be a boolean")
+			return
+		}
+		if !include {
+			owned = visibleDeployments(owned)
+			assigned = visibleDeployments(assigned)
+		}
+	}
 	writeJSON(w, 200, map[string]any{"deployments": owned, "assignments": assigned})
+}
+
+func visibleDeployments(all []Deployment) []Deployment {
+	visible := make([]Deployment, 0, len(all))
+	for _, d := range all {
+		if d.Desired != "deleted" || d.Status.Phase != "deleted" {
+			visible = append(visible, d)
+		}
+	}
+	return visible
+}
+
+// HandleDeploymentDelete uses the same durable reconciliation as legacy PUT.
+func (a *adminAPI) HandleDeploymentDelete(w http.ResponseWriter, r *http.Request) {
+	if !a.requireController(w) {
+		return
+	}
+	id := r.PathValue("id")
+	if _, exists := a.m.deployments.get(true, id); !exists {
+		writeError(w, 404, "deployment not found")
+		return
+	}
+	d, err := a.m.changeDeployment(id, "deleted")
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, d)
 }
 
 func (a *adminAPI) HandleDeploymentCreate(w http.ResponseWriter, r *http.Request) {

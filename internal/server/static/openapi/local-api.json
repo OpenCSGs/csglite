@@ -11868,7 +11868,18 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "include_deleted",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            },
+            "description": "Set false to omit deployments only after both desired and confirmed worker phase are deleted. Deletion in progress stays visible. Omitted defaults to true for legacy clients. Durable tombstones prevent stale assignments from restarting deleted models."
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -11986,6 +11997,80 @@
             }
           }
         },
+        "responses": {
+          "202": {
+            "description": "Desired state saved; execution is asynchronous.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterDeployment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or controller authorization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Management login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Deployment not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cluster is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Delete a managed deployment",
+        "operationId": "deleteClusterDeployment",
+        "description": "Asynchronously stop and clean a deployment through its worker. Equivalent to legacy PUT desired=deleted, which remains supported. Repeating deletion is idempotent. Tombstones are retained to reject stale deployment generations; use include_deleted=false when listing to hide confirmed deletions.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "responses": {
           "202": {
             "description": "Desired state saved; execution is asynchronous.",

@@ -479,3 +479,62 @@ func TestDeploymentDeleteCancelsPreparationAndFencesResurrection(t *testing.T) {
 		t.Fatal("unauthorized model deletion accepted")
 	}
 }
+
+func TestDeploymentDeleteAndFilteredHistoryPreserveTombstone(t *testing.T) {
+	m, _ := deploymentTestNode(t)
+	d := testDeployment(m)
+	if err := m.deployments.update(true, d.ID, func(record *Deployment, _ bool) error { *record = d; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	deleteRequest := func() Deployment {
+		r := httptest.NewRequest(http.MethodDelete, "/api/cluster/deployments/"+d.ID, nil)
+		r.SetPathValue("id", d.ID)
+		w := httptest.NewRecorder()
+		m.Admin().HandleDeploymentDelete(w, r)
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+		}
+		var result Deployment
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	deleted := deleteRequest()
+	if deleted.Desired != "deleted" {
+		t.Fatal("delete did not set durable intent")
+	}
+	if again := deleteRequest(); again.Generation != deleted.Generation {
+		t.Fatal("repeated deletion changed generation")
+	}
+	// Pending cleanup remains visible; only an acknowledged deletion is hidden.
+	for _, phase := range []string{"pending", "deleted"} {
+		if err := m.deployments.update(true, d.ID, func(record *Deployment, _ bool) error { record.Status.Phase = phase; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		for _, query := range []string{"", "?include_deleted=true", "?include_deleted=false"} {
+			w := httptest.NewRecorder()
+			m.Admin().HandleDeployments(w, httptest.NewRequest(http.MethodGet, "/api/cluster/deployments"+query, nil))
+			var body struct {
+				Deployments []Deployment `json:"deployments"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			hidden := phase == "deleted" && query == "?include_deleted=false"
+			if (len(body.Deployments) == 0) != hidden {
+				t.Fatalf("phase=%s query=%s: %s", phase, query, w.Body.String())
+			}
+		}
+	}
+	reopened, err := openDeploymentStore(m.opts.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record, ok := reopened.get(true, d.ID); !ok || record.Desired != "deleted" {
+		t.Fatal("listing removed the durable tombstone")
+	}
+	if _, err := m.changeDeployment(d.ID, "running"); err == nil {
+		t.Fatal("deleted deployment restarted")
+	}
+}
