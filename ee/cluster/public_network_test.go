@@ -248,3 +248,37 @@ func TestOldPublicConnectionCannotOverwriteReplacement(t *testing.T) {
 		t.Fatal("last-seen leaked across gateway identities")
 	}
 }
+
+func TestWorkerServiceViewsRespectSharingWithoutHidingLocalInventory(t *testing.T) {
+	ctx := context.Background()
+	for _, mode := range []string{"worker", ""} {
+		m, err := New(Options{Dir: t.TempDir(), Mode: mode, GatewayURL: "https://gateway.example", Host: &fakeHost{models: []ModelStatus{{ID: "shared"}, {ID: "private"}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.UpdateSettings(func(s *Settings) { s.SharedModels = []string{"shared"} }); err != nil {
+			t.Fatal(err)
+		}
+		models := m.Models(ctx)
+		want := 2
+		if mode == "worker" {
+			want = 1
+		}
+		if len(models) != want {
+			t.Fatalf("mode %s models=%+v", mode, models)
+		}
+		ex := m.Explain(ctx, "private", 10, 10, "")
+		if mode == "worker" && (ex.Candidates[0].Eligible || ex.Candidates[0].Excluded != "model is not shared by this node") {
+			t.Fatalf("private model eligible: %+v", ex)
+		}
+		if len(m.View(ctx).Members[0].Status.Models) != 2 || len(m.LocalStatus(ctx).Models) != 2 {
+			t.Fatal("service filtering changed local inventory")
+		}
+		if _, err := m.UpdateSettings(func(s *Settings) { s.SharedModels = []string{"shared", "private"} }); err != nil {
+			t.Fatal(err)
+		}
+		if len(m.Models(ctx)) != 2 || !m.Explain(ctx, "private", 10, 10, "").Candidates[0].Eligible {
+			t.Fatal("sharing did not immediately update local service views")
+		}
+	}
+}

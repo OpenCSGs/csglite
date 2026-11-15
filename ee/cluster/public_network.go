@@ -447,15 +447,23 @@ func (m *Manager) publicModelAllowed(model string) bool {
 
 func (m *Manager) publicWorkerStatus(ctx context.Context) (json.RawMessage, error) {
 	st := m.LocalStatus(ctx)
+	st = *m.sharedModelStatus(&st)
+	st.Net.Addrs = nil
+	return json.Marshal(st)
+}
+
+// Keep the full local inventory for the worker console, but advertise only
+// models the Master may serve. The cached status must not be modified.
+func (m *Manager) sharedModelStatus(st *Status) *Status {
+	shared := *st
 	models := make([]ModelStatus, 0)
 	for _, model := range st.Models {
 		if m.publicModelShared(model.ID) {
 			models = append(models, model)
 		}
 	}
-	st.Models = models
-	st.Net.Addrs = nil
-	return json.Marshal(st)
+	shared.Models = models
+	return &shared
 }
 
 func (m *Manager) publicStatus(node string) (*Status, string, error) {

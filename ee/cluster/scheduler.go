@@ -21,7 +21,8 @@ type Candidate struct {
 	Breaker  bool
 	// Cooling is set when the node answered 429 and asked to be left alone
 	// for a while.
-	Cooling bool
+	Cooling  bool
+	Unshared bool
 }
 
 // RankRequest describes the request being placed.
@@ -139,6 +140,8 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 			r.Excluded = "model failed on this node recently"
 		case c.Cooling:
 			r.Excluded = "node asked to be retried later"
+		case c.Unshared:
+			r.Excluded = "model is not shared by this node"
 		}
 		if r.Excluded != "" {
 			out = append(out, r)
