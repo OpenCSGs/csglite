@@ -13,7 +13,7 @@ const (
 	ProviderID = "csghub-lite"
 )
 
-// SyncConfig writes OpenCode configuration to ~/.opencode.json
+// SyncConfig writes OpenCode configuration to ~/.config/opencode/opencode.json
 // so subsequent launches use csghub-lite as the model provider.
 func SyncConfig(serverURL, apiKey, selectedModelID string, models []api.ModelInfo) error {
 	if strings.TrimSpace(selectedModelID) == "" && len(models) > 0 {
@@ -79,11 +79,16 @@ func SyncConfig(serverURL, apiKey, selectedModelID string, models []api.ModelInf
 	return os.WriteFile(configPath, data, 0o644)
 }
 
-// ConfigPath returns the path to OpenCode config file.
+// ConfigPath returns OpenCode's global config path. OpenCode uses the XDG
+// config directory on every platform, defaulting to ~/.config.
 func ConfigPath() (string, error) {
+	if configHome := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(configHome) {
+		return filepath.Join(configHome, "opencode", "opencode.json"), nil
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".opencode.json"), nil
+	return filepath.Join(home, ".config", "opencode", "opencode.json"), nil
 }
