@@ -41,6 +41,7 @@ import type {
 import { clusterMode, navigationMode } from "../clusterAccess";
 import { filterModelInstances, isManagedModelInstance, mergeClusterDeployments, modelInstanceCategory, modelInstanceRows, modelRowState, modelNodeState, measuredRate, modelPublication } from "../clusterModels";
 import { ClusterModelActions } from "../components/ClusterModelActions";
+import { DeploymentMessage } from "../components/DeploymentMessage";
 import { ClusterWorkerOverview } from "../components/ClusterWorkerOverview";
 import { ClusterDeploymentControls } from "../components/ClusterDeployments";
 import { deploymentProgress } from "../deploymentModels";
@@ -1357,8 +1358,8 @@ function ModelsSection({ view }: { view: ClusterView }) {
                   <span class={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-xs ${!node.online ? "bg-gray-100 text-gray-500" : state === "deployments.phase.failed" ? "bg-red-50 text-red-700" : modelNodeState(row) ? "bg-amber-50 text-amber-700" : state === "cluster.instanceRunning" ? "bg-emerald-50 text-emerald-700" : model.loading || sync || state === "deployments.phase.downloading" ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-600"}`}>{t(state)}</span>
                   {modelNodeState(row) && <p class="mt-2 text-xs text-amber-700" title={t("cluster.nodePausedHint")}>{t(modelNodeState(row))}</p>}
                   {deployment?.status.phase === "downloading" && progress && <div class="mt-2 text-xs text-indigo-600"><progress class="block h-1.5 w-28" value={progress.percent ?? undefined} max={100} aria-label={t("deployments.phase.downloading")} />{progress.percent !== null && <p class="mt-1">{progress.percent}%</p>}</div>}
-                  {deployment?.status.error && <p class="mt-2 break-words text-xs text-red-600">{deployment.status.error}</p>}
-                  {deployment?.status.detail && !deployment.status.error && <p class="mt-2 break-all text-xs text-gray-400">{deployment.status.detail}</p>}
+                  {deployment?.status.error && <DeploymentMessage message={deployment.status.error} class="mt-2 text-xs text-red-600" />}
+                  {deployment?.status.detail && !deployment.status.error && <DeploymentMessage message={deployment.status.detail} class="mt-2 text-xs text-gray-400" />}
                   {node.online && sync && <div class="mt-2"><SyncProgress sync={sync} /></div>}
                 </td>
                 <td class="px-3 py-4" title={publication.services.map(service => service.model).join("\n")}><span class={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-xs ${publication.state === "published" ? "bg-indigo-50 text-indigo-700" : publication.state === "disabled" ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-500"}`}>{t(`cluster.publication.${publication.state}`)}</span>{publication.services.length > 1 && <p class="mt-1 text-xs text-gray-400">{t("cluster.publicationServices", publication.services.length)}</p>}</td>

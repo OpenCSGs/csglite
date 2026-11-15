@@ -3,6 +3,7 @@ import { getCluster, getClusterDeployments, isClusterDisabledError, isFeatureNot
 import type { ClusterDeployment } from "../api/client";
 import { localDeploymentAssignments, deploymentProgress, deploymentPhaseKey } from "../deploymentModels";
 import { locale, t } from "../i18n";
+import { DeploymentMessage } from "./DeploymentMessage";
 
 // Read the node's durable deployment receipts, not browser-local pull history.
 // Managed runtimes share ordinary library artifacts; lifecycle stays on Master.
@@ -62,8 +63,8 @@ export function DeploymentTasksPanel({ tasks, error, title, description }: {
             </div>
             <progress aria-label={t("cluster.workerDownloadProgress")} class="block h-1.5 w-full accent-indigo-600" {...(progress.percent === null ? {} : { value: progress.percent, max: 100 })} />
           </div>}
-          {task.status.error && <p role="alert" class="mt-2 break-words text-sm text-red-600">{task.status.error}</p>}
-          {task.status.detail && !task.status.error && <p class="mt-2 break-all text-xs text-gray-500">{downloading ? `${t("lib.managedCurrentFile")}: ` : ""}{task.status.detail}</p>}
+          {task.status.error && <DeploymentMessage message={task.status.error} alert class="mt-2 text-sm text-red-600" />}
+          {task.status.detail && !task.status.error && <DeploymentMessage message={`${downloading ? `${t("lib.managedCurrentFile")}: ` : ""}${task.status.detail}`} class="mt-2 text-xs text-gray-500" />}
         </li>;
       })}</ul>}
   </section>;

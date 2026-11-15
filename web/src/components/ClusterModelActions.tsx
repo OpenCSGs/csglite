@@ -6,6 +6,7 @@ import type { ModelInstanceRow } from "../clusterModels";
 import { canPublishModelInstance, modelActionAvailability, modelPublication } from "../clusterModels";
 import { t } from "../i18n";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { DeploymentMessage } from "./DeploymentMessage";
 
 export function ClusterModelActions({ row, rows, view, publication, stale, busy: parentBusy, onPublish, onChanged, onSync, syncBusy }: {
   row: ModelInstanceRow; rows: ModelInstanceRow[]; view: ClusterView; publication: ReturnType<typeof modelPublication>;
@@ -86,7 +87,7 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
       <div class="my-1 border-t border-gray-100" />
       <button type="button" role="menuitem" class={`${itemClass} text-rose-600`} disabled={!actions.delete} title={!actions.delete ? t(actions.reason) : undefined} onClick={() => act(() => setConfirm("delete"))}>{t("cluster.modelDelete")}</button>
     </div>, document.body)}
-    {error && <p role="alert" class="mt-2 break-words text-xs text-red-600">{error}</p>}
+    {error && <DeploymentMessage message={error} alert class="mt-2 text-xs text-red-600" />}
     {notice && <p role="status" class="mt-2 text-xs text-gray-500">{notice}</p>}
     <ConfirmDialog open={confirm !== null} title={t(confirm === "delete" ? "cluster.modelDelete" : stopLabel)}
       name={`${row.model.id} · ${row.node.name || t("deployments.unknownNode")}`} description={t(confirm === "delete" ? "cluster.modelDeleteHint" : "cluster.modelUnloadHint")}
