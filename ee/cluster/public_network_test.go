@@ -5,6 +5,7 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -48,7 +49,7 @@ func assertWorkerGatewayOnline(t *testing.T, worker *Manager, gateway string, on
 					wantCount = 2
 				}
 				return node.Online == online && node.Health == wantHealth &&
-					node.Status == nil && node.LastSeen != nil &&
+					node.Status == nil && node.StatusScope == "connectivity_only" && node.LastSeen != nil &&
 					worker.Summary(context.Background()).OnlineCount == wantCount
 			}
 		}
@@ -108,14 +109,10 @@ func TestPublicClusterReusesMembershipAndScheduler(t *testing.T) {
 	if _, err = worker.UpdateSettings(func(s *Settings) { s.SharedModels = []string{"shared-model"} }); err != nil {
 		t.Fatal(err)
 	}
-	waitPublic(t, func() bool {
-		st, addr, err := gateway.publicStatus(worker.identity.UUID)
-		if err != nil || len(st.Models) != 1 {
-			return false
-		}
-		gateway.dir.MarkSuccess(worker.identity.UUID, addr, st)
-		return true
-	})
+	if !gateway.RemoteHasModel("shared-model") {
+		t.Fatal("sharing returned before the gateway directory was updated")
+	}
+
 	if gateway.RemoteHasModel("private-model") {
 		t.Fatal("private model leaked into directory")
 	}
@@ -131,6 +128,54 @@ func TestPublicClusterReusesMembershipAndScheduler(t *testing.T) {
 	if resp.Header.Get(NodeHeader) != worker.identity.UUID {
 		t.Fatal("executing node header missing")
 	}
+	for _, shared := range []bool{false, true, false, true} {
+		if _, err := worker.UpdateSettings(func(s *Settings) {
+			s.SharedModels = nil
+			if shared {
+				s.SharedModels = []string{"shared-model"}
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if gateway.RemoteHasModel("shared-model") != shared {
+			t.Fatalf("gateway directory not synchronized after shared=%v", shared)
+		}
+		ex := gateway.Explain(ctx, "shared-model", 10, 10, "")
+		eligible := false
+		for _, c := range ex.Candidates {
+			if c.UUID == worker.identity.UUID {
+				eligible = c.Eligible
+			}
+		}
+		if eligible != shared {
+			t.Fatalf("gateway scheduler not synchronized after shared=%v: %+v", shared, ex)
+		}
+	}
+
+	for _, state := range []NodeState{NodeStateMaintenance, NodeStateDrain, NodeStateActive} {
+		req := httptest.NewRequest(http.MethodPost, "/api/cluster/nodes/worker/state", strings.NewReader(`{"state":"`+string(state)+`"}`))
+		req.SetPathValue("uuid", worker.identity.UUID)
+		w := httptest.NewRecorder()
+		gateway.Admin().HandleNodeState(w, req)
+		if w.Code != 200 {
+			t.Fatalf("remote state %s: %d %s", state, w.Code, w.Body.String())
+		}
+		var settings Settings
+		if err := json.Unmarshal(w.Body.Bytes(), &settings); err != nil || settings.State != state || worker.store.Settings().State != state {
+			t.Fatalf("state not applied: %s", w.Body.String())
+		}
+		st := gateway.candidateStatus(worker.identity.UUID)
+		if st.State != state || st.AcceptWork != (state == NodeStateActive) {
+			t.Fatalf("scheduler stale after state %s: %+v", state, st)
+		}
+		if len(st.Net.Addrs) != 0 {
+			t.Fatal("state receipt exposed worker network addresses")
+		}
+		if _, ok := st.Model("private-model"); ok {
+			t.Fatal("state receipt leaked a private model")
+		}
+	}
+
 	// The existing signed node identity authenticates reconnection; a captured
 	// connection proof cannot be reused, even while its timestamp is valid.
 	proof, err := worker.publicProof(gateway.identity.UUID)
@@ -246,5 +291,93 @@ func TestOldPublicConnectionCannotOverwriteReplacement(t *testing.T) {
 	m.observePublicGateway("different-gateway")
 	if !m.publicConnection.lastSeen.IsZero() {
 		t.Fatal("last-seen leaked across gateway identities")
+	}
+}
+
+func TestWorkerServiceViewsRespectSharingWithoutHidingLocalInventory(t *testing.T) {
+	ctx := context.Background()
+	for _, mode := range []string{"worker", ""} {
+		m, err := New(Options{Dir: t.TempDir(), Mode: mode, GatewayURL: "https://gateway.example", Host: &fakeHost{models: []ModelStatus{{ID: "shared"}, {ID: "private"}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.UpdateSettings(func(s *Settings) { s.SharedModels = []string{"shared"} }); err != nil {
+			t.Fatal(err)
+		}
+		models := m.Models(ctx)
+		want := 2
+		if mode == "worker" {
+			want = 1
+		}
+		if len(models) != want {
+			t.Fatalf("mode %s models=%+v", mode, models)
+		}
+		ex := m.Explain(ctx, "private", 10, 10, "")
+		if mode == "worker" && (ex.Candidates[0].Eligible || ex.Candidates[0].Excluded != "model is not shared by this node") {
+			t.Fatalf("private model eligible: %+v", ex)
+		}
+		if len(m.View(ctx).Members[0].Status.Models) != 2 || len(m.LocalStatus(ctx).Models) != 2 {
+			t.Fatal("service filtering changed local inventory")
+		}
+		if _, err := m.UpdateSettings(func(s *Settings) { s.SharedModels = []string{"shared", "private"} }); err != nil {
+			t.Fatal(err)
+		}
+		if len(m.Models(ctx)) != 2 || !m.Explain(ctx, "private", 10, 10, "").Candidates[0].Eligible {
+			t.Fatal("sharing did not immediately update local service views")
+		}
+	}
+}
+
+func TestPublicWorkerExplainsGatewayTelemetryScope(t *testing.T) {
+	m, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{}, Mode: "worker", GatewayURL: "https://gateway.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := ClusterInfo{UUID: "cluster", Topology: "public", GatewayUUID: "gateway"}
+	if err := m.store.Adopt(info, "", []Member{{UUID: "gateway", Name: "gateway", CertFingerprint: "sha256:test"}}, m.identity.UUID); err != nil {
+		t.Fatal(err)
+	}
+	m.dir.Track("gateway", nil)
+	m.observePublicGateway("gateway")(true)
+	view := m.View(context.Background())
+	node := view.Members[1]
+	if !node.Online || node.Status != nil || node.StatusScope != "connectivity_only" {
+		t.Fatalf("gateway view=%+v", node)
+	}
+	ex := m.Explain(context.Background(), "m", 0, 0, "")
+	for _, c := range ex.Candidates {
+		if c.UUID == "gateway" {
+			if c.Eligible || c.Excluded != "gateway telemetry is managed on the Master" {
+				t.Fatalf("gateway candidate=%+v", c)
+			}
+			return
+		}
+	}
+	t.Fatal("gateway missing from explain")
+}
+
+func TestPublicWorkerQueuesSharingChangesAcrossConnectWindow(t *testing.T) {
+	m, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{models: []ModelStatus{{ID: "m"}}}, Mode: "worker", GatewayURL: "https://gateway.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ids := range [][]string{{"m"}, {}, {"m"}} {
+		if _, err := m.UpdateSettings(func(s *Settings) { s.SharedModels = ids }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(m.publicStatusUpdates) != 1 {
+		t.Fatal("sharing updates were not coalesced for the connecting session")
+	}
+	raw, err := m.publicWorkerStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status Status
+	if err := json.Unmarshal(raw, &status); err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Models) != 1 || status.Models[0].ID != "m" {
+		t.Fatalf("queued update did not use latest settings: %s", raw)
 	}
 }

@@ -8895,7 +8895,7 @@
           "Cluster"
         ],
         "summary": "Set this node's admission state",
-        "description": "`drain` finishes in-flight requests and takes no new ones; `maintenance` also excludes the node from sync. A node's state is set on the node itself.",
+        "description": "Set active, drain or maintenance on this node or a member managed by this Master. Remote control uses its authenticated tunnel or pinned LAN peer, requires node_state_management support and does not change the Master's settings. Existing local-node requests remain compatible.",
         "operationId": "setClusterNodeState",
         "parameters": [
           {
@@ -8961,6 +8961,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Remote node unavailable, not controlled by this Master, or unable to apply the requested state."
           }
         }
       }
@@ -11865,7 +11868,18 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "include_deleted",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            },
+            "description": "Set false to omit deployments only after both desired and confirmed worker phase are deleted. Deletion in progress stays visible. Omitted defaults to true for legacy clients. Durable tombstones prevent stale assignments from restarting deleted models."
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -11983,6 +11997,80 @@
             }
           }
         },
+        "responses": {
+          "202": {
+            "description": "Desired state saved; execution is asynchronous.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterDeployment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid specification or controller authorization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Management login required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Deployment not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cluster is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operation belongs to the deployment controller / Master."
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Cluster"
+        ],
+        "summary": "Delete a managed deployment",
+        "operationId": "deleteClusterDeployment",
+        "description": "Asynchronously stop and clean a deployment through its worker. Equivalent to legacy PUT desired=deleted, which remains supported. Repeating deletion is idempotent. Tombstones are retained to reject stale deployment generations; use include_deleted=false when listing to hide confirmed deletions.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "responses": {
           "202": {
             "description": "Desired state saved; execution is asynchronous.",
@@ -17841,6 +17929,10 @@
           },
           "type": {
             "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "description": "Optional cluster failure code, also repeated at the envelope root for local API compatibility."
           }
         }
       },
@@ -17859,6 +17951,17 @@
           },
           "error": {
             "$ref": "#/components/schemas/OpenAIError"
+          },
+          "code": {
+            "type": "string",
+            "description": "Optional machine-readable cluster failure code, such as cluster_no_available_node or cluster_model_not_shared."
+          },
+          "tried": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Cluster node UUIDs attempted before a routing failure; empty when no candidate was available."
           }
         }
       },
@@ -18811,7 +18914,8 @@
             }
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "For /ai-gateway/v1 calls, echoes the requested published model service ID, independent of the underlying replica or repository."
           },
           "usage": {
             "$ref": "#/components/schemas/OpenAIUsage"
@@ -18957,7 +19061,8 @@
             "type": "integer"
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "For /ai-gateway/v1 calls, echoes the requested published model service ID, independent of the underlying replica or repository."
           },
           "choices": {
             "type": "array",
@@ -19475,7 +19580,8 @@
             }
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "For /ai-gateway/v1 calls, echoes the requested published model service ID, independent of the underlying replica or repository."
           },
           "stop_reason": {
             "type": "string"
@@ -19677,6 +19783,10 @@
           },
           "message": {
             "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "description": "Optional cluster failure code, also repeated at the envelope root for local API compatibility."
           }
         }
       },
@@ -19702,6 +19812,17 @@
           },
           "error": {
             "$ref": "#/components/schemas/AnthropicErrorObject"
+          },
+          "code": {
+            "type": "string",
+            "description": "Optional machine-readable cluster failure code, such as cluster_no_available_node or cluster_model_not_shared."
+          },
+          "tried": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Cluster node UUIDs attempted before a routing failure; empty when no candidate was available."
           }
         }
       },
@@ -20337,7 +20458,7 @@
           },
           "licensed": {
             "type": "boolean",
-            "description": "False when the node's own license does not cover a cluster of the current size; such a node is not scheduled."
+            "description": "Whether the current cluster size fits this node's node quota, in either edition. False means quota exceeded, not Community edition. The field name is retained for compatibility."
           },
           "node_limit": {
             "type": "integer"
@@ -20505,6 +20626,10 @@
           "model_management": {
             "type": "boolean",
             "description": "Node supports typed remote unload/delete actions authorized by its current controller."
+          },
+          "node_state_management": {
+            "type": "boolean",
+            "description": "Supports authenticated state control by its current managed_by Master; optional for older peers."
           }
         }
       },
@@ -20564,6 +20689,13 @@
           },
           "status": {
             "$ref": "#/components/schemas/ClusterNodeStatus"
+          },
+          "status_scope": {
+            "type": "string",
+            "enum": [
+              "connectivity_only"
+            ],
+            "description": "On a public Worker, the Master entry reports tunnel connectivity only; its resource and inference telemetry is managed on the Master. An absent status is expected in this scope."
           }
         }
       },
@@ -20624,7 +20756,8 @@
             "description": "Licensed member cap including this node; 0 means unlimited."
           },
           "licensed": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether this instance has an Enterprise license; distinct from a node status licensed field, which reports node quota eligibility."
           },
           "join_token_available": {
             "type": "boolean",
@@ -20711,7 +20844,8 @@
             "type": "string"
           },
           "licensed": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the current cluster size fits this node's node quota, in either edition. False means quota exceeded, not Community edition. The field name is retained for compatibility."
           },
           "version": {
             "type": "string"
@@ -20799,7 +20933,8 @@
             "type": "integer"
           },
           "licensed": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether this instance has an Enterprise license; distinct from a node status licensed field, which reports node quota eligibility."
           },
           "vram_total": {
             "type": "integer"
@@ -20995,7 +21130,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Eligible node uuids in scheduling order."
+            "description": "Eligible node UUIDs in scheduling order; [] when no node is eligible."
           },
           "candidates": {
             "type": "array",
@@ -21008,8 +21143,7 @@
                 "eligible",
                 "warm",
                 "affinity",
-                "estimated_seconds",
-                "rank"
+                "estimated_seconds"
               ],
               "properties": {
                 "uuid": {
@@ -21043,7 +21177,17 @@
                   }
                 },
                 "rank": {
-                  "type": "integer"
+                  "type": "integer",
+                  "description": "One-based rank among eligible nodes only; omitted for excluded candidates."
+                },
+                "excluded_reason": {
+                  "$ref": "#/components/schemas/ClusterSchedulingReason"
+                },
+                "factor_details": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ClusterSchedulingReason"
+                  }
                 }
               }
             }
@@ -21070,6 +21214,9 @@
           },
           "reason": {
             "type": "string"
+          },
+          "reason_detail": {
+            "$ref": "#/components/schemas/ClusterSchedulingReason"
           }
         }
       },
@@ -21383,6 +21530,63 @@
             }
           }
         ]
+      },
+      "ClusterSchedulingReason": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable reason code for UI localization. Clients should fall back to the legacy description for unknown codes.",
+            "enum": [
+              "not_pinned",
+              "gateway_managed",
+              "no_status",
+              "node_unhealthy",
+              "not_reached",
+              "quota_exceeded",
+              "node_state",
+              "not_accepting",
+              "model_failed",
+              "cooldown",
+              "model_not_shared",
+              "model_missing",
+              "memory_low",
+              "decode_estimated",
+              "decode_measured",
+              "queued",
+              "loading",
+              "disk_busy",
+              "cold_start",
+              "thermal",
+              "power_limit",
+              "cpu_busy",
+              "ram_low",
+              "gpu_busy",
+              "weight",
+              "affinity",
+              "affinity_skipped",
+              "eviction",
+              "second_replica"
+            ]
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "description": "Positional parameters for the localized reason."
+          }
+        }
       }
     }
   }

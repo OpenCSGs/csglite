@@ -551,3 +551,18 @@ func TestClusterHostLocalEngineHonoursTheEngineKind(t *testing.T) {
 		}
 	}
 }
+
+func TestShortClusterHostnamePreservesIPAddresses(t *testing.T) {
+	for _, tc := range []struct{ host, want string }{
+		{"192.168.1.24", "192.168.1.24"},
+		{"2001:db8::1", "2001:db8::1"},
+		{"::ffff:192.168.1.24", "::ffff:192.168.1.24"},
+		{"node1.example.com", "node1"},
+		{"node1", "node1"},
+		{"", ""},
+	} {
+		if got := shortClusterHostname(tc.host); got != tc.want {
+			t.Errorf("shortClusterHostname(%q) = %q, want %q", tc.host, got, tc.want)
+		}
+	}
+}

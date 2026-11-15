@@ -39,6 +39,7 @@ func (m *Manager) LocalStatus(ctx context.Context) Status {
 	}
 	st.Time = time.Now().UTC()
 	st.ManagedBy = m.deploymentController()
+	st.NodeStateManagement = true
 	_, st.DeploymentCapable = m.opts.Host.(DeploymentHost)
 	_, st.ModelManagement = m.opts.Host.(ModelActionHost)
 	st.Models = append(st.Models, m.deploymentModels()...)
@@ -195,11 +196,15 @@ func (m *Manager) candidateStatus(nodeUUID string) *Status {
 func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 	var out []Candidate
 	local := m.cachedLocalStatus(ctx)
+	unshared := m.opts.Mode == "worker" && local.HoldsModel(model) && !m.publicModelShared(model)
+	if m.opts.Mode == "worker" {
+		local = m.sharedModelStatus(local)
+	}
 	localReserved := 0
 	if rt, ok := m.dir.Get(m.identity.UUID); ok {
 		localReserved = int(rt.reserveSeq)
 	}
-	out = append(out, Candidate{UUID: m.identity.UUID, Name: m.identity.DisplayName(), Local: true, Status: local, Health: HealthHealthy, Reserved: localReserved, Breaker: m.dir.ModelBroken(m.identity.UUID, model)})
+	out = append(out, Candidate{UUID: m.identity.UUID, Name: m.identity.DisplayName(), Local: true, Status: local, Health: HealthHealthy, Reserved: localReserved, Breaker: m.dir.ModelBroken(m.identity.UUID, model), Unshared: unshared})
 	for _, rt := range m.dir.Snapshot() {
 		if _, ok := m.store.Member(rt.UUID); !ok {
 			continue
@@ -216,7 +221,7 @@ func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 			// we have measured this node ourselves.
 			st = m.overlayPerf(rt.UUID, st)
 		}
-		out = append(out, Candidate{UUID: rt.UUID, Name: name, Status: st, Health: rt.Health, Reserved: int(rt.reserveSeq), Breaker: m.dir.ModelBroken(rt.UUID, model), Cooling: m.dir.Cooling(rt.UUID)})
+		out = append(out, Candidate{UUID: rt.UUID, Name: name, Status: st, Health: rt.Health, Reserved: int(rt.reserveSeq), Breaker: m.dir.ModelBroken(rt.UUID, model), Cooling: m.dir.Cooling(rt.UUID), GatewayOnly: m.isPublicGateway(rt.UUID)})
 	}
 	return out
 }

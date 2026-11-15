@@ -117,7 +117,10 @@ type llamaEngine struct {
 type inferenceHTTPError struct {
 	status int
 	body   string
+	cause  error
 }
+
+func (e *inferenceHTTPError) Unwrap() error { return e.cause }
 
 func (e *inferenceHTTPError) Error() string {
 	return fmt.Sprintf("inference error %d: %s", e.status, e.body)

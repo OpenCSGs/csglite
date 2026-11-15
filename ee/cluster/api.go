@@ -297,7 +297,17 @@ func (a *adminAPI) HandleNodeState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if nodeUUID != a.m.identity.UUID {
-		writeError(w, http.StatusBadRequest, "a node's state is set on that node itself; open its own API or UI")
+		if !a.requireController(w) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		settings, err := a.m.setRemoteNodeState(ctx, nodeUUID, req.State)
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
 		return
 	}
 	s, err := a.m.UpdateSettings(func(s *Settings) { s.State = req.State })

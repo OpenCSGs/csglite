@@ -225,8 +225,12 @@ func TestConsoleRoutesApplyConfiguredPolicy(t *testing.T) {
 			r.RemoteAddr = "127.0.0.1:1234"
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
-			if w.Code != tc.want {
-				t.Fatalf("%+v plain=%v got=%d", tc, plain, w.Code)
+			want := tc.want
+			if !plain {
+				want = http.StatusUnauthorized
+			}
+			if w.Code != want {
+				t.Fatalf("%+v plain=%v got=%d want=%d", tc, plain, w.Code, want)
 			}
 		}
 	}

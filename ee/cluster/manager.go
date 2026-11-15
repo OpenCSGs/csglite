@@ -116,26 +116,27 @@ type Options struct {
 
 // Manager runs the cluster on one node.
 type Manager struct {
-	deploymentWG       sync.WaitGroup
-	deployments        *deploymentStore
-	deploymentWake     chan struct{}
-	publicConnectionMu sync.Mutex
-	publicConnection   *publicGatewayConnection
-	publicGateway      *publictunnel.Gateway
-	publicHTTP         *http.Server
-	publicClient       *http.Client
-	publicWake         chan struct{}
-	publicProofMu      sync.Mutex
-	publicJoinMu       sync.Mutex
-	publicProofs       map[string]time.Time
-	opts               Options
-	logf               func(string, ...any)
-	identity           *Identity
-	store              *Store
-	dir                *Directory
-	affinity           *Affinity
-	perf               *perfStore
-	peers              *peerClientCache
+	deploymentWG        sync.WaitGroup
+	deployments         *deploymentStore
+	deploymentWake      chan struct{}
+	publicConnectionMu  sync.Mutex
+	publicConnection    *publicGatewayConnection
+	publicGateway       *publictunnel.Gateway
+	publicHTTP          *http.Server
+	publicClient        *http.Client
+	publicWake          chan struct{}
+	publicStatusUpdates chan chan error
+	publicProofMu       sync.Mutex
+	publicJoinMu        sync.Mutex
+	publicProofs        map[string]time.Time
+	opts                Options
+	logf                func(string, ...any)
+	identity            *Identity
+	store               *Store
+	dir                 *Directory
+	affinity            *Affinity
+	perf                *perfStore
+	peers               *peerClientCache
 
 	mu          sync.RWMutex
 	ctx         context.Context
@@ -192,19 +193,20 @@ func New(opts Options) (*Manager, error) {
 		return nil, err
 	}
 	m := &Manager{
-		publicWake:   make(chan struct{}, 1),
-		publicProofs: make(map[string]time.Time),
-		opts:         opts,
-		logf:         logf,
-		identity:     id,
-		store:        store,
-		dir:          NewDirectory(),
-		affinity:     NewAffinity(),
-		perf:         newPerfStore(filepath.Join(opts.Dir, "perf.json")),
-		peers:        newPeerClientCache(id),
-		gossipWake:   make(chan struct{}, 1),
-		discoverer:   opts.Discoverer,
-		observedIPs:  map[string]time.Time{},
+		publicStatusUpdates: make(chan chan error, 1),
+		publicWake:          make(chan struct{}, 1),
+		publicProofs:        make(map[string]time.Time),
+		opts:                opts,
+		logf:                logf,
+		identity:            id,
+		store:               store,
+		dir:                 NewDirectory(),
+		affinity:            NewAffinity(),
+		perf:                newPerfStore(filepath.Join(opts.Dir, "perf.json")),
+		peers:               newPeerClientCache(id),
+		gossipWake:          make(chan struct{}, 1),
+		discoverer:          opts.Discoverer,
+		observedIPs:         map[string]time.Time{},
 	}
 	m.deployments, err = openDeploymentStore(opts.Dir)
 	if err != nil {

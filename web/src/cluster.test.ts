@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clusterReasonText,
+  canManageNodeState,
   workerNodeState,
   clusterNodeRole,
   fmtGB,
@@ -114,4 +116,32 @@ describe("workerNodeState", () => {
     expect(workerNodeState({ state: "drain", accept_work: false })).toBe("drain");
     expect(workerNodeState({ state: "maintenance", accept_work: true })).toBe("maintenance");
   });
+});
+
+describe("remote node state authority", () => {
+ const view = { mode: "gateway", node: {uuid: "master"} } as import("./api/client").ClusterView;
+ const node = { local: false, online: true, status: { managed_by: "master", node_state_management: true } } as import("./api/client").ClusterNodeView;
+ it("offers controls only for nodes accepting this Master", () => {
+  expect(canManageNodeState(view, node)).toBe(true);
+  expect(canManageNodeState({...view, mode: "worker"}, node)).toBe(false);
+  expect(canManageNodeState(view, {...node, status: {...node.status!, managed_by: "other"}})).toBe(false);
+  expect(canManageNodeState(view, {...node, status: {...node.status!, node_state_management: undefined}})).toBe(false);
+  expect(canManageNodeState(view, {...node, status: undefined})).toBe(false);
+ });
+});
+
+describe("localized scheduling reasons", () => {
+ const translate = (key: string, ...args: (string | number)[]) => ({
+  "cluster.reason.not_accepting": "节点已暂停接单",
+  "cluster.reason.node_state": `节点处于${args[0]}`,
+  "cluster.stateDrain": "排空中",
+  "cluster.reason.decode_measured": `实测速度 ${args[0]}`,
+ }[key] ?? key);
+ it("uses reason codes and parameters while supporting legacy responses", () => {
+  expect(clusterReasonText({code:"not_accepting"}, "node is not accepting work", translate)).toBe("节点已暂停接单");
+  expect(clusterReasonText({code:"node_state",args:["drain"]}, "node state is drain", translate)).toBe("节点处于排空中");
+  expect(clusterReasonText({code:"decode_measured",args:[11.4]}, "decode 11.4 tok/s", translate)).toBe("实测速度 11.4");
+  expect(clusterReasonText(undefined, "legacy", translate)).toBe("legacy");
+  expect(clusterReasonText({code:"future"}, "new reason", translate)).toBe("new reason");
+ });
 });

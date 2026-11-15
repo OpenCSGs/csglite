@@ -3266,6 +3266,7 @@ export interface ClusterNodeModelStatus {
 }
 
 export interface ClusterNodeStatus {
+  node_state_management?: boolean;
   model_management?: boolean;
   managed_by?: string;
   deployment_capable?: boolean;
@@ -3310,6 +3311,7 @@ export interface ClusterNodeView {
   static_address?: string;
   api_port?: number;
   status?: ClusterNodeStatus;
+  status_scope?: "connectivity_only";
 }
 
 export interface ClusterInfo {
@@ -3407,7 +3409,14 @@ export interface ClusterSyncResponse {
   results: ClusterSyncResult[];
 }
 
+export interface ClusterSchedulingReason {
+  code: string;
+  args?: (string | number)[];
+}
+
 export interface ClusterExplainCandidate {
+  excluded_reason?: ClusterSchedulingReason;
+  factor_details?: ClusterSchedulingReason[];
   uuid: string;
   name: string;
   local: boolean;
@@ -3417,7 +3426,7 @@ export interface ClusterExplainCandidate {
   affinity: boolean;
   estimated_seconds: number;
   factors?: string[];
-  rank: number;
+  rank?: number;
 }
 
 export interface ClusterExplainResponse {
@@ -3431,6 +3440,7 @@ export interface ClusterRecommendation {
   node_uuid: string;
   node_name: string;
   reason: string;
+  reason_detail?: ClusterSchedulingReason;
 }
 
 export interface ClusterSettingsUpdate {
@@ -3775,13 +3785,16 @@ export interface ClusterDeployment extends ClusterDeploymentSpec {
   status: { phase: string; error?: string; detail?: string; completed_bytes?: number; total_bytes?: number; size?: number; updated_at: string };
 }
 export function getClusterDeployments(): Promise<{ deployments: ClusterDeployment[]; assignments: ClusterDeployment[] }> {
-  return fetchJSONWithApiError("/api/cluster/deployments", { cache: "no-store" });
+  return fetchJSONWithApiError("/api/cluster/deployments?include_deleted=false", { cache: "no-store" });
 }
 export function createClusterDeployment(spec: ClusterDeploymentSpec): Promise<ClusterDeployment> {
   return fetchJSONWithApiError("/api/cluster/deployments", { method: "POST", body: JSON.stringify(spec) });
 }
 export function updateClusterDeployment(id: string, desired: "running" | "stopped" | "deleted"): Promise<ClusterDeployment> {
   return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ desired }) });
+}
+export function deleteClusterDeployment(id: string): Promise<ClusterDeployment> {
+  return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export function manageClusterNodeModel(uuid: string, model: ClusterNodeModelStatus, action: "unload" | "delete"): Promise<{status: string}> {

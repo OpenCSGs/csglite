@@ -28,12 +28,16 @@ type WorkerOptions struct {
 	// ConnectionChanged reports an accepted tunnel and its subsequent closure.
 	// Failed TLS/authentication/hello handshakes never report online.
 	ConnectionChanged func(bool)
+	// StatusUpdates requests an immediate publication. The buffered reply
+	// channel is completed after a supporting gateway accepts the snapshot.
+	StatusUpdates <-chan chan error
 	// Handler must execute locally. It must not route to another cluster/cloud.
 	Handler http.Handler
 	// DeploymentHandler accepts only a typed assignment on the private tunnel.
 	// The host must independently check explicit worker management consent.
 	DeploymentHandler  http.Handler
 	ModelActionHandler http.Handler
+	NodeStateHandler   http.Handler
 	// Dialer may supply a private CA or enterprise proxy; TLS verification stays on.
 	Dialer *websocket.Dialer
 }
@@ -104,7 +108,7 @@ func (w *Worker) Connect(ctx context.Context) error {
 		return err
 	}
 	control := newControl(stream)
-	sendStatus := func() error {
+	sendStatus := func(sequence uint64) error {
 		status, err := w.opts.Status(ctx)
 		if err != nil {
 			return err
@@ -112,9 +116,9 @@ func (w *Worker) Connect(ctx context.Context) error {
 		if !json.Valid(status) {
 			return errors.New("invalid local status")
 		}
-		return control.write(controlMessage{Type: "status", Status: status}, 15*time.Second)
+		return control.write(controlMessage{Type: "status", Status: status, Sequence: sequence}, 15*time.Second)
 	}
-	if err = sendStatus(); err != nil {
+	if err = sendStatus(0); err != nil {
 		return err
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
@@ -126,12 +130,33 @@ func (w *Worker) Connect(ctx context.Context) error {
 		return errors.New("invalid public gateway handshake")
 	}
 	heartbeat := time.Duration(hello.HeartbeatMS) * time.Millisecond
+	_ = stream.SetReadDeadline(time.Time{})
+	acks := make(chan uint64, 1)
 	var heartbeatWG sync.WaitGroup
+	if hello.StatusAck {
+		heartbeatWG.Add(1)
+		go func() {
+			defer heartbeatWG.Done()
+			defer mux.Close()
+			for {
+				msg, err := control.read()
+				if err != nil || msg.Type != "status_ack" {
+					return
+				}
+				select {
+				case acks <- msg.Sequence:
+				case <-mux.CloseChan():
+					return
+				}
+			}
+		}()
+	}
 	heartbeatWG.Add(1)
 	go func() {
 		defer heartbeatWG.Done()
 		tick := time.NewTicker(heartbeat)
 		defer tick.Stop()
+		var sequence uint64
 		for {
 			select {
 			case <-ctx.Done():
@@ -139,7 +164,22 @@ func (w *Worker) Connect(ctx context.Context) error {
 			case <-mux.CloseChan():
 				return
 			case <-tick.C:
-				if sendStatus() != nil {
+				if sendStatus(0) != nil {
+					_ = mux.Close()
+					return
+				}
+			case done := <-w.opts.StatusUpdates:
+				sequence++
+				seq := uint64(0)
+				if hello.StatusAck {
+					seq = sequence
+				}
+				err := sendStatus(seq)
+				if err == nil && hello.StatusAck {
+					err = waitStatusAck(ctx, mux.CloseChan(), acks, sequence)
+				}
+				done <- err
+				if err != nil {
 					_ = mux.Close()
 					return
 				}
@@ -160,6 +200,24 @@ func (w *Worker) Connect(ctx context.Context) error {
 	return fmt.Errorf("public tunnel ended: %w", err)
 }
 
+func waitStatusAck(ctx context.Context, closed <-chan struct{}, acks <-chan uint64, sequence uint64) error {
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case got := <-acks:
+		if got != sequence {
+			return errors.New("invalid public status acknowledgment")
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-closed:
+		return ErrOffline
+	case <-timer.C:
+		return errors.New("public status acknowledgment timed out")
+	}
+}
+
 type HandshakeError struct{ Status int }
 
 func (e *HandshakeError) Error() string {
@@ -172,7 +230,10 @@ func (w *Worker) handler() http.Handler {
 		if r.URL.Path == ModelActionPath {
 			controlHandler = w.opts.ModelActionHandler
 		}
-		if (r.URL.Path == DeploymentPath || r.URL.Path == ModelActionPath) && controlHandler != nil {
+		if r.URL.Path == NodeStatePath {
+			controlHandler = w.opts.NodeStateHandler
+		}
+		if (r.URL.Path == DeploymentPath || r.URL.Path == ModelActionPath || r.URL.Path == NodeStatePath) && controlHandler != nil {
 			if r.Method != http.MethodPost || r.URL.RawQuery != "" || r.URL.RawPath != "" {
 				http.Error(rw, "invalid deployment request", 400)
 				return
@@ -189,7 +250,18 @@ func (w *Worker) handler() http.Handler {
 			if errors.As(err, &re) {
 				status = re.status
 			}
-			http.Error(rw, err.Error(), status)
+			errType := "invalid_request_error"
+			code := ""
+			if status == http.StatusForbidden {
+				errType, code = "permission_error", "cluster_model_not_shared"
+			}
+			payload := map[string]any{"errorCode": status, "error": map[string]any{"message": strings.TrimSpace(err.Error()), "type": errType}}
+			if code != "" {
+				payload["code"] = code
+			}
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(status)
+			_ = json.NewEncoder(rw).Encode(payload)
 			return
 		}
 		defer out.Body.Close()

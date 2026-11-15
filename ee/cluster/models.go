@@ -110,9 +110,15 @@ func (m *Manager) Models(ctx context.Context) []ClusterModel {
 			group.seen[uuid] = len(group.model.Nodes)
 			group.model.Nodes = append(group.model.Nodes, ModelNode{UUID: uuid, Name: name, Loaded: ms.Loaded, Online: online, Local: local})
 		}
-		attachPulls(byKey, uuid, name, st)
+		if m.opts.Mode != "worker" {
+			attachPulls(byKey, uuid, name, st)
+		}
 	}
-	add(m.identity.UUID, m.identity.DisplayName(), true, true, m.cachedLocalStatus(ctx))
+	local := m.cachedLocalStatus(ctx)
+	if m.opts.Mode == "worker" {
+		local = m.sharedModelStatus(local)
+	}
+	add(m.identity.UUID, m.identity.DisplayName(), true, true, local)
 	for _, rt := range m.dir.Snapshot() {
 		mem, ok := m.store.Member(rt.UUID)
 		if !ok {

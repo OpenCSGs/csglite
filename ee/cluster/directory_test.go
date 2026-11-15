@@ -196,3 +196,14 @@ func TestDirectoryForgetAddress(t *testing.T) {
 		t.Fatalf("candidates after forget: %v", got)
 	}
 }
+
+func TestLatePollCannotRestoreStatusOlderThanPushedUpdate(t *testing.T) {
+	d := NewDirectory()
+	now := time.Now()
+	d.MarkSuccess("node", "tunnel:node", &Status{Time: now, AcceptWork: false})
+	d.MarkSuccess("node", "tunnel:node", &Status{Time: now.Add(-time.Second), AcceptWork: true})
+	node, ok := d.Get("node")
+	if !ok || node.Status.AcceptWork || !node.Status.Time.Equal(now) {
+		t.Fatalf("late poll restored stale status: %+v", node)
+	}
+}

@@ -113,16 +113,29 @@ csghub-lite cluster leave
 | POST | `/ai-gateway/v1/responses` | 现有无持久会话的 Responses 用法 |
 | POST | `/ai-gateway/v1/messages` | Anthropic 兼容消息 |
 | POST | `/ai-gateway/v1/messages/count_tokens` | 对应模型的 token 计数 |
-| POST | `/api/chat`、`/api/generate` | Ollama 兼容接口 |
+| POST | `/api/chat`、`/api/generate` | 保留给旧客户端的 Ollama 兼容接口 |
 
 客户端使用自己的 API Key；代码示例、日志和共享文档中不得放入真实 Key。
 Responses 的后台任务和 `previous_response_id` 延续不支持。具体模型是否支持
 某种模态，仍由工作节点现有的推理引擎和模型能力决定。
 
-公网入口省略 `source` 时进入集群调度；`source=cluster` 选择可用节点，
-`source=node:<uuid>` 固定节点。`source=local` 及固定到网关本机的请求，只有
-网关管理员明确打开本机接单时才可用。`cloud`、`provider:*` 和 `pool:*` 不在
-该公网入口的路由范围内，拒绝时不会回落为本地执行。
+统一入口 `/ai-gateway/v1/*` 的请求只填写已发布的模型服务 ID，不填写 `source`。
+来源由管理员在服务成员中选择：整个集群、指定节点、本机或 Provider；客户端
+不能通过 `source` 绕过服务成员配置。同名的底层模型不会改变服务的路由。
+
+例如，发布服务 ID 为 `team-chat` 后：
+
+```sh
+curl https://<主节点地址>:8080/ai-gateway/v1/chat/completions \
+  -H "Authorization: Bearer $LITE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"team-chat","messages":[{"role":"user","content":"你好"}]}'
+```
+
+仅旧 `/v1/*` 与 `/api/chat`、`/api/generate` 兼容入口接受 `source`：省略或
+`cluster` 使用集群调度，`node:<uuid>` 固定节点，`local` 选择网关本机。
+本机推理仍需管理员打开本机接单。这些旧公网入口不接受 `cloud`、`provider:*`
+或 `pool:*`，不再用于新的客户端配置；统一入口的来源由模型服务管理。
 
 网关到工作节点的每个请求固定本机执行。两端都验证方法和路径白名单，工作节点
 还验证模型共享与接单状态。调用方的 API Key、Cookie 和节点连接证明不会传入
@@ -217,8 +230,8 @@ csghub-lite cluster login-token revoke <id>
 
 默认 `auto` 模式下，主管理监听器对直接连接的回环、RFC1918 私网、IPv6 ULA 与链路本地来源免管理
 Token 登录，访问地址也必须是本机或私网 IP、localhost 或本机名称。公网来源
-必须使用管理 Token。含转发头的请求不享受免登录；专用公网监听器的明文代理
-流量也不享受免登录，防止反向代理把公网访问变成本机访问。公网登录要求 HTTPS。
+必须使用管理 Token。含转发头的请求不享受免登录；专用公网监听器的所有管理
+请求均需登录，防止 VPC 或反向代理来源绕过登录。公网登录要求 HTTPS。
 本机或局域网浏览器请求仍校验同源，拒绝跨站管理操作。
 
 控制台免登录不等于免推理鉴权。同源控制台可以直接使用推理功能；普通程序的
@@ -241,13 +254,14 @@ csghub-lite restart
 
 | 值 | 控制台页面及管理 API |
 | --- | --- |
-| `auto`（默认） | 直接本机、局域网访问免登录；公网及代理访问需要登录 |
+| `auto`（默认） | 普通控制台监听器允许直接本机、局域网访问免登录；公网集群专用监听器及代理访问需要登录 |
 | `required` | 本机、局域网、公网都必须先用管理 Token 登录 |
 
-没有关闭公网鉴权的模式；无效配置会阻止服务启动。登录使用 HTTPS 安全 Cookie，
+公网集群专用监听器始终需要管理 Token 登录，包括来自同 VPC、私网和回环地址的请求；
+不会依据客户端提供的 Host 头授予管理权限。没有关闭公网鉴权的模式；无效配置会阻止服务启动。登录使用 HTTPS 安全 Cookie，
 局域网/本机启用 `required` 后也需使用 HTTPS（可通过 TLS 反向代理并保留 Host），
 不能直接在普通 HTTP 页面完成登录。生成 Token 前管理访问保持拒绝。
-该开关同时覆盖普通控制台和专用公网控制台，不影响桌面 sidecar 自动鉴权，
+该开关控制普通控制台的本机和局域网豁免，不影响专用公网控制台的强制登录及桌面 sidecar 自动鉴权，
 也不改变推理 API Key 的独立策略。恢复默认使用
 `csghub-lite config unset console_auth_mode` 并重启；若设置过环境变量，须同时移除。
 

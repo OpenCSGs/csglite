@@ -341,6 +341,12 @@ func (d *Directory) MarkSuccess(nodeUUID, addr string, st *Status) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	n := d.node(nodeUUID)
+	// A poll started before a pushed update must not restore stale sharing or
+	// admission state after that update has already been acknowledged.
+	if st != nil && n.Status != nil && !st.Time.IsZero() && !n.Status.Time.IsZero() && st.Time.Before(n.Status.Time) {
+		n.probing = false
+		return
+	}
 	now := d.now()
 	n.probing = false
 	n.Health = HealthHealthy

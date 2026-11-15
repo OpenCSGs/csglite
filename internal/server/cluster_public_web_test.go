@@ -21,8 +21,8 @@ func TestConsoleNetworkAccessBoundaries(t *testing.T) {
 		{"127.0.0.1:1234", "localhost:11435", "", false, true, "local"},
 		{"[::1]:1234", "[::1]:11435", "", false, true, "local"},
 		{"192.168.1.20:1234", "192.168.1.2:11435", "", false, true, "lan"},
-		{"10.1.2.3:1234", "10.1.2.4:8080", "", true, false, "lan"},
-		{"[fd00::2]:1234", "[fd00::1]:8080", "", true, false, "lan"},
+		{"10.1.2.3:1234", "10.1.2.4:8080", "", true, false, ""},
+		{"[fd00::2]:1234", "[fd00::1]:8080", "", true, false, ""},
 		{"[::ffff:192.168.1.20]:1234", "192.168.1.2:11435", "", false, true, "lan"},
 		{"192.0.2.10:1234", "localhost:11435", "", false, true, ""},
 		{"192.0.2.10:1234", "192.168.1.2:11435", "127.0.0.1", false, true, ""},
@@ -41,6 +41,29 @@ func TestConsoleNetworkAccessBoundaries(t *testing.T) {
 		}
 		if got := localConsoleAccess(r, tc.plain); got != tc.want {
 			t.Errorf("%+v: got %q", tc, got)
+		}
+	}
+}
+
+func TestPublicListenerNeverGrantsNetworkManagementAccess(t *testing.T) {
+	auth := clusterpublic.NewAdminAuth(clusterpublic.AdminTokenPath(t.TempDir()))
+	management := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("unauthenticated request reached management")
+		w.WriteHeader(http.StatusNoContent)
+	})
+	h := publicClusterWebHandler(auth, management, http.NotFoundHandler(), false, false)
+	for _, peer := range []string{"10.1.2.3:1234", "192.168.1.20:1234", "[fd00::2]:1234", "127.0.0.1:1234"} {
+		for _, host := range []string{"10.1.2.4:8080", "localhost:8080", "[::1]:8080"} {
+			for _, path := range []string{"/auth/session", "/api/cluster", "/api/settings"} {
+				r := httptest.NewRequest(http.MethodGet, "https://"+host+path, nil)
+				r.RemoteAddr = peer
+				r.TLS = &tls.ConnectionState{}
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, r)
+				if w.Code != http.StatusUnauthorized {
+					t.Errorf("peer=%s host=%s path=%s: got %d, want 401", peer, host, path, w.Code)
+				}
+			}
 		}
 	}
 }

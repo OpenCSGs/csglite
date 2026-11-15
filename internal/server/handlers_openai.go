@@ -258,7 +258,12 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	w.WriteHeader(http.StatusOK)
 	if stream {
 		capture := &streamUsageCapture{}
-		_, _ = io.Copy(openAIStreamWriter{ResponseWriter: w}, io.TeeReader(resp.Body, capture))
+		reader := io.TeeReader(resp.Body, capture)
+		if isPublishedGatewayRequest(r) {
+			_ = copyGatewayModelStream(openAIStreamWriter{ResponseWriter: w}, reader, req.Model)
+		} else {
+			_, _ = io.Copy(openAIStreamWriter{ResponseWriter: w}, reader)
+		}
 		inputTokens, outputTokens := countMessageTokens(req.Messages), 0
 		if capturedInput, capturedOutput, ok := capture.usage(); ok {
 			if capturedInput > 0 {
@@ -297,6 +302,9 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 		} else {
 			r = markUsageEstimated(r)
 			s.recordAPIUsageWithPool(r, req.Model, usageSource, countMessageTokens(req.Messages), 0, usagePool)
+		}
+		if isPublishedGatewayRequest(r) {
+			body = rewriteResponseModel(body, req.Model)
 		}
 		_, _ = w.Write(body)
 	}
@@ -584,27 +592,33 @@ func writeOpenAIInferenceError(w http.ResponseWriter, err error) {
 	switch status {
 	case http.StatusBadRequest:
 		errType = "invalid_request_error"
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized:
 		errType = "authentication_error"
+	case http.StatusForbidden:
+		errType = "permission_error"
 	case http.StatusNotFound:
 		errType = "model_not_found"
 	case http.StatusTooManyRequests:
 		errType = "rate_limit_error"
 	}
 
-	writeOpenAIError(w, status, errType, inference.HTTPErrorMessage(err))
+	payload := openAIErrorPayload(status, errType, inference.HTTPErrorMessage(err))
+	addClusterInferenceErrorDetails(payload, err)
+	writeJSON(w, status, payload)
 }
 
 func writeOpenAIError(w http.ResponseWriter, status int, errType, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, status, openAIErrorPayload(status, errType, msg))
+}
+
+func openAIErrorPayload(status int, errType, msg string) map[string]any {
+	return map[string]any{
 		"errorCode": status,
 		"error": map[string]interface{}{
 			"message": msg,
 			"type":    errType,
 		},
-	})
+	}
 }
 
 func openAIInferenceStatus(err error) int {

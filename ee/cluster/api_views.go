@@ -29,6 +29,7 @@ type NodeView struct {
 	StaticAddress string     `json:"static_address,omitempty"`
 	APIPort       int        `json:"api_port,omitempty"`
 	Status        *Status    `json:"status,omitempty"`
+	StatusScope   string     `json:"status_scope,omitempty"`
 }
 
 // SelfView identifies this node.
@@ -124,10 +125,11 @@ type DiscoveredView struct {
 
 // Recommendation suggests replicating a model to a node.
 type Recommendation struct {
-	Model    string `json:"model"`
-	NodeUUID string `json:"node_uuid"`
-	NodeName string `json:"node_name"`
-	Reason   string `json:"reason"`
+	Model        string            `json:"model"`
+	NodeUUID     string            `json:"node_uuid"`
+	NodeName     string            `json:"node_name"`
+	Reason       string            `json:"reason"`
+	ReasonDetail *SchedulingReason `json:"reason_detail,omitempty"`
 }
 
 // SyncResult is one node's answer to a sync request.
@@ -334,7 +336,7 @@ func (m *Manager) Recommendations(ctx context.Context) []Recommendation {
 			}
 		}
 		if best != nil {
-			out = append(out, Recommendation{Model: cm.ID, NodeUUID: best.UUID, NodeName: best.Name, Reason: "model is served by one node only; a second replica lets the scheduler balance and fail over"})
+			out = append(out, Recommendation{Model: cm.ID, NodeUUID: best.UUID, NodeName: best.Name, Reason: "model is served by one node only; a second replica lets the scheduler balance and fail over", ReasonDetail: &SchedulingReason{Code: "second_replica"}})
 		}
 	}
 	return out

@@ -250,6 +250,9 @@ func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	body := result.body
 	s.recordAPIUsageWithPool(r, req.Model, result.usageSource, openAIEmbeddingPromptTokens(body, req.Input), 0, result.usagePool)
+	if isPublishedGatewayRequest(r) {
+		body = rewriteResponseModel(body, req.Model)
+	}
 	_, _ = w.Write(body)
 }
 

@@ -59,7 +59,10 @@ func (s *Server) consoleInferenceKeyRequired(next http.Handler) http.Handler {
 // Requiring a local destination also prevents a public reverse proxy from
 // inheriting the exemption merely because it connects over loopback.
 func localConsoleAccess(r *http.Request, allowPlainLocal bool) string {
-	if !allowPlainLocal && r.TLS == nil {
+	// The dedicated public listener always requires an administrator session,
+	// including requests from a cloud VPC or loopback. Host and TLS do not prove
+	// that a caller is using the trusted local console listener.
+	if !allowPlainLocal {
 		return ""
 	}
 	for _, header := range []string{"Forwarded", "X-Forwarded-For", "X-Real-IP", "X-Forwarded-Host", "X-Forwarded-Proto"} {

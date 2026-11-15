@@ -1105,3 +1105,30 @@ func TestPerfRatesMeasuresARequestThatGeneratesNoTokens(t *testing.T) {
 		t.Fatalf("a request with no tokens at all was recorded: %v", p)
 	}
 }
+
+func TestInviteValidatesArgumentsBeforeQuota(t *testing.T) {
+	m, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{limit: 1}, ListenAddr: "127.0.0.1:0", Discoverer: NopDiscoverer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+	if _, _, err := m.CreateCluster("full"); err != nil {
+		t.Fatal(err)
+	}
+	validUUID := "123e4567-e89b-12d3-a456-426614174000"
+	for _, tc := range []struct {
+		uuid, code string
+		status     int
+	}{
+		{"bad-uuid", "12345678", 400},
+		{validUUID, "bad-code", 400},
+		{validUUID, "12345678", 403},
+	} {
+		body, _ := json.Marshal(map[string]string{"uuid": tc.uuid, "code": tc.code})
+		w := httptest.NewRecorder()
+		m.Admin().HandleInvite(w, httptest.NewRequest(http.MethodPost, "/api/cluster/invite", bytes.NewReader(body)))
+		if w.Code != tc.status {
+			t.Fatalf("uuid=%s code=%s: %d %s", tc.uuid, tc.code, w.Code, w.Body.String())
+		}
+	}
+}

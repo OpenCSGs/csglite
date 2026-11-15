@@ -24,6 +24,7 @@ import (
 )
 
 const (
+	NodeStatePath   = "/cluster/v1/node/state"
 	ModelActionPath = "/cluster/v1/models/action"
 	DeploymentPath  = "/cluster/v1/deployments/assign"
 	ConnectPath     = "/cluster/v1/connect"
@@ -45,6 +46,8 @@ type controlMessage struct {
 	Type        string          `json:"type"`
 	Status      json.RawMessage `json:"status,omitempty"`
 	HeartbeatMS int64           `json:"heartbeat_ms,omitempty"`
+	StatusAck   bool            `json:"status_ack,omitempty"`
+	Sequence    uint64          `json:"sequence,omitempty"`
 }
 
 type controlStream struct {

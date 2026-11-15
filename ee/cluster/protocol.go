@@ -153,35 +153,38 @@ type ModelSource struct {
 
 // Status is everything a node tells its peers about itself.
 type Status struct {
-	ModelManagement   bool          `json:"model_management,omitempty"`
-	ManagedBy         string        `json:"managed_by,omitempty"`
-	DeploymentCapable bool          `json:"deployment_capable,omitempty"`
-	UUID              string        `json:"uuid"`
-	Name              string        `json:"name"`
-	Version           string        `json:"version"`
-	Protocol          int           `json:"protocol"`
-	ClusterUUID       string        `json:"cluster_uuid,omitempty"`
-	Licensed          bool          `json:"licensed"`
-	NodeLimit         int           `json:"node_limit"`
-	AcceptWork        bool          `json:"accept_work"`
-	State             NodeState     `json:"state"`
-	Weight            int           `json:"weight"`
-	APIPort           int           `json:"api_port"`
-	ClusterPort       int           `json:"cluster_port"`
-	Hostname          string        `json:"hostname,omitempty"`
-	OS                string        `json:"os,omitempty"`
-	Arch              string        `json:"arch,omitempty"`
-	GPUs              []GPUStatus   `json:"gpus"`
-	CPU               CPUStatus     `json:"cpu"`
-	RAM               RAMStatus     `json:"ram"`
-	Disk              DiskStatus    `json:"disk"`
-	Net               NetStatus     `json:"net"`
-	Jobs              JobsStatus    `json:"jobs"`
-	ModelSource       ModelSource   `json:"model_source"`
-	Models            []ModelStatus `json:"models"`
-	Inflight          int           `json:"inflight"`
-	UptimeSec         int64         `json:"uptime_sec"`
-	Time              time.Time     `json:"time"`
+	NodeStateManagement bool   `json:"node_state_management,omitempty"`
+	ModelManagement     bool   `json:"model_management,omitempty"`
+	ManagedBy           string `json:"managed_by,omitempty"`
+	DeploymentCapable   bool   `json:"deployment_capable,omitempty"`
+	UUID                string `json:"uuid"`
+	Name                string `json:"name"`
+	Version             string `json:"version"`
+	Protocol            int    `json:"protocol"`
+	ClusterUUID         string `json:"cluster_uuid,omitempty"`
+	// Licensed reports whether cluster size fits this node's quota, in either edition.
+	// ClusterView.Licensed separately reports the Enterprise license.
+	Licensed    bool          `json:"licensed"`
+	NodeLimit   int           `json:"node_limit"`
+	AcceptWork  bool          `json:"accept_work"`
+	State       NodeState     `json:"state"`
+	Weight      int           `json:"weight"`
+	APIPort     int           `json:"api_port"`
+	ClusterPort int           `json:"cluster_port"`
+	Hostname    string        `json:"hostname,omitempty"`
+	OS          string        `json:"os,omitempty"`
+	Arch        string        `json:"arch,omitempty"`
+	GPUs        []GPUStatus   `json:"gpus"`
+	CPU         CPUStatus     `json:"cpu"`
+	RAM         RAMStatus     `json:"ram"`
+	Disk        DiskStatus    `json:"disk"`
+	Net         NetStatus     `json:"net"`
+	Jobs        JobsStatus    `json:"jobs"`
+	ModelSource ModelSource   `json:"model_source"`
+	Models      []ModelStatus `json:"models"`
+	Inflight    int           `json:"inflight"`
+	UptimeSec   int64         `json:"uptime_sec"`
+	Time        time.Time     `json:"time"`
 }
 
 // Model finds a model on the node by its public inference id.

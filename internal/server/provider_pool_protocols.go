@@ -121,7 +121,7 @@ func (s *Server) fillPoolProtocols(pool config.ProviderPool, out *api.ProviderPo
 		if pool.Policy == config.ProviderPoolPolicyFixed && i > 0 {
 			break
 		}
-		if member.Disabled || s.providerPoolSourceState(member) == "disabled" {
+		if s.providerPoolSourceState(member) != "configured" {
 			continue
 		}
 		info, _ := s.poolMemberInfo(member)

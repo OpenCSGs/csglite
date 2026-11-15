@@ -245,10 +245,13 @@ func printClusterMembers(members []cluster.NodeView) {
 			name += " (this node)"
 		}
 		state, gpu, vram, loaded, inflight, version := "-", "-", "-", "-", "-", "-"
+		if m.StatusScope == "connectivity_only" {
+			state = "Master-managed"
+		}
 		if st := m.Status; st != nil {
 			state = string(st.State)
 			if !st.Licensed {
-				state += " (unlicensed)"
+				state += " (node quota exceeded)"
 			}
 			if len(st.GPUs) > 0 {
 				gpu = st.GPUs[0].Name

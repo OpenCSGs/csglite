@@ -1479,7 +1479,7 @@ func writeAnthropicInferenceError(w http.ResponseWriter, err error) {
 	if status == 0 {
 		status = http.StatusInternalServerError
 	}
-	writeAnthropicErrorWithType(w, status, anthropicErrorTypeForStatus(status), inference.HTTPErrorMessage(err))
+	writeJSON(w, status, anthropicErrorPayloadFromInferenceError(err))
 }
 
 func writeAnthropicErrorWithType(w http.ResponseWriter, status int, errType, msg string) {
@@ -1497,15 +1497,19 @@ func anthropicErrorPayloadFromInferenceError(err error) map[string]interface{} {
 	if status == 0 {
 		status = http.StatusInternalServerError
 	}
-	return anthropicErrorPayloadWithStatus(status, anthropicErrorTypeForStatus(status), inference.HTTPErrorMessage(err))
+	payload := anthropicErrorPayloadWithStatus(status, anthropicErrorTypeForStatus(status), inference.HTTPErrorMessage(err))
+	addClusterInferenceErrorDetails(payload, err)
+	return payload
 }
 
 func anthropicErrorTypeForStatus(status int) string {
 	switch status {
 	case http.StatusBadRequest:
 		return "invalid_request_error"
-	case http.StatusUnauthorized, http.StatusForbidden:
+	case http.StatusUnauthorized:
 		return "authentication_error"
+	case http.StatusForbidden:
+		return "permission_error"
 	case http.StatusNotFound:
 		return "not_found_error"
 	case http.StatusTooManyRequests:
