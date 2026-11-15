@@ -3310,6 +3310,7 @@ export interface ClusterNodeView {
   static_address?: string;
   api_port?: number;
   status?: ClusterNodeStatus;
+  status_scope?: "connectivity_only";
 }
 
 export interface ClusterInfo {

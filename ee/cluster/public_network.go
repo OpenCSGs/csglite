@@ -580,13 +580,10 @@ func (m *Manager) observePublicGateway(gateway string) func(bool) {
 }
 
 func (m *Manager) publicGatewayView(node *NodeView) {
-	if m.opts.Mode != "worker" {
+	if !m.isPublicGateway(node.UUID) {
 		return
 	}
-	cluster := m.store.Cluster()
-	if cluster == nil || cluster.Topology != "public" || node.UUID != cluster.GatewayUUID {
-		return
-	}
+	node.StatusScope = "connectivity_only"
 	node.Online, node.Health = false, HealthDown
 	node.Addr = m.opts.GatewayURL
 	// The tunnel establishes connectivity only. It does not provide the
@@ -604,4 +601,9 @@ func (m *Manager) publicGatewayView(node *NodeView) {
 			node.LastSeen = &seen
 		}
 	}
+}
+
+func (m *Manager) isPublicGateway(node string) bool {
+	c := m.store.Cluster()
+	return m.opts.Mode == "worker" && c != nil && c.Topology == "public" && node == c.GatewayUUID
 }

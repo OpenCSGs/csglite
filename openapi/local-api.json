@@ -20564,6 +20564,13 @@
           },
           "status": {
             "$ref": "#/components/schemas/ClusterNodeStatus"
+          },
+          "status_scope": {
+            "type": "string",
+            "enum": [
+              "connectivity_only"
+            ],
+            "description": "On a public Worker, the Master entry reports tunnel connectivity only; its resource and inference telemetry is managed on the Master. An absent status is expected in this scope."
           }
         }
       },

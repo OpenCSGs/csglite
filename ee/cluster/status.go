@@ -220,7 +220,7 @@ func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 			// we have measured this node ourselves.
 			st = m.overlayPerf(rt.UUID, st)
 		}
-		out = append(out, Candidate{UUID: rt.UUID, Name: name, Status: st, Health: rt.Health, Reserved: int(rt.reserveSeq), Breaker: m.dir.ModelBroken(rt.UUID, model), Cooling: m.dir.Cooling(rt.UUID)})
+		out = append(out, Candidate{UUID: rt.UUID, Name: name, Status: st, Health: rt.Health, Reserved: int(rt.reserveSeq), Breaker: m.dir.ModelBroken(rt.UUID, model), Cooling: m.dir.Cooling(rt.UUID), GatewayOnly: m.isPublicGateway(rt.UUID)})
 	}
 	return out
 }

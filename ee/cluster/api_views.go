@@ -29,6 +29,7 @@ type NodeView struct {
 	StaticAddress string     `json:"static_address,omitempty"`
 	APIPort       int        `json:"api_port,omitempty"`
 	Status        *Status    `json:"status,omitempty"`
+	StatusScope   string     `json:"status_scope,omitempty"`
 }
 
 // SelfView identifies this node.

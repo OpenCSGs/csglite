@@ -245,6 +245,9 @@ func printClusterMembers(members []cluster.NodeView) {
 			name += " (this node)"
 		}
 		state, gpu, vram, loaded, inflight, version := "-", "-", "-", "-", "-", "-"
+		if m.StatusScope == "connectivity_only" {
+			state = "Master-managed"
+		}
 		if st := m.Status; st != nil {
 			state = string(st.State)
 			if !st.Licensed {

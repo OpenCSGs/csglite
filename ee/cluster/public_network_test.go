@@ -48,7 +48,7 @@ func assertWorkerGatewayOnline(t *testing.T, worker *Manager, gateway string, on
 					wantCount = 2
 				}
 				return node.Online == online && node.Health == wantHealth &&
-					node.Status == nil && node.LastSeen != nil &&
+					node.Status == nil && node.StatusScope == "connectivity_only" && node.LastSeen != nil &&
 					worker.Summary(context.Background()).OnlineCount == wantCount
 			}
 		}
@@ -281,4 +281,32 @@ func TestWorkerServiceViewsRespectSharingWithoutHidingLocalInventory(t *testing.
 			t.Fatal("sharing did not immediately update local service views")
 		}
 	}
+}
+
+func TestPublicWorkerExplainsGatewayTelemetryScope(t *testing.T) {
+	m, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{}, Mode: "worker", GatewayURL: "https://gateway.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := ClusterInfo{UUID: "cluster", Topology: "public", GatewayUUID: "gateway"}
+	if err := m.store.Adopt(info, "", []Member{{UUID: "gateway", Name: "gateway", CertFingerprint: "sha256:test"}}, m.identity.UUID); err != nil {
+		t.Fatal(err)
+	}
+	m.dir.Track("gateway", nil)
+	m.observePublicGateway("gateway")(true)
+	view := m.View(context.Background())
+	node := view.Members[1]
+	if !node.Online || node.Status != nil || node.StatusScope != "connectivity_only" {
+		t.Fatalf("gateway view=%+v", node)
+	}
+	ex := m.Explain(context.Background(), "m", 0, 0, "")
+	for _, c := range ex.Candidates {
+		if c.UUID == "gateway" {
+			if c.Eligible || c.Excluded != "gateway telemetry is managed on the Master" {
+				t.Fatalf("gateway candidate=%+v", c)
+			}
+			return
+		}
+	}
+	t.Fatal("gateway missing from explain")
 }

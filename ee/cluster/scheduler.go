@@ -21,8 +21,9 @@ type Candidate struct {
 	Breaker  bool
 	// Cooling is set when the node answered 429 and asked to be left alone
 	// for a while.
-	Cooling  bool
-	Unshared bool
+	Cooling     bool
+	Unshared    bool
+	GatewayOnly bool
 }
 
 // RankRequest describes the request being placed.
@@ -124,6 +125,8 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 		switch {
 		case req.PinnedUUID != "" && c.UUID != req.PinnedUUID:
 			r.Excluded = "not the pinned node"
+		case st == nil && c.GatewayOnly:
+			r.Excluded = "gateway telemetry is managed on the Master"
 		case st == nil:
 			r.Excluded = "no status yet"
 		case c.Health == HealthDown || c.Health == HealthProbing:
