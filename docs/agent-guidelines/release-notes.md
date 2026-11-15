@@ -23,8 +23,9 @@
 ## Release Workflow
 
 - Pushing a `v*` tag to GitHub triggers `.github/workflows/release.yml`.
-- The workflow tests the tagged commit, builds the Web UI and all supported
-  release archives with `make package`, Developer ID-signs the macOS binaries
+- The workflow builds the Web UI before testing the tagged commit so login and
+  static-page tests can use the embedded assets, builds all supported release
+  archives with `make package`, Developer ID-signs the macOS binaries
   with the certificate in the GitHub `release` environment, verifies
   `dist/checksums.txt`, and creates the GitHub release.
 - After GitHub publication, the `sync-gitlab` job uses the `gitlab-sync`
