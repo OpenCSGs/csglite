@@ -73,6 +73,9 @@ type ClusterInfo struct {
 // Settings are the operator-tunable knobs; they live next to the member table
 // so one file is the single source of truth for cluster state.
 type Settings struct {
+	// ManagedBy selects a controller for LAN peers. Public workers derive their
+	// controller from Cluster.GatewayUUID; this field is not persisted for them.
+	ManagedBy string `json:"managed_by,omitempty"`
 	// SharedModels is explicit owner consent for outbound public workers.
 	// LAN sharing retains its existing behavior. Empty means share nothing.
 	SharedModels     []string    `json:"shared_models,omitempty"`
@@ -212,10 +215,19 @@ func OpenStore(dir string) (*Store, error) {
 	st.data.Settings.normalize()
 	st.normalizeAddressesLocked()
 	st.pruneLocked(time.Now())
+	if st.data.Cluster != nil && st.data.Cluster.Topology == "public" && st.data.Settings.ManagedBy != "" {
+		// Migrate the old optional authorization. Membership is now sufficient.
+		if err := st.saveLocked(); err != nil {
+			return nil, fmt.Errorf("migrating public cluster controller: %w", err)
+		}
+	}
 	return st, nil
 }
 
 func (st *Store) saveLocked() error {
+	if st.data.Cluster != nil && st.data.Cluster.Topology == "public" {
+		st.data.Settings.ManagedBy = ""
+	}
 	st.data.Settings.normalize()
 	st.normalizeAddressesLocked()
 	sort.Slice(st.data.Members, func(i, j int) bool { return st.data.Members[i].UUID < st.data.Members[j].UUID })
@@ -276,7 +288,7 @@ func (st *Store) UpdateSettings(fn func(*Settings)) (Settings, error) {
 	if err := st.saveLocked(); err != nil {
 		return Settings{}, err
 	}
-	out := s
+	out := st.data.Settings
 	out.SharedModels = append([]string(nil), s.SharedModels...)
 	out.StaticAddresses = copyMap(s.StaticAddresses)
 	return out, nil
@@ -425,6 +437,7 @@ func (st *Store) Leave() error {
 		return ErrNotClustered
 	}
 	st.data.Cluster = nil
+	st.data.Settings.ManagedBy = ""
 	st.data.JoinTokenHash = ""
 	st.data.Members = []Member{}
 	st.data.Tombstones = nil

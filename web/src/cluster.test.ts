@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  workerNodeState,
   clusterNodeRole,
   fmtGB,
   fmtGBPair,
@@ -103,5 +104,14 @@ describe("cluster node roles", () => {
     expect(clusterNodeRole("node", { uuid: "lan", name: "LAN", created_at: "" })).toBe("peer");
     expect(clusterNodeRole("node", null)).toBe("standalone");
     expect(clusterNodeRole("node", { ...publicCluster, gateway_uuid: undefined })).toBe("unknown");
+  });
+});
+
+describe("workerNodeState", () => {
+  it("shows a legacy stopped worker as maintenance and preserves draining", () => {
+    expect(workerNodeState({ state: "active", accept_work: false })).toBe("maintenance");
+    expect(workerNodeState({ state: "active", accept_work: true })).toBe("active");
+    expect(workerNodeState({ state: "drain", accept_work: false })).toBe("drain");
+    expect(workerNodeState({ state: "maintenance", accept_work: true })).toBe("maintenance");
   });
 });

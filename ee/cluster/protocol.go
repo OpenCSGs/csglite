@@ -119,7 +119,11 @@ type ModelPerf struct {
 
 // ModelStatus is one model present on a node.
 type ModelStatus struct {
-	ID string `json:"id"`
+	HasMMProj      bool   `json:"has_mmproj,omitempty"`
+	TypedDecisions bool   `json:"typed_decisions,omitempty"`
+	DecisionOnly   bool   `json:"decision_only,omitempty"`
+	DeploymentID   string `json:"deployment_id,omitempty"`
+	ID             string `json:"id"`
 	// Repo and Source are what a pull job needs to fetch this model:
 	// "namespace/name" and the artifact source. The public ID alone is not
 	// enough, because an OpenCSG model is advertised under its short name.
@@ -149,32 +153,35 @@ type ModelSource struct {
 
 // Status is everything a node tells its peers about itself.
 type Status struct {
-	UUID        string        `json:"uuid"`
-	Name        string        `json:"name"`
-	Version     string        `json:"version"`
-	Protocol    int           `json:"protocol"`
-	ClusterUUID string        `json:"cluster_uuid,omitempty"`
-	Licensed    bool          `json:"licensed"`
-	NodeLimit   int           `json:"node_limit"`
-	AcceptWork  bool          `json:"accept_work"`
-	State       NodeState     `json:"state"`
-	Weight      int           `json:"weight"`
-	APIPort     int           `json:"api_port"`
-	ClusterPort int           `json:"cluster_port"`
-	Hostname    string        `json:"hostname,omitempty"`
-	OS          string        `json:"os,omitempty"`
-	Arch        string        `json:"arch,omitempty"`
-	GPUs        []GPUStatus   `json:"gpus"`
-	CPU         CPUStatus     `json:"cpu"`
-	RAM         RAMStatus     `json:"ram"`
-	Disk        DiskStatus    `json:"disk"`
-	Net         NetStatus     `json:"net"`
-	Jobs        JobsStatus    `json:"jobs"`
-	ModelSource ModelSource   `json:"model_source"`
-	Models      []ModelStatus `json:"models"`
-	Inflight    int           `json:"inflight"`
-	UptimeSec   int64         `json:"uptime_sec"`
-	Time        time.Time     `json:"time"`
+	ModelManagement   bool          `json:"model_management,omitempty"`
+	ManagedBy         string        `json:"managed_by,omitempty"`
+	DeploymentCapable bool          `json:"deployment_capable,omitempty"`
+	UUID              string        `json:"uuid"`
+	Name              string        `json:"name"`
+	Version           string        `json:"version"`
+	Protocol          int           `json:"protocol"`
+	ClusterUUID       string        `json:"cluster_uuid,omitempty"`
+	Licensed          bool          `json:"licensed"`
+	NodeLimit         int           `json:"node_limit"`
+	AcceptWork        bool          `json:"accept_work"`
+	State             NodeState     `json:"state"`
+	Weight            int           `json:"weight"`
+	APIPort           int           `json:"api_port"`
+	ClusterPort       int           `json:"cluster_port"`
+	Hostname          string        `json:"hostname,omitempty"`
+	OS                string        `json:"os,omitempty"`
+	Arch              string        `json:"arch,omitempty"`
+	GPUs              []GPUStatus   `json:"gpus"`
+	CPU               CPUStatus     `json:"cpu"`
+	RAM               RAMStatus     `json:"ram"`
+	Disk              DiskStatus    `json:"disk"`
+	Net               NetStatus     `json:"net"`
+	Jobs              JobsStatus    `json:"jobs"`
+	ModelSource       ModelSource   `json:"model_source"`
+	Models            []ModelStatus `json:"models"`
+	Inflight          int           `json:"inflight"`
+	UptimeSec         int64         `json:"uptime_sec"`
+	Time              time.Time     `json:"time"`
 }
 
 // Model finds a model on the node by its public inference id.

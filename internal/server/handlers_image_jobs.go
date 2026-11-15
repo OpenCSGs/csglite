@@ -188,7 +188,7 @@ func (s *Server) runImageGenerationJob(ctx context.Context, job *imageGeneration
 		var eng imagegen.Engine
 		eng, err = s.getOrLoadImageEngine(ctx, req.Model)
 		if err == nil {
-			resp, err = eng.Generate(ctx, req)
+			resp, err = s.generateLocalImage(ctx, eng, req)
 			if err == nil {
 				s.touchImageEngine(req.Model)
 			}

@@ -256,6 +256,9 @@ func (m *Manager) autoJoin(token string) {
 // Invite brings an unpaired node seen on the LAN into this cluster using the
 // admission code shown on that node.
 func (m *Manager) Invite(ctx context.Context, nodeUUID, code, address string) (Member, error) {
+	if m.opts.Mode == "worker" {
+		return Member{}, errors.New("public workers cannot invite other nodes")
+	}
 	if !m.store.InCluster() {
 		return Member{}, ErrNotClustered
 	}
@@ -402,6 +405,9 @@ func (m *Manager) leaveLocally() error {
 
 // RemoveMember drops a member, tells it, and lets gossip carry the tombstone.
 func (m *Manager) RemoveMember(ctx context.Context, nodeUUID string) error {
+	if m.opts.Mode == "worker" {
+		return errors.New("public workers cannot remove cluster members; use leave to disconnect this node")
+	}
 	mem, ok := m.store.Member(nodeUUID)
 	if !ok {
 		return fmt.Errorf("node %s is not a member", shortUUID(nodeUUID))
@@ -443,14 +449,21 @@ func (m *Manager) Rename(name string) error {
 
 // UpdateSettings changes operator settings and re-tracks static addresses.
 func (m *Manager) UpdateSettings(fn func(*Settings)) (Settings, error) {
-	s, err := m.store.UpdateSettings(fn)
+	_, err := m.store.UpdateSettings(func(s *Settings) {
+		fn(s)
+		if m.opts.Mode == "worker" {
+			s.ManagedBy = "" // Derived from membership, never a second writable source.
+		}
+	})
 	if err != nil {
 		return Settings{}, err
 	}
 	for _, mem := range m.store.Members() {
 		m.dir.Track(mem.UUID, m.seedAddressesFor(mem))
 	}
-	return s, nil
+	m.invalidateLocalStatus()
+	m.wakeDeployments()
+	return m.effectiveSettings(), nil
 }
 
 // PullOnNode asks a member to download a model from its own model source.

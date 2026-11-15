@@ -145,7 +145,7 @@ export function Dashboard() {
               {runningModels.value.map((m) => (
                 <tr key={m.name} class="border-b border-gray-50">
                   <td class="py-3">
-                    <div class="font-medium text-gray-900">{m.name}</div>
+                    <div class="font-medium text-gray-900">{m.display_name || m.name}</div>
                     <div class="text-xs text-gray-400">{t("dash.format")}: {m.format}</div>
                     {m.status === "loading" && (
                       <div class="mt-0.5 flex items-center gap-1.5 text-xs text-indigo-600">
@@ -156,20 +156,20 @@ export function Dashboard() {
                       </div>
                     )}
                   </td>
-                  <td class="py-3 text-gray-600">{new Date(m.expires_at).toLocaleTimeString()}</td>
+                  <td class="py-3 text-gray-600">{m.name.startsWith("deployment/") ? "—" : new Date(m.expires_at).toLocaleTimeString()}</td>
                   <td class="py-3 text-right space-x-2">
-                    <span
+                    {!m.name.startsWith("deployment/") && <span
                       class="text-indigo-600 text-xs cursor-pointer hover:underline"
                       onClick={() => (apiInfoModel.value = m.name)}
                     >
                       {t("dash.apiInfo")}
-                    </span>
-                    <button
+                    </span>}
+                    {m.name.startsWith("deployment/") ? <span class="text-xs text-gray-400">{t("deployments.controllerAction")}</span> : <button
                       onClick={() => handleUnload(m.name)}
                       class="px-3 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50 transition-colors"
                     >
                       {t("dash.unload")}
-                    </button>
+                    </button>}
                   </td>
                 </tr>
               ))}

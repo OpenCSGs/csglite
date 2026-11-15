@@ -44,8 +44,8 @@ describe("published model service choices", () => {
 
   it("does not merge candidates with incompatible capabilities", () => {
     expect(candidateCategory(model({ category: "embedding", pipeline_tag: "feature-extraction" }))).toBe("embedding");
-    expect(candidateCategory(model({ pipeline_tag: "text-to-image" }))).toBe("unsupported");
-    expect(candidateCategory(model({ decision_only: true }))).toBe("unsupported");
+    expect(candidateCategory(model({ pipeline_tag: "text-to-image" }))).toBe("image");
+    expect(candidateCategory(model({ decision_only: true }))).toBe("decision");
     expect(candidateCategory(model({ category: "language_model", pipeline_tag: "text-generation" }))).toBe("chat");
     expect(candidateCategory(model({ pipeline_tag: "image-text-to-text" }))).toBe("chat");
   });

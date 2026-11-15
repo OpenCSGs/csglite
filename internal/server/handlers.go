@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/csghub"
 	"github.com/opencsgs/csglite/internal/httpjson"
 	"github.com/opencsgs/csglite/internal/imagegen"
@@ -250,6 +251,13 @@ func (s *Server) handlePs(w http.ResponseWriter, r *http.Request) {
 	models := make([]api.RunningModel, 0, len(s.engines)+len(s.loading)+len(s.imageEngines)+len(s.imageLoading)+len(s.asrEngines)+len(s.asrLoading)+len(s.ttsEngines)+len(s.ttsLoading))
 	for id, me := range s.engines {
 		modelID := engineModelIDFromKey(id)
+		if lm := me.deploymentModel; lm != nil && strings.HasPrefix(modelID, cluster.DeploymentModelPrefix) {
+			models = append(models, api.RunningModel{
+				Name: modelID, Model: modelID, DisplayName: me.deploymentName, Repository: lm.Repository,
+				Size: lm.Size, Format: string(lm.Format), Status: "running", ExpiresAt: me.expiresAt(),
+			})
+			continue
+		}
 		lm, err := s.manager.Get(modelID)
 		if err != nil {
 			continue
@@ -411,6 +419,10 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if strings.HasPrefix(strings.TrimSpace(req.Model), cluster.DeploymentModelPrefix) {
+		writeError(w, http.StatusForbidden, "managed deployments must be started and stopped through their controller")
+		return
+	}
 
 	s.mu.Lock()
 	stopped := false
@@ -510,7 +522,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		safeSSE(api.PullResponse{Status: "error: " + sourceErr.Error()})
 		return
 	}
-	_, err := s.manager.PullFrom(r.Context(), req.Model, string(source), strings.TrimSpace(req.Revision), quants, progress)
+	_, err := s.manager.EnsureFrom(r.Context(), req.Model, string(source), strings.TrimSpace(req.Revision), quants, progress)
 	if err != nil {
 		log.Printf("pull %s failed: %v", req.Model, err)
 		s.reportModelDownloadFailure(&pullJob{
@@ -550,6 +562,18 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.HasPrefix(modelID, cluster.DeploymentModelPrefix) {
+		writeError(w, http.StatusForbidden, "delete managed deployments through their controller")
+		return
+	}
+	if ref := s.modelDeploymentReference(modelID, ""); ref != "" {
+		writeError(w, http.StatusConflict, "model is used by managed deployment "+ref+"; delete it on the Master first")
+		return
+	}
+	if err := s.checkSharedModelIdleForDeployment(modelID); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	// Close engine if running
 	s.mu.Lock()
 	for _, key := range []string{engineCacheKey(modelID, engineModeChat), engineCacheKey(modelID, engineModeEmbed)} {
@@ -560,7 +584,12 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	if err := s.manager.Remove(modelID); err != nil {
+	if err := s.manager.RemoveWhen(r.Context(), modelID, func() error {
+		if ref := s.modelDeploymentReference(modelID, ""); ref != "" {
+			return fmt.Errorf("model is used by managed deployment %s", ref)
+		}
+		return s.checkSharedModelIdle(modelID)
+	}); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -573,6 +602,10 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	var req api.LoadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.HasPrefix(strings.TrimSpace(req.Model), cluster.DeploymentModelPrefix) {
+		writeError(w, http.StatusForbidden, "managed deployments must be started and stopped through their controller")
 		return
 	}
 

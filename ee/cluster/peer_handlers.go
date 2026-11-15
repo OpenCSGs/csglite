@@ -53,6 +53,12 @@ func (a *peerAPI) peerMux() http.Handler {
 	mux.HandleFunc("POST "+peerPathGossip, a.requirePeer(a.handlePeerGossip))
 	mux.HandleFunc("POST "+peerPathLeave, a.requirePeer(a.handlePeerLeave))
 	mux.HandleFunc("POST "+peerPathPull, a.requirePeer(a.handlePeerPull))
+	mux.HandleFunc("POST "+deploymentPeerPath, a.requirePeer(func(w http.ResponseWriter, r *http.Request) {
+		a.m.deploymentHandler(r.Header.Get("X-CSGLite-Peer")).ServeHTTP(w, r)
+	}))
+	mux.HandleFunc("POST /cluster/v1/models/action", a.requirePeer(func(w http.ResponseWriter, r *http.Request) {
+		a.m.modelActionHandler(r.Header.Get("X-CSGLite-Peer")).ServeHTTP(w, r)
+	}))
 	mux.Handle(peerPathInference, a.requirePeer(a.handlePeerInference))
 	mux.HandleFunc("GET "+peerPathModelBundle, a.requirePeer(a.handlePeerModelBundle))
 	mux.HandleFunc("GET "+peerPathModelFile, a.requirePeer(a.handlePeerModelFile))

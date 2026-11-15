@@ -106,6 +106,7 @@ func newClusterManager(s *Server, storageRoot string) *cluster.Manager {
 		log.Printf("cluster: disabled: %v", err)
 		return nil
 	}
+	s.migrateDeploymentModels(m)
 	return m
 }
 
@@ -194,6 +195,9 @@ func (h *clusterHost) InferenceHandler() http.Handler {
 		}
 	}
 	mux.HandleFunc("POST /v1/chat/completions", local(s.handleOpenAIChatCompletions))
+	mux.HandleFunc("POST /v1/decisions", local(s.handleDecisions))
+	mux.HandleFunc("POST /v1/images/generations", local(s.handleOpenAIImagesGenerations))
+	mux.HandleFunc("POST /v1/images/edits", local(s.handleOpenAIImagesEdits))
 	mux.HandleFunc("POST /v1/embeddings", local(s.handleOpenAIEmbeddings))
 	mux.HandleFunc("POST /v1/responses", local(s.handleOpenAIResponses))
 	mux.HandleFunc("POST /v1/messages", local(s.handleAnthropicMessages))
@@ -303,7 +307,8 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 	}
 	for id, me := range s.imageEngines {
 		public := s.localInferenceModelID(id)
-		engines[public] = loaded{slots: 1, ngl: -1, expires: workerExpiry(me.lastUsed, me.keepAlive)}
+		engines[public] = loaded{slots: 1, active: me.activeRequests, ngl: -1, expires: workerExpiry(me.lastUsed, me.keepAlive)}
+		st.Inflight += me.activeRequests
 	}
 	for id := range s.asrLoading {
 		if _, ok := s.asrEngines[id]; !ok {
@@ -343,7 +348,13 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 	}
 	if infos, err := s.listLocalModelInfos(); err == nil {
 		for _, info := range infos {
-			ms := cluster.ModelStatus{ID: info.Model, Size: info.Size, Format: info.Format, PipelineTag: info.PipelineTag, Category: info.Category, NGPULayers: -1}
+			// A managed artifact is advertised through its deployment aliases.
+			// Publishing its raw cache ID as well would allow an unintended
+			// independent cold start and duplicate it in the Master inventory.
+			if s.modelDeploymentReference(info.ID, "") != "" {
+				continue
+			}
+			ms := cluster.ModelStatus{ID: info.Model, Size: info.Size, Format: info.Format, PipelineTag: info.PipelineTag, Category: info.Category, NGPULayers: -1, TypedDecisions: info.TypedDecisions, DecisionOnly: info.DecisionOnly, HasMMProj: info.HasMMProj}
 			if spec, ok := pullSpecs[info.Model]; ok {
 				ms.Repo, ms.Source = spec[0], spec[1]
 			}
@@ -480,7 +491,7 @@ func (s *Server) clusterModelInfos(ctx context.Context) ([]api.ModelInfo, map[st
 		remoteOnly = append(remoteOnly, api.ModelInfo{
 			Name: cm.ID, Model: cm.ID, Size: cm.Size, Format: cm.Format, Label: cm.ID, DisplayName: cm.ID,
 			Source: cluster.SourceCluster, Provider: "cluster", Category: category, PipelineTag: cm.PipelineTag,
-			Nodes: presence[cm.ID],
+			Nodes: presence[cm.ID], TypedDecisions: cm.TypedDecisions, DecisionOnly: cm.DecisionOnly, HasMMProj: cm.HasMMProj,
 		})
 	}
 	return remoteOnly, presence

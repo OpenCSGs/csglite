@@ -57,17 +57,20 @@ const (
 )
 
 type managedEngine struct {
-	engine         inference.Engine
-	numCtx         int
-	numParallel    int
-	nGPULayers     int
-	cacheTypeK     string
-	cacheTypeV     string
-	dtype          string
-	speculativeKey string
-	lastUsed       time.Time
-	keepAlive      time.Duration
-	activeRequests int
+	// Metadata for isolated deployment engines, which are outside the local library.
+	deploymentModel *model.LocalModel
+	deploymentName  string
+	engine          inference.Engine
+	numCtx          int
+	numParallel     int
+	nGPULayers      int
+	cacheTypeK      string
+	cacheTypeV      string
+	dtype           string
+	speculativeKey  string
+	lastUsed        time.Time
+	keepAlive       time.Duration
+	activeRequests  int
 }
 
 // loadStepState records the latest load/conversion progress step for a model
@@ -114,9 +117,10 @@ type selfHealBreakerState struct {
 }
 
 type managedImageEngine struct {
-	engine    imagegen.Engine
-	lastUsed  time.Time
-	keepAlive time.Duration
+	activeRequests int
+	engine         imagegen.Engine
+	lastUsed       time.Time
+	keepAlive      time.Duration
 }
 
 type imageEngineLoadState struct {
@@ -654,7 +658,7 @@ func (s *Server) evictExpired(now time.Time) {
 		}
 	}
 	for id, me := range s.imageEngines {
-		if me.keepAlive < 0 {
+		if me.keepAlive < 0 || me.activeRequests > 0 {
 			continue
 		}
 		if now.After(me.lastUsed.Add(me.keepAlive)) {
@@ -871,6 +875,10 @@ func (s *Server) applyModelKeepAlive(modelID string, keepAlive time.Duration) {
 
 func (s *Server) setEngineKeepAlive(modelID string, keepAlive time.Duration) {
 	modelID = s.resolveLocalModelStorageID(modelID)
+	if strings.HasPrefix(modelID, cluster.DeploymentModelPrefix) {
+		// Managed runtime lifetime belongs to the deployment controller.
+		return
+	}
 	s.mu.Lock()
 	for _, key := range []string{engineCacheKey(modelID, engineModeChat), engineCacheKey(modelID, engineModeEmbed)} {
 		if me, ok := s.engines[key]; ok {
@@ -1014,6 +1022,9 @@ func (s *Server) getOrLoadEmbeddingEngineWithProgress(ctx context.Context, model
 }
 
 func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.ConvertProgressFunc, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype, mode string, speculative inference.SpeculativeConfig, speculativeRequested bool) (inference.Engine, error) {
+	if strings.HasPrefix(modelID, cluster.DeploymentModelPrefix) {
+		return s.deploymentInferenceEngine(modelID, mode)
+	}
 	modelID = s.resolveLocalModelStorageID(modelID)
 	normalizedCacheTypeK, err := inference.NormalizeCacheType(cacheTypeK)
 	if err != nil {
@@ -1188,7 +1199,14 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 			oldEngine.Close()
 		}
 
+		unlock, lockErr := s.manager.LockArtifact(s.engineLoadContext(), modelID)
+		if lockErr == nil {
+			defer unlock()
+		}
 		lm, err := s.manager.Get(modelID)
+		if lockErr != nil {
+			err = lockErr
+		}
 		loadStarted := time.Now()
 		if err == nil {
 			if mode == engineModeEmbed {

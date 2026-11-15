@@ -8,6 +8,8 @@ export function ConfirmDialog({
   description,
   confirmLabel,
   busy = false,
+  confirmDisabled = false,
+  busyLabel,
   onConfirm,
   onCancel,
 }: {
@@ -17,6 +19,8 @@ export function ConfirmDialog({
   description: string;
   confirmLabel?: string;
   busy?: boolean;
+  confirmDisabled?: boolean;
+  busyLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -84,11 +88,11 @@ export function ConfirmDialog({
           </button>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || confirmDisabled}
             onClick={onConfirm}
             class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {busy ? t("confirm.deleting") : confirmLabel || t("confirm.delete")}
+            {busy ? busyLabel || t("confirm.deleting") : confirmLabel || t("confirm.delete")}
           </button>
         </div>
       </section>

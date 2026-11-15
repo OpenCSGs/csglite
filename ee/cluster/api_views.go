@@ -173,8 +173,8 @@ func (m *Manager) memberViews(ctx context.Context, withStatus bool) []NodeView {
 			t := mem.JoinedAt
 			v.JoinedAt = &t
 		}
-		if withStatus {
-			v.Status = rt.Status
+		if withStatus && rt.Status != nil {
+			v.Status = m.overlayPerf(mem.UUID, rt.Status)
 		}
 		m.publicGatewayView(&v)
 		views = append(views, v)
@@ -195,7 +195,7 @@ func (m *Manager) View(ctx context.Context) ClusterView {
 		NodeLimit:          m.NodeLimit(),
 		Licensed:           m.opts.Host.Licensed(),
 		JoinTokenAvailable: m.store.JoinToken() != "",
-		Settings:           m.store.Settings(),
+		Settings:           m.effectiveSettings(),
 		Members:            members,
 		DiscoveredCount:    len(m.dir.Discovered(discoveredMaxAge)),
 		AutoForm:           m.AutoFormEnabled(),

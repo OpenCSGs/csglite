@@ -222,7 +222,7 @@ func TestProviderRouteLegacyAuthPath(t *testing.T) {
 
 func TestProviderPoolRouteIsObserved(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/providers/pool-one/v1/chat/completions", nil)
-	if !isObservedTextGenerationRequest(req) {
+	if !isObservedRequest(req) {
 		t.Fatal("provider pool chat route should be observed")
 	}
 }

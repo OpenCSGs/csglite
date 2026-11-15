@@ -148,8 +148,8 @@ func (s *Server) validateProviderPool(_ *http.Request, pool config.ProviderPool,
 	if pool.Policy == config.ProviderPoolPolicyFixed && len(pool.Members) != 1 {
 		return errProviderPool("fixed routing requires exactly one source")
 	}
-	if pool.Category != "" && pool.Category != "chat" && pool.Category != "embedding" {
-		return errProviderPool("category must be chat or embedding")
+	if pool.Category != "" && pool.Category != "chat" && pool.Category != "embedding" && pool.Category != "image" && pool.Category != "asr" && pool.Category != "tts" && pool.Category != "decision" {
+		return errProviderPool("category must be chat, embedding, image, asr, tts or decision")
 	}
 	for _, existing := range pools {
 		if existing.ID == excludeID {
@@ -269,6 +269,7 @@ func (s *Server) providerPoolView(pool config.ProviderPool) api.ProviderPool {
 	for _, member := range pool.Members {
 		out.SourceStates[member.ID] = s.providerPoolSourceState(member)
 	}
+	s.fillPoolProtocols(pool, &out)
 	return out
 }
 

@@ -20,9 +20,12 @@ import (
 	"time"
 
 	"github.com/hashicorp/yamux"
+	inferencebody "github.com/opencsgs/csglite/internal/inference"
 )
 
 const (
+	ModelActionPath = "/cluster/v1/models/action"
+	DeploymentPath  = "/cluster/v1/deployments/assign"
 	ConnectPath     = "/cluster/v1/connect"
 	ProtocolVersion = "1"
 	HeaderNode      = "X-CSGLite-Node-UUID"
@@ -129,6 +132,11 @@ func openStream(ctx context.Context, mux *yamux.Session) (net.Conn, error) {
 
 // Both ends enforce this list. No URL supplied by a caller is ever dialed.
 var inferencePaths = map[string]bool{
+	"/v1/decisions":             true,
+	"/v1/images/generations":    true,
+	"/v1/images/edits":          true,
+	"/v1/audio/transcriptions":  true,
+	"/v1/audio/speech":          true,
 	"/v1/chat/completions":      true,
 	"/v1/embeddings":            true,
 	"/v1/responses":             true,
@@ -164,21 +172,19 @@ func inferenceRequest(req *http.Request, allowModel func(string) bool) (*http.Re
 	if len(data) > maxRequestBytes {
 		return nil, &requestError{http.StatusRequestEntityTooLarge, "inference request too large"}
 	}
-	var body map[string]json.RawMessage
-	if json.Unmarshal(data, &body) != nil || body == nil {
-		return nil, &requestError{http.StatusBadRequest, "a JSON object is required"}
+	target, err := inferencebody.ParseModelRequest(data, req.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, &requestError{http.StatusBadRequest, err.Error()}
 	}
-	var model, source string
-	if json.Unmarshal(body["model"], &model) != nil || model == "" {
-		return nil, &requestError{http.StatusBadRequest, "model is required"}
-	}
-	if allowModel != nil && !allowModel(model) {
+	if allowModel != nil && !allowModel(target.Model) {
 		return nil, &requestError{http.StatusForbidden, "model is not shared by this node"}
 	}
-	if value, ok := body["source"]; ok {
-		if json.Unmarshal(value, &source) != nil || (source != "" && source != "local") {
-			return nil, &requestError{http.StatusBadRequest, "a tunneled request must execute locally"}
-		}
+	if target.Source != "" && target.Source != "local" {
+		return nil, &requestError{http.StatusBadRequest, "a tunneled request must execute locally"}
+	}
+	var body map[string]json.RawMessage
+	if req.URL.Path == "/v1/responses" {
+		_ = json.Unmarshal(data, &body)
 	}
 	if req.URL.Path == "/v1/responses" {
 		var background bool
@@ -189,8 +195,7 @@ func inferenceRequest(req *http.Request, allowModel func(string) bool) (*http.Re
 			return nil, &requestError{http.StatusBadRequest, "stored response continuation is not supported"}
 		}
 	}
-	body["source"] = json.RawMessage(`"local"`)
-	data, err = json.Marshal(body)
+	data, contentType, err := inferencebody.RewriteModelRequest(data, req.Header.Get("Content-Type"), target.Model, "local")
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +210,7 @@ func inferenceRequest(req *http.Request, allowModel func(string) bool) (*http.Re
 			out.Header[http.CanonicalHeaderKey(name)] = append([]string(nil), values...)
 		}
 	}
-	out.Header.Set("Content-Type", "application/json")
+	out.Header.Set("Content-Type", contentType)
 	out.Trailer = nil
 	out.TransferEncoding = nil
 	out.Body = io.NopCloser(bytes.NewReader(data))

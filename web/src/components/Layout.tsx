@@ -3,6 +3,7 @@ import type { JSX } from "preact";
 import { useLocation } from "preact-iso";
 import { useEffect, useState } from "preact/hooks";
 import { getSettings } from "../api/client";
+import { clusterMode, refreshClusterMode, isControllerPage, isWorkerHiddenNav } from "../clusterAccess";
 import { SidebarAccount } from "./SidebarAccount";
 import { communitySettings } from "../cloudAccount";
 import { consoleAccessMode } from "../utils/consoleAuth";
@@ -110,7 +111,19 @@ export function Layout({ children }: { children: ComponentChildren }) {
     };
   }, []);
 
-  const showNavItem = (id: string) => hiddenNavItems !== null && !hiddenNavItems.has(id);
+  useEffect(() => {
+    void refreshClusterMode();
+    const timer = window.setInterval(() => void refreshClusterMode(), 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const mode = clusterMode.value;
+  const waitingForRole = mode === null && isControllerPage(path);
+  const blocked = mode === "worker" && isControllerPage(path);
+  useEffect(() => {
+    if (blocked) route("/cluster", true);
+  }, [blocked, path]);
+  const showNavItem = (id: string) => hiddenNavItems !== null && !hiddenNavItems.has(id)
+    && (!isWorkerHiddenNav(id) || (mode !== null && mode !== "worker"));
 
   return (
     <div class="flex h-screen overflow-hidden">
@@ -154,7 +167,7 @@ export function Layout({ children }: { children: ComponentChildren }) {
         </div>
       </aside>
       <main class="flex min-h-0 flex-1 flex-col overflow-hidden bg-gray-50">
-        <div class="min-h-0 flex-1 overflow-auto">{children}</div>
+        <div class="min-h-0 flex-1 overflow-auto">{waitingForRole ? <div class="p-8 text-sm text-gray-500">{t("cluster.checkingRole")}</div> : blocked ? null : children}</div>
         <div class="flex-shrink-0 py-3 text-xs text-gray-400 text-center">
           &copy; OpenCSG &middot; Powered By OpenCSG
         </div>

@@ -155,6 +155,14 @@ func (s *Server) handleModelUpload(w http.ResponseWriter, r *http.Request) {
 
 	importStart := time.Now()
 	log.Printf("MODEL UPLOAD %s: import started", modelID)
+	if ref := s.modelDeploymentReference(modelID, ""); ref != "" {
+		writeError(w, http.StatusConflict, "model is used by managed deployment "+ref)
+		return
+	}
+	if err := s.checkSharedModelIdleForDeployment(modelID); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
 	opts := model.ImportOptions{
 		ModelID:   modelID,
 		Source:    source,

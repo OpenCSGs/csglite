@@ -36,7 +36,7 @@ type ManagedProvider = ThirdPartyProvider & { builtIn?: boolean; source?: "cloud
 type GatewayAPIInfoTarget = {
   targetID: string;
   model: ModelInfo;
-  /** Only the cloud provider card serves /v1/decisions; third-party providers and provider pools do not. */
+  /** Provider cards expose Decisions for the built-in cloud; services derive their own capabilities. */
   decisionsSupported: boolean;
 };
 
@@ -1529,6 +1529,8 @@ function lastSummaryValue(summary: LocalAPIUsageTotalSummary | undefined, series
 
 function apiUsageSourceSummaryLabel(sourceType: string, sourceName?: string): string {
   switch (sourceType) {
+    case "cluster":
+      return sourceName ? `${t("settings.apiUsageSourceCluster")} · ${sourceName}` : t("settings.apiUsageSourceCluster");
     case "local":
       return t("settings.apiUsageSourceLocal");
     case "cloud":
@@ -1547,7 +1549,7 @@ function apiUsageSourceRowLabel(sourceType: string, sourceName?: string, poolNam
     const member = sourceName || apiUsageSourceSummaryLabel(sourceType);
     return `${poolName} → ${member}`;
   }
-  if (sourceType === "provider" && sourceName) {
+  if ((sourceType === "provider" || sourceType === "cluster") && sourceName) {
     return sourceName;
   }
   return apiUsageSourceSummaryLabel(sourceType);

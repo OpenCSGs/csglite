@@ -270,6 +270,20 @@ func TestJoinWithTokenAndRouteToPeer(t *testing.T) {
 	// The measured body fed the perf store (the fake answers instantly, so
 	// the combined rate is attributed to decoding).
 	waitFor(t, "perf sample", func() bool { return a.m.perf.get(b.m.identity.UUID, "m-b") != nil })
+	foundPerf := false
+	for _, node := range a.m.View(context.Background()).Members {
+		if node.UUID != b.m.identity.UUID || node.Status == nil {
+			continue
+		}
+		for _, model := range node.Status.Models {
+			if model.ID == "m-b" && model.Perf != nil && model.Perf.Samples > 0 && model.Perf.DecodeTPS > 0 {
+				foundPerf = true
+			}
+		}
+	}
+	if !foundPerf {
+		t.Fatal("management view omitted the entry node's measured peer throughput")
+	}
 
 	// The Ollama-style Chat path streams through the same route.
 	var tokens []string

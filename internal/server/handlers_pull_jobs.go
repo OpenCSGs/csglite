@@ -193,6 +193,14 @@ func (s *Server) handlePartialModelPullDelete(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusConflict, "cancel the active download before clearing partial files")
 		return
 	}
+	id := req.Model
+	if source != modelregistry.SourceOpenCSG {
+		id = string(source) + "/" + req.Model
+	}
+	if ref := s.modelDeploymentReference(id, ""); ref != "" {
+		writeError(w, http.StatusConflict, "model is used by managed deployment "+ref+"; manage it on the Master")
+		return
+	}
 	removedPath, err := s.manager.RemovePartial(req.Model, string(source))
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
@@ -298,7 +306,7 @@ func (s *Server) runPullJob(job *pullJob) {
 		if handled, copyErr := s.pullModelFromPeer(ctx, job); handled {
 			err = copyErr
 		} else {
-			_, err = s.manager.PullFrom(ctx, job.name, job.source, job.revision, job.quants, progress)
+			_, err = s.manager.EnsureFrom(ctx, job.name, job.source, job.revision, job.quants, progress)
 		}
 	case "dataset":
 		_, err = s.datasetManager.PullFrom(ctx, job.name, job.source, job.revision, progress)

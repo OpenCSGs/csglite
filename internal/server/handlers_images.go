@@ -144,7 +144,7 @@ func (s *Server) runOpenAIImageInference(r *http.Request, inferenceReq imageInfe
 		}
 		return nil, err
 	}
-	resp, err := eng.Generate(r.Context(), req)
+	resp, err := s.generateLocalImage(r.Context(), eng, req)
 	if err != nil {
 		return nil, &imageGenerateError{err: err}
 	}
@@ -763,4 +763,20 @@ func (s *Server) handleImageRuntimeInstall(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+// Track image use so remote lifecycle operations and idle eviction never close
+// a runtime in the middle of a generation, including background image jobs.
+func (s *Server) generateLocalImage(ctx context.Context, engine imagegen.Engine, req api.OpenAIImagesGenerationRequest) (*api.OpenAIImagesGenerationResponse, error) {
+	id := s.resolveLocalModelStorageID(req.Model)
+	s.mu.Lock()
+	me := s.imageEngines[id]
+	if me == nil || me.engine != engine {
+		s.mu.Unlock()
+		return nil, errors.New("image runtime was unloaded; retry the request")
+	}
+	me.activeRequests++
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); me.activeRequests--; me.lastUsed = time.Now(); s.mu.Unlock() }()
+	return engine.Generate(ctx, req)
 }

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/csghub"
+	"github.com/opencsgs/csglite/internal/safefile"
 )
 
 type ImportSourceKind string
@@ -37,6 +39,11 @@ func (m *Manager) Import(opts ImportOptions) (*LocalModel, error) {
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := m.LockArtifact(context.Background(), namespace+"/"+name)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if strings.TrimSpace(opts.Source) == "" {
 		return nil, fmt.Errorf("source is required")
 	}
@@ -115,6 +122,11 @@ func (m *Manager) ImportPreparedDirectory(opts ImportOptions) (*LocalModel, erro
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := m.LockArtifact(context.Background(), namespace+"/"+name)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if strings.TrimSpace(opts.Source) == "" {
 		return nil, fmt.Errorf("source is required")
 	}
@@ -451,5 +463,5 @@ func SaveManifestInDir(modelDir string, m *LocalModel) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(modelDir, "manifest.json"), data, 0o644)
+	return safefile.Write(filepath.Join(modelDir, "manifest.json"), data, 0o644)
 }

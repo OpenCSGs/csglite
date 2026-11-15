@@ -24,6 +24,16 @@ type adminAPI struct{ m *Manager }
 // Admin returns this node's operator API.
 func (m *Manager) Admin() *adminAPI { return &adminAPI{m: m} }
 
+// requireController keeps public workers execution-only even when called
+// directly through the local API or CLI.
+func (a *adminAPI) requireController(w http.ResponseWriter) bool {
+	if a.m.opts.Mode != "worker" {
+		return true
+	}
+	writeCodedError(w, http.StatusForbidden, "manage the cluster and deployments on the Master", "master_required")
+	return false
+}
+
 // ---- API views ----
 
 // ---- JSON helpers matching the server's error envelope ----
@@ -44,6 +54,9 @@ func (a *adminAPI) HandleSummary(w http.ResponseWriter, r *http.Request) {
 
 // HandleCreate is POST /api/cluster.
 func (a *adminAPI) HandleCreate(w http.ResponseWriter, r *http.Request) {
+	if !a.requireController(w) {
+		return
+	}
 	var req struct {
 		Name string `json:"name"`
 	}
@@ -99,6 +112,9 @@ func (a *adminAPI) HandleToken(w http.ResponseWriter, r *http.Request) {
 
 // HandleTokenRotate is POST /api/cluster/token/rotate.
 func (a *adminAPI) HandleTokenRotate(w http.ResponseWriter, r *http.Request) {
+	if !a.requireController(w) {
+		return
+	}
 	token, err := a.m.JoinToken(true)
 	if err != nil {
 		writeOpError(w, err)
@@ -129,6 +145,9 @@ func (a *adminAPI) HandleDisable(w http.ResponseWriter, r *http.Request) {
 
 // HandleCode is GET /api/cluster/code.
 func (a *adminAPI) HandleCode(w http.ResponseWriter, r *http.Request) {
+	if !a.requireController(w) {
+		return
+	}
 	// Showing the code means an invite is expected, which needs the
 	// listener up.
 	if err := a.m.Activate(); err != nil {
@@ -151,6 +170,9 @@ func (a *adminAPI) HandleDiscovered(w http.ResponseWriter, r *http.Request) {
 
 // HandleInvite is POST /api/cluster/invite.
 func (a *adminAPI) HandleInvite(w http.ResponseWriter, r *http.Request) {
+	if !a.requireController(w) {
+		return
+	}
 	var req struct {
 		UUID    string `json:"uuid"`
 		Code    string `json:"code"`
@@ -183,6 +205,9 @@ func (a *adminAPI) HandleInvite(w http.ResponseWriter, r *http.Request) {
 // HandleNodeUpdate is PUT /api/cluster/nodes/{uuid}.
 func (a *adminAPI) HandleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	nodeUUID := r.PathValue("uuid")
+	if nodeUUID != a.m.identity.UUID && !a.requireController(w) {
+		return
+	}
 	var req struct {
 		Name          *string `json:"name"`
 		StaticAddress *string `json:"static_address"`
@@ -240,6 +265,9 @@ func (a *adminAPI) HandleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 
 // HandleNodeRemove is DELETE /api/cluster/nodes/{uuid}.
 func (a *adminAPI) HandleNodeRemove(w http.ResponseWriter, r *http.Request) {
+	if !a.requireController(w) {
+		return
+	}
 	nodeUUID := r.PathValue("uuid")
 	if nodeUUID == a.m.identity.UUID {
 		writeError(w, http.StatusBadRequest, "use DELETE /api/cluster to leave the cluster from this node")
@@ -312,6 +340,7 @@ func (a *adminAPI) HandleRecommendations(w http.ResponseWriter, r *http.Request)
 // HandleSettingsUpdate is PUT /api/cluster/settings.
 func (a *adminAPI) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		ManagedBy        *string      `json:"managed_by"`
 		SharedModels     *[]string    `json:"shared_models"`
 		AcceptWork       *bool        `json:"accept_work"`
 		PreferLocal      *bool        `json:"prefer_local"`
@@ -332,6 +361,29 @@ func (a *adminAPI) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) 
 	if req.State != nil && *req.State != NodeStateActive && *req.State != NodeStateDrain && *req.State != NodeStateMaintenance {
 		writeError(w, http.StatusBadRequest, "state must be active, drain or maintenance")
 		return
+	}
+	if a.m.opts.Mode == "worker" {
+		current := a.m.store.Settings()
+		if (req.RoutingMode != nil && *req.RoutingMode != current.RoutingMode) ||
+			(req.PreferLocal != nil && *req.PreferLocal != current.PreferLocal) ||
+			(req.AffinityMaxQueue != nil && *req.AffinityMaxQueue != current.AffinityMaxQueue) {
+			a.requireController(w)
+			return
+		}
+		if req.ManagedBy != nil {
+			if *req.ManagedBy != "" && *req.ManagedBy != a.m.deploymentController() {
+				writeError(w, http.StatusBadRequest, "the Master is determined by cluster membership; leave the cluster to change it")
+				return
+			}
+			// Accept legacy empty/current-Master payloads without changing control.
+			req.ManagedBy = nil
+		}
+	}
+	if req.ManagedBy != nil && *req.ManagedBy != "" {
+		if _, ok := a.m.store.Member(*req.ManagedBy); !ok || a.m.opts.Mode == "gateway" {
+			writeError(w, 400, "managed_by must name an admitted deployment controller")
+			return
+		}
 	}
 	if req.SharedModels != nil {
 		if len(*req.SharedModels) > 128 {
@@ -354,6 +406,9 @@ func (a *adminAPI) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) 
 		req.SharedModels = &clean
 	}
 	s, err := a.m.UpdateSettings(func(s *Settings) {
+		if req.ManagedBy != nil {
+			s.ManagedBy = *req.ManagedBy
+		}
 		if req.SharedModels != nil {
 			s.SharedModels = append([]string{}, (*req.SharedModels)...)
 		}
@@ -392,6 +447,9 @@ func (a *adminAPI) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) 
 // the model from its own model source (the on-prem CSGHub in the intended
 // deployment).
 func (a *adminAPI) HandleModelSync(w http.ResponseWriter, r *http.Request) {
+	if !a.requireController(w) {
+		return
+	}
 	if a.m.opts.Mode != "" {
 		writeError(w, 409, "public cluster models are prepared locally on each worker; model distribution is not enabled")
 		return
@@ -513,6 +571,9 @@ func (a *adminAPI) HandleModelSync(w http.ResponseWriter, r *http.Request) {
 
 // HandleNodePull is POST /api/cluster/nodes/{uuid}/models/pull.
 func (a *adminAPI) HandleNodePull(w http.ResponseWriter, r *http.Request) {
+	if !a.requireController(w) {
+		return
+	}
 	nodeUUID := r.PathValue("uuid")
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {

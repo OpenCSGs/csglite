@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/ee/cluster"
+	"github.com/opencsgs/csglite/internal/inference"
 )
 
 func validatePublicManagementListener(mode, addr string) error {
@@ -24,7 +25,7 @@ func validatePublicManagementListener(mode, addr string) error {
 // It never uses the main API's loopback authentication exemption.
 func (s *Server) publicClusterInferenceRoutes() http.Handler {
 	mux := http.NewServeMux()
-	s.registerGatewayInferenceRoutes(mux)
+	s.registerGatewayInferenceRoutes(mux, false)
 	mux.HandleFunc("GET /v1/models", func(w http.ResponseWriter, r *http.Request) {
 		models := []map[string]any{}
 		if s.cluster != nil {
@@ -85,11 +86,13 @@ func (s *Server) publicClusterInferenceRoutes() http.Handler {
 				writeError(w, 413, "request body too large or unreadable")
 				return
 			}
-			var body map[string]json.RawMessage
-			if json.Unmarshal(data, &body) != nil || body == nil {
-				writeError(w, 400, "a JSON object is required")
+			_, parseErr := inference.ParseModelRequest(data, r.Header.Get("Content-Type"))
+			if parseErr != nil {
+				writeError(w, 400, parseErr.Error())
 				return
 			}
+			var body map[string]json.RawMessage
+			_ = json.Unmarshal(data, &body)
 			if !strings.HasPrefix(r.URL.Path, gatewayPrefix+"/v1/") {
 				var source string
 				if value, exists := body["source"]; exists && json.Unmarshal(value, &source) != nil {
@@ -121,7 +124,9 @@ func (s *Server) publicClusterInferenceRoutes() http.Handler {
 					return
 				}
 			}
-			data, _ = json.Marshal(body)
+			if !strings.HasPrefix(r.URL.Path, gatewayPrefix+"/v1/") {
+				data, _ = json.Marshal(body)
+			}
 			r.Body = io.NopCloser(bytes.NewReader(data))
 			r.ContentLength = int64(len(data))
 

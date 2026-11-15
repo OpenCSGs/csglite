@@ -1,16 +1,28 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/correlation"
 	"github.com/opencsgs/csglite/internal/observability"
 	"github.com/opencsgs/csglite/pkg/api"
 )
+
+func TestClusterUsageSourceRetainsExactNodeIdentity(t *testing.T) {
+	s := &Server{}
+	for _, source := range []string{"cluster", "node:worker-a", "node:worker-b"} {
+		resolved, kind, _ := s.resolveAPIUsageSource(context.Background(), "deployment/runtime", source)
+		if resolved != source || kind != apiUsageSourceCluster {
+			t.Fatalf("cluster route %q resolved as %q (%q)", source, resolved, kind)
+		}
+	}
+}
 
 func TestRequestPricingSnapshotKnownAndUnknown(t *testing.T) {
 	s := &Server{}
@@ -194,12 +206,12 @@ func TestObservationResponseUsageReadsFinalUsageFromTruncatedTail(t *testing.T) 
 	}
 }
 
-func TestObservabilityMiddlewareIgnoresNonTextRoutes(t *testing.T) {
+func TestObservabilityMiddlewareIgnoresManagementRoutes(t *testing.T) {
 	s := newTestServer(t)
 	handler := s.observabilityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"model":"embed"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/load", strings.NewReader(`{"model":"embed"}`))
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 
 	s.observabilityMu.RLock()
@@ -209,7 +221,82 @@ func TestObservabilityMiddlewareIgnoresNonTextRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if page.Total != 0 {
-		t.Fatalf("captured non-text requests = %d, want 0", page.Total)
+		t.Fatalf("captured management requests = %d, want 0", page.Total)
+	}
+}
+
+func TestObservabilityRecordsDecisionServicesAcrossListeners(t *testing.T) {
+	s := newNativeDecisionTestServer(t)
+	config.ResetProviderPools()
+	t.Cleanup(config.ResetProviderPools)
+	s.engines["org/laya"] = &managedEngine{engine: &fakeSystemOneEngine{}, numCtx: 8192, numParallel: 1}
+	pool := config.ProviderPool{ID: "laya-service", Name: "Laya", Model: "public-laya", Enabled: true, Policy: "fixed",
+		Members: []config.ProviderPoolMember{{ID: "member", Source: "local", Model: "org/laya"}}}
+	if err := config.SaveProviderPools([]config.ProviderPool{pool}); err != nil {
+		t.Fatal(err)
+	}
+	_, key, err := s.apiKeys.Create("decision-observation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for listener, handler := range map[string]http.Handler{"console": s.routes(), "desktop": s.externalAPIRoutes(), "public": s.publicClusterInferenceRoutes()} {
+		for _, valid := range []bool{true, false} {
+			name := listener + "/success"
+			body := `{"model":"public-laya","input":"I need a refund.","questions":[{"type":"predicate","name":"refund","instructions":"Refund requested?"}]}`
+			wantStatus := http.StatusOK
+			if !valid {
+				name = listener + "/failure"
+				body = `{"model":"public-laya","input":"I need a refund.","questions":[{"type":"invalid","name":"refund"}]}`
+				wantStatus = http.StatusBadRequest
+			}
+			t.Run(name, func(t *testing.T) {
+				r := httptest.NewRequest(http.MethodPost, "/ai-gateway/v1/decisions", strings.NewReader(body))
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set("Authorization", "Bearer "+key)
+				r.Header.Set(observabilityTraceIDHeader, "decision-trace")
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, r)
+				if w.Code != wantStatus {
+					t.Fatalf("status=%d body=%s", w.Code, w.Body)
+				}
+				id := w.Header().Get(observabilityRequestIDHeader)
+				if id == "" {
+					t.Fatal("decision request has no observation ID")
+				}
+				record, err := s.observability.GetRequest(r.Context(), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if record.Protocol != "decisions" || record.Model != pool.Model || record.Path != r.URL.Path || record.StatusCode != wantStatus || record.TraceID != "decision-trace" {
+					t.Fatalf("unexpected decision observation: %+v", record)
+				}
+				if record.PoolID != pool.ID || record.MemberModel != "org/laya" || record.ActualMemberID != "member" {
+					t.Fatalf("missing decision routing metadata: %+v", record)
+				}
+				if valid && (record.InputTokens != 40 || record.OutputTokens != 0 || !strings.Contains(record.RequestBody, "questions") || !strings.Contains(record.ResponseBody, "probability")) {
+					t.Fatalf("missing decision payload or usage: %+v", record)
+				}
+				if !valid && (record.Status != "failed" || record.ErrorMessage == "") {
+					t.Fatalf("missing decision failure: %+v", record)
+				}
+				if record.FirstTokenLatencyMS != 0 {
+					t.Fatal("decision response time was reported as first-token latency")
+				}
+			})
+		}
+	}
+}
+
+func TestObservedDecisionRoutes(t *testing.T) {
+	for _, path := range []string{"/v1/decide", "/v1/decisions", "/ai-gateway/v1/decisions", "/providers/laya/v1/decisions"} {
+		t.Run(path, func(t *testing.T) {
+			if !isObservedRequest(httptest.NewRequest(http.MethodPost, path, nil)) || observationProtocol(path) != "decisions" {
+				t.Fatal("decision route excluded from observations")
+			}
+			if isObservedRequest(httptest.NewRequest(http.MethodGet, path, nil)) {
+				t.Fatal("observed a non-inference GET")
+			}
+		})
 	}
 }
 

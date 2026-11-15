@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { buildApiExamples } from "./apiExamples";
+import { apiExampleModeFromPipelineTag, buildApiExamples } from "./apiExamples";
 
 describe("buildApiExamples", () => {
+  it.each([
+    ["text-to-image", "text-to-image", "images/generations"],
+    ["image-to-image", "image-to-image", "images/edits"],
+    ["automatic-speech-recognition", "asr", "audio/transcriptions"],
+    ["text-to-speech", "tts", "audio/speech"],
+  ] as const)("publishes the %s API at the unified gateway", (tag, mode, endpoint) => {
+    expect(apiExampleModeFromPipelineTag(tag)).toBe(mode);
+    const examples = buildApiExamples("http://localhost:11435/ai-gateway", "service-model", mode);
+    expect(examples.curl).toContain(`/ai-gateway/v1/${endpoint}`);
+    for (const code of Object.values(examples)) {
+      expect(code).toContain("service-model");
+      expect(code).toContain("YOUR_API_KEY");
+      expect(code).not.toContain("chat/completions");
+    }
+  });
   it("uses the unified gateway base URL and API Key for OpenAI examples", () => {
     const examples = buildApiExamples(
       "http://localhost:11435/ai-gateway",
