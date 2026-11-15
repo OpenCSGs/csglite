@@ -18914,7 +18914,8 @@
             }
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "For /ai-gateway/v1 calls, echoes the requested published model service ID, independent of the underlying replica or repository."
           },
           "usage": {
             "$ref": "#/components/schemas/OpenAIUsage"
@@ -19060,7 +19061,8 @@
             "type": "integer"
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "For /ai-gateway/v1 calls, echoes the requested published model service ID, independent of the underlying replica or repository."
           },
           "choices": {
             "type": "array",
@@ -19578,7 +19580,8 @@
             }
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "For /ai-gateway/v1 calls, echoes the requested published model service ID, independent of the underlying replica or repository."
           },
           "stop_reason": {
             "type": "string"
@@ -21127,7 +21130,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Eligible node uuids in scheduling order."
+            "description": "Eligible node UUIDs in scheduling order; [] when no node is eligible."
           },
           "candidates": {
             "type": "array",
@@ -21140,8 +21143,7 @@
                 "eligible",
                 "warm",
                 "affinity",
-                "estimated_seconds",
-                "rank"
+                "estimated_seconds"
               ],
               "properties": {
                 "uuid": {
@@ -21175,7 +21177,17 @@
                   }
                 },
                 "rank": {
-                  "type": "integer"
+                  "type": "integer",
+                  "description": "One-based rank among eligible nodes only; omitted for excluded candidates."
+                },
+                "excluded_reason": {
+                  "$ref": "#/components/schemas/ClusterSchedulingReason"
+                },
+                "factor_details": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ClusterSchedulingReason"
+                  }
                 }
               }
             }
@@ -21202,6 +21214,9 @@
           },
           "reason": {
             "type": "string"
+          },
+          "reason_detail": {
+            "$ref": "#/components/schemas/ClusterSchedulingReason"
           }
         }
       },
@@ -21515,6 +21530,63 @@
             }
           }
         ]
+      },
+      "ClusterSchedulingReason": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable reason code for UI localization. Clients should fall back to the legacy description for unknown codes.",
+            "enum": [
+              "not_pinned",
+              "gateway_managed",
+              "no_status",
+              "node_unhealthy",
+              "not_reached",
+              "quota_exceeded",
+              "node_state",
+              "not_accepting",
+              "model_failed",
+              "cooldown",
+              "model_not_shared",
+              "model_missing",
+              "memory_low",
+              "decode_estimated",
+              "decode_measured",
+              "queued",
+              "loading",
+              "disk_busy",
+              "cold_start",
+              "thermal",
+              "power_limit",
+              "cpu_busy",
+              "ram_low",
+              "gpu_busy",
+              "weight",
+              "affinity",
+              "affinity_skipped",
+              "eviction",
+              "second_replica"
+            ]
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "description": "Positional parameters for the localized reason."
+          }
+        }
       }
     }
   }

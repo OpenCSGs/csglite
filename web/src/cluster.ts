@@ -1,4 +1,4 @@
-import type { ClusterInfo, ClusterView, ClusterNodeView, ClusterNodeHealth, ClusterNodeState, ClusterSettings } from "./api/client";
+import type { ClusterSchedulingReason, ClusterInfo, ClusterView, ClusterNodeView, ClusterNodeHealth, ClusterNodeState, ClusterSettings } from "./api/client";
 
 /**
  * Pure helpers shared by the Dashboard cluster section and the Cluster page.
@@ -172,4 +172,14 @@ export function workerNodeState(settings: Pick<ClusterSettings, "state" | "accep
 
 export function canManageNodeState(view: ClusterView, node: ClusterNodeView): boolean {
  return node.local || (view.mode !== "worker" && node.status?.node_state_management === true && node.status.managed_by === view.node.uuid);
+}
+
+export function clusterReasonText(reason: ClusterSchedulingReason | undefined, fallback: string, translate: (key: string, ...args: (string | number)[]) => string): string {
+ if (!reason) return fallback;
+ const args = [...(reason.args ?? [])];
+ if (reason.code === "node_state" && typeof args[0] === "string") args[0] = translate(stateKey(args[0]));
+ if (reason.code === "node_unhealthy" && typeof args[0] === "string") args[0] = translate(healthKey(args[0], args[0] !== "down"));
+ const key = `cluster.reason.${reason.code}`;
+ const text = translate(key, ...args);
+ return text === key ? fallback : text;
 }

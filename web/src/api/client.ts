@@ -3409,7 +3409,14 @@ export interface ClusterSyncResponse {
   results: ClusterSyncResult[];
 }
 
+export interface ClusterSchedulingReason {
+  code: string;
+  args?: (string | number)[];
+}
+
 export interface ClusterExplainCandidate {
+  excluded_reason?: ClusterSchedulingReason;
+  factor_details?: ClusterSchedulingReason[];
   uuid: string;
   name: string;
   local: boolean;
@@ -3419,7 +3426,7 @@ export interface ClusterExplainCandidate {
   affinity: boolean;
   estimated_seconds: number;
   factors?: string[];
-  rank: number;
+  rank?: number;
 }
 
 export interface ClusterExplainResponse {
@@ -3433,6 +3440,7 @@ export interface ClusterRecommendation {
   node_uuid: string;
   node_name: string;
   reason: string;
+  reason_detail?: ClusterSchedulingReason;
 }
 
 export interface ClusterSettingsUpdate {

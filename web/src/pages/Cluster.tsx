@@ -47,7 +47,7 @@ import { deploymentProgress } from "../deploymentModels";
 import type { ModelInstanceFilter } from "../clusterModels";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { t, locale } from "../i18n";
-import { canManageNodeState, workerNodeState, clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, shortVersion, stateKey } from "../cluster";
+import { clusterReasonText, canManageNodeState, workerNodeState, clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, shortVersion, stateKey } from "../cluster";
 
 type ClusterTab = "overview" | "discovered" | "models" | "settings";
 
@@ -1416,7 +1416,7 @@ function RecommendationsCard() {
                 <div class="min-w-0">
                   <div class="text-sm font-medium text-gray-900 break-all">{rec.model}</div>
                   <div class="text-xs text-gray-500">
-                    → <span class="font-medium text-gray-700">{rec.node_name}</span> · {rec.reason}
+                    → <span class="font-medium text-gray-700">{rec.node_name}</span> · {clusterReasonText(rec.reason_detail, rec.reason, t)}
                   </div>
                   {outcome && <div class="mt-1 text-xs text-indigo-700">{outcome}</div>}
                 </div>
@@ -1439,7 +1439,7 @@ function RecommendationsCard() {
 
 function ExplainCard({ models: list }: { models: ClusterModelDistribution[] }) {
   const result = explainResult.value;
-  const ordered = result ? [...result.candidates].sort((a, b) => a.rank - b.rank) : [];
+  const ordered = result ? [...result.candidates].sort((a, b) => Number(b.eligible) - Number(a.eligible) || (a.rank ?? 0) - (b.rank ?? 0)) : [];
   return (
     <section class="bg-white rounded-xl border border-gray-200 p-6">
       <h2 class="text-lg font-bold text-gray-900">{t("cluster.explainTitle")}</h2>
@@ -1505,9 +1505,9 @@ function ExplainCard({ models: list }: { models: ClusterModelDistribution[] }) {
                   {c.eligible && <span class="ml-auto text-xs text-gray-500">{t("cluster.estimated", fmtSeconds(c.estimated_seconds))}</span>}
                 </div>
                 {c.eligible ? (
-                  c.factors && c.factors.length > 0 && <div class="mt-0.5 text-xs text-gray-500">{c.factors.join(" · ")}</div>
+                  c.factors && c.factors.length > 0 && <div class="mt-0.5 text-xs text-gray-500">{(c.factor_details?.map((reason, index) => clusterReasonText(reason, c.factors?.[index] ?? "", t)) ?? c.factors).join(" · ")}</div>
                 ) : (
-                  <div class="mt-0.5 text-xs">{t("cluster.excluded", c.excluded || t("cluster.unknownError"))}</div>
+                  <div class="mt-0.5 text-xs">{t("cluster.excluded", clusterReasonText(c.excluded_reason, c.excluded || t("cluster.unknownError"), t))}</div>
                 )}
               </div>
             </li>

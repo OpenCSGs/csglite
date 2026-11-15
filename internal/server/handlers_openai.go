@@ -258,7 +258,12 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 	w.WriteHeader(http.StatusOK)
 	if stream {
 		capture := &streamUsageCapture{}
-		_, _ = io.Copy(openAIStreamWriter{ResponseWriter: w}, io.TeeReader(resp.Body, capture))
+		reader := io.TeeReader(resp.Body, capture)
+		if isPublishedGatewayRequest(r) {
+			_ = copyGatewayModelStream(openAIStreamWriter{ResponseWriter: w}, reader, req.Model)
+		} else {
+			_, _ = io.Copy(openAIStreamWriter{ResponseWriter: w}, reader)
+		}
 		inputTokens, outputTokens := countMessageTokens(req.Messages), 0
 		if capturedInput, capturedOutput, ok := capture.usage(); ok {
 			if capturedInput > 0 {
@@ -297,6 +302,9 @@ func (s *Server) handleOpenAIChatCompletionsProxy(
 		} else {
 			r = markUsageEstimated(r)
 			s.recordAPIUsageWithPool(r, req.Model, usageSource, countMessageTokens(req.Messages), 0, usagePool)
+		}
+		if isPublishedGatewayRequest(r) {
+			body = rewriteResponseModel(body, req.Model)
 		}
 		_, _ = w.Write(body)
 	}

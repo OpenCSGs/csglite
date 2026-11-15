@@ -40,16 +40,18 @@ type RankRequest struct {
 
 // Ranked is one candidate's verdict, in explain form.
 type Ranked struct {
-	UUID     string   `json:"uuid"`
-	Name     string   `json:"name"`
-	Local    bool     `json:"local"`
-	Eligible bool     `json:"eligible"`
-	Excluded string   `json:"excluded,omitempty"`
-	Warm     bool     `json:"warm"`
-	Affinity bool     `json:"affinity"`
-	Seconds  float64  `json:"estimated_seconds"`
-	Factors  []string `json:"factors,omitempty"`
-	Rank     int      `json:"rank"`
+	UUID           string             `json:"uuid"`
+	Name           string             `json:"name"`
+	Local          bool               `json:"local"`
+	Eligible       bool               `json:"eligible"`
+	Excluded       string             `json:"excluded,omitempty"`
+	Warm           bool               `json:"warm"`
+	Affinity       bool               `json:"affinity"`
+	Seconds        float64            `json:"estimated_seconds"`
+	Factors        []string           `json:"factors,omitempty"`
+	Rank           int                `json:"rank,omitempty"`
+	ExcludedReason *SchedulingReason  `json:"excluded_reason,omitempty"`
+	FactorDetails  []SchedulingReason `json:"factor_details,omitempty"`
 }
 
 // Explain is the full scheduling decision for one request.
@@ -124,27 +126,27 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 		st := c.Status
 		switch {
 		case req.PinnedUUID != "" && c.UUID != req.PinnedUUID:
-			r.Excluded = "not the pinned node"
+			r.exclude("not_pinned", "not the pinned node")
 		case st == nil && c.GatewayOnly:
-			r.Excluded = "gateway telemetry is managed on the Master"
+			r.exclude("gateway_managed", "gateway telemetry is managed on the Master")
 		case st == nil:
-			r.Excluded = "no status yet"
+			r.exclude("no_status", "no status yet")
 		case c.Health == HealthDown || c.Health == HealthProbing:
-			r.Excluded = "node is " + string(c.Health)
+			r.exclude("node_unhealthy", "node is "+string(c.Health), string(c.Health))
 		case c.Health == HealthUnknown:
-			r.Excluded = "node not reached yet"
+			r.exclude("not_reached", "node not reached yet")
 		case !st.Licensed:
-			r.Excluded = "node exceeds its license node cap"
+			r.exclude("quota_exceeded", "node exceeds its license node cap")
 		case st.State != NodeStateActive:
-			r.Excluded = "node state is " + string(st.State)
+			r.exclude("node_state", "node state is "+string(st.State), string(st.State))
 		case !st.AcceptWork:
-			r.Excluded = "node is not accepting work"
+			r.exclude("not_accepting", "node is not accepting work")
 		case c.Breaker:
-			r.Excluded = "model failed on this node recently"
+			r.exclude("model_failed", "model failed on this node recently")
 		case c.Cooling:
-			r.Excluded = "node asked to be retried later"
+			r.exclude("cooldown", "node asked to be retried later")
 		case c.Unshared:
-			r.Excluded = "model is not shared by this node"
+			r.exclude("model_not_shared", "model is not shared by this node")
 		}
 		if r.Excluded != "" {
 			out = append(out, r)
@@ -152,7 +154,7 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 		}
 		m, ok := st.Model(req.Model)
 		if !ok {
-			r.Excluded = "model not present"
+			r.exclude("model_missing", "model not present")
 			out = append(out, r)
 			continue
 		}
@@ -163,9 +165,9 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 		decodeTPS := perf.DecodeTPS
 		if decodeTPS <= 0 {
 			decodeTPS = max(defaultDecodeTPS(m.Size), bestDecode)
-			r.Factors = append(r.Factors, fmt.Sprintf("decode speed estimated %.0f tok/s (no samples)", decodeTPS))
+			r.factor("decode_estimated", fmt.Sprintf("decode speed estimated %.0f tok/s (no samples)", decodeTPS), fmt.Sprintf("%.0f", decodeTPS))
 		} else {
-			r.Factors = append(r.Factors, fmt.Sprintf("decode %.1f tok/s measured", decodeTPS))
+			r.factor("decode_measured", fmt.Sprintf("decode %.1f tok/s measured", decodeTPS), fmt.Sprintf("%.1f", decodeTPS))
 		}
 		promptTPS := perf.PromptTPS
 		if promptTPS <= 0 {
@@ -189,7 +191,7 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 			}
 			if queued > 0 {
 				seconds += float64(queued) * perRequest
-				r.Factors = append(r.Factors, fmt.Sprintf("%d request(s) queued ahead", queued))
+				r.factor("queued", fmt.Sprintf("%d request(s) queued ahead", queued), queued)
 			}
 		case m.Loading:
 			load := perf.LoadSeconds
@@ -197,7 +199,7 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 				load = float64(m.Size) / (defaultDiskMBps * 1e6)
 			}
 			seconds += load / 2 // already part way through
-			r.Factors = append(r.Factors, "model is loading now")
+			r.factor("loading", "model is loading now")
 		default:
 			load := perf.LoadSeconds
 			if load <= 0 {
@@ -209,15 +211,15 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 			}
 			if st.Disk.IOBusy || len(st.Jobs.Pulling) > 0 || len(st.Jobs.Converting) > 0 {
 				load *= 2
-				r.Factors = append(r.Factors, "disk busy with a download or conversion")
+				r.factor("disk_busy", "disk busy with a download or conversion")
 			}
 			seconds += load
-			r.Factors = append(r.Factors, fmt.Sprintf("cold start ~%.0fs", load))
+			r.factor("cold_start", fmt.Sprintf("cold start ~%.0fs", load), fmt.Sprintf("%.0f", load))
 			// Memory check: VRAM on discrete GPUs, RAM on unified memory.
 			need := uint64(float64(m.Size) * vramHeadroomFactor)
 			free, known := freeMemoryForModel(st)
 			if known && free < need {
-				r.Excluded = "not enough free memory to load without evicting"
+				r.exclude("memory_low", "not enough free memory to load without evicting")
 				needsEviction++
 				out = append(out, r)
 				continue
@@ -233,33 +235,33 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 		for _, g := range st.GPUs {
 			if g.Throttled || (g.Temperature != nil && *g.Temperature >= 85) {
 				mult *= 1.5
-				r.Factors = append(r.Factors, "GPU thermal throttling")
+				r.factor("thermal", "GPU thermal throttling")
 				break
 			}
 		}
 		for _, g := range st.GPUs {
 			if g.PowerLimit != nil && g.PowerDraw != nil && *g.PowerLimit > 0 && float64(*g.PowerDraw) >= 0.95*float64(*g.PowerLimit) {
 				mult *= 1.2
-				r.Factors = append(r.Factors, "GPU at power limit")
+				r.factor("power_limit", "GPU at power limit")
 				break
 			}
 		}
 		if m.NGPULayers >= 0 && m.NGPULayers < 999 && m.Loaded && st.CPU.Load1 != nil && st.CPU.Cores > 0 && *st.CPU.Load1/float64(st.CPU.Cores) > 0.8 {
 			mult *= 1.5
-			r.Factors = append(r.Factors, "partial GPU offload under CPU contention")
+			r.factor("cpu_busy", "partial GPU offload under CPU contention")
 		}
 		if st.RAM.Total > 0 && !st.RAM.Unified {
 			ramFree := st.RAM.Total - min(st.RAM.Used, st.RAM.Total)
 			if ramFree < uint64(float64(m.Size)*0.5) {
 				mult *= 1.3
-				r.Factors = append(r.Factors, "little RAM left for the weight cache")
+				r.factor("ram_low", "little RAM left for the weight cache")
 			}
 		}
 		if st.Inflight == 0 && active == 0 {
 			for _, g := range st.GPUs {
 				if g.Util != nil && *g.Util >= 60 {
 					mult *= 1.3
-					r.Factors = append(r.Factors, "GPU busy with another process")
+					r.factor("gpu_busy", "GPU busy with another process")
 					break
 				}
 			}
@@ -270,7 +272,7 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 		}
 		if weight != 100 {
 			mult *= 100.0 / float64(weight)
-			r.Factors = append(r.Factors, fmt.Sprintf("operator weight %d", weight))
+			r.factor("weight", fmt.Sprintf("operator weight %d", weight), weight)
 		}
 		seconds *= mult
 		r.Seconds = math.Round(seconds*100) / 100
@@ -283,9 +285,9 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 			queued := active - slots + 1
 			if queued <= req.AffinityMaxQueue {
 				r.Affinity = true
-				r.Factors = append(r.Factors, "session affinity")
+				r.factor("affinity", "session affinity")
 			} else {
-				r.Factors = append(r.Factors, fmt.Sprintf("affinity skipped: %d queued > %d", queued, req.AffinityMaxQueue))
+				r.factor("affinity_skipped", fmt.Sprintf("affinity skipped: %d queued > %d", queued, req.AffinityMaxQueue), queued, req.AffinityMaxQueue)
 			}
 		}
 		out = append(out, r)
@@ -313,8 +315,9 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 		if bestIdx >= 0 {
 			out[bestIdx].Eligible = true
 			out[bestIdx].Excluded = ""
+			out[bestIdx].ExcludedReason = nil
 			out[bestIdx].Seconds = 3600
-			out[bestIdx].Factors = append(out[bestIdx].Factors, "will evict other models to load")
+			out[bestIdx].factor("eviction", "will evict other models to load")
 		}
 	}
 
@@ -337,10 +340,10 @@ func Rank(req RankRequest, cands []Candidate) ([]Ranked, Explain) {
 		}
 		return stableTiebreak(req.Model, a.UUID) < stableTiebreak(req.Model, b.UUID)
 	})
-	ex := Explain{Model: req.Model}
+	ex := Explain{Model: req.Model, Order: []string{}}
 	for i := range out {
-		out[i].Rank = i + 1
 		if out[i].Eligible {
+			out[i].Rank = len(ex.Order) + 1
 			ex.Order = append(ex.Order, out[i].UUID)
 		}
 	}

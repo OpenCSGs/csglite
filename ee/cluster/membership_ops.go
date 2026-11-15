@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // CreateCluster founds a cluster of one and returns the join token.
@@ -261,6 +263,19 @@ func (m *Manager) Invite(ctx context.Context, nodeUUID, code, address string) (M
 	}
 	if !m.store.InCluster() {
 		return Member{}, ErrNotClustered
+	}
+	nodeUUID = strings.TrimSpace(nodeUUID)
+	if nodeUUID != "" {
+		if _, err := uuid.Parse(nodeUUID); err != nil {
+			return Member{}, errors.New("invalid node uuid")
+		}
+	}
+	code = strings.TrimSpace(code)
+	if len(code) != 8 || strings.Trim(code, "0123456789") != "" {
+		return Member{}, errors.New("admission code must contain eight digits")
+	}
+	if nodeUUID == "" && strings.TrimSpace(address) == "" {
+		return Member{}, errors.New("uuid or address is required")
 	}
 	if err := m.Activate(); err != nil {
 		return Member{}, err

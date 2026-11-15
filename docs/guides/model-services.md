@@ -51,3 +51,7 @@ flowchart LR
 需要改为在服务成员中配置来源。公网示例见[公网集群调用接口](public-cluster-requirements.md#调用接口)。
 
 设计讨论：[Issue #253](https://github.com/OpenCSGs/csglite/issues/253)。
+
+统一入口的对话、Responses、Messages、向量与决策结果使用调用方传入的模型服务 ID 回显 `model`；
+对话流的每个 JSON 事件也保持相同 ID，底层 Provider 或节点副本的仓库名称不改变这个标识。
+实际执行来源可在观测记录和成员来源信息中查看。

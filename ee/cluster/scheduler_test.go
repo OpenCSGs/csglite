@@ -4,6 +4,8 @@
 package cluster
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -249,5 +251,28 @@ func TestRankDoesNotPunishANodeMerelyForHavingNoSamples(t *testing.T) {
 	ranked, ex = Rank(RankRequest{Model: "m", PromptTokens: 512, MaxTokens: 128}, []Candidate{slow, unmeasured})
 	if ranked[0].Name != "unmeasured" {
 		t.Fatalf("a node measured at 3 tok/s outranked an unmeasured one (%s)", summarizeExplain(ex))
+	}
+}
+
+func TestExplainEmptyOrderAndEligibleRanks(t *testing.T) {
+	_, empty := Rank(RankRequest{Model: "m"}, []Candidate{{UUID: "no-status"}})
+	raw, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"order":[]`)) || bytes.Contains(raw, []byte(`"rank":`)) {
+		t.Fatalf("invalid empty explain shape: %s", raw)
+	}
+	warm := nodeWithModel("warm", ModelStatus{ID: "m", Loaded: true}, nil)
+	stopped := nodeWithModel("paused", ModelStatus{ID: "m"}, func(s *Status) { s.AcceptWork = false })
+	_, ex := Rank(RankRequest{Model: "m"}, []Candidate{stopped, warm})
+	if len(ex.Order) != 1 || ex.Candidates[0].Rank != 1 || ex.Candidates[1].Rank != 0 {
+		t.Fatalf("excluded node ranked: %+v", ex)
+	}
+	if ex.Candidates[1].ExcludedReason == nil || ex.Candidates[1].ExcludedReason.Code != "not_accepting" {
+		t.Fatalf("structured exclusion missing: %+v", ex)
+	}
+	if len(ex.Candidates[0].FactorDetails) != len(ex.Candidates[0].Factors) {
+		t.Fatalf("factors lost localization data: %+v", ex)
 	}
 }

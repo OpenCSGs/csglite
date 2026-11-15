@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  clusterReasonText,
   canManageNodeState,
   workerNodeState,
   clusterNodeRole,
@@ -126,5 +127,21 @@ describe("remote node state authority", () => {
   expect(canManageNodeState(view, {...node, status: {...node.status!, managed_by: "other"}})).toBe(false);
   expect(canManageNodeState(view, {...node, status: {...node.status!, node_state_management: undefined}})).toBe(false);
   expect(canManageNodeState(view, {...node, status: undefined})).toBe(false);
+ });
+});
+
+describe("localized scheduling reasons", () => {
+ const translate = (key: string, ...args: (string | number)[]) => ({
+  "cluster.reason.not_accepting": "节点已暂停接单",
+  "cluster.reason.node_state": `节点处于${args[0]}`,
+  "cluster.stateDrain": "排空中",
+  "cluster.reason.decode_measured": `实测速度 ${args[0]}`,
+ }[key] ?? key);
+ it("uses reason codes and parameters while supporting legacy responses", () => {
+  expect(clusterReasonText({code:"not_accepting"}, "node is not accepting work", translate)).toBe("节点已暂停接单");
+  expect(clusterReasonText({code:"node_state",args:["drain"]}, "node state is drain", translate)).toBe("节点处于排空中");
+  expect(clusterReasonText({code:"decode_measured",args:[11.4]}, "decode 11.4 tok/s", translate)).toBe("实测速度 11.4");
+  expect(clusterReasonText(undefined, "legacy", translate)).toBe("legacy");
+  expect(clusterReasonText({code:"future"}, "new reason", translate)).toBe("new reason");
  });
 });
