@@ -498,9 +498,20 @@ func TestStoppedDeploymentMigratesToConfiguredLibraryAtStartup(t *testing.T) {
 	if err := os.WriteFile(oldFile, []byte("GGUF"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.Stat(oldFile)
+	// On Windows, os.Stat loads the file ID lazily through its original path.
+	// Read it through a handle before migration, then close the handle so the
+	// directory can be renamed and SameFile never needs the removed old path.
+	originalFile, err := os.Open(oldFile)
 	if err != nil {
 		t.Fatal(err)
+	}
+	before, statErr := originalFile.Stat()
+	closeErr := originalFile.Close()
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
 	}
 	reopenWithDeploymentReceipts(t, s, []cluster.Deployment{d})
 	dir, err := s.manager.ModelPath(lm.FullName())
@@ -513,6 +524,10 @@ func TestStoppedDeploymentMigratesToConfiguredLibraryAtStartup(t *testing.T) {
 	after, err := os.Stat(filepath.Join(dir, "model.gguf"))
 	if err != nil || !os.SameFile(before, after) {
 		t.Fatal("same-filesystem migration copied or lost weights", err)
+	}
+	weights, err := os.ReadFile(filepath.Join(dir, "model.gguf"))
+	if err != nil || string(weights) != "GGUF" {
+		t.Fatal("migration changed weight contents", err)
 	}
 	if _, err := os.Stat(legacyRoot); !os.IsNotExist(err) {
 		t.Fatal("legacy cache directory retained", err)
