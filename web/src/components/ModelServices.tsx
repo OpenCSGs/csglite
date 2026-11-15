@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { createPortal } from "preact/compat";
 import { t } from "../i18n";
-import { createProviderPool, deleteProviderPool, getProviderManageTags, getProviderPools, getProviderSelectedTags, updateProviderPool } from "../api/client";
+import { createProviderPool, deleteProviderPool, getCluster, getProviderManageTags, getProviderPools, getProviderSelectedTags, updateProviderPool } from "../api/client";
 import type { ModelInfo, ProviderPool, ProviderPoolMember, ThirdPartyProvider } from "../api/client";
 import { ApiInfoDialog } from "./ApiInfoDialog";
 import { useRuntimeAPIOrigin } from "../utils/runtimeAPIOrigin";
@@ -43,6 +43,15 @@ export function ModelServices({ providers, catalogRequest, onChanged }: {
   const refresh = async () => { setServices(await getProviderPools()); };
   useEffect(() => { void refresh().catch(e => setError(e.message)).finally(() => setLoading(false)); }, []);
   useEffect(() => {
+    let active = true;
+    void getCluster().then(view => {
+      if (active) setNodeNames(current => ({ ...current, ...Object.fromEntries(view.members.map(node => [`node:${node.uuid}`, node.name])) }));
+    }).catch(() => {
+      // Cluster discovery may be disabled; source labels retain a readable fallback.
+    });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
     if (catalogRequest.serial) { setDraft(blankService()); setSource(catalogRequest.source); setConfirmed(false); setFormError(""); }
   }, [catalogRequest.serial]);
   useEffect(() => { if (draft) editor.current?.showModal(); else editor.current?.close(); }, [!!draft]);
@@ -62,7 +71,15 @@ export function ModelServices({ providers, catalogRequest, onChanged }: {
     }).catch(e => { if (active) setCatalogError(e.message); }).finally(() => { if (active) setCatalogLoading(false); });
     return () => { active = false; };
   }, [!!draft, source, catalogVersion]);
-  const sourceName = (value: string) => value === "local" ? t("services.local") : value === "cluster" ? t("services.cluster") : nodeNames[value] || providers.find(p => (p.builtIn ? "cloud" : `provider:${p.id}`) === value)?.name || value;
+  const sourceName = (value: string) => {
+    if (value === "local") return t("services.local");
+    if (value === "cluster") return t("services.sourceCluster");
+    if (value.startsWith("node:")) return nodeNames[value] ? t("services.sourceClusterNode", nodeNames[value]) : t("services.sourceClusterNodeUnknown");
+    const provider = providers.find(p => (p.builtIn ? "cloud" : `provider:${p.id}`) === value);
+    if (provider) return t("services.sourceProvider", provider.name);
+    if (value === "cloud" || value.startsWith("provider:")) return t("services.sourceProviderUnknown");
+    return t("services.sourceUnknown");
+  };
   const edit = (pool = blankService()) => { setDraft({ ...pool, members: pool.members.map(m => ({ ...m })) }); setFormError(""); setConfirmed(pool.members.length > 1); setCatalogSearch(""); };
   const patch = (value: Partial<ProviderPool>) => setDraft(current => current && ({ ...current, ...value }));
   const patchMember = (index: number, value: Partial<ProviderPoolMember>) => { if (draft) patch({ members: draft.members.map((m, i) => i === index ? { ...m, ...value } : m) }); };
@@ -105,7 +122,7 @@ export function ModelServices({ providers, catalogRequest, onChanged }: {
       <thead class="border-b text-xs text-gray-400"><tr>{["modelID", "sources", "policy", "state", "actions"].map(key => <th class="px-3 py-3" key={key}>{t(`services.${key}`)}</th>)}</tr></thead>
       <tbody>{filtered.map(pool => <tr key={pool.id} class="border-b border-gray-100 align-top last:border-0">
         <td class="px-3 py-4"><code class="break-all text-sm font-medium text-gray-900">{pool.model}</code></td>
-        <td class="min-w-48 px-3 py-4"><details><summary class="cursor-pointer text-indigo-600">{t("services.sourceCount", pool.members.length)}</summary><div class="mt-3 space-y-2">{pool.members.map(m => <div key={m.id} class="max-w-xs rounded-lg bg-gray-50 p-2 text-xs"><p class="font-medium text-gray-700">{sourceName(m.source)}</p><p class="break-all text-gray-500">{m.model}</p><p class="mt-1 text-gray-400">{t(`services.${pool.source_states?.[m.id] || "configured"}`)}</p></div>)}</div></details></td>
+        <td class="min-w-48 px-3 py-4"><details><summary class="cursor-pointer text-indigo-600"><span class="inline-flex max-w-xs flex-col gap-1 align-top">{[...new Set(pool.members.map(member => member.source))].map(source => <span key={source} class="break-words text-sm font-medium">{sourceName(source)}</span>)}</span></summary><div class="mt-3 space-y-2">{pool.members.map(m => <div key={m.id} class="max-w-xs rounded-lg bg-gray-50 p-2 text-xs"><p class="font-medium text-gray-700">{sourceName(m.source)}</p><p class="break-all text-gray-500">{m.model}</p><p class="mt-1 text-gray-400">{t(`services.${pool.source_states?.[m.id] || "configured"}`)}</p></div>)}</div></details></td>
         <td class="whitespace-nowrap px-3 py-4 text-gray-600">{t(`services.${pool.policy || "priority_weight"}`)}</td>
         <td class="px-3 py-4"><span class={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-xs ${serviceConfigured(pool) ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-500"}`}>{t(!pool.enabled ? "services.disabled" : serviceConfigured(pool) ? "services.configured" : "services.unavailable")}</span><p class="mt-2 max-w-xs text-xs text-gray-400">{t("services.notTested")}</p></td>
         <td class="px-3 py-4"><div class="flex items-center gap-2 whitespace-nowrap">
