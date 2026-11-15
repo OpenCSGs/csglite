@@ -113,16 +113,29 @@ csghub-lite cluster leave
 | POST | `/ai-gateway/v1/responses` | 现有无持久会话的 Responses 用法 |
 | POST | `/ai-gateway/v1/messages` | Anthropic 兼容消息 |
 | POST | `/ai-gateway/v1/messages/count_tokens` | 对应模型的 token 计数 |
-| POST | `/api/chat`、`/api/generate` | Ollama 兼容接口 |
+| POST | `/api/chat`、`/api/generate` | 保留给旧客户端的 Ollama 兼容接口 |
 
 客户端使用自己的 API Key；代码示例、日志和共享文档中不得放入真实 Key。
 Responses 的后台任务和 `previous_response_id` 延续不支持。具体模型是否支持
 某种模态，仍由工作节点现有的推理引擎和模型能力决定。
 
-公网入口省略 `source` 时进入集群调度；`source=cluster` 选择可用节点，
-`source=node:<uuid>` 固定节点。`source=local` 及固定到网关本机的请求，只有
-网关管理员明确打开本机接单时才可用。`cloud`、`provider:*` 和 `pool:*` 不在
-该公网入口的路由范围内，拒绝时不会回落为本地执行。
+统一入口 `/ai-gateway/v1/*` 的请求只填写已发布的模型服务 ID，不填写 `source`。
+来源由管理员在服务成员中选择：整个集群、指定节点、本机或 Provider；客户端
+不能通过 `source` 绕过服务成员配置。同名的底层模型不会改变服务的路由。
+
+例如，发布服务 ID 为 `team-chat` 后：
+
+```sh
+curl https://<主节点地址>:8080/ai-gateway/v1/chat/completions \
+  -H "Authorization: Bearer $LITE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"team-chat","messages":[{"role":"user","content":"你好"}]}'
+```
+
+仅旧 `/v1/*` 与 `/api/chat`、`/api/generate` 兼容入口接受 `source`：省略或
+`cluster` 使用集群调度，`node:<uuid>` 固定节点，`local` 选择网关本机。
+本机推理仍需管理员打开本机接单。这些旧公网入口不接受 `cloud`、`provider:*`
+或 `pool:*`，不再用于新的客户端配置；统一入口的来源由模型服务管理。
 
 网关到工作节点的每个请求固定本机执行。两端都验证方法和路径白名单，工作节点
 还验证模型共享与接单状态。调用方的 API Key、Cookie 和节点连接证明不会传入
