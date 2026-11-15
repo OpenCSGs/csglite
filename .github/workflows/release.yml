@@ -36,6 +36,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Build web UI for tests
+        run: make build-web
+
       - name: Run tests
         run: go test ./...
 
