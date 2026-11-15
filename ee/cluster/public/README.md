@@ -92,3 +92,8 @@ via `ManageModel`. It accepts only typed unload/delete payloads and is not admit
 by `RoundTrip` or the inference allowlist. The receiving host validates current
 controller membership and the exact repository/source identity. This is not a
 general management proxy.
+
+Status updates are pushed when sharing or admission settings change. A gateway
+advertises `status_ack` in its hello and acknowledges a numbered update only after
+publishing it to the scheduler. Older peers continue using periodic heartbeats.
+Disconnected workers retain settings and publish them when they reconnect.

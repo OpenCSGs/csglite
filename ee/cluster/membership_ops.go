@@ -463,6 +463,7 @@ func (m *Manager) UpdateSettings(fn func(*Settings)) (Settings, error) {
 	}
 	m.invalidateLocalStatus()
 	m.wakeDeployments()
+	m.pushPublicStatus()
 	return m.effectiveSettings(), nil
 }
 

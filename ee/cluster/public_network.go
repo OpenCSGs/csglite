@@ -113,7 +113,7 @@ func (m *Manager) activatePublic() error {
 	var ln net.Listener
 	var srv *http.Server
 	if m.opts.Mode == "gateway" {
-		g, err := publictunnel.NewGateway(publictunnel.GatewayOptions{Authorize: m.authorizePublic, ValidateStatus: m.validatePublicStatus})
+		g, err := publictunnel.NewGateway(publictunnel.GatewayOptions{Authorize: m.authorizePublic, ValidateStatus: m.validatePublicStatus, StatusChanged: m.acceptPublicStatus})
 		if err != nil {
 			runCancel()
 			m.mu.Unlock()
@@ -383,7 +383,7 @@ func (m *Manager) publicWorkerLoop(ctx context.Context) {
 			return
 		}
 		transport := m.publicClient.Transport.(*http.Transport)
-		worker, err := publictunnel.NewWorker(publictunnel.WorkerOptions{GatewayURL: m.opts.GatewayURL, NodeUUID: m.identity.UUID, Token: proof, ConnectionChanged: m.observePublicGateway(gateway), Status: m.publicWorkerStatus, AllowModel: m.publicModelAllowed, Handler: m.opts.Host.InferenceHandler(), DeploymentHandler: m.deploymentHandler(gateway), ModelActionHandler: m.modelActionHandler(gateway), Dialer: &websocket.Dialer{Proxy: http.ProxyFromEnvironment, TLSClientConfig: transport.TLSClientConfig.Clone(), HandshakeTimeout: 15 * time.Second}})
+		worker, err := publictunnel.NewWorker(publictunnel.WorkerOptions{GatewayURL: m.opts.GatewayURL, NodeUUID: m.identity.UUID, Token: proof, ConnectionChanged: m.observePublicGateway(gateway), StatusUpdates: m.publicStatusUpdates, Status: m.publicWorkerStatus, AllowModel: m.publicModelAllowed, Handler: m.opts.Host.InferenceHandler(), DeploymentHandler: m.deploymentHandler(gateway), ModelActionHandler: m.modelActionHandler(gateway), Dialer: &websocket.Dialer{Proxy: http.ProxyFromEnvironment, TLSClientConfig: transport.TLSClientConfig.Clone(), HandshakeTimeout: 15 * time.Second}})
 		if err != nil {
 			m.logf("cluster: invalid public worker: %v", err)
 			return
@@ -606,4 +606,47 @@ func (m *Manager) publicGatewayView(node *NodeView) {
 func (m *Manager) isPublicGateway(node string) bool {
 	c := m.store.Cluster()
 	return m.opts.Mode == "worker" && c != nil && c.Topology == "public" && node == c.GatewayUUID
+}
+
+func (m *Manager) acceptPublicStatus(node string, raw json.RawMessage) {
+	var st Status
+	if json.Unmarshal(raw, &st) == nil {
+		m.dir.MarkSuccess(node, "tunnel:"+node, &st)
+	}
+}
+
+func (m *Manager) pushPublicStatus() {
+	if m.opts.Mode != "worker" {
+		return
+	}
+	m.publicConnectionMu.Lock()
+	connected := m.publicConnection != nil && m.publicConnection.online
+	m.publicConnectionMu.Unlock()
+	if !connected {
+		// A setting can change after Connect captured its initial snapshot but
+		// before it reports online. Queue one coalesced refresh so that window
+		// never delays publication until the next periodic heartbeat.
+		select {
+		case m.publicStatusUpdates <- make(chan error, 1):
+		default:
+		}
+		return
+	} // Reconnection publishes the latest persisted settings.
+	ctx, cancel := context.WithTimeout(m.context(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	select {
+	case m.publicStatusUpdates <- done:
+	case <-ctx.Done():
+		m.logf("cluster: settings saved; status publication pending: %v", ctx.Err())
+		return
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			m.logf("cluster: settings saved; status publication pending: %v", err)
+		}
+	case <-ctx.Done():
+		m.logf("cluster: settings saved; status publication pending: %v", ctx.Err())
+	}
 }

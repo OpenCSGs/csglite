@@ -24,7 +24,10 @@ type GatewayOptions struct {
 	Authorize func(context.Context, string, string) error
 	// ValidateStatus validates without side effects. Status publication is fenced
 	// by session identity so a replaced connection cannot overwrite a new one.
-	ValidateStatus   func(string, json.RawMessage) error
+	ValidateStatus func(string, json.RawMessage) error
+	// StatusChanged publishes an accepted snapshot to the host's scheduler.
+	// It runs under the session fence and must not call back into Gateway.
+	StatusChanged    func(string, json.RawMessage)
 	Heartbeat        time.Duration
 	HandshakeTimeout time.Duration
 	// MaxSessions is a resource ceiling, independent of the host's license cap.
@@ -155,7 +158,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ResponseHeaderTimeout: 10 * time.Minute,
 	}
 	defer sess.transport.CloseIdleConnections()
-	if err = control.write(controlMessage{Type: "hello", HeartbeatMS: g.opts.Heartbeat.Milliseconds()}, g.opts.HandshakeTimeout); err != nil {
+	if err = control.write(controlMessage{Type: "hello", HeartbeatMS: g.opts.Heartbeat.Milliseconds(), StatusAck: true}, g.opts.HandshakeTimeout); err != nil {
 		return
 	}
 	g.mu.Lock()
@@ -165,6 +168,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.sessions[node] = sess
+	if g.opts.StatusChanged != nil {
+		g.opts.StatusChanged(node, msg.Status)
+	}
 	g.mu.Unlock()
 	releaseHandshake()
 	if previous != nil {
@@ -199,8 +205,16 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sess.draining = true
 		} else {
 			sess.status = append(sess.status[:0], msg.Status...)
+			if g.opts.StatusChanged != nil {
+				g.opts.StatusChanged(node, msg.Status)
+			}
 		}
 		g.mu.Unlock()
+		if msg.Type == "status" && msg.Sequence != 0 {
+			if err := control.write(controlMessage{Type: "status_ack", Sequence: msg.Sequence}, g.opts.HandshakeTimeout); err != nil {
+				return
+			}
+		}
 	}
 }
 

@@ -383,3 +383,57 @@ func TestCloseAlsoTerminatesAnUnfinishedHandshake(t *testing.T) {
 		t.Fatalf("unfinished handshake did not close promptly: %v", err)
 	}
 }
+
+func TestSharingUpdatesAreAcknowledgedBeforeNextHeartbeat(t *testing.T) {
+	g, server, dialer := newFixture(t, 30*time.Second)
+	var generation, accepted atomic.Int64
+	generation.Store(1)
+	g.opts.StatusChanged = func(node string, raw json.RawMessage) {
+		var st struct {
+			Generation int64 `json:"generation"`
+		}
+		if err := json.Unmarshal(raw, &st); err != nil {
+			t.Error(err)
+		}
+		accepted.Store(st.Generation)
+	}
+	updates := make(chan chan error, 1)
+	worker, err := NewWorker(WorkerOptions{GatewayURL: server.URL, NodeUUID: "worker-1", Token: "test-node-secret", Dialer: dialer,
+		Status: func(context.Context) (json.RawMessage, error) {
+			return json.RawMessage(fmt.Sprintf(`{"generation":%d}`, generation.Load())), nil
+		},
+		StatusUpdates: updates, AllowModel: func(string) bool { return true }, Handler: http.NotFoundHandler(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan error, 1)
+	go func() { stopped <- worker.Connect(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-stopped:
+		case <-time.After(3 * time.Second):
+			t.Error("worker did not stop")
+		}
+	}()
+	eventually(t, func() bool { return accepted.Load() == 1 })
+	for _, n := range []int64{2, 3, 4} {
+		generation.Store(n)
+		done := make(chan error, 1)
+		updates <- done
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("status update waited for the periodic heartbeat")
+		}
+		raw, ok := g.Snapshot("worker-1")
+		if !ok || accepted.Load() != n || !strings.Contains(string(raw), fmt.Sprint(n)) {
+			t.Fatalf("ack preceded status publication: %s", raw)
+		}
+	}
+}

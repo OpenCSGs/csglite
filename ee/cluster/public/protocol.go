@@ -45,6 +45,8 @@ type controlMessage struct {
 	Type        string          `json:"type"`
 	Status      json.RawMessage `json:"status,omitempty"`
 	HeartbeatMS int64           `json:"heartbeat_ms,omitempty"`
+	StatusAck   bool            `json:"status_ack,omitempty"`
+	Sequence    uint64          `json:"sequence,omitempty"`
 }
 
 type controlStream struct {
