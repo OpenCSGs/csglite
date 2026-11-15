@@ -243,14 +243,21 @@ func (h *clusterHost) PullSpec(modelID string) (string, string) {
 	return modelID, ""
 }
 
+func shortClusterHostname(host string) string {
+	if net.ParseIP(host) == nil {
+		if i := strings.IndexByte(host, '.'); i > 0 {
+			return host[:i]
+		}
+	}
+	return host
+}
+
 // LocalStatus reports this node's models, load and hardware.
 func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 	s := h.s
 	st := cluster.Status{Models: []cluster.ModelStatus{}}
 	st.Hostname, _ = os.Hostname()
-	if i := strings.IndexByte(st.Hostname, '.'); i > 0 {
-		st.Hostname = st.Hostname[:i]
-	}
+	st.Hostname = shortClusterHostname(st.Hostname)
 	st.ModelSource = cluster.ModelSource{
 		ServerURL:          strings.TrimSpace(s.cfg.ServerURL),
 		HFEndpoint:         strings.TrimSpace(s.cfg.HuggingFaceEndpoint),
