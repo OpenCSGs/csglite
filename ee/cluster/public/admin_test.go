@@ -222,6 +222,31 @@ func TestAdminTokenExpiryBoundsLoginAndSessions(t *testing.T) {
 	}
 }
 
+func TestAdminCookieMaxAge(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		remaining time.Duration
+		want      int
+	}{
+		{"eight_hours_exact", 8 * time.Hour, 8 * 3600},
+		{"eight_hours_minus_nanosecond", 8*time.Hour - time.Nanosecond, 8 * 3600},
+		{"one_hour_exact", time.Hour, 3600},
+		{"one_second_exact", time.Second, 1},
+		{"one_second_plus_nanosecond", time.Second + time.Nanosecond, 2},
+		{"subsecond", time.Nanosecond, 1},
+		// Zero means a browser-session cookie and negative values delete it.
+		// Keep Max-Age positive; authentication enforces the exact deadline.
+		{"zero", 0, 1},
+		{"expired", -time.Second, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := adminCookieMaxAge(tt.remaining); got != tt.want {
+				t.Fatalf("Max-Age for %s = %d, want %d", tt.remaining, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAdminTokenTTLCompatibilityAndInvalidDuration(t *testing.T) {
 	path := AdminTokenPath(t.TempDir())
 	if _, err := GenerateAdminToken(path); err != nil {

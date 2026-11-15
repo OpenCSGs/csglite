@@ -210,10 +210,7 @@ func (a *AdminAuth) Login(w http.ResponseWriter, r *http.Request) {
 		expires = *credential.ExpiresAt
 	}
 	// Round up cookie Max-Age; the server still enforces the exact deadline.
-	maxAge := int(time.Until(expires).Seconds()) + 1
-	if maxAge < 1 {
-		maxAge = 1
-	}
+	maxAge := adminCookieMaxAge(time.Until(expires))
 	a.mu.Lock()
 	for key, session := range a.sessions {
 		if now.After(session.Expires) || session.Credential != credential.Hash {
@@ -235,6 +232,15 @@ func (a *AdminAuth) Login(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: AdminCookie, Value: secret, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Expires: expires})
 	http.SetCookie(w, &http.Cookie{Name: CSRFCookie, Value: csrf, Path: "/", Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Expires: expires})
 	adminJSON(w, 200, map[string]any{"authenticated": true, "expires_at": expires})
+}
+
+func adminCookieMaxAge(remaining time.Duration) int {
+	if remaining <= 0 {
+		return 1
+	}
+	// Ceiling in integer nanoseconds leaves whole seconds unchanged, even
+	// when a coarse clock reports no elapsed time since session creation.
+	return int((remaining-1)/time.Second) + 1
 }
 
 func (a *AdminAuth) Authenticate(r *http.Request) bool {
