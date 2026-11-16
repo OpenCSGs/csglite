@@ -117,7 +117,7 @@ func TestGatewayClusterServicesFollowNodeAvailability(t *testing.T) {
 		req := httptest.NewRequest("POST", "/ai-gateway/v1/"+path, strings.NewReader(`{"model":"published-jev"}`))
 		req.Header.Set("Content-Type", "application/json")
 		master.withGatewayProtocol(func(http.ResponseWriter, *http.Request) { t.Error("offline source reached inference") }, false)(w, req)
-		if w.Code != http.StatusServiceUnavailable {
+		if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), cluster.ErrNoNodeCode) {
 			t.Fatalf("%s: %d %s", path, w.Code, w.Body)
 		}
 	}

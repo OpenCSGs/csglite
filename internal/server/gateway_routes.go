@@ -112,7 +112,7 @@ func (s *Server) withGatewayProtocol(next http.HandlerFunc, allowDirect bool) ht
 			return
 		}
 		if !s.providerPoolAvailable(*selected) {
-			writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "model service has no available sources")
+			writeOpenAIInferenceError(w, providerPoolUnavailableError(*selected))
 			return
 		}
 		protocol := strings.TrimPrefix(providerRouteLegacyPath(r.URL.Path), "/v1/")

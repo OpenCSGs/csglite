@@ -8,6 +8,7 @@ import (
 
 	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -319,6 +320,18 @@ func (s *Server) providerPoolAvailable(pool config.ProviderPool) bool {
 		}
 	}
 	return false
+}
+
+func providerPoolUnavailableError(pool config.ProviderPool) error {
+	for i, member := range pool.Members {
+		if pool.Policy == config.ProviderPoolPolicyFixed && i > 0 {
+			break
+		}
+		if !member.Disabled && cluster.IsClusterSource(member.Source) {
+			return inference.NewHTTPStatusErrorWithCause(http.StatusServiceUnavailable, &cluster.ErrNoNode{Model: member.Model})
+		}
+	}
+	return inference.NewHTTPStatusError(http.StatusServiceUnavailable, "model service has no available sources")
 }
 
 // Preserve unscoped legacy routing when a service shares an ID with a direct
