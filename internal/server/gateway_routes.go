@@ -46,20 +46,7 @@ func (s *Server) handleGatewayModels(w http.ResponseWriter, r *http.Request) {
 	anthropic := []api.AnthropicModelInfo{}
 	seen := map[string]struct{}{}
 	for _, pool := range config.GetProviderPools() {
-		if !pool.Enabled {
-			continue
-		}
-		available := false
-		for _, member := range pool.Members {
-			if s.providerPoolSourceState(member) == "configured" {
-				available = true
-				break
-			}
-			if pool.Policy == config.ProviderPoolPolicyFixed {
-				break
-			}
-		}
-		if !available {
+		if !s.providerPoolAvailable(pool) {
 			continue
 		}
 		info := api.ModelInfo{Model: pool.Model, DisplayName: pool.Name}
@@ -122,6 +109,10 @@ func (s *Server) withGatewayProtocol(next http.HandlerFunc, allowDirect bool) ht
 		source := poolSource(selected.ID)
 		if target.Source != "" && target.Source != source {
 			writeOpenAIError(w, 400, "invalid_request_error", "gateway requests must use the published model service; omit source and configure routing in the model service members")
+			return
+		}
+		if !s.providerPoolAvailable(*selected) {
+			writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "model service has no available sources")
 			return
 		}
 		protocol := strings.TrimPrefix(providerRouteLegacyPath(r.URL.Path), "/v1/")

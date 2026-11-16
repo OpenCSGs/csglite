@@ -23,7 +23,9 @@ export function ModelServices({ providers, catalogRequest, onChanged }: {
   const [services, setServices] = useState<ProviderPool[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [refreshError, setRefreshError] = useState("");
   const [search, setSearch] = useState("");
+  const [showUnavailable, setShowUnavailable] = useState(false);
   const [draft, setDraft] = useState<ProviderPool | null>(null);
   const [source, setSource] = useState("local");
   const [catalog, setCatalog] = useState<ModelInfo[]>([]);
@@ -40,8 +42,30 @@ export function ModelServices({ providers, catalogRequest, onChanged }: {
   const [testing, setTesting] = useState<ProviderPool | null>(null);
   const editor = useRef<HTMLDialogElement>(null);
   const deleteDialog = useRef<HTMLDialogElement>(null);
-  const refresh = async () => { setServices(await getProviderPools()); };
-  useEffect(() => { void refresh().catch(e => setError(e.message)).finally(() => setLoading(false)); }, []);
+  const refreshSequence = useRef(0);
+  const refresh = async () => {
+    const sequence = ++refreshSequence.current;
+    const next = await getProviderPools();
+    if (sequence === refreshSequence.current) setServices(next);
+  };
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const load = async () => {
+      try {
+        await refresh();
+        if (active) setRefreshError("");
+      } catch (e) { if (active) setRefreshError((e as Error).message); }
+      finally {
+        if (active) {
+          setLoading(false);
+          timer = setTimeout(() => void load(), 5000);
+        }
+      }
+    };
+    void load();
+    return () => { active = false; refreshSequence.current++; clearTimeout(timer); };
+  }, []);
   useEffect(() => {
     let active = true;
     void getCluster().then(view => {
@@ -110,21 +134,21 @@ export function ModelServices({ providers, catalogRequest, onChanged }: {
     setError(""); setSaving(true);
     try { await updateProviderPool(pool.id, { enabled: !pool.enabled }); await changed(); } catch (e: any) { setError(e.message); } finally { setSaving(false); }
   };
-  const filtered = services.filter(pool => `${pool.name} ${pool.model} ${pool.members.map(m => `${sourceName(m.source)} ${m.model}`).join(" ")}`.toLowerCase().includes(search.toLowerCase()));
+  const filtered = services.filter(pool => (showUnavailable || serviceConfigured(pool)) && `${pool.name} ${pool.model} ${pool.members.map(m => `${sourceName(m.source)} ${m.model}`).join(" ")}`.toLowerCase().includes(search.toLowerCase()));
   return <section class="rounded-2xl border border-gray-200 bg-white shadow-sm">
     <div class="flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 p-5">
       <div><h2 class="font-semibold text-gray-900">{t("services.title")}</h2><p class="mt-1 max-w-2xl text-sm leading-6 text-gray-500">{t("services.description")}</p></div>
       <button class={primaryClass} onClick={() => edit()}>{t("services.create")}</button>
     </div>
-    <div class="p-5"><input class={inputClass} value={search} onInput={e => setSearch(e.currentTarget.value)} placeholder={t("services.search")} aria-label={t("services.search")} /></div>
-    {error && <p role="alert" class="px-5 pb-4 text-sm text-red-600">{error}</p>}
+    <div class="flex flex-wrap gap-3 p-5"><input class={`${inputClass} min-w-48 flex-1`} value={search} onInput={e => setSearch(e.currentTarget.value)} placeholder={t("services.search")} aria-label={t("services.search")} /><select class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700" aria-label={t("services.visibility")} value={showUnavailable ? "all" : "available"} onChange={event => setShowUnavailable(event.currentTarget.value === "all")}><option value="available">{t("services.availableOnly")}</option><option value="all">{t("services.allServices")}</option></select></div>
+    {(error || refreshError) && <p role="alert" class="px-5 pb-4 text-sm text-red-600">{error || refreshError}</p>}
     {loading ? <p class="p-8 text-center text-sm text-gray-500">{t("services.loading")}</p> : !filtered.length ? <div class="p-10 text-center"><p class="font-medium text-gray-700">{t(services.length ? "services.noMatches" : "services.empty")}</p><p class="mt-2 text-sm text-gray-500">{t("services.emptyHint")}</p></div> : <div class="overflow-x-auto px-5 pb-5"><table class="w-full text-left text-sm">
       <thead class="border-b text-xs text-gray-400"><tr>{["modelID", "sources", "policy", "state", "actions"].map(key => <th class="px-3 py-3" key={key}>{t(`services.${key}`)}</th>)}</tr></thead>
       <tbody>{filtered.map(pool => <tr key={pool.id} class="border-b border-gray-100 align-top last:border-0">
         <td class="px-3 py-4"><code class="break-all text-sm font-medium text-gray-900">{pool.model}</code></td>
         <td class="min-w-48 px-3 py-4"><details><summary class="cursor-pointer text-indigo-600"><span class="inline-flex max-w-xs flex-col gap-1 align-top">{[...new Set(pool.members.map(member => member.source))].map(source => <span key={source} class="break-words text-sm font-medium">{sourceName(source)}</span>)}</span></summary><div class="mt-3 space-y-2">{pool.members.map(m => <div key={m.id} class="max-w-xs rounded-lg bg-gray-50 p-2 text-xs"><p class="font-medium text-gray-700">{sourceName(m.source)}</p><p class="break-all text-gray-500">{m.model}</p><p class="mt-1 text-gray-400">{t(`services.${pool.source_states?.[m.id] || "configured"}`)}</p></div>)}</div></details></td>
         <td class="whitespace-nowrap px-3 py-4 text-gray-600">{t(`services.${pool.policy || "priority_weight"}`)}</td>
-        <td class="px-3 py-4"><span class={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-xs ${serviceConfigured(pool) ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-500"}`}>{t(!pool.enabled ? "services.disabled" : serviceConfigured(pool) ? "services.configured" : "services.unavailable")}</span><p class="mt-2 max-w-xs text-xs text-gray-400">{t("services.notTested")}</p></td>
+        <td class="px-3 py-4"><span class={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-xs ${serviceConfigured(pool) ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-500"}`}>{t(!pool.enabled ? "services.disabled" : serviceConfigured(pool) ? "services.configured" : "services.unavailable")}</span></td>
         <td class="px-3 py-4"><div class="flex items-center gap-2 whitespace-nowrap">
           <button class={buttonClass} onClick={() => setAPIService(pool)}>API</button>
           <button class={buttonClass} disabled={saving} onClick={() => void toggle(pool)}>{t(pool.enabled ? "services.disable" : "services.enable")}</button>
