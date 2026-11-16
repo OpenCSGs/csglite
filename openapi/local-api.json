@@ -4667,17 +4667,35 @@
           "CloudAuth"
         ],
         "summary": "Complete the OpenCSG SSO login redirect",
-        "description": "Browser redirect target for the lite SSO flow. Persists the access token carried in the token query parameter, clears any previous manual OpenCSG API key and cloud caches, and returns a confirmation page.",
+        "description": "Browser SSO return: jwt_token and state must match the initiating browser HttpOnly cookie and a one-use server-side attempt bound to this instance and community. The JWT is verified by the selected platform and exchanged for a platform access token; credentials are never returned to the UI. This specific return does not require the console SameSite=Strict session cookie. Legacy token callbacks are accepted only by the dedicated loopback listener.",
         "operationId": "completeCloudAuthCallback",
         "parameters": [
           {
-            "name": "token",
+            "name": "jwt_token",
             "in": "query",
-            "required": true,
-            "description": "OpenCSG access token issued to the lite client.",
+            "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Platform-signed SSO JWT for browser returns"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "One-use browser-bound nonce"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Legacy access token, dedicated loopback listener only"
           }
         ],
         "responses": {
@@ -4690,6 +4708,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Invalid, expired or replayed browser login state"
           }
         }
       }
@@ -12331,6 +12352,68 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/license/usage": {
+      "get": {
+        "tags": [
+          "License"
+        ],
+        "summary": "Read installed-license device usage without a CSGHub account",
+        "operationId": "getLicenseDeviceUsage",
+        "description": "Uses the signed installed license as proof of possession for a read-only platform status request. Never claims or reports a device. Unknown counts are omitted; the known device limit remains available.",
+        "responses": {
+          "200": {
+            "description": "Installed-license device usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.LicenseDeviceUsage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cloud/auth/login": {
+      "post": {
+        "tags": [
+          "Cloud"
+        ],
+        "summary": "Start browser SSO for the current Lite instance",
+        "operationId": "startCloudBrowserLogin",
+        "description": "Requires console administrator access. Returns the platform authorization URL with the initiating instance callback encoded in state, and sets a ten-minute HttpOnly SameSite=Lax nonce cookie. Uses the same flow on local, LAN and public browser consoles.",
+        "responses": {
+          "200": {
+            "description": "SSO URL and browser binding cookie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "login_url": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid origin"
+          },
+          "429": {
+            "description": "Too many pending logins"
+          },
+          "502": {
+            "description": "Community SSO is unavailable"
+          },
+          "409": {
+            "description": "Community or credentials changed while starting login"
           }
         }
       }
@@ -21702,6 +21785,43 @@
             }
           }
         ]
+      },
+      "api.LicenseDeviceUsage": {
+        "type": "object",
+        "description": "Device activation usage of the installed signed license; no CSGHub account session is required. Unknown usage is omitted.",
+        "properties": {
+          "license_key": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "used": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "remaining": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "no_license",
+              "invalid_license",
+              "unsupported",
+              "unreachable",
+              "rate_limited",
+              "server_error",
+              "unmanaged_license"
+            ]
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       }
     }
   }

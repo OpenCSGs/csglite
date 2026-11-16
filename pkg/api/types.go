@@ -652,6 +652,18 @@ type LicenseCloudStatus struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// LicenseDeviceUsage is the installed license's activation ledger, queried
+// using its signed PEM without a CSGHub account session. Missing usage is unknown.
+type LicenseDeviceUsage struct {
+	LicenseKey string    `json:"license_key,omitempty"`
+	Available  bool      `json:"available"`
+	Used       *int      `json:"used,omitempty"`
+	Limit      int       `json:"limit"`
+	Remaining  *int      `json:"remaining,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+	CheckedAt  time.Time `json:"checked_at"`
+}
+
 // LicenseImportRequest carries the LICENSE KEY PEM text, as CSGHub's ImportLicenseReq does.
 type LicenseImportRequest struct {
 	Data string `json:"data"`
