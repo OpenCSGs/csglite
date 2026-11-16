@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canWithdraw, centsToYuan, currentMonth, isEdgeGatewayUnreachableMessage, isValidEdgeModelName, suggestEdgeModelName, yuanToCents } from "./edge";
+vi.hoisted(() => {
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: () => null, setItem: () => undefined } });
+});
+import { canWithdraw, centsToYuan, currentMonth, edgeErrorText, isEdgeGatewayUnreachableMessage, isValidEdgeModelName, suggestEdgeModelName, yuanToCents } from "./edge";
 
 describe("edge serving helpers", () => {
   it("converts owner prices between yuan and cents", () => {
@@ -27,6 +30,13 @@ describe("edge serving helpers", () => {
     expect(isEdgeGatewayUnreachableMessage("register node: cannot connect to the CSGHub AI gateway")).toBe(true);
     expect(isEdgeGatewayUnreachableMessage("不能连接 CSGHub AI 网关")).toBe(true);
     expect(isEdgeGatewayUnreachableMessage("this model of this node already has a live application")).toBe(false);
+  });
+
+  it("replaces HTML error pages with a readable message", () => {
+    const translate = (key: string) => key;
+    expect(edgeErrorText("<!DOCTYPE html><html><body>bad gateway</body></html>", translate)).toBe("edge.error.htmlResponse");
+    expect(edgeErrorText("  <html>...</html>", translate)).toBe("edge.error.htmlResponse");
+    expect(edgeErrorText("application not found", translate)).toBe("application not found");
   });
 
   it("formats the current month and withdraw rules", () => {
@@ -99,8 +109,21 @@ describe("edge online time label", () => {
   });
 });
 
-import { edgeErrorText, filterEdgeApplications, servingState } from "./edge";
+import { filterEdgeApplications, servingState } from "./edge";
+import { getEdgeEarnings } from "./api/client";
 import type { EdgeApplication } from "./api/client";
+
+describe("edge API error messages", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("does not surface an HTML proxy error page", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      "<!DOCTYPE html><html><body>bad gateway</body></html>",
+      { status: 502, headers: { "Content-Type": "text/html" } },
+    )));
+    await expect(getEdgeEarnings("2026-10")).rejects.toThrow(/HTML/);
+  });
+});
 
 describe("shared model filters", () => {
   it("localizes the platform-disabled message and preserves unknown diagnostics", () => {

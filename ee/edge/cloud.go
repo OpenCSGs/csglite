@@ -88,12 +88,28 @@ func (m *Manager) call(ctx context.Context, method, path string, query url.Value
 			return nil, 0, ErrGatewayUnreachable
 		}
 		msg := strings.TrimSpace(env.Msg)
-		if msg == "" {
-			msg = strings.TrimSpace(string(raw))
+		if msg == "" || looksLikeHTML(msg) {
+			msg = gatewayErrorMessage(raw, resp.StatusCode)
 		}
 		return nil, 0, &APIError{Status: resp.StatusCode, Message: msg}
 	}
 	return env.Data, env.Total, nil
+}
+
+// gatewayErrorMessage turns an unstructured gateway error body into a short
+// message. Proxies such as Cloudflare answer with a full HTML page; forwarding
+// it would dump markup into the UI.
+func gatewayErrorMessage(raw []byte, status int) string {
+	msg := strings.TrimSpace(string(raw))
+	if msg == "" || looksLikeHTML(msg) || len(msg) > 512 {
+		return fmt.Sprintf("gateway returned HTTP %d %s", status, http.StatusText(status))
+	}
+	return msg
+}
+
+func looksLikeHTML(msg string) bool {
+	lower := strings.ToLower(strings.TrimSpace(msg))
+	return strings.HasPrefix(lower, "<!doctype html") || strings.HasPrefix(lower, "<html")
 }
 
 // hasEdgeAPIMessage reports whether a gateway error body is an edge API

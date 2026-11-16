@@ -33,7 +33,12 @@ export function isEdgeGatewayUnreachableMessage(message: string): boolean {
 }
 
 export function edgeErrorText(message: string, translate: (key: string) => string): string {
-  const normalized = message.trim().toLowerCase().replace(/[.。]+$/g, "");
+  const trimmed = message.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("<!doctype html") || lower.startsWith("<html")) {
+    return translate("edge.error.htmlResponse");
+  }
+  const normalized = lower.replace(/[.。]+$/g, "");
   return normalized === "this node was disabled by the platform" ? translate("edge.error.nodeDisabledByPlatform") : message;
 }
 
