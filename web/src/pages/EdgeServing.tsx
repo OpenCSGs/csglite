@@ -26,6 +26,8 @@ import {
   edgeErrorText,
   formatYuan,
   filterEdgeApplications,
+  loadEdgeModelFilter,
+  saveEdgeModelFilter,
   hasStats,
   isLiveApplication,
   isValidEdgeModelName,
@@ -53,7 +55,7 @@ const toggling = signal(false);
 const applications = signal<EdgeApplication[]>([]);
 const applicationsError = signal("");
 const lastChanged = signal(-1);
-const modelFilter = signal<EdgeModelFilter>("running");
+const modelFilter = signal<EdgeModelFilter>(loadEdgeModelFilter());
 
 const month = signal(currentMonth());
 const earnings = signal<EdgeEarnings | null>(null);
@@ -422,7 +424,10 @@ function ModelsTab() {
           </div>
           <div class="flex flex-wrap items-center gap-3">
             <select aria-label={t("edge.apps.filterLabel")} value={modelFilter.value}
-              onChange={event => (modelFilter.value = event.currentTarget.value as EdgeModelFilter)}
+              onChange={event => {
+                modelFilter.value = event.currentTarget.value as EdgeModelFilter;
+                saveEdgeModelFilter(modelFilter.value);
+              }}
               class="w-64 max-w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
               {(["running", "all", "rejected"] as const).map(filter => <option key={filter} value={filter}>{t(`edge.apps.filter.${filter}`)}</option>)}
             </select>

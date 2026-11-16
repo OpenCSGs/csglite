@@ -124,6 +124,22 @@ export function servingState(app: Pick<EdgeApplication, "status" | "node_status"
 
 export type EdgeModelFilter = "running" | "all" | "rejected";
 
+const edgeModelFilterKey = "csghub-edge-model-filter";
+
+export function loadEdgeModelFilter(): EdgeModelFilter {
+  try {
+    const saved = localStorage.getItem(edgeModelFilterKey);
+    if (saved === "running" || saved === "all" || saved === "rejected") return saved;
+  } catch { /* Browser storage may be unavailable. */ }
+  return "all";
+}
+
+export function saveEdgeModelFilter(filter: EdgeModelFilter): void {
+  try { localStorage.setItem(edgeModelFilterKey, filter); }
+  catch { /* Keep filtering usable when browser storage is unavailable. */ }
+}
+
+
 export function filterEdgeApplications(applications: EdgeApplication[], filter: EdgeModelFilter): EdgeApplication[] {
   if (filter === "all") return applications;
   return applications.filter(app => filter === "rejected" ? app.status === "rejected" : servingState(app) === "serving");
