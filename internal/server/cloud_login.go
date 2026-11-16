@@ -51,7 +51,11 @@ func resetCommunityLoginCache() {
 // to lite makes the user service redirect the access token to the local
 // callback instead.
 func (s *Server) communityLoginURL(ctx context.Context) string {
-	serverURL := strings.TrimRight(strings.TrimSpace(s.cfg.ServerURL), "/")
+	return communityLoginURLForServer(ctx, s.cfg.ServerURL)
+}
+
+func communityLoginURLForServer(ctx context.Context, server string) string {
+	serverURL := strings.TrimRight(strings.TrimSpace(server), "/")
 	if serverURL == "" || serverURL == config.DefaultServerURL {
 		return cloud.DefaultLoginURL
 	}

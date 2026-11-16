@@ -1,6 +1,6 @@
 import { signal } from "@preact/signals";
 import { getLicense, isApiError } from "./api/client";
-import type { LicenseCloudStatus, LicenseState, LicenseStatus } from "./api/client";
+import type { LicenseCloudStatus, LicenseDeviceUsage, LicenseState, LicenseStatus } from "./api/client";
 import { t } from "./i18n";
 
 /**
@@ -191,23 +191,27 @@ export function licenseFeatureName(key: string): string {
   return featureNameKeys[key] ? t(featureNameKeys[key]) : key;
 }
 
-/** Authoritative device usage is only usable for the same installed license. */
-export function cloudDeviceUsage(
+/** Device usage belongs to the installed signed license, independent of account login. */
+export function installedDeviceUsage(
   state: LicenseState | null,
-  cloud: LicenseCloudStatus | null,
+  usage: LicenseDeviceUsage | null,
 ): { used: number; limit: number; remaining: number; overLimit: boolean } | null {
-  if (!cloud?.logged_in || !cloud.online || !cloud.supported || cloud.reason || !cloud.has_license || !cloud.license_key) return null;
-  if (!Number.isSafeInteger(cloud.limit) || cloud.limit <= 0 || !Number.isSafeInteger(cloud.used) || cloud.used < 0) return null;
-  if (state?.license?.key !== cloud.license_key) return null;
-  // Report real usage even when delayed offline activations exceed the quota.
-  return { used: cloud.used, limit: cloud.limit, remaining: Math.max(0, cloud.limit - cloud.used), overLimit: cloud.used > cloud.limit };
+  const used = usage?.used;
+  if (!usage?.available || usage.license_key !== state?.license?.key ||
+      typeof used !== "number" || !Number.isSafeInteger(used) || used < 0 ||
+      !Number.isSafeInteger(usage.limit) || usage.limit <= 0) return null;
+  return {
+    used,
+    limit: usage.limit,
+    remaining: Math.max(0, usage.limit - used),
+    overLimit: used > usage.limit,
+  };
 }
 
-export function deviceUsageHint(state: LicenseState | null, cloud: LicenseCloudStatus | null): string {
-  if (!cloud) return "settings.licenseDeviceUnavailable";
-  if (!cloud.logged_in) return cloud.reason === "token_invalid" ? "settings.licenseDeviceSessionExpired" : "settings.licenseDeviceLogin";
-  if (!cloud.online) return "settings.licenseDeviceOffline";
-  if (cloud.supported && !cloud.reason && cloud.license_key && cloud.license_key !== state?.license?.key) return "settings.licenseDeviceDifferent";
+export function deviceUsageHint(usage: LicenseDeviceUsage | null): string {
+  if (usage?.reason === "unsupported") return "settings.licenseDeviceUnsupported";
+  if (usage?.reason === "unreachable") return "settings.licenseDeviceOffline";
+  if (usage?.reason === "unmanaged_license") return "settings.licenseDeviceUnmanaged";
   return "settings.licenseDeviceUnavailable";
 }
 

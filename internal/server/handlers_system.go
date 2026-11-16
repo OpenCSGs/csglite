@@ -182,17 +182,21 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		configUpdated = true
 	}
 	if req.ServerURL != nil {
+		s.cloudLoginMu.Lock()
 		serverURL := strings.TrimSpace(*req.ServerURL)
 		if serverURL == "" {
 			serverURL = config.DefaultServerURL
 		}
 		if serverURL != strings.TrimSpace(s.cfg.ServerURL) {
+			s.cloudLoginRevision++
+			clear(s.cloudLoginAttempts)
 			s.cfg.Token = ""
 			s.cfg.OpenCSGAPIKey = ""
 			cloudTokenUpdated = true
 		}
 		serverURLUpdated = serverURL != strings.TrimSpace(s.cfg.ServerURL)
 		s.cfg.ServerURL = serverURL
+		s.cloudLoginMu.Unlock()
 		configUpdated = true
 	}
 	if req.AIGatewayURL != nil {
