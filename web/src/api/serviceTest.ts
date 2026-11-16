@@ -6,16 +6,23 @@ import { buildDecisionRequest } from "../utils/decision";
 export type ServiceTestProtocol = "chat/completions" | "responses" | "messages" | "embeddings" | "decisions" | "images/generations" | "images/edits" | "audio/transcriptions" | "audio/speech";
 export interface ServiceTestOptions { file?: File; question?: string; questionType?: DecisionQuestionType; choices?: string; voice?: string }
 const allProtocols: ServiceTestProtocol[] = ["chat/completions","responses","messages","embeddings","decisions","images/generations","images/edits","audio/transcriptions","audio/speech"];
-export function serviceTestProtocols(service: Pick<ProviderPool,"category"|"inference_protocols">): ServiceTestProtocol[] {
-  if(service.inference_protocols) return allProtocols.filter(protocol=>service.inference_protocols!.includes(protocol));
-  switch(service.category) {
-    case "embedding":return ["embeddings"];
-    case "image":return ["images/generations","images/edits"];
-    case "asr":return ["audio/transcriptions"];
-    case "tts":return ["audio/speech"];
-    case "decision":return ["decisions"];
-    default:return ["chat/completions","responses","messages"];
-  }
+const taskProtocols: Record<string, ServiceTestProtocol[]> = {
+  chat: ["chat/completions", "responses", "messages"],
+  embedding: ["embeddings"],
+  image: ["images/generations", "images/edits"],
+  asr: ["audio/transcriptions"],
+  tts: ["audio/speech"],
+  decision: ["decisions"],
+};
+export function serviceTestProtocols(service: Pick<ProviderPool, "category" | "inference_protocols" | "typed_decisions" | "decision_only">): ServiceTestProtocol[] {
+  // JEV can chat as well as decide. Prefer its Decisions API, as API examples
+  // do, while keeping the server's protocol list authoritative for support.
+  const preferred: ServiceTestProtocol[] = service.decision_only ? ["decisions"] : [
+    ...(service.typed_decisions ? ["decisions" as const] : []),
+    ...(taskProtocols[service.category || "chat"] || taskProtocols.chat),
+  ];
+  const available = service.inference_protocols ?? preferred;
+  return [...new Set([...preferred, ...allProtocols])].filter(protocol => available.includes(protocol));
 }
 
 async function dataURL(file: File): Promise<string> {
