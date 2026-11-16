@@ -714,3 +714,31 @@ func TestSharedModelDeletionPreservesOtherDeploymentAndRuntime(t *testing.T) {
 		t.Fatal("unreferenced artifact not removed", err)
 	}
 }
+
+func TestRevokedDeploymentUnloadsBusyRuntimeAndPreservesLocalModel(t *testing.T) {
+	for _, kind := range []string{"chat", "embedding"} {
+		t.Run(kind, func(t *testing.T) {
+			s, h, d := deploymentRuntimeFixture(t)
+			d.Kind = kind
+			managed, local := &countedDeploymentEngine{}, &countedDeploymentEngine{}
+			key := engineCacheKey(d.ModelID(), deploymentEngineMode(d))
+			s.engines[key] = &managedEngine{engine: managed, activeRequests: 1, keepAlive: -1}
+			s.engines[engineCacheKey("acme/test", engineModeChat)] = &managedEngine{engine: local, keepAlive: -1}
+			if err := h.StopDeployment(d); err == nil {
+				t.Fatal("ordinary stop interrupted active inference")
+			}
+			if err := h.UnloadDeployment(d); err != nil {
+				t.Fatal(err)
+			}
+			if managed.closed.Load() != 1 || local.closed.Load() != 0 || h.DeploymentRunning(d) {
+				t.Fatal("revocation did not isolate and unload the managed runtime")
+			}
+			if _, err := h.deploymentModelManager(d).Get(deploymentArtifactID(d)); err != nil {
+				t.Fatal("unload removed cached weights", err)
+			}
+			if err := h.UnloadDeployment(d); err != nil || managed.closed.Load() != 1 {
+				t.Fatal("repeated unload was not idempotent", err)
+			}
+		})
+	}
+}

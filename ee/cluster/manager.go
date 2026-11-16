@@ -117,6 +117,8 @@ type Options struct {
 // Manager runs the cluster on one node.
 type Manager struct {
 	deploymentWG        sync.WaitGroup
+	deploymentMu        sync.Mutex
+	deploymentRuns      map[string]deploymentRun
 	deployments         *deploymentStore
 	deploymentWake      chan struct{}
 	publicConnectionMu  sync.Mutex
@@ -213,6 +215,7 @@ func New(opts Options) (*Manager, error) {
 		return nil, fmt.Errorf("open deployments: %w", err)
 	}
 	m.deploymentWake = make(chan struct{}, 1)
+	m.deploymentRuns = make(map[string]deploymentRun)
 	if err := m.preparePublic(); err != nil {
 		return nil, err
 	}

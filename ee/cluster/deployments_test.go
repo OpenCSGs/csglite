@@ -365,7 +365,7 @@ func TestDeploymentAcrossPublicTunnelJoinControlAndLeave(t *testing.T) {
 	if err = os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
 		t.Fatal(err)
 	}
-	host := &deploymentTestHost{fakeHost: &fakeHost{name: "worker", limit: 2}, running: map[string]bool{}}
+	host := &leaveDeploymentHost{deploymentTestHost: &deploymentTestHost{fakeHost: &fakeHost{name: "worker", limit: 2}, running: map[string]bool{}}}
 	worker, err := New(Options{Dir: t.TempDir(), Host: host, Mode: "worker", GatewayURL: server.URL, TLSCAFile: caFile, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)
@@ -474,8 +474,12 @@ func TestDeploymentAcrossPublicTunnelJoinControlAndLeave(t *testing.T) {
 	if _, err = master.publicHub().RoundTrip(worker.identity.UUID, req); err == nil {
 		t.Fatal("inference transport accepted management path")
 	}
+	host.drainBusy.Store(true)
 	if err := worker.Leave(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if host.DeploymentRunning(d) || host.unloads.Load() == 0 {
+		t.Fatal("public leave returned before unloading its busy managed runtime")
 	}
 	if worker.deploymentAuthorized(master.identity.UUID) || worker.DeploymentReady(d.ModelID()) || worker.LocalStatus(ctx).ManagedBy != "" {
 		t.Fatal("leaving retained Master control")

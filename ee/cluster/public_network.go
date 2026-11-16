@@ -543,7 +543,7 @@ func (m *Manager) leavePublic(ctx context.Context) error {
 	}
 	_, err := m.store.UpdateSettings(func(s *Settings) { s.SharedModels = nil })
 	m.deactivate()
-	return err
+	return errors.Join(err, m.waitDeploymentUnload(ctx))
 }
 
 // A public worker has no peer polling loop: its authenticated outbound tunnel
