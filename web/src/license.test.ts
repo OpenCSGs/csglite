@@ -16,6 +16,8 @@ import {
   cloudImportErrorMessage,
   cloudLicenseCanReplace,
   deviceLimitOf,
+  deviceUsageHint,
+  licenseFeatureName,
   editionOf,
   formatLicenseDate,
   isLicensed,
@@ -197,13 +199,36 @@ describe("device limits", () => {
     expect(deviceLimitOf(custom)).toBe(10);
   });
 
-  it("shows cloud usage only for the installed license and clamps it", () => {
+  it("shows true activated and remaining counts only for the installed license", () => {
     const local = licensedState("subscription:4:1", "2027-01-01T00:00:00Z");
-    expect(cloudDeviceUsage(local, cloud())).toEqual({ used: 3, limit: 10, overLimit: false });
-    expect(cloudDeviceUsage(local, cloud({ used: 12 }))).toEqual({ used: 10, limit: 10, overLimit: true });
+    expect(cloudDeviceUsage(local, cloud())).toEqual({ used: 3, limit: 10, remaining: 7, overLimit: false });
+    expect(cloudDeviceUsage(local, cloud({ used: 12 }))).toEqual({ used: 12, limit: 10, remaining: 0, overLimit: true });
     expect(cloudDeviceUsage(local, cloud({ license_key: "subscription:4:2" }))).toBeNull();
     expect(cloudDeviceUsage(local, cloud({ has_license: false }))).toBeNull();
     expect(cloudDeviceUsage(null, cloud())).toBeNull();
+  });
+});
+
+describe("license details", () => {
+  it("localizes current features and retains unknown future keys", () => {
+    expect(licenseFeatureName("feature.lite.lan_cluster")).toBe(t("settings.licenseFeature.cluster"));
+    expect(licenseFeatureName("feature.lite.edge_serving")).toBe(t("settings.licenseFeature.sharedCompute"));
+    expect(licenseFeatureName("feature.lite.future")).toBe("feature.lite.future");
+  });
+  it("does not present missing, stale or invalid telemetry as zero activations", () => {
+    const local = licensedState("subscription:4:1", "2027-01-01T00:00:00Z");
+    for (const status of [cloud({ logged_in: false }), cloud({ online: false }), cloud({ supported: false }), cloud({ reason: "server_error" }), cloud({ used: NaN }), cloud({ used: -1 }), cloud({ limit: 0 })]) {
+      expect(cloudDeviceUsage(local, status)).toBeNull();
+    }
+    expect(cloudDeviceUsage(local, cloud({ used: 0 }))).toEqual({ used: 0, limit: 10, remaining: 10, overLimit: false });
+  });
+  it("explains why matching device usage is unavailable", () => {
+    const local = licensedState("subscription:4:1", "2027-01-01T00:00:00Z");
+    expect(deviceUsageHint(local, null)).toBe("settings.licenseDeviceUnavailable");
+    expect(deviceUsageHint(local, cloud({ logged_in: false }))).toBe("settings.licenseDeviceLogin");
+    expect(deviceUsageHint(local, cloud({ logged_in: false, reason: "token_invalid" }))).toBe("settings.licenseDeviceSessionExpired");
+    expect(deviceUsageHint(local, cloud({ online: false }))).toBe("settings.licenseDeviceOffline");
+    expect(deviceUsageHint(local, cloud({ license_key: "other" }))).toBe("settings.licenseDeviceDifferent");
   });
 });
 
