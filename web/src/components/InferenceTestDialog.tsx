@@ -66,7 +66,7 @@ export function InferenceTestDialog({ service: initialService, services = [initi
     }
   };
 
-  return <dialog ref={dialog} onCancel={event => { event.preventDefault(); onClose(); }} aria-labelledby="inference-test-title" class="m-auto max-h-[calc(100dvh-2rem)] w-[min(1040px,calc(100vw-2rem))] max-w-none flex-col overflow-hidden rounded-2xl bg-white p-0 shadow-2xl backdrop:bg-gray-900/40 open:flex">
+  return <dialog ref={dialog} onCancel={event => { event.preventDefault(); onClose(); }} aria-labelledby="inference-test-title" class="m-auto max-h-[calc(100dvh-2rem)] w-[min(900px,calc(100vw-2rem))] max-w-none flex-col overflow-hidden rounded-2xl bg-white p-0 shadow-2xl backdrop:bg-gray-900/40 open:flex">
     <header class="flex shrink-0 items-start justify-between gap-4 border-b border-gray-100 px-5 py-4">
       <div class="min-w-0"><h2 id="inference-test-title" class="break-words text-base font-semibold text-gray-900">{t("services.test")} · {service.name}</h2>{service.name !== service.model && <p class="mt-1 break-all font-mono text-xs text-gray-400">{service.model}</p>}</div>
       <button onClick={onClose} aria-label={t("services.close")} class="shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 6 12 12M6 18 18 6" /></svg></button>
