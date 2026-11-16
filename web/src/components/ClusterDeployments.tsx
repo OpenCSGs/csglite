@@ -8,12 +8,13 @@ import type { ModelInstanceRow } from "../clusterModels";
 import { DeploymentModelPicker } from "./DeploymentModelPicker";
 import { deploymentModelKind, deploymentName, deploymentRevision, deploymentTargets, isLlamaDeployment } from "../deploymentModels";
 import type { DeploymentModelKind } from "../deploymentModels";
+import { formatMemory as memorySize } from "../clusterMemory";
 import { automaticDeploymentTarget, deploymentNodeMemory, deploymentQuantOptions, recommendDeploymentQuant } from "../deploymentRecommendation";
 
 const inputClass = "w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500";
 const buttonClass = "rounded-lg border border-gray-200 px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-40";
 const primaryClass = "rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-40";
-const memorySize = (bytes: number) => `${(bytes / 1024 ** 3).toLocaleString(undefined, { maximumFractionDigits: 1 })} GiB`;
+
 function nodeMemoryLabel(node: ClusterNodeView, cpuOnly: boolean): string {
   const memory = deploymentNodeMemory(node, cpuOnly);
   const capacity = memory.total > 0 ? memorySize(memory.total) : t("deployments.memoryUnknown");

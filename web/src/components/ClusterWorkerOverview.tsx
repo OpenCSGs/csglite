@@ -2,7 +2,8 @@ import { DeploymentTasksPanel } from "./LocalDeploymentModels";
 import { useEffect, useState } from "preact/hooks";
 import { getClusterDeployments, getPs } from "../api/client";
 import type { ClusterDeployment, ClusterView, RunningModel } from "../api/client";
-import { clusterNodeRole, fmtGB, fmtGBPairShort, shortVersion, stateKey, workerNodeState } from "../cluster";
+import { clusterNodeRole, fmtGB, shortVersion, stateKey, workerNodeState } from "../cluster";
+import { nodeMemory, formatMemory, formatMemoryPair } from "../clusterMemory";
 import { workerDeploymentAssignments } from "../deploymentModels";
 import { t } from "../i18n";
 
@@ -31,12 +32,11 @@ export function ClusterWorkerOverview({ view, onSettings }: { view: ClusterView;
     const timer = setInterval(() => void poll(), 3000);
     return () => { active = false; clearInterval(timer); };
   }, [view.node.uuid, view.cluster?.gateway_uuid]);
-  const st = view.members.find(node => node.local)?.status;
+  const node = view.members.find(node => node.local);
+  const st = node?.status;
   const gpus = st?.gpus ?? [];
-  const gpuTotal = gpus.reduce((sum, gpu) => sum + gpu.vram_total, 0);
-  const gpuUsed = gpus.reduce((sum, gpu) => sum + gpu.vram_used, 0);
-  const usageKnown = gpus.length > 0 && gpus.every(gpu => gpu.usage_known);
-  const gpuValue = !st ? "—" : !gpuTotal ? t("dash.na") : usageKnown ? fmtGBPairShort(gpuUsed, gpuTotal) : t("dash.totalOnly", fmtGB(gpuTotal));
+  const memory = nodeMemory(node), ram = nodeMemory(node, true);
+  const gpuValue = !st ? "—" : !gpus.length || !memory.total ? t("dash.na") : formatMemoryPair(memory.free, memory.total);
   const state = workerNodeState(view.settings);
   return <div class="space-y-5">
     <section class="rounded-xl border border-gray-200 bg-white p-5">
@@ -55,8 +55,8 @@ export function ClusterWorkerOverview({ view, onSettings }: { view: ClusterView;
         <Metric label={t("cluster.workerDisk")} value={st && st.disk.total > 0 ? `${fmtGB(st.disk.free)} GB` : "—"} />
       </div>
       <div class="mt-3 grid gap-3 sm:grid-cols-2">
-        <Metric label={t("cluster.workerGPU")} value={gpuValue} hint={[...gpus.map(gpu => gpu.name), gpus.some(gpu => gpu.shared_memory) ? t("dash.unifiedMemory") : ""].filter(Boolean).join(" · ")} />
-        <Metric label={t("cluster.workerRAM")} value={st && st.ram.total > 0 ? fmtGBPairShort(st.ram.used, st.ram.total) : "—"} hint={st ? t("cluster.workerCPU", st.cpu.cores) : undefined} />
+        <Metric label={t("cluster.statVRAM")} value={gpuValue} hint={[...gpus.map(gpu => gpu.name), memory.kind === "unified" ? t("dash.unifiedMemory") : "", t("cluster.memoryFreeTotal")].filter(Boolean).join(" · ")} />
+        <Metric label={t("cluster.workerRAM")} value={st && st.ram.total > 0 ? formatMemoryPair(Math.min(st.ram.used, st.ram.total), st.ram.total) : "—"} hint={st ? [t("cluster.workerCPU", st.cpu.cores), ram.free === null ? t("deployments.memoryFreeUnknown") : t("deployments.memoryFree", formatMemory(ram.free))].join(" · ") : undefined} />
       </div>
       {st && !st.licensed && <p role="status" class="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{t("cluster.workerQuotaBlocked")}</p>}
       {state !== "active" && <p class="mt-4 text-sm text-amber-700">{t("cluster.workerPaused")}</p>}
