@@ -67,6 +67,7 @@ type cappedWriter struct {
 	mu       sync.Mutex
 	buf      bytes.Buffer
 	maxBytes int
+	observe  func(string)
 }
 
 func newCappedWriter(maxBytes int) *cappedWriter {
@@ -81,6 +82,9 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 		b := w.buf.Bytes()
 		w.buf.Reset()
 		w.buf.Write(b[len(b)-w.maxBytes:])
+	}
+	if w.observe != nil {
+		w.observe(w.buf.String())
 	}
 	return len(p), nil
 }
@@ -102,6 +106,8 @@ type llamaEngine struct {
 	client              *http.Client
 	logBuf              *cappedWriter
 	logFile             *os.File
+	runtimeMu           sync.Mutex
+	runtimeErr          error
 	hasMultimodal       bool
 	nativeToolStreaming bool
 	// decisionLoRA is set when a typed-decision adapter is loaded (scale 0
@@ -678,28 +684,19 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		}
 	}
 
+	// Keep diagnostics and terminal GPU faults even with verbose logging. A
+	// process can still answer /health after its compute backend has failed.
+	engine.logBuf = newCappedWriter(64 * 1024)
+	engine.logBuf.observe = engine.observeRuntimeLog
+	outputs := []io.Writer{engine.logBuf}
 	if verbose {
-		stdout := io.Writer(os.Stderr)
-		stderr := io.Writer(os.Stderr)
-		if engine.logFile != nil {
-			stdout = io.MultiWriter(stdout, engine.logFile)
-			stderr = io.MultiWriter(stderr, engine.logFile)
-		}
-		engine.cmd.Stdout = stdout
-		engine.cmd.Stderr = stderr
-	} else {
-		// Large models print long tensor/KV lists; keep more tail for error diagnosis.
-		w := newCappedWriter(64 * 1024)
-		stdout := io.Writer(w)
-		stderr := io.Writer(w)
-		if engine.logFile != nil {
-			stdout = io.MultiWriter(stdout, engine.logFile)
-			stderr = io.MultiWriter(stderr, engine.logFile)
-		}
-		engine.cmd.Stdout = stdout
-		engine.cmd.Stderr = stderr
-		engine.logBuf = w
+		outputs = append(outputs, os.Stderr)
 	}
+	if engine.logFile != nil {
+		outputs = append(outputs, engine.logFile)
+	}
+	engine.cmd.Stdout = io.MultiWriter(outputs...)
+	engine.cmd.Stderr = engine.cmd.Stdout
 
 	// Ensure shared libraries co-located with the binary can be found
 	binDir := filepath.Dir(binary)
@@ -742,6 +739,10 @@ func newLlamaEngineWithMode(modelPath, modelName string, verbose bool, progress 
 		engine.decisionLoRA = true
 	}
 	engine.detectNativeToolStreaming()
+	if err := engine.RuntimeError(); err != nil {
+		_ = engine.Close()
+		return nil, err
+	}
 	log.Printf("LLAMA: llama-server ready model=%q port=%d native_tool_streaming=%t typed_decisions=%t decision_type=%q", modelName, port, engine.nativeToolStreaming, engine.decisionLoRA, engine.decisionType)
 	return engine, nil
 }
@@ -754,7 +755,12 @@ func (e *llamaEngine) waitForReady(timeout time.Duration, progress ConvertProgre
 
 	// Monitor process exit in background so we can fail fast.
 	exited := make(chan error, 1)
-	go func() { exited <- e.cmd.Wait() }()
+	cmd := e.cmd
+	go func() {
+		err := cmd.Wait()
+		e.failRuntime(errors.New("llama-server process exited; retry deployment to restart"), false)
+		exited <- err
+	}()
 
 	start := time.Now()
 	lastBeat := time.Time{}
@@ -779,6 +785,9 @@ func (e *llamaEngine) waitForReady(timeout time.Duration, progress ConvertProgre
 			e.cmd = nil // process already exited
 			return fmt.Errorf("%s", msg)
 		default:
+		}
+		if err := e.RuntimeError(); err != nil {
+			return err
 		}
 
 		resp, err := healthClient.Get(url)
@@ -868,7 +877,7 @@ func (e *llamaEngine) postChatCompletion(ctx context.Context, reqBody map[string
 			reqDebug = reqDebug[:500] + "...(truncated)"
 		}
 		log.Printf("llama-server error %d: %s\nRequest (truncated): %s", resp.StatusCode, string(errBody), reqDebug)
-		return nil, &inferenceHTTPError{status: resp.StatusCode, body: string(errBody)}
+		return nil, e.runtimeHTTPError(resp.StatusCode, string(errBody))
 	}
 	return resp, nil
 }
@@ -947,7 +956,7 @@ func (e *llamaEngine) Embeddings(ctx context.Context, reqBody map[string]interfa
 			reqDebug = reqDebug[:500] + "...(truncated)"
 		}
 		log.Printf("llama-server embeddings error %d: %s\nRequest (truncated): %s", resp.StatusCode, string(errBody), reqDebug)
-		return nil, &inferenceHTTPError{status: resp.StatusCode, body: string(errBody)}
+		return nil, e.runtimeHTTPError(resp.StatusCode, string(errBody))
 	}
 	return resp, nil
 }

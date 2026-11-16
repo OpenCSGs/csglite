@@ -21457,10 +21457,12 @@
               "unreachable",
               "deleting",
               "deleted"
-            ]
+            ],
+            "description": "ready means the runtime is loaded without a detected terminal backend fault. Startup failures, inference out-of-memory/compute failures and unexpected process exits set failed, even if the HTTP process is still alive. Failed deployments require an explicit retry and remain failed across restarts."
           },
           "error": {
-            "type": "string"
+            "type": "string",
+            "description": "The deployment or terminal inference failure reason, including memory exhaustion; propagated from the worker to the Master."
           },
           "detail": {
             "type": "string"

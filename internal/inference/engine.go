@@ -32,6 +32,15 @@ type Engine interface {
 	ModelName() string
 }
 
+// RuntimeError returns a terminal backend failure, when the engine can report
+// one. Request validation errors and cancellations do not make a runtime fail.
+func RuntimeError(engine Engine) error {
+	if health, ok := engine.(interface{ RuntimeError() error }); ok {
+		return health.RuntimeError()
+	}
+	return nil
+}
+
 // ChatCompletionProxier exposes direct access to the underlying
 // OpenAI-compatible /v1/chat/completions API for advanced use cases
 // such as native Ollama tool-calling compatibility.

@@ -32,6 +32,13 @@ type deploymentTestHost struct {
 	actions   atomic.Int32
 	block     chan struct{}
 	fail      atomic.Bool
+	healthErr error // guarded by runtimeMu
+}
+
+func (h *deploymentTestHost) DeploymentHealth(Deployment) error {
+	h.runtimeMu.Lock()
+	defer h.runtimeMu.Unlock()
+	return h.healthErr
 }
 
 func (h *deploymentTestHost) PrepareDeployment(ctx context.Context, d Deployment, report func(DeploymentStatus)) (int64, error) {
@@ -214,6 +221,56 @@ func TestDeploymentStopCancelsDownloadAndRetryIsExplicit(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitDeployment(t, m, d.ID, "ready")
+}
+
+func TestDeploymentRuntimeFailureIsDurableAndNeedsExplicitRetry(t *testing.T) {
+	m, h := deploymentTestNode(t)
+	d := testDeployment(m)
+	if _, err := m.receiveDeployment(m.identity.UUID, d); err != nil {
+		t.Fatal(err)
+	}
+	waitDeployment(t, m, d.ID, "ready")
+	h.runtimeMu.Lock()
+	h.healthErr = errors.New("insufficient memory: compute backend failed")
+	h.runtimeMu.Unlock()
+	if m.DeploymentReady(d.ModelID()) {
+		t.Fatal("a poisoned runtime still accepted inference before the next receipt")
+	}
+	waitDeployment(t, m, d.ID, "failed")
+	waitPublic(t, func() bool { return !h.DeploymentRunning(d) })
+	receipt, _ := m.deployments.get(false, d.ID)
+	if !strings.Contains(receipt.Status.Error, "insufficient memory") {
+		t.Fatal("runtime failure reason was lost", receipt.Status)
+	}
+	if len(m.deploymentModels()) != 0 {
+		t.Fatal("failed deployment was still advertised for routing")
+	}
+	store, err := openDeploymentStore(m.opts.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, _ := store.get(false, d.ID)
+	if persisted.Status.Phase != "failed" || persisted.Status.Error != receipt.Status.Error {
+		t.Fatal("runtime failure was not durable")
+	}
+	if _, err := m.receiveDeployment(m.identity.UUID, d); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if h.starts.Load() != 1 {
+		t.Fatal("failed runtime automatically reloaded the same generation")
+	}
+	h.runtimeMu.Lock()
+	h.healthErr = nil
+	h.runtimeMu.Unlock()
+	d.Generation++
+	if _, err := m.receiveDeployment(m.identity.UUID, d); err != nil {
+		t.Fatal(err)
+	}
+	waitDeployment(t, m, d.ID, "ready")
+	if h.starts.Load() != 2 || !m.DeploymentReady(d.ModelID()) {
+		t.Fatal("an explicit retry did not recover the deployment")
+	}
 }
 
 func TestDeploymentInventoryKeepsSameRepositoryInstancesDistinct(t *testing.T) {
