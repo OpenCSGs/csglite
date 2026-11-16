@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -131,7 +132,7 @@ func TestHandleAppsReturnsBeforeLatestVersionLookup(t *testing.T) {
 		t.Fatalf("write marker: %v", err)
 	}
 
-	latestRequested := make(chan struct{}, 1)
+	latestRequested := make(chan context.Context, 1)
 	releaseLatest := make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() {
@@ -144,7 +145,7 @@ func TestHandleAppsReturnsBeforeLatestVersionLookup(t *testing.T) {
 			t.Errorf("latest path = %q, want /latest", r.URL.Path)
 		}
 		select {
-		case latestRequested <- struct{}{}:
+		case latestRequested <- r.Context():
 		default:
 		}
 		<-releaseLatest
@@ -168,9 +169,11 @@ func TestHandleAppsReturnsBeforeLatestVersionLookup(t *testing.T) {
 		close(done)
 	}()
 
+	// App discovery probes installed binaries too. Check ordering against the
+	// blocked HTTP lookup, rather than imposing a latency limit on discovery.
 	select {
 	case <-done:
-	case <-time.After(750 * time.Millisecond):
+	case <-time.After(10 * time.Second):
 		release()
 		<-done
 		t.Fatal("handleApps blocked on latest version lookup")
@@ -180,8 +183,11 @@ func TestHandleAppsReturnsBeforeLatestVersionLookup(t *testing.T) {
 		t.Fatalf("handleApps status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	select {
-	case <-latestRequested:
-	case <-time.After(time.Second):
+	case lookupContext := <-latestRequested:
+		if err := lookupContext.Err(); err != nil {
+			t.Fatalf("latest version lookup finished before the list response: %v", err)
+		}
+	case <-time.After(10 * time.Second):
 		t.Fatal("expected latest version lookup to start in the background")
 	}
 }

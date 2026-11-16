@@ -499,7 +499,7 @@ export function AIAppShell() {
                     value={selectedModel}
                     onChange={(e) => setSelectedModel((e.currentTarget as HTMLSelectElement).value)}
                     disabled={modelsLoading || applyingLaunchConfig || models.length === 0}
-                    class={`appearance-none w-full rounded-lg border bg-slate-900 pl-3 pr-9 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
+                    class={`select-dark w-full rounded-lg border bg-slate-900 pl-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
                       modelsLoading || applyingLaunchConfig || models.length === 0
                         ? "border-slate-700 text-slate-500"
                         : "border-slate-700 text-slate-100"
@@ -518,9 +518,6 @@ export function AIAppShell() {
                       ))
                     )}
                   </select>
-                  <svg class="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
                 </div>
               )}
               <input

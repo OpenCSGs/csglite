@@ -407,7 +407,7 @@ export function Marketplace() {
         </form>
         <div class="relative">
           <select
-            class="appearance-none border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            class="border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             value={sortBy.value}
             onChange={(e) => (sortBy.value = (e.target as HTMLSelectElement).value)}
           >

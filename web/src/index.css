@@ -2,6 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Keep one arrow and reserve its space across all single-value selects.
+   The selector deliberately overrides per-page padding utilities. */
+select:not([multiple]):is(:not([size]), [size="0"], [size="1"]) {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: var(--select-arrow, url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"));
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1rem 1rem;
+  padding-inline-end: 2.5rem;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.select-dark {
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+select:not([multiple]):is(:not([size]), [size="0"], [size="1"]):disabled {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  cursor: not-allowed;
+}
+
+/* Let the OS draw a visible arrow in Windows high-contrast mode. */
+@media (forced-colors: active) {
+  select:not([multiple]):is(:not([size]), [size="0"], [size="1"]),
+  select:not([multiple]):is(:not([size]), [size="0"], [size="1"]):disabled {
+    -webkit-appearance: auto;
+    appearance: auto;
+    background-image: none;
+    padding-inline-end: 0.75rem;
+  }
+}
+
 /* Fix xterm cursor not showing */
 .xterm .xterm-viewport {
   cursor: text !important;

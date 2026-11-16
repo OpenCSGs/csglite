@@ -324,7 +324,7 @@ export function AIApps() {
           <select
             value={categoryFilter.value}
             onChange={(e) => (categoryFilter.value = (e.currentTarget as HTMLSelectElement).value as AIAppFilter)}
-            class="appearance-none w-full border border-gray-200 rounded-lg pl-3 pr-9 py-2.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            class="w-full border border-gray-200 rounded-lg pl-3 py-2.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           >
             {aiAppCategoryOptions.map((option) => (
               <option key={option.id} value={option.id}>
@@ -332,9 +332,6 @@ export function AIApps() {
               </option>
             ))}
           </select>
-          <svg class="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
         </div>
       </div>
 
@@ -1247,7 +1244,7 @@ function LiveLogsDrawer({
                           value={xiaozhiBindings[slot]}
                           onChange={(event) => handleXiaozhiBindingChange(slot, (event.currentTarget as HTMLSelectElement).value)}
                           disabled={modelsLoading || candidates.length === 0}
-                          class={`appearance-none w-full rounded-lg border bg-white py-2.5 pl-3 pr-9 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+                          class={`w-full rounded-lg border bg-white py-2.5 pl-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
                             modelsLoading || candidates.length === 0 ? "border-gray-200 text-gray-400" : "border-gray-200 text-gray-700"
                           }`}
                           aria-label={xiaozhiSlotLabel(slot)}
@@ -1264,9 +1261,6 @@ function LiveLogsDrawer({
                             ))
                           )}
                         </select>
-                        <svg class="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-                        </svg>
                       </div>
                     </div>
                   );
@@ -1362,7 +1356,7 @@ function LiveLogsDrawer({
                           handleModelChange((e.currentTarget as HTMLSelectElement).value);
                         }}
                         disabled={modelsLoading || models.length === 0}
-                        class={`appearance-none w-full rounded-xl border bg-white pl-3 pr-9 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
+                        class={`w-full rounded-xl border bg-white pl-3 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
                           modelsLoading || models.length === 0
                             ? "border-gray-200 text-gray-400"
                             : "border-gray-200 text-gray-700"
@@ -1386,9 +1380,6 @@ function LiveLogsDrawer({
                           </>
                         )}
                       </select>
-                      <svg class="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
                     </div>
                   ) : (
                     <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 font-mono break-all">
