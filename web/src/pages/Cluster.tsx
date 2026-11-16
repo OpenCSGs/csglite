@@ -1334,7 +1334,16 @@ function ModelsSection({ view }: { view: ClusterView }) {
           <span class="text-xs text-gray-400">{t("cluster.modelRowCount", rows.length, allRows.length)}</span>
         </div>
         {!rows.length ? <p class="px-5 py-12 text-center text-sm text-gray-400">{t(modelsLoading.value ? "cluster.loading" : modelsError.value && !allRows.length ? "cluster.modelRefreshFailed" : allRows.length ? "cluster.modelNoMatches" : "cluster.modelManagementEmpty")}</p> : <div class="overflow-x-auto px-5">
-          <table class="w-full text-left text-sm">
+          <table class="w-full min-w-[64rem] table-fixed text-left text-sm">
+            <colgroup>
+              <col class="w-[22%]" />
+              <col class="w-[14%]" />
+              <col />
+              <col class="w-28" />
+              <col class="w-24" />
+              <col class="w-24" />
+              <col class="w-44" />
+            </colgroup>
             <thead><tr class="border-b border-gray-200 text-xs text-gray-500">
               {["cluster.instanceModelID", "cluster.instanceMachine", "cluster.runtimeStatus", "cluster.publicationStatus", "cluster.instanceSpeed", "cluster.instanceSize", "cluster.colActions"].map(key => <th key={key} class="px-3 py-3 first:pl-0 font-medium whitespace-nowrap">{t(key)}</th>)}
             </tr></thead>
@@ -1357,9 +1366,15 @@ function ModelsSection({ view }: { view: ClusterView }) {
                 <td class="min-w-36 max-w-64 px-3 py-4">
                   <span class={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-xs ${!node.online ? "bg-gray-100 text-gray-500" : state === "deployments.phase.failed" ? "bg-red-50 text-red-700" : modelNodeState(row) ? "bg-amber-50 text-amber-700" : state === "cluster.instanceRunning" ? "bg-emerald-50 text-emerald-700" : model.loading || sync || state === "deployments.phase.downloading" ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-600"}`}>{t(state)}</span>
                   {modelNodeState(row) && <p class="mt-2 text-xs text-amber-700" title={t("cluster.nodePausedHint")}>{t(modelNodeState(row))}</p>}
-                  {deployment?.status.phase === "downloading" && progress && <div class="mt-2 text-xs text-indigo-600"><progress class="block h-1.5 w-28" value={progress.percent ?? undefined} max={100} aria-label={t("deployments.phase.downloading")} />{progress.percent !== null && <p class="mt-1">{progress.percent}%</p>}</div>}
+                  {deployment?.status.phase === "downloading" && progress && <div class="mt-2 min-w-0 space-y-2 text-xs text-indigo-600">
+                    <div class="flex items-center gap-2">
+                      <progress class="block h-1.5 min-w-0 flex-1" value={progress.percent ?? undefined} max={100} aria-label={t("deployments.phase.downloading")} />
+                      <span class="w-12 shrink-0 text-right tabular-nums">{progress.percent === null ? "—" : `${progress.percent}%`}</span>
+                    </div>
+                    <p class="h-4 truncate text-gray-400" title={deployment.status.detail}>{deployment.status.detail}</p>
+                  </div>}
                   {deployment?.status.error && <DeploymentMessage message={deployment.status.error} class="mt-2 text-xs text-red-600" />}
-                  {deployment?.status.detail && !deployment.status.error && <DeploymentMessage message={deployment.status.detail} class="mt-2 text-xs text-gray-400" />}
+                  {deployment?.status.detail && !deployment.status.error && deployment.status.phase !== "downloading" && <DeploymentMessage message={deployment.status.detail} class="mt-2 text-xs text-gray-400" />}
                   {node.online && sync && <div class="mt-2"><SyncProgress sync={sync} /></div>}
                 </td>
                 <td class="px-3 py-4" title={publication.services.map(service => service.model).join("\n")}><span class={`inline-block whitespace-nowrap rounded-full px-2 py-1 text-xs ${publication.state === "published" ? "bg-indigo-50 text-indigo-700" : publication.state === "disabled" ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-500"}`}>{t(`cluster.publication.${publication.state}`)}</span>{publication.services.length > 1 && <p class="mt-1 text-xs text-gray-400">{t("cluster.publicationServices", publication.services.length)}</p>}</td>

@@ -23,7 +23,9 @@ import {
   formatMonth,
   statementTone,
   edgeStateTone,
+  edgeErrorText,
   formatYuan,
+  filterEdgeApplications,
   hasStats,
   isLiveApplication,
   isValidEdgeModelName,
@@ -37,6 +39,7 @@ import {
   ttftLabel,
   yuanToCents,
 } from "../edge";
+import type { EdgeModelFilter } from "../edge";
 
 type EdgeTab = "overview" | "models" | "earnings";
 
@@ -50,7 +53,7 @@ const toggling = signal(false);
 const applications = signal<EdgeApplication[]>([]);
 const applicationsError = signal("");
 const lastChanged = signal(-1);
-const showHistory = signal(false);
+const modelFilter = signal<EdgeModelFilter>("running");
 
 const month = signal(currentMonth());
 const earnings = signal<EdgeEarnings | null>(null);
@@ -175,6 +178,7 @@ async function submit(e: Event) {
     formName.value = "";
     formDescription.value = "";
     activeTab.value = "models";
+    modelFilter.value = "all";
     await loadApplications();
   } catch (err) {
     submitError.value = (err as Error).message;
@@ -244,7 +248,7 @@ export function EdgeServing() {
 
       {!current ? (
         <section class="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-400">
-          {statusError.value ? <span class="text-red-600">{statusError.value}</span> : t("edge.loading")}
+          {statusError.value ? <span class="text-red-600">{edgeErrorText(statusError.value, t)}</span> : t("edge.loading")}
         </section>
       ) : !current.signed_in ? (
         <section class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
@@ -365,7 +369,7 @@ function OverviewTab({ status: st }: { status: EdgeStatus }) {
           <dd class="text-gray-800">{st.reconnects}</dd>
         </dl>
         {st.last_error && st.state !== "connected" && (
-          <p class="mt-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 break-all">{st.last_error}</p>
+          <p class="mt-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 break-all">{edgeErrorText(st.last_error, t)}</p>
         )}
         <p class="mt-4 text-xs leading-5 text-gray-500">{t("edge.networkHint")}</p>
       </section>
@@ -390,125 +394,126 @@ function OverviewTab({ status: st }: { status: EdgeStatus }) {
 
 function ModelsTab() {
   const all = applications.value;
-  const live = all.filter((a) => isLiveApplication(a.status));
-  const history = all.length - live.length;
-  const rows = showHistory.value ? all : live;
+  const rows = filterEdgeApplications(all, modelFilter.value);
   const quota = modelQuota();
   return (
-    <section class="rounded-xl border border-gray-200 bg-white">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-6 py-4">
-        <div>
-          <h2 class="text-base font-semibold text-gray-900">{t("edge.apps.title")}</h2>
-          <p class="mt-0.5 text-xs text-gray-500">{t("edge.apps.desc")}</p>
-        </div>
-        <div class="flex items-center gap-3">
-          {history > 0 && (
-            <label class="flex items-center gap-1.5 text-xs text-gray-500">
-              <input type="checkbox" checked={showHistory.value} onChange={(e) => (showHistory.value = (e.target as HTMLInputElement).checked)} />
-              {t("edge.apps.showHistory", history)}
-            </label>
-          )}
-          <button type="button" class="text-sm text-gray-500 hover:text-gray-800" onClick={() => void loadApplications()}>
-            {t("edge.refresh")}
-          </button>
-          {quota.limit > 0 && (
-            <span class={`text-xs ${quota.reached ? "text-amber-600" : "text-gray-500"}`} title={quota.reached ? t("edge.apps.quotaHint", quota.limit) : undefined}>
-              {t("edge.apps.quota", quota.used, quota.limit)}
-            </span>
-          )}
-          <button
-            type="button"
-            class="rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={quota.reached}
-            title={quota.reached ? t("edge.apps.quotaHint", quota.limit) : undefined}
-            onClick={openApply}
-          >
-            {t("edge.apps.apply")}
-          </button>
-        </div>
+    <div class="space-y-4">
+      <div class="flex flex-wrap items-center justify-end gap-3">
+        {quota.limit > 0 && (
+          <span class={`text-xs ${quota.reached ? "text-amber-600" : "text-gray-500"}`} title={quota.reached ? t("edge.apps.quotaHint", quota.limit) : undefined}>
+            {t("edge.apps.quota", quota.used, quota.limit)}
+          </span>
+        )}
+        <button
+          type="button"
+          class="rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={quota.reached}
+          title={quota.reached ? t("edge.apps.quotaHint", quota.limit) : undefined}
+          onClick={openApply}
+        >
+          {t("edge.apps.apply")}
+        </button>
       </div>
-      {applicationsError.value && <p class="px-6 pt-4 text-sm text-red-600 break-all">{applicationsError.value}</p>}
-      {rows.length === 0 ? (
-        <div class="px-6 py-12 text-center">
-          <p class="text-sm text-gray-500">{t("edge.apps.empty")}</p>
-          {quota.reached ? (
-            <p class="mt-3 text-xs text-gray-500">{t("edge.apps.quotaHint", quota.limit)}</p>
-          ) : (
-            <button type="button" class="mt-3 text-sm font-medium text-indigo-600 hover:text-indigo-800" onClick={openApply}>
-              {t("edge.apps.applyFirst")}
+      <section class="rounded-xl border border-gray-200 bg-white">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-6 py-4">
+          <div>
+            <h2 class="text-base font-semibold text-gray-900">{t("edge.apps.title")}</h2>
+            <p class="mt-0.5 text-xs text-gray-500">{t("edge.apps.desc")}</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <select aria-label={t("edge.apps.filterLabel")} value={modelFilter.value}
+              onChange={event => (modelFilter.value = event.currentTarget.value as EdgeModelFilter)}
+              class="w-64 max-w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              {(["running", "all", "rejected"] as const).map(filter => <option key={filter} value={filter}>{t(`edge.apps.filter.${filter}`)}</option>)}
+            </select>
+            <button type="button" class="text-sm text-gray-500 hover:text-gray-800" onClick={() => void loadApplications()}>
+              {t("edge.refresh")}
             </button>
-          )}
+          </div>
         </div>
-      ) : (
-        <div class="overflow-x-auto">
-          <table class="min-w-full text-sm">
-            <thead class="bg-gray-50 text-left text-xs text-gray-500">
-              <tr>
-                <th class="px-6 py-2.5 font-medium">{t("edge.apps.model")}</th>
-                <th class="px-3 py-2.5 font-medium">{t("edge.apps.review")}</th>
-                <th class="px-3 py-2.5 font-medium">{t("edge.apps.servingCol")}</th>
-                <th class="px-3 py-2.5 font-medium" title={t("edge.stats.columnHint")}>{t("edge.stats.column")}</th>
-                <th class="px-3 py-2.5 font-medium">{t("edge.apps.price")}</th>
-                <th class="px-3 py-2.5 font-medium">{t("edge.apps.shareCol")}</th>
-                <th class="px-6 py-2.5" />
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-100">
-              {rows.map((app) => (
-                <tr key={app.id} class={isLiveApplication(app.status) ? "" : "text-gray-400"}>
-                  <td class="px-6 py-3 align-top">
-                    <div class="flex items-baseline gap-2">
-                      <span class="font-mono font-medium text-gray-900">{app.public_model_id}</span>
-                      <span class="text-[11px] text-gray-400" title={t("edge.apps.idHint")}>#{app.id}</span>
-                    </div>
-                    <div class="mt-0.5 text-xs text-gray-400">{app.local_model_id}</div>
-                    {app.review_msg && <div class="mt-1 text-xs text-gray-500">{t("edge.apps.reviewNote", app.review_msg)}</div>}
-                  </td>
-                  <td class="px-3 py-3 align-top whitespace-nowrap">
-                    <span class={`inline-flex rounded-full px-2 py-0.5 text-xs ring-1 ring-inset ${applicationTone(app.status)}`}>
-                      {t(`edge.appStatus.${app.status}`)}
-                    </span>
-                  </td>
-                  <td class="px-3 py-3 align-top whitespace-nowrap text-xs">
-                    <ServingCell app={app} />
-                  </td>
-                  <td class="px-3 py-3 align-top text-xs whitespace-nowrap text-gray-600">
-                    {hasStats(app.stats) ? (
-                      <>
-                        <div>
-                          {ttftLabel(app.stats) ? t("edge.stats.ttft", ttftLabel(app.stats)) : t("edge.stats.noStream")}
-                          {app.stats.tokens_per_second > 0 && <span class="text-gray-400"> · {t("edge.stats.speed", app.stats.tokens_per_second)}</span>}
-                        </div>
-                        <div class="text-gray-400">
-                          {t("edge.stats.uptime", onlineLabel(app.stats))}
-                          {app.stats.requests > 0 && ` · ${t("edge.stats.success", percent(app.stats.success_rate))}`}
-                        </div>
-                      </>
-                    ) : (
-                      <span class="text-gray-300">—</span>
-                    )}
-                  </td>
-                  <td class="px-3 py-3 align-top text-xs whitespace-nowrap text-gray-600">
-                    <div>{t("edge.apps.inPrice", centsToYuan(app.prompt_price))}</div>
-                    <div>{t("edge.apps.outPrice", centsToYuan(app.completion_price))}</div>
-                  </td>
-                  <td class="px-3 py-3 align-top text-xs text-gray-600">
-                    {app.status === "approved" || app.status === "suspended" ? `${Math.round((1 - app.commission_rate) * 100)}%` : "—"}
-                  </td>
-                  <td class="px-6 py-3 align-top text-right">
-                    {canWithdraw(app.status) && (
-                      <button type="button" class="text-xs text-gray-400 hover:text-red-600" onClick={() => (withdrawTarget.value = app)}>
-                        {t("edge.apps.withdraw")}
-                      </button>
-                    )}
-                  </td>
+        {applicationsError.value && <p class="px-6 pt-4 text-sm text-red-600 break-all">{edgeErrorText(applicationsError.value, t)}</p>}
+        {rows.length === 0 ? (
+          <div class="px-6 py-12 text-center">
+            <p class="text-sm text-gray-500">{t(all.length ? "edge.apps.noMatches" : "edge.apps.empty")}</p>
+            {!all.length && (quota.reached ? (
+              <p class="mt-3 text-xs text-gray-500">{t("edge.apps.quotaHint", quota.limit)}</p>
+            ) : (
+              <button type="button" class="mt-3 text-sm font-medium text-indigo-600 hover:text-indigo-800" onClick={openApply}>
+                {t("edge.apps.applyFirst")}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead class="bg-gray-50 text-left text-xs text-gray-500">
+                <tr>
+                  <th class="px-6 py-2.5 font-medium">{t("edge.apps.model")}</th>
+                  <th class="px-3 py-2.5 font-medium">{t("edge.apps.review")}</th>
+                  <th class="px-3 py-2.5 font-medium">{t("edge.apps.servingCol")}</th>
+                  <th class="px-3 py-2.5 font-medium" title={t("edge.stats.columnHint")}>{t("edge.stats.column")}</th>
+                  <th class="px-3 py-2.5 font-medium">{t("edge.apps.price")}</th>
+                  <th class="px-3 py-2.5 font-medium">{t("edge.apps.shareCol")}</th>
+                  <th class="px-6 py-2.5" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                {rows.map((app) => (
+                  <tr key={app.id} class={isLiveApplication(app.status) ? "" : "text-gray-400"}>
+                    <td class="px-6 py-3 align-top">
+                      <div class="flex items-baseline gap-2">
+                        <span class="font-mono font-medium text-gray-900">{app.public_model_id}</span>
+                        <span class="text-[11px] text-gray-400" title={t("edge.apps.idHint")}>#{app.id}</span>
+                      </div>
+                      <div class="mt-0.5 text-xs text-gray-400">{app.local_model_id}</div>
+                      {app.review_msg && <div class="mt-1 text-xs text-gray-500">{t("edge.apps.reviewNote", app.review_msg)}</div>}
+                    </td>
+                    <td class="px-3 py-3 align-top whitespace-nowrap">
+                      <span class={`inline-flex rounded-full px-2 py-0.5 text-xs ring-1 ring-inset ${applicationTone(app.status)}`}>
+                        {t(`edge.appStatus.${app.status}`)}
+                      </span>
+                    </td>
+                    <td class="px-3 py-3 align-top whitespace-nowrap text-xs">
+                      <ServingCell app={app} />
+                    </td>
+                    <td class="px-3 py-3 align-top text-xs whitespace-nowrap text-gray-600">
+                      {hasStats(app.stats) ? (
+                        <>
+                          <div>
+                            {ttftLabel(app.stats) ? t("edge.stats.ttft", ttftLabel(app.stats)) : t("edge.stats.noStream")}
+                            {app.stats.tokens_per_second > 0 && <span class="text-gray-400"> · {t("edge.stats.speed", app.stats.tokens_per_second)}</span>}
+                          </div>
+                          <div class="text-gray-400">
+                            {t("edge.stats.uptime", onlineLabel(app.stats))}
+                            {app.stats.requests > 0 && ` · ${t("edge.stats.success", percent(app.stats.success_rate))}`}
+                          </div>
+                        </>
+                      ) : (
+                        <span class="text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td class="px-3 py-3 align-top text-xs whitespace-nowrap text-gray-600">
+                      <div>{t("edge.apps.inPrice", centsToYuan(app.prompt_price))}</div>
+                      <div>{t("edge.apps.outPrice", centsToYuan(app.completion_price))}</div>
+                    </td>
+                    <td class="px-3 py-3 align-top text-xs text-gray-600">
+                      {app.status === "approved" || app.status === "suspended" ? `${Math.round((1 - app.commission_rate) * 100)}%` : "—"}
+                    </td>
+                    <td class="px-6 py-3 align-top text-right">
+                      {canWithdraw(app.status) && (
+                        <button type="button" class="text-xs text-gray-400 hover:text-red-600" onClick={() => (withdrawTarget.value = app)}>
+                          {t("edge.apps.withdraw")}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 

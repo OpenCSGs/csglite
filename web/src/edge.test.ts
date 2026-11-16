@@ -99,7 +99,33 @@ describe("edge online time label", () => {
   });
 });
 
-import { servingState } from "./edge";
+import { edgeErrorText, filterEdgeApplications, servingState } from "./edge";
+import type { EdgeApplication } from "./api/client";
+
+describe("shared model filters", () => {
+  it("localizes the platform-disabled message and preserves unknown diagnostics", () => {
+    const translate = (key: string) => key === "edge.error.nodeDisabledByPlatform" ? "此节点已被平台禁用。" : key;
+    expect(edgeErrorText("This node was disabled by the platform.", translate)).toBe("此节点已被平台禁用。");
+    expect(edgeErrorText("this node was disabled by the platform", () => "This node has been disabled by the platform.")).toBe("This node has been disabled by the platform.");
+    expect(edgeErrorText("network error: diagnostic details", translate)).toBe("network error: diagnostic details");
+  });
+  it("uses serving availability for running models and keeps rejected applications accessible", () => {
+    const applications = [
+      { id: 1, status: "approved", node_status: "online", model_state: "loaded" },
+      { id: 2, status: "approved", node_status: "online", model_state: "sleeping" },
+      { id: 3, status: "approved", node_status: "offline", model_state: "loaded" },
+      { id: 4, status: "approved", node_status: "online", model_state: "unavailable" },
+      { id: 5, status: "pending", node_status: "online" },
+      { id: 6, status: "suspended", node_status: "online" },
+      { id: 7, status: "rejected", node_status: "online" },
+      { id: 8, status: "revoked", node_status: "online" },
+      { id: 9, status: "withdrawn", node_status: "online" },
+    ] as EdgeApplication[];
+    expect(filterEdgeApplications(applications, "running").map(app => app.id)).toEqual([1, 2]);
+    expect(filterEdgeApplications(applications, "rejected").map(app => app.id)).toEqual([7]);
+    expect(filterEdgeApplications(applications, "all")).toEqual(applications);
+  });
+});
 
 describe("edge serving state", () => {
   it("shows nothing until approved and stopped while suspended", () => {
