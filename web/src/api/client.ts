@@ -3274,6 +3274,7 @@ export interface ClusterNodeStatus {
   model_management?: boolean;
   managed_by?: string;
   deployment_capable?: boolean;
+  deployment_configurable?: boolean;
   uuid: string;
   name: string;
   version: string;
@@ -3799,6 +3800,10 @@ export function createClusterDeployment(spec: ClusterDeploymentCreateRequest): P
 }
 export function updateClusterDeployment(id: string, desired: "running" | "stopped" | "deleted"): Promise<ClusterDeployment> {
   return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ desired }) });
+}
+export type ClusterDeploymentConfig = Pick<ClusterDeploymentSpec, "quant" | "num_ctx" | "num_parallel" | "n_gpu_layers">;
+export function configureClusterDeployment(id: string, generation: number, config: ClusterDeploymentConfig): Promise<ClusterDeployment> {
+  return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ generation, config }) });
 }
 export function deleteClusterDeployment(id: string): Promise<ClusterDeployment> {
   return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "DELETE" });

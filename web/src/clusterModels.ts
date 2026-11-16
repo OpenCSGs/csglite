@@ -103,6 +103,9 @@ export function modelActionAvailability(row: ModelInstanceRow, view: ClusterView
     && other.deployment.status.phase !== "deleted" && other.deployment.repository === row.model.repo
     && other.deployment.artifact_source === row.model.source);
   return {
+    edit: available && !!d && d.desired === "stopped" && phase === "stopped" && !!row.node.status?.deployment_configurable,
+    editReason: !available ? (stale ? "cluster.modelStatusStale" : !owned ? "cluster.modelReadOnly" : !row.node.online ? "cluster.healthOffline" : "cluster.modelApplying")
+      : !row.node.status?.deployment_configurable ? "deployments.configUpgradeNode" : "deployments.configStopFirst",
     start: available && !!d && d.desired !== "deleted" && (phase === "stopped" || phase === "failed")
       && row.node.status?.state === "active" && !!row.node.status.accept_work && row.node.status.licensed !== false,
     unload: available && (d ? d.desired === "running" && phase !== "stopped" && phase !== "deleted" : ordinaryReady && row.model.loaded),

@@ -153,15 +153,16 @@ type ModelSource struct {
 
 // Status is everything a node tells its peers about itself.
 type Status struct {
-	NodeStateManagement bool   `json:"node_state_management,omitempty"`
-	ModelManagement     bool   `json:"model_management,omitempty"`
-	ManagedBy           string `json:"managed_by,omitempty"`
-	DeploymentCapable   bool   `json:"deployment_capable,omitempty"`
-	UUID                string `json:"uuid"`
-	Name                string `json:"name"`
-	Version             string `json:"version"`
-	Protocol            int    `json:"protocol"`
-	ClusterUUID         string `json:"cluster_uuid,omitempty"`
+	NodeStateManagement    bool   `json:"node_state_management,omitempty"`
+	ModelManagement        bool   `json:"model_management,omitempty"`
+	ManagedBy              string `json:"managed_by,omitempty"`
+	DeploymentCapable      bool   `json:"deployment_capable,omitempty"`
+	DeploymentConfigurable bool   `json:"deployment_configurable,omitempty"`
+	UUID                   string `json:"uuid"`
+	Name                   string `json:"name"`
+	Version                string `json:"version"`
+	Protocol               int    `json:"protocol"`
+	ClusterUUID            string `json:"cluster_uuid,omitempty"`
 	// Licensed reports whether cluster size fits this node's quota, in either edition.
 	// ClusterView.Licensed separately reports the Enterprise license.
 	Licensed    bool          `json:"licensed"`

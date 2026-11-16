@@ -24,15 +24,16 @@ import (
 
 type deploymentTestHost struct {
 	*fakeHost
-	runtimeMu sync.Mutex
-	running   map[string]bool
-	starts    atomic.Int32
-	prepares  atomic.Int32
-	deletes   atomic.Int32
-	actions   atomic.Int32
-	block     chan struct{}
-	fail      atomic.Bool
-	healthErr error // guarded by runtimeMu
+	runtimeMu   sync.Mutex
+	running     map[string]bool
+	lastStarted Deployment
+	starts      atomic.Int32
+	prepares    atomic.Int32
+	deletes     atomic.Int32
+	actions     atomic.Int32
+	block       chan struct{}
+	fail        atomic.Bool
+	healthErr   error // guarded by runtimeMu
 }
 
 func (h *deploymentTestHost) DeploymentHealth(Deployment) error {
@@ -63,6 +64,7 @@ func (h *deploymentTestHost) StartDeployment(ctx context.Context, d Deployment, 
 	h.runtimeMu.Lock()
 	defer h.runtimeMu.Unlock()
 	h.running[d.ID] = true
+	h.lastStarted = d
 	h.starts.Add(1)
 	return nil
 }

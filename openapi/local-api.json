@@ -12037,9 +12037,9 @@
         "tags": [
           "Cluster"
         ],
-        "summary": "Start, unload, retry or delete a deployment",
+        "summary": "Start, stop, configure, retry or delete a deployment",
         "operationId": "updateClusterDeployment",
-        "description": "Increments the durable generation. Use running to retry a failed deployment. Stop retains cached model files and fences new inference before draining the runtime. Artifact and runtime specification are immutable. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available. Desired deleted fences inference, cancels preparation, drains requests and removes shared library model files only when no other deployment references them and no local runtime still uses them. Other references retain the files and are reported in status.detail. Terminal tombstones reject resurrection. Retry failed deletion with deleted; gateway routes are retained.",
+        "description": "Increments the durable generation. Use running to retry a failed deployment. Stop retains cached model files and fences new inference before draining the runtime. Model identity (name, node, repository, source, revision and kind) is immutable. To edit quantization or runtime settings, send config and the last observed generation, without desired. Configuration updates require desired=stopped and an acknowledged stopped phase, and a target reporting deployment_configurable. They preserve the deployment ID and service bindings, increment generation, and remain stopped until explicitly started. A stale generation, non-stopped deployment or unsupported target returns 409. Repeating unchanged settings is a no-op. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available. Desired deleted fences inference, cancels preparation, drains requests and removes shared library model files only when no other deployment references them and no local runtime still uses them. Other references retain the files and are reported in status.detail. Terminal tombstones reject resurrection. Retry failed deletion with deleted; gateway routes are retained.",
         "parameters": [
           {
             "in": "path",
@@ -12056,27 +12056,49 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "required": [
-                  "desired"
-                ],
-                "properties": {
-                  "desired": {
-                    "type": "string",
-                    "enum": [
-                      "running",
-                      "stopped",
-                      "deleted"
-                    ]
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "desired"
+                    ],
+                    "properties": {
+                      "desired": {
+                        "type": "string",
+                        "enum": [
+                          "running",
+                          "stopped",
+                          "deleted"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "generation",
+                      "config"
+                    ],
+                    "properties": {
+                      "generation": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 1,
+                        "description": "Last observed deployment generation for optimistic concurrency."
+                      },
+                      "config": {
+                        "$ref": "#/components/schemas/ClusterDeploymentConfigPatch"
+                      }
+                    }
                   }
-                }
+                ]
               }
             }
           }
         },
         "responses": {
           "202": {
-            "description": "Desired state saved; execution is asynchronous.",
+            "description": "Desired state or configuration saved; reconciliation is asynchronous. Saving configuration does not start the deployment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12127,6 +12149,16 @@
           },
           "403": {
             "description": "Operation belongs to the deployment controller / Master."
+          },
+          "409": {
+            "description": "Stale generation, deployment not fully stopped, or target node does not support configuration updates.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
           }
         }
       },
@@ -20715,6 +20747,10 @@
           "node_state_management": {
             "type": "boolean",
             "description": "Supports authenticated state control by its current managed_by Master; optional for older peers."
+          },
+          "deployment_configurable": {
+            "type": "boolean",
+            "description": "Node supports changing quantization and runtime settings on stopped deployments. Missing/false requires a target-node upgrade."
           }
         }
       },
@@ -21702,6 +21738,36 @@
             }
           }
         ]
+      },
+      "ClusterDeploymentConfigPatch": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "description": "At least one setting. Omitted fields retain their values. Null values are treated as omitted. Empty quant selects model default; zero GPU layers selects CPU-only execution.",
+        "properties": {
+          "quant": {
+            "type": "string",
+            "description": "Optional GGUF quantization/runtime dtype."
+          },
+          "num_ctx": {
+            "type": "integer",
+            "minimum": 512,
+            "maximum": 131072,
+            "default": 4096
+          },
+          "num_parallel": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16,
+            "default": 1
+          },
+          "n_gpu_layers": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 999,
+            "default": -1
+          }
+        }
       }
     }
   }
