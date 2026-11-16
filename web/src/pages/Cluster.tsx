@@ -551,8 +551,8 @@ export function Cluster() {
         onOverview={() => (activeTab.value = "overview")} /> : <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-500">{t(publicMode ? "cluster.publicEyebrow" : "cluster.eyebrow")}</p>
-          <h1 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">{t(current?.mode === "worker" ? "cluster.workerTitle" : "cluster.title")}</h1>
-          <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t(current?.mode === "worker" ? "cluster.workerSubtitle" : publicMode ? "cluster.publicSubtitle" : "cluster.subtitle")}</p>
+          <h1 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">{t(current?.mode === "worker" ? "cluster.workerConnectTitle" : "cluster.title")}</h1>
+          <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t(current?.mode === "worker" ? "cluster.workerConnectSubtitle" : publicMode ? "cluster.publicSubtitle" : "cluster.subtitle")}</p>
         </div>
         {current?.cluster && current.mode !== "worker" && <HeaderStats view={current} />}
       </div>}
@@ -679,16 +679,16 @@ function DormantNotice({ current }: { current: ClusterView }) {
     }
   };
   return (
-    <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 flex flex-wrap items-center justify-between gap-3">
+    <div class="flex flex-col items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/70 p-5 text-sm text-gray-700 sm:flex-row sm:items-center sm:p-6" data-cluster-network>
       <div>
         <div class="font-semibold text-gray-900">{t("cluster.dormantTitle")}</div>
-        <p class="mt-1">{t("cluster.dormantDesc")}</p>
+        <p class="mt-1 text-xs leading-5 text-gray-500">{t(current.mode === "worker" ? "cluster.workerDormantDesc" : "cluster.dormantDesc")}</p>
       </div>
       <button
         type="button"
         disabled={enablingCluster.value}
         onClick={enable}
-        class="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+        class="shrink-0 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 disabled:opacity-50"
       >
         {enablingCluster.value ? t("cluster.enabling") : t("cluster.enableAction")}
       </button>
@@ -710,13 +710,14 @@ function NotInCluster({ view }: { view: ClusterView }) {
   const code = admissionCode.value;
   const remaining = codeCountdown.value ?? secondsUntil(code?.expires_at);
   return (
-    <>
+    <div class={`space-y-6 ${view.mode === "worker" || view.mode === "gateway" ? "max-w-3xl" : ""}`} data-cluster-connect>
       <CapBanner />
-      <DormantNotice current={view} />
       <AutoFormNotice view={view} />
-      <div class="grid gap-6 lg:grid-cols-2">
+      <section class="overflow-hidden rounded-xl border border-gray-200 bg-white" data-cluster-setup>
+      <DormantNotice current={view} />
+      <div class={`grid ${!view.mode || view.mode === "lan" ? "divide-y divide-gray-200 lg:grid-cols-2 lg:divide-x lg:divide-y-0" : ""}`} data-cluster-forms>
         {/* Create */}
-        {view.mode !== "worker" && <section class="bg-white rounded-xl border border-gray-200 p-6">
+        {view.mode !== "worker" && <section class="min-w-0 p-5 sm:p-6">
           <h2 class="text-lg font-bold text-gray-900">{t("cluster.createTitle")}</h2>
           <p class="mt-1 text-sm text-gray-500">{t("cluster.createDesc")}</p>
           {createdToken.value ? (
@@ -762,7 +763,7 @@ function NotInCluster({ view }: { view: ClusterView }) {
         </section>}
 
         {/* Join */}
-        {view.mode !== "gateway" && <section class="bg-white rounded-xl border border-gray-200 p-6">
+        {view.mode !== "gateway" && <section class="min-w-0 p-5 sm:p-6">
           <h2 class="text-lg font-bold text-gray-900">{t("cluster.joinTitle")}</h2>
           <p class="mt-1 text-sm text-gray-500">{t(view.mode === "worker" ? "cluster.workerJoinDesc" : "cluster.joinDesc")}</p>
           <div class="mt-4 space-y-3">
@@ -794,13 +795,14 @@ function NotInCluster({ view }: { view: ClusterView }) {
               type="button"
               onClick={() => void handleJoin()}
               disabled={joining.value}
-              class="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:opacity-60"
+              class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
             >
               {joining.value ? t("cluster.joining") : t("cluster.joinAction")}
             </button>
           </div>
         </section>}
       </div>
+      </section>
 
       {(!view.mode || view.mode === "lan") && <>
       {/* Admission code */}
@@ -828,7 +830,7 @@ function NotInCluster({ view }: { view: ClusterView }) {
 
       <DiscoveredSection readOnly />
       </>}
-    </>
+    </div>
   );
 }
 
