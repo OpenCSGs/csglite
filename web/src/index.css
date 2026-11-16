@@ -133,3 +133,85 @@ select:not([multiple]):is(:not([size]), [size="0"], [size="1"]):disabled {
     overflow-wrap: anywhere;
   }
 }
+
+
+/* The cluster overview fits its container; compact containers use node cards. */
+.cluster-members {
+  container-type: inline-size;
+}
+
+.cluster-members-table th,
+.cluster-members-table td {
+  padding-right: 0.5rem;
+  overflow-wrap: anywhere;
+}
+
+.cluster-members-table th:last-child,
+.cluster-members-table td:last-child {
+  padding-right: 0;
+}
+
+.cluster-members-table td:first-child > * {
+  max-width: min(100%, 12rem);
+}
+
+@container (max-width: 56rem) {
+  .cluster-members-table,
+  .cluster-members-table tbody {
+    display: block;
+  }
+
+  .cluster-members-table colgroup {
+    display: none;
+  }
+
+  .cluster-members-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .cluster-members-table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+    padding: 1rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+  }
+
+  .cluster-members-table td {
+    min-width: 0;
+    padding: 0;
+    text-align: left;
+  }
+
+  .cluster-members-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 0.25rem;
+    color: #9ca3af;
+    font-size: 0.75rem;
+  }
+
+  .cluster-members-table td:first-child,
+  .cluster-members-table td:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .cluster-members-table td:first-child::before {
+    display: none;
+  }
+}
+
+
+@container (max-width: 24rem) {
+  .cluster-members-table tr {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0.75rem;
+  }
+}
