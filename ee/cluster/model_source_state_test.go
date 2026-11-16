@@ -22,6 +22,10 @@ func TestModelSourceStateTracksExactPinsAndRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	m.dir.Track("worker", nil)
+	if got := m.ModelSourceState(context.Background(), "deployment/jev", "node:worker"); got != "offline" {
+		t.Fatalf("node without telemetry should remain offline: %s", got)
+	}
 	st := &Status{Licensed: true, State: NodeStateActive, AcceptWork: true, Models: []ModelStatus{{ID: "deployment/jev", Loaded: false, Active: 20}}}
 	m.dir.MarkSuccess("worker", "worker:11438", st)
 	m.dir.MarkSuccess("other", "other:11438", st)

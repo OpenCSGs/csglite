@@ -366,6 +366,9 @@ func (m *Manager) ModelSourceState(ctx context.Context, model, source string) st
 		if pinned != "" && candidate.UUID != pinned {
 			continue
 		}
+		if pinned != "" && candidate.Health != HealthHealthy && candidate.Health != HealthSuspect {
+			return "offline"
+		}
 		if candidate.Status == nil {
 			continue
 		}
