@@ -153,7 +153,7 @@ func (e *llamaEngine) ScoreDecisionTokens(ctx context.Context, prompt string, to
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, 0, &inferenceHTTPError{status: resp.StatusCode, body: string(msg)}
+		return nil, 0, e.runtimeHTTPError(resp.StatusCode, string(msg))
 	}
 	var out struct {
 		TokensEvaluated int `json:"tokens_evaluated"`

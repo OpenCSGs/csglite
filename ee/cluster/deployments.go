@@ -72,6 +72,12 @@ type DeploymentInspector interface {
 	InspectDeployment(Deployment) (ModelStatus, bool)
 }
 
+// DeploymentHealth reports terminal inference failures even when a runtime's
+// process is still alive. Older hosts retain their process-liveness behavior.
+type DeploymentHealth interface {
+	DeploymentHealth(Deployment) error
+}
+
 type DeploymentCleaner interface {
 	DeleteDeployment(Deployment) (string, error)
 }
@@ -263,6 +269,13 @@ func (m *Manager) deploymentAllowed(d Deployment) bool {
 	return m.deploymentAuthorized(d.ControllerUUID) && s.AcceptWork && s.State == NodeStateActive && m.withinNodeLimit(len(m.store.Members())+1) && m.Active()
 }
 
+func (m *Manager) deploymentRuntimeError(d Deployment) error {
+	if health, ok := m.opts.Host.(DeploymentHealth); ok {
+		return health.DeploymentHealth(d)
+	}
+	return nil
+}
+
 func (m *Manager) receiveDeployment(controller string, incoming Deployment) (Deployment, error) {
 	if _, ok := m.opts.Host.(DeploymentHost); !ok {
 		return Deployment{}, errors.New("deployment runtime is not supported")
@@ -430,6 +443,15 @@ func (m *Manager) deploymentWorkerLoop(ctx context.Context) {
 			}
 			if d.Status.Phase == "failed" {
 				mu.Unlock()
+				// A fatal error can arrive while a request is draining. Keep the
+				// failed receipt and retry cleanup, never reload this generation.
+				_ = host.StopDeployment(d)
+				continue
+			}
+			if err := m.deploymentRuntimeError(d); err != nil {
+				mu.Unlock()
+				m.deploymentStatus(d.ID, d.Generation, DeploymentStatus{Phase: "failed", Error: err.Error()})
+				_ = host.StopDeployment(d)
 				continue
 			}
 			if host.DeploymentRunning(d) {
@@ -472,6 +494,12 @@ func (m *Manager) deploymentWorkerLoop(ctx context.Context) {
 				}
 				if err != nil {
 					report(DeploymentStatus{Phase: "failed", Error: err.Error()})
+					_ = host.StopDeployment(d)
+					return
+				}
+				if err := m.deploymentRuntimeError(d); err != nil {
+					report(DeploymentStatus{Phase: "failed", Error: err.Error()})
+					_ = host.StopDeployment(d)
 					return
 				}
 				report(DeploymentStatus{Phase: "ready", Size: size})
@@ -495,6 +523,9 @@ func (m *Manager) deploymentModels() []ModelStatus {
 		if d.Desired != "running" || d.Status.Phase != "ready" || !m.deploymentAllowed(d) {
 			continue
 		}
+		if m.deploymentRuntimeError(d) != nil {
+			continue
+		}
 		tag := "text-generation"
 		if d.Kind == "embedding" {
 			tag = "sentence-similarity"
@@ -516,7 +547,7 @@ func (m *Manager) DeploymentReady(model string) bool {
 		return false
 	}
 	d, ok := m.deployments.get(false, strings.TrimPrefix(model, DeploymentModelPrefix))
-	return ok && d.Desired == "running" && d.Status.Phase == "ready" && m.deploymentAllowed(d)
+	return ok && d.Desired == "running" && d.Status.Phase == "ready" && m.deploymentAllowed(d) && m.deploymentRuntimeError(d) == nil
 }
 
 func (m *Manager) createDeployment(spec DeploymentSpec) (Deployment, error) {

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +27,42 @@ type countedDeploymentEngine struct {
 }
 
 func (e *countedDeploymentEngine) Close() error { e.closed.Add(1); return nil }
+
+type unhealthyDeploymentEngine struct {
+	countedDeploymentEngine
+}
+
+func (*unhealthyDeploymentEngine) RuntimeError() error {
+	return errors.New("llama-server inference failed: insufficient memory")
+}
+
+func TestDeploymentDoesNotPublishRuntimeWithFatalStartupError(t *testing.T) {
+	_, h, d := deploymentRuntimeFixture(t)
+	engine := &unhealthyDeploymentEngine{}
+	old := loadEngineWithProgress
+	t.Cleanup(func() { loadEngineWithProgress = old })
+	loadEngineWithProgress = func(string, *model.LocalModel, inference.ConvertProgressFunc, bool, int, int, int, string, string, string) (inference.Engine, error) {
+		return engine, nil
+	}
+	if err := h.StartDeployment(context.Background(), d, func(cluster.DeploymentStatus) {}); err == nil || !strings.Contains(err.Error(), "insufficient memory") {
+		t.Fatal("fatal startup failure was not returned", err)
+	}
+	if h.DeploymentRunning(d) || engine.closed.Load() != 1 {
+		t.Fatal("poisoned runtime was published or leaked")
+	}
+}
+
+type healthSystemOneEngine struct {
+	fakeSystemOneEngine
+	broken atomic.Bool
+}
+
+func (e *healthSystemOneEngine) RuntimeError() error {
+	if e.broken.Load() {
+		return errors.New("llama-server inference failed: insufficient memory")
+	}
+	return nil
+}
 
 func TestPrepareOpenCSGEmbeddingDeploymentDownloadsDefaultBranch(t *testing.T) {
 	const repo = "Qwen/Qwen3-Embedding-0.6B"
@@ -305,7 +342,7 @@ func TestNativeDecisionDeploymentLANToUnifiedGateway(t *testing.T) {
 		rt, ok := master.cluster.Directory().Get(worker.cluster.Identity().UUID)
 		return ok && rt.Status != nil && rt.Status.ManagedBy == master.cluster.Identity().UUID
 	})
-	engine := &fakeSystemOneEngine{}
+	engine := &healthSystemOneEngine{}
 	old := loadEngineWithProgress
 	loadEngineWithProgress = func(string, *model.LocalModel, inference.ConvertProgressFunc, bool, int, int, int, string, string, string) (inference.Engine, error) {
 		return engine, nil
@@ -369,6 +406,39 @@ func TestNativeDecisionDeploymentLANToUnifiedGateway(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"probability":0.9`) {
 		t.Fatalf("gateway %d %s", rec.Code, rec.Body)
 	}
+	engine.broken.Store(true)
+	clusterWait(t, "runtime failure on worker", func() bool {
+		for _, receipt := range worker.cluster.LocalDeployments() {
+			if receipt.ID == d.ID {
+				return receipt.Status.Phase == "failed" && strings.Contains(receipt.Status.Error, "insufficient memory")
+			}
+		}
+		return false
+	})
+	clusterWait(t, "runtime failure receipt on Master", func() bool {
+		status := httptest.NewRecorder()
+		routes.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/cluster/deployments", nil))
+		var view struct {
+			Deployments []cluster.Deployment `json:"deployments"`
+		}
+		if json.Unmarshal(status.Body.Bytes(), &view) != nil {
+			return false
+		}
+		for _, receipt := range view.Deployments {
+			if receipt.ID == d.ID {
+				return receipt.Status.Phase == "failed" && strings.Contains(receipt.Status.Error, "insufficient memory")
+			}
+		}
+		return false
+	})
+	clusterWait(t, "failed model removed from routing", func() bool { return !master.cluster.RemoteHasModel(d.ModelID()) })
+	engine.broken.Store(false)
+	rec = httptest.NewRecorder()
+	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/cluster/deployments/"+d.ID, strings.NewReader(`{"desired":"running"}`)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("retry %d %s", rec.Code, rec.Body)
+	}
+	clusterWait(t, "explicit retry recovers runtime", func() bool { return worker.cluster.DeploymentReady(d.ModelID()) })
 	rec = httptest.NewRecorder()
 	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/cluster/deployments/"+d.ID, strings.NewReader(`{"desired":"stopped"}`)))
 	if rec.Code != http.StatusAccepted {

@@ -82,7 +82,7 @@ func (e *llamaEngine) SystemOne(ctx context.Context, body []byte) ([]byte, error
 		return nil, fmt.Errorf("reading decision response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, &inferenceHTTPError{status: resp.StatusCode, body: llamaErrorMessage(data)}
+		return nil, e.runtimeHTTPError(resp.StatusCode, llamaErrorMessage(data))
 	}
 	return data, nil
 }

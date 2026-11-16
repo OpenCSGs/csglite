@@ -206,6 +206,10 @@ func (h *clusterHost) StartDeployment(ctx context.Context, d cluster.Deployment,
 		_ = engine.Close()
 		return err
 	}
+	if err := inference.RuntimeError(engine); err != nil {
+		_ = engine.Close()
+		return err
+	}
 	key := engineCacheKey(d.ModelID(), deploymentEngineMode(d))
 	h.s.mu.Lock()
 	if _, exists := h.s.engines[key]; exists {
@@ -245,6 +249,15 @@ func (h *clusterHost) DeploymentRunning(d cluster.Deployment) bool {
 	return me != nil
 }
 
+func (h *clusterHost) DeploymentHealth(d cluster.Deployment) error {
+	h.s.mu.RLock()
+	defer h.s.mu.RUnlock()
+	if me := h.s.engines[engineCacheKey(d.ModelID(), deploymentEngineMode(d))]; me != nil {
+		return inference.RuntimeError(me.engine)
+	}
+	return nil
+}
+
 func (s *Server) deploymentInferenceEngine(modelID, mode string) (inference.Engine, error) {
 	if s.cluster == nil || !s.cluster.DeploymentReady(modelID) {
 		return nil, inference.NewHTTPStatusError(503, "deployment is not ready")
@@ -254,6 +267,9 @@ func (s *Server) deploymentInferenceEngine(modelID, mode string) (inference.Engi
 	me := s.engines[engineCacheKey(modelID, mode)]
 	if me == nil {
 		return nil, inference.NewHTTPStatusError(503, "deployment runtime is not available for this API type")
+	}
+	if err := inference.RuntimeError(me.engine); err != nil {
+		return nil, inference.NewHTTPStatusError(503, err.Error())
 	}
 	return me.engine, nil
 }
