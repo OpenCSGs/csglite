@@ -9648,7 +9648,7 @@
           "Compatibility"
         ],
         "summary": "Model service gateway: List compatibility models",
-        "description": "Lists enabled model services with at least one configured source. Does not discover upstream catalogs. Configuration availability is not a live health check. Supports OpenAI and Anthropic model list formats.",
+        "description": "Lists enabled model services with at least one available source, respecting fixed-source policy. Offline or unavailable cluster sources are excluded using current node telemetry; services return automatically when a source recovers. Does not discover upstream catalogs or perform inference health probes. Supports OpenAI and Anthropic model list formats.",
         "operationId": "gateway_listCompatibilityModels",
         "parameters": [
           {
@@ -9795,6 +9795,16 @@
           },
           "500": {
             "$ref": "#/components/responses/OpenAIInternalError"
+          },
+          "503": {
+            "description": "The OpenAI-compatible endpoint encountered an internal error. Model service has no available sources, including offline or unavailable cluster nodes. Retry after a source recovers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -9857,6 +9867,16 @@
           },
           "500": {
             "$ref": "#/components/responses/OpenAIInternalError"
+          },
+          "503": {
+            "description": "The OpenAI-compatible endpoint encountered an internal error. Model service has no available sources, including offline or unavailable cluster nodes. Retry after a source recovers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -9955,6 +9975,16 @@
           },
           "500": {
             "$ref": "#/components/responses/OpenAIInternalError"
+          },
+          "503": {
+            "description": "The OpenAI-compatible endpoint encountered an internal error. Model service has no available sources, including offline or unavailable cluster nodes. Retry after a source recovers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -10024,6 +10054,16 @@
           },
           "500": {
             "$ref": "#/components/responses/AnthropicInternalError"
+          },
+          "503": {
+            "description": "The OpenAI-compatible endpoint encountered an internal error. Model service has no available sources, including offline or unavailable cluster nodes. Retry after a source recovers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -10066,6 +10106,16 @@
           },
           "400": {
             "$ref": "#/components/responses/AnthropicBadRequest"
+          },
+          "503": {
+            "description": "The OpenAI-compatible endpoint encountered an internal error. Model service has no available sources, including offline or unavailable cluster nodes. Retry after a source recovers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            }
           }
         },
         "description": "Unified published-service endpoint. Only enabled model services are accepted; direct source IDs are not accepted. Inference resolves the public model ID to its configured pool without provider discovery or fallback to unrelated direct models. "
@@ -11129,7 +11179,7 @@
             "$ref": "#/components/responses/OpenAIBadRequest"
           },
           "503": {
-            "description": "Diffusers runtime is not installed or not ready.",
+            "description": "Diffusers runtime is not installed or not ready. Model service has no available sources, including offline or unavailable cluster nodes. Retry after a source recovers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11180,7 +11230,7 @@
             "$ref": "#/components/responses/OpenAIBadRequest"
           },
           "503": {
-            "description": "Diffusers runtime is not installed or not ready.",
+            "description": "Diffusers runtime is not installed or not ready. Model service has no available sources, including offline or unavailable cluster nodes. Retry after a source recovers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -11275,6 +11325,16 @@
           },
           "500": {
             "$ref": "#/components/responses/OpenAIInternalError"
+          },
+          "503": {
+            "description": "The OpenAI-compatible endpoint encountered an internal error. Model service has no available sources, including offline or unavailable cluster nodes. Retry after a source recovers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -11432,7 +11492,14 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
+            "description": "The requested streaming service is not currently available. Model service has no available sources, including offline or unavailable cluster nodes. Retry after a source recovers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/OpenAIUnauthorized"
@@ -11493,7 +11560,7 @@
             }
           },
           "503": {
-            "description": "The Python text-to-speech runtime is not installed. The response carries the runtime status so a client can offer to install it.",
+            "description": "The Python text-to-speech runtime is not installed. The response carries the runtime status so a client can offer to install it. Model service has no available sources, including offline or unavailable cluster nodes. Retry after a source recovers.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13038,10 +13105,12 @@
               "enum": [
                 "configured",
                 "disabled",
-                "missing"
+                "missing",
+                "offline",
+                "unavailable"
               ]
             },
-            "description": "Derived configuration status by member ID. Configured is not a live inference health check."
+            "description": "Derived source availability by member ID. Cluster sources require the exact model on an online, licensed node accepting work. Offline, maintenance, unshared, and failed sources are excluded; sleeping models remain routable. This does not perform an inference health probe."
           },
           "inference_protocols": {
             "type": "array",

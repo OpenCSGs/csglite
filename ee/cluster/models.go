@@ -356,6 +356,41 @@ func (m *Manager) RemoteHasModel(model string) bool {
 	return false
 }
 
+// ModelSourceState checks advertised model availability without starting inference
+// or excluding busy nodes. Pins stay scoped to their exact node; sleeping models
+// remain available for on-demand loading.
+func (m *Manager) ModelSourceState(ctx context.Context, model, source string) string {
+	pinned := NodeUUIDFromSource(source)
+	state := "missing"
+	for _, candidate := range m.candidates(ctx, model) {
+		if pinned != "" && candidate.UUID != pinned {
+			continue
+		}
+		if pinned != "" && candidate.Health != HealthHealthy && candidate.Health != HealthSuspect {
+			return "offline"
+		}
+		if candidate.Status == nil {
+			continue
+		}
+		if _, ok := candidate.Status.Model(model); !ok {
+			continue
+		}
+		if candidate.Health != HealthHealthy && candidate.Health != HealthSuspect {
+			if state == "missing" {
+				state = "offline"
+			}
+			continue
+		}
+		status := candidate.Status
+		if !status.Licensed || status.State != NodeStateActive || !status.AcceptWork || candidate.Unshared || candidate.Breaker {
+			state = "unavailable"
+			continue
+		}
+		return "configured"
+	}
+	return state
+}
+
 // Explain runs the scheduler for a hypothetical request.
 func (m *Manager) Explain(ctx context.Context, model string, promptTokens, maxTokens int, affinityKey string) Explain {
 	e := &clusterEngine{m: m, model: model, affinity: affinityKey}

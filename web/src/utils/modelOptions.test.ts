@@ -8,7 +8,7 @@ vi.hoisted(() => {
   });
 });
 
-import { candidateCategory } from "./modelServices";
+import { candidateCategory, serviceConfigured } from "./modelServices";
 import type { ModelInfo, ProviderPool } from "../api/client";
 import { modelHotIcon, sortHotModelsFirst, preferModelServices } from "./modelOptions";
 
@@ -48,5 +48,24 @@ describe("published model service choices", () => {
     expect(candidateCategory(model({ decision_only: true }))).toBe("decision");
     expect(candidateCategory(model({ category: "language_model", pipeline_tag: "text-generation" }))).toBe("chat");
     expect(candidateCategory(model({ pipeline_tag: "image-text-to-text" }))).toBe("chat");
+  });
+});
+
+
+describe("service source availability", () => {
+  const member = { id: "a", source: "node:offline", model: "deployment/jev" };
+  const pool: ProviderPool = { id: "service", name: "JEV", model: "public-jev", enabled: true, policy: "fixed", members: [member] };
+  it("excludes offline or unavailable sources and restores online services", () => {
+    for (const state of ["offline", "unavailable", "missing", "disabled"]) {
+      expect(serviceConfigured({ ...pool, source_states: { a: state } })).toBe(false);
+    }
+    expect(serviceConfigured({ ...pool, source_states: { a: "configured" } })).toBe(true);
+    expect(serviceConfigured({ ...pool, enabled: false, source_states: { a: "configured" } })).toBe(false);
+  });
+  it("keeps live fallback services but never substitutes a fixed source", () => {
+    const multi = { ...pool, members: [member, { ...member, id: "b", source: "node:online" }], source_states: { a: "offline", b: "configured" } };
+    expect(serviceConfigured(multi)).toBe(false);
+    expect(serviceConfigured({ ...multi, policy: "failover" })).toBe(true);
+    expect(serviceConfigured({ ...multi, policy: "weighted" })).toBe(true);
   });
 });

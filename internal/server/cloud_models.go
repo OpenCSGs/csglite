@@ -126,7 +126,7 @@ func (s *Server) listAvailableModelsForProvider(ctx context.Context, provider st
 	}
 	if provider == "" {
 		for _, pool := range config.GetProviderPools() {
-			if !pool.Enabled {
+			if !s.providerPoolAvailable(pool) {
 				continue
 			}
 			label := pool.Model + " [" + pool.Name + "]"
