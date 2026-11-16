@@ -236,6 +236,7 @@ export interface MarketplaceModelQuantization {
   name: string;
   file_count: number;
   example_path: string;
+  size?: number;
 }
 
 export interface MarketplaceLocalModelStatus {
@@ -3775,19 +3776,22 @@ export async function createEmbeddings(model: string, input: string, source?: st
 }
 
 export interface ClusterDeploymentSpec {
-  name: string; node_uuid: string; repository: string; artifact_source: string;
+  name: string; node_uuid?: string; repository: string; artifact_source: string;
   revision: string; quant: string; kind: "chat" | "embedding";
   num_ctx: number; num_parallel: number; n_gpu_layers: number;
 }
 export interface ClusterDeployment extends ClusterDeploymentSpec {
-  id: string; controller_uuid: string; generation: number; desired: "running" | "stopped" | "deleted";
+  id: string; node_uuid: string; controller_uuid: string; generation: number; desired: "running" | "stopped" | "deleted";
   created_at: string;
   status: { phase: string; error?: string; detail?: string; completed_bytes?: number; total_bytes?: number; size?: number; updated_at: string };
+}
+export interface ClusterDeploymentCreateRequest extends ClusterDeploymentSpec {
+  minimum_memory_bytes?: number;
 }
 export function getClusterDeployments(): Promise<{ deployments: ClusterDeployment[]; assignments: ClusterDeployment[] }> {
   return fetchJSONWithApiError("/api/cluster/deployments?include_deleted=false", { cache: "no-store" });
 }
-export function createClusterDeployment(spec: ClusterDeploymentSpec): Promise<ClusterDeployment> {
+export function createClusterDeployment(spec: ClusterDeploymentCreateRequest): Promise<ClusterDeployment> {
   return fetchJSONWithApiError("/api/cluster/deployments", { method: "POST", body: JSON.stringify(spec) });
 }
 export function updateClusterDeployment(id: string, desired: "running" | "stopped" | "deleted"): Promise<ClusterDeployment> {
