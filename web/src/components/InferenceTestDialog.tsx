@@ -5,17 +5,17 @@ import type { ServiceTestProtocol } from "../api/serviceTest";
 import { canSendDecision } from "../utils/decision";
 import { t } from "../i18n";
 
-const protocols: { value: ServiceTestProtocol; label: string }[] = [
-  { value: "chat/completions", label: "OpenAI · Chat Completions" },
-  { value: "responses", label: "OpenAI · Responses" },
-  { value: "messages", label: "Anthropic · Messages" },
-  { value: "embeddings", label: "OpenAI · Embeddings" },
-  { value: "decisions", label: "OpenAI · Decisions" },
-  { value: "images/generations", label: "OpenAI · Images Generations" },
-  { value: "images/edits", label: "OpenAI · Images Edits" },
-  { value: "audio/transcriptions", label: "OpenAI · Audio Transcriptions" },
-  { value: "audio/speech", label: "OpenAI · Audio Speech" },
-];
+const protocols: Record<ServiceTestProtocol, string> = {
+  "chat/completions": "OpenAI · Chat Completions",
+  responses: "OpenAI · Responses",
+  messages: "Anthropic · Messages",
+  embeddings: "OpenAI · Embeddings",
+  decisions: "OpenAI · Decisions",
+  "images/generations": "OpenAI · Images Generations",
+  "images/edits": "OpenAI · Images Edits",
+  "audio/transcriptions": "OpenAI · Audio Transcriptions",
+  "audio/speech": "OpenAI · Audio Speech",
+};
 
 export function InferenceTestDialog({ service: initialService, services = [initialService], onClose }: { service: ProviderPool; services?: ProviderPool[]; onClose: () => void }) {
   const [serviceID, setServiceID] = useState(initialService.id);
@@ -85,7 +85,7 @@ export function InferenceTestDialog({ service: initialService, services = [initi
       <div class="flex flex-wrap items-center gap-3 px-6 pt-5">
         <label class="flex items-center gap-3 text-sm text-gray-600">{t("services.testProtocol")}
           <select value={protocol} disabled={running||!supported.length} onChange={e=>{setProtocol(e.currentTarget.value as ServiceTestProtocol);setResult(null);setError("");setStopped(false);setFile(undefined)}} class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-            {protocols.filter(p=>supported.includes(p.value)).map(p=><option key={p.value} value={p.value}>{p.label}</option>)}
+            {supported.map(protocol=><option key={protocol} value={protocol}>{protocols[protocol]}</option>)}
           </select>
         </label>
         <code class="break-all text-xs text-gray-400">POST /ai-gateway/v1/{protocol}</code>

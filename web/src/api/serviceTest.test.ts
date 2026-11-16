@@ -19,6 +19,42 @@ describe("per-model API testing", () => {
     expect(serviceTestProtocols({ category: "asr" })).toEqual(["audio/transcriptions"]);
     expect(serviceTestProtocols({ category: "tts" })).toEqual(["audio/speech"]);
   });
+  it("defaults a JEV model with both decision and chat capabilities to the Decisions API", async () => {
+    environment();
+    const fetcher = vi.fn().mockResolvedValue(new Response('{"answers":[]}'));
+    vi.stubGlobal("fetch", fetcher);
+    const supported = serviceTestProtocols({
+      category: "chat",
+      typed_decisions: true,
+      decision_only: false,
+      inference_protocols: ["chat/completions", "responses", "messages", "decisions"],
+    });
+    expect(supported).toEqual(["decisions", "chat/completions", "responses", "messages"]);
+    await testModelService("autotrust/JEV-9B", supported[0], "I was charged twice", new AbortController().signal, {
+      question: "Is a refund requested?",
+    });
+    expect(fetcher.mock.calls[0][0]).toBe("/ai-gateway/v1/decisions");
+    const body = JSON.parse(fetcher.mock.calls[0][1].body);
+    expect(body.model).toBe("autotrust/JEV-9B");
+    expect(body.questions[0].type).toBe("predicate");
+    expect(body).not.toHaveProperty("messages");
+  });
+  it.each([
+    ["decision", "decisions"],
+    ["embedding", "embeddings"],
+    ["image", "images/generations"],
+    ["asr", "audio/transcriptions"],
+    ["tts", "audio/speech"],
+  ])("defaults the %s task to its own API even when chat is also available", (category, expected) => {
+    expect(serviceTestProtocols({ category, inference_protocols: ["chat/completions", expected] })[0]).toBe(expected);
+  });
+  it("uses legacy decision flags without advertising unsupported server protocols", () => {
+    expect(serviceTestProtocols({ category: "chat", typed_decisions: true })).toEqual(["decisions", "chat/completions", "responses", "messages"]);
+    expect(serviceTestProtocols({ category: "chat", decision_only: true })).toEqual(["decisions"]);
+    expect(serviceTestProtocols({ category: "chat", typed_decisions: true, inference_protocols: [] })).toEqual([]);
+    expect(serviceTestProtocols({ category: "chat", typed_decisions: true, inference_protocols: ["messages", "unknown"] })).toEqual(["messages"]);
+    expect(serviceTestProtocols({ category: "chat", typed_decisions: false })).toEqual(["chat/completions", "responses", "messages"]);
+  });
   it.each(["chat/completions", "responses", "messages", "embeddings"] as const)("sends the correct %s request with the fixed model and console authentication", async protocol => {
     environment();
     const fetcher = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
