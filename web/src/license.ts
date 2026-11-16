@@ -176,21 +176,39 @@ export function cloudLicenseCanReplace(state: LicenseState | null, cloud: Licens
   return remoteTime > localTime;
 }
 
-/**
- * "used/limit" for the installed license, or null when the cloud numbers
- * belong to a different license.
- */
+/** Labels describe effective capabilities; the backend remains the feature catalog. */
+const featureNameKeys: Record<string, string> = {
+  "feature.lite.provider_pools": "settings.licenseFeature.providerPools",
+  "feature.lite.observability": "settings.licenseFeature.observability",
+  "feature.lite.remote_api_keys": "settings.licenseFeature.remoteAPIKeys",
+  "feature.lite.ai_apps": "settings.licenseFeature.aiApps",
+  "feature.lite.realtime_voice": "settings.licenseFeature.realtimeVoice",
+  "feature.lite.image_generation": "settings.licenseFeature.imageGeneration",
+  "feature.lite.lan_cluster": "settings.licenseFeature.cluster",
+  "feature.lite.edge_serving": "settings.licenseFeature.sharedCompute",
+};
+export function licenseFeatureName(key: string): string {
+  return featureNameKeys[key] ? t(featureNameKeys[key]) : key;
+}
+
+/** Authoritative device usage is only usable for the same installed license. */
 export function cloudDeviceUsage(
   state: LicenseState | null,
   cloud: LicenseCloudStatus | null,
-): { used: number; limit: number; overLimit: boolean } | null {
-  if (!cloud || !cloud.has_license || !cloud.license_key || cloud.limit <= 0) return null;
+): { used: number; limit: number; remaining: number; overLimit: boolean } | null {
+  if (!cloud?.logged_in || !cloud.online || !cloud.supported || cloud.reason || !cloud.has_license || !cloud.license_key) return null;
+  if (!Number.isSafeInteger(cloud.limit) || cloud.limit <= 0 || !Number.isSafeInteger(cloud.used) || cloud.used < 0) return null;
   if (state?.license?.key !== cloud.license_key) return null;
-  const used = Math.max(cloud.used, 0);
-  // The status endpoint reports the real count, which can exceed the limit when
-  // an offline device was reported late. Clamp the displayed number but keep
-  // the overflow so the page can warn that new devices are refused.
-  return { used: Math.min(used, cloud.limit), limit: cloud.limit, overLimit: used > cloud.limit };
+  // Report real usage even when delayed offline activations exceed the quota.
+  return { used: cloud.used, limit: cloud.limit, remaining: Math.max(0, cloud.limit - cloud.used), overLimit: cloud.used > cloud.limit };
+}
+
+export function deviceUsageHint(state: LicenseState | null, cloud: LicenseCloudStatus | null): string {
+  if (!cloud) return "settings.licenseDeviceUnavailable";
+  if (!cloud.logged_in) return cloud.reason === "token_invalid" ? "settings.licenseDeviceSessionExpired" : "settings.licenseDeviceLogin";
+  if (!cloud.online) return "settings.licenseDeviceOffline";
+  if (cloud.supported && !cloud.reason && cloud.license_key && cloud.license_key !== state?.license?.key) return "settings.licenseDeviceDifferent";
+  return "settings.licenseDeviceUnavailable";
 }
 
 /**

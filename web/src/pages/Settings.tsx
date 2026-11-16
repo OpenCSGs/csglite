@@ -1,8 +1,9 @@
 import { signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
+import { LicenseFeaturesTooltip } from "../components/LicenseFeaturesTooltip";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DocumentationLink } from "../components/DocumentationLink";
-import { cloudAuth, cloudUserLabel, communitySettings, invalidateCloudAuth, refreshCloudAuth } from "../cloudAccount";
+import { cloudAuth, cloudUserLabel, communitySettings, openCloudConnection, invalidateCloudAuth, refreshCloudAuth } from "../cloudAccount";
 import { DirectoryPickerDialog } from "../components/DirectoryPickerDialog";
 import { UpgradeDialog, type UpgradeProgress } from "../components/UpgradeDialog";
 import { t, locale, setLocale } from "../i18n";
@@ -37,6 +38,7 @@ import {
   cloudImportAvailability,
   cloudImportErrorMessage,
   deviceLimitOf,
+  deviceUsageHint,
   editionOf,
   formatLicenseDate,
   isLicensed,
@@ -128,6 +130,8 @@ const isRemovingLicense = signal(false);
 const licenseRemoveDialogOpen = signal(false);
 const licenseCloud = signal<LicenseCloudStatus | null>(null);
 const isImportingCloudLicense = signal(false);
+const licenseCloudLoading = signal(false);
+let licenseCloudRequestID = 0;
 
 function normalizeObservabilityRetentionDays(days: number | undefined | null): number {
   const value = Math.max(0, Math.min(3650, Math.round(days ?? 30)));
@@ -867,11 +871,16 @@ async function removeInstalledLicense() {
 }
 
 async function loadLicenseCloud() {
+  const requestID = ++licenseCloudRequestID;
+  licenseCloudLoading.value = true;
+  licenseCloud.value = null;
   try {
-    licenseCloud.value = await getLicenseCloud();
+    const cloud = await getLicenseCloud();
+    if (requestID === licenseCloudRequestID) licenseCloud.value = cloud;
   } catch {
-    // A failed status check disables the button; the page itself stays usable.
-    licenseCloud.value = null;
+    if (requestID === licenseCloudRequestID) licenseCloud.value = null;
+  } finally {
+    if (requestID === licenseCloudRequestID) licenseCloudLoading.value = false;
   }
 }
 
@@ -909,7 +918,7 @@ function LicenseSection() {
   const cloudAvailability = cloudImportAvailability(state, cloud);
   const cloudUsage = cloudDeviceUsage(state, cloud);
   const deviceLimit = deviceLimitOf(state);
-  const showDeviceRow = licensed && state?.edition === "Enterprise" && deviceLimit !== null;
+  const showDeviceRow = licensed && deviceLimit !== null;
   // Auto-expand the import form only when nothing is installed. An unreadable
   // or expired file keeps the buttons so the user can replace or remove it.
   const hasFile = state !== null && state.status !== "none";
@@ -973,13 +982,18 @@ function LicenseSection() {
                 <div class="flex justify-between gap-4 sm:block">
                   <dt class="text-gray-500">{t("settings.licenseFeatures")}</dt>
                   <dd class="text-gray-900 text-right sm:text-left">
-                    {state.features.length > 0 ? state.features.length : t("settings.licenseFeaturesNone")}
+                    <LicenseFeaturesTooltip features={state.features} />
                   </dd>
                 </div>
                 {showDeviceRow && (
-                  <div class="flex justify-between gap-4 sm:block">
+                  <div class="min-w-0" data-license-devices>
                     <dt class="text-gray-500">{t("settings.licenseDevices")}</dt>
-                    <dd class="text-gray-900 text-right sm:text-left">{deviceLimit}</dd>
+                    <dd class="mt-1 flex flex-wrap gap-x-6 gap-y-2">
+                      {([["settings.licenseDeviceTotal", cloudUsage?.limit ?? deviceLimit], ["settings.licenseDeviceActivated", cloudUsage?.used ?? "—"], ["settings.licenseDeviceRemaining", cloudUsage?.remaining ?? "—"]] as const).map(([label, value]) => <span key={label} class="min-w-0"><span class="block text-xs text-gray-500">{t(label)}</span><span class="text-base font-medium text-gray-900">{value}</span></span>)}
+                    </dd>
+                    <dd class="mt-2 text-xs leading-5 text-gray-500" role="status">{t(licenseCloudLoading.value ? "settings.licenseDeviceLoading" : cloudUsage ? "settings.licenseDeviceLedger" : deviceUsageHint(state, cloud))}</dd>
+                    {cloudUsage?.overLimit && <dd role="status" class="mt-1 text-xs text-amber-700">{t("settings.licenseCloudOverLimit")}</dd>}
+                    {!licenseCloudLoading.value && !cloudUsage && cloud && (!cloud.logged_in || cloud.license_key !== summary.key) && <dd class="mt-1"><button type="button" onClick={openCloudConnection} class="text-xs text-indigo-600 hover:text-indigo-700 hover:underline">{t("settings.licenseDeviceConnect")}</button></dd>}
                   </div>
                 )}
               </dl>
@@ -1037,16 +1051,6 @@ function LicenseSection() {
                       ? t("settings.licenseCloudImporting")
                       : t("settings.licenseCloudImport")}
                   </button>
-                  {cloudUsage && (
-                    <span class="self-center text-xs text-gray-500">
-                      {t("settings.licenseCloudUsage", cloudUsage.used, cloudUsage.limit)}
-                    </span>
-                  )}
-                  {cloudUsage?.overLimit && (
-                    <span class="self-center text-xs text-amber-700">
-                      {t("settings.licenseCloudOverLimit")}
-                    </span>
-                  )}
                   {!showForm && hasFile && (
                     <button
                       type="button"
