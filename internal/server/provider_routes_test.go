@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -104,9 +106,12 @@ func TestProviderRouteUnknownEndpointReturnsJSON404(t *testing.T) {
 
 func TestProviderRouteFiltersPoolModels(t *testing.T) {
 	s := newTestServer(t)
+	storageID := "acme/member-model"
+	mustSaveLocalModel(t, s.cfg.ModelDir, &model.LocalModel{Namespace: "acme", Name: "member-model", Format: model.FormatGGUF, Files: []string{"model.gguf"}, DownloadedAt: time.Unix(100, 0)})
+	memberID := s.localInferenceModelID(storageID)
 	if err := config.SaveProviderPools([]config.ProviderPool{{
 		ID: "pool-one", Name: "Pool One", Model: "public-model", Enabled: true,
-		Members: []config.ProviderPoolMember{{ID: "local", Source: "local", Model: "member-model"}},
+		Members: []config.ProviderPoolMember{{ID: "local", Source: "local", Model: memberID}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +124,16 @@ func TestProviderRouteFiltersPoolModels(t *testing.T) {
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte(`"id":"public-model"`)) {
 		t.Fatalf("pool model missing from response: %s", w.Body.String())
+	}
+	pools := config.GetProviderPools()
+	pools[0].Members[0].Model = "missing-model"
+	if err := config.SaveProviderPools(pools); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	s.routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK || bytes.Contains(w.Body.Bytes(), []byte(`"id":"public-model"`)) {
+		t.Fatalf("unavailable pool model leaked: %d %s", w.Code, w.Body.String())
 	}
 }
 
