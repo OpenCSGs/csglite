@@ -42,6 +42,7 @@ import { clusterMode, navigationMode } from "../clusterAccess";
 import { filterModelInstances, isManagedModelInstance, mergeClusterDeployments, modelInstanceCategory, modelInstanceRows, modelRowState, modelNodeState, measuredRate, modelPublication } from "../clusterModels";
 import { ClusterModelActions } from "../components/ClusterModelActions";
 import { DeploymentMessage } from "../components/DeploymentMessage";
+import { ClusterWorkerHeader } from "../components/ClusterWorkerHeader";
 import { ClusterWorkerOverview } from "../components/ClusterWorkerOverview";
 import { ClusterDeploymentControls } from "../components/ClusterDeployments";
 import { deploymentProgress } from "../deploymentModels";
@@ -544,14 +545,17 @@ export function Cluster() {
 
   return (
     <div class="page-shell min-w-0 space-y-6 px-4 md:px-8">
-      <div class="flex flex-wrap items-end justify-between gap-4">
+      {current?.mode === "worker" && current.cluster ? <ClusterWorkerHeader view={current}
+        settings={activeTab.value === "settings"}
+        onSettings={() => openSettingsTab(current.settings)}
+        onOverview={() => (activeTab.value = "overview")} /> : <div class="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.28em] text-indigo-500">{t(publicMode ? "cluster.publicEyebrow" : "cluster.eyebrow")}</p>
           <h1 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">{t(current?.mode === "worker" ? "cluster.workerTitle" : "cluster.title")}</h1>
           <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t(current?.mode === "worker" ? "cluster.workerSubtitle" : publicMode ? "cluster.publicSubtitle" : "cluster.subtitle")}</p>
         </div>
         {current?.cluster && current.mode !== "worker" && <HeaderStats view={current} />}
-      </div>
+      </div>}
 
       {current && viewError.value && <p role="alert" class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{t("cluster.staleView")} {viewError.value}</p>}
 
@@ -839,27 +843,26 @@ function InCluster({ view }: { view: ClusterView }) {
         </div>
       )}
       {view.mode !== "worker" && <CapBanner />}
-      {view.mode === "worker" && <MasterConnection view={view} />}
-      <div class="inline-flex max-w-full flex-wrap rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
-        <TabButton tab="overview" label={t(view.mode === "worker" ? "cluster.workerOverviewTab" : "cluster.tabOverview")} onSelect={() => (activeTab.value = "overview")} />
+      {view.mode !== "worker" && <div class="inline-flex max-w-full flex-wrap rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+        <TabButton tab="overview" label={t("cluster.tabOverview")} onSelect={() => (activeTab.value = "overview")} />
         {(!view.mode || view.mode === "lan") && <TabButton
           tab="discovered"
           label={t("cluster.tabDiscovered")}
           badge={view.discovered_count > 0 ? String(view.discovered_count) : ""}
           onSelect={() => (activeTab.value = "discovered")}
         />}
-        {view.mode !== "worker" && <TabButton
+        <TabButton
           tab="models"
           label={t("cluster.modelManagement")}
           onSelect={() => {
             activeTab.value = "models";
             void loadModels();
           }}
-        />}
-        <TabButton tab="settings" label={t(view.mode === "worker" ? "cluster.workerSettingsTab" : "cluster.tabSettings")} onSelect={() => openSettingsTab(view.settings)} />
-      </div>
+        />
+        <TabButton tab="settings" label={t("cluster.tabSettings")} onSelect={() => openSettingsTab(view.settings)} />
+      </div>}
 
-      {activeTab.value === "overview" && (view.mode === "worker" ? <ClusterWorkerOverview view={view} onSettings={() => openSettingsTab(view.settings)} /> : <OverviewSection view={view} />)}
+      {activeTab.value === "overview" && (view.mode === "worker" ? <ClusterWorkerOverview view={view} /> : <OverviewSection view={view} />)}
       {activeTab.value === "discovered" && (!view.mode || view.mode === "lan") && <DiscoveredSection />}
       {activeTab.value === "models" && view.mode !== "worker" && <ModelsSection view={view} />}
       {activeTab.value === "settings" && <SettingsSection view={view} />}
@@ -1558,22 +1561,6 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
       <span class={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${checked ? "translate-x-5" : "translate-x-0.5"}`} />
     </button>
   );
-}
-
-function MasterConnection({ view }: { view: ClusterView }) {
-  const master = view.members.find(node => node.uuid === view.cluster?.gateway_uuid);
-  return (<section class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-6">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <h2 class="text-sm font-semibold text-gray-900">{t("cluster.masterConnection")}</h2>
-          <span class={`rounded-full px-2.5 py-1 text-xs font-medium ${master?.online ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>{t(master?.online ? "cluster.masterOnline" : "cluster.masterOffline")}</span>
-        </div>
-        {activeTab.value === "settings" && <p class="mt-2 text-sm text-gray-600">{t("cluster.masterControlDesc")}</p>}
-        <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-          <div><dt class="text-gray-500">{t("cluster.masterName")}</dt><dd class="mt-1 font-medium text-gray-900">{master?.name || t("cluster.masterName")}</dd></div>
-          <div><dt class="text-gray-500">{t("cluster.masterAddress")}</dt><dd class="mt-1 break-all font-mono text-gray-900">{view.gateway_url}</dd></div>
-        </dl>
-        {!master?.online && <p role="status" class="mt-4 text-sm text-amber-800">{t("cluster.workerDisconnected")}</p>}
-      </section>);
 }
 
 function SettingsSection({ view }: { view: ClusterView }) {
