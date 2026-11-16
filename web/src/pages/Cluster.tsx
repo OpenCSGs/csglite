@@ -42,6 +42,7 @@ import { clusterMode, navigationMode } from "../clusterAccess";
 import { filterModelInstances, isManagedModelInstance, mergeClusterDeployments, modelInstanceCategory, modelInstanceRows, modelRowState, modelNodeState, measuredRate, modelPublication } from "../clusterModels";
 import { ClusterModelActions } from "../components/ClusterModelActions";
 import { DeploymentMessage } from "../components/DeploymentMessage";
+import { InfoTooltip } from "../components/InfoTooltip";
 import { ClusterWorkerHeader } from "../components/ClusterWorkerHeader";
 import { ClusterWorkerOverview } from "../components/ClusterWorkerOverview";
 import { ClusterDeploymentControls } from "../components/ClusterDeployments";
@@ -50,7 +51,7 @@ import { deploymentProgress } from "../deploymentModels";
 import type { ModelInstanceFilter } from "../clusterModels";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { t, locale } from "../i18n";
-import { clusterReasonText, canManageNodeState, workerNodeState, clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, shortVersion, stateKey } from "../cluster";
+import { clusterReasonText, canManageNodeState, workerNodeState, clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, stateKey } from "../cluster";
 
 type ClusterTab = "overview" | "discovered" | "models" | "settings";
 
@@ -924,24 +925,18 @@ function OverviewSection({ view }: { view: ClusterView }) {
       <div class="cluster-members" data-cluster-overview>
         <table class="cluster-members-table w-full table-fixed text-sm">
           <colgroup>
-            <col class="w-48" />
-            <col class="w-28" />
-            <col class="w-[12%]" />
-            <col /><col /><col />
-            <col class="w-20" />
-            <col class="w-24" />
-            <col class="w-28" />
+            <col class="w-[29%]" />
+            <col class="w-[15%]" />
+            <col class="w-[30%]" />
+            <col class="w-[11%]" />
+            <col class="w-[15%]" />
           </colgroup>
           <thead>
             <tr class="border-b border-gray-100 text-left text-gray-500">
               <th class="pb-3 font-medium">{t("cluster.colNode")}</th>
-              <th class="pb-3 font-medium">{t("cluster.colRole")}</th>
               <th class="pb-3 font-medium">{t("cluster.colStatus")}</th>
               <th class="pb-3 font-medium">{t("cluster.colGPU")}</th>
-              <th class="pb-3 font-medium">{t("cluster.colCPURAM")}</th>
-              <th class="pb-3 font-medium">{t("cluster.colDisk")}</th>
-              <th class="pb-3 font-medium">{t("cluster.colModels")}</th>
-              <th class="pb-3 font-medium">{t("cluster.colVersion")}</th>
+              <th class="pb-3 font-medium">{t("cluster.modelsShort")}</th>
               <th class="pb-3 font-medium text-right">{t("cluster.colActions")}</th>
             </tr>
           </thead>
@@ -961,175 +956,94 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
   const tone = healthTone(node.health, node.online);
   const gpus = st?.gpus ?? [];
   const memory = nodeMemory(node);
-  const ram = nodeMemory(node, true);
   const vramPct = memory.free === null ? 0 : percentOf(memory.total - memory.free, memory.total);
-  const gpuName = gpus[0]?.name || (st ? t("dash.clusterNoGPU") : "—");
+  const gpuNames = [...new Set(gpus.map(gpu => gpu.name))].map(name => {
+    const count = gpus.filter(gpu => gpu.name === name).length;
+    return count > 1 ? `${name} ×${count}` : name;
+  });
+  const utilization = gpus.length && gpus.every(gpu => gpu.util != null)
+    ? Math.round(gpus.reduce((sum, gpu) => sum + gpu.util!, 0) / gpus.length) : null;
   const loaded = (st?.models ?? []).filter((m) => m.loaded);
   const stateName = st?.state ?? (node.local ? view.settings.state : undefined);
   const stateLabel = stateName && stateName !== "active" ? t(stateKey(stateName)) : "";
   const muted = node.online ? "" : "text-gray-400";
   const lastSeen = node.last_seen ? new Date(node.last_seen) : null;
-  const addr = node.addr || node.static_address || "";
   const editingStatic = staticEditUUID.value === node.uuid;
 
   return (
-    <tr class={`border-b border-gray-50 align-top ${node.online ? "" : "bg-gray-50/60"}`}>
-      <td data-label={t("cluster.colNode")} class="py-3">
-        {node.local && nameEditing.value ? (
-          <div class="flex min-w-0 flex-wrap items-center gap-1.5">
-            <input
-              class="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={nameDraft.value}
-              disabled={nameSaving.value}
-              onInput={(e) => (nameDraft.value = (e.target as HTMLInputElement).value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void saveName(node.uuid);
-                if (e.key === "Escape") nameEditing.value = false;
-              }}
-            />
-            <button type="button" class="text-xs text-indigo-600 hover:underline" disabled={nameSaving.value} onClick={() => void saveName(node.uuid)}>
-              {nameSaving.value ? "..." : t("cluster.save")}
+    <tr class={`border-b border-gray-100 align-middle last:border-0 ${node.online ? "" : "bg-gray-50/60"}`}>
+      <td data-label={t("cluster.colNode")} class="py-4">
+        {node.local && nameEditing.value ? <div class="flex min-w-0 flex-wrap items-center gap-1.5">
+          <input aria-label={t("cluster.workerNodeName")} class="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            value={nameDraft.value} disabled={nameSaving.value} onInput={e => (nameDraft.value = e.currentTarget.value)}
+            onKeyDown={e => { if (e.key === "Enter") void saveName(node.uuid); if (e.key === "Escape") nameEditing.value = false; }} />
+          <button type="button" class="text-xs text-indigo-600" disabled={nameSaving.value} onClick={() => void saveName(node.uuid)}>{t("cluster.save")}</button>
+          <button type="button" class="text-xs text-gray-400" onClick={() => (nameEditing.value = false)}>{t("confirm.cancel")}</button>
+        </div> : <InfoTooltip label={t("cluster.nodeDetailsFor", node.name)} class={`min-w-0 font-medium ${node.online ? "text-gray-900 hover:text-indigo-600" : "text-gray-500"}`} content={<NodeMetadataDetails node={node} />}>
+          <span class="flex min-w-0 items-center gap-1.5"><span class="truncate">{node.name}</span><svg aria-hidden="true" class="h-3.5 w-3.5 shrink-0 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7v1" /></svg></span>
+        </InfoTooltip>}
+        <div class="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+          <span class={clusterNodeRole(node.uuid, view.cluster) === "master" ? "font-medium text-indigo-600" : "text-gray-500"}>{t(`cluster.role.${clusterNodeRole(node.uuid, view.cluster)}`)}</span>
+          {node.local && <>
+            <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{t("cluster.thisNode")}</span>
+            <button type="button" class="rounded text-gray-400 hover:text-indigo-600" aria-label={t("cluster.rename")} title={t("cluster.rename")} onClick={() => startNameEdit(node.name)}>
+              <svg aria-hidden="true" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
             </button>
-            <button type="button" class="text-xs text-gray-400 hover:text-gray-600" onClick={() => (nameEditing.value = false)}>
-              {t("confirm.cancel")}
-            </button>
-          </div>
-        ) : (
-          <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span class={`min-w-0 max-w-full truncate font-medium ${node.online ? "text-gray-900" : "text-gray-500"}`} title={node.name}>
-              {node.name}
-            </span>
-            {node.local && (
-              <>
-                <span class="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
-                  {t("cluster.thisNode")}
-                </span>
-                <button type="button" class="text-gray-400 hover:text-indigo-600" title={t("cluster.rename")} onClick={() => startNameEdit(node.name)}>
-                  <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                </button>
-              </>
-            )}
-          </div>
-        )}
-        {st?.hostname && !isNoiseHostname(st.hostname, node.name) && <div class="truncate text-xs text-gray-400" title={st.hostname}>{st.hostname}</div>}
-        {editingStatic ? (
-          <div class="mt-1 flex items-center gap-1.5">
-            <input
-              class="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={staticDraft.value}
-              placeholder={t("cluster.staticAddressPlaceholder")}
-              disabled={staticSaving.value}
-              onInput={(e) => (staticDraft.value = (e.target as HTMLInputElement).value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void saveStaticAddress();
-                if (e.key === "Escape") staticEditUUID.value = "";
-              }}
-            />
-            <button type="button" class="text-xs text-indigo-600 hover:underline" disabled={staticSaving.value} onClick={() => void saveStaticAddress()}>
-              {staticSaving.value ? "..." : t("cluster.save")}
-            </button>
-            <button type="button" class="text-xs text-gray-400 hover:text-gray-600" onClick={() => (staticEditUUID.value = "")}>
-              {t("confirm.cancel")}
-            </button>
-          </div>
-        ) : (
-          addr && (
-            <div class="mt-0.5 truncate font-mono text-[11px] text-gray-400" title={node.static_address ? t("cluster.staticAddressSet", node.static_address) : addr}>
-              {addr}
-              {node.static_address && <span class="ml-1 rounded bg-gray-100 px-1 text-[10px] text-gray-500">{t("cluster.staticBadge")}</span>}
-            </div>
-          )
-        )}
-      </td>
-      <td data-label={t("cluster.colRole")} class="py-3">
-        <span class={`inline-flex max-w-full rounded-md px-2 py-1 text-xs font-medium ${clusterNodeRole(node.uuid, view.cluster) === "master" ? "bg-indigo-50 text-indigo-700" : "bg-gray-100 text-gray-600"}`}>
-          {t(`cluster.role.${clusterNodeRole(node.uuid, view.cluster)}`)}
-        </span>
-      </td>
-      <td data-label={t("cluster.colStatus")} class="py-3">
-        <div class="flex min-w-0 flex-wrap items-center gap-1.5" title={node.last_error || undefined}>
-          <span class={`h-2 w-2 shrink-0 rounded-full ${healthDotClass[tone]}`} />
-          <span class={node.online ? "text-gray-700" : "text-gray-400"}>{t(healthKey(node.health, node.online))}</span>
-          {stateLabel && <span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">{stateLabel}</span>}
-          {node.last_error && (
-            <span class="cursor-help text-red-500" title={node.last_error}>
-              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-              </svg>
-            </span>
-          )}
+          </>}
         </div>
-        {!node.online && lastSeen && !Number.isNaN(lastSeen.getTime()) && (
-          <div class="text-[11px] text-gray-400">{t("cluster.lastSeen", lastSeen.toLocaleString())}</div>
-        )}
-        {st && !st.licensed && (
-          <div class="text-[11px] text-gray-400">{t("cluster.nodeQuotaExceeded")}</div>
-        )}
-        {st && st.inflight > 0 && <div class="text-[11px] text-indigo-600">{t("cluster.inflightCount", st.inflight)}</div>}
+        {editingStatic && <div class="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+          <input aria-label={t("cluster.colAddress")} class="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            value={staticDraft.value} placeholder={t("cluster.staticAddressPlaceholder")} disabled={staticSaving.value} onInput={e => (staticDraft.value = e.currentTarget.value)}
+            onKeyDown={e => { if (e.key === "Enter") void saveStaticAddress(); if (e.key === "Escape") staticEditUUID.value = ""; }} />
+          <button type="button" class="text-xs text-indigo-600" disabled={staticSaving.value} onClick={() => void saveStaticAddress()}>{t("cluster.save")}</button>
+          <button type="button" class="text-xs text-gray-400" onClick={() => (staticEditUUID.value = "")}>{t("confirm.cancel")}</button>
+        </div>}
       </td>
-      <td data-label={t("cluster.colGPU")} class={`py-3 ${muted}`}>
-        <div class="truncate max-w-full" title={gpuName}>
-          {gpuName}
-          {gpus.length > 1 ? ` ×${gpus.length}` : ""}
-        </div>
-        {gpus.length > 0 && memory.total > 0 ? (
-          <>
-            {memory.kind === "unified" && <div class="text-xs text-gray-500">{t("deployments.memory.unified")}</div>}
-            <div class="text-xs text-gray-500" title={t("cluster.memoryFreeTotal")}>{t("cluster.memoryFreeShort", formatMemoryPair(memory.free, memory.total))}</div>
-            {memory.free !== null && <div class="mt-1 h-1.5 w-full max-w-28 rounded-full bg-gray-100 overflow-hidden">
-              <div class={`h-full rounded-full ${vramPct > 80 ? "bg-red-500" : vramPct > 50 ? "bg-amber-400" : "bg-indigo-500"}`} style={{ width: `${vramPct}%` }} />
-            </div>}
-          </>
-        ) : (
-          st && <div class="text-xs text-gray-400">{t("dash.na")}</div>
-        )}
+      <td data-label={t("cluster.colStatus")} class="py-4">
+        <InfoTooltip label={t("cluster.nodeStatusFor", node.name)} content={<>
+          <p class="font-semibold text-gray-900">{t(healthKey(node.health, node.online))}</p>
+          {lastSeen && !Number.isNaN(lastSeen.getTime()) && <p class="mt-2">{t("cluster.lastSeen", lastSeen.toLocaleString())}</p>}
+          {node.last_error && <p class="mt-2 whitespace-pre-wrap break-words text-red-600">{node.last_error}</p>}
+          {st && !st.licensed && <p class="mt-2 text-amber-700">{t("cluster.nodeQuotaExceeded")}</p>}
+        </>}>
+          <span class="inline-flex items-center gap-1.5 whitespace-nowrap"><span class={`h-1.5 w-1.5 shrink-0 rounded-full ${healthDotClass[tone]}`} /><span class={node.online ? "text-gray-700" : "text-gray-400"}>{t(healthKey(node.health, node.online))}</span>{node.last_error && <span class="text-red-500" aria-hidden="true">!</span>}</span>
+        </InfoTooltip>
+        {stateLabel && <div class="mt-1 text-xs text-amber-700">{stateLabel}</div>}
+        {st && !st.licensed && <div class="mt-1 text-[11px] text-amber-700">{t("cluster.nodeQuotaExceeded")}</div>}
+        {st && st.inflight > 0 && <div class="mt-1 text-[11px] text-indigo-600">{t("cluster.inflightCount", st.inflight)}</div>}
       </td>
-      <td data-label={t("cluster.colCPURAM")} class={`py-3 ${muted}`}>
-        {st ? (
-          <>
-            <div>
-              {st.cpu.util !== undefined && st.cpu.util !== null
-                ? t("dash.clusterCPUWithUtil", st.cpu.cores, Math.round(st.cpu.util))
-                : t("dash.clusterCPUCores", st.cpu.cores)}
-            </div>
-            <div class="text-xs text-gray-500" title={st.ram.unified ? t("dash.unifiedMemory") : undefined}>
-              {formatMemoryPair(Math.min(st.ram.used, st.ram.total), st.ram.total)}
-            </div>
-            <div class="text-xs text-gray-500">{ram.free === null ? t("deployments.memoryFreeUnknown") : t("deployments.memoryFree", formatMemory(ram.free))}</div>
-          </>
-        ) : (
-          "—"
-        )}
-      </td>
-      <td data-label={t("cluster.colDisk")} class={`py-3 ${muted}`}>
-        {st ? (
-          <>
-            <div>{fmtGBPairShort(st.disk.total - st.disk.free, st.disk.total)}</div>
-            <div class="text-xs text-gray-500">{t("cluster.diskFreeShort", fmtGBShort(st.disk.free))}</div>
-          </>
-        ) : (
-          "—"
-        )}
-        {st?.disk.io_busy && <div class="text-[11px] text-amber-600">{t("cluster.diskBusy")}</div>}
-        {st && (st.jobs.pulling.length > 0 || st.jobs.converting.length > 0) && (
-          <div class="text-[11px] text-indigo-600" title={[...st.jobs.pulling, ...st.jobs.converting].join("\n")}>
-            {t("cluster.jobsRunning", st.jobs.pulling.length + st.jobs.converting.length)}
+      <td data-label={t("cluster.colGPU")} class={`py-4 ${muted}`}>
+        {gpus.length > 0 ? <>
+          <InfoTooltip label={t("cluster.gpuDetailsFor", node.name)} class="w-full" content={<>
+            <p class="mb-2 font-semibold text-gray-900">{t("cluster.colGPU")}</p>
+            <div class="space-y-3">{gpus.map(gpu => <div key={gpu.index}>
+              <p class="break-words font-medium">#{gpu.index} · {gpu.name}</p>
+              <p>{t("cluster.memoryFreeShort", formatMemoryPair(memory.kind === "unified" ? memory.free : gpu.usage_known ? Math.max(0, gpu.vram_total - gpu.vram_used) : null, memory.kind === "unified" ? memory.total : gpu.vram_total))}</p>
+              {gpu.util != null && <p>{t("cluster.gpuUtil", Math.round(gpu.util))}</p>}
+              {gpu.temperature != null && <p>{t("cluster.gpuTemperature", gpu.temperature)}</p>}
+              {gpu.power_draw != null && <p>{t("cluster.gpuPower", gpu.power_draw)}</p>}
+              {gpu.throttled && <p class="text-amber-700">{t("cluster.gpuThrottled")}</p>}
+            </div>)}</div>
+            {memory.kind === "unified" && <p class="mt-3 text-gray-500">{t("cluster.unifiedMemoryHint")}</p>}
+          </>}>
+            <span class="block break-words font-medium" data-node-gpu-name>{gpuNames.join(" · ")}</span>
+          </InfoTooltip>
+          <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500" data-node-gpu-memory>
+            <span>{t("cluster.memoryFreeShort", formatMemoryPair(memory.free, memory.total))}</span>
+            {utilization !== null && <span>{t("cluster.gpuUtil", utilization)}</span>}
+            {memory.kind === "unified" && <span>{t("deployments.memory.unified")}</span>}
           </div>
-        )}
+          {memory.free !== null && memory.total > 0 && <div class="mt-2 h-1 w-full max-w-48 overflow-hidden rounded-full bg-gray-100" role="meter" aria-label={t("cluster.memoryUsedPercent")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={vramPct}>
+            <div class={`h-full rounded-full ${!node.online ? "bg-gray-300" : vramPct > 80 ? "bg-red-400" : vramPct > 50 ? "bg-amber-400" : "bg-indigo-400"}`} style={{ width: `${vramPct}%` }} />
+          </div>}
+          {!node.online && <p class="mt-1 text-[11px] text-gray-400">{t("cluster.lastReportedResources")}</p>}
+        </> : <span class="text-gray-400">{st ? t("dash.clusterNoGPU") : "—"}</span>}
       </td>
-      <td data-label={t("cluster.colModels")} class={`py-3 ${muted}`}>
-        {st ? (
-          <span class={loaded.length > 0 ? "cursor-help underline decoration-dotted" : ""} title={loaded.map((m) => m.id).join("\n")}>
-            {loaded.length} / {st.models.length}
-          </span>
-        ) : (
-          "—"
-        )}
-      </td>
-      <td data-label={t("cluster.colVersion")} class={`py-3 ${muted}`} title={st?.version}>
-        <span class="block max-w-24 truncate">{shortVersion(st?.version)}</span>
+      <td data-label={t("cluster.colModels")} class={`py-4 ${muted}`}>
+        {st ? <InfoTooltip label={t("cluster.nodeModelsFor", node.name)} class="text-gray-700 underline decoration-gray-300 decoration-dotted underline-offset-4 hover:text-indigo-600" content={<>
+          <p class="font-semibold text-gray-900">{t("cluster.modelsSummary", loaded.length, st.models.length)}</p>
+          {loaded.length ? <ul class="mt-2 space-y-2">{loaded.map(model => <li key={model.id} class="break-words"><p>{model.repo || model.id}</p>{model.repo && <p class="text-[11px] text-gray-400">{model.id}</p>}</li>)}</ul> : <p class="mt-2 text-gray-500">{t("cluster.noLoadedModels")}</p>}
+        </>}><span class="font-medium tabular-nums">{loaded.length}</span><span class="ml-1 text-xs text-gray-400">/ {st.models.length}</span></InfoTooltip> : "—"}
       </td>
       <td data-label={t("cluster.colActions")} class="py-3 text-right">
         {canManageNodeState(view, node) ? (
@@ -1138,6 +1052,7 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
             value={node.local ? (view.mode === "worker" ? workerNodeState(view.settings) : view.settings.state) : st?.state ?? "active"}
             disabled={stateSaving.value || !node.online}
             onChange={(e) => void changeNodeState(node.uuid, (e.target as HTMLSelectElement).value as ClusterNodeState)}
+            aria-label={t("cluster.nodeStateFor", node.name)}
             title={t(view.mode === "worker" ? "cluster.workerStateOverviewHint" : "cluster.stateSelectorHint")}
           >
             <option value="active">{t("cluster.stateActive")}</option>
@@ -1154,6 +1069,34 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
       </td>
     </tr>
   );
+}
+
+function NodeMetadataDetails({ node }: { node: ClusterNodeView }) {
+  const st = node.status, ram = nodeMemory(node, true);
+  return <>
+    <p class="mb-3 break-words font-semibold text-gray-900">{node.name}</p>
+    <dl class="space-y-2">
+      <NodeDetail label={t("cluster.nodeID")} value={node.uuid} />
+      {st?.hostname && !isNoiseHostname(st.hostname, node.name) && <NodeDetail label={t("cluster.hostname")} value={st.hostname} />}
+      {(node.addr || node.static_address) && <NodeDetail label={t("cluster.colAddress")} value={node.addr || node.static_address || ""} />}
+      {node.static_address && <NodeDetail label={t("cluster.staticBadge")} value={node.static_address} />}
+      <NodeDetail label={t("cluster.colVersion")} value={st?.version || "—"} />
+      {st && <>
+        <NodeDetail label={t("cluster.system")} value={[st.os, st.arch].filter(Boolean).join(" · ")} />
+        <NodeDetail label={t("cluster.cpuLabel")} value={st.cpu.util != null ? t("dash.clusterCPUWithUtil", st.cpu.cores, Math.round(st.cpu.util)) : t("dash.clusterCPUCores", st.cpu.cores)} />
+        <NodeDetail label={t("cluster.ramLabel")} value={formatMemoryPair(Math.min(st.ram.used, st.ram.total), st.ram.total)} />
+        <NodeDetail label={t("cluster.ramFree")} value={ram.free === null ? t("deployments.memoryFreeUnknown") : formatMemory(ram.free)} />
+        <NodeDetail label={t("cluster.colDisk")} value={fmtGBPairShort(st.disk.total - st.disk.free, st.disk.total)} />
+        <NodeDetail label={t("cluster.diskAvailable")} value={`${fmtGBShort(st.disk.free)} GB`} />
+        {st.disk.io_busy && <NodeDetail label={t("cluster.colStatus")} value={t("cluster.diskBusy")} />}
+        {(st.jobs.pulling.length > 0 || st.jobs.converting.length > 0) && <NodeDetail label={t("cluster.backgroundJobs")} value={[...st.jobs.pulling, ...st.jobs.converting].join("\n")} />}
+      </>}
+    </dl>
+  </>;
+}
+
+function NodeDetail({ label, value }: { label: string; value: string }) {
+  return <div class="grid grid-cols-[5rem_minmax(0,1fr)] gap-2"><dt class="text-gray-400">{label}</dt><dd class="whitespace-pre-wrap break-words">{value}</dd></div>;
 }
 
 // ---- discovered ------------------------------------------------------------
