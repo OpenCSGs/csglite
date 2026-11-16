@@ -1,17 +1,19 @@
 import { createPortal } from "preact/compat";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
-import type { ClusterView } from "../api/client";
+import type { ClusterView, ProviderPool } from "../api/client";
 import { deleteClusterDeployment, manageClusterNodeModel, updateClusterDeployment } from "../api/client";
 import type { ModelInstanceRow } from "../clusterModels";
-import { canPublishModelInstance, modelActionAvailability, modelPublication } from "../clusterModels";
+import { canPublishModelInstance, modelActionAvailability, modelPublication, modelTestServices } from "../clusterModels";
 import { t } from "../i18n";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { InferenceTestDialog } from "./InferenceTestDialog";
 import { DeploymentMessage } from "./DeploymentMessage";
 
 export function ClusterModelActions({ row, rows, view, publication, stale, busy: parentBusy, onPublish, onChanged, onSync, syncBusy }: {
   row: ModelInstanceRow; rows: ModelInstanceRow[]; view: ClusterView; publication: ReturnType<typeof modelPublication>;
   stale: boolean; busy: boolean; onPublish: () => void; onChanged: () => Promise<unknown>; onSync?: () => void; syncBusy: boolean;
 }) {
+  const [testing, setTesting] = useState<ProviderPool | null>(null);
   const [confirm, setConfirm] = useState<"unload" | "delete" | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -21,6 +23,7 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
   const menu = useRef<HTMLDivElement>(null);
   const menuID = `cluster-model-actions-${encodeURIComponent(row.key)}`;
   const unavailable = busy || parentBusy || stale;
+  const testServices = modelTestServices(row, view, publication, unavailable);
   const actions = modelActionAvailability(row, view, unavailable, rows);
   const publishable = !unavailable && publication.state === "unpublished" && canPublishModelInstance(row, view);
   const publishReason = stale ? "cluster.modelStatusStale" : publication.state === "unknown" ? "cluster.publicationRefreshFailed"
@@ -83,10 +86,11 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
       <button type="button" role="menuitem" class={itemClass} disabled={!actions.start} title={!actions.start ? t(!d ? "cluster.modelStartsOnDemand" : actions.reason) : undefined} onClick={() => act(() => void change("start"))}>{t("cluster.modelStart")}</button>
       <button type="button" role="menuitem" class={itemClass} disabled={!actions.unload} title={!actions.unload ? t(actions.reason) : undefined} onClick={() => act(() => setConfirm("unload"))}>{t(stopLabel)}</button>
       {onSync && <button type="button" role="menuitem" class={itemClass} disabled={!actions.sync || syncBusy || unavailable} title={!actions.sync ? t(actions.reason) : undefined} onClick={() => act(onSync)}>{t(syncBusy ? "cluster.syncing" : "cluster.syncAll")}</button>}
-      {publication.services.length > 0 && <a href="/ai-gateway" role="menuitem" class={itemClass}>{t("cluster.modelGatewayServices")}</a>}
+      <button type="button" role="menuitem" class={itemClass} disabled={!testServices.length} title={!testServices.length ? t(stale ? "cluster.modelStatusStale" : publication.state === "unpublished" ? "cluster.modelTestPublishFirst" : "cluster.modelTestUnavailable") : undefined} onClick={() => act(() => setTesting(testServices[0]))}>{t("services.test")}</button>
       <div class="my-1 border-t border-gray-100" />
       <button type="button" role="menuitem" class={`${itemClass} text-rose-600`} disabled={!actions.delete} title={!actions.delete ? t(actions.reason) : undefined} onClick={() => act(() => setConfirm("delete"))}>{t("cluster.modelDelete")}</button>
     </div>, document.body)}
+    {testing && <InferenceTestDialog service={testing} services={testServices} onClose={() => setTesting(null)} />}
     {error && <DeploymentMessage message={error} alert class="mt-2 text-xs text-red-600" />}
     {notice && <p role="status" class="mt-2 text-xs text-gray-500">{notice}</p>}
     <ConfirmDialog open={confirm !== null} title={t(confirm === "delete" ? "cluster.modelDelete" : stopLabel)}

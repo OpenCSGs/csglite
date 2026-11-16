@@ -1,5 +1,6 @@
 import type { ClusterDeployment, ClusterModelDistribution, ClusterModelSync, ClusterNodeModelStatus, ClusterNodeView, ClusterView, ProviderPool } from "./api/client";
 import { candidateCategory } from "./utils/modelServices";
+import { serviceTestProtocols } from "./api/serviceTestProtocols";
 import { deploymentPhaseKey } from "./deploymentModels";
 
 export interface ModelInstanceRow {
@@ -73,14 +74,19 @@ export function canPublishModelInstance(row: ModelInstanceRow, view: ClusterView
 
 // Match runtime IDs and their source scope, never just a repository name.
 export function modelPublication(row: ModelInstanceRow, view: ClusterView, pools: ProviderPool[] | null) {
-  if (!pools) return { state: "unknown" as const, services: [] as ProviderPool[] };
+  if (!pools) return { state: "unknown" as const, services: [] as ProviderPool[], activeServices: [] as ProviderPool[] };
   const matches = (source: string, model: string) => model === row.model.id && (source === `node:${row.node.uuid}`
     || source === "cluster" || (source === "local" && row.node.uuid === view.node.uuid));
   const services = pools.filter(pool => pool.members.some(member => matches(member.source, member.model)));
-  const enabled = services.some(pool => pool.enabled && pool.members.some((member, index) => matches(member.source, member.model)
+  const activeServices = services.filter(pool => pool.enabled && pool.members.some((member, index) => matches(member.source, member.model)
     && !member.disabled && (pool.policy !== "fixed" || index === 0)
     && (!pool.source_states?.[member.id] || pool.source_states[member.id] === "configured")));
-  return { state: !services.length ? "unpublished" as const : enabled ? "published" as const : "disabled" as const, services };
+  return { state: !services.length ? "unpublished" as const : activeServices.length ? "published" as const : "disabled" as const, services, activeServices };
+}
+
+export function modelTestServices(row: ModelInstanceRow, view: ClusterView, publication: ReturnType<typeof modelPublication>, unavailable = false): ProviderPool[] {
+  if (unavailable || !canPublishModelInstance(row, view)) return [];
+  return publication.activeServices.filter(service => serviceTestProtocols(service).length > 0);
 }
 
 export function modelActionAvailability(row: ModelInstanceRow, view: ClusterView, stale = false, rows: ModelInstanceRow[] = []) {

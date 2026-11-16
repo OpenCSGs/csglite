@@ -1,22 +1,13 @@
 import { t } from "../i18n";
 import { publicSessionHeaders } from "../utils/consoleAuth";
-import type { DecisionQuestionType, ProviderPool } from "./client";
+import type { DecisionQuestionType } from "./client";
 import { buildDecisionRequest } from "../utils/decision";
 
-export type ServiceTestProtocol = "chat/completions" | "responses" | "messages" | "embeddings" | "decisions" | "images/generations" | "images/edits" | "audio/transcriptions" | "audio/speech";
+import type { ServiceTestProtocol } from "./serviceTestProtocols";
+export { serviceTestProtocols } from "./serviceTestProtocols";
+export type { ServiceTestProtocol } from "./serviceTestProtocols";
+
 export interface ServiceTestOptions { file?: File; question?: string; questionType?: DecisionQuestionType; choices?: string; voice?: string }
-const allProtocols: ServiceTestProtocol[] = ["chat/completions","responses","messages","embeddings","decisions","images/generations","images/edits","audio/transcriptions","audio/speech"];
-export function serviceTestProtocols(service: Pick<ProviderPool,"category"|"inference_protocols">): ServiceTestProtocol[] {
-  if(service.inference_protocols) return allProtocols.filter(protocol=>service.inference_protocols!.includes(protocol));
-  switch(service.category) {
-    case "embedding":return ["embeddings"];
-    case "image":return ["images/generations","images/edits"];
-    case "asr":return ["audio/transcriptions"];
-    case "tts":return ["audio/speech"];
-    case "decision":return ["decisions"];
-    default:return ["chat/completions","responses","messages"];
-  }
-}
 
 async function dataURL(file: File): Promise<string> {
   return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(reader.error);reader.readAsDataURL(file)});

@@ -17,7 +17,9 @@ const protocols: { value: ServiceTestProtocol; label: string }[] = [
   { value: "audio/speech", label: "OpenAI · Audio Speech" },
 ];
 
-export function InferenceTestDialog({ service, onClose }: { service: ProviderPool; onClose: () => void }) {
+export function InferenceTestDialog({ service: initialService, services = [initialService], onClose }: { service: ProviderPool; services?: ProviderPool[]; onClose: () => void }) {
+  const [serviceID, setServiceID] = useState(initialService.id);
+  const service = services.find(candidate => candidate.id === serviceID) || initialService;
   const dialog = useRef<HTMLDialogElement>(null);
   const activeRequest = useRef<AbortController | null>(null);
   const supported=serviceTestProtocols(service);
@@ -70,6 +72,16 @@ export function InferenceTestDialog({ service, onClose }: { service: ProviderPoo
       <button onClick={onClose} aria-label={t("services.close")} class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 6 12 12M6 18 18 6" /></svg></button>
     </header>
     <form onSubmit={event => { event.preventDefault(); void run(); }}>
+      {services.length > 1 && <label class="mx-6 mt-5 flex flex-wrap items-center gap-3 text-sm text-gray-600">{t("services.modelID")}
+        <select value={service.id} disabled={running} onChange={event => {
+          const next = services.find(candidate => candidate.id === event.currentTarget.value);
+          if (!next) return;
+          setServiceID(next.id); setProtocol(serviceTestProtocols(next)[0] || "chat/completions");
+          setResult(null); setError(""); setStopped(false); setFile(undefined); setInput(""); setVoice("");
+        }} class="min-w-0 max-w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          {services.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.model}</option>)}
+        </select>
+      </label>}
       <div class="flex flex-wrap items-center gap-3 px-6 pt-5">
         <label class="flex items-center gap-3 text-sm text-gray-600">{t("services.testProtocol")}
           <select value={protocol} disabled={running||!supported.length} onChange={e=>{setProtocol(e.currentTarget.value as ServiceTestProtocol);setResult(null);setError("");setStopped(false);setFile(undefined)}} class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
