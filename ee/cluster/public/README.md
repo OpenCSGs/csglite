@@ -28,8 +28,10 @@ through its WebSocket dialer.
 - The worker's required `AllowModel` callback checks the owner's current sharing
   choices on every request. Its handler must execute on this machine only.
 - The host reuses persisted node certificates and membership, signs a fresh
-  audience-bound nonce for each connection, and owns jittered reconnection. `HandshakeError` preserves HTTP rejection status so
-  revoked identities can stop retrying rather than automatically re-enrolling.
+  audience-bound nonce for each connection, and owns jittered reconnection with
+  bounded backoff, including rejected handshakes. Each attempt still passes
+  gateway authorization; a removed identity is never automatically re-enrolled.
+  `HandshakeError` preserves HTTP rejection status for diagnostics.
 - Removing a member requires persisted membership removal and `Disconnect`.
   The application also rotates the join token so an old invitation cannot
   re-admit the removed node. Other admitted identities remain valid.
