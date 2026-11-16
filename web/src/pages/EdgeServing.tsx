@@ -466,7 +466,7 @@ function ModelsTab() {
                         <span class="text-[11px] text-gray-400" title={t("edge.apps.idHint")}>#{app.id}</span>
                       </div>
                       <div class="mt-0.5 text-xs text-gray-400">{app.local_model_id}</div>
-                      {app.review_msg && <div class="mt-1 text-xs text-gray-500">{t("edge.apps.reviewNote", app.review_msg)}</div>}
+                      {app.review_msg && <div class="mt-1 text-xs text-red-600">{t("edge.apps.reviewNote", app.review_msg)}</div>}
                     </td>
                     <td class="px-3 py-3 align-top whitespace-nowrap">
                       <span class={`inline-flex rounded-full px-2 py-0.5 text-xs ring-1 ring-inset ${applicationTone(app.status)}`}>
