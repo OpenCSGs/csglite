@@ -23,7 +23,9 @@ import {
   formatMonth,
   statementTone,
   edgeStateTone,
+  edgeErrorText,
   formatYuan,
+  filterEdgeApplications,
   hasStats,
   isLiveApplication,
   isValidEdgeModelName,
@@ -37,6 +39,7 @@ import {
   ttftLabel,
   yuanToCents,
 } from "../edge";
+import type { EdgeModelFilter } from "../edge";
 
 type EdgeTab = "overview" | "models" | "earnings";
 
@@ -50,7 +53,7 @@ const toggling = signal(false);
 const applications = signal<EdgeApplication[]>([]);
 const applicationsError = signal("");
 const lastChanged = signal(-1);
-const showHistory = signal(false);
+const modelFilter = signal<EdgeModelFilter>("running");
 
 const month = signal(currentMonth());
 const earnings = signal<EdgeEarnings | null>(null);
@@ -175,6 +178,7 @@ async function submit(e: Event) {
     formName.value = "";
     formDescription.value = "";
     activeTab.value = "models";
+    modelFilter.value = "all";
     await loadApplications();
   } catch (err) {
     submitError.value = (err as Error).message;
@@ -244,7 +248,7 @@ export function EdgeServing() {
 
       {!current ? (
         <section class="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-400">
-          {statusError.value ? <span class="text-red-600">{statusError.value}</span> : t("edge.loading")}
+          {statusError.value ? <span class="text-red-600">{edgeErrorText(statusError.value, t)}</span> : t("edge.loading")}
         </section>
       ) : !current.signed_in ? (
         <section class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
@@ -365,7 +369,7 @@ function OverviewTab({ status: st }: { status: EdgeStatus }) {
           <dd class="text-gray-800">{st.reconnects}</dd>
         </dl>
         {st.last_error && st.state !== "connected" && (
-          <p class="mt-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 break-all">{st.last_error}</p>
+          <p class="mt-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 break-all">{edgeErrorText(st.last_error, t)}</p>
         )}
         <p class="mt-4 text-xs leading-5 text-gray-500">{t("edge.networkHint")}</p>
       </section>
@@ -390,9 +394,7 @@ function OverviewTab({ status: st }: { status: EdgeStatus }) {
 
 function ModelsTab() {
   const all = applications.value;
-  const live = all.filter((a) => isLiveApplication(a.status));
-  const history = all.length - live.length;
-  const rows = showHistory.value ? all : live;
+  const rows = filterEdgeApplications(all, modelFilter.value);
   const quota = modelQuota();
   return (
     <section class="rounded-xl border border-gray-200 bg-white">
@@ -401,13 +403,12 @@ function ModelsTab() {
           <h2 class="text-base font-semibold text-gray-900">{t("edge.apps.title")}</h2>
           <p class="mt-0.5 text-xs text-gray-500">{t("edge.apps.desc")}</p>
         </div>
-        <div class="flex items-center gap-3">
-          {history > 0 && (
-            <label class="flex items-center gap-1.5 text-xs text-gray-500">
-              <input type="checkbox" checked={showHistory.value} onChange={(e) => (showHistory.value = (e.target as HTMLInputElement).checked)} />
-              {t("edge.apps.showHistory", history)}
-            </label>
-          )}
+        <div class="flex flex-wrap items-center gap-3">
+          <select aria-label={t("edge.apps.filterLabel")} value={modelFilter.value}
+            onChange={event => (modelFilter.value = event.currentTarget.value as EdgeModelFilter)}
+            class="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            {(["running", "all", "rejected"] as const).map(filter => <option key={filter} value={filter}>{t(`edge.apps.filter.${filter}`)}</option>)}
+          </select>
           <button type="button" class="text-sm text-gray-500 hover:text-gray-800" onClick={() => void loadApplications()}>
             {t("edge.refresh")}
           </button>
@@ -427,17 +428,17 @@ function ModelsTab() {
           </button>
         </div>
       </div>
-      {applicationsError.value && <p class="px-6 pt-4 text-sm text-red-600 break-all">{applicationsError.value}</p>}
+      {applicationsError.value && <p class="px-6 pt-4 text-sm text-red-600 break-all">{edgeErrorText(applicationsError.value, t)}</p>}
       {rows.length === 0 ? (
         <div class="px-6 py-12 text-center">
-          <p class="text-sm text-gray-500">{t("edge.apps.empty")}</p>
-          {quota.reached ? (
+          <p class="text-sm text-gray-500">{t(all.length ? "edge.apps.noMatches" : "edge.apps.empty")}</p>
+          {!all.length && (quota.reached ? (
             <p class="mt-3 text-xs text-gray-500">{t("edge.apps.quotaHint", quota.limit)}</p>
           ) : (
             <button type="button" class="mt-3 text-sm font-medium text-indigo-600 hover:text-indigo-800" onClick={openApply}>
               {t("edge.apps.applyFirst")}
             </button>
-          )}
+          ))}
         </div>
       ) : (
         <div class="overflow-x-auto">

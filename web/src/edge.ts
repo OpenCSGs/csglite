@@ -32,6 +32,11 @@ export function isEdgeGatewayUnreachableMessage(message: string): boolean {
   return false;
 }
 
+export function edgeErrorText(message: string, translate: (key: string) => string): string {
+  const normalized = message.trim().toLowerCase().replace(/[.。]+$/g, "");
+  return normalized === "this node was disabled by the platform" ? translate("edge.error.nodeDisabledByPlatform") : message;
+}
+
 export function currentMonth(now = new Date()): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
@@ -115,6 +120,13 @@ export function servingState(app: Pick<EdgeApplication, "status" | "node_status"
   if (app.node_status !== "online" || app.model_state === "offline") return "offline";
   if (app.model_state === "unavailable") return "unavailable";
   return "serving";
+}
+
+export type EdgeModelFilter = "running" | "all" | "rejected";
+
+export function filterEdgeApplications(applications: EdgeApplication[], filter: EdgeModelFilter): EdgeApplication[] {
+  if (filter === "all") return applications;
+  return applications.filter(app => filter === "rejected" ? app.status === "rejected" : servingState(app) === "serving");
 }
 
 export function servingTone(state: ServingState): string {
