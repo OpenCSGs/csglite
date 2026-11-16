@@ -1114,7 +1114,7 @@ function isLikelyHTML(text: string): boolean {
 
 function unexpectedJSONError(url: string, contentType: string, body: string): Error {
   if (isLikelyHTML(body)) {
-    return new Error(`Expected JSON from ${url}, but received HTML. Check the API server port or dev proxy target.`);
+    return new Error(t("api.htmlResponse"));
   }
 
   const preview = previewResponseBody(body);
@@ -1126,6 +1126,9 @@ function unexpectedJSONError(url: string, contentType: string, body: string): Er
 }
 
 function extractErrorMessage(body: string, contentType: string, fallback: string): string {
+  if (isLikelyHTML(body)) {
+    return t("api.htmlResponse");
+  }
   if (contentType.includes("application/json")) {
     try {
       const parsed = JSON.parse(body) as {

@@ -374,6 +374,27 @@ func TestApplicationsPassesGatewayJSONNotFound(t *testing.T) {
 	}
 }
 
+func TestManagerRewritesGatewayHTMLErrorPage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, "<!DOCTYPE html><html><body>bad gateway</body></html>")
+	}))
+	defer srv.Close()
+	m, err := New(&fakeHost{gateway: srv.URL, token: "user-token"}, t.TempDir(), "studio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.Balance(context.Background())
+	apiErr, ok := err.(*APIError)
+	if !ok || apiErr.Status != http.StatusBadGateway {
+		t.Fatalf("err = %v, want HTTP 502", err)
+	}
+	if strings.Contains(apiErr.Message, "<") || !strings.Contains(apiErr.Message, "502") {
+		t.Fatalf("message = %q, want a short HTTP status message", apiErr.Message)
+	}
+}
+
 func TestManagerSubmitPassesGatewayErrors(t *testing.T) {
 	g := newFakeGateway(t)
 	m, err := New(&fakeHost{gateway: g.server.URL, token: "user-token"}, t.TempDir(), "studio")

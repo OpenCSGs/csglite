@@ -77,6 +77,7 @@ const submitError = signal("");
 const withdrawTarget = signal<EdgeApplication | null>(null);
 
 async function loadStatus() {
+  const previousState = status.value?.state;
   try {
     const next = await getEdgeStatus();
     status.value = next;
@@ -84,6 +85,9 @@ async function loadStatus() {
     if (next.signed_in && next.applications_changed !== lastChanged.value) {
       lastChanged.value = next.applications_changed;
       void loadApplications();
+    }
+    if (next.state === "connected" && previousState && previousState !== "connected") {
+      refreshEdgeData();
     }
   } catch (e) {
     statusError.value = (e as Error).message;
@@ -120,6 +124,14 @@ async function loadSettlement() {
   } catch (e) {
     settlementError.value = (e as Error).message;
   }
+}
+
+/** Reloads the data that can fail while the gateway is reconnecting. */
+function refreshEdgeData() {
+  if (!status.value?.signed_in) return;
+  void loadApplications();
+  void loadSettlement();
+  void loadEarnings();
 }
 
 async function toggle() {
@@ -218,19 +230,18 @@ export function EdgeServing() {
     if (requested === "overview" || requested === "models" || requested === "earnings") {
       activeTab.value = requested;
     }
-    void loadStatus().then(() => {
-      if (status.value?.signed_in) {
-        void loadApplications();
-        void loadSettlement();
-        void loadEarnings();
-      }
-    });
+    void loadStatus().then(refreshEdgeData);
     const timer = setInterval(() => void loadStatus(), 3000);
     const onConnectionChanged = () => { void loadStatus(); };
+    const onVisibilityChanged = () => {
+      if (document.visibilityState === "visible") void loadStatus().then(refreshEdgeData);
+    };
     window.addEventListener("csghub:providers-changed", onConnectionChanged);
+    document.addEventListener("visibilitychange", onVisibilityChanged);
     return () => {
       clearInterval(timer);
       window.removeEventListener("csghub:providers-changed", onConnectionChanged);
+      document.removeEventListener("visibilitychange", onVisibilityChanged);
     };
   }, []);
 
@@ -666,8 +677,8 @@ function EarningsTab() {
   const rows = e ? mergeEarningsByModel(e.rows) : [];
   return (
     <div class="space-y-6">
-      {earningsError.value && <p class="text-sm text-red-600 break-all">{earningsError.value}</p>}
-      {settlementError.value && <p class="text-sm text-red-600 break-all">{settlementError.value}</p>}
+      {earningsError.value && <p class="text-sm text-red-600 break-all">{edgeErrorText(earningsError.value, t)}</p>}
+      {settlementError.value && <p class="text-sm text-red-600 break-all">{edgeErrorText(settlementError.value, t)}</p>}
       <section class="rounded-xl border border-gray-200 bg-white p-5">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
