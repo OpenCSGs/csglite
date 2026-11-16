@@ -551,8 +551,21 @@ func (m *Manager) DeploymentReady(model string) bool {
 }
 
 func (m *Manager) createDeployment(spec DeploymentSpec) (Deployment, error) {
+	return m.createDeploymentWithMemory(spec, 0)
+}
+
+func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory uint64) (Deployment, error) {
 	if m.opts.Mode == "worker" || !m.store.InCluster() {
 		return Deployment{}, errors.New("create deployments on a cluster controller")
+	}
+	if spec.NodeUUID == "" || spec.NodeUUID == "auto" {
+		node, err := selectDeploymentTarget(m.memberViews(context.Background(), true), m.identity.UUID, spec.NGPULayers == 0, minimumMemory)
+		if err != nil {
+			return Deployment{}, err
+		}
+		// Persist the concrete assignment. Retrying never moves a deployment or
+		// changes the node identity in an existing worker receipt.
+		spec.NodeUUID = node
 	}
 	if err := validateDeployment(spec); err != nil {
 		return Deployment{}, err
@@ -565,6 +578,12 @@ func (m *Manager) createDeployment(spec DeploymentSpec) (Deployment, error) {
 	}
 	if st == nil || !st.DeploymentCapable || (spec.NodeUUID != m.identity.UUID && st.ManagedBy != m.identity.UUID) {
 		return Deployment{}, errors.New("target node must report this Master as its deployment controller; check membership and node version (LAN peers select a controller in settings)")
+	}
+	if minimumMemory > 0 {
+		free, known, _ := deploymentMemory(st, spec.NGPULayers == 0)
+		if !known || free < minimumMemory {
+			return Deployment{}, errors.New("target node no longer reports enough available memory for the recommended quantization; refresh node status or choose a quantization manually")
+		}
 	}
 	for _, existing := range m.deployments.list(true) {
 		if existing.Desired != "deleted" && strings.EqualFold(existing.Name, spec.Name) {

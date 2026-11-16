@@ -171,16 +171,19 @@ func (a *adminAPI) HandleDeploymentCreate(w http.ResponseWriter, r *http.Request
 	if !a.requireController(w) {
 		return
 	}
-	spec := DeploymentSpec{ArtifactSource: "opencsg", Revision: "main", Kind: "chat", NumCtx: 4096, NumParallel: 1, NGPULayers: -1}
+	request := struct {
+		DeploymentSpec
+		MinimumMemoryBytes uint64 `json:"minimum_memory_bytes,omitempty"`
+	}{DeploymentSpec: DeploymentSpec{ArtifactSource: "opencsg", Revision: "main", Kind: "chat", NumCtx: 4096, NumParallel: 1, NGPULayers: -1}}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&spec); err != nil {
+	if err := dec.Decode(&request); err != nil {
 		writeError(w, 400, "invalid deployment specification")
 		return
 	}
-	spec.Name = strings.TrimSpace(spec.Name)
-	d, err := a.m.createDeployment(spec)
+	request.Name = strings.TrimSpace(request.Name)
+	d, err := a.m.createDeploymentWithMemory(request.DeploymentSpec, request.MinimumMemoryBytes)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return

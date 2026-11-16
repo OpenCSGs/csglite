@@ -166,6 +166,7 @@ type marketplaceModelQuantization struct {
 	Name        string `json:"name"`
 	FileCount   int    `json:"file_count"`
 	ExamplePath string `json:"example_path"`
+	Size        int64  `json:"size,omitempty"`
 }
 
 type marketplaceLocalModelStatus struct {
@@ -976,8 +977,9 @@ func approximateMarketplaceFilteredTotal(offset, itemCount, matchedCount int) in
 
 func summarizeMarketplaceQuantizations(files []csghub.RepoFile) []marketplaceModelQuantization {
 	type agg struct {
-		item marketplaceModelQuantization
-		rank int
+		item        marketplaceModelQuantization
+		rank        int
+		unknownSize bool
 	}
 
 	byName := make(map[string]*agg)
@@ -1002,6 +1004,11 @@ func summarizeMarketplaceQuantizations(files []csghub.RepoFile) []marketplaceMod
 			byName[label] = entry
 		}
 		entry.item.FileCount++
+		if file.Size <= 0 {
+			entry.unknownSize = true
+		} else {
+			entry.item.Size += file.Size
+		}
 		if entry.item.ExamplePath == "" || strings.Compare(path, entry.item.ExamplePath) < 0 {
 			entry.item.ExamplePath = path
 		}
@@ -1021,6 +1028,9 @@ func summarizeMarketplaceQuantizations(files []csghub.RepoFile) []marketplaceMod
 		return left.item.Name < right.item.Name
 	})
 	for _, key := range keys {
+		if byName[key].unknownSize {
+			byName[key].item.Size = 0
+		}
 		out = append(out, byName[key].item)
 	}
 	return out

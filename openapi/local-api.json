@@ -11960,7 +11960,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ClusterDeploymentSpec"
+                "$ref": "#/components/schemas/ClusterDeploymentCreateRequest"
               }
             }
           }
@@ -17909,6 +17909,12 @@
           },
           "example_path": {
             "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Combined bytes of the weight GGUF files for this quantization, including split shards. Omitted when any file size is unknown. Auxiliary projector/MTP weights are excluded."
           }
         }
       },
@@ -21443,7 +21449,6 @@
         "type": "object",
         "required": [
           "name",
-          "node_uuid",
           "repository"
         ],
         "properties": {
@@ -21453,7 +21458,18 @@
           },
           "node_uuid": {
             "type": "string",
-            "format": "uuid"
+            "description": "Target member UUID, or auto/empty/omitted to choose an online, authorized node that accepts deployments. Auto prefers GPU nodes with more available memory, then lower load. Creation resolves and persists a concrete UUID; retries keep that assignment.",
+            "anyOf": [
+              {
+                "format": "uuid"
+              },
+              {
+                "enum": [
+                  "auto",
+                  ""
+                ]
+              }
+            ]
           },
           "repository": {
             "type": "string",
@@ -21658,6 +21674,24 @@
             "description": "Positional parameters for the localized reason."
           }
         }
+      },
+      "ClusterDeploymentCreateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ClusterDeploymentSpec"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "minimum_memory_bytes": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "description": "Optional create-time estimate for an automatically recommended quantization. The controller requires this much currently reported free memory (VRAM, unified RAM, or host RAM for CPU-only execution). Auto selects a fitting eligible node; manual targets are rechecked. Omit for manual quantization/partial CPU offload. This is not a reservation and is never persisted in the deployment."
+              }
+            }
+          }
+        ]
       }
     }
   }

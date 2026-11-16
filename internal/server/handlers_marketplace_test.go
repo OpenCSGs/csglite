@@ -745,10 +745,10 @@ func TestHandleMarketplaceModelDetailReturnsQuantizations(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoFile]{
 				Msg: "OK",
 				Data: []csghub.RepoFile{
-					{Path: "Q8_0/Qwen3-Q8_0-00001-of-00002.gguf", Name: "Qwen3-Q8_0-00001-of-00002.gguf"},
-					{Path: "Q8_0/Qwen3-Q8_0-00002-of-00002.gguf", Name: "Qwen3-Q8_0-00002-of-00002.gguf"},
-					{Path: "Q4_K_M/Qwen3-Q4_K_M-00001-of-00002.gguf", Name: "Qwen3-Q4_K_M-00001-of-00002.gguf"},
-					{Path: "Q4_K_M/Qwen3-Q4_K_M-00002-of-00002.gguf", Name: "Qwen3-Q4_K_M-00002-of-00002.gguf"},
+					{Path: "Q8_0/Qwen3-Q8_0-00001-of-00002.gguf", Name: "Qwen3-Q8_0-00001-of-00002.gguf", Size: 4 << 30},
+					{Path: "Q8_0/Qwen3-Q8_0-00002-of-00002.gguf", Name: "Qwen3-Q8_0-00002-of-00002.gguf", Size: 4 << 30},
+					{Path: "Q4_K_M/Qwen3-Q4_K_M-00001-of-00002.gguf", Name: "Qwen3-Q4_K_M-00001-of-00002.gguf", Size: 2 << 30},
+					{Path: "Q4_K_M/Qwen3-Q4_K_M-00002-of-00002.gguf", Name: "Qwen3-Q4_K_M-00002-of-00002.gguf", Size: 2 << 30},
 					{Path: "mmproj/model-mmproj.gguf", Name: "model-mmproj.gguf"},
 				},
 			})
@@ -790,6 +790,9 @@ func TestHandleMarketplaceModelDetailReturnsQuantizations(t *testing.T) {
 	}
 	if resp.Quantizations[1].Name != "Q4_K_M" || resp.Quantizations[1].FileCount != 2 {
 		t.Fatalf("second quantization = %#v, want Q4_K_M x2", resp.Quantizations[1])
+	}
+	if resp.Quantizations[0].Size != 8<<30 || resp.Quantizations[1].Size != 4<<30 {
+		t.Fatalf("split GGUF sizes = %#v; want 8 GiB and 4 GiB", resp.Quantizations)
 	}
 	if !resp.LocalInference.Supported || resp.LocalInference.Runtime != "llama" || resp.LocalInference.Mode != "direct" || resp.LocalInference.RuntimeArchitecture != "qwen2" {
 		t.Fatalf("local_inference = %#v, want llama direct qwen2", resp.LocalInference)
