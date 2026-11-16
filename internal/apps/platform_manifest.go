@@ -140,10 +140,12 @@ func (m *Manager) fetchDesktopDownloadsManifest(ctx context.Context, spec appSpe
 }
 
 // desktopDownloadsManifest is the release-channel downloads.json shared by
-// OpenCSG desktop apps.
+// OpenCSG desktop apps. latest_by_platform lets a channel publish a release for
+// one platform before the others; when it is missing, latest applies to all.
 type desktopDownloadsManifest struct {
-	Latest   string `json:"latest"`
-	Versions map[string]struct {
+	Latest           string            `json:"latest"`
+	LatestByPlatform map[string]string `json:"latest_by_platform"`
+	Versions         map[string]struct {
 		Artifacts []desktopDownloadArtifact `json:"artifacts"`
 	} `json:"versions"`
 }
@@ -154,10 +156,22 @@ type desktopDownloadArtifact struct {
 	URL      string `json:"url"`
 }
 
-// latestArtifactFor reports whether the latest release ships a package the
-// installer scripts can handle on goos/goarch.
+// latestVersionFor returns the release a platform should install. Channels
+// that publish per-platform releases use latest_by_platform; older channels
+// only have latest.
+func (m desktopDownloadsManifest) latestVersionFor(goos string) string {
+	if platform := desktopManifestPlatformKey(goos); platform != "" {
+		if version := strings.TrimSpace(m.LatestByPlatform[platform]); version != "" {
+			return version
+		}
+	}
+	return strings.TrimSpace(m.Latest)
+}
+
+// latestArtifactFor reports whether the latest release for goos ships a
+// package the installer scripts can handle on goos/goarch.
 func (m desktopDownloadsManifest) latestArtifactFor(goos, goarch string) (desktopDownloadArtifact, bool) {
-	release, ok := m.Versions[strings.TrimSpace(m.Latest)]
+	release, ok := m.Versions[m.latestVersionFor(goos)]
 	if !ok {
 		return desktopDownloadArtifact{}, false
 	}
@@ -176,6 +190,21 @@ func desktopManifestPlatform(platform string) string {
 	case "macos", "darwin", "mac":
 		return "darwin"
 	case "windows", "win32", "win":
+		return "windows"
+	case "linux":
+		return "linux"
+	default:
+		return ""
+	}
+}
+
+// desktopManifestPlatformKey maps a Go GOOS to the platform key used by
+// downloads.json latest_by_platform.
+func desktopManifestPlatformKey(goos string) string {
+	switch strings.ToLower(strings.TrimSpace(goos)) {
+	case "darwin":
+		return "macos"
+	case "windows":
 		return "windows"
 	case "linux":
 		return "linux"

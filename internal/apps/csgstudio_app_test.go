@@ -18,6 +18,10 @@ import (
 func TestDesktopDownloadsManifestLatestArtifactFor(t *testing.T) {
 	manifest := desktopDownloadsManifest{
 		Latest: "0.2.0",
+		LatestByPlatform: map[string]string{
+			// Windows publishes a newer release than the channel-wide latest.
+			"windows": "0.3.0",
+		},
 		Versions: map[string]struct {
 			Artifacts []desktopDownloadArtifact `json:"artifacts"`
 		}{
@@ -25,9 +29,12 @@ func TestDesktopDownloadsManifestLatestArtifactFor(t *testing.T) {
 				{Platform: "windows", Arch: "x86_64", URL: "https://example.com/CSGStudio_0.1.0.exe"},
 			}},
 			"0.2.0": {Artifacts: []desktopDownloadArtifact{
-				{Platform: "macos", Arch: "arm64", URL: "https://example.com/CSGStudio_0.2.0_macos_arm64.dmg"},
-				{Platform: "linux", Arch: "x86_64", URL: "https://example.com/CSGStudio_0.2.0_amd64.deb"},
-				{Platform: "linux", Arch: "aarch64", URL: "https://example.com/CSGStudio_0.2.0.AppImage?sig=1"},
+				{Platform: "macos", Arch: "arm64", URL: "https://example.com/CSGLab_0.2.0_macos_arm64.dmg"},
+				{Platform: "linux", Arch: "x86_64", URL: "https://example.com/CSGLab_0.2.0_amd64.deb"},
+				{Platform: "linux", Arch: "aarch64", URL: "https://example.com/CSGLab_0.2.0.AppImage?sig=1"},
+			}},
+			"0.3.0": {Artifacts: []desktopDownloadArtifact{
+				{Platform: "windows", Arch: "x86_64", URL: "https://example.com/CSGLab_0.3.0-setup.exe"},
 			}},
 		},
 	}
@@ -36,10 +43,12 @@ func TestDesktopDownloadsManifestLatestArtifactFor(t *testing.T) {
 		goos, goarch string
 		want         bool
 	}{
+		// macOS has no latest_by_platform entry, so it falls back to latest.
 		{"darwin", "arm64", true},
 		{"darwin", "amd64", false},
-		// Only an older release ships Windows.
-		{"windows", "amd64", false},
+		// Windows uses latest_by_platform even though latest has no Windows package.
+		{"windows", "amd64", true},
+		{"windows", "arm64", false},
 		// The installer cannot handle a .deb.
 		{"linux", "amd64", false},
 		{"linux", "arm64", true},

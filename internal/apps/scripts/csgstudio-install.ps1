@@ -63,7 +63,12 @@ $archNames = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
 Emit-Progress 25 "resolving_latest"
 $manifest = Invoke-RestMethod -Uri $ManifestUrl -UseBasicParsing -TimeoutSec 60
 $version = if ([string]::IsNullOrWhiteSpace($Target) -or $Target -eq "latest") {
-    [string]$manifest.latest
+    $platformLatest = [string]$manifest.latest_by_platform.windows
+    if ([string]::IsNullOrWhiteSpace($platformLatest)) {
+        [string]$manifest.latest
+    } else {
+        $platformLatest
+    }
 } else {
     $Target.TrimStart("v")
 }

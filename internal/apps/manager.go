@@ -867,10 +867,14 @@ func (m *Manager) fetchLatestVersion(ctx context.Context, spec appSpec) (string,
 	}
 	if spec.latest.format == "downloads-json" {
 		var payload struct {
-			Latest string `json:"latest"`
+			Latest           string            `json:"latest"`
+			LatestByPlatform map[string]string `json:"latest_by_platform"`
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
 			return "", err
+		}
+		if version := strings.TrimSpace(payload.LatestByPlatform[desktopManifestPlatformKey(runtime.GOOS)]); version != "" {
+			return version, nil
 		}
 		return strings.TrimSpace(payload.Latest), nil
 	}
