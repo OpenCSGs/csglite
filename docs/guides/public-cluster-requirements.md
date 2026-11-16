@@ -67,22 +67,41 @@ csghub-lite cluster create --name team
 
 ## 接入工作节点
 
-工作节点准备推理引擎，再配置网关地址。托管模型由 Master 下发并在节点下载；
+工作节点使用一条命令加入公网 Master。命令会保存 worker 角色和网关地址，
+自动启动 Lite；已有服务需要应用新配置时会自动重启，无需先执行 `configure-public`。
+加入即接受 Master 的部署控制。托管模型由 Master 下发并在节点下载；
 希望额外共享的已有模型需提前下载。
 
 ```sh
-csghub-lite cluster configure-public \
-  --role worker \
+csghub-lite cluster join <节点加入令牌> \
   --gateway https://gateway.example.com:8080
-csghub-lite start
+
+# --server 与 --gateway 等价
+csghub-lite cluster join <节点加入令牌> \
+  --server https://gateway.example.com:8080
+
+# 从受保护文件读取令牌，避免令牌出现在进程参数和 Shell 历史中
 csghub-lite cluster join --token-stdin \
-  --address https://gateway.example.com:8080 < /path/to/protected-join-token
+  --gateway https://gateway.example.com:8080 < /path/to/protected-join-token
+
+# 可选：额外共享已下载的本地模型
 csghub-lite cluster share Qwen2-0.5B-Instruct-GGUF
 ```
 
-网关使用私有 CA 时，为配置命令增加 `--ca-file /path/to/gateway-ca.pem`。
-证书必须匹配目标域名或 IP；不支持关闭证书校验。加入地址必须与配置的网关 URL
-一致，不能通过一次请求偷偷改写连接目标。
+网关使用私有 CA 时，为加入命令增加 `--ca-file /path/to/gateway-ca.pem`。
+证书必须匹配目标域名或 IP；不支持关闭证书校验。这里使用的是 Master 的
+**节点加入令牌**，与网页管理登录 Token、推理 API Key、CSGHub 账号凭据不同。
+管理员可在 Master 上通过 `csghub-lite cluster token` 查看令牌；不可用时通过
+`csghub-lite cluster token --rotate` 重新生成，已加入节点不受影响。
+
+重复加入同一个集群不会重复注册或重启服务。已属于其他集群的节点需先执行
+`csghub-lite cluster leave`，命令不会替换现有成员关系。首次加入失败时，会恢复
+原有配置和服务运行状态；若已保存成员关系但未收到完整回执，则保留连接配置，
+使用 `csghub-lite cluster status` 确认结果。加入令牌不写入 `config.json`。
+
+原有 `cluster configure-public --role worker` 配置方式仍然可用，HTTPS
+`cluster join --address` 也支持自动配置；局域网 `--address host:port` 的用法不变。
+同时传入 `--gateway`、`--server` 或 HTTPS `--address` 时，地址必须一致。
 
 `cluster share` 是额外共享已有模型的可选步骤，不是接受 Master 部署控制的前置条件。
 共享参数使用本机准确的推理模型 ID，可在本机集群状态或模型列表中查看。
@@ -99,7 +118,8 @@ csghub-lite cluster leave
 停止共享和 drain 在工作节点入口再次检查，网关即使暂时持有旧目录，也不能继续
 发起未经允许的新推理。已开始的请求允许完成。退出会清除本机共享列表；普通
 进程重启保留身份、加入关系和共享选择。维护/排空只暂停工作，不解除 Master 管理；
-退出集群才解除控制。旧版本的独立托管授权在升级时移除，由既有成员关系决定控制节点。
+退出集群才解除控制，命令为 `csghub-lite cluster leave`，保留本地模型文件和节点身份。
+旧版本的独立托管授权在升级时移除，由既有成员关系决定控制节点。
 
 ## 调用接口
 
