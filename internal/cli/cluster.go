@@ -16,15 +16,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newClusterCmd manages the LAN compute cluster through the local server's
-// API. Every subcommand needs a running csghub-lite on this machine, because
-// pairing and discovery live in the server process.
+// newClusterCmd manages LAN and public compute clusters through the local
+// server. Public join also provisions and starts the local worker service.
 func newClusterCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cluster",
-		Short: "Discover, pair and manage CSGLite nodes on the local network",
+		Short: "Discover, pair and manage CSGLite cluster nodes",
 		Long: strings.Join([]string{
-			"Manage the LAN compute cluster this node belongs to.",
+			"Manage the LAN or public compute cluster this node belongs to.",
 			"",
 			"Nodes on the same network discover each other automatically. One node",
 			"creates the cluster and hands out a join token; every other machine joins",
@@ -32,6 +31,8 @@ func newClusterCmd() *cobra.Command {
 			"recognise each other by certificate, so an IP change after a reboot needs",
 			"no action. Requests for a model this node lacks are routed to a member",
 			"that holds it.",
+			"Public workers instead connect outbound to an HTTPS Master: 'cluster join",
+			"TOKEN --gateway URL' configures and starts the worker in one command.",
 			"",
 			"A plain single machine keeps all of this off: no listener, no multicast,",
 			"no polling. Networking starts when the machine is given a cluster secret",
@@ -42,6 +43,7 @@ func newClusterCmd() *cobra.Command {
 			"Examples:",
 			"  csghub-lite cluster create --name lab",
 			"  csghub-lite cluster join csgl1-<cluster-uuid>-<secret>",
+			"  csghub-lite cluster join TOKEN --server https://master.example.com:8080",
 			"  csghub-lite cluster status",
 			"  csghub-lite cluster code            # show this node's admission code",
 			"  csghub-lite cluster invite <uuid> <code>",
@@ -309,7 +311,11 @@ func newClusterCreateCmd() *cobra.Command {
 			fmt.Printf("Created cluster %q (%s).\n\n", out.Cluster.Name, out.Cluster.UUID)
 			fmt.Printf("Join token (shown once; rotate with 'cluster token --rotate'):\n  %s\n\n", out.JoinToken)
 			fmt.Println("On each other machine run:")
-			fmt.Printf("  csghub-lite cluster join %s\n", out.JoinToken)
+			if out.Cluster.Topology == "public" {
+				fmt.Printf("  csghub-lite cluster join %s --gateway https://<master-host>:8080\n", out.JoinToken)
+			} else {
+				fmt.Printf("  csghub-lite cluster join %s\n", out.JoinToken)
+			}
 			fmt.Printf("or set %s before its first start.\n", "CSGHUB_LITE_CLUSTER_JOIN_TOKEN")
 			return nil
 		},
@@ -319,12 +325,14 @@ func newClusterCreateCmd() *cobra.Command {
 }
 
 func newClusterJoinCmd() *cobra.Command {
-	var address string
+	var address, gateway, server, caFile string
 	var tokenStdin bool
 	cmd := &cobra.Command{
-		Use:   "join [token]",
-		Short: "Join the cluster named by a join token",
-		Args:  cobra.MaximumNArgs(1),
+		Use:     "join [token]",
+		Short:   "Join the cluster named by a join token",
+		Long:    "Join a LAN cluster, or configure and start a public worker with --gateway or --server. Joining a public Master grants it control of model deployments on this node.",
+		Example: "  csghub-lite cluster join TOKEN --gateway https://master.example.com:8080\n  csghub-lite cluster join TOKEN --server https://master.example.com:8080 --ca-file gateway-ca.pem\n  csghub-lite cluster join --gateway https://master.example.com:8080 --token-stdin",
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var token string
 			if tokenStdin {
@@ -345,6 +353,16 @@ func newClusterJoinCmd() *cobra.Command {
 			if token == "" {
 				return fmt.Errorf("a join token is required; use --token-stdin to read it safely")
 			}
+			target, err := clusterJoinGateway(gateway, server, address)
+			if err != nil {
+				return err
+			}
+			if target != "" {
+				return joinPublicWorker(cmd, token, target, caFile, cmd.Flags().Changed("ca-file"))
+			}
+			if cmd.Flags().Changed("gateway") || cmd.Flags().Changed("server") || cmd.Flags().Changed("ca-file") {
+				return fmt.Errorf("a public Master HTTPS address is required with --gateway, --server or --ca-file")
+			}
 			c, err := newClusterClient()
 			if err != nil {
 				return err
@@ -360,6 +378,9 @@ func newClusterJoinCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&address, "address", "", "cluster endpoint (host or host:port) of a member when it cannot be discovered")
+	cmd.Flags().StringVar(&gateway, "gateway", "", "public Master HTTPS origin; automatically configure and start this worker")
+	cmd.Flags().StringVar(&server, "server", "", "alias for --gateway")
+	cmd.Flags().StringVar(&caFile, "ca-file", "", "trusted private CA file for a public Master")
 	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false, "read the join token from standard input")
 	return cmd
 }
@@ -367,7 +388,7 @@ func newClusterJoinCmd() *cobra.Command {
 func newClusterLeaveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "leave",
-		Short: "Leave the cluster (the node identity is kept)",
+		Short: "Leave the cluster and end Master control; keep node identity and local model files",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := newClusterClient()
@@ -377,7 +398,7 @@ func newClusterLeaveCmd() *cobra.Command {
 			if err := c.do(http.MethodDelete, "/api/cluster", nil, nil); err != nil {
 				return err
 			}
-			fmt.Println("Left the cluster.")
+			cmd.Println("Left the cluster.")
 			return nil
 		},
 	}
