@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -379,5 +381,150 @@ func TestPublicWorkerQueuesSharingChangesAcrossConnectWindow(t *testing.T) {
 	}
 	if len(status.Models) != 1 || status.Models[0].ID != "m" {
 		t.Fatalf("queued update did not use latest settings: %s", raw)
+	}
+}
+
+func TestPublicWorkerRecoversAfterRejectedHandshake(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			gateway, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{limit: 2}, Mode: "gateway", PublicListenAddr: "127.0.0.1:0", PublicInference: http.NotFoundHandler(), Logf: t.Logf})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer gateway.Stop()
+			if err = gateway.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			_, token, err := gateway.CreateCluster("retry")
+			if err != nil {
+				t.Fatal(err)
+			}
+			routes := gateway.publicRoutes(gateway.publicHub())
+			var attempts, joins atomic.Int32
+			var mu sync.Mutex
+			var firstProof string
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == peerPathJoin {
+					joins.Add(1)
+				}
+				if r.URL.Path == "/cluster/v1/connect" {
+					attempt := attempts.Add(1)
+					mu.Lock()
+					proof := r.Header.Get("X-CSGLite-Node-Token")
+					if attempt == 1 {
+						firstProof = proof
+					}
+					reused := attempt > 1 && proof == firstProof
+					mu.Unlock()
+					if reused {
+						t.Error("reconnection reused an old signed proof")
+					}
+					if attempt == 1 {
+						http.Error(w, "temporary rejection", status)
+						return
+					}
+				}
+				routes.ServeHTTP(w, r)
+			}))
+			defer server.Close()
+			caFile := filepath.Join(t.TempDir(), "ca.pem")
+			if err = os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+				t.Fatal(err)
+			}
+			worker, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{limit: 2}, Mode: "worker", GatewayURL: server.URL, TLSCAFile: caFile, Logf: t.Logf})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer worker.Stop()
+			if err = worker.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = worker.Join(ctx, token, server.URL); err != nil {
+				t.Fatal(err)
+			}
+			uuid := worker.identity.UUID
+			waitPublic(t, func() bool { _, _, err := gateway.publicStatus(uuid); return err == nil })
+			if attempts.Load() < 2 || joins.Load() != 1 || len(gateway.store.Members()) != 1 {
+				t.Fatal("recovery did not reuse the existing membership")
+			}
+			if err = gateway.RemoveMember(ctx, uuid); err != nil {
+				t.Fatal(err)
+			}
+			before := attempts.Load()
+			waitPublic(t, func() bool { return attempts.Load() > before })
+			if joins.Load() != 1 || len(gateway.store.Members()) != 0 {
+				t.Fatal("revoked node was re-enrolled")
+			}
+			if _, ok := gateway.publicHub().Snapshot(uuid); ok {
+				t.Fatal("revoked node became connected")
+			}
+		})
+	}
+}
+
+func TestPublicWorkerReconnectsAfterGatewayRestart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opts := Options{Dir: t.TempDir(), Host: &fakeHost{limit: 2}, Mode: "gateway", PublicListenAddr: "127.0.0.1:0", PublicInference: http.NotFoundHandler(), Logf: t.Logf}
+	gateway, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = gateway.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var current atomic.Pointer[Manager]
+	current.Store(gateway)
+	defer func() { current.Load().Stop() }()
+	_, token, err := gateway.CreateCluster("restart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joins atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == peerPathJoin {
+			joins.Add(1)
+		}
+		g := current.Load()
+		hub := g.publicHub()
+		if hub == nil {
+			http.Error(w, "restarting", 503)
+			return
+		}
+		g.publicRoutes(hub).ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err = os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{limit: 2}, Mode: "worker", GatewayURL: server.URL, TLSCAFile: caFile, Logf: t.Logf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer worker.Stop()
+	if err = worker.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = worker.Join(ctx, token, server.URL); err != nil {
+		t.Fatal(err)
+	}
+	waitPublic(t, func() bool { _, _, err := gateway.publicStatus(worker.identity.UUID); return err == nil })
+	identity := gateway.identity.UUID
+	gateway.Stop()
+	restarted, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Store(restarted)
+	if err = restarted.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitPublic(t, func() bool { _, _, err := restarted.publicStatus(worker.identity.UUID); return err == nil })
+	assertWorkerGatewayOnline(t, worker, identity, true)
+	if restarted.identity.UUID != identity || len(restarted.store.Members()) != 1 || joins.Load() != 1 {
+		t.Fatal("gateway restart changed membership or re-enrolled the worker")
 	}
 }

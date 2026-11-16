@@ -395,13 +395,10 @@ func (m *Manager) publicWorkerLoop(ctx context.Context) {
 		}
 		var refused *publictunnel.HandshakeError
 		if errors.As(err, &refused) && (refused.Status == 401 || refused.Status == 403 || refused.Status == 409) {
-			m.logf("cluster: gateway refused node; check membership and license before joining again")
-			select {
-			case <-ctx.Done():
-				return
-			case <-m.publicWake:
-			}
-			continue
+			// A suspended handshake, clock adjustment, proxy or rolling gateway
+			// restart can temporarily reject an admitted identity. Retry with a
+			// fresh proof through the same bounded backoff; never re-enroll.
+			m.logf("cluster: gateway refused node (HTTP %d); retaining membership and retrying with backoff", refused.Status)
 		}
 		if time.Since(started) > 30*time.Second {
 			delay = time.Second

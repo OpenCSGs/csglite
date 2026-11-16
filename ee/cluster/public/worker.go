@@ -71,7 +71,7 @@ func NewWorker(opts WorkerOptions) (*Worker, error) {
 }
 
 // Connect establishes one session. Its host owns jittered retry, persists
-// credentials and stops retrying revoked identities rather than re-enrolling.
+// credentials and never re-enrolls identities when a connection is refused.
 func (w *Worker) Connect(ctx context.Context) error {
 	header := http.Header{}
 	header.Set(HeaderNode, w.opts.NodeUUID)
