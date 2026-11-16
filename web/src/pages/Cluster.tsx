@@ -45,6 +45,7 @@ import { DeploymentMessage } from "../components/DeploymentMessage";
 import { ClusterWorkerHeader } from "../components/ClusterWorkerHeader";
 import { ClusterWorkerOverview } from "../components/ClusterWorkerOverview";
 import { ClusterDeploymentControls } from "../components/ClusterDeployments";
+import { nodeMemory, clusterAcceleratorMemory, formatMemory, formatMemoryPair } from "../clusterMemory";
 import { deploymentProgress } from "../deploymentModels";
 import type { ModelInstanceFilter } from "../clusterModels";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -591,16 +592,7 @@ export function Cluster() {
 function HeaderStats({ view }: { view: ClusterView }) {
   const limit = nodeLimitLabel(view.members.length, view.node_limit);
   const online = view.members.filter((m) => m.online).length;
-  const vram = view.members.filter(m => m.online).reduce(
-    (acc, m) => {
-      for (const gpu of m.status?.gpus ?? []) {
-        acc.total += gpu.vram_total;
-        acc.used += gpu.vram_used;
-      }
-      return acc;
-    },
-    { total: 0, used: 0 },
-  );
+  const memory = clusterAcceleratorMemory(view.members);
   const inflight = view.members.filter(m => m.online).reduce((sum, m) => sum + (m.status?.inflight ?? 0), 0);
   const nodesValue = view.node_limit > 0 ? `${view.members.length} / ${view.node_limit}` : String(view.members.length);
   const nodesHint = view.node_limit > 0 ? (limit.atLimit ? t("cluster.capHintShort") : "") : t("cluster.nodesUnlimitedHint");
@@ -608,7 +600,7 @@ function HeaderStats({ view }: { view: ClusterView }) {
     <div class="grid w-full min-w-0 max-w-full grid-cols-2 gap-3 sm:w-auto sm:grid-cols-3 xl:grid-cols-5" data-cluster-summary>
       <Stat label={t("cluster.statOnline")} value={`${online} / ${view.members.length}`} />
       <Stat label={t("cluster.statNodes")} value={nodesValue} hint={nodesHint} tone={limit.atLimit ? "warn" : "normal"} />
-      <Stat label={t("cluster.statVRAM")} value={fmtGBPairShort(vram.used, vram.total)} hint={t("cluster.onlineResources")} />
+      <Stat label={t("cluster.statVRAM")} value={memory.total > 0 ? formatMemoryPair(memory.free, memory.total) : "—"} hint={t("cluster.memorySummaryHint")} />
       <Stat label={t("cluster.statInflight")} value={String(inflight)} />
       <Stat label={t("cluster.statRole")} value={t(`cluster.role.${clusterNodeRole(view.node.uuid, view.cluster)}`)} />
     </div>
@@ -968,9 +960,9 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
   const st = node.status;
   const tone = healthTone(node.health, node.online);
   const gpus = st?.gpus ?? [];
-  const vramTotal = gpus.reduce((s, g) => s + g.vram_total, 0);
-  const vramUsed = gpus.reduce((s, g) => s + g.vram_used, 0);
-  const vramPct = percentOf(vramUsed, vramTotal);
+  const memory = nodeMemory(node);
+  const ram = nodeMemory(node, true);
+  const vramPct = memory.free === null ? 0 : percentOf(memory.total - memory.free, memory.total);
   const gpuName = gpus[0]?.name || (st ? t("dash.clusterNoGPU") : "—");
   const loaded = (st?.models ?? []).filter((m) => m.loaded);
   const stateName = st?.state ?? (node.local ? view.settings.state : undefined);
@@ -1082,12 +1074,13 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
           {gpuName}
           {gpus.length > 1 ? ` ×${gpus.length}` : ""}
         </div>
-        {vramTotal > 0 ? (
+        {gpus.length > 0 && memory.total > 0 ? (
           <>
-            <div class="text-xs text-gray-500">{fmtGBPairShort(vramUsed, vramTotal)}</div>
-            <div class="mt-1 h-1.5 w-full max-w-28 rounded-full bg-gray-100 overflow-hidden">
+            {memory.kind === "unified" && <div class="text-xs text-gray-500">{t("deployments.memory.unified")}</div>}
+            <div class="text-xs text-gray-500" title={t("cluster.memoryFreeTotal")}>{t("cluster.memoryFreeShort", formatMemoryPair(memory.free, memory.total))}</div>
+            {memory.free !== null && <div class="mt-1 h-1.5 w-full max-w-28 rounded-full bg-gray-100 overflow-hidden">
               <div class={`h-full rounded-full ${vramPct > 80 ? "bg-red-500" : vramPct > 50 ? "bg-amber-400" : "bg-indigo-500"}`} style={{ width: `${vramPct}%` }} />
-            </div>
+            </div>}
           </>
         ) : (
           st && <div class="text-xs text-gray-400">{t("dash.na")}</div>
@@ -1102,8 +1095,9 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
                 : t("dash.clusterCPUCores", st.cpu.cores)}
             </div>
             <div class="text-xs text-gray-500" title={st.ram.unified ? t("dash.unifiedMemory") : undefined}>
-              {fmtGBPairShort(st.ram.used, st.ram.total)}
+              {formatMemoryPair(Math.min(st.ram.used, st.ram.total), st.ram.total)}
             </div>
+            <div class="text-xs text-gray-500">{ram.free === null ? t("deployments.memoryFreeUnknown") : t("deployments.memoryFree", formatMemory(ram.free))}</div>
           </>
         ) : (
           "—"

@@ -1,29 +1,11 @@
 import type { ClusterNodeView, ClusterView, MarketplaceModel, MarketplaceModelDetailResponse } from "./api/client";
 import { deploymentTargets } from "./deploymentModels";
+import { nodeMemory as deploymentNodeMemory } from "./clusterMemory";
+import type { NodeMemory as DeploymentMemory } from "./clusterMemory";
+export { deploymentNodeMemory };
+export type { DeploymentMemory };
 
 const GiB = 1024 ** 3;
-export interface DeploymentMemory {
-  kind: "vram" | "unified" | "ram";
-  total: number;
-  free: number | null;
-  gpu: boolean;
-}
-
-export function deploymentNodeMemory(node?: ClusterNodeView, cpuOnly = false): DeploymentMemory {
-  const status = node?.status;
-  const devices = status?.gpus || [];
-  const unified = status?.ram?.unified || devices.some(device => device.shared_memory);
-  const gpu = !cpuOnly && devices.length > 0;
-  if (cpuOnly || unified || !devices.length) {
-    const total = status?.ram?.total || 0;
-    return { kind: unified && !cpuOnly ? "unified" : "ram", total,
-      free: total > 0 ? Math.max(0, total - (status?.ram?.used || 0)) : null, gpu };
-  }
-  const reported = devices.filter(device => device.usage_known && device.vram_total > 0);
-  return { kind: "vram", gpu, total: devices.reduce((sum, device) => sum + device.vram_total, 0),
-    free: reported.length ? reported.reduce((sum, device) => sum + Math.max(0, device.vram_total - device.vram_used), 0) : null };
-}
-
 /** Match the controller's Auto placement, including its deterministic tie break. */
 export function automaticDeploymentTarget(view: ClusterView, cpuOnly = false): ClusterNodeView | undefined {
   return deploymentTargets(view).map(node => ({ node, memory: deploymentNodeMemory(node, cpuOnly) }))
