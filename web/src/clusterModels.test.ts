@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ClusterNodeView, ClusterNodeModelStatus, ClusterNodeStatus, ClusterView, ClusterDeployment, ProviderPool } from "./api/client";
-import { canPublishModelInstance, filterModelInstances, isManagedModelInstance, mergeClusterDeployments, modelInstanceRows, modelRowState, modelNodeState, measuredRate, modelPublication, modelActionAvailability } from "./clusterModels";
+import { canPublishModelInstance, filterModelInstances, isManagedModelInstance, mergeClusterDeployments, modelInstanceRows, modelRowState, modelNodeState, measuredRate, modelPublication, modelActionAvailability, modelTestServices } from "./clusterModels";
 const model = (id: string, loaded = true): ClusterNodeModelStatus => ({ id, repo: "org/shared", size: 1024, loaded, loading: false, active: 0, native_tool_streaming: false, perf: { decode_tps: 32.42, samples: 2 } });
 const node = (uuid: string, online: boolean, models: ClusterNodeModelStatus[]): ClusterNodeView => ({ uuid, name: uuid, online, local: false, health: "healthy", status: { models } as ClusterNodeStatus });
 describe("model instance table", () => {
@@ -40,6 +40,42 @@ describe("publication status and lifecycle actions", () => {
   };
   const pool = (source = "node:worker", id = "qwen"): ProviderPool => ({ id: "service", name: "service", model: "public-qwen", enabled: true, policy: "fixed", members: [{ id: "binding", source, model: id }] });
   const task = (phase = "ready", desired: ClusterDeployment["desired"] = "running") => ({ id: "one", node_uuid: "worker", controller_uuid: "master", repository: "org/shared", artifact_source: "opencsg", desired, kind: "chat", status: { phase } }) as ClusterDeployment;
+
+  it("tests published aliases with their advertised APIs, excluding disabled and nonselected bindings", () => {
+    const row = modelInstanceRows([worker()], [])[0];
+    const decision = { ...pool(), id: "decision", model: "public-decision", inference_protocols: ["decisions"] };
+    const embedding = { ...pool("cluster"), id: "embedding", model: "public-embedding", category: "embedding" };
+    const disabled = { ...pool(), enabled: false };
+    const missing = { ...pool(), source_states: { binding: "missing" } };
+    const noAPI = { ...pool(), inference_protocols: [] };
+    const fixedElsewhere = { ...pool(), members: [{ id: "other", source: "node:other", model: "qwen" }, ...pool().members] };
+    const publication = modelPublication(row, view, [disabled, missing, noAPI, fixedElsewhere, decision, embedding]);
+    expect(modelTestServices(row, view, publication)).toEqual([decision, embedding]);
+    expect(modelTestServices(row, view, publication).map(service => service.model)).toEqual(["public-decision", "public-embedding"]);
+    expect(modelTestServices(row, view, modelPublication(row, view, null))).toEqual([]);
+    expect(modelTestServices(row, view, modelPublication(row, view, []))).toEqual([]);
+  });
+
+  it("disables testing for stale, offline, paused and unfinished models while allowing on-demand wakeup", () => {
+    const row = modelInstanceRows([worker()], [])[0];
+    const publication = modelPublication(row, view, [pool()]);
+    expect(modelTestServices(row, view, publication, true)).toEqual([]);
+    row.node.online = false;
+    expect(modelTestServices(row, view, publication)).toEqual([]);
+    row.node.online = true;
+    row.node.status!.state = "maintenance";
+    expect(modelTestServices(row, view, publication)).toEqual([]);
+    row.node.status!.state = "active";
+    row.model.loaded = false;
+    expect(modelTestServices(row, view, publication)).toHaveLength(1);
+    row.model.loading = true;
+    expect(modelTestServices(row, view, publication)).toEqual([]);
+    row.model.loading = false;
+    row.deployment = task("downloading");
+    expect(modelTestServices(row, view, publication)).toEqual([]);
+    row.deployment = task("failed");
+    expect(modelTestServices(row, view, publication)).toEqual([]);
+  });
 
   it("matches publications by exact model ID and node, excluding unrelated sources and repository aliases", () => {
     const row = modelInstanceRows([worker()], [])[0];
