@@ -418,6 +418,37 @@ func TestFetchLatestVersionParsesDesktopDownloadsManifest(t *testing.T) {
 	}
 }
 
+func TestFetchLatestVersionPrefersDesktopManifestPlatformLatest(t *testing.T) {
+	want := map[string]string{
+		"darwin":  "0.4.2",
+		"windows": "0.4.3",
+		"linux":   "0.4.1",
+	}[runtime.GOOS]
+	if want == "" {
+		t.Skip("host platform has no downloads.json mapping")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"latest":"0.4.3","latest_by_platform":{"macos":"0.4.2","windows":"0.4.3","linux":"0.4.1"},"versions":{}}`))
+	}))
+	defer server.Close()
+
+	mgr := NewManager(nil)
+	latest, err := mgr.fetchLatestVersion(context.Background(), appSpec{
+		id: "csgstudio",
+		latest: &latestVersionSource{
+			baseURL: server.URL + "/downloads.json",
+			format:  "downloads-json",
+		},
+	})
+	if err != nil {
+		t.Fatalf("fetchLatestVersion returned error: %v", err)
+	}
+	if latest != want {
+		t.Fatalf("latest = %q, want %q", latest, want)
+	}
+}
+
 func TestFetchLatestVersionParsesVersionPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/en/changelog" {

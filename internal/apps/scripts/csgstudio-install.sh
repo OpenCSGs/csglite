@@ -33,6 +33,24 @@ json_field() {
   printf '%s' "$json" | sed -n "s/.*\"${field}\":\"\\([^\"]*\\)\".*/\\1/p" | sed -n '1p'
 }
 
+# Prints the release a platform should install. Channels may publish a release
+# for one platform before the others through latest_by_platform; older channels
+# only have latest.
+latest_version() {
+  local flat="$1"
+  local platform="$2"
+  local by_platform
+  by_platform="$(printf '%s' "$flat" | sed -n 's/.*"latest_by_platform":{\([^}]*\)}.*/\1/p')"
+  local version=""
+  if [[ -n "$by_platform" ]]; then
+    version="$(json_field "$by_platform" "$platform")"
+  fi
+  if [[ -z "$version" ]]; then
+    version="$(json_field "$flat" latest)"
+  fi
+  printf '%s' "$version"
+}
+
 # Prints the artifact object of the latest release matching platform and one of
 # the accepted arch spellings. The manifest is flattened first so the match does
 # not depend on its formatting.
@@ -118,7 +136,8 @@ done
 
 emit_progress 25 resolving_latest
 manifest="$(curl --connect-timeout 15 --max-time 60 --retry 3 -fsSL "$MANIFEST_URL")"
-version="$(json_field "$(printf '%s' "$manifest" | tr -d '\n\r\t ')" latest)"
+flat_manifest="$(printf '%s' "$manifest" | tr -d '\n\r\t ')"
+version="$(latest_version "$flat_manifest" "$platform")"
 entry=""
 if [[ -n "$version" ]]; then
   entry="$(artifact_entry "$manifest" "$version" "$platform" "${arch_names[@]}")"
