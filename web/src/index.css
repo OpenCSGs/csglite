@@ -142,7 +142,7 @@ select:not([multiple]):is(:not([size]), [size="0"], [size="1"]):disabled {
 
 .cluster-members-table th,
 .cluster-members-table td {
-  padding-right: 0.5rem;
+  padding-right: 1.25rem;
   overflow-wrap: anywhere;
 }
 
@@ -152,10 +152,10 @@ select:not([multiple]):is(:not([size]), [size="0"], [size="1"]):disabled {
 }
 
 .cluster-members-table td:first-child > * {
-  max-width: min(100%, 12rem);
+  max-width: 100%;
 }
 
-@container (max-width: 56rem) {
+@container (max-width: 44rem) {
   .cluster-members-table,
   .cluster-members-table tbody {
     display: block;
