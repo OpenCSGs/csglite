@@ -8214,11 +8214,21 @@
           "Cluster"
         ],
         "summary": "Leave the cluster",
-        "description": "Announces departure to every member and forgets the cluster. The node identity is kept, so the node can be paired again.",
+        "description": "Announces departure and revokes membership, then waits up to 30 seconds for this node's managed deployments to unload. Pending downloads and loads are cancelled; in-flight managed inference is interrupted to release the runtime. Cached model files and independently loaded local models are retained. The node identity is kept for pairing again. If cleanup outlasts the wait or the caller disconnects, membership is still revoked and cleanup continues in the background.",
         "operationId": "leaveCluster",
         "responses": {
+          "400": {
+            "description": "Leave failed, or membership was revoked but managed runtime cleanup has not yet completed. The error message distinguishes these cases; cleanup continues after a timeout or caller cancellation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterErrorResponse"
+                }
+              }
+            }
+          },
           "200": {
-            "description": "Left; the view now shows no cluster.",
+            "description": "Left and managed runtimes unloaded; the view now shows no cluster.",
             "content": {
               "application/json": {
                 "schema": {

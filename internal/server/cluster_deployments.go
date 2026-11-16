@@ -223,6 +223,16 @@ func (h *clusterHost) StartDeployment(ctx context.Context, d cluster.Deployment,
 }
 
 func (h *clusterHost) StopDeployment(d cluster.Deployment) error {
+	return h.stopDeployment(d, false)
+}
+
+// UnloadDeployment is called only after membership authorization is revoked.
+// Closing the isolated engine also interrupts any remaining inference requests.
+func (h *clusterHost) UnloadDeployment(d cluster.Deployment) error {
+	return h.stopDeployment(d, true)
+}
+
+func (h *clusterHost) stopDeployment(d cluster.Deployment, force bool) error {
 	key := engineCacheKey(d.ModelID(), deploymentEngineMode(d))
 	h.s.mu.Lock()
 	me := h.s.engines[key]
@@ -230,7 +240,7 @@ func (h *clusterHost) StopDeployment(d cluster.Deployment) error {
 		h.s.mu.Unlock()
 		return nil
 	}
-	if me.activeRequests > 0 {
+	if me.activeRequests > 0 && !force {
 		h.s.mu.Unlock()
 		return errors.New("waiting for active inference requests")
 	}

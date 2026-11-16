@@ -68,6 +68,12 @@ type DeploymentHost interface {
 	DeploymentRunning(Deployment) bool
 }
 
+// DeploymentUnloader terminates a managed runtime after its controller loses
+// authorization, including in-flight inference. Ordinary stops still drain.
+type DeploymentUnloader interface {
+	UnloadDeployment(Deployment) error
+}
+
 type DeploymentInspector interface {
 	InspectDeployment(Deployment) (ModelStatus, bool)
 }
@@ -363,13 +369,64 @@ func (m *Manager) startDeploymentLoopsLocked() {
 	go func() { defer m.deploymentWG.Done(); m.deploymentControllerLoop(ctx) }()
 }
 
+// Revoking membership must release managed runtimes even if an inference
+// request never drains. Only isolated deployment IDs reach this path.
+func (m *Manager) stopDeployment(host DeploymentHost, d Deployment) error {
+	if !m.deploymentAuthorized(d.ControllerUUID) {
+		if unloader, ok := host.(DeploymentUnloader); ok {
+			return unloader.UnloadDeployment(d)
+		}
+	}
+	return host.StopDeployment(d)
+}
+
+// Membership is already revoked before waiting. The lifetime reconciliation
+// loop continues cleanup even if the caller disconnects or this wait times out.
+func (m *Manager) waitDeploymentUnload(ctx context.Context) error {
+	host, ok := m.opts.Host.(DeploymentHost)
+	if !ok {
+		return nil
+	}
+	assignments := m.deployments.list(false)
+	m.deploymentMu.Lock()
+	for _, run := range m.deploymentRuns {
+		run.cancel()
+	}
+	m.deploymentMu.Unlock()
+	m.wakeDeployments()
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		m.deploymentMu.Lock()
+		preparing := len(m.deploymentRuns) > 0
+		m.deploymentMu.Unlock()
+		unloaded := !preparing
+		for _, d := range assignments {
+			if host.DeploymentRunning(d) {
+				unloaded = false
+				break
+			}
+		}
+		if unloaded {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("left cluster; managed model cleanup is still in progress: %w", ctx.Err())
+		case <-tick.C:
+		}
+	}
+}
+
 func (m *Manager) deploymentWorkerLoop(ctx context.Context) {
 	host, ok := m.opts.Host.(DeploymentHost)
 	if !ok {
 		return
 	}
-	var mu sync.Mutex
-	runs := map[string]deploymentRun{}
+	mu := &m.deploymentMu
+	runs := m.deploymentRuns
 	var wg sync.WaitGroup
 	defer func() {
 		mu.Lock()
@@ -379,15 +436,15 @@ func (m *Manager) deploymentWorkerLoop(ctx context.Context) {
 		mu.Unlock()
 		wg.Wait()
 		for _, d := range m.deployments.list(false) {
-			_ = host.StopDeployment(d)
+			_ = m.stopDeployment(host, d)
 		}
 	}()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
 		for _, d := range m.deployments.list(false) {
-			allowed := m.deploymentAllowed(d)
 			mu.Lock()
+			allowed := m.deploymentAllowed(d)
 			if run, exists := runs[d.ID]; exists {
 				if run.generation != d.Generation || !allowed || d.Desired != "running" {
 					run.cancel()
@@ -404,7 +461,7 @@ func (m *Manager) deploymentWorkerLoop(ctx context.Context) {
 					continue
 				}
 				phase, detail := "deleting", ""
-				if err := host.StopDeployment(d); err != nil {
+				if err := m.stopDeployment(host, d); err != nil {
 					detail = err.Error()
 				} else if cleaner, ok := host.(DeploymentCleaner); !ok {
 					phase, detail = "failed", "node version does not support deleting deployment files"
@@ -433,7 +490,7 @@ func (m *Manager) deploymentWorkerLoop(ctx context.Context) {
 				if !allowed && d.Desired == "running" {
 					phase = "blocked"
 				}
-				if err := host.StopDeployment(d); err != nil {
+				if err := m.stopDeployment(host, d); err != nil {
 					phase = "stopping"
 				}
 				if d.Status.Phase != phase {
@@ -445,13 +502,13 @@ func (m *Manager) deploymentWorkerLoop(ctx context.Context) {
 				mu.Unlock()
 				// A fatal error can arrive while a request is draining. Keep the
 				// failed receipt and retry cleanup, never reload this generation.
-				_ = host.StopDeployment(d)
+				_ = m.stopDeployment(host, d)
 				continue
 			}
 			if err := m.deploymentRuntimeError(d); err != nil {
 				mu.Unlock()
 				m.deploymentStatus(d.ID, d.Generation, DeploymentStatus{Phase: "failed", Error: err.Error()})
-				_ = host.StopDeployment(d)
+				_ = m.stopDeployment(host, d)
 				continue
 			}
 			if host.DeploymentRunning(d) {
@@ -489,17 +546,17 @@ func (m *Manager) deploymentWorkerLoop(ctx context.Context) {
 				}
 				current, exists := m.deployments.get(false, d.ID)
 				if runCtx.Err() != nil || !exists || current.Generation != d.Generation || !m.deploymentAllowed(current) {
-					_ = host.StopDeployment(d)
+					_ = m.stopDeployment(host, d)
 					return
 				}
 				if err != nil {
 					report(DeploymentStatus{Phase: "failed", Error: err.Error()})
-					_ = host.StopDeployment(d)
+					_ = m.stopDeployment(host, d)
 					return
 				}
 				if err := m.deploymentRuntimeError(d); err != nil {
 					report(DeploymentStatus{Phase: "failed", Error: err.Error()})
-					_ = host.StopDeployment(d)
+					_ = m.stopDeployment(host, d)
 					return
 				}
 				report(DeploymentStatus{Phase: "ready", Size: size})

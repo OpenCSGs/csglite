@@ -383,7 +383,7 @@ func (m *Manager) Leave(ctx context.Context) error {
 		m.deactivate()
 		_, _ = m.store.UpdateSettings(func(s *Settings) { s.Enabled = false })
 	}
-	return nil
+	return m.waitDeploymentUnload(ctx)
 }
 
 func (m *Manager) leaveLocally() error {
