@@ -14,9 +14,10 @@ const primaryClass = "rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium tex
 const policies = ["fixed", "failover", "weighted", "priority_weight"];
 const blankService = (): ProviderPool => ({ id: "", name: "", model: "", enabled: true, policy: "failover", category: "chat", members: [] });
 
-export function ModelServices({ providers, catalogRequest, onChanged }: {
+export function ModelServices({ providers, catalogRequest, onCatalogOpened, onChanged }: {
   providers: (ThirdPartyProvider & { builtIn?: boolean })[];
   catalogRequest: { source: string; serial: number };
+  onCatalogOpened: () => void;
   onChanged: () => Promise<void>;
 }) {
   const origin = useRuntimeAPIOrigin();
@@ -76,7 +77,10 @@ export function ModelServices({ providers, catalogRequest, onChanged }: {
     return () => { active = false; };
   }, []);
   useEffect(() => {
-    if (catalogRequest.serial) { setDraft(blankService()); setSource(catalogRequest.source); setConfirmed(false); setFormError(""); }
+    if (!catalogRequest.serial) return;
+    setDraft(blankService()); setSource(catalogRequest.source); setConfirmed(false); setFormError("");
+    // Consume the navigation request so remounting this page cannot replay it.
+    onCatalogOpened();
   }, [catalogRequest.serial]);
   useEffect(() => { if (draft) editor.current?.showModal(); else editor.current?.close(); }, [!!draft]);
   useEffect(() => { if (deleting) deleteDialog.current?.showModal(); else deleteDialog.current?.close(); }, [!!deleting]);

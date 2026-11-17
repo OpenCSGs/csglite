@@ -34,6 +34,9 @@ jobs:
           mkdir -p internal/server/static
           cp -r web/dist/. internal/server/static/
 
+      - name: Run web tests
+        run: npm --prefix web test
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
