@@ -1195,6 +1195,7 @@ type AIAppActionRequest struct {
 	ModelID       string              `json:"model_id,omitempty"`
 	Source        string              `json:"source,omitempty"`
 	ProviderMode  string              `json:"provider_mode,omitempty"`
+	Force         bool                `json:"force,omitempty"`
 	ModelBindings []AIAppModelBinding `json:"model_bindings,omitempty"`
 	WorkDir       string              `json:"work_dir,omitempty"`
 }

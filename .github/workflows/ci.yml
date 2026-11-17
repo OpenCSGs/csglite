@@ -34,6 +34,9 @@ jobs:
           mkdir -p internal/server/static
           cp -r web/dist/. internal/server/static/
 
+      - name: Test gateway navigation
+        run: npm --prefix web test -- src/pages/AIGateway.test.tsx
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

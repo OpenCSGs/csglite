@@ -1017,6 +1017,7 @@ func (s *Server) prepareAIAppShellLaunch(target aiAppOpenTarget, modelID, modelS
 				"CLAUDE_API_BASE_URL":            serverURL,
 				"CLAUDE_API_KEY":                 "csghub-lite",
 				"CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+				"CLAUDE_CODE_AUTO_MODE_SERVER":   "0",
 			}), "NO_COLOR", "ANTHROPIC_AUTH_TOKEN"),
 			Dir: workingDir,
 		}, nil
@@ -1165,6 +1166,7 @@ func claudeLaunchSettingsJSON(serverURL string) string {
 			"CLAUDE_API_BASE_URL":            serverURL,
 			"CLAUDE_API_KEY":                 "csghub-lite",
 			"CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+			"CLAUDE_CODE_AUTO_MODE_SERVER":   "0",
 		},
 		"permissions": map[string]string{
 			"defaultMode": "acceptEdits",

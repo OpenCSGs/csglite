@@ -669,7 +669,7 @@ export function AIGateway() {
 
       {activeGatewayTab.value === "apiKeys" && <LocalAPIKeysSection />}
       {activeGatewayTab.value === "providers" && <ProvidersSection />}
-      {activeGatewayTab.value === "pools" && <ModelServices providers={providerCards()} catalogRequest={serviceCatalogSource.value} onChanged={async () => { await fetchProviderOptions(); notifyProvidersChanged(); }} />}
+      {activeGatewayTab.value === "pools" && <ModelServices providers={providerCards()} catalogRequest={serviceCatalogSource.value} onCatalogOpened={() => { serviceCatalogSource.value = { ...serviceCatalogSource.value, serial: 0 }; }} onChanged={async () => { await fetchProviderOptions(); notifyProvidersChanged(); }} />}
       {activeGatewayTab.value === "usage" && <UsageStatisticsSection />}
       <LocalAPIKeyDialog
         open={isLocalAPIKeyDialogOpen.value}

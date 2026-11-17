@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -654,6 +655,9 @@ func TestClaudeLaunchSettingsJSONIncludesAcceptEditsMode(t *testing.T) {
 	if payload.Env["CLAUDE_CODE_ATTRIBUTION_HEADER"] != "0" {
 		t.Fatalf("CLAUDE_CODE_ATTRIBUTION_HEADER = %q, want 0", payload.Env["CLAUDE_CODE_ATTRIBUTION_HEADER"])
 	}
+	if payload.Env["CLAUDE_CODE_AUTO_MODE_SERVER"] != "0" {
+		t.Fatalf("CLAUDE_CODE_AUTO_MODE_SERVER = %q, want 0", payload.Env["CLAUDE_CODE_AUTO_MODE_SERVER"])
+	}
 	if _, ok := payload.Env["ANTHROPIC_AUTH_TOKEN"]; ok {
 		t.Fatalf("ANTHROPIC_AUTH_TOKEN should not be included with ANTHROPIC_API_KEY")
 	}
@@ -666,6 +670,7 @@ func TestPrepareClaudeLaunchPersistsSettingsEnv(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("CLAUDE_CODE_AUTO_MODE_SERVER", "1")
 	binDir := t.TempDir()
 	commandPath := filepath.Join(binDir, "claude")
 	content := "#!/bin/sh\nexit 0\n"
@@ -678,13 +683,16 @@ func TestPrepareClaudeLaunchPersistsSettingsEnv(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	_, err := prepareClaudeLaunch(launchTarget{
+	prepared, err := prepareClaudeLaunch(launchTarget{
 		AppID:       "claude-code",
 		DisplayName: "Claude Code",
 		Binaries:    []string{"claude"},
 	}, "http://127.0.0.1:11435", "glm-5(infini-ai)", nil)
 	if err != nil {
 		t.Fatalf("prepareClaudeLaunch returned error: %v", err)
+	}
+	if !slices.Contains(prepared.Env, "CLAUDE_CODE_AUTO_MODE_SERVER=0") || slices.Contains(prepared.Env, "CLAUDE_CODE_AUTO_MODE_SERVER=1") {
+		t.Fatal("Claude launch did not override the inherited server-side classifier setting")
 	}
 
 	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
@@ -709,6 +717,9 @@ func TestPrepareClaudeLaunchPersistsSettingsEnv(t *testing.T) {
 	}
 	if settings.Env["CLAUDE_CODE_ATTRIBUTION_HEADER"] != "0" {
 		t.Fatalf("CLAUDE_CODE_ATTRIBUTION_HEADER = %q, want 0", settings.Env["CLAUDE_CODE_ATTRIBUTION_HEADER"])
+	}
+	if settings.Env["CLAUDE_CODE_AUTO_MODE_SERVER"] != "0" {
+		t.Fatalf("CLAUDE_CODE_AUTO_MODE_SERVER = %q, want 0", settings.Env["CLAUDE_CODE_AUTO_MODE_SERVER"])
 	}
 	if _, ok := settings.Env["ANTHROPIC_AUTH_TOKEN"]; ok {
 		t.Fatalf("ANTHROPIC_AUTH_TOKEN should not be persisted")

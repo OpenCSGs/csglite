@@ -2899,9 +2899,10 @@ export async function switchAIAppProvider(
   appId: string,
   providerMode: "native" | "opencsg",
   modelId?: string,
-  source?: string
+  source?: string,
+  force?: boolean
 ): Promise<AIAppInfo> {
-  return fetchJSON<AIAppInfo>("/api/apps/provider", {
+  return fetchJSONWithApiError<AIAppInfo>("/api/apps/provider", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2909,6 +2910,7 @@ export async function switchAIAppProvider(
       provider_mode: providerMode,
       model_id: modelId || undefined,
       source: source || undefined,
+      force: force || undefined,
     }),
   });
 }

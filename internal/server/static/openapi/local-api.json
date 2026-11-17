@@ -5490,7 +5490,7 @@
           "AI Apps"
         ],
         "summary": "Switch an AI App model provider",
-        "description": "Switches Codex or Claude Code between its native provider configuration and OpenCSG. Codex CLI and Codex App share one provider state.",
+        "description": "Switches Codex or Claude Code between its native provider configuration and OpenCSG. Codex CLI and Codex App share one provider state. Set force to overwrite app configuration that changed after OpenCSG was enabled.",
         "operationId": "switchAIAppProvider",
         "requestBody": {
           "required": true,
@@ -5522,7 +5522,7 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "409": {
-            "description": "The app configuration changed after OpenCSG was enabled and was not overwritten."
+            "description": "The app configuration changed after OpenCSG was enabled and was not overwritten. Retry with force to overwrite it."
           }
         }
       }
@@ -17356,6 +17356,10 @@
               "opencsg"
             ],
             "description": "Provider mode requested for apps that support explicit source switching."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Overwrite app configuration that changed after OpenCSG was enabled."
           },
           "model_bindings": {
             "type": "array",
