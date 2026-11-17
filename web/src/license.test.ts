@@ -8,10 +8,10 @@ vi.hoisted(() => {
 });
 
 import { ApiError } from "./api/client";
-import type { LicenseCloudStatus, LicenseState } from "./api/client";
+import type { LicenseCloudStatus, LicenseDeviceUsage, LicenseState } from "./api/client";
 import { t } from "./i18n";
 import {
-  cloudDeviceUsage,
+  installedDeviceUsage,
   cloudImportAvailability,
   cloudImportErrorMessage,
   cloudLicenseCanReplace,
@@ -67,6 +67,10 @@ function cloud(overrides: Partial<LicenseCloudStatus> = {}): LicenseCloudStatus 
     env_managed: false,
     ...overrides,
   };
+}
+
+function usage(overrides: Partial<LicenseDeviceUsage> = {}): LicenseDeviceUsage {
+ return {license_key:"subscription:4:1",available:true,used:3,limit:10,remaining:7,checked_at:"2026-11-16T12:00:00Z",...overrides};
 }
 
 describe("license helpers", () => {
@@ -199,13 +203,12 @@ describe("device limits", () => {
     expect(deviceLimitOf(custom)).toBe(10);
   });
 
-  it("shows true activated and remaining counts only for the installed license", () => {
+  it("shows installed-license usage independently of cloud account connection", () => {
     const local = licensedState("subscription:4:1", "2027-01-01T00:00:00Z");
-    expect(cloudDeviceUsage(local, cloud())).toEqual({ used: 3, limit: 10, remaining: 7, overLimit: false });
-    expect(cloudDeviceUsage(local, cloud({ used: 12 }))).toEqual({ used: 12, limit: 10, remaining: 0, overLimit: true });
-    expect(cloudDeviceUsage(local, cloud({ license_key: "subscription:4:2" }))).toBeNull();
-    expect(cloudDeviceUsage(local, cloud({ has_license: false }))).toBeNull();
-    expect(cloudDeviceUsage(null, cloud())).toBeNull();
+    expect(installedDeviceUsage(local, usage())).toEqual({used:3,limit:10,remaining:7,overLimit:false});
+    expect(installedDeviceUsage(local, usage({used:12}))).toEqual({used:12,limit:10,remaining:0,overLimit:true});
+    expect(installedDeviceUsage(local, usage({license_key:"other"}))).toBeNull();
+    expect(installedDeviceUsage(null, usage())).toBeNull();
   });
 });
 
@@ -215,20 +218,15 @@ describe("license details", () => {
     expect(licenseFeatureName("feature.lite.edge_serving")).toBe(t("settings.licenseFeature.sharedCompute"));
     expect(licenseFeatureName("feature.lite.future")).toBe("feature.lite.future");
   });
-  it("does not present missing, stale or invalid telemetry as zero activations", () => {
+  it("keeps missing or invalid device telemetry unknown", () => {
     const local = licensedState("subscription:4:1", "2027-01-01T00:00:00Z");
-    for (const status of [cloud({ logged_in: false }), cloud({ online: false }), cloud({ supported: false }), cloud({ reason: "server_error" }), cloud({ used: NaN }), cloud({ used: -1 }), cloud({ limit: 0 })]) {
-      expect(cloudDeviceUsage(local, status)).toBeNull();
-    }
-    expect(cloudDeviceUsage(local, cloud({ used: 0 }))).toEqual({ used: 0, limit: 10, remaining: 10, overLimit: false });
+    for (const status of [null,usage({available:false}),usage({used:undefined}),usage({used:NaN}),usage({used:-1}),usage({limit:0})]) expect(installedDeviceUsage(local,status)).toBeNull();
+    expect(installedDeviceUsage(local,usage({used:0}))).toEqual({used:0,limit:10,remaining:10,overLimit:false});
   });
-  it("explains why matching device usage is unavailable", () => {
-    const local = licensedState("subscription:4:1", "2027-01-01T00:00:00Z");
-    expect(deviceUsageHint(local, null)).toBe("settings.licenseDeviceUnavailable");
-    expect(deviceUsageHint(local, cloud({ logged_in: false }))).toBe("settings.licenseDeviceLogin");
-    expect(deviceUsageHint(local, cloud({ logged_in: false, reason: "token_invalid" }))).toBe("settings.licenseDeviceSessionExpired");
-    expect(deviceUsageHint(local, cloud({ online: false }))).toBe("settings.licenseDeviceOffline");
-    expect(deviceUsageHint(local, cloud({ license_key: "other" }))).toBe("settings.licenseDeviceDifferent");
+  it("explains platform query failures without requiring an account", () => {
+    expect(deviceUsageHint(null)).toBe("settings.licenseDeviceUnavailable");
+    expect(deviceUsageHint(usage({reason:"unsupported",available:false}))).toBe("settings.licenseDeviceUnsupported");
+    expect(deviceUsageHint(usage({reason:"unreachable",available:false}))).toBe("settings.licenseDeviceOffline");
   });
 });
 

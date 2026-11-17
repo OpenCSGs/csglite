@@ -72,6 +72,12 @@ func (s *Server) handleCloudAuthTokenSave(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) saveCloudAccessToken(token string) error {
+	s.cloudLoginMu.Lock()
+	defer s.cloudLoginMu.Unlock()
+	return s.saveCloudAccessTokenLocked(token)
+}
+
+func (s *Server) saveCloudAccessTokenLocked(token string) error {
 	token = strings.TrimSpace(token)
 	previousToken, previousAPIKey := s.cfg.Token, s.cfg.OpenCSGAPIKey
 	s.cfg.Token = token
@@ -81,6 +87,8 @@ func (s *Server) saveCloudAccessToken(token string) error {
 		s.cfg.Token, s.cfg.OpenCSGAPIKey = previousToken, previousAPIKey
 		return err
 	}
+	s.cloudLoginRevision++
+	clear(s.cloudLoginAttempts)
 	s.refreshCloudCredentials()
 	// A fresh login is the second write-off trigger: a license imported while
 	// offline can now be reported. The server context lets shutdown cancel an
@@ -114,21 +122,26 @@ func writeCloudAuthCallbackPage(w http.ResponseWriter, success bool, errCode str
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(http.StatusOK)
 	if success {
-		_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>Login complete</title></head><body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0"><p>Login complete. You can close this window and return to csglite.</p><script>window.close();</script></body></html>`)
+		_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>Login complete</title></head><body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0"><p>Login complete. You can close this window and return to csglite.</p><script>history.replaceState(null,"",location.pathname);window.close();</script></body></html>`)
 		return
 	}
-	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>Login failed</title></head><body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0"><p>Login failed (`+errCode+`). Please try again.</p></body></html>`)
+	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><title>Login failed</title></head><body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0"><p>Login failed (`+errCode+`). Please try again.</p><script>history.replaceState(null,"",location.pathname);</script></body></html>`)
 }
 
 func (s *Server) handleCloudAuthTokenDelete(w http.ResponseWriter, r *http.Request) {
+	s.cloudLoginMu.Lock()
 	previousToken, previousAPIKey := s.cfg.Token, s.cfg.OpenCSGAPIKey
 	s.cfg.Token = ""
 	s.cfg.OpenCSGAPIKey = ""
 	if err := config.Save(s.cfg); err != nil {
 		s.cfg.Token, s.cfg.OpenCSGAPIKey = previousToken, previousAPIKey
 		writeError(w, http.StatusInternalServerError, "clearing token: "+err.Error())
+		s.cloudLoginMu.Unlock()
 		return
 	}
+	s.cloudLoginRevision++
+	clear(s.cloudLoginAttempts)
+	s.cloudLoginMu.Unlock()
 	s.refreshCloudCredentials()
 
 	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))

@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { clearCloudToken, getSettings, openExternalURL, saveCloudToken } from "../api/client";
+import { clearCloudToken, getSettings, openExternalURL, startCloudBrowserLogin } from "../api/client";
 import type { AppSettings } from "../api/client";
 import {
   cloudAuth,
@@ -151,7 +151,6 @@ export function SidebarAccount() {
   const session = consoleSession.value;
   const [consoleError, setConsoleError] = useState("");
   const [leavingConsole, setLeavingConsole] = useState(false);
-  const [platformToken, setPlatformToken] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<"login" | "account" | "disconnect" | null>(null);
   const [disconnectReturn, setDisconnectReturn] = useState<"account" | null>(null);
@@ -342,7 +341,6 @@ export function SidebarAccount() {
     if (dialog === "login" && siteID === CUSTOM_SITE_ID)
       void persistSelection(serverURL, gatewayURL);
     setDialog(null);
-    setPlatformToken("");
     requestAnimationFrame(() => triggerRef.current?.focus());
   }
 
@@ -361,18 +359,6 @@ export function SidebarAccount() {
       setError(t("account.invalidURL"));
       return;
     }
-    if (!settings.desktop_mode && session?.access_mode !== "local") {
-      if (!platformToken.trim()) { setError(t("access.platformTokenRequired")); return; }
-      setOpening(true); setError("");
-      try {
-        if (server !== settings.server_url || gateway !== settings.ai_gateway_url) await saveCommunitySelection(server, gateway);
-        setCloudAuth(await saveCloudToken(platformToken.trim()));
-        setPlatformToken(""); setDialog(null);
-        window.dispatchEvent(new Event("csghub:providers-changed"));
-      } catch { setError(t("account.loginFailed")); }
-      finally { setOpening(false); }
-      return;
-    }
     // Reserve a browser tab before awaiting settings/auth; WebViews use the system browser.
     const tab = settings.desktop_mode ? null : window.open("", "_blank");
     if (tab) tab.opener = null;
@@ -389,7 +375,9 @@ export function SidebarAccount() {
       if (changingCommunity) {
         await saveCommunitySelection(server, gateway);
       }
-      const status = await refreshCloudAuth({ force: true });
+      const status = settings.desktop_mode
+        ? await refreshCloudAuth({ force: true })
+        : await startCloudBrowserLogin();
       if (attempt !== loginAttempt.current) {
         tab?.close();
         return;
@@ -607,7 +595,7 @@ export function SidebarAccount() {
                     </label>
                   </>
                 )}
-                {!settings.desktop_mode && session?.access_mode !== "local" && <label class="block"><span class="text-sm font-medium text-gray-700">{t("access.platformToken")}</span><input type="password" autoComplete="off" required class={fieldClass} value={platformToken} onInput={(event) => setPlatformToken(event.currentTarget.value)} /><span class="mt-2 block text-xs text-gray-400">{t("access.platformTokenHint")}</span></label>}
+
                 <button
                   type="submit"
                   class={`${primaryClass} w-full`}
@@ -620,12 +608,12 @@ export function SidebarAccount() {
                         ? "account.savingCommunity"
                         : waiting
                           ? "account.waiting"
-                          : session?.access_mode === "local" ? "account.continue" : "account.login",
+                          : "account.continue",
                   )}
                   <AccountIcon kind="external" />
                 </button>
                 <p class="text-center text-xs leading-5 text-gray-400">
-                  {t(session?.access_mode === "local" ? "account.browserHint" : "access.platformTokenHint")}
+                  {t("account.browserHint")}
                 </p>
               </>
             ) : (

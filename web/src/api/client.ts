@@ -432,6 +432,24 @@ export interface LicenseCloudStatus {
   reason?: string;
 }
 
+export interface LicenseDeviceUsage {
+  license_key?: string;
+  available: boolean;
+  used?: number;
+  limit: number;
+  remaining?: number;
+  reason?: string;
+  checked_at: string;
+}
+
+export function getLicenseDeviceUsage(): Promise<LicenseDeviceUsage> {
+  return fetchJSON<LicenseDeviceUsage>("/api/license/usage");
+}
+
+export function startCloudBrowserLogin(): Promise<{login_url: string}> {
+  return fetchJSON<{login_url: string}>("/api/cloud/auth/login", {method: "POST"});
+}
+
 export interface LicenseVerifyResponse {
   valid: boolean;
   status: LicenseStatus;

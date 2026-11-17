@@ -204,8 +204,12 @@ type Server struct {
 
 	// licenseCloudMu guards the short-lived cache of the customer's cloud
 	// license state, so the Settings page does not call the hub on every poll.
-	licenseCloudMu    sync.Mutex
-	licenseCloudCache map[string]licenseCloudCacheEntry
+	licenseCloudMu     sync.Mutex
+	licenseCloudCache  map[string]licenseCloudCacheEntry
+	licenseDeviceCache *licenseDeviceUsageCache
+	cloudLoginMu       sync.Mutex
+	cloudLoginAttempts map[string]browserLoginAttempt
+	cloudLoginRevision uint64
 
 	// modelSettingsMu guards cfg.Inference.Models. It is written by the
 	// model-config handler and read by every engine load, on different request

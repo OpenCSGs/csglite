@@ -142,6 +142,7 @@ func licenseKeyLogPrefix(key string) string {
 func (s *Server) invalidateLicenseCloudCache() {
 	s.licenseCloudMu.Lock()
 	s.licenseCloudCache = nil
+	s.licenseDeviceCache = nil
 	s.licenseCloudMu.Unlock()
 }
 

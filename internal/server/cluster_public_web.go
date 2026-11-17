@@ -168,6 +168,10 @@ func publicClusterWebHandler(auth *clusterpublic.AdminAuth, management, inferenc
 			static.ServeHTTP(w, copy)
 			return
 		}
+		if r.Method == http.MethodGet && r.URL.Path == browserLoginCallback {
+			management.ServeHTTP(w, r)
+			return
+		}
 		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && (strings.HasPrefix(r.URL.Path, "/assets/") || r.URL.Path == "/favicon.svg") {
 			static.ServeHTTP(w, r)
 			return

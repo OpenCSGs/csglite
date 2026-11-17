@@ -18,6 +18,7 @@ const (
 const (
 	ActivationModeClaim  = "claim"
 	ActivationModeReport = "report"
+	ActivationModeStatus = "status"
 )
 
 // licenseRequestTimeout keeps license calls short enough that an offline
@@ -126,4 +127,10 @@ func decodeEnvelopeData(envelope responseEnvelope, out any) error {
 		return fmt.Errorf("decoding API response: %w", err)
 	}
 	return nil
+}
+
+// InspectCsgliteLicense reads usage with proof of license possession. Unlike
+// claim/report it must not register or update an activation.
+func (c *Client) InspectCsgliteLicense(ctx context.Context, text string) (*CsgliteActivation, error) {
+	return c.ActivateCsgliteLicense(ctx, CsgliteActivationRequest{License: text, Mode: ActivationModeStatus})
 }
