@@ -8,6 +8,48 @@ GGUF。模型库里单独下载的模型不会自动变为 SGLang 服务模型�
 Docker 部署面向 Linux NVIDIA 和 AMD 主机，macOS 不在本方案的运行支持范围内。
 构建机仍可使用 macOS，交叉编译并构建 Linux 镜像。
 
+## NVIDIA 验证镜像
+
+标签：`opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-min-8986bf4`。
+仅支持 `linux/amd64`；包含 CSGLite、SGLang 0.5.19、PyTorch 2.13.0+cu129 和 CUDA 12.9。
+已上传国内仓库，实际模型推理待 NVIDIA 主机验收。镜像不包含模型权重。
+
+| 发布信息 | 实测值 |
+| --- | --- |
+| 镜像源码 | `8986bf4` |
+| 下载体积（registry layer 合计） | 13,328,132,494 字节，约 13.33GB；比上游约 17.16GB 减少约 22% |
+| 解包体积 | 约 31GB；Docker Desktop 29 连同压缩内容存储显示约 44.1GB，不含模型和新增运行缓存 |
+| 镜像索引 digest | `sha256:11f61bcd47bd86cf0605fdb2c6e4a1cdb17894b43b057d853d58002cb5a6a096` |
+| linux/amd64 digest | `sha256:2e28a02788858258bec6bb1523b2e47789ea3b9d63296ea0180c04e3920625c8` |
+| 上游 linux/amd64 digest | `sha256:5412cdedcacf3e05c329e24d097988b9cae15ad1cf69289fc8014df94e40972b` |
+
+移除 154 个可选 Python 包和约 3.32GB 静态数学库，保留 208 个运行/JIT 依赖包及预编译算子。
+
+从仓库根目录启动，无需本地构建或执行 pip 安装：
+
+```bash
+export CSGLITE_SGLANG_IMAGE=opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-min-8986bf4
+export MODEL_DIR=/absolute/path/to/complete-hf-model
+docker compose -f docker/sglang/compose.cuda.yaml pull
+docker compose -f docker/sglang/compose.cuda.yaml up -d
+docker compose -f docker/sglang/compose.cuda.yaml logs -f
+```
+
+也可直接运行镜像，替换宿主模型目录和持久化数据目录：
+
+```bash
+docker run -d --name csglite-sglang --gpus '"device=0"' --shm-size=8g \
+  --init --restart unless-stopped --stop-timeout 30 \
+  -p 127.0.0.1:11435:11435 \
+  -v "$HOME/.csghub-lite/docker-sglang:/root/.csghub-lite" \
+  -v /absolute/path/to/complete-hf-model:/root/.csghub-lite/models/serving:ro \
+  -e SGLANG_EXTRA_ARGS='["--mem-fraction-static","0.8","--context-length","8192"]' \
+  opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-min-8986bf4
+```
+
+模型就绪后访问 `http://localhost:11435`，选择 `local-sglang [SGLang]`。
+入群配置见下方「加入现有集群」，使用现有集群环境变量。
+
 ## 构建与 NVIDIA 部署（CUDA 12.9）
 
 宿主需安装兼容 CUDA 12.9 的 NVIDIA 驱动、Docker 和 NVIDIA Container Toolkit。
@@ -52,8 +94,9 @@ BASE_IMAGE=<国内仓库>/sglang:<固定的CUDA12标签或digest> \
   CSGHUB_LITE_VERSION=<发布版本> bash docker/sglang/build.sh
 ```
 
-构建脚本只构建本地镜像，不执行 push。发布前需固定基础镜像 digest，在对应 NVIDIA
-机器完成实机验证，再上传国内仓库。设置 `CSGLITE_SGLANG_IMAGE` 使用发布后的地址。
+构建脚本只构建本地镜像，不执行 push。为复现构建，使用基础镜像 digest；
+验证镜像可先上传供实机验收，宣称 GPU 可用前必须在 NVIDIA 机器验证模型推理。
+设置 `CSGLITE_SGLANG_IMAGE` 使用发布后的地址。
 
 ## AMD / MI210
 
@@ -139,12 +182,14 @@ SGLang 仅监听容器 loopback 30000，不公开内部服务端口。CSGLite �
 
 | 项目 | 状态 |
 | --- | --- |
-| 启动器与集群环境变量透传 | 6 个单元测试通过 |
+| 启动器、缓存、集群环境变量和依赖裁剪 | 11 个单元测试通过 |
 | CUDA / ROCm Compose，含集群 overlay | 4 种组合解析通过 |
 | 真实 CSGLite 对接模拟 OpenAI 服务 | 无外部网络容器中，模型注册、普通/流式聊天、联合健康检查、正常退出通过 |
-| NVIDIA CUDA 12.9 完整镜像 | 已验证基础标签存在，完整构建与 GPU 推理待完成 |
+| NVIDIA CUDA 12.9 精简镜像 | linux/amd64 构建通过；SGLang/PyTorch/Transformers 导入与 SGLang CLI 检查通过 |
+| CUDA JIT 工具链 | NVCC 12.9 编译并链接 sm_80 CUDA 程序通过，未执行 GPU kernel |
 | AMD MI210 | 缺少经验证的 gfx90a 基础运行环境，待实机适配 |
-| 集群真实节点互联、国内发布 | 待验证 / 待发布 |
+| 集群真实节点互联 | 环境变量透传与 Compose 检查通过，真实节点互联待实测 |
+| 国内仓库发布 | NVIDIA 精简镜像上传成功，registry manifest 与 digest 校验通过，体积见上方发布信息 |
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s docker/sglang -v
@@ -155,6 +200,6 @@ docker run --rm --network none \
   --entrypoint python3 "${CSGLITE_SGLANG_IMAGE:-csglite-sglang:dev-cu129}" /smoke.py
 ```
 
-该 smoke 使用 OpenAI 模拟服务，不能代替真实 GPU 验收。发布前需在 NVIDIA CUDA
-12 和 MI210 环境分别验证真实模型加载、流式输出、重启、停止释放
-资源和集群入群，并记录镜像大小与驱动要求。当前仓库文件不代表镜像已经发布。
+该 smoke 使用 OpenAI 模拟服务，不能代替真实 GPU 验收。NVIDIA 镜像需在对应
+CUDA 12 主机验证真实模型加载、流式输出、重启、停止释放资源和集群入群。
+MI210 待基础运行环境就绪后单独验收。
