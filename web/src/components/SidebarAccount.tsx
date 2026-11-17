@@ -375,7 +375,9 @@ export function SidebarAccount() {
       if (changingCommunity) {
         await saveCommunitySelection(server, gateway);
       }
-      const status = settings.desktop_mode
+      // Local browsers use the existing state=lite loopback callback. Dynamic
+      // callbacks require a separately registered target on the community.
+      const status = settings.desktop_mode || session?.access_mode === "local"
         ? await refreshCloudAuth({ force: true })
         : await startCloudBrowserLogin();
       if (attempt !== loginAttempt.current) {
