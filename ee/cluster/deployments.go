@@ -22,8 +22,8 @@ import (
 const DeploymentModelPrefix = "deployment/"
 const maxDeployments = 64
 
-// DeploymentSpec describes an immutable model artifact and runtime. Changing
-// either requires a new deployment; a retry never silently changes versions.
+// DeploymentSpec pins model identity and revision. Runtime settings and quant
+// may change only after an acknowledged stop, in a newer generation.
 type DeploymentSpec struct {
 	Name           string `json:"name"`
 	NodeUUID       string `json:"node_uuid"`
@@ -301,10 +301,12 @@ func (m *Manager) receiveDeployment(controller string, incoming Deployment) (Dep
 	if incoming.Desired != "running" && incoming.Desired != "stopped" && incoming.Desired != "deleted" {
 		return Deployment{}, errors.New("invalid desired state")
 	}
+	m.deploymentMu.Lock()
+	defer m.deploymentMu.Unlock()
 	err := m.deployments.update(false, incoming.ID, func(d *Deployment, exists bool) error {
 		if exists {
-			if d.ControllerUUID != controller || d.DeploymentSpec != incoming.DeploymentSpec {
-				return errors.New("deployment identity and specification are immutable")
+			if d.ControllerUUID != controller || !sameDeploymentIdentity(d.DeploymentSpec, incoming.DeploymentSpec) {
+				return errors.New("deployment identity is immutable")
 			}
 			if d.Desired == "deleted" && incoming.Desired != "deleted" {
 				return errors.New("deleted deployments cannot be restarted")
@@ -313,10 +315,16 @@ func (m *Manager) receiveDeployment(controller string, incoming Deployment) (Dep
 				return errors.New("stale deployment generation")
 			}
 			if incoming.Generation == d.Generation {
-				if d.Desired != incoming.Desired {
+				if d.Desired != incoming.Desired || d.DeploymentSpec != incoming.DeploymentSpec {
 					return errors.New("conflicting deployment generation")
 				}
 				return nil
+			}
+			if d.DeploymentSpec != incoming.DeploymentSpec {
+				_, preparing := m.deploymentRuns[d.ID]
+				if d.Desired != "stopped" || d.Status.Phase != "stopped" || preparing || m.opts.Host.(DeploymentHost).DeploymentRunning(*d) {
+					return errors.New("stop the deployment before changing its configuration")
+				}
 			}
 		}
 		*d = incoming

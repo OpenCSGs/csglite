@@ -210,3 +210,28 @@ describe("unified cluster model management", () => {
     expect(canPublishModelInstance(local, view)).toBe(false);
   });
 });
+
+
+describe("stopped deployment configuration", () => {
+  const view = {mode:"gateway",node:{uuid:"master"}} as ClusterView;
+  function editable() {
+    const worker=node("worker",true,[]); worker.status!.deployment_configurable=true;
+    const d={id:"edit",node_uuid:"worker",controller_uuid:"master",desired:"stopped",status:{phase:"stopped"}} as ClusterDeployment;
+    return modelInstanceRows([worker],[],[d])[0];
+  }
+  it("allows edits only on stopped owned deployments with capable online workers",()=>{
+    const row=editable();expect(modelActionAvailability(row,view).edit).toBe(true);
+    expect(modelActionAvailability(row,view,true).edit).toBe(false);
+    expect(modelActionAvailability(row,{...view,mode:"worker"}).edit).toBe(false);
+    row.node.online=false;expect(modelActionAvailability(row,view).edit).toBe(false);row.node.online=true;
+    row.deployment!.controller_uuid="another";expect(modelActionAvailability(row,view).edit).toBe(false);
+  });
+  it("requires a completed stop even after failure and explains old node versions",()=>{
+    const row=editable();
+    for(const phase of ["ready","pending","stopping","failed","unreachable","deleted"]){row.deployment!.status.phase=phase;expect(modelActionAvailability(row,view).edit).toBe(false);}
+    row.deployment!.status.phase="stopped";row.deployment!.desired="running";expect(modelActionAvailability(row,view).edit).toBe(false);
+    row.deployment!.desired="stopped";delete row.node.status!.deployment_configurable;
+    expect(modelActionAvailability(row,view).edit).toBe(false);
+    expect(modelActionAvailability(row,view).editReason).toBe("deployments.configUpgradeNode");
+  });
+});

@@ -1,0 +1,250 @@
+// Copyright (c) OpenCSG. Licensed under the CSGLite Enterprise Edition License.
+// See ee/LICENSE for details.
+
+package cluster
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+)
+
+func configTestNode(t *testing.T) (*Manager, *deploymentTestHost, Deployment) {
+	t.Helper()
+	h := &deploymentTestHost{fakeHost: &fakeHost{name: "config", limit: 0}, running: map[string]bool{}}
+	m, err := New(Options{Dir: t.TempDir(), Host: h, Discoverer: NopDiscoverer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := m.store.create("test", "lan", ""); err != nil {
+		t.Fatal(err)
+	}
+	d := testDeployment(m)
+	d.Desired = "stopped"
+	d.Status.Phase = "stopped"
+	for _, owned := range []bool{true, false} {
+		if err := m.deployments.update(owned, d.ID, func(record *Deployment, _ bool) error { *record = d; return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return m, h, d
+}
+
+func configRequest(m *Manager, id, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPut, "/api/cluster/deployments/"+id, strings.NewReader(body))
+	r.SetPathValue("id", id)
+	w := httptest.NewRecorder()
+	m.Admin().HandleDeploymentUpdate(w, r)
+	return w
+}
+
+func TestDeploymentConfigurationRoundTripAndLegacyStart(t *testing.T) {
+	m, _, d := configTestNode(t)
+	w := configRequest(m, d.ID, fmt.Sprintf(`{"generation":%d,"config":{"quant":"q4_k_m","num_ctx":8192,"num_parallel":2,"n_gpu_layers":0}}`, d.Generation))
+	if w.Code != 202 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var changed Deployment
+	if err := json.Unmarshal(w.Body.Bytes(), &changed); err != nil {
+		t.Fatal(err)
+	}
+	if changed.Generation != d.Generation+1 || changed.Desired != "stopped" || changed.ModelID() != d.ModelID() || !sameDeploymentIdentity(changed.DeploymentSpec, d.DeploymentSpec) {
+		t.Fatalf("identity/state changed: %+v", changed)
+	}
+	if changed.NumCtx != 8192 || changed.NumParallel != 2 || changed.NGPULayers != 0 || changed.Quant != "q4_k_m" {
+		t.Fatalf("settings: %+v", changed)
+	}
+	if _, err := m.receiveDeployment(m.identity.UUID, changed); err != nil {
+		t.Fatal(err)
+	}
+	m.deploymentStatus(d.ID, changed.Generation, DeploymentStatus{Phase: "stopped"})
+	// Controller acknowledgement and persisted receipts survive a restart.
+	changed.Status.Phase = "stopped"
+	if err := m.deployments.update(true, d.ID, func(record *Deployment, _ bool) error { *record = changed; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := openDeploymentStore(m.opts.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, owned := range []bool{true, false} {
+		got, _ := reopened.get(owned, d.ID)
+		if got.DeploymentSpec != changed.DeploymentSpec || got.Desired != "stopped" {
+			t.Fatalf("lost configuration: %+v", got)
+		}
+	}
+	// Partial updates preserve omitted fields; empty quant and CPU-only zero are intentional.
+	w = configRequest(m, d.ID, fmt.Sprintf(`{"generation":%d,"config":{"quant":""}}`, changed.Generation))
+	if w.Code != 202 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	changed = Deployment{}
+	if err := json.Unmarshal(w.Body.Bytes(), &changed); err != nil {
+		t.Fatal(err)
+	}
+	if changed.Quant != "" || changed.NGPULayers != 0 || changed.NumCtx != 8192 {
+		t.Fatalf("partial update: %+v", changed)
+	}
+	if _, err := m.receiveDeployment(m.identity.UUID, changed); err != nil {
+		t.Fatal(err)
+	}
+	m.deploymentStatus(d.ID, changed.Generation, DeploymentStatus{Phase: "stopped"})
+	// The original desired-only API still starts the same ID with the edited spec.
+	w = configRequest(m, d.ID, `{"desired":"running"}`)
+	if w.Code != 202 {
+		t.Fatalf("legacy start: %d %s", w.Code, w.Body)
+	}
+	var running Deployment
+	if err := json.Unmarshal(w.Body.Bytes(), &running); err != nil {
+		t.Fatal(err)
+	}
+	if running.DeploymentSpec != changed.DeploymentSpec || running.Generation != changed.Generation+1 {
+		t.Fatal("legacy restart lost config")
+	}
+	if _, err := m.receiveDeployment(m.identity.UUID, running); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeploymentConfigRejectsInvalidOrConflictingUpdates(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		code       int
+		mutate     func(*Deployment)
+	}{
+		{"stale", `{"generation":9,"config":{"num_ctx":8192}}`, 409, nil},
+		{"missing generation", `{"config":{"num_ctx":8192}}`, 400, nil},
+		{"empty", `{"generation":1,"config":{}}`, 400, nil},
+		{"null", `{"generation":1,"config":null}`, 400, nil},
+		{"mixed", `{"generation":1,"desired":"running","config":{"num_ctx":8192}}`, 400, nil},
+		{"invalid context", `{"generation":1,"config":{"num_ctx":0}}`, 400, nil},
+		{"invalid parallel", `{"generation":1,"config":{"num_parallel":17}}`, 400, nil},
+		{"invalid layers", `{"generation":1,"config":{"n_gpu_layers":-2}}`, 400, nil},
+		{"invalid quant", `{"generation":1,"config":{"quant":"../q4"}}`, 400, nil},
+		{"immutable node", `{"generation":1,"config":{"node_uuid":"auto"}}`, 400, nil},
+		{"running", `{"generation":1,"config":{"num_ctx":8192}}`, 409, func(d *Deployment) { d.Desired = "running"; d.Status.Phase = "ready" }},
+		{"stopping", `{"generation":1,"config":{"num_ctx":8192}}`, 409, func(d *Deployment) { d.Status.Phase = "stopping" }},
+		{"unreachable", `{"generation":1,"config":{"num_ctx":8192}}`, 409, func(d *Deployment) { d.Status.Phase = "unreachable" }},
+		{"failed stop", `{"generation":1,"config":{"num_ctx":8192}}`, 409, func(d *Deployment) { d.Status.Phase = "failed" }},
+		{"deleted", `{"generation":1,"config":{"num_ctx":8192}}`, 409, func(d *Deployment) { d.Desired = "deleted"; d.Status.Phase = "deleted" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _, d := configTestNode(t)
+			if tc.mutate != nil {
+				tc.mutate(&d)
+				if err := m.deployments.update(true, d.ID, func(record *Deployment, _ bool) error { *record = d; return nil }); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w := configRequest(m, d.ID, tc.body)
+			if w.Code != tc.code {
+				t.Fatalf("%d %s", w.Code, w.Body)
+			}
+			got, _ := m.deployments.get(true, d.ID)
+			if got != d {
+				t.Fatal("rejected edit changed persisted deployment")
+			}
+		})
+	}
+}
+
+func TestDeploymentConfigRequiresNodeSupportAndController(t *testing.T) {
+	m, _, d := configTestNode(t)
+	if !m.candidateStatus(m.identity.UUID).DeploymentConfigurable {
+		t.Fatal("capability not advertised")
+	}
+	d.NodeUUID = uuid.NewString()
+	if err := m.deployments.update(true, d.ID, func(record *Deployment, _ bool) error { *record = d; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	w := configRequest(m, d.ID, `{"generation":1,"config":{"num_ctx":8192}}`)
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "upgrade") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	m.opts.Mode = "worker"
+	w = configRequest(m, d.ID, `{"generation":1,"config":{"num_ctx":8192}}`)
+	if w.Code != 403 {
+		t.Fatalf("worker allowed configuration: %d", w.Code)
+	}
+	w = configRequest(m, uuid.NewString(), `{"desired":"running"}`)
+	if w.Code != 403 {
+		t.Fatal("worker bypass")
+	}
+}
+
+func TestDeploymentConfigWorkerFencesRuntimeAndGeneration(t *testing.T) {
+	for _, reason := range []string{"same generation", "stale generation", "running", "preparing", "immutable revision", "deleted"} {
+		t.Run(reason, func(t *testing.T) {
+			m, h, d := configTestNode(t)
+			incoming := d
+			incoming.Generation++
+			incoming.NumCtx = 8192
+			switch reason {
+			case "same generation":
+				incoming.Generation = d.Generation
+			case "stale generation":
+				d.Generation = 3
+			case "running":
+				h.running[d.ID] = true
+			case "preparing":
+				m.deploymentRuns[d.ID] = deploymentRun{generation: d.Generation}
+			case "immutable revision":
+				incoming.Revision = "another"
+			case "deleted":
+				d.Desired = "deleted"
+				d.Status.Phase = "deleted"
+			}
+			if err := m.deployments.update(false, d.ID, func(record *Deployment, _ bool) error { *record = d; return nil }); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.receiveDeployment(m.identity.UUID, incoming); err == nil {
+				t.Fatal("unsafe assignment accepted")
+			}
+			got, _ := m.deployments.get(false, d.ID)
+			if got != d {
+				t.Fatal("rejected assignment changed receipt")
+			}
+		})
+	}
+}
+
+func TestDeploymentEditedSettingsReachRuntimeAfterExplicitStart(t *testing.T) {
+	m, h := deploymentTestNode(t)
+	d, err := m.createDeployment(testDeployment(m).DeploymentSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitPublic(t, func() bool { current, _ := m.deployments.get(true, d.ID); return current.Status.Phase == "ready" })
+	if _, err := m.changeDeployment(d.ID, "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	waitPublic(t, func() bool { current, _ := m.deployments.get(true, d.ID); return current.Status.Phase == "stopped" })
+	stopped, _ := m.deployments.get(true, d.ID)
+	ctx, parallel, layers, quant := 8192, 2, 0, "q4_k_m"
+	changed, err := m.configureDeployment(d.ID, stopped.Generation, DeploymentConfigPatch{NumCtx: &ctx, NumParallel: &parallel, NGPULayers: &layers, Quant: &quant})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitPublic(t, func() bool {
+		current, _ := m.deployments.get(true, d.ID)
+		return current.Status.Phase == "stopped" && current.Generation == changed.Generation
+	})
+	if h.starts.Load() != 1 || h.DeploymentRunning(changed) {
+		t.Fatal("saving configuration started runtime")
+	}
+	if _, err := m.changeDeployment(d.ID, "running"); err != nil {
+		t.Fatal(err)
+	}
+	waitPublic(t, func() bool { current, _ := m.deployments.get(true, d.ID); return current.Status.Phase == "ready" })
+	h.runtimeMu.Lock()
+	actual := h.lastStarted
+	h.runtimeMu.Unlock()
+	if actual.NumCtx != ctx || actual.NumParallel != parallel || actual.NGPULayers != layers || actual.Quant != quant || actual.ModelID() != d.ModelID() {
+		t.Fatalf("runtime got wrong configuration: %+v", actual)
+	}
+}

@@ -4,6 +4,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -196,7 +197,9 @@ func (a *adminAPI) HandleDeploymentUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var body struct {
-		Desired string `json:"desired"`
+		Desired    string          `json:"desired"`
+		Generation uint64          `json:"generation"`
+		Config     json.RawMessage `json:"config"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, 400, "invalid desired state")
@@ -207,9 +210,26 @@ func (a *adminAPI) HandleDeploymentUpdate(w http.ResponseWriter, r *http.Request
 		writeError(w, 404, "deployment not found")
 		return
 	}
-	d, err := a.m.changeDeployment(id, body.Desired)
+	var d Deployment
+	var err error
+	if len(body.Config) > 0 {
+		var patch *DeploymentConfigPatch
+		dec := json.NewDecoder(bytes.NewReader(body.Config))
+		dec.DisallowUnknownFields()
+		if body.Desired != "" || dec.Decode(&patch) != nil || patch == nil {
+			writeError(w, 400, "provide configuration parameters separately from desired state")
+			return
+		}
+		d, err = a.m.configureDeployment(id, body.Generation, *patch)
+	} else {
+		d, err = a.m.changeDeployment(id, body.Desired)
+	}
 	if err != nil {
-		writeError(w, 400, fmt.Sprint(err))
+		status := http.StatusBadRequest
+		if errors.Is(err, errDeploymentConfigConflict) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, fmt.Sprint(err))
 		return
 	}
 	writeJSON(w, http.StatusAccepted, d)
