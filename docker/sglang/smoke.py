@@ -54,13 +54,28 @@ home.mkdir(exist_ok=True)
 server = ThreadingHTTPServer(("127.0.0.1", 30000), Backend)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 env = dict(os.environ, SGLANG_BASE_URL="http://127.0.0.1:30000/v1",
+           CSGHUB_LITE_VERSION=os.getenv("CSGLITE_SMOKE_VERSION", "bundled"),
            CSGHUB_LITE_CLUSTER_DISABLED="1", CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER="0")
-process = subprocess.Popen(["python3", "/opt/csglite-sglang/launcher.py"], env=env)
+process = subprocess.Popen(["python3", "/opt/csglite-sglang/launcher.py"], env=env,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+supervising = threading.Event()
+
+
+def output():
+    for line in process.stdout:
+        print(line, end="", flush=True)
+        if line.startswith("CSGLite starting on :11435;"):
+            supervising.set()
+
+
+threading.Thread(target=output, daemon=True).start()
 client = build_opener(ProxyHandler({}))
 try:
     deadline = time.monotonic() + 60
     while True:
         try:
+            if not supervising.is_set():
+                raise OSError("Waiting for supervised server after installer cleanup")
             with client.open("http://127.0.0.1:11435/api/health", timeout=2):
                 break
         except OSError:

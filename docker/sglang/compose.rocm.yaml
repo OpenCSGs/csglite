@@ -19,6 +19,8 @@ services:
       - ${CSGLITE_DATA_DIR:-./data}:/root/.csghub-lite
       - ${MODEL_DIR:?Set MODEL_DIR to a complete local HF model directory}:/root/.csghub-lite/models/serving:ro
     environment:
+      CSGHUB_LITE_VERSION: ${CSGHUB_LITE_VERSION:-latest}
+      CSGHUB_LITE_REGION: ${CSGHUB_LITE_REGION:-CN}
       HIP_VISIBLE_DEVICES: ${GPU_ID:-0}
       SGLANG_USE_AITER: "0"
       SGLANG_MODEL_NAME: ${MODEL_NAME:-local-sglang}

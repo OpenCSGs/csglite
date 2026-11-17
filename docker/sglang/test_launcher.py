@@ -84,6 +84,7 @@ class LauncherTests(unittest.TestCase):
         binary.write_text("#!/bin/sh\nexit 23\n")
         binary.chmod(0o755)
         env = dict(os.environ, HOME=str(self.home), PATH=str(self.home) + os.pathsep + os.environ["PATH"],
+                   CSGHUB_LITE_VERSION="bundled",
                    SGLANG_BASE_URL="http://127.0.0.1:1/v1", SGLANG_START_TIMEOUT="3")
         result = subprocess.run([sys.executable, str(Path(launcher.__file__))], env=env,
                                 capture_output=True, timeout=10)
@@ -106,12 +107,15 @@ class LauncherTests(unittest.TestCase):
                    "CSGHUB_LITE_CLUSTER_DISABLED": "0"}
         env = dict(os.environ, **cluster)
         env.update(HOME=str(self.home), PATH=str(self.home) + os.pathsep + os.environ["PATH"],
+                   CSGHUB_LITE_VERSION="bundled",
+                   CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER="1",
                    SGLANG_BASE_URL="http://127.0.0.1:1/v1", SGLANG_START_TIMEOUT="3")
         result = subprocess.run([sys.executable, str(Path(launcher.__file__))], env=env,
                                 capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 23, result.stderr.decode())
         actual = json.loads(captured.read_text())
         self.assertEqual({key: actual[key] for key in cluster}, cluster)
+        self.assertEqual(actual["CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER"], "0")
 
 
 if __name__ == "__main__":

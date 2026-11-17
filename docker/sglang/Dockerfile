@@ -9,8 +9,10 @@ LABEL org.opencontainers.image.title="CSGLite + SGLang" \
 
 USER root
 ENV HOME=/root \
+    PATH=/root/.csghub-lite/bin:${PATH} \
     PYTHONUNBUFFERED=1 \
     CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER=0 \
+    CSGHUB_LITE_VERSION=latest \
     SGLANG_MODEL_PATH=/root/.csghub-lite/models/serving \
     SGLANG_MODEL_NAME=local-sglang \
     HF_HOME=/root/.csghub-lite/cache/huggingface \
@@ -27,7 +29,7 @@ ENV HOME=/root \
     TMPDIR=/root/.csghub-lite/tmp TMP=/root/.csghub-lite/tmp TEMP=/root/.csghub-lite/tmp
 
 COPY --from=csglite-binary /csghub-lite /usr/local/bin/csghub-lite
-COPY docker/sglang/launcher.py /opt/csglite-sglang/launcher.py
+COPY docker/sglang/launcher.py docker/sglang/lite_update.py /opt/csglite-sglang/
 # Do not install or replace the GPU stack inherited from the chosen base image.
 RUN python3 -c "import sglang, torch; print('SGLang:', sglang.__file__); print('PyTorch:', torch.__version__)" \
     && python3 -c "import torch; assert not torch.version.cuda or int(torch.version.cuda.split('.')[0]) == 12, 'This image requires CUDA 12.x, not CUDA 13+'" \

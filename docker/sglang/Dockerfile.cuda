@@ -13,7 +13,7 @@ ARG CSGHUB_LITE_VERSION=dev
 LABEL org.opencontainers.image.title="CSGLite + SGLang CUDA 12 text runtime" \
       org.opencontainers.image.source="https://github.com/OpenCSGs/csglite" \
       org.opencontainers.image.version=${CSGHUB_LITE_VERSION}
-ENV PATH=/opt/sglang/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/cuda/nvvm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+ENV PATH=/root/.csghub-lite/bin:/opt/sglang/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/cuda/nvvm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
     CUDA_HOME=/usr/local/cuda \
     CUDA_VERSION=12.9.2 \
@@ -26,6 +26,7 @@ ENV PATH=/opt/sglang/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/cu
     LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8 \
     HOME=/root PYTHONUNBUFFERED=1 \
     CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER=0 \
+    CSGHUB_LITE_VERSION=latest \
     SGLANG_MODEL_PATH=/root/.csghub-lite/models/serving \
     SGLANG_MODEL_NAME=local-sglang \
     HF_HOME=/root/.csghub-lite/cache/huggingface \
@@ -43,7 +44,7 @@ ENV PATH=/opt/sglang/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/cu
     TMPDIR=/root/.csghub-lite/tmp TMP=/root/.csghub-lite/tmp TEMP=/root/.csghub-lite/tmp
 WORKDIR /sgl-workspace/sglang
 COPY --from=csglite-binary /csghub-lite /usr/local/bin/csghub-lite
-COPY docker/sglang/launcher.py /opt/csglite-sglang/launcher.py
+COPY docker/sglang/launcher.py docker/sglang/lite_update.py /opt/csglite-sglang/
 EXPOSE 11435 11438
 VOLUME ["/root/.csghub-lite"]
 STOPSIGNAL SIGTERM

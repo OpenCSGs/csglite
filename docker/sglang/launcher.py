@@ -14,6 +14,8 @@ import time
 from urllib.error import URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
+from lite_update import select_binary
+
 PROVIDER_ID = "csglite-docker-sglang"
 STOPPING = False
 HTTP = build_opener(ProxyHandler({}))
@@ -121,6 +123,11 @@ def stop_requested(_signum, _frame):
     STOPPING = True
 
 
+def cancel_install(signum, frame):
+    stop_requested(signum, frame)
+    raise InterruptedError("Startup installation cancelled")
+
+
 def shutdown(children):
     for child in children:
         if child.poll() is None:
@@ -159,7 +166,17 @@ def main():
     args = None if external else launch_args()
     if not external:
         seed_runtime_cache(Path("/opt/csglite/runtime-cache"), home)
+    # This image serves through SGLang; startup installation must never pull
+    # llama.cpp, even when inherited deployment variables enable it elsewhere.
+    os.environ["CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER"] = "0"
+    signal.signal(signal.SIGTERM, cancel_install)
+    signal.signal(signal.SIGINT, cancel_install)
+    try:
+        binary = select_binary(home)
+    except InterruptedError:
+        return 0
     configure_provider(home, base_url(), model)
+    os.environ["PATH"] = str(home / "bin") + os.pathsep + os.environ.get("PATH", "")
     signal.signal(signal.SIGTERM, stop_requested)
     signal.signal(signal.SIGINT, stop_requested)
     children = []
@@ -167,7 +184,7 @@ def main():
         if args:
             children.append(subprocess.Popen(args, start_new_session=True))
         children.append(subprocess.Popen(
-            ["csghub-lite", "serve", "--listen", "0.0.0.0:11435"], start_new_session=True))
+            [binary, "serve", "--listen", "0.0.0.0:11435"], start_new_session=True))
         deadline = time.monotonic() + int(os.getenv("SGLANG_START_TIMEOUT", "1800"))
         ready = False
         print("CSGLite starting on :11435; waiting for SGLang model readiness", flush=True)
