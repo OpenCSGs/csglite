@@ -61,8 +61,8 @@ func (s *Server) handleAppProviderSwitch(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	log.Printf("AI APP %s: provider switch requested group=%s mode=%s", appID, group, mode)
-	if err := s.switchAIAppProvider(r.Context(), appID, mode, req.ModelID, req.Source); err != nil {
+	log.Printf("AI APP %s: provider switch requested group=%s mode=%s force=%t", appID, group, mode, req.Force)
+	if err := s.switchAIAppProvider(r.Context(), appID, mode, req.ModelID, req.Source, req.Force); err != nil {
 		log.Printf("AI APP %s: provider switch failed: %v", appID, err)
 		status := http.StatusBadRequest
 		if strings.Contains(err.Error(), "refusing to overwrite") ||
@@ -82,7 +82,7 @@ func (s *Server) handleAppProviderSwitch(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, info)
 }
 
-func (s *Server) switchAIAppProvider(ctx context.Context, appID, mode, requestedModelID, requestedSource string) error {
+func (s *Server) switchAIAppProvider(ctx context.Context, appID, mode, requestedModelID, requestedSource string, force bool) error {
 	group, supported := providerGroupForApp(appID)
 	if !supported {
 		return fmt.Errorf("provider switching is not supported for %s", appID)
@@ -92,7 +92,7 @@ func (s *Server) switchAIAppProvider(ctx context.Context, appID, mode, requested
 		return err
 	}
 	if mode == apps.ProviderModeNative {
-		options := apps.RestoreNativeOptions{}
+		options := apps.RestoreNativeOptions{Force: force}
 		switch group {
 		case codexProviderGroup:
 			options.ValidateManaged = s.sourceSwitchManagedValidator(group)
@@ -141,7 +141,10 @@ func (s *Server) switchAIAppProvider(ctx context.Context, appID, mode, requested
 		targetPath,
 		isManaged,
 		apply,
-		s.sourceSwitchManagedValidator(group),
+		apps.UseOpenCSGOptions{
+			ValidateManaged: s.sourceSwitchManagedValidator(group),
+			Force:           force,
+		},
 	); err != nil {
 		return err
 	}

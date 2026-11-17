@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import {
   getAIApps,
   installAIApp,
+  isApiError,
   openAIApp,
   saveAIAppModel,
   setAIAppPath,
@@ -940,8 +941,8 @@ function LiveLogsDrawer({
     return false;
   };
 
-  const handleProviderSwitch = async (providerMode: "native" | "opencsg") => {
-    if (providerSwitching || providerMode === state.providerMode) {
+  const handleProviderSwitch = async (providerMode: "native" | "opencsg", force = false) => {
+    if (providerSwitching || (!force && providerMode === state.providerMode)) {
       return;
     }
     const model = currentModelInfo || models[0];
@@ -955,7 +956,18 @@ function LiveLogsDrawer({
     setProviderSwitching(true);
     setProviderNotice(null);
     try {
-      const info = await switchAIAppProvider(app.id, providerMode, model?.model, model?.source);
+      let info: RemoteAIAppInfo;
+      try {
+        info = await switchAIAppProvider(app.id, providerMode, model?.model, model?.source, force);
+      } catch (error) {
+        if (force || !isApiError(error) || error.status !== 409 || !error.message.includes("configuration changed")) {
+          throw error;
+        }
+        if (!confirm(t("aiApps.provider.forceOverwriteConfirm"))) {
+          return;
+        }
+        info = await switchAIAppProvider(app.id, providerMode, model?.model, model?.source, true);
+      }
       mergeAppStates([info]);
       if (providerMode === "opencsg" && model) {
         setSelectedModel(aiAppModelKey(model));
@@ -1324,8 +1336,16 @@ function LiveLogsDrawer({
                 })}
               </div>
               {state.providerDrifted && (
-                <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                  {t("aiApps.provider.drifted")}
+                <div class="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                  <span>{t("aiApps.provider.drifted")}</span>
+                  <button
+                    type="button"
+                    onClick={() => void handleProviderSwitch("opencsg", true)}
+                    disabled={providerSwitching}
+                    class="shrink-0 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {t("aiApps.provider.forceOverwrite")}
+                  </button>
                 </div>
               )}
               {providerNotice && (

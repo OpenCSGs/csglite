@@ -98,7 +98,7 @@ func TestSourceSwitchValidatorIgnoresUnmanagedFileChanges(t *testing.T) {
 	validateManaged := func(data []byte) bool { return strings.Contains(string(data), "provider=managed") }
 	if _, err := manager.UseOpenCSG("codex", target, isManaged, func() error {
 		return os.WriteFile(target, []byte("provider=managed\nunrelated=old\n"), 0o600)
-	}, validateManaged); err != nil {
+	}, UseOpenCSGOptions{ValidateManaged: validateManaged}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(target, []byte("provider=managed\nunrelated=new\n"), 0o600); err != nil {
@@ -194,5 +194,78 @@ func TestSourceSwitchRollsBackWhenApplyFails(t *testing.T) {
 	}
 	if string(got) != string(original) {
 		t.Fatalf("config after rollback = %q, want %q", got, original)
+	}
+}
+
+func TestSourceSwitchForceRestoreOverwritesDriftedConfig(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "config.json")
+	original := []byte("{}\n")
+	if err := os.WriteFile(target, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewSourceSwitchManager(filepath.Join(root, "storage"))
+	isManaged := func(data []byte) bool { return string(data) == "managed\n" }
+	if _, err := manager.UseOpenCSG("claude-code", target, isManaged, func() error {
+		return os.WriteFile(target, []byte("managed\n"), 0o600)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("user changed this\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := manager.RestoreNative("claude-code", target, isManaged, func() error {
+		return nil
+	}, RestoreNativeOptions{Force: true})
+	if err != nil {
+		t.Fatalf("RestoreNative() with force: %v", err)
+	}
+	if status.Mode != ProviderModeNative || status.Drifted {
+		t.Fatalf("RestoreNative() status = %#v", status)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("forced restore = %q, want %q", got, original)
+	}
+}
+
+func TestSourceSwitchForceReapplyOverwritesDriftedConfig(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "config.toml")
+	if err := os.WriteFile(target, []byte("native\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewSourceSwitchManager(filepath.Join(root, "storage"))
+	isManaged := func(data []byte) bool { return strings.HasPrefix(string(data), "managed") }
+	if _, err := manager.UseOpenCSG("codex", target, isManaged, func() error {
+		return os.WriteFile(target, []byte("managed v1\n"), 0o600)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("user changed this\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := manager.UseOpenCSG("codex", target, isManaged, func() error {
+		return os.WriteFile(target, []byte("managed v2\n"), 0o600)
+	}, UseOpenCSGOptions{Force: true})
+	if err != nil {
+		t.Fatalf("UseOpenCSG() with force: %v", err)
+	}
+	if status.Mode != ProviderModeOpenCSG || status.Drifted {
+		t.Fatalf("UseOpenCSG() status = %#v", status)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "managed v2\n" {
+		t.Fatalf("forced reapply = %q, want managed v2", got)
 	}
 }

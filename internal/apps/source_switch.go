@@ -23,9 +23,15 @@ type SourceSwitchStatus struct {
 	Drifted bool
 }
 
+type UseOpenCSGOptions struct {
+	ValidateManaged func([]byte) bool
+	Force           bool
+}
+
 type RestoreNativeOptions struct {
 	ValidateManaged func([]byte) bool
 	RestoreManaged  func(currentData, originalData []byte, originalExisted bool) error
+	Force           bool
 }
 
 type sourceFileSnapshot struct {
@@ -91,7 +97,7 @@ func (m *SourceSwitchManager) UseOpenCSG(
 	group, targetPath string,
 	isManaged func([]byte) bool,
 	apply func() error,
-	validateManaged ...func([]byte) bool,
+	options ...UseOpenCSGOptions,
 ) (SourceSwitchStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -104,8 +110,12 @@ func (m *SourceSwitchManager) UseOpenCSG(
 	if err != nil {
 		return SourceSwitchStatus{}, err
 	}
-	if found && normalizeProviderMode(record.Mode) == ProviderModeOpenCSG &&
-		record.ManagedSHA256 != "" && managedConfigDrifted(currentData, record.ManagedSHA256, validateManaged) {
+	var option UseOpenCSGOptions
+	if len(options) > 0 {
+		option = options[0]
+	}
+	if !option.Force && found && normalizeProviderMode(record.Mode) == ProviderModeOpenCSG &&
+		record.ManagedSHA256 != "" && managedConfigDrifted(currentData, record.ManagedSHA256, []func([]byte) bool{option.ValidateManaged}) {
 		return SourceSwitchStatus{Mode: ProviderModeOpenCSG, Drifted: true},
 			fmt.Errorf("configuration changed after OpenCSG was enabled; restore or review the app configuration before switching again")
 	}
@@ -164,7 +174,7 @@ func (m *SourceSwitchManager) RestoreNative(
 	if len(options) > 0 {
 		option = options[0]
 	}
-	if found && normalizeProviderMode(record.Mode) == ProviderModeOpenCSG &&
+	if !option.Force && found && normalizeProviderMode(record.Mode) == ProviderModeOpenCSG &&
 		record.ManagedSHA256 != "" && managedConfigDrifted(currentData, record.ManagedSHA256, []func([]byte) bool{option.ValidateManaged}) {
 		return SourceSwitchStatus{Mode: ProviderModeOpenCSG, Drifted: true},
 			fmt.Errorf("configuration changed after OpenCSG was enabled; refusing to overwrite the newer app configuration")
