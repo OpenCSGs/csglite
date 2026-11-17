@@ -216,7 +216,7 @@ describe("stopped deployment configuration", () => {
   const view = {mode:"gateway",node:{uuid:"master"}} as ClusterView;
   function editable() {
     const worker=node("worker",true,[]); worker.status!.deployment_configurable=true;
-    const d={id:"edit",node_uuid:"worker",controller_uuid:"master",desired:"stopped",status:{phase:"stopped"}} as ClusterDeployment;
+    const d={id:"edit",kind:"chat",node_uuid:"worker",controller_uuid:"master",desired:"stopped",status:{phase:"stopped"}} as ClusterDeployment;
     return modelInstanceRows([worker],[],[d])[0];
   }
   it("allows edits only on stopped owned deployments with capable online workers",()=>{
@@ -225,6 +225,18 @@ describe("stopped deployment configuration", () => {
     expect(modelActionAvailability(row,{...view,mode:"worker"}).edit).toBe(false);
     row.node.online=false;expect(modelActionAvailability(row,view).edit).toBe(false);row.node.online=true;
     row.deployment!.controller_uuid="another";expect(modelActionAvailability(row,view).edit).toBe(false);
+  });
+  it("keeps context-based configuration restricted to chat and embedding runtimes",()=>{
+    for (const kind of ["chat", "embedding"]) {
+      const row=editable(); row.deployment!.kind=kind as ClusterDeployment["kind"];
+      expect(modelActionAvailability(row,view).edit).toBe(true);
+    }
+    for (const kind of ["image", "asr", "tts", "unknown"]) {
+      const row=editable(); row.deployment!.kind=kind as ClusterDeployment["kind"];
+      const actions=modelActionAvailability(row,view);
+      expect(actions.edit).toBe(false);
+      expect(actions.editReason).toBe("deployments.unsupportedKind");
+    }
   });
   it("requires a completed stop even after failure and explains old node versions",()=>{
     const row=editable();

@@ -5,6 +5,7 @@ import type { ArtifactSource, MarketplaceModel, MarketplaceModelDetailResponse, 
 import { t } from "../i18n";
 import { canPublishModelInstance, modelInstanceRows, modelInstanceCategory, modelPublication } from "../clusterModels";
 import type { ModelInstanceRow } from "../clusterModels";
+import { ContextWindowField } from "./ContextWindowField";
 import { DeploymentModelPicker } from "./DeploymentModelPicker";
 import { deploymentModelKind, deploymentName, deploymentRevision, deploymentTargets, isLlamaDeployment } from "../deploymentModels";
 import type { DeploymentModelKind } from "../deploymentModels";
@@ -182,7 +183,7 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
             <div class="mt-4 grid grid-cols-2 gap-4">
               <label class="col-span-2 space-y-1 text-sm">{t("deployments.name")}<input id="deployment-name" class={inputClass} required maxLength={100} value={draft.name} onInput={e => patch({ name: e.currentTarget.value })} /></label>
               {isLlamaDeployment(modelKind) && <>
-                <label class="space-y-1 text-sm">{t("deployments.context")}<input type="number" class={inputClass} min={512} max={131072} required value={draft.num_ctx} onInput={e => patch({ num_ctx: Number(e.currentTarget.value) })} /></label>
+                <ContextWindowField kind={modelKind} value={draft.num_ctx} required inputClass={inputClass} onInput={value => patch({ num_ctx: Number(value) })} />
                 <label class="space-y-1 text-sm">{t("deployments.parallel")}<input type="number" class={inputClass} min={1} max={16} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
                 <label class="space-y-1 text-sm">{t("deployments.gpuLayers")}<input type="number" class={inputClass} min={-1} max={999} required value={draft.n_gpu_layers} onInput={e => patch({ n_gpu_layers: Number(e.currentTarget.value) })} /></label>
                 <p class="col-span-2 text-xs text-gray-400">{t("deployments.llamaParamsHint")}</p>

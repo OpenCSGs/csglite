@@ -1,3 +1,6 @@
+import { runtimeKindForTask, runtimeKindFromSupport } from "./utils/modelRuntime";
+import type { ModelRuntimeKind } from "./utils/modelRuntime";
+export { contextWindowApplies as isLlamaDeployment } from "./utils/modelRuntime";
 import type { ArtifactSource, ClusterDeployment, ClusterView, LocalInferenceSupport, MarketplaceModel } from "./api/client";
 
 const deploymentPhases = new Set(["pending", "downloading", "loading", "ready", "stopping", "stopped", "failed", "blocked", "unreachable", "deleting", "deleted"]);
@@ -10,7 +13,7 @@ export function workerDeploymentAssignments(assignments: ClusterDeployment[], no
   return assignments.filter(task => task.status.phase !== "deleted" && task.node_uuid === node && task.controller_uuid === master);
 }
 
-export type DeploymentModelKind = "chat" | "embedding" | "image" | "asr" | "tts" | "unknown";
+export type DeploymentModelKind = ModelRuntimeKind;
 
 export function deploymentModelKind(model: MarketplaceModel, support?: LocalInferenceSupport): DeploymentModelKind {
   // Classify by machine-readable task metadata, never by repository names or
@@ -18,25 +21,8 @@ export function deploymentModelKind(model: MarketplaceModel, support?: LocalInfe
   const task = (model.provider?.huggingface?.pipeline_tag
     || model.provider?.modelscope?.tasks?.[0]
     || model.tags?.find(tag => tag.category === "task")?.name || "").trim().toLowerCase();
-  switch (task) {
-    case "text-generation": case "text2text-generation": case "image-text-to-text": return "chat";
-    case "sentence-similarity": case "feature-extraction": case "text-embedding": return "embedding";
-    case "text-to-image": case "image-to-image": return "image";
-    case "automatic-speech-recognition": return "asr";
-    case "text-to-speech": case "text-to-audio": return "tts";
-    default:
-      // The detail endpoint also inspects model configuration and runtime support.
-      if (support?.supported) {
-        switch (support.mode) {
-          case "direct": case "convert": return "chat";
-          case "embedding": return "embedding";
-          case "image": return "image";
-          case "asr": return "asr";
-          case "tts": return "tts";
-        }
-      }
-      return "unknown";
-  }
+  const declared = runtimeKindForTask(task);
+  return declared !== "unknown" ? declared : runtimeKindFromSupport(support);
 }
 
 export function deploymentRevision(model: MarketplaceModel | undefined, source: ArtifactSource): string {
@@ -60,10 +46,6 @@ export function deploymentName(model: string, existing: string[]): string {
     candidate = base.slice(0, 100 - suffix.length) + suffix;
   }
   return candidate;
-}
-
-export function isLlamaDeployment(kind: DeploymentModelKind): kind is "chat" | "embedding" {
-  return kind === "chat" || kind === "embedding";
 }
 
 /** Only execution receipts on this machine and from its current controller. */
