@@ -967,7 +967,6 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
   const stateName = st?.state ?? (node.local ? view.settings.state : undefined);
   const stateLabel = stateName && stateName !== "active" ? t(stateKey(stateName)) : "";
   const muted = node.online ? "" : "text-gray-400";
-  const lastSeen = node.last_seen ? new Date(node.last_seen) : null;
   const editingStatic = staticEditUUID.value === node.uuid;
 
   return (
@@ -979,9 +978,12 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
             onKeyDown={e => { if (e.key === "Enter") void saveName(node.uuid); if (e.key === "Escape") nameEditing.value = false; }} />
           <button type="button" class="text-xs text-indigo-600" disabled={nameSaving.value} onClick={() => void saveName(node.uuid)}>{t("cluster.save")}</button>
           <button type="button" class="text-xs text-gray-400" onClick={() => (nameEditing.value = false)}>{t("confirm.cancel")}</button>
-        </div> : <InfoTooltip label={t("cluster.nodeDetailsFor", node.name)} class={`min-w-0 font-medium ${node.online ? "text-gray-900 hover:text-indigo-600" : "text-gray-500"}`} content={<NodeMetadataDetails node={node} />}>
-          <span class="flex min-w-0 items-center gap-1.5"><span class="truncate">{node.name}</span><svg aria-hidden="true" class="h-3.5 w-3.5 shrink-0 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7v1" /></svg></span>
-        </InfoTooltip>}
+        </div> : <div class="flex min-w-0 items-center gap-1.5">
+          <span class={`min-w-0 truncate font-medium ${node.online ? "text-gray-900" : "text-gray-500"}`} data-node-name>{node.name}</span>
+          <InfoTooltip label={t("cluster.nodeDetailsFor", node.name)} class="shrink-0 p-0.5 text-gray-400 hover:text-indigo-600" content={<NodeMetadataDetails node={node} />}>
+            <svg aria-hidden="true" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7v1" /></svg>
+          </InfoTooltip>
+        </div>}
         <div class="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
           <span class={clusterNodeRole(node.uuid, view.cluster) === "master" ? "font-medium text-indigo-600" : "text-gray-500"}>{t(`cluster.role.${clusterNodeRole(node.uuid, view.cluster)}`)}</span>
           {node.local && <>
@@ -1000,34 +1002,14 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
         </div>}
       </td>
       <td data-label={t("cluster.colStatus")} class="py-4">
-        <InfoTooltip label={t("cluster.nodeStatusFor", node.name)} content={<>
-          <p class="font-semibold text-gray-900">{t(healthKey(node.health, node.online))}</p>
-          {lastSeen && !Number.isNaN(lastSeen.getTime()) && <p class="mt-2">{t("cluster.lastSeen", lastSeen.toLocaleString())}</p>}
-          {node.last_error && <p class="mt-2 whitespace-pre-wrap break-words text-red-600">{node.last_error}</p>}
-          {st && !st.licensed && <p class="mt-2 text-amber-700">{t("cluster.nodeQuotaExceeded")}</p>}
-        </>}>
-          <span class="inline-flex items-center gap-1.5 whitespace-nowrap"><span class={`h-1.5 w-1.5 shrink-0 rounded-full ${healthDotClass[tone]}`} /><span class={node.online ? "text-gray-700" : "text-gray-400"}>{t(healthKey(node.health, node.online))}</span>{node.last_error && <span class="text-red-500" aria-hidden="true">!</span>}</span>
-        </InfoTooltip>
+        <span class="inline-flex items-center gap-1.5 whitespace-nowrap"><span class={`h-1.5 w-1.5 shrink-0 rounded-full ${healthDotClass[tone]}`} /><span class={node.online ? "text-gray-700" : "text-gray-400"}>{t(healthKey(node.health, node.online))}</span>{node.last_error && <span class="text-red-500" aria-hidden="true">!</span>}</span>
         {stateLabel && <div class="mt-1 text-xs text-amber-700">{stateLabel}</div>}
         {st && !st.licensed && <div class="mt-1 text-[11px] text-amber-700">{t("cluster.nodeQuotaExceeded")}</div>}
         {st && st.inflight > 0 && <div class="mt-1 text-[11px] text-indigo-600">{t("cluster.inflightCount", st.inflight)}</div>}
       </td>
       <td data-label={t("cluster.colGPU")} class={`py-4 ${muted}`}>
         {gpus.length > 0 ? <>
-          <InfoTooltip label={t("cluster.gpuDetailsFor", node.name)} class="w-full" content={<>
-            <p class="mb-2 font-semibold text-gray-900">{t("cluster.colGPU")}</p>
-            <div class="space-y-3">{gpus.map(gpu => <div key={gpu.index}>
-              <p class="break-words font-medium">#{gpu.index} · {gpu.name}</p>
-              <p>{t("cluster.memoryFreeShort", formatMemoryPair(memory.kind === "unified" ? memory.free : gpu.usage_known ? Math.max(0, gpu.vram_total - gpu.vram_used) : null, memory.kind === "unified" ? memory.total : gpu.vram_total))}</p>
-              {gpu.util != null && <p>{t("cluster.gpuUtil", Math.round(gpu.util))}</p>}
-              {gpu.temperature != null && <p>{t("cluster.gpuTemperature", gpu.temperature)}</p>}
-              {gpu.power_draw != null && <p>{t("cluster.gpuPower", gpu.power_draw)}</p>}
-              {gpu.throttled && <p class="text-amber-700">{t("cluster.gpuThrottled")}</p>}
-            </div>)}</div>
-            {memory.kind === "unified" && <p class="mt-3 text-gray-500">{t("cluster.unifiedMemoryHint")}</p>}
-          </>}>
-            <span class="block break-words font-medium" data-node-gpu-name>{gpuNames.join(" · ")}</span>
-          </InfoTooltip>
+          <span class="block break-words font-medium" data-node-gpu-name>{gpuNames.join(" · ")}</span>
           <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500" data-node-gpu-memory>
             <span>{t("cluster.memoryFreeShort", formatMemoryPair(memory.free, memory.total))}</span>
             {utilization !== null && <span>{t("cluster.gpuUtil", utilization)}</span>}
@@ -1040,10 +1022,7 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
         </> : <span class="text-gray-400">{st ? t("dash.clusterNoGPU") : "—"}</span>}
       </td>
       <td data-label={t("cluster.colModels")} class={`py-4 ${muted}`}>
-        {st ? <InfoTooltip label={t("cluster.nodeModelsFor", node.name)} class="text-gray-700 underline decoration-gray-300 decoration-dotted underline-offset-4 hover:text-indigo-600" content={<>
-          <p class="font-semibold text-gray-900">{t("cluster.modelsSummary", loaded.length, st.models.length)}</p>
-          {loaded.length ? <ul class="mt-2 space-y-2">{loaded.map(model => <li key={model.id} class="break-words"><p>{model.repo || model.id}</p>{model.repo && <p class="text-[11px] text-gray-400">{model.id}</p>}</li>)}</ul> : <p class="mt-2 text-gray-500">{t("cluster.noLoadedModels")}</p>}
-        </>}><span class="font-medium tabular-nums">{loaded.length}</span><span class="ml-1 text-xs text-gray-400">/ {st.models.length}</span></InfoTooltip> : "—"}
+        {st ? <><span class="font-medium tabular-nums">{loaded.length}</span><span class="ml-1 text-xs text-gray-400">/ {st.models.length}</span></> : "—"}
       </td>
       <td data-label={t("cluster.colActions")} class="py-3 text-right">
         {canManageNodeState(view, node) ? (
@@ -1072,10 +1051,16 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
 }
 
 function NodeMetadataDetails({ node }: { node: ClusterNodeView }) {
-  const st = node.status, ram = nodeMemory(node, true);
+  const st = node.status, ram = nodeMemory(node, true), memory = nodeMemory(node);
+  const gpus = st?.gpus ?? [], loaded = (st?.models ?? []).filter(model => model.loaded);
+  const lastSeen = node.last_seen ? new Date(node.last_seen) : null;
   return <>
     <p class="mb-3 break-words font-semibold text-gray-900">{node.name}</p>
+    {lastSeen && !Number.isNaN(lastSeen.getTime()) && <p class="mb-2 text-gray-500">{t("cluster.lastSeen", lastSeen.toLocaleString())}</p>}
+    {node.last_error && <p class="mb-2 whitespace-pre-wrap break-words text-red-600">{node.last_error}</p>}
+    {st && !st.licensed && <p class="mb-2 text-amber-700">{t("cluster.nodeQuotaExceeded")}</p>}
     <dl class="space-y-2">
+      <NodeDetail label={t("cluster.colStatus")} value={t(healthKey(node.health, node.online))} />
       <NodeDetail label={t("cluster.nodeID")} value={node.uuid} />
       {st?.hostname && !isNoiseHostname(st.hostname, node.name) && <NodeDetail label={t("cluster.hostname")} value={st.hostname} />}
       {(node.addr || node.static_address) && <NodeDetail label={t("cluster.colAddress")} value={node.addr || node.static_address || ""} />}
@@ -1092,6 +1077,23 @@ function NodeMetadataDetails({ node }: { node: ClusterNodeView }) {
         {(st.jobs.pulling.length > 0 || st.jobs.converting.length > 0) && <NodeDetail label={t("cluster.backgroundJobs")} value={[...st.jobs.pulling, ...st.jobs.converting].join("\n")} />}
       </>}
     </dl>
+    {gpus.length > 0 && <section class="mt-3 border-t border-gray-100 pt-3">
+      <p class="mb-2 font-semibold text-gray-900">{t("cluster.colGPU")}</p>
+      <div class="space-y-3">{gpus.map(gpu => <div key={gpu.index}>
+        <p class="break-words font-medium">#{gpu.index} · {gpu.name}</p>
+        <p>{t("cluster.memoryFreeShort", formatMemoryPair(memory.kind === "unified" ? memory.free : gpu.usage_known ? Math.max(0, gpu.vram_total - gpu.vram_used) : null, memory.kind === "unified" ? memory.total : gpu.vram_total))}</p>
+        {gpu.util != null && <p>{t("cluster.gpuUtil", Math.round(gpu.util))}</p>}
+        {gpu.temperature != null && <p>{t("cluster.gpuTemperature", gpu.temperature)}</p>}
+        {gpu.power_draw != null && <p>{t("cluster.gpuPower", gpu.power_draw)}</p>}
+        {gpu.throttled && <p class="text-amber-700">{t("cluster.gpuThrottled")}</p>}
+      </div>)}</div>
+      {memory.kind === "unified" && <p class="mt-3 text-gray-500">{t("cluster.unifiedMemoryHint")}</p>}
+      {!node.online && <p class="mt-2 text-gray-500">{t("cluster.lastReportedResources")}</p>}
+    </section>}
+    {st && <section class="mt-3 border-t border-gray-100 pt-3">
+      <p class="font-semibold text-gray-900">{t("cluster.modelsSummary", loaded.length, st.models.length)}</p>
+      {loaded.length ? <ul class="mt-2 space-y-2">{loaded.map(model => <li key={model.id} class="break-words"><p>{model.repo || model.id}</p>{model.repo && <p class="text-[11px] text-gray-400">{model.id}</p>}</li>)}</ul> : <p class="mt-2 text-gray-500">{t("cluster.noLoadedModels")}</p>}
+    </section>}
   </>;
 }
 
