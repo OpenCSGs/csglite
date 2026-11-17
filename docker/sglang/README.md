@@ -15,6 +15,15 @@ Docker 部署面向 Linux NVIDIA 和 AMD 主机，macOS 不在本方案的运行
 一定满足镜像全部算子的要求。默认基础镜像固定为
 `lmsysorg/sglang:v0.5.19-cu129-runtime`，不使用 CUDA 13。
 
+默认使用 `Dockerfile.cuda` 构建文本推理专用镜像：按已安装包的依赖图保留 SGLang
+默认运行依赖、CUDA 12 和预编译算子，移除仅由 diffusion/all/dev extras 引入的包，
+删除源码仓库、文档和下载缓存，最后从清理后的文件系统重新打包，避免旧镜像层
+继续携带被删除的内容。保留 NVCC、GCC、Ninja 和头文件供 Triton、FlashInfer、
+DeepGEMM 首次推理 JIT 使用；不承诺图像/视频生成运行时。
+移除与保留的 Python 包版本清单在 `/opt/csglite/runtime-packages.json`。
+预编译 kernel 缓存保存在 `/opt/csglite/runtime-cache`，启动时补齐到持久化缓存，
+保留用户已有文件。精简包的实际 GPU 推理仍需 NVIDIA 主机验证。
+
 从仓库根目录执行；构建机需要 Go（版本满足 go.mod）、Docker BuildKit，以及访问
 Go 模块和基础镜像的网络。外网访问遵循仓库规则先 `source ~/.myshrc`。
 
@@ -51,6 +60,7 @@ BASE_IMAGE=<国内仓库>/sglang:<固定的CUDA12标签或digest> \
 
 ```bash
 BASE_IMAGE=<已验证的ROCm-SGLang镜像或digest> \
+  DOCKERFILE=docker/sglang/Dockerfile \
   IMAGE_TAG=csglite-sglang:dev-rocm PLATFORM=linux/amd64 \
   bash docker/sglang/build.sh
 export CSGLITE_SGLANG_IMAGE=csglite-sglang:dev-rocm

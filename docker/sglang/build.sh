@@ -11,7 +11,7 @@ esac
 : "${BASE_IMAGE:=lmsysorg/sglang:v0.5.19-cu129-runtime}"
 : "${IMAGE_TAG:=csglite-sglang:dev-cu129}"
 : "${CSGHUB_LITE_VERSION:=dev}"
-: "${DOCKERFILE:=docker/sglang/Dockerfile}"
+: "${DOCKERFILE:=docker/sglang/Dockerfile.cuda}"
 
 build_root="${CSGHUB_LITE_BUILD_ROOT:-${HOME}/.csghub-lite/tmp/sglang-build}"
 mkdir -p "${build_root}"

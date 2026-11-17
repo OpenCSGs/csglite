@@ -40,6 +40,24 @@ class LauncherTests(unittest.TestCase):
             launcher.configure_provider(self.home, "http://localhost/v1", "model")
         self.assertEqual(path.read_text(), "broken json")
 
+    def test_bundled_kernels_preserve_user_cache_and_symlinks(self):
+        bundle = self.home / "bundle"
+        source = bundle / "huggingface"
+        source.mkdir(parents=True)
+        (source / "kernel").write_text("bundled kernel")
+        (source / "existing").write_text("bundled old value")
+        (source / "alias").symlink_to("kernel")
+        target = self.home / "cache" / "huggingface"
+        target.mkdir(parents=True)
+        (target / "existing").write_text("user value")
+        with patch.dict(os.environ, {"HF_HOME": str(target)}):
+            launcher.seed_runtime_cache(bundle, self.home)
+            launcher.seed_runtime_cache(bundle, self.home)
+        self.assertEqual((target / "kernel").read_text(), "bundled kernel")
+        self.assertEqual((target / "existing").read_text(), "user value")
+        self.assertTrue((target / "alias").is_symlink())
+        self.assertEqual((target / "alias").read_text(), "bundled kernel")
+
     def test_model_validation_and_arguments(self):
         with patch.dict(os.environ, {"SGLANG_MODEL_PATH": str(self.home),
                                      "SGLANG_EXTRA_ARGS": "[]"}, clear=True):

@@ -6,6 +6,7 @@ is confined to its optional container, not CSGLite's shared Python runtime.
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -62,6 +63,26 @@ def configure_provider(home, base_url, model):
 
 def base_url():
     return os.getenv("SGLANG_BASE_URL", "http://127.0.0.1:30000/v1").rstrip("/")
+
+
+def seed_runtime_cache(bundle, home):
+    # Keep bundled AOT kernels available without overwriting a user's cache.
+    for name in ("huggingface", "sglang"):
+        source = bundle / name
+        target = Path(os.getenv("HF_HOME", str(home / "cache" / name))) if name == "huggingface" else home / "cache" / name
+        if not source.is_dir():
+            continue
+        for path in source.rglob("*"):
+            destination = target / path.relative_to(source)
+            if path.is_symlink():
+                if not destination.exists() and not destination.is_symlink():
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.symlink_to(os.readlink(path))
+            elif path.is_dir():
+                destination.mkdir(parents=True, exist_ok=True)
+            elif not destination.exists() and not destination.is_symlink():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, destination)
 
 
 def healthy(url, authenticated=False):
@@ -136,6 +157,8 @@ def main():
         raise ValueError("SGLANG_MODEL_NAME must not be empty")
     external = bool(os.getenv("SGLANG_BASE_URL"))
     args = None if external else launch_args()
+    if not external:
+        seed_runtime_cache(Path("/opt/csglite/runtime-cache"), home)
     configure_provider(home, base_url(), model)
     signal.signal(signal.SIGTERM, stop_requested)
     signal.signal(signal.SIGINT, stop_requested)
