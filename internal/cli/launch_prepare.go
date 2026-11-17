@@ -285,6 +285,7 @@ func prepareClaudeLaunch(target launchTarget, serverURL, modelID string, userArg
 		"CLAUDE_API_BASE_URL":            serverURL,
 		"CLAUDE_API_KEY":                 "csghub-lite",
 		"CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+		"CLAUDE_CODE_AUTO_MODE_SERVER":   "0",
 	}, "ANTHROPIC_AUTH_TOKEN")
 	return preparedLaunch{Binary: binary, Args: args, Env: env}, nil
 }
@@ -550,6 +551,7 @@ func claudeLaunchSettingsJSON(serverURL string) string {
 			"CLAUDE_API_BASE_URL":            serverURL,
 			"CLAUDE_API_KEY":                 "csghub-lite",
 			"CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+			"CLAUDE_CODE_AUTO_MODE_SERVER":   "0",
 		},
 		"permissions": map[string]string{
 			"defaultMode": "acceptEdits",

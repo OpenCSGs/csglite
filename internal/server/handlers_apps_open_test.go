@@ -1515,6 +1515,7 @@ func TestPrepareAIAppShellLaunchSetsTerminalEnvForClaudeCode(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "old-token")
+	t.Setenv("CLAUDE_CODE_AUTO_MODE_SERVER", "1")
 
 	s := newTestServerWithConfig(t, &config.Config{
 		ListenAddr: ":11435",
@@ -1534,12 +1535,13 @@ func TestPrepareAIAppShellLaunchSetsTerminalEnvForClaudeCode(t *testing.T) {
 	}
 
 	for key, want := range map[string]string{
-		"TERM":           "xterm-256color",
-		"COLORTERM":      "truecolor",
-		"FORCE_COLOR":    "1",
-		"CLICOLOR":       "1",
-		"TERM_PROGRAM":   "csghub-lite",
-		"CLAUDE_API_KEY": "csghub-lite",
+		"TERM":                         "xterm-256color",
+		"COLORTERM":                    "truecolor",
+		"FORCE_COLOR":                  "1",
+		"CLICOLOR":                     "1",
+		"TERM_PROGRAM":                 "csghub-lite",
+		"CLAUDE_API_KEY":               "csghub-lite",
+		"CLAUDE_CODE_AUTO_MODE_SERVER": "0",
 	} {
 		if got := envValue(prepared.Env, key); got != want {
 			t.Fatalf("%s = %q, want %q", key, got, want)
@@ -1567,6 +1569,9 @@ func TestPrepareAIAppShellLaunchSetsTerminalEnvForClaudeCode(t *testing.T) {
 	}
 	if payload.Permissions.DefaultMode != "acceptEdits" {
 		t.Fatalf("permissions.defaultMode = %q, want acceptEdits", payload.Permissions.DefaultMode)
+	}
+	if payload.Env["CLAUDE_CODE_AUTO_MODE_SERVER"] != "0" {
+		t.Fatalf("CLAUDE_CODE_AUTO_MODE_SERVER = %q, want 0", payload.Env["CLAUDE_CODE_AUTO_MODE_SERVER"])
 	}
 	if _, ok := payload.Env["ANTHROPIC_AUTH_TOKEN"]; ok {
 		t.Fatalf("ANTHROPIC_AUTH_TOKEN should not be included in settings json")

@@ -21,6 +21,7 @@ var managedEnvKeys = []string{
 	"CLAUDE_API_BASE_URL",
 	"CLAUDE_API_KEY",
 	"CLAUDE_CODE_ATTRIBUTION_HEADER",
+	"CLAUDE_CODE_AUTO_MODE_SERVER",
 }
 
 // SyncConfig persists Claude Code settings to ~/.claude/settings.json
@@ -43,6 +44,9 @@ func SyncConfig(serverURL, apiKey, modelID string) error {
 		env["CLAUDE_API_BASE_URL"] = strings.TrimRight(serverURL, "/")
 		env["CLAUDE_API_KEY"] = strings.TrimSpace(apiKey)
 		env["CLAUDE_CODE_ATTRIBUTION_HEADER"] = "0"
+		// Local and translated model APIs do not provide Anthropic's server-side
+		// classifier. Keep auto mode's client-side checks without the billing notice.
+		env["CLAUDE_CODE_AUTO_MODE_SERVER"] = "0"
 	}); err != nil {
 		return err
 	}

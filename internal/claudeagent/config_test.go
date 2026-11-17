@@ -66,6 +66,7 @@ func TestRestoreNativeConfigDataPreservesUnrelatedChanges(t *testing.T) {
     "CLAUDE_API_BASE_URL": "http://127.0.0.1:11435/providers/csghub",
     "CLAUDE_API_KEY": "csghub-lite",
     "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+    "CLAUDE_CODE_AUTO_MODE_SERVER": "0",
     "OTHER_VAR": "new"
   }
 }`)
@@ -91,10 +92,47 @@ func TestRestoreNativeConfigDataPreservesUnrelatedChanges(t *testing.T) {
 	if env["ANTHROPIC_API_KEY"] != "native-key" || env["ANTHROPIC_AUTH_TOKEN"] != "native-token" || env["OTHER_VAR"] != "new" {
 		t.Fatalf("restored env = %#v", env)
 	}
-	for _, key := range []string{"ANTHROPIC_BASE_URL", "CLAUDE_API_BASE_URL", "CLAUDE_API_KEY", "CLAUDE_CODE_ATTRIBUTION_HEADER"} {
+	for _, key := range []string{"ANTHROPIC_BASE_URL", "CLAUDE_API_BASE_URL", "CLAUDE_API_KEY", "CLAUDE_CODE_ATTRIBUTION_HEADER", "CLAUDE_CODE_AUTO_MODE_SERVER"} {
 		if _, ok := env[key]; ok {
 			t.Fatalf("managed env %q was not removed: %#v", key, env)
 		}
+	}
+}
+
+func TestRestoreNativeConfigDataRestoresAutoModeServer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"env":{"CLAUDE_CODE_AUTO_MODE_SERVER":"1"}}`)
+	if err := os.WriteFile(settingsPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncConfig("http://127.0.0.1:11436", ManagedAPIKey, "local-model"); err != nil {
+		t.Fatal(err)
+	}
+	current, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreNativeConfigData(current, original, true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Env["CLAUDE_CODE_AUTO_MODE_SERVER"] != "1" {
+		t.Fatalf("original server-side classifier setting was not restored: %s", data)
 	}
 }
 
@@ -136,6 +174,9 @@ func TestSyncConfigWritesEnvSettings(t *testing.T) {
 	}
 	if settings.Env["CLAUDE_CODE_ATTRIBUTION_HEADER"] != "0" {
 		t.Fatalf("CLAUDE_CODE_ATTRIBUTION_HEADER = %q, want 0", settings.Env["CLAUDE_CODE_ATTRIBUTION_HEADER"])
+	}
+	if settings.Env["CLAUDE_CODE_AUTO_MODE_SERVER"] != "0" {
+		t.Fatalf("CLAUDE_CODE_AUTO_MODE_SERVER = %q, want 0", settings.Env["CLAUDE_CODE_AUTO_MODE_SERVER"])
 	}
 	if _, ok := settings.Env["ANTHROPIC_AUTH_TOKEN"]; ok {
 		t.Fatalf("ANTHROPIC_AUTH_TOKEN should not be written with ANTHROPIC_API_KEY")
