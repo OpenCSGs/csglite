@@ -76,7 +76,7 @@ func TestCodexProviderRestorePreservesUnrelatedConfigChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.switchAIAppProvider(context.Background(), "codex", apps.ProviderModeNative, "", ""); err != nil {
+	if err := s.switchAIAppProvider(context.Background(), "codex", apps.ProviderModeNative, "", "", false); err != nil {
 		t.Fatalf("restore native provider: %v", err)
 	}
 	data, err = os.ReadFile(configPath)
@@ -148,7 +148,7 @@ func TestClaudeProviderDriftIgnoresUnrelatedSettingsChanges(t *testing.T) {
 	if !supported || status.Drifted {
 		t.Fatalf("provider status = %#v, supported=%v", status, supported)
 	}
-	if err := s.switchAIAppProvider(context.Background(), "claude-code", apps.ProviderModeOpenCSG, "Qwen/Qwen3.5-2B", ""); err != nil {
+	if err := s.switchAIAppProvider(context.Background(), "claude-code", apps.ProviderModeOpenCSG, "Qwen/Qwen3.5-2B", "", false); err != nil {
 		t.Fatalf("switch OpenCSG model: %v", err)
 	}
 	data, err = os.ReadFile(settingsPath)
@@ -212,7 +212,7 @@ func TestClaudeProviderRestorePreservesUnrelatedConfigChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.switchAIAppProvider(context.Background(), "claude-code", apps.ProviderModeNative, "", ""); err != nil {
+	if err := s.switchAIAppProvider(context.Background(), "claude-code", apps.ProviderModeNative, "", "", false); err != nil {
 		t.Fatalf("restore native provider: %v", err)
 	}
 	data, err = os.ReadFile(settingsPath)
@@ -232,6 +232,65 @@ func TestClaudeProviderRestorePreservesUnrelatedConfigChanges(t *testing.T) {
 	env, _ = settings["env"].(map[string]interface{})
 	if env["ANTHROPIC_API_KEY"] != "native-key" || env["ANTHROPIC_AUTH_TOKEN"] != "native-token" || env["OTHER_VAR"] != "new" {
 		t.Fatalf("restored env = %#v", env)
+	}
+}
+
+func TestClaudeProviderForceRestoreOverwritesDriftedConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{"model":"native-model","env":{"ANTHROPIC_API_KEY":"native-key"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newTestServerWithConfig(t, &config.Config{
+		ListenAddr: ":11435",
+		ModelDir:   filepath.Join(home, ".csghub-lite", "models"),
+	})
+	enableOpenCSGProviderForTest(t, s, "claude-code", func() error {
+		return claudeagent.SyncConfig(s.localBaseURL(), claudeagent.ManagedAPIKey, "managed-model")
+	})
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := settings["env"].(map[string]interface{})
+	env["ANTHROPIC_API_KEY"] = "user-key"
+	env["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
+	data, err = json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsPath, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.switchAIAppProvider(context.Background(), "claude-code", apps.ProviderModeNative, "", "", false); err == nil {
+		t.Fatal("switch without force should reject the drifted config")
+	}
+	if err := s.switchAIAppProvider(context.Background(), "claude-code", apps.ProviderModeNative, "", "", true); err != nil {
+		t.Fatalf("forced switch: %v", err)
+	}
+	data, err = os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings = nil
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	env, _ = settings["env"].(map[string]interface{})
+	if settings["model"] != "native-model" || env["ANTHROPIC_API_KEY"] != "native-key" {
+		t.Fatalf("forced restore kept drifted config: %#v", settings)
 	}
 }
 
@@ -1173,7 +1232,7 @@ func TestOpenAIAppShellURLRemembersRequestedModel(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	s := newTestServerWithConfig(t, cfg)
-	if err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "Qwen/Qwen2.5-Coder-1.5B", ""); err != nil {
+	if err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "Qwen/Qwen2.5-Coder-1.5B", "", false); err != nil {
 		t.Fatalf("switchAIAppProvider returned error: %v", err)
 	}
 
@@ -1248,7 +1307,7 @@ func TestOpenAIAppShellURLUsesRememberedModelWhenRequestOmitted(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	s := newTestServerWithConfig(t, cfg)
-	if err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "", ""); err != nil {
+	if err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "", "", false); err != nil {
 		t.Fatalf("switchAIAppProvider returned error: %v", err)
 	}
 
@@ -1415,7 +1474,7 @@ func TestOpenAIAppShellURLMissingCloudTokenShowsSettingsHint(t *testing.T) {
 
 	s := newTestServerWithConfig(t, cfg)
 
-	err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "afrideva/Qwen2-0.5B-Instruct-GGUF:fh23aijhzx8g", "")
+	err := s.switchAIAppProvider(context.Background(), "claude-code", "opencsg", "afrideva/Qwen2-0.5B-Instruct-GGUF:fh23aijhzx8g", "", false)
 	if err == nil {
 		t.Fatal("switchAIAppProvider returned nil error, want settings hint")
 	}
@@ -1430,7 +1489,7 @@ func TestOpenAIAppShellURLWithoutLocalModelsShowsOpenCSGLoginHint(t *testing.T) 
 		ListenAddr: ":11435",
 	})
 
-	err := s.switchAIAppProvider(context.Background(), "codex", "opencsg", "", "")
+	err := s.switchAIAppProvider(context.Background(), "codex", "opencsg", "", "", false)
 	if err == nil {
 		t.Fatal("switchAIAppProvider returned nil error, want OpenCSG login hint")
 	}

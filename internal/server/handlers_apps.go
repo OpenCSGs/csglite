@@ -16,7 +16,7 @@ import (
 const (
 	aiAppRuntimeStatusRunning = "running"
 	aiAppRuntimeStatusStopped = "stopped"
-	aiAppRuntimeStatusTimeout  = 2 * time.Second
+	aiAppRuntimeStatusTimeout = 2 * time.Second
 
 	// aiAppRuntimeCacheTTL bounds how often the AI Apps poll re-probes runtime
 	// liveness (TCP dial for csgclaw/dsh, dashboard fetch for openclaw,
@@ -188,7 +188,7 @@ func (s *Server) handleAppModelSave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	} else if supported && status.Mode == apps.ProviderModeOpenCSG {
-		if err := s.switchAIAppProvider(r.Context(), appID, apps.ProviderModeOpenCSG, req.ModelID, req.Source); err != nil {
+		if err := s.switchAIAppProvider(r.Context(), appID, apps.ProviderModeOpenCSG, req.ModelID, req.Source, false); err != nil {
 			log.Printf("AI APP %s: OpenCSG model update failed: %v", appID, err)
 			writeError(w, http.StatusConflict, err.Error())
 			return
