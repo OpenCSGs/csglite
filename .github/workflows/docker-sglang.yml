@@ -23,8 +23,11 @@ jobs:
           CSGLITE_SGLANG_IMAGE: csglite-sglang:check
           RENDER_GID: '109'
           CSGHUB_LITE_CLUSTER_ADVERTISE_HOST: '192.0.2.10'
+          CSGHUB_LITE_CLUSTER_GATEWAY_URL: 'https://gateway.example.com:8080'
+          CSGHUB_LITE_CLUSTER_JOIN_TOKEN: 'compose-validation-only'
         run: |
           for platform in cuda rocm; do
             docker compose -f docker/sglang/compose.${platform}.yaml config --quiet
             docker compose -f docker/sglang/compose.${platform}.yaml -f docker/sglang/compose.cluster.yaml config --quiet
+            docker compose -f docker/sglang/compose.${platform}.yaml -f docker/sglang/compose.worker.yaml config --quiet
           done

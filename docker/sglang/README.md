@@ -29,6 +29,23 @@ IMAGE_TAG=opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v
 
 ## NVIDIA 验证镜像
 
+当前原生镜像：
+`opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-native`。
+
+| 发布信息 | 实测值 |
+| --- | --- |
+| 固定标签 | `sglang-v0.5.19-cu129-native-61fed34` |
+| 内置 Lite | `1.0.6-sglang-native.release.g61fed34`，已嵌入完整 UI |
+| 下载体积（registry layer 合计） | 13,329,016,869 字节，约 13.33GB |
+| 镜像索引 digest | `sha256:94626b95a4fc903eab661d77fa9bc1bf658e4f4875542df804aad24d6d589d8a` |
+| linux/amd64 digest | `sha256:7063697818f923c278a5a03f1fe57ad24cbee6ba4b5e33339e71641427cc619b` |
+
+默认无固定模型启动、完整 UI、官方 installer 更新且不降级、禁用 llama.cpp 安装、
+正常退出均已验证。A100 上完成 Master 跨节点首次加载流式工具调用、托管部署
+自动选择 SGLang、实际参数上报，以及部署别名的工具结果多轮回传。匿名拉取已验证。
+
+### 历史运行时底座
+
 历史运行时底座标签：`opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-min`。
 仅支持 `linux/amd64`；包含 CSGLite、SGLang 0.5.19、PyTorch 2.13.0+cu129 和 CUDA 12.9。
 镜像不包含模型权重。下表记录历史镜像的体积和 digest；native 镜像使用独立标签。
