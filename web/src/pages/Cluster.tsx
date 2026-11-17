@@ -1306,6 +1306,11 @@ function ModelsSection({ view }: { view: ClusterView }) {
               const syncKey = `${label}::all`;
               const publication = modelPublication(row, view, publications);
               const state = modelRowState(row);
+              // The status badge already conveys a disconnected worker. Keep
+              // actionable errors, but omit the duplicate transport message.
+              const deploymentError = deployment?.status.error;
+              const offlineError = deployment?.status.phase === "unreachable"
+                && ["public cluster node is offline", "node is offline"].includes(deploymentError?.trim() || "");
               const kind = modelInstanceCategory(row);
               const progress = deployment ? deploymentProgress(deployment.status) : null;
               return <tr key={row.key} data-model-instance={row.key} data-deployment-id={deployment?.id} class="border-b border-gray-100 align-top last:border-0 hover:bg-gray-50/60">
@@ -1326,7 +1331,7 @@ function ModelsSection({ view }: { view: ClusterView }) {
                     </div>
                     <p class="h-4 truncate text-gray-400" title={deployment.status.detail}>{deployment.status.detail}</p>
                   </div>}
-                  {deployment?.status.error && <DeploymentMessage message={deployment.status.error} class="mt-2 text-xs text-red-600" />}
+                  {deploymentError && !offlineError && <DeploymentMessage message={deploymentError} class="mt-2 text-xs text-red-600" />}
                   {deployment?.status.detail && !deployment.status.error && deployment.status.phase !== "downloading" && <DeploymentMessage message={deployment.status.detail} class="mt-2 text-xs text-gray-400" />}
                   {node.online && sync && <div class="mt-2"><SyncProgress sync={sync} /></div>}
                 </td>
