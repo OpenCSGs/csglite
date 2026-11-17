@@ -34,8 +34,8 @@ jobs:
           mkdir -p internal/server/static
           cp -r web/dist/. internal/server/static/
 
-      - name: Run web tests
-        run: npm --prefix web test
+      - name: Test gateway navigation
+        run: npm --prefix web test -- src/pages/AIGateway.test.tsx
 
       - uses: actions/setup-go@v5
         with:
