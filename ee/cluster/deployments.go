@@ -226,7 +226,9 @@ func validateDeployment(d DeploymentSpec) error {
 	if d.Kind != "chat" && d.Kind != "embedding" {
 		return errors.New("kind must be chat or embedding")
 	}
-	if d.NumCtx < 512 || d.NumCtx > 131072 || d.NumParallel < 1 || d.NumParallel > 16 || d.NGPULayers < -1 || d.NGPULayers > 999 {
+	// Explicit context sizes follow model/runtime support, as local model settings
+	// do. A fixed 128K ceiling incorrectly rejects native 256K and longer models.
+	if d.NumCtx < 512 || d.NumParallel < 1 || d.NumParallel > 16 || d.NGPULayers < -1 || d.NGPULayers > 999 {
 		return errors.New("invalid deployment runtime limits")
 	}
 	if len(d.Quant) > 32 || strings.ContainsAny(d.Quant, "/\\\x00\r\n ") {

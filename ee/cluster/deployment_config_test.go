@@ -123,7 +123,11 @@ func TestDeploymentConfigRejectsInvalidOrConflictingUpdates(t *testing.T) {
 		{"null", `{"generation":1,"config":null}`, 400, nil},
 		{"mixed", `{"generation":1,"desired":"running","config":{"num_ctx":8192}}`, 400, nil},
 		{"invalid context", `{"generation":1,"config":{"num_ctx":0}}`, 400, nil},
+		{"short context", `{"generation":1,"config":{"num_ctx":511}}`, 400, nil},
 		{"invalid parallel", `{"generation":1,"config":{"num_parallel":17}}`, 400, nil},
+		{"unsupported image runtime", `{"generation":1,"config":{"num_ctx":262144}}`, 400, func(d *Deployment) { d.Kind = "image" }},
+		{"unsupported ASR runtime", `{"generation":1,"config":{"num_ctx":262144}}`, 400, func(d *Deployment) { d.Kind = "asr" }},
+		{"unsupported TTS runtime", `{"generation":1,"config":{"num_ctx":262144}}`, 400, func(d *Deployment) { d.Kind = "tts" }},
 		{"invalid layers", `{"generation":1,"config":{"n_gpu_layers":-2}}`, 400, nil},
 		{"invalid quant", `{"generation":1,"config":{"quant":"../q4"}}`, 400, nil},
 		{"immutable node", `{"generation":1,"config":{"node_uuid":"auto"}}`, 400, nil},
@@ -225,7 +229,7 @@ func TestDeploymentEditedSettingsReachRuntimeAfterExplicitStart(t *testing.T) {
 	}
 	waitPublic(t, func() bool { current, _ := m.deployments.get(true, d.ID); return current.Status.Phase == "stopped" })
 	stopped, _ := m.deployments.get(true, d.ID)
-	ctx, parallel, layers, quant := 8192, 2, 0, "q4_k_m"
+	ctx, parallel, layers, quant := 262144, 2, 0, "q4_k_m"
 	changed, err := m.configureDeployment(d.ID, stopped.Generation, DeploymentConfigPatch{NumCtx: &ctx, NumParallel: &parallel, NGPULayers: &layers, Quant: &quant})
 	if err != nil {
 		t.Fatal(err)
@@ -246,5 +250,59 @@ func TestDeploymentEditedSettingsReachRuntimeAfterExplicitStart(t *testing.T) {
 	h.runtimeMu.Unlock()
 	if actual.NumCtx != ctx || actual.NumParallel != parallel || actual.NGPULayers != layers || actual.Quant != quant || actual.ModelID() != d.ModelID() {
 		t.Fatalf("runtime got wrong configuration: %+v", actual)
+	}
+}
+
+func TestDeploymentLongContextCreateEditAndWorkerReceipt(t *testing.T) {
+	for _, numCtx := range []int{262144, 1048576, 2097152} {
+		t.Run(fmt.Sprint(numCtx), func(t *testing.T) {
+			m, _, stopped := configTestNode(t)
+			spec := testDeployment(m).DeploymentSpec
+			spec.Name = fmt.Sprintf("Long-context-%d", numCtx)
+			spec.NumCtx = numCtx
+			body, err := json.Marshal(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			m.Admin().HandleDeploymentCreate(w, httptest.NewRequest(http.MethodPost, "/api/cluster/deployments", strings.NewReader(string(body))))
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("create: %d %s", w.Code, w.Body)
+			}
+			var created Deployment
+			if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+				t.Fatal(err)
+			}
+			if created.NumCtx != numCtx {
+				t.Fatalf("create truncated context: %d", created.NumCtx)
+			}
+			if _, err := m.receiveDeployment(m.identity.UUID, created); err != nil {
+				t.Fatalf("worker rejected created context: %v", err)
+			}
+			w = configRequest(m, stopped.ID, fmt.Sprintf(`{"generation":%d,"config":{"num_ctx":%d}}`, stopped.Generation, numCtx))
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("edit: %d %s", w.Code, w.Body)
+			}
+			var edited Deployment
+			if err := json.Unmarshal(w.Body.Bytes(), &edited); err != nil {
+				t.Fatal(err)
+			}
+			if edited.NumCtx != numCtx || edited.Desired != "stopped" {
+				t.Fatal("edit changed desired state or truncated context")
+			}
+			if _, err := m.receiveDeployment(m.identity.UUID, edited); err != nil {
+				t.Fatalf("worker rejected edited context: %v", err)
+			}
+			reopened, err := openDeploymentStore(m.opts.Dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, owned := range []bool{true, false} {
+				saved, ok := reopened.get(owned, edited.ID)
+				if !ok || saved.NumCtx != numCtx {
+					t.Fatal("context lost after reopening deployment store")
+				}
+			}
+		})
 	}
 }

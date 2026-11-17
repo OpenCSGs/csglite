@@ -21633,8 +21633,8 @@
           "num_ctx": {
             "type": "integer",
             "minimum": 512,
-            "maximum": 131072,
-            "default": 4096
+            "default": 4096,
+            "description": "Context window in tokens. No fixed 128K ceiling; the selected model, inference engine and available node memory determine the usable context."
           },
           "num_parallel": {
             "type": "integer",
@@ -21835,8 +21835,8 @@
           "num_ctx": {
             "type": "integer",
             "minimum": 512,
-            "maximum": 131072,
-            "default": 4096
+            "default": 4096,
+            "description": "Context window in tokens. No fixed 128K ceiling; the selected model, inference engine and available node memory determine the usable context."
           },
           "num_parallel": {
             "type": "integer",

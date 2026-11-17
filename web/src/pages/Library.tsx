@@ -9,7 +9,8 @@ import { DownloadProgressCell } from "../components/DownloadProgressPanel";
 import { ApiInfoDialog } from "../components/ApiInfoDialog";
 import { Pagination, DEFAULT_PAGE_SIZE, clampPage, paginate } from "../components/Pagination";
 import type { PageSize } from "../components/Pagination";
-import { isImageGenerationModel } from "../utils/imageModels";
+import { isImageModel as isImageGenerationModel, isEmbeddingModel, isASRModel, isTTSModel, modelRuntimeKind, modelContextWindowApplies as numCtxApplies } from "../utils/modelRuntime";
+import { ContextWindowField } from "../components/ContextWindowField";
 import { formatLoadStep } from "../utils/loadSteps";
 import { getDownloadTask, getDownloadTasks, clearDownloadTask, pauseDownload, startDownload, compareDownloadTasks, downloadRowTime, downloadCompletionVersion } from "../downloads";
 import type { DownloadTask } from "../downloads";
@@ -232,39 +233,15 @@ function buildLoadOptions(params: RunModelParams): LoadModelOptions {
   };
 }
 
-function isEmbeddingModel(model: Pick<ModelInfo, "pipeline_tag" | "category">): boolean {
-  const tag = (model.pipeline_tag || "").toLowerCase();
-  const category = (model.category || "").toLowerCase();
-  return category === "embedding" || tag === "feature-extraction" || tag === "sentence-similarity" || tag === "text-embedding" || tag === "embedding";
-}
-
 function isVisionModel(model: Pick<ModelInfo, "pipeline_tag" | "input_modalities">): boolean {
   const tag = (model.pipeline_tag || "").toLowerCase();
   return tag === "image-text-to-text" || Boolean(model.input_modalities?.includes("image"));
 }
 
-function isASRModel(model: Pick<ModelInfo, "pipeline_tag" | "input_modalities" | "output_modalities">): boolean {
-  const tag = (model.pipeline_tag || "").toLowerCase();
-  return tag === "automatic-speech-recognition" ||
-    Boolean(model.input_modalities?.includes("audio")) ||
-    Boolean(model.output_modalities?.includes("transcription"));
-}
-
-function isTTSModel(model: ModelInfo): boolean {
-  return (model.pipeline_tag || "").toLowerCase() === "text-to-speech" ||
-    Boolean(model.output_modalities?.includes("speech"));
-}
-
-// The image, ASR and text-to-speech runtimes ignore the context length, so the
-// run dialog neither prefills nor saves it for those models.
-function numCtxApplies(model: ModelInfo): boolean {
-  return !isImageGenerationModel(model) && !isASRModel(model) && !isTTSModel(model);
-}
-
 function buildLoadOptionsForModel(model: ModelInfo, params: RunModelParams): LoadModelOptions {
 	// These run in their own Python runtime, which takes none of the llama.cpp
 	// load options; only how long to keep the model resident applies.
-	if (isImageGenerationModel(model) || isASRModel(model) || isTTSModel(model)) {
+	if (!numCtxApplies(model)) {
 		return {
 			keep_alive: optionalText(params.keepAlive),
 		};
@@ -1410,7 +1387,9 @@ function RunParamsDialog({
           ) : (
             <>
               <div>
-                <RunNumberField
+                <ContextWindowField
+                  disabled={disabled}
+                  kind={modelRuntimeKind(model)}
                   label={t("lib.runParamNumCtx")}
                   value={params.numCtx}
                   min={1024}
