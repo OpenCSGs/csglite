@@ -1,18 +1,37 @@
 # CSGLite + SGLang Docker
 
-将 CSGLite 加入已预装 SGLang 的镜像。一个容器运行两个进程，通过容器内部
-OpenAI 接口连接。启动时注册 `SGLang` provider 及选中的模型，直接在 CSGLite
-聊天模型列表里选择 `local-sglang [SGLang]`。这条路径直读 Safetensors，不转换
-GGUF。模型库里单独下载的模型不会自动变为 SGLang 服务模型。
+本镜像在已预装 SGLang 的 Linux GPU 容器中运行 CSGLite。默认是 **native
+managed 模式**：CSGLite 自己按模型启动、停止和重启 SGLang 进程，模型通过
+Web UI 或 `/api/*`、`/v1/*` 选择并加载，不需要 `SGLANG_MODEL_PATH`，也不要求
+容器启动时就挂载固定模型。Safetensors 直接由 SGLang 服务，不转换 GGUF。
 
 Docker 部署面向 Linux NVIDIA 和 AMD 主机，macOS 不在本方案的运行支持范围内。
-构建机仍可使用 macOS，交叉编译并构建 Linux 镜像。
+构建机仍可使用 macOS 交叉编译并构建 Linux 镜像。
+
+## 版本要求
+
+native managed 镜像内置包含 SGLang 后端的 CSGLite 构建。启动默认通过官方
+installer 检查 `latest`，在内置、缓存和下载版本中保留较新的 semver 版本，避免
+公开版本暂时落后时覆盖新功能。也可设置 `CSGHUB_LITE_VERSION=vX.Y.Z` 指定版本，
+或设置 `bundled` 使用镜像内置版本。精确指定旧版本会按指定值安装；旧版 Lite
+需要搭配 legacy fixed-model 模式。
+
+本地构建需先编译并同步 UI，且必须提供可比较的 semver 构建版本：
+
+```bash
+make build-web
+CSGHUB_LITE_VERSION=1.0.6-sglang.1 \
+IMAGE_TAG=opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-native \
+./docker/sglang/build.sh
+```
+
+这里的版本用于二进制和镜像标签元数据，不会创建 Git release tag。
 
 ## NVIDIA 验证镜像
 
-标签：`opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-min`。
+历史运行时底座标签：`opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-min`。
 仅支持 `linux/amd64`；包含 CSGLite、SGLang 0.5.19、PyTorch 2.13.0+cu129 和 CUDA 12.9。
-已上传国内仓库，实际模型推理待 NVIDIA 主机验收。镜像不包含模型权重。
+镜像不包含模型权重。下表记录历史镜像的体积和 digest；native 镜像使用独立标签。
 
 | 发布信息 | 实测值 |
 | --- | --- |
@@ -26,223 +45,136 @@ Docker 部署面向 Linux NVIDIA 和 AMD 主机，macOS 不在本方案的运行
 
 移除 154 个可选 Python 包和约 3.32GB 静态数学库，保留 208 个运行/JIT 依赖包及预编译算子。
 
-从仓库根目录启动，无需本地构建或执行 pip 安装：
+**发布标签说明**：上述已发布的 `sglang-v0.5.19-cu129-min` 使用旧的
+provider/fixed-model launcher，是 SGLang/CUDA 运行时底座和历史产物；仅替换 Lite
+Go binary 不会自动让它获得 native 入口行为。native 镜像标签为
+`sglang-v0.5.19-cu129-native`，由本分支源码构建，并内置原生后端版本。
+首次迁移入口后，日常只需更新 Lite binary，无需重建
+SGLang/CUDA runtime。历史 tag 和 digest 不会被修改。
+
+## 启动（native managed，默认）
+
+从仓库根目录启动。`MODEL_DIR` 可选；不设置时容器启动后通过 UI/API 下载或挂载模型。
 
 ```bash
-export CSGLITE_SGLANG_IMAGE=opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-min
-export MODEL_DIR=/absolute/path/to/complete-hf-model
+export CSGLITE_SGLANG_IMAGE=opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-native
 docker compose -f docker/sglang/compose.cuda.yaml pull
 docker compose -f docker/sglang/compose.cuda.yaml up -d
 docker compose -f docker/sglang/compose.cuda.yaml logs -f
 ```
 
-也可直接运行镜像，替换宿主模型目录和持久化数据目录：
+容器启动后打开 `http://localhost:11435`，在模型库中选择 Safetensors 对话模型，
+推理后端选择 SGLang（或自动）。也可以加入集群，由 Master 在节点卡片中查看该
+节点的引擎能力并下发托管部署。
+
+### 通过环境变量加入公网 Master
+
+公网 Worker 使用独立的 `compose.worker.yaml`，无需 LAN advertise IP 或入站集群
+端口；管理 API 只监听容器内 `127.0.0.1:11435`，从 Master UI 管理该节点。
 
 ```bash
-docker run -d --name csglite-sglang --gpus '"device=0"' --shm-size=8g \
-  --init --restart unless-stopped --stop-timeout 30 \
-  -p 127.0.0.1:11435:11435 \
-  -v "$HOME/.csghub-lite/docker-sglang:/root/.csghub-lite" \
-  -v /absolute/path/to/complete-hf-model:/root/.csghub-lite/models/serving:ro \
-  -e SGLANG_EXTRA_ARGS='["--mem-fraction-static","0.8","--context-length","8192"]' \
-  opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-cu129-min
+export CSGHUB_LITE_CLUSTER_GATEWAY_URL=https://master.example.com:8080
+export CSGHUB_LITE_CLUSTER_JOIN_TOKEN='<集群加入凭据>'
+docker compose -f docker/sglang/compose.cuda.yaml -f docker/sglang/compose.worker.yaml up -d
 ```
 
-模型就绪后访问 `http://localhost:11435`，选择 `local-sglang [SGLang]`。
-入群配置见下方「加入现有集群」，使用现有集群环境变量。
+加入前须将已授权的 `license.key` 放入持久化数据目录。使用自签发证书时，将可信
+CA 放入同一数据目录，例如 `data/certs/gateway-ca.pem`，并设置容器内路径
+`CSGHUB_LITE_CLUSTER_TLS_CA_FILE=/root/.csghub-lite/certs/gateway-ca.pem`。
+不关闭 TLS 验证。加入凭据只通过环境传给 Lite，不写入 `config.json`。
 
-## 构建与 NVIDIA 部署（CUDA 12.9）
+容器支持以下环境变量，并复用已有 `config.json.cluster` 字段：
 
-宿主需安装兼容 CUDA 12.9 的 NVIDIA 驱动、Docker 和 NVIDIA Container Toolkit。
-按 NVIDIA 的 CUDA 12.9 兼容说明检查驱动；不能把能运行早期 CUDA 12 的驱动视为
-一定满足镜像全部算子的要求。默认基础镜像固定为
-`lmsysorg/sglang:v0.5.19-cu129-runtime`，不使用 CUDA 13。
-
-默认使用 `Dockerfile.cuda` 构建文本推理专用镜像：按已安装包的依赖图保留 SGLang
-默认运行依赖、CUDA 12 和预编译算子，移除仅由 diffusion/all/dev extras 引入的包，
-删除源码仓库、文档、下载缓存及 CUDA 数学库的静态链接副本，保留动态库；
-最后从清理后的文件系统重新打包，避免旧镜像层
-继续携带被删除的内容。保留 NVCC、GCC、Ninja 和头文件供 Triton、FlashInfer、
-DeepGEMM 首次推理 JIT 使用；不承诺图像/视频生成运行时。
-移除与保留的 Python 包版本清单在 `/opt/csglite/runtime-packages.json`。
-预编译 kernel 缓存保存在 `/opt/csglite/runtime-cache`，启动时补齐到持久化缓存，
-保留用户已有文件。精简包的实际 GPU 推理仍需 NVIDIA 主机验证。
-
-从仓库根目录执行；构建机需要 Go（版本满足 go.mod）、Docker BuildKit，以及访问
-Go 模块和基础镜像的网络。外网访问遵循仓库规则先 `source ~/.myshrc`。
-
-```bash
-bash docker/sglang/build.sh
-export MODEL_DIR=/absolute/path/to/Qwen3-0.6B
-docker compose -f docker/sglang/compose.cuda.yaml up -d
-```
-
-`MODEL_DIR` 必须是完整的本地 HF 模型目录（config.json、tokenizer、全部权重分片），
-无需在启动时联网下载模型。默认占用第 0 张 GPU、8K 上下文、显存比例 0.8，模型
-本身需支持该上下文且能放入显存。用 `GPU_ID` 选择 GPU，用 `MODEL_NAME` 设置服务名。
-页面地址为 `http://localhost:11435`。通过 Compose logs 查看加载进度。
-
-构建脚本交叉编译仓库当前源码作为内置回退版本，嵌入现有 `internal/server/static`。
-运行时按 `CSGHUB_LITE_VERSION` 选择 Lite；SGLang/CUDA 运行环境保持固定。若需要更新 UI，先执行仓库的 `make build-web`。临时构建文件放在
-`~/.csghub-lite/tmp/sglang-build`。镜像不安装 llama.cpp，也不修改基础镜像的 GPU
-依赖。用户只需拉取最终镜像；完整首次启动不执行 pip 或 apt。
-
-国内基础镜像可用 `BASE_IMAGE` 替换，必须保持所选 CUDA 12 版本和平台一致：
-
-```bash
-BASE_IMAGE=<国内仓库>/sglang:<固定的CUDA12标签或digest> \
-  IMAGE_TAG=<国内仓库>/csglite-sglang:<发布版本>-cu129 \
-  CSGHUB_LITE_VERSION=<发布版本> bash docker/sglang/build.sh
-```
-
-构建脚本只构建本地镜像，不执行 push。为复现构建，使用基础镜像 digest；
-验证镜像可先上传供实机验收，宣称 GPU 可用前必须在 NVIDIA 机器验证模型推理。
-设置 `CSGLITE_SGLANG_IMAGE` 使用发布后的地址。
-
-## Lite 启动升级与指定版本
-
-默认 `CSGHUB_LITE_VERSION=latest`：每次启动调用官方
-`https://hub.opencsg.com/csghub-lite/install.sh` 安装最新版 Lite。
-发行包下载和国内/海外源选择全部复用该安装脚本，当前已验证的 Linux Lite 安装包约 11MB。
-不升级 SGLang、PyTorch、CUDA，不执行 pip/apt，也不会安装 llama.cpp。
-
-| `CSGHUB_LITE_VERSION` | 行为 |
+| 环境变量后缀（前缀 `CSGHUB_LITE_CLUSTER_`） | 既有配置字段 |
 | --- | --- |
-| 不设置、空值或 `latest` | 每次启动运行安装脚本更新 Lite；安装失败时复用缓存版本，没有缓存则使用镜像内置版 |
-| `v0.8.55` 等发布版本 | 严格使用指定版本；本地已匹配则跳过安装并可离线复用，否则安装该版本，失败则退出 |
-| `bundled` | 使用镜像内置回退版，跳过联网安装 |
+| `MODE` | `mode`，`lan` / `worker` / `gateway` |
+| `GATEWAY_URL` | `gateway_url` |
+| `TLS_CA_FILE` | `tls_ca_file` |
+| `PUBLIC_LISTEN_ADDR` | `public_listen_addr` |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | `tls_cert_file` / `tls_key_file` |
 
-Lite 程序持久化到 `/root/.csghub-lite/bin/csghub-lite`。安装先在同一存储根目录的
-临时目录中进行，校验实际版本后替换持久化程序，失败时保留旧文件。运行中的
-Lite 也使用此路径，页面手动升级的程序文件可随数据卷保留。
-安装器的临时后台服务会在安装结束后清理，正式服务由容器启动器统一管理。
-启动器强制 `CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER=0`，包括用户传入 `1` 的情况。
+设置 `worker` 或 `gateway` 时不可同时配置 LAN `CLUSTER_SECRET`。已有 LAN 成员需
+先通过 Lite 离群，再切换拓扑；launcher 不会删除已有身份或强制切换成员关系。
+原 `compose.cluster.yaml` 保留 LAN 部署方式。
 
-日常更新 Lite 直接重启容器：
+## 参数策略
 
-```bash
-docker restart csglite-sglang
-# 使用 Compose 启动时：
-docker compose -f docker/sglang/compose.cuda.yaml restart
-```
+native 模式不再沿用固定服务的 `8192`/`0.8` 调参。默认值来自模型元数据、请求和
+目标节点可见资源：
 
-指定版本时，修改环境变量并使用同一镜像、同一数据目录重建容器：
+- **后端**：GGUF 默认 llama.cpp；原生 Safetensors 默认 SGLang（已安装/已配置时）。
+  显式选择 SGLang 而运行时不可用时直接报错，绝不静默转换 GGUF。
+- **GPU**：默认只用 1 张卡（`--tp-size 1`）。只有显式设置
+  `SGLANG_TP_SIZE` 或在 `SGLANG_EXTRA_ARGS` 中给出 `--tp-size` 才张量并行。
+  `CUDA_VISIBLE_DEVICES` 的顺序会被保留，`--base-gpu-id` 会参与显存估算。
+- **上下文**：请求值 > 每模型设置 > 模型声明的最大值（默认上限 16K），并受
+  `--context-length` 显式覆盖。SGLang 的 `--max-total-tokens` 按上下文 ×
+  `num_parallel` 计算；显式 `--max-total-tokens` 小于上下文会被拒绝。
+- **并发**：`num_parallel` 映射为 `--max-running-requests`，按
+  请求 > 每模型设置 > 全局设置 > 1 解析。
+- **显存**：`--mem-fraction-static` 由权重、KV 池（含 `head_dim`/嵌套
+  `text_config`/KV dtype 宽度）和至少 1.5GiB 或 3% 显存的运行时余量估算，
+  避免小模型占满整张 80GB 卡。该值是估算，实际占用随模型、请求和算子缓存变化。
+- **dtype**：遵循 SGLang 的 auto 规则：BF16 权重用 BF16，FP16 用 FP16，
+  FP32 权重按 FP16 运行。显式 `f16/bf16/f32` 或 `--dtype` 会保留；GGUF 量化名
+  在 SGLang 上会被明确拒绝。
+- **编译并发**：按容器 cgroup 的 CPU 和内存计算 `MAX_JOBS`（4 CPU/8GiB 容器
+  默认 2），显式 `MAX_JOBS` 永远优先。
+- **工具调用**：根据模型家族、版本和 tokenizer chat template 选择
+  `--tool-call-parser`（如 Qwen3.5/Coder、Qwen2.5/3、DeepSeek、Llama 3、
+  GLM 等），必要时选择 `--reasoning-parser`。未知/未验证或 base 模型不会宣称
+  支持函数调用；请求 tools 时会得到明确拒绝，而不是返回无法执行的文本。
 
-```bash
-export CSGHUB_LITE_VERSION=v0.8.55
-docker compose -f docker/sglang/compose.cuda.yaml up -d
-# docker run 的对应参数：-e CSGHUB_LITE_VERSION=v0.8.55
-```
+高级参数可通过 `SGLANG_EXTRA_ARGS`（JSON 字符串数组，支持
+`["--flag","value"]` 和 `["--flag=value"]`）覆盖，但 `--model-path`、`--host`、
+`--port`、`--served-model-name`、`--api-key` 等身份参数由 CSGLite 管理，不能覆盖；
+重复的管理参数会被拒绝。计划中的生效值会通过模型设置和节点状态 API 返回。
 
-旧的 `sglang-v0.5.19-cu129-min-8986bf4` 标签使用固定 Lite；首次启用本功能需切换到
-上方新标签。之后仅更新 Lite 无需重建运行时镜像。`CSGHUB_LITE_REGION=CN/INTL`
-可指定安装器的下载地区，Compose 默认 `CN`。
+## 存储与缓存
 
-## AMD / MI210
+进程临时文件、日志、HF/SGLang/FlashInfer/Triton/torch extension/CUDA/bytecode
+缓存全部位于配置的存储根目录（默认 `/root/.csghub-lite`）。容器不再要求宿主
+`/tmp` 或固定缓存路径。
 
-共用 Dockerfile，使用匹配 GPU 的 ROCm SGLang 基础镜像构建：
+## Legacy fixed-model 模式（显式 opt-in）
 
-```bash
-BASE_IMAGE=<已验证的ROCm-SGLang镜像或digest> \
-  DOCKERFILE=docker/sglang/Dockerfile \
-  IMAGE_TAG=csglite-sglang:dev-rocm PLATFORM=linux/amd64 \
-  bash docker/sglang/build.sh
-export CSGLITE_SGLANG_IMAGE=csglite-sglang:dev-rocm
-export MODEL_DIR=/absolute/path/to/model
-export VIDEO_GID=$(getent group video | cut -d: -f3)
-export RENDER_GID=$(getent group render | cut -d: -f3)
-docker compose -f docker/sglang/compose.rocm.yaml up -d
-```
-
-以上是 Linux 主机命令。宿主需兼容 AMD 驱动及 `/dev/kfd`、`/dev/dri`。
-默认关闭 AITER，以 Triton 和禁用 CUDA graph 作为保守起点，并非所有模型通用的
-性能预设。用 `SGLANG_EXTRA_ARGS` 覆盖需要的模型参数。
-
-**MI210 状态：尚未验证、未提供可宣称开箱即用的基础镜像。** 上游当前 ROCm
-构建档主要面向 gfx942/gfx950/gfx1250，不能直接用于 gfx90a（MI210）。需要获取或
-制作覆盖 gfx90a 的 PyTorch、SGLang 算子组合，并在 MI210 验证后发布专用标签。
-Compose 强制指定镜像，避免默认误用 MI300 包。没有真实 AMD GPU 时的构建成功
-不能作为 MI210 通过的依据。
-
-## 加入现有集群
-
-支持 CSGLite 现有的全部集群环境变量。容器桥接网络默认不依赖 mDNS，通过静态
-seed 找到节点。使用单独的 cluster overlay，普通部署不额外公开集群端口。
+只有需要“一个容器固定服务一个模型并通过 provider 暴露”的旧行为时，才设置：
 
 ```bash
-export CSGHUB_LITE_CLUSTER_ADVERTISE_HOST=<本机可被其他节点访问的局域网IP>
-export CSGHUB_LITE_CLUSTER_SEEDS=<已有节点IP>:11438
-# 共享密钥由部署环境注入，也可改用首次加入令牌：
-# CSGHUB_LITE_CLUSTER_SECRET / CSGHUB_LITE_CLUSTER_JOIN_TOKEN
-docker compose -f docker/sglang/compose.cuda.yaml \
-  -f docker/sglang/compose.cluster.yaml up -d
+SGLANG_LEGACY_FIXED_MODEL=1
+SGLANG_MODEL_PATH=/absolute/path/to/complete-hf-model
+SGLANG_MODEL_NAME=local-sglang
 ```
 
-将 cuda 文件替换为 rocm 文件即可使用 AMD。同机原生 CSGLite 不得
-同时占用 11438。各主机之间需双向可达 TCP 11438，集群身份持久化在数据卷中。
-本期只复用现有入群能力；SGLang provider 不因此自动成为集群调度的本地部署资源。
+此时 launcher 启动一个固定 SGLang、注册 `SGLang` provider，并设置
+`CSGHUB_LITE_SGLANG_DISABLE=1`，避免 native 模式再启动第二个进程。未设置
+`SGLANG_LEGACY_FIXED_MODEL=1` 时，launcher 只启动 CSGLite，不要求模型路径。
 
-| 环境变量 | 用途 |
-| --- | --- |
-| `CSGHUB_LITE_CLUSTER_SECRET` | 同一共享密钥自动组网（至少 4 位，建议 12 位以上） |
-| `CSGHUB_LITE_CLUSTER_NAME` | 集群显示名 |
-| `CSGHUB_LITE_CLUSTER_JOIN_TOKEN` | 尚未入群节点首次加入令牌 |
-| `CSGHUB_LITE_CLUSTER_SEEDS` | 逗号分隔的成员地址，容器推荐显式配置 |
-| `CSGHUB_LITE_CLUSTER_ADDR` | overlay 固定为 `:11438`，与发布端口一致 |
-| `CSGHUB_LITE_CLUSTER_ADVERTISE_HOST` | 对外可达的宿主 IP/主机名，overlay 必填 |
-| `CSGHUB_LITE_CLUSTER_DISCOVERY` | overlay 默认 `none`，宿主网络部署可用 `mdns` |
-| `CSGHUB_LITE_CLUSTER_DISABLED` | `1` 禁用集群 |
+## 节点与集群语义
 
-## 运行参数与数据
+节点状态通过 `engines` 上报每个引擎的 `known/installed/available/running`、
+版本、支持格式/任务、CUDA/ROCm、PyTorch 可见设备和不可用原因。旧节点不上报该
+字段时 UI 显示 **unknown/unreported**，不会假设已安装或可用；首次探测尚未完成时
+同样显示 unknown，而不是 not installed。Master 的部署 UI 使用**目标节点**的引擎
+能力、GPU/VRAM 和模型格式推荐后端与参数，不使用 Master 本地运行时。
 
-| 环境变量 | 默认值 / 含义 |
-| --- | --- |
-| `CSGHUB_LITE_VERSION` | `latest`；指定 Lite 发布版本或使用 `bundled` |
-| `CSGHUB_LITE_REGION` | 安装器下载地区 `CN` / `INTL`，Compose 默认 `CN` |
-| `SGLANG_MODEL_PATH` | `/root/.csghub-lite/models/serving`，完整本地模型路径 |
-| `SGLANG_MODEL_NAME` | `local-sglang`，页面及 API 使用的模型名 |
-| `SGLANG_EXTRA_ARGS` | JSON 字符串数组，例如 `["--tp","2","--context-length","4096"]` |
-| `SGLANG_START_TIMEOUT` | `1800` 秒，模型初始化上限 |
-| `SGLANG_API_KEY` | 可选的内部/已有 SGLang 服务接口密钥 |
-| `SGLANG_BASE_URL` | 设置后连接已有 SGLang，跳过容器内 SGLang 进程启动 |
-| `CSGLITE_DATA_DIR` | Compose 数据目录，默认相对于 Compose 文件的 `./data` |
+## 限制
 
-所有应用运行数据、缓存、临时文件在 `/root/.csghub-lite`。只修改本镜像管理的
-provider ID，保留其他 provider 和模型选择；每次启动按环境变量刷新本 provider。
-一个数据目录只供一个运行中的 CSGLite 容器使用，不与原生服务共享写入。
-SGLang 仅监听容器 loopback 30000，不公开内部服务端口。CSGLite 默认只发布本机
-11435。日志输出到 Docker stdout/stderr。任一托管进程退出则停止另一个，容器
-返回失败码；停止时向两个进程组发送 SIGTERM，超时强制结束。
+- 已在 A100-SXM4-80GB 上验证原生 Safetensors 自动选择 SGLang、启动/停止、
+  普通和流式聊天。Qwen2.5-1.5B-Instruct 在 4 CPU/8GiB 容器中使用 BF16/16K/TP1，
+  单工具调用、SSE 分片、工具结果回传及 `auto/required/指定函数` 通过；停止后显存归零。
+- 同一 1.5B 模型的双城市并行调用未通过，直接请求 SGLang 也复现；不保证模型的
+  多工具并行生成质量。AMD MI210 尚未进行实卡验收。
+- native SGLang 仅支持 Linux + CUDA/ROCm；macOS/Windows 继续使用 llama.cpp。
+- 仅保证文本生成/对话。Embedding、ASR、TTS、图像模型不会自动路由到 SGLang。
+- SGLang 的 `--tool-call-parser` 支持取决于模型家族与 chat template；未验证模型
+  不宣称函数调用可用。
+- 集群自动选择节点会优先匹配目标引擎；旧节点的 unknown 语义不会被当作可用。
 
-`SGLANG_EXTRA_ARGS` 不接受覆盖受管理的 host/port/model/name/API-key 参数。
-改变服务模型目录后重建容器，无需重新构建镜像。Lite 更新或版本切换见上方启动升级说明；
-SGLang/CUDA 升级通过替换运行时镜像完成，升级前先备份数据卷。
+## 参考
 
-## 验证
-
-本次本地验证记录（2026-11-17）：
-
-| 项目 | 状态 |
-| --- | --- |
-| 启动器、缓存、集群环境变量和依赖裁剪 | 17 个单元测试通过 |
-| Lite 启动安装 | 真实安装脚本安装最新版与固定版 v1.0.5、重建后离线复用、更新失败回退通过；未安装 llama-server |
-| CUDA / ROCm Compose，含集群 overlay | 4 种组合解析通过 |
-| 真实 CSGLite 对接模拟 OpenAI 服务 | 无外部网络容器中，模型注册、普通/流式聊天、联合健康检查、正常退出通过 |
-| NVIDIA CUDA 12.9 精简镜像 | linux/amd64 构建通过；SGLang/PyTorch/Transformers 导入与 SGLang CLI 检查通过 |
-| CUDA JIT 工具链 | NVCC 12.9 编译并链接 sm_80 CUDA 程序通过，未执行 GPU kernel |
-| AMD MI210 | 缺少经验证的 gfx90a 基础运行环境，待实机适配 |
-| 集群真实节点互联 | 环境变量透传与 Compose 检查通过，真实节点互联待实测 |
-| 国内仓库发布 | NVIDIA 精简镜像上传成功，registry manifest 与 digest 校验通过，体积见上方发布信息 |
-
-```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s docker/sglang -v
-MODEL_DIR=/models docker compose -f docker/sglang/compose.cuda.yaml config --quiet
-# 使用已构建的 Linux 镜像验证真实 CSGLite 注册、转发、健康检查和退出：
-docker run --rm --network none \
-  -v "$PWD/docker/sglang/smoke.py:/smoke.py:ro" \
-  --entrypoint python3 "${CSGLITE_SGLANG_IMAGE:-csglite-sglang:dev-cu129}" /smoke.py
-```
-
-该 smoke 使用 OpenAI 模拟服务，不能代替真实 GPU 验收。NVIDIA 镜像需在对应
-CUDA 12 主机验证真实模型加载、流式输出、重启、停止释放资源和集群入群。
-MI210 待基础运行环境就绪后单独验收。
+- 镜像构建：`Dockerfile`、`Dockerfile.cuda`、`compose.cuda.yaml`、`compose.rocm.yaml`
+- 公网 Worker：`compose.worker.yaml`；LAN：`compose.cluster.yaml`
+- launcher：`launcher.py`（native 默认，legacy 显式 opt-in）
+- 集群部署：`docs/guides/cluster-model-deployments.md`
+- 环境变量：`docs/guides/environment-variables.md`

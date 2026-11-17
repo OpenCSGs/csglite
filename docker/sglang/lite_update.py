@@ -103,6 +103,44 @@ def install_release(home, bundled, requested, target):
         print("CSGLite: using v%s from %s" % (installed, target), flush=True)
 
 
+def semver_key(version):
+    """Return a comparable SemVer key, or None when the string is not SemVer.
+
+    Build metadata is ignored. A release sorts after a prerelease with the
+    same core version; prerelease identifiers follow SemVer ordering.
+    """
+    if not version:
+        return None
+    value = version.strip().removeprefix("v")
+    match = re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+                         r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+                         r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", value)
+    if not match:
+        return None
+    numbers = tuple(int(part) for part in match.groups()[:3])
+    prerelease = match.group(4)
+    if prerelease is None:
+        return numbers + (1, ())
+    identifiers = []
+    for identifier in prerelease.split("."):
+        if identifier.isdigit():
+            if len(identifier) > 1 and identifier.startswith("0"):
+                return None
+            identifiers.append((0, int(identifier)))
+        else:
+            identifiers.append((1, identifier))
+    return numbers + (0, tuple(identifiers))
+
+
+def newer_version(left, right):
+    left_key, right_key = semver_key(left), semver_key(right)
+    if left_key is None:
+        return right
+    if right_key is None:
+        return left
+    return left if left_key >= right_key else right
+
+
 def select_binary(home):
     requested = os.getenv("CSGHUB_LITE_VERSION", "latest").strip() or "latest"
     if requested not in ("latest", "bundled"):
@@ -120,21 +158,48 @@ def select_binary(home):
     managed.mkdir(parents=True, exist_ok=True)
     (home / "tmp").mkdir(parents=True, exist_ok=True)
     target = managed / "csghub-lite"
+    current = binary_version(target)
+    bundled_version = binary_version(bundled)
     if requested == "bundled":
+        # This explicit recovery mode means the image's exact bundled binary.
+        # Only automatic "latest" updates apply the no-downgrade policy.
         replace_binary(bundled, target)
         return str(target)
-    current = binary_version(target)
-    if requested != "latest" and current == requested:
+    if requested != "latest":
+        if current == requested:
+            return str(target)
+        # An explicit pin may intentionally downgrade for legacy mode.
+        try:
+            install_release(home, bundled, requested, target)
+        except InterruptedError:
+            raise
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            raise OSError("Cannot install requested Lite v%s (%s)" % (requested, type(error).__name__)) from error
         return str(target)
     try:
-        install_release(home, bundled, requested, target)
+        candidate = home / "tmp" / ("lite-candidate-%d" % os.getpid())
+        try:
+            install_release(home, bundled, requested, candidate)
+            installed = binary_version(candidate)
+            best = newer_version(current, bundled_version)
+            if semver_key(installed) and semver_key(best) and semver_key(best) > semver_key(installed):
+                print("CSGLite: public latest %s is older than %s; keeping the newer runtime" % (installed, best), flush=True)
+                if best == current:
+                    candidate.unlink(missing_ok=True)
+                    return str(target)
+                replace_binary(bundled, target)
+                return str(target)
+            replace_binary(candidate, target)
+        finally:
+            candidate.unlink(missing_ok=True)
     except InterruptedError:
         raise
     except (OSError, ValueError, subprocess.SubprocessError) as error:
-        if requested != "latest":
-            raise OSError("Cannot install requested Lite v%s (%s)" % (requested, type(error).__name__)) from error
         print("CSGLite: startup update failed (%s); using %s" % (
             type(error).__name__, "cached Lite" if current else "bundled Lite"), flush=True)
-        if not current:
+        best = newer_version(current, bundled_version)
+        if best == bundled_version and bundled_version:
+            replace_binary(bundled, target)
+        elif not current and bundled_version is None:
             replace_binary(bundled, target)
     return str(target)

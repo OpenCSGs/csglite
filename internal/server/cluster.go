@@ -252,6 +252,30 @@ func shortClusterHostname(host string) string {
 	return host
 }
 
+// coldModelToolStreaming derives a library model's tool-streaming capability
+// without loading it. It reads model metadata and uses the cached SGLang
+// probe, so a heartbeat never blocks on a runtime import.
+func (h *clusterHost) coldModelToolStreaming(publicID string) bool {
+	if h.s.manager == nil {
+		return false
+	}
+	runtimeInfo, known := inference.SGLangRuntimeInfoCached()
+	if !known || !runtimeInfo.Available {
+		return false
+	}
+	storageID := h.s.resolveLocalModelStorageID(publicID)
+	lm, err := h.s.manager.Get(storageID)
+	if err != nil || lm == nil || !strings.EqualFold(strings.TrimSpace(lm.PipelineTag), "text-generation") {
+		return false
+	}
+	dir, err := h.s.manager.ModelPath(storageID)
+	if err != nil {
+		return false
+	}
+	_, supported, _ := inference.SelectSGLangToolParser(dir, h.s.modelIdentityForLoad(storageID))
+	return supported
+}
+
 // LocalStatus reports this node's models, load and hardware.
 func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 	s := h.s
@@ -272,6 +296,8 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 		expires            time.Time
 		toolStreaming      bool
 		loading            bool
+		backend            string
+		plan               *cluster.EnginePlanStatus
 	}
 	engines := map[string]loaded{}
 	s.mu.RLock()
@@ -284,6 +310,8 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 			cur.slots = me.numParallel
 			cur.ngl = me.nGPULayers
 			cur.toolStreaming = inference.SupportsNativeToolStreaming(me.engine)
+			cur.backend = me.effectiveBackend
+			cur.plan = clusterEnginePlan(me.engine)
 			cur.expires = me.expiresAt()
 		}
 		cur.active += me.activeRequests
@@ -372,10 +400,15 @@ func (h *clusterHost) LocalStatus(ctx context.Context) cluster.Status {
 				ms.Active = l.active
 				ms.NGPULayers = l.ngl
 				ms.NativeToolStreaming = l.toolStreaming
+				ms.EngineBackend = l.backend
+				ms.EnginePlan = l.plan
 				if !l.expires.IsZero() {
 					t := l.expires
 					ms.ExpiresAt = &t
 				}
+			}
+			if !ms.Loaded {
+				ms.NativeToolStreaming = h.coldModelToolStreaming(info.Model)
 			}
 			if d, ok := s.modelLoadDuration(info.Model); ok {
 				ms.Perf = &cluster.ModelPerf{LoadSeconds: d.Seconds()}

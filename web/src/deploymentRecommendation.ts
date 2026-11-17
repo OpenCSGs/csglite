@@ -7,14 +7,20 @@ export type { DeploymentMemory };
 
 const GiB = 1024 ** 3;
 /** Match the controller's Auto placement, including its deterministic tie break. */
-export function automaticDeploymentTarget(view: ClusterView, cpuOnly = false): ClusterNodeView | undefined {
-  return deploymentTargets(view).map(node => ({ node, memory: deploymentNodeMemory(node, cpuOnly) }))
+export function automaticDeploymentTarget(view: ClusterView, cpuOnly = false, backend?: "llama" | "sglang" | ""): ClusterNodeView | undefined {
+  return deploymentTargets(view, backend).map(node => ({ node, memory: deploymentNodeMemory(node, cpuOnly) }))
     .filter(item => item.memory.free !== 0)
-    .sort((a, b) => Number(b.memory.gpu) - Number(a.memory.gpu)
+    .sort((a, b) => Number(engineReady(b.node, backend)) - Number(engineReady(a.node, backend))
+      || Number(b.memory.gpu) - Number(a.memory.gpu)
       || Number(b.memory.free !== null) - Number(a.memory.free !== null)
       || (b.memory.free || 0) - (a.memory.free || 0)
       || (a.node.status?.inflight || 0) - (b.node.status?.inflight || 0)
       || (a.node.uuid < b.node.uuid ? -1 : a.node.uuid > b.node.uuid ? 1 : 0))[0]?.node;
+}
+
+function engineReady(node: ClusterNodeView, backend?: "llama" | "sglang" | ""): boolean {
+  if (!backend) return true;
+  return Boolean(node.status?.engines?.some(engine => engine.known && engine.name === backend && engine.available));
 }
 
 export interface DeploymentQuantOption { quant: string; size?: number; estimated: boolean }

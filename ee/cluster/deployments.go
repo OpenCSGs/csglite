@@ -31,20 +31,27 @@ type DeploymentSpec struct {
 	ArtifactSource string `json:"artifact_source"`
 	Revision       string `json:"revision"`
 	Quant          string `json:"quant,omitempty"`
-	Kind           string `json:"kind"`
-	NumCtx         int    `json:"num_ctx"`
-	NumParallel    int    `json:"num_parallel"`
-	NGPULayers     int    `json:"n_gpu_layers"`
+	// Backend pins the inference runtime: "llama", "sglang", or "" for the
+	// format default. SGLang is text-generation only.
+	Backend     string `json:"backend,omitempty"`
+	Kind        string `json:"kind"`
+	NumCtx      int    `json:"num_ctx"`
+	NumParallel int    `json:"num_parallel"`
+	NGPULayers  int    `json:"n_gpu_layers"`
 }
 
 type DeploymentStatus struct {
-	Phase          string    `json:"phase"`
-	Error          string    `json:"error,omitempty"`
-	Detail         string    `json:"detail,omitempty"`
-	CompletedBytes int64     `json:"completed_bytes,omitempty"`
-	TotalBytes     int64     `json:"total_bytes,omitempty"`
-	Size           int64     `json:"size,omitempty"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	Phase          string `json:"phase"`
+	Error          string `json:"error,omitempty"`
+	Detail         string `json:"detail,omitempty"`
+	CompletedBytes int64  `json:"completed_bytes,omitempty"`
+	TotalBytes     int64  `json:"total_bytes,omitempty"`
+	Size           int64  `json:"size,omitempty"`
+	// EngineBackend and EnginePlan are derived from the started runtime; they
+	// are read-only status, not a second configuration record.
+	EngineBackend string            `json:"engine_backend,omitempty"`
+	EnginePlan    *EnginePlanStatus `json:"engine_plan,omitempty"`
+	UpdatedAt     time.Time         `json:"updated_at"`
 }
 
 type Deployment struct {
@@ -61,6 +68,13 @@ func (d Deployment) ModelID() string { return DeploymentModelPrefix + d.ID }
 
 // DeploymentHost uses isolated runtime IDs; stopping a deployment must not stop
 // a user's independently loaded model. Artifacts share the normal library.
+// EngineStatusReporter lets a controller see which engines a worker actually
+// has, including installed/available/running and unsupported reasons, instead
+// of assuming every node supports every backend.
+type EngineStatusReporter interface {
+	Engines() []EngineStatus
+}
+
 type DeploymentHost interface {
 	PrepareDeployment(context.Context, Deployment, func(DeploymentStatus)) (int64, error)
 	StartDeployment(context.Context, Deployment, func(DeploymentStatus)) error
@@ -199,6 +213,14 @@ func (s *deploymentStore) update(owned bool, id string, edit func(*Deployment, b
 	return err
 }
 
+func normalizeDeploymentBackend(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "auto" {
+		return ""
+	}
+	return value
+}
+
 func validateDeployment(d DeploymentSpec) error {
 	if strings.TrimSpace(d.Name) == "" || len(d.Name) > 100 {
 		return errors.New("deployment name is required (maximum 100 characters)")
@@ -225,6 +247,14 @@ func validateDeployment(d DeploymentSpec) error {
 	}
 	if d.Kind != "chat" && d.Kind != "embedding" {
 		return errors.New("kind must be chat or embedding")
+	}
+	switch strings.ToLower(strings.TrimSpace(d.Backend)) {
+	case "", "auto", "llama", "sglang":
+	default:
+		return errors.New("backend must be llama, sglang, or empty for automatic")
+	}
+	if strings.EqualFold(strings.TrimSpace(d.Backend), "sglang") && d.Kind != "chat" {
+		return errors.New("the SGLang backend serves text generation and chat only")
 	}
 	// Explicit context sizes follow model/runtime support, as local model settings
 	// do. A fixed 128K ceiling incorrectly rejects native 256K and longer models.
@@ -356,6 +386,15 @@ func (m *Manager) deploymentStatus(id string, gen uint64, status DeploymentStatu
 		}
 		if status.Size == 0 {
 			status.Size = d.Status.Size
+		}
+		// The started plan is read-only status for this generation. A later
+		// progress/ready update must not erase it; configure() starts a new
+		// generation with an empty status, which clears it.
+		if status.EngineBackend == "" {
+			status.EngineBackend = d.Status.EngineBackend
+		}
+		if status.EnginePlan == nil {
+			status.EnginePlan = d.Status.EnginePlan
 		}
 		d.Status = status
 		return nil
@@ -625,8 +664,16 @@ func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory 
 	if m.opts.Mode == "worker" || !m.store.InCluster() {
 		return Deployment{}, errors.New("create deployments on a cluster controller")
 	}
+	spec.Backend = normalizeDeploymentBackend(spec.Backend)
+	placementBackend := spec.Backend
+	if placementBackend == "" && (spec.Quant != "" || spec.Kind == "embedding") {
+		// A GGUF quantization and embedding deployments can only be served by
+		// llama.cpp, so an automatic target must report that engine. Legacy
+		// nodes with no engine report remain eligible as unknown.
+		placementBackend = "llama"
+	}
 	if spec.NodeUUID == "" || spec.NodeUUID == "auto" {
-		node, err := selectDeploymentTarget(m.memberViews(context.Background(), true), m.identity.UUID, spec.NGPULayers == 0, minimumMemory)
+		node, err := selectDeploymentTarget(m.memberViews(context.Background(), true), m.identity.UUID, spec.NGPULayers == 0, minimumMemory, placementBackend)
 		if err != nil {
 			return Deployment{}, err
 		}
@@ -638,6 +685,24 @@ func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory 
 		return Deployment{}, err
 	}
 	st := m.candidateStatus(spec.NodeUUID)
+	if spec.Backend == "sglang" {
+		if st == nil || len(st.Engines) == 0 {
+			return Deployment{}, errors.New("target node did not report SGLang capability; upgrade the node or choose automatic")
+		}
+		available := false
+		reason := "SGLang is not available on the target node"
+		for _, engine := range st.Engines {
+			if engine.Name == "sglang" {
+				available = engine.Available
+				if engine.Reason != "" {
+					reason = engine.Reason
+				}
+			}
+		}
+		if !available {
+			return Deployment{}, fmt.Errorf("SGLang is not available on the target node: %s", reason)
+		}
+	}
 	if spec.NodeUUID != m.identity.UUID {
 		if _, ok := m.store.Member(spec.NodeUUID); !ok {
 			return Deployment{}, errors.New("target node is not a member")

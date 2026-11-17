@@ -1,13 +1,23 @@
 # 模型格式
 
-CSGLite 支持下载和管理多种格式的模型，但仅 GGUF 格式可直接用于本地推理。
+CSGLite 支持下载和管理多种格式的模型。GGUF 由 llama.cpp 直接推理；原生
+Safetensors 在安装了 SGLang 的 Linux GPU 主机上由 SGLang 直接服务，不需要转换。
 
 ## 格式对照
 
 | 格式 | 下载 | 推理 | 说明 |
 |------|------|------|------|
 | GGUF | 支持 | 支持 | llama.cpp 原生格式，量化后体积小、推理快 |
-| SafeTensors | 支持 | 不支持（需转换） | PyTorch 生态常用格式 |
+| SafeTensors | 支持 | 支持（SGLang）或转换 GGUF（llama.cpp） | PyTorch 生态常用格式 |
+
+## 原生 Safetensors 与 SGLang
+
+Linux + CUDA/ROCm 主机安装 SGLang 后，文本对话模型可以原生 Safetensors 启动：
+模型设置里选择 SGLang，或在“自动”下由格式与目标节点引擎能力决定。SGLang 只服务
+原生 Safetensors，不接受 GGUF 量化；显式选择 SGLang 但运行时不可用、权重已删除
+或模型任务不是文本生成时，会明确报错而不是静默转换。SGLang 不用于 embedding、
+ASR、TTS 或图像模型。原生 SGLang 未安装时，Safetensors 仍可按原有流程转换 GGUF；
+但一旦 SGLang 已安装/已配置，探测失败不会回退到转换。
 
 ## GGUF 格式
 

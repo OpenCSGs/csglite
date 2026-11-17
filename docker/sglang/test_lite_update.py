@@ -130,5 +130,81 @@ sleep 0.1
         self.assertEqual(list((self.home / "tmp").iterdir()), [])
 
 
+class LatestNoDowngradeTests(unittest.TestCase):
+    def setUp(self):
+        root = Path.home() / ".csghub-lite" / "tmp"
+        root.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=str(root))
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.home = self.root / "data"
+        self.bundled = self.root / "bundled" / "csghub-lite"
+        self.cached = self.home / "bin" / "csghub-lite"
+        self.binary(self.bundled, "bundled-build")
+        env = dict(PATH=str(self.bundled.parent) + os.pathsep + os.environ["PATH"],
+                   CSGHUB_LITE_VERSION="latest")
+        self.environment = patch.dict(os.environ, env)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    def binary(self, path, version):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('#!/bin/sh\necho "csghub-lite version %s"\n' % version)
+        path.chmod(0o755)
+
+    def fake_latest(self, version):
+        def install(_home, _bundled, _requested, target):
+            self.binary(target, version)
+        return patch.object(lite_update, "install_release", side_effect=install)
+
+    def test_latest_does_not_replace_newer_bundled_prerelease(self):
+        self.binary(self.bundled, "1.0.6-sglang.qa1")
+        with self.fake_latest("1.0.5"):
+            lite_update.select_binary(self.home)
+        self.assertEqual(lite_update.binary_version(self.cached), "1.0.6-sglang.qa1")
+
+    def test_latest_does_not_replace_newer_cached_release(self):
+        self.binary(self.cached, "1.0.7")
+        self.binary(self.bundled, "1.0.6")
+        with self.fake_latest("1.0.6"):
+            lite_update.select_binary(self.home)
+        self.assertEqual(lite_update.binary_version(self.cached), "1.0.7")
+
+    def test_release_replaces_same_core_prerelease(self):
+        self.binary(self.cached, "1.0.6-pre")
+        self.binary(self.bundled, "1.0.6-pre")
+        with self.fake_latest("1.0.6"):
+            lite_update.select_binary(self.home)
+        self.assertEqual(lite_update.binary_version(self.cached), "1.0.6")
+
+    def test_explicit_pin_still_allows_downgrade(self):
+        self.binary(self.cached, "1.0.6")
+        self.binary(self.bundled, "1.0.6")
+        def install(_home, _bundled, _requested, target):
+            self.binary(target, "1.0.5")
+        with patch.object(lite_update, "install_release", side_effect=install), \
+                patch.dict(os.environ, CSGHUB_LITE_VERSION="v1.0.5"):
+            lite_update.select_binary(self.home)
+        self.assertEqual(lite_update.binary_version(self.cached), "1.0.5")
+
+    def test_bundled_mode_remains_an_explicit_offline_recovery(self):
+        self.binary(self.cached, "1.0.7")
+        self.binary(self.bundled, "1.0.6")
+        with patch.dict(os.environ, CSGHUB_LITE_VERSION="bundled"):
+            lite_update.select_binary(self.home)
+        self.assertEqual(lite_update.binary_version(self.cached), "1.0.6")
+
+    def test_semver_precedence_and_invalid_versions(self):
+        versions = ["1.0.6-alpha", "1.0.6-alpha.1", "1.0.6-alpha.beta",
+                    "1.0.6-beta", "1.0.6-beta.2", "1.0.6-beta.11",
+                    "1.0.6-rc.1", "1.0.6", "1.0.7-alpha"]
+        keys = [lite_update.semver_key(version) for version in versions]
+        self.assertEqual(keys, sorted(keys))
+        self.assertEqual(lite_update.semver_key("1.0.6+build.1"),
+                         lite_update.semver_key("1.0.6+build.2"))
+        for version in ("dev", "01.0.6", "1.0.6-01", "1.0.6-", "1.0.6-a..b"):
+            self.assertIsNone(lite_update.semver_key(version), version)
+
+
 if __name__ == "__main__":
     unittest.main()

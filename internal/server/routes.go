@@ -11,6 +11,7 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/inference/runtimes", s.handleInferenceRuntimes)
 	mux.HandleFunc("GET /api/tags", s.handleTags)
 	mux.HandleFunc("GET /api/pipeline-tags", s.handlePipelineTags)
 	mux.HandleFunc("GET /api/tags/manage", s.handleProviderTagsManageList)

@@ -19,6 +19,10 @@ from lite_update import select_binary
 PROVIDER_ID = "csglite-docker-sglang"
 STOPPING = False
 HTTP = build_opener(ProxyHandler({}))
+# Native managed mode is the default: CSGLite starts SGLang per model through
+# its own API, so the container supervisor must not start a second process.
+# Set SGLANG_LEGACY_FIXED_MODEL=1 for the original fixed-model behavior.
+LEGACY_ENV = "SGLANG_LEGACY_FIXED_MODEL"
 
 
 def app_home():
@@ -37,6 +41,50 @@ def write_json(path, value):
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(value, stream, ensure_ascii=False, indent=2)
     os.replace(str(temporary), str(path))
+
+
+def configure_cluster(home):
+    """Provision the existing cluster schema from container environment.
+
+    Join credentials stay in the inherited environment. Public workers expose
+    management only on container loopback and connect outbound to the Master.
+    """
+    path = home / "config.json"
+    config = read_json(path, {})
+    if not isinstance(config, dict):
+        raise ValueError("config.json must contain an object")
+    cluster = config.get("cluster", {})
+    if cluster is None:
+        cluster = {}
+    if not isinstance(cluster, dict):
+        raise ValueError("config.json cluster must contain an object")
+    cluster = dict(cluster)
+    fields = {"MODE": "mode", "GATEWAY_URL": "gateway_url",
+              "TLS_CA_FILE": "tls_ca_file", "PUBLIC_LISTEN_ADDR": "public_listen_addr",
+              "TLS_CERT_FILE": "tls_cert_file", "TLS_KEY_FILE": "tls_key_file"}
+    changed = False
+    for suffix, field in fields.items():
+        name = "CSGHUB_LITE_CLUSTER_" + suffix
+        if name not in os.environ:
+            continue
+        value = os.environ[name].strip()
+        if field == "mode":
+            value = value.lower()
+        if value:
+            cluster[field] = value
+        else:
+            cluster.pop(field, None)
+        changed = True
+    mode = str(cluster.get("mode", "")).strip().lower()
+    if mode not in ("", "lan", "gateway", "worker"):
+        raise ValueError("CSGHUB_LITE_CLUSTER_MODE must be lan, gateway or worker")
+    if mode in ("gateway", "worker") and (
+            os.getenv("CSGHUB_LITE_CLUSTER_SECRET", "").strip() or cluster.get("secret")):
+        raise ValueError("Public cluster mode uses join tokens; unset the LAN cluster secret")
+    if changed:
+        config["cluster"] = cluster
+        write_json(path, config)
+    return "127.0.0.1:11435" if mode in ("gateway", "worker") else "0.0.0.0:11435"
 
 
 def configure_provider(home, base_url, model):
@@ -61,6 +109,25 @@ def configure_provider(home, base_url, model):
          "input_modalities": ["text"], "output_modalities": ["text"]}]
     write_json(path, providers)
     write_json(selections_path, selections)
+
+
+def remove_provider(home):
+    """Drop only this launcher's fixed-model provider and selection.
+
+    Other providers, pools and user selections are preserved. Native mode must
+    not leave a ghost provider pointing at the fixed port 30000.
+    """
+    providers_path = home / "providers.json"
+    providers = read_json(providers_path, None)
+    if isinstance(providers, list):
+        remaining = [p for p in providers if p.get("id") != PROVIDER_ID]
+        if len(remaining) != len(providers):
+            write_json(providers_path, remaining)
+    selections_path = home / "provider_model_allowlist.json"
+    selections = read_json(selections_path, None)
+    if isinstance(selections, dict) and isinstance(selections.get("providers"), dict):
+        if selections["providers"].pop(PROVIDER_ID, None) is not None:
+            write_json(selections_path, selections)
 
 
 def base_url():
@@ -96,6 +163,15 @@ def healthy(url, authenticated=False):
             return response.status == 200
     except (URLError, OSError, TimeoutError):
         return False
+
+
+def env_bool(name):
+    value = os.getenv(name, "").strip().lower()
+    return value in ("1", "true", "yes", "on")
+
+
+def legacy_mode():
+    return env_bool(LEGACY_ENV)
 
 
 def launch_args():
@@ -150,8 +226,11 @@ def signal_group(child, sig):
 
 def main():
     if sys.argv[1:] == ["health"]:
-        return 0 if (healthy("http://127.0.0.1:11435/api/health") and
-                     healthy(base_url() + "/models", True)) else 1
+        if not healthy("http://127.0.0.1:11435/api/health"):
+            return 1
+        if legacy_mode() and not os.getenv("SGLANG_BASE_URL"):
+            return 0 if healthy(base_url() + "/models", True) else 1
+        return 0
     if len(sys.argv) > 1:
         raise ValueError("Configure SGLang with environment variables; no positional arguments")
     home = app_home()
@@ -159,13 +238,15 @@ def main():
         (home / name).mkdir(parents=True, exist_ok=True)
     for name in ("TMPDIR", "TMP", "TEMP"):
         os.environ[name] = str(home / "tmp")
-    model = os.getenv("SGLANG_MODEL_NAME", "local-sglang").strip()
-    if not model:
-        raise ValueError("SGLANG_MODEL_NAME must not be empty")
-    external = bool(os.getenv("SGLANG_BASE_URL"))
-    args = None if external else launch_args()
-    if not external:
-        seed_runtime_cache(Path("/opt/csglite/runtime-cache"), home)
+    listen_addr = configure_cluster(home)
+    legacy = legacy_mode()
+    args = None
+    if legacy:
+        model = os.getenv("SGLANG_MODEL_NAME", "local-sglang").strip()
+        if not model:
+            raise ValueError("SGLANG_MODEL_NAME must not be empty")
+        external = bool(os.getenv("SGLANG_BASE_URL"))
+        args = None if external else launch_args()
     # This image serves through SGLang; startup installation must never pull
     # llama.cpp, even when inherited deployment variables enable it elsewhere.
     os.environ["CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER"] = "0"
@@ -175,7 +256,16 @@ def main():
         binary = select_binary(home)
     except InterruptedError:
         return 0
-    configure_provider(home, base_url(), model)
+    seed_runtime_cache(Path("/opt/csglite/runtime-cache"), home)
+    if legacy:
+        # A fixed-model server is a provider, not a per-model native runtime.
+        # Disable native spawning so CSGLite cannot start a second SGLang.
+        os.environ["CSGHUB_LITE_SGLANG_DISABLE"] = "1"
+        configure_provider(home, base_url(), model)
+    else:
+        # Switching back to native must remove the launcher's own fixed-model
+        # provider; otherwise it keeps pointing at a port nothing listens on.
+        remove_provider(home)
     os.environ["PATH"] = str(home / "bin") + os.pathsep + os.environ.get("PATH", "")
     signal.signal(signal.SIGTERM, stop_requested)
     signal.signal(signal.SIGINT, stop_requested)
@@ -184,10 +274,13 @@ def main():
         if args:
             children.append(subprocess.Popen(args, start_new_session=True))
         children.append(subprocess.Popen(
-            [binary, "serve", "--listen", "0.0.0.0:11435"], start_new_session=True))
+            [binary, "serve", "--listen", listen_addr], start_new_session=True))
         deadline = time.monotonic() + int(os.getenv("SGLANG_START_TIMEOUT", "1800"))
         ready = False
-        print("CSGLite starting on :11435; waiting for SGLang model readiness", flush=True)
+        if legacy and args:
+            print("CSGLite starting on :11435; waiting for SGLang model readiness", flush=True)
+        else:
+            print("CSGLite starting on :11435; manage models through the UI or API", flush=True)
         while not STOPPING:
             for child in children:
                 code = child.poll()
@@ -196,11 +289,13 @@ def main():
                           file=sys.stderr, flush=True)
                     return code if code > 0 else 1
             if not ready:
-                ready = healthy(base_url() + "/models", True)
+                ready = healthy("http://127.0.0.1:11435/api/health")
+                if legacy and args and ready:
+                    ready = healthy(base_url() + "/models", True)
                 if ready:
-                    print("SGLang ready; select %s [SGLang] in CSGLite" % model, flush=True)
+                    print("CSGLite ready on :11435", flush=True)
                 elif time.monotonic() > deadline:
-                    print("SGLang readiness timeout", file=sys.stderr, flush=True)
+                    print("CSGLite readiness timeout", file=sys.stderr, flush=True)
                     return 1
             time.sleep(1)
         return 0

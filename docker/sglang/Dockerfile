@@ -13,7 +13,6 @@ ENV HOME=/root \
     PYTHONUNBUFFERED=1 \
     CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER=0 \
     CSGHUB_LITE_VERSION=latest \
-    SGLANG_MODEL_PATH=/root/.csghub-lite/models/serving \
     SGLANG_MODEL_NAME=local-sglang \
     HF_HOME=/root/.csghub-lite/cache/huggingface \
     XDG_CACHE_HOME=/root/.csghub-lite/cache \

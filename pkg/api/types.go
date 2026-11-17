@@ -234,20 +234,115 @@ type ModelConfigResponse struct {
 	// EffectiveKeepAlive is what a load without a request-level keep-alive
 	// would use right now.
 	EffectiveKeepAlive string `json:"effective_keep_alive"`
-	// Runtime names the runtime that serves this model: "llama",
+	// Runtime names the runtime that serves this model: "llama", "sglang",
 	// "python-asr", "python-tts" or "diffusers". Clients
 	// use it to decide which load options mean anything -- the llama.cpp
 	// options do not reach a model served by a Python runtime.
 	Runtime string `json:"runtime"`
+	// Backend is the backend pinned for this model, or "" when the format
+	// default applies.
+	Backend string `json:"backend"`
+	// EffectiveBackend is the backend a load would use right now. It can differ
+	// from Backend when the setting is automatic.
+	EffectiveBackend string `json:"effective_backend"`
+	// Backends reports which inference runtimes this machine can use, so a
+	// client never offers a backend that cannot start. It is additive: older
+	// clients ignore it.
+	Backends []InferenceRuntimeCapability `json:"backends,omitempty"`
+	// SGLang reports the limits and function-calling capability of the SGLang
+	// plan for this model. It is present only when SGLang is the effective
+	// backend, so clients cannot mistake an unknown parser for working tools.
+	SGLang *SGLangRuntimeSettings `json:"sglang,omitempty"`
+}
+
+// SGLangRuntimeSettings is the process configuration a model would receive.
+type SGLangRuntimeSettings struct {
+	ContextLength        int     `json:"context_length"`
+	MaxRunningRequests   int     `json:"max_running_requests"`
+	MaxTotalTokens       int     `json:"max_total_tokens"`
+	TensorParallel       int     `json:"tensor_parallel"`
+	MemFractionStatic    float64 `json:"mem_fraction_static,omitempty"`
+	DType                string  `json:"dtype,omitempty"`
+	ToolCallParser       string  `json:"tool_call_parser,omitempty"`
+	ReasoningParser      string  `json:"reasoning_parser,omitempty"`
+	ToolCallingSupported bool    `json:"tool_calling_supported"`
+	ToolCallingReason    string  `json:"tool_calling_reason,omitempty"`
+	MaxJobs              int     `json:"max_jobs,omitempty"`
+	// Sources explains why each automatic value was chosen, so the UI can show
+	// whether a value came from the request, model metadata, env or overrides.
+	Sources map[string]string `json:"sources,omitempty"`
+	// Reason explains why a plan could not be built, such as an invalid
+	// SGLANG_EXTRA_ARGS value. It is empty for a usable plan.
+	Reason string `json:"reason,omitempty"`
+}
+
+// InferenceGPU is one visible accelerator, reported so a client can explain
+// SGLang placement and memory limits truthfully.
+type InferenceGPU struct {
+	Index       int    `json:"index"`
+	Name        string `json:"name"`
+	MemoryTotal uint64 `json:"memory_total"`
+	MemoryUsed  uint64 `json:"memory_used"`
+}
+
+// InferenceEngineDevice is one accelerator a runtime can actually use.
+type InferenceEngineDevice struct {
+	Index       int    `json:"index"`
+	Name        string `json:"name"`
+	MemoryTotal uint64 `json:"memory_total"`
+}
+
+// InferenceRuntimeCapability describes one inference engine on this machine.
+// Known distinguishes an older node that did not report engine information
+// from a runtime that was probed and found absent. Installed, Available and
+// Running are separate states.
+type InferenceRuntimeCapability struct {
+	Backend     string                  `json:"backend"`
+	Known       bool                    `json:"known"`
+	Installed   bool                    `json:"installed"`
+	Available   bool                    `json:"available"`
+	Running     int                     `json:"running"`
+	Version     string                  `json:"version,omitempty"`
+	Reason      string                  `json:"reason,omitempty"`
+	CUDA        bool                    `json:"cuda,omitempty"`
+	ROCM        bool                    `json:"rocm,omitempty"`
+	Devices     []InferenceEngineDevice `json:"devices,omitempty"`
+	MaxJobs     int                     `json:"max_jobs,omitempty"`
+	Formats     []string                `json:"formats,omitempty"`
+	Tasks       []string                `json:"tasks,omitempty"`
+	ToolCalling string                  `json:"tool_calling,omitempty"`
+}
+
+// InferenceResourceLimits is the CPU/memory budget the node process actually
+// has, including a container cgroup limit.
+type InferenceResourceLimits struct {
+	CPUCores    int    `json:"cpu_cores,omitempty"`
+	MemoryBytes uint64 `json:"memory_bytes,omitempty"`
+	Source      string `json:"source,omitempty"`
+}
+
+type InferenceRuntimesResponse struct {
+	Runtimes []InferenceRuntimeCapability `json:"runtimes"`
+	GPUs     []InferenceGPU               `json:"gpus,omitempty"`
+	Limits   InferenceResourceLimits      `json:"limits,omitempty"`
 }
 
 // Runtimes a local model can be served by, as reported in
 // ModelConfigResponse.Runtime.
 const (
 	ModelRuntimeLlama     = "llama"
+	ModelRuntimeSGLang    = "sglang"
 	ModelRuntimePythonASR = "python-asr"
 	ModelRuntimePythonTTS = "python-tts"
 	ModelRuntimeDiffusers = "diffusers"
+)
+
+// Inference backends accepted by ModelConfigUpdateRequest.Backend and by a
+// cluster deployment's Backend field. "" is automatic.
+const (
+	InferenceBackendAuto   = ""
+	InferenceBackendLlama  = "llama"
+	InferenceBackendSGLang = "sglang"
 )
 
 // ModelConfigUpdateRequest sets the per-model runtime settings. Every field is
@@ -267,6 +362,11 @@ type ModelConfigUpdateRequest struct {
 	// KeepAlive is a duration such as "30s" or "1h", "-1" to keep the model
 	// loaded until it is stopped, or "" to clear the setting.
 	KeepAlive *string `json:"keep_alive,omitempty"`
+	// Backend is "llama", "sglang" or "" to follow the format default. An
+	// explicit "sglang" is honoured only for native Safetensors weights and
+	// only when the runtime is installed; the request fails with the reason
+	// instead of converting the model to GGUF.
+	Backend *string `json:"backend,omitempty"`
 }
 
 type ModelUploadResponse struct {
@@ -324,14 +424,27 @@ type RunningModel struct {
 // -- Shared types --
 
 type Message struct {
-	Role             string       `json:"role"`
-	Content          interface{}  `json:"content"`
-	Thinking         string       `json:"thinking,omitempty"`
-	ReasoningContent string       `json:"reasoning_content,omitempty"`
-	ToolCalls        []ToolCall   `json:"tool_calls,omitempty"`
-	ToolName         string       `json:"tool_name,omitempty"`
-	ToolCallID       string       `json:"tool_call_id,omitempty"`
-	Meta             *MessageMeta `json:"meta,omitempty"`
+	Role             string      `json:"role"`
+	Content          interface{} `json:"content"`
+	Thinking         string      `json:"thinking,omitempty"`
+	ReasoningContent string      `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
+	// FunctionCall is the legacy assistant function-call field. It is
+	// normalized into ToolCalls before a backend request and on responses.
+	FunctionCall *OpenAIFunctionCall `json:"function_call,omitempty"`
+	// Name is the legacy OpenAI function name on a role:"function" message.
+	// ToolName is the equivalent field used by Ollama-style payloads.
+	Name       string       `json:"name,omitempty"`
+	ToolName   string       `json:"tool_name,omitempty"`
+	ToolCallID string       `json:"tool_call_id,omitempty"`
+	Meta       *MessageMeta `json:"meta,omitempty"`
+}
+
+// OpenAIFunctionCall is the legacy function-call object used by the deprecated
+// functions/function_call API.
+type OpenAIFunctionCall struct {
+	Name      string      `json:"name"`
+	Arguments interface{} `json:"arguments,omitempty"`
 }
 
 type MessageMeta struct {
@@ -360,6 +473,15 @@ type ToolFunction struct {
 	Description string      `json:"description,omitempty"`
 	Parameters  interface{} `json:"parameters,omitempty"`
 	Arguments   interface{} `json:"arguments,omitempty"`
+}
+
+// OpenAIFunction is the legacy Chat Completions function declaration. The
+// legacy functions/function_call fields are still sent by some agent clients;
+// they are normalized to tools/tool_choice before reaching a backend.
+type OpenAIFunction struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Parameters  interface{} `json:"parameters,omitempty"`
 }
 
 type ModelInfo struct {
@@ -1151,12 +1273,17 @@ type AIAppOpenResponse struct {
 // -- OpenAI-compatible types --
 
 type OpenAIChatRequest struct {
-	Model              string                 `json:"model"`
-	Source             string                 `json:"source,omitempty"`
-	Messages           []Message              `json:"messages"`
-	Tools              []Tool                 `json:"tools,omitempty"`
-	ToolChoice         interface{}            `json:"tool_choice,omitempty"`
-	ParallelToolCalls  *bool                  `json:"parallel_tool_calls,omitempty"`
+	Model             string      `json:"model"`
+	Source            string      `json:"source,omitempty"`
+	Messages          []Message   `json:"messages"`
+	Tools             []Tool      `json:"tools,omitempty"`
+	ToolChoice        interface{} `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool       `json:"parallel_tool_calls,omitempty"`
+	// Functions and FunctionCall are the pre-tools Chat Completions fields.
+	// They are accepted for compatibility and normalized into Tools and
+	// ToolChoice when the modern fields are absent.
+	Functions          []OpenAIFunction       `json:"functions,omitempty"`
+	FunctionCall       interface{}            `json:"function_call,omitempty"`
 	ChatTemplateKwargs map[string]interface{} `json:"chat_template_kwargs,omitempty"`
 	StreamOptions      map[string]interface{} `json:"stream_options,omitempty"`
 	Stream             *bool                  `json:"stream,omitempty"`

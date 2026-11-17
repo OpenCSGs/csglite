@@ -9,13 +9,17 @@ services:
       - "127.0.0.1:11435:11435"
     volumes:
       - ${CSGLITE_DATA_DIR:-./data}:/root/.csghub-lite
-      - ${MODEL_DIR:?Set MODEL_DIR to a complete local HF model directory}:/root/.csghub-lite/models/serving:ro
+      # Optional in native mode: models can be downloaded or pulled through
+      # the CSGLite UI/API after the container starts.
+      - ${MODEL_DIR:-./models}:/root/.csghub-lite/models/serving:ro
     environment:
       CSGHUB_LITE_VERSION: ${CSGHUB_LITE_VERSION:-latest}
       CSGHUB_LITE_REGION: ${CSGHUB_LITE_REGION:-CN}
-      SGLANG_MODEL_NAME: ${MODEL_NAME:-local-sglang}
       SGLANG_START_TIMEOUT: "1800"
-      SGLANG_EXTRA_ARGS: '${SGLANG_EXTRA_ARGS:-["--mem-fraction-static","0.8","--context-length","8192"]}'
+      # Advanced SGLang flags only. CSGLite chooses bounded context, KV and
+      # memory defaults from the model and visible GPUs; override only after
+      # measuring the result.
+      SGLANG_EXTRA_ARGS: '${SGLANG_EXTRA_ARGS:-[]}'
     shm_size: 8gb
     deploy:
       resources:

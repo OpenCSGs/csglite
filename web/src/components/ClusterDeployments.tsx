@@ -1,7 +1,8 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { createClusterDeployment, createProviderPool, getMarketplaceModelDetail } from "../api/client";
-import type { ArtifactSource, MarketplaceModel, MarketplaceModelDetailResponse, ClusterNodeView, ClusterDeployment, ClusterDeploymentSpec, ClusterView, ProviderPool } from "../api/client";
+import { buildClusterDeploymentRequest } from "../deploymentPayload";
+import type { ArtifactSource, MarketplaceModel, MarketplaceModelDetailResponse, ClusterNodeView, ClusterDeployment, ClusterDeploymentSpec, ClusterView, ProviderPool, ClusterEngineStatus } from "../api/client";
 import { t } from "../i18n";
 import { canPublishModelInstance, modelInstanceRows, modelInstanceCategory, modelPublication } from "../clusterModels";
 import type { ModelInstanceRow } from "../clusterModels";
@@ -77,20 +78,59 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
     }, 300);
     return () => { current = false; clearTimeout(timer); };
   }, [draft?.repository, draft?.artifact_source, selection]);
-  const targets = deploymentTargets(view);
+  // Prefer nodes that report the runtime this model format needs. Manual
+  // backend selection narrows the list further.
+  const preferredBackend = draft?.backend
+    || (detail?.local_inference?.mode === "direct" ? "llama"
+      : detail?.local_inference?.mode === "convert" ? "sglang" : "");
+  const targets = deploymentTargets(view, preferredBackend as "llama" | "sglang" | "");
   const cpuOnly = draft?.n_gpu_layers === 0;
-  const autoTarget = automaticDeploymentTarget(view, cpuOnly);
+  const autoTarget = automaticDeploymentTarget(view, cpuOnly, preferredBackend as "llama" | "sglang" | "");
   const target = draft?.node_uuid === "auto" ? autoTarget : targets.find(node => node.uuid === draft?.node_uuid);
   const quantOptions = deploymentQuantOptions(detail?.details || selectedModel.current, detail);
   const recommendation = recommendDeploymentQuant(quantOptions, deploymentNodeMemory(target, cpuOnly), draft?.num_ctx || 4096, draft?.num_parallel || 1);
-  const quantNoFit = !draft?.quant && recommendation.state === "no-fit";
+  const targetEngines = target?.status?.engines ?? [];
+  const enginesKnown = targetEngines.some(engine => engine.known);
+  const sglangEngine = targetEngines.find(item => item.name === "sglang");
+  const llamaEngine = targetEngines.find(item => item.name === "llama");
+  const sglangAvailable = Boolean(sglangEngine?.known && sglangEngine?.available);
+  // Model format comes from the registry detail; "direct" is GGUF, "convert"
+  // is native Safetensors. Unknown metadata must stay unknown rather than be
+  // guessed into an exact plan.
+  const modelFormat = detail?.local_inference?.mode === "direct" ? "gguf"
+    : detail?.local_inference?.mode === "convert" ? "safetensors" : "unknown";
+  // SGLang serves native Safetensors text models only.
+  const sglangEligible = modelKind === "chat" && modelFormat === "safetensors";
+  const engineUsable = (engine: ClusterEngineStatus | undefined) => Boolean(engine?.known && engine?.available);
+  const engineUnknown = (engine: ClusterEngineStatus | undefined) => !engine || !engine.known;
+  const recommendedBackend = modelKind === "embedding"
+    // Embeddings are llama.cpp-only; never recommend SGLang for them.
+    ? (engineUsable(llamaEngine) ? "llama" : engineUnknown(llamaEngine) ? "unknown" : "none")
+    : modelKind === "chat"
+      ? (modelFormat === "gguf"
+        ? (engineUsable(llamaEngine) ? "llama" : engineUnknown(llamaEngine) ? "unknown" : "none")
+        : modelFormat === "safetensors"
+          ? (engineUsable(sglangEngine) ? "sglang" : engineUsable(llamaEngine) ? "llama" : engineUnknown(sglangEngine) || engineUnknown(llamaEngine) ? "unknown" : "none")
+          : "unknown")
+      : "unknown";
+  const selectedBackend = draft?.backend || "";
+  const planBackend = selectedBackend || (recommendedBackend === "sglang" || recommendedBackend === "llama" ? recommendedBackend : "");
+  const planEngine = targetEngines.find(item => item.name === planBackend);
+  const backendSource = selectedBackend
+    ? t("deployments.backendSourceManual")
+    : modelFormat === "unknown"
+      ? t("deployments.backendSourceUnknown")
+      : t("deployments.backendSourceTarget", modelFormat === "gguf" ? "GGUF" : "Safetensors", enginesKnown ? t("deployments.backendSourceEngines") : t("deployments.backendSourceNoEngines"));
+  const sglangDevices = sglangEngine?.devices ?? [];
+  const effectiveSGLang = modelKind === "chat" && planBackend === "sglang";
+  const quantNoFit = !effectiveSGLang && !draft?.quant && recommendation.state === "no-fit";
   const instances = modelInstanceRows(view.members, [], deployments);
   const currentPublishing = instances.find(row => row.key === publishing?.key);
   const canPublish = !stale && !!currentPublishing && canPublishModelInstance(currentPublishing, view)
     && modelPublication(currentPublishing, view, publications).state === "unpublished";
   const create = () => {
     setFormError(""); setModelKind("unknown"); setDetectedKind("unknown"); setDetecting(false); setDetectionFailed(false); setDetail(null); selectedModel.current = null;
-    setDraft({ name: "", node_uuid: "auto", repository: "", artifact_source: "opencsg", revision: "main", quant: "", kind: "chat", num_ctx: 4096, num_parallel: 1, n_gpu_layers: -1 });
+    setDraft({ name: "", node_uuid: "auto", repository: "", artifact_source: "opencsg", revision: "main", quant: "", backend: "", kind: "chat", num_ctx: 4096, num_parallel: 1, n_gpu_layers: -1 });
   };
   const patch = (value: Partial<ClusterDeploymentSpec>) => setDraft(current => current && ({ ...current, ...value }));
   const selectModel = (model: MarketplaceModel) => {
@@ -101,16 +141,22 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
     setModelKind(kind); setDetectedKind(kind);
     setDetecting(true);
     setDraft(current => current && ({ ...current, repository: model.path, name: deploymentName(model.path, deployments.map(d => d.name)),
-      revision: deploymentRevision(model, current.artifact_source as ArtifactSource), quant: "", ...(isLlamaDeployment(kind) ? { kind } : {}) }));
+      revision: deploymentRevision(model, current.artifact_source as ArtifactSource), quant: "", backend: "", ...(isLlamaDeployment(kind) ? { kind } : {}) }));
   };
   const save = async (event: Event) => {
     event.preventDefault(); if (stale || busy || !draft || detecting || !isLlamaDeployment(modelKind)) return;
     if (!target) { setFormError(t("deployments.chooseNode")); return; }
     if (quantNoFit) { setFormError(t("deployments.quantNoFit")); return; }
     setBusy(true); setFormError("");
-    try { await createClusterDeployment({ ...draft, quant: draft.quant || recommendation.quant || "",
-      minimum_memory_bytes: !draft.quant && recommendation.required ? Math.ceil(recommendation.required) : undefined,
-      repository: draft.repository.trim(), kind: modelKind }); setDraft(null); await onChanged(); }
+    try {
+      await createClusterDeployment(buildClusterDeploymentRequest({
+        draft, modelKind, effectiveSGLang,
+        recommendedQuant: recommendation.quant,
+        recommendedRequired: recommendation.required,
+        targetUUID: target?.uuid,
+      }));
+      setDraft(null); await onChanged();
+    }
     catch (e) { setFormError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -134,13 +180,13 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
         <fieldset disabled={busy} class="grid grid-cols-2 gap-4">
           <label class="col-span-2 space-y-1 text-sm">{t("deployments.source")}<select id="deployment-source" class={inputClass} value={draft.artifact_source} onChange={e => {
             const source = e.currentTarget.value as ArtifactSource;
-            patch({ artifact_source: source, repository: "", name: "", revision: deploymentRevision(undefined, source), quant: "" });
+            patch({ artifact_source: source, repository: "", name: "", revision: deploymentRevision(undefined, source), quant: "", backend: "" });
             selectedModel.current = null; setDetail(null); setModelKind("unknown"); setDetectedKind("unknown"); setDetecting(false); setDetectionFailed(false);
           }}><option value="opencsg">OpenCSG</option><option value="huggingface">Hugging Face</option><option value="modelscope">ModelScope</option></select></label>
           <DeploymentModelPicker value={draft.repository} source={draft.artifact_source as ArtifactSource} disabled={busy}
             onInput={repository => {
               if (repository === draft.repository) return;
-              patch({ repository, name: deploymentName(repository.trim(), deployments.map(d => d.name)), quant: "", revision: deploymentRevision(undefined, draft.artifact_source as ArtifactSource) });
+              patch({ repository, name: deploymentName(repository.trim(), deployments.map(d => d.name)), quant: "", backend: "", revision: deploymentRevision(undefined, draft.artifact_source as ArtifactSource) });
               selectedModel.current = null; setDetail(null); setModelKind("unknown"); setDetectedKind("unknown"); setDetecting(/^[^/\s]+\/[^/\s]+$/.test(repository.trim())); setDetectionFailed(false);
             }} onSelect={selectModel} />
           {detecting ? <p role="status" class="col-span-2 text-sm text-gray-500">{t("deployments.detecting")}</p>
@@ -154,6 +200,32 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
               {modelKind !== "unknown" && <p data-deployment-runtime class="col-span-2 rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">
                 {t(`deployments.${modelKind}`)} · {t(`deployments.runtime.${modelKind}`)} · {t("deployments.latest")}
               </p>}
+              {modelKind === "chat" && <label class="col-span-2 space-y-1 text-sm" for="deployment-backend">{t("deployments.backend")}
+                <select id="deployment-backend" class={inputClass} value={draft.backend || ""} onChange={e => patch({ backend: e.currentTarget.value as ClusterDeploymentSpec["backend"], quant: e.currentTarget.value === "sglang" ? "" : draft.quant })}>
+                  <option value="">{t("deployments.backendAuto")}</option>
+                  <option value="llama" disabled={!enginesKnown || (llamaEngine ? !llamaEngine.available : false)}>{t("deployments.backendLlama")}</option>
+                  <option value="sglang" disabled={!enginesKnown || !sglangEligible || !sglangAvailable}>{t("deployments.backendSGLang")}</option>
+                </select>
+                <p class="text-xs text-gray-500">{t("deployments.backendHint")}</p>
+                {!enginesKnown && <p class="text-xs text-amber-700">{t("deployments.targetNoEngineInfo")}</p>}
+                {enginesKnown && !sglangAvailable && <p class="text-xs text-amber-700">{t("deployments.backendUnavailable", sglangEngine?.reason || t("deployments.backendUnknownReason"))}</p>}
+                {sglangAvailable && !sglangEligible && <p class="text-xs text-gray-500">{t("deployments.backendSGLangRequiresSafetensors")}</p>}
+              </label>}
+              {target && <div data-target-plan class="col-span-2 space-y-1 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
+                <p class="font-medium">{t("deployments.targetPlanTitle", target.name)}</p>
+                {!enginesKnown
+                  ? <p class="text-amber-800">{t("deployments.targetEngineUnknown")}</p>
+                  : <p>{t("deployments.targetEngineState", planEngine ? (planEngine.name === "sglang" ? "SGLang" : "llama.cpp") : t("deployments.targetBackendUnknown"),
+                    planEngine?.version || "—",
+                    planEngine ? (planEngine.available ? t("deployments.engineAvailable") : planEngine.installed ? t("deployments.engineUnavailable") : t("deployments.engineNotInstalled")) : t("deployments.targetBackendUnknown"),
+                    planEngine?.running ?? 0)}</p>}
+                <p>{t("deployments.targetBackendRecommendation", recommendedBackend === "sglang" ? "SGLang" : recommendedBackend === "llama" ? "llama.cpp" : recommendedBackend === "none" ? t("deployments.targetBackendNone") : t("deployments.targetBackendUnknown"), backendSource)}</p>
+                <p>{t("deployments.targetParams", draft.num_ctx, draft.num_parallel)}</p>
+                {planBackend === "sglang" && <p>{t("deployments.targetSGLangResolved")}</p>}
+                {planBackend === "sglang" && sglangDevices.length > 0 && <p>{t("deployments.targetSGLangDevices", sglangDevices.length, sglangDevices[0].name, memorySize(sglangDevices[0].memory_total))}</p>}
+                {modelFormat === "unknown" && <p class="text-amber-800">{t("deployments.targetFormatUnknown")}</p>}
+                {recommendedBackend === "none" && <p class="text-red-700">{t("deployments.targetNoRuntime")}</p>}
+              </div>}
               {modelKind !== "unknown" && !isLlamaDeployment(modelKind) && <p role="status" class="col-span-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{t("deployments.unsupportedKind")}</p>}
             </>}
           <label class="col-span-2 space-y-1 text-sm" for="deployment-node">{t("deployments.node")}
@@ -165,7 +237,7 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
               ? autoTarget ? t("deployments.autoNodeSelected", autoTarget.name, nodeMemoryLabel(autoTarget, cpuOnly)) : t("deployments.autoNodeUnavailable")
               : target && nodeMemoryLabel(target, cpuOnly)}</p>
           </label>
-          {draft.repository.trim() && isLlamaDeployment(modelKind) && <div class="col-span-2 space-y-2">
+          {draft.repository.trim() && isLlamaDeployment(modelKind) && !effectiveSGLang && <div class="col-span-2 space-y-2">
             <label class="block space-y-1 text-sm" for="deployment-quant">{t("deployments.quant")}
               <select id="deployment-quant" class={inputClass} disabled={detecting} value={draft.quant} onChange={e => patch({ quant: e.currentTarget.value })}>
                 <option value="">{recommendation.quant ? t("deployments.quantAutoRecommended", recommendation.quant.toUpperCase()) : t("deployments.quantAuto")}</option>
@@ -185,8 +257,8 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
               {isLlamaDeployment(modelKind) && <>
                 <ContextWindowField kind={modelKind} value={draft.num_ctx} required inputClass={inputClass} onInput={value => patch({ num_ctx: Number(value) })} />
                 <label class="space-y-1 text-sm">{t("deployments.parallel")}<input type="number" class={inputClass} min={1} max={16} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
-                <label class="space-y-1 text-sm">{t("deployments.gpuLayers")}<input type="number" class={inputClass} min={-1} max={999} required value={draft.n_gpu_layers} onInput={e => patch({ n_gpu_layers: Number(e.currentTarget.value) })} /></label>
-                <p class="col-span-2 text-xs text-gray-400">{t("deployments.llamaParamsHint")}</p>
+                {!effectiveSGLang && <label class="space-y-1 text-sm">{t("deployments.gpuLayers")}<input type="number" class={inputClass} min={-1} max={999} required value={draft.n_gpu_layers} onInput={e => patch({ n_gpu_layers: Number(e.currentTarget.value) })} /></label>}
+                <p class="col-span-2 text-xs text-gray-400">{t(effectiveSGLang ? "deployments.sglangParamsHint" : "deployments.llamaParamsHint")}</p>
               </>}
               <p class="col-span-2 text-xs text-gray-400">{t("deployments.registryContext")}</p>
             </div>
@@ -194,7 +266,7 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
         </fieldset>
         {stale && <p role="status" class="text-sm text-amber-700">{t("cluster.modelStatusStale")}</p>}
         {formError && <p role="alert" class="text-sm text-red-600">{formError}</p>}
-        <div class="flex justify-end gap-2"><button type="button" class={buttonClass} disabled={busy} onClick={() => setDraft(null)}>{t("deployments.cancel")}</button><button class={primaryClass} disabled={stale || busy || detecting || quantNoFit || !/^[^/\s]+\/[^/\s]+$/.test(draft.repository.trim()) || !target || !isLlamaDeployment(modelKind)}>{t(busy ? "deployments.saving" : "deployments.deploy")}</button></div>
+        <div class="flex justify-end gap-2"><button type="button" class={buttonClass} disabled={busy} onClick={() => setDraft(null)}>{t("deployments.cancel")}</button><button class={primaryClass} disabled={stale || busy || detecting || quantNoFit || (effectiveSGLang && (!sglangAvailable || !sglangEligible || !enginesKnown)) || recommendedBackend === "none" || !/^[^/\s]+\/[^/\s]+$/.test(draft.repository.trim()) || !target || !isLlamaDeployment(modelKind)}>{t(busy ? "deployments.saving" : "deployments.deploy")}</button></div>
       </form>}
     </dialog>
     <dialog ref={publisher} class="w-full max-w-md rounded-2xl p-6 shadow-xl backdrop:bg-black/30" onCancel={e => { if (busy) e.preventDefault(); else setPublishing(null); }}>

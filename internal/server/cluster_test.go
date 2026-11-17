@@ -566,3 +566,24 @@ func TestShortClusterHostnamePreservesIPAddresses(t *testing.T) {
 		}
 	}
 }
+
+func TestClusterHostForwardsEngineStatusToManager(t *testing.T) {
+	s := newClusterTestServer(t, cluster.NewMemoryBus())
+	status := s.cluster.LocalStatus(context.Background())
+	if len(status.Engines) == 0 {
+		t.Fatal("engine status never reached the cluster manager")
+	}
+	seen := map[string]bool{}
+	for _, engine := range status.Engines {
+		seen[engine.Name] = true
+		if !engine.Known {
+			t.Fatalf("engine %s reported known=false on a current node", engine.Name)
+		}
+	}
+	if !seen["llama"] || !seen["sglang"] {
+		t.Fatalf("engines = %v, want llama and sglang entries", seen)
+	}
+	if status.ResourceLimits.CPUCores == 0 {
+		t.Fatal("resource limits were not reported")
+	}
+}

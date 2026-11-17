@@ -95,6 +95,7 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
     </div>, document.body)}
     {testing && <InferenceTestDialog service={testing[0]} services={testing} onClose={() => setTesting(null)} />}
     {editing && <DeploymentConfigDialog deployment={editing} nodeName={row.node.name} allowed={actions.edit && d?.generation === editing.generation}
+      engines={row.node.status?.engines}
       onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); setNotice(t("deployments.configSaved")); await onChanged(); }} />}
     {error && <DeploymentMessage message={error} alert class="mt-2 text-xs text-red-600" />}
     {notice && <p role="status" class="mt-2 text-xs text-gray-500">{notice}</p>}

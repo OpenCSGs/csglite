@@ -31,10 +31,16 @@ export function deploymentRevision(model: MarketplaceModel | undefined, source: 
   return model?.default_branch?.trim() || (source === "modelscope" ? "master" : "main");
 }
 
-export function deploymentTargets(view: ClusterView) {
-  return view.members.filter(n => n.online && n.status?.deployment_capable && n.status.licensed
+export function deploymentTargets(view: ClusterView, backend?: "llama" | "sglang" | "") {
+  const eligible = view.members.filter(n => n.online && n.status?.deployment_capable && n.status.licensed
     && n.status.accept_work && n.status.state === "active"
     && (n.uuid === view.node.uuid || n.status.managed_by === view.node.uuid));
+  if (!backend) return eligible;
+  const withEngine = eligible.filter(n => n.status?.engines?.some(engine => engine.known && engine.name === backend && engine.available));
+  if (withEngine.length > 0) return withEngine;
+  // Legacy or still-probing nodes report no known engine. They are unknown
+  // rather than proven unusable, so keep them as an explicit fallback.
+  return eligible.filter(n => !n.status?.engines?.some(engine => engine.known));
 }
 
 export function deploymentName(model: string, existing: string[]): string {
