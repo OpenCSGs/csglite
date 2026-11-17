@@ -17,7 +17,8 @@ Docker 部署面向 Linux NVIDIA 和 AMD 主机，macOS 不在本方案的运行
 
 默认使用 `Dockerfile.cuda` 构建文本推理专用镜像：按已安装包的依赖图保留 SGLang
 默认运行依赖、CUDA 12 和预编译算子，移除仅由 diffusion/all/dev extras 引入的包，
-删除源码仓库、文档和下载缓存，最后从清理后的文件系统重新打包，避免旧镜像层
+删除源码仓库、文档、下载缓存及 CUDA 数学库的静态链接副本，保留动态库；
+最后从清理后的文件系统重新打包，避免旧镜像层
 继续携带被删除的内容。保留 NVCC、GCC、Ninja 和头文件供 Triton、FlashInfer、
 DeepGEMM 首次推理 JIT 使用；不承诺图像/视频生成运行时。
 移除与保留的 Python 包版本清单在 `/opt/csglite/runtime-packages.json`。

@@ -37,6 +37,21 @@ def dependency_closure(distributions, roots):
     return keep
 
 
+def prune_math_archives(roots):
+    # PyTorch/SGLang load the shared math libraries. Do not remove the device
+    # runtime, CUDA compiler archives, headers, or any shared library used by JIT.
+    prefixes = ("libcublas", "libcudnn", "libcufft", "libcusolver", "libcusparse",
+                "libcurand", "libnpp", "libnvjpeg")
+    removed = {}
+    for root in roots:
+        for path in root.glob("*.a"):
+            if path.name.startswith(prefixes) and path.is_file():
+                actual = path.resolve()
+                removed[str(actual)] = actual.stat().st_size
+                actual.unlink()
+    return removed
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
@@ -55,6 +70,10 @@ def main():
         return
     if remove:
         subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y"] + remove, check=True)
+    math_roots = [Path("/usr/lib/x86_64-linux-gnu")]
+    math_roots.extend(Path("/usr/local").glob("cuda*/targets/*/lib"))
+    report["removed_static_math_archives"] = prune_math_archives(math_roots)
+    print("Removed static math archive bytes:", sum(report["removed_static_math_archives"].values()), flush=True)
     # Keep runtime code and licenses; drop source-control and documentation assets.
     workspace = Path("/sgl-workspace/sglang")
     for name in (".git", "docs", "test", "tests", "benchmark", "examples", "assets"):
