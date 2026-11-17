@@ -61,7 +61,7 @@ class LauncherTests(unittest.TestCase):
         self.assertIsNotNone(child.poll())
 
     def test_supervisor_reports_service_failure(self):
-        # No HTTP server is needed: the gateway command fails before readiness.
+        # No HTTP server is needed: the CSGLite command fails before readiness.
         binary = self.home / "csghub-lite"
         binary.write_text("#!/bin/sh\nexit 23\n")
         binary.chmod(0o755)

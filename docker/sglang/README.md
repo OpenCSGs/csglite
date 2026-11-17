@@ -5,6 +5,9 @@ OpenAI 接口连接。启动时注册 `SGLang` provider 及选中的模型，直
 聊天模型列表里选择 `local-sglang [SGLang]`。这条路径直读 Safetensors，不转换
 GGUF。模型库里单独下载的模型不会自动变为 SGLang 服务模型。
 
+Docker 部署面向 Linux NVIDIA 和 AMD 主机，macOS 不在本方案的运行支持范围内。
+构建机仍可使用 macOS，交叉编译并构建 Linux 镜像。
+
 ## 构建与 NVIDIA 部署（CUDA 12.9）
 
 宿主需安装兼容 CUDA 12.9 的 NVIDIA 驱动、Docker 和 NVIDIA Container Toolkit。
@@ -67,21 +70,6 @@ docker compose -f docker/sglang/compose.rocm.yaml up -d
 Compose 强制指定镜像，避免默认误用 MI300 包。没有真实 AMD GPU 时的构建成功
 不能作为 MI210 通过的依据。
 
-## Apple Silicon：宿主服务 + 容器网关
-
-Linux Docker 容器无法直接使用 Apple Metal。这里提供混合部署文件，不将 CPU
-容器宣称为 Apple GPU 镜像。先按 SGLang 官方 Apple 文档在 macOS 运行原生
-SGLang/MLX 服务，指定 `--served-model-name local-sglang`，监听容器可访问的
-宿主接口和 30000 端口。需要限定宿主防火墙访问范围，或使用 `--api-key`，并把同一
-`SGLANG_API_KEY` 传给 Compose。Apple 原生运行时的安装与模型兼容仍需单独验收。
-
-```bash
-PLATFORM=linux/arm64 BASE_IMAGE=python:3.12-slim-bookworm \
-  DOCKERFILE=docker/sglang/Dockerfile.gateway \
-  IMAGE_TAG=csglite-sglang:dev-apple-gateway bash docker/sglang/build.sh
-docker compose -f docker/sglang/compose.apple.yaml up -d
-```
-
 ## 加入现有集群
 
 支持 CSGLite 现有的全部集群环境变量。容器桥接网络默认不依赖 mDNS，通过静态
@@ -96,7 +84,7 @@ docker compose -f docker/sglang/compose.cuda.yaml \
   -f docker/sglang/compose.cluster.yaml up -d
 ```
 
-将 cuda 文件替换为 rocm 或 apple 文件即可使用其他平台。同机原生 CSGLite 不得
+将 cuda 文件替换为 rocm 文件即可使用 AMD。同机原生 CSGLite 不得
 同时占用 11438。各主机之间需双向可达 TCP 11438，集群身份持久化在数据卷中。
 本期只复用现有入群能力；SGLang provider 不因此自动成为集群调度的本地部署资源。
 
@@ -119,7 +107,7 @@ docker compose -f docker/sglang/compose.cuda.yaml \
 | `SGLANG_MODEL_NAME` | `local-sglang`，页面及 API 使用的模型名 |
 | `SGLANG_EXTRA_ARGS` | JSON 字符串数组，例如 `["--tp","2","--context-length","4096"]` |
 | `SGLANG_START_TIMEOUT` | `1800` 秒，模型初始化上限 |
-| `SGLANG_API_KEY` | 可选的内部/宿主 SGLang 接口密钥 |
+| `SGLANG_API_KEY` | 可选的内部/已有 SGLang 服务接口密钥 |
 | `SGLANG_BASE_URL` | 设置后连接已有 SGLang，跳过容器内 SGLang 进程启动 |
 | `CSGLITE_DATA_DIR` | Compose 数据目录，默认相对于 Compose 文件的 `./data` |
 
@@ -141,23 +129,21 @@ SGLang 仅监听容器 loopback 30000，不公开内部服务端口。CSGLite �
 | 项目 | 状态 |
 | --- | --- |
 | 启动器与集群环境变量透传 | 6 个单元测试通过 |
-| CUDA / ROCm / Apple Compose，含集群 overlay | 6 种组合解析通过 |
-| Apple ARM64 网关镜像 | 本地构建成功，约 55 MB（镜像内容统计，不含宿主 SGLang） |
+| CUDA / ROCm Compose，含集群 overlay | 4 种组合解析通过 |
 | 真实 CSGLite 对接模拟 OpenAI 服务 | 无外部网络容器中，模型注册、普通/流式聊天、联合健康检查、正常退出通过 |
 | NVIDIA CUDA 12.9 完整镜像 | 已验证基础标签存在，完整构建与 GPU 推理待完成 |
 | AMD MI210 | 缺少经验证的 gfx90a 基础运行环境，待实机适配 |
-| Apple 宿主 SGLang/MLX | GPU 推理待实机验证 |
 | 集群真实节点互联、国内发布 | 待验证 / 待发布 |
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s docker/sglang -v
 MODEL_DIR=/models docker compose -f docker/sglang/compose.cuda.yaml config --quiet
-# 使用已构建的 ARM64 网关镜像验证真实 CSGLite 注册、转发、健康检查和退出：
+# 使用已构建的 Linux 镜像验证真实 CSGLite 注册、转发、健康检查和退出：
 docker run --rm --network none \
   -v "$PWD/docker/sglang/smoke.py:/smoke.py:ro" \
-  --entrypoint python3 csglite-sglang:dev-apple-gateway /smoke.py
+  --entrypoint python3 "${CSGLITE_SGLANG_IMAGE:-csglite-sglang:dev-cu129}" /smoke.py
 ```
 
 该 smoke 使用 OpenAI 模拟服务，不能代替真实 GPU 验收。发布前需在 NVIDIA CUDA
-12、MI210 和 macOS Metal 环境分别验证真实模型加载、流式输出、重启、停止释放
+12 和 MI210 环境分别验证真实模型加载、流式输出、重启、停止释放
 资源和集群入群，并记录镜像大小与驱动要求。当前仓库文件不代表镜像已经发布。

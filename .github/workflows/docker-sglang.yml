@@ -23,7 +23,7 @@ jobs:
           RENDER_GID: '109'
           CSGHUB_LITE_CLUSTER_ADVERTISE_HOST: '192.0.2.10'
         run: |
-          for platform in cuda rocm apple; do
+          for platform in cuda rocm; do
             docker compose -f docker/sglang/compose.${platform}.yaml config --quiet
             docker compose -f docker/sglang/compose.${platform}.yaml -f docker/sglang/compose.cluster.yaml config --quiet
           done

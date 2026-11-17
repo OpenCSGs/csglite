@@ -1,4 +1,4 @@
-"""Run inside the gateway image with --network none; no GPU or model required.
+"""Run inside the combined image with --network none; no GPU or model required.
 
 Verifies the real CSGLite binary discovers the seeded provider and forwards chat
 to an OpenAI fixture. This does not validate SGLang GPU compatibility.
