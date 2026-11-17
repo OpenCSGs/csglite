@@ -32,7 +32,7 @@ func deploymentMemory(st *Status, cpuOnly bool) (free uint64, known, gpu bool) {
 	return free, known, gpu
 }
 
-func selectDeploymentTarget(nodes []NodeView, controller string, cpuOnly bool, minimumMemory uint64, backend string) (string, error) {
+func selectDeploymentTarget(nodes []NodeView, controller string, cpuOnly bool, minimumMemory uint64, backend string, legacyAutomatic ...bool) (string, error) {
 	type candidate struct {
 		uuid        string
 		free        uint64
@@ -50,10 +50,11 @@ func selectDeploymentTarget(nodes []NodeView, controller string, cpuOnly bool, m
 		}
 		engineReady := engineReportedAndAvailable(st.Engines, backend)
 		if backend != "" {
-			// An explicit backend needs a node that reports that engine as
-			// available. A legacy node with no engine report is unknown, so it
-			// cannot satisfy an explicit selection.
-			if !engineReady {
+			// Old clients still create automatic embedding/GGUF deployments.
+			// Preserve those legacy nodes as an unknown fallback, while an
+			// explicit backend selection requires reported capability.
+			allowUnknown := len(legacyAutomatic) > 0 && legacyAutomatic[0] && !enginesKnown(st.Engines)
+			if !engineReady && !allowUnknown {
 				continue
 			}
 		} else if len(st.Engines) > 0 && !anyEngineAvailable(st.Engines) {
@@ -115,7 +116,7 @@ func selectDeploymentTarget(nodes []NodeView, controller string, cpuOnly bool, m
 
 func anyEngineAvailable(engines []EngineStatus) bool {
 	for _, engine := range engines {
-		if engine.Available {
+		if engine.Known && engine.Available {
 			return true
 		}
 	}
@@ -123,10 +124,32 @@ func anyEngineAvailable(engines []EngineStatus) bool {
 }
 
 func engineReportedAndAvailable(engines []EngineStatus, backend string) bool {
+	if backend == "" {
+		return anyEngineAvailable(engines)
+	}
 	for _, engine := range engines {
-		if engine.Name == backend && engine.Available {
+		if engine.Name == backend && engine.Known && engine.Available {
 			return true
 		}
 	}
 	return false
+}
+
+func enginesKnown(engines []EngineStatus) bool {
+	for _, engine := range engines {
+		if engine.Known {
+			return true
+		}
+	}
+	return false
+}
+
+func deploymentPlacementBackend(spec DeploymentSpec) string {
+	if spec.Backend != "" {
+		return spec.Backend
+	}
+	if spec.Kind == "embedding" || spec.Quant != "" {
+		return "llama"
+	}
+	return ""
 }

@@ -1367,6 +1367,7 @@ function RunParamsDialog({
   const numCtxAboveModelMax = modelMaxNumCtx > 0 && Number.isInteger(typedNumCtx) && typedNumCtx > modelMaxNumCtx;
   const backendLabel = (value?: string) => value === "sglang" ? t("lib.runBackendSGLang") : t("lib.runBackendLlama");
   const sglangCapability = modelConfig?.backends?.find((item) => item.backend === "sglang");
+  const llamaCapability = modelConfig?.backends?.find((item) => item.backend === "llama");
   const sglangAvailable = Boolean(sglangCapability?.known && sglangCapability?.available);
   const sglangEffective = !embeddingModel && (params.backend === "sglang"
     || (!params.backend && modelConfig?.effective_backend === "sglang"));
@@ -1429,7 +1430,7 @@ function RunParamsDialog({
                     class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   >
                     <option value="">{t("lib.runBackendAuto", backendLabel(modelConfig.effective_backend))}</option>
-                    <option value="llama">{t("lib.runBackendLlama")}</option>
+                    <option value="llama" disabled={Boolean(llamaCapability?.known && !llamaCapability.available)}>{t("lib.runBackendLlama")}</option>
                     <option value="sglang" disabled={!sglangAvailable || ggufModel}>{t("lib.runBackendSGLang")}</option>
                   </select>
                   <p class="text-xs text-gray-400 mt-1">{draftMatchesSaved
@@ -1437,6 +1438,9 @@ function RunParamsDialog({
                     : t("lib.runBackendSaved", backendLabel(savedBackend || modelConfig.effective_backend), backendLabel(params.backend || modelConfig.effective_backend))}</p>
                   {!sglangAvailable && (
                     <p class="text-xs text-amber-700 mt-1">{t("lib.runBackendSGLangUnavailable", sglangCapability?.reason || "")}</p>
+                  )}
+                  {llamaCapability?.known && !llamaCapability.available && (
+                    <p class="text-xs text-amber-700 mt-1">{t("lib.runBackendLlamaUnavailable", llamaCapability.reason || "")}</p>
                   )}
                   {ggufModel && <p class="text-xs text-gray-400 mt-1">{t("lib.runBackendGGUFOnly")}</p>}
                 </div>

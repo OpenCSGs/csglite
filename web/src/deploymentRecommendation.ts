@@ -19,8 +19,7 @@ export function automaticDeploymentTarget(view: ClusterView, cpuOnly = false, ba
 }
 
 function engineReady(node: ClusterNodeView, backend?: "llama" | "sglang" | ""): boolean {
-  if (!backend) return true;
-  return Boolean(node.status?.engines?.some(engine => engine.known && engine.name === backend && engine.available));
+  return Boolean(node.status?.engines?.some(engine => engine.known && (!backend || engine.name === backend) && engine.available));
 }
 
 export interface DeploymentQuantOption { quant: string; size?: number; estimated: boolean }

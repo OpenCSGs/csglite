@@ -20,6 +20,30 @@ func placementNode(id string, free uint64) NodeView {
 	}}
 }
 
+func TestAutomaticEmbeddingPlacementUsesLlamaAndLegacyFallback(t *testing.T) {
+	sg := placementNode("sg", 30<<30)
+	sg.Status.Engines = []EngineStatus{{Name: "sglang", Known: true, Installed: true, Available: true}}
+	llama := placementNode("llama", 16<<30)
+	llama.Status.Engines = []EngineStatus{{Name: "llama", Known: true, Installed: true, Available: true}}
+	legacy := placementNode("legacy", 31<<30)
+	backend := deploymentPlacementBackend(DeploymentSpec{Kind: "embedding"})
+	if backend != "llama" {
+		t.Fatalf("embedding placement backend = %q", backend)
+	}
+	if id, err := selectDeploymentTarget([]NodeView{sg, llama, legacy}, "master", false, 0, backend, true); err != nil || id != "llama" {
+		t.Fatalf("embedding selected %q, %v; want known llama node", id, err)
+	}
+	if id, err := selectDeploymentTarget([]NodeView{legacy}, "master", false, 0, backend, true); err != nil || id != "legacy" {
+		t.Fatalf("legacy automatic fallback = %q, %v", id, err)
+	}
+	if _, err := selectDeploymentTarget([]NodeView{sg}, "master", false, 0, backend, true); err == nil {
+		t.Fatal("embedding was placed on a known SGLang-only node")
+	}
+	if _, err := selectDeploymentTarget([]NodeView{legacy}, "master", false, 0, backend); err == nil {
+		t.Fatal("an unknown legacy node satisfied an explicit engine request")
+	}
+}
+
 func TestSelectDeploymentTarget(t *testing.T) {
 	small := placementNode("small", 12<<30)
 	large := placementNode("large", 24<<30)

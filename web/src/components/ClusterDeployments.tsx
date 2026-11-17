@@ -2,13 +2,13 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { createClusterDeployment, createProviderPool, getMarketplaceModelDetail } from "../api/client";
 import { buildClusterDeploymentRequest } from "../deploymentPayload";
-import type { ArtifactSource, MarketplaceModel, MarketplaceModelDetailResponse, ClusterNodeView, ClusterDeployment, ClusterDeploymentSpec, ClusterView, ProviderPool, ClusterEngineStatus } from "../api/client";
+import type { ArtifactSource, MarketplaceModel, MarketplaceModelDetailResponse, ClusterNodeView, ClusterDeployment, ClusterDeploymentSpec, ClusterView, ProviderPool } from "../api/client";
 import { t } from "../i18n";
 import { canPublishModelInstance, modelInstanceRows, modelInstanceCategory, modelPublication } from "../clusterModels";
 import type { ModelInstanceRow } from "../clusterModels";
 import { ContextWindowField } from "./ContextWindowField";
 import { DeploymentModelPicker } from "./DeploymentModelPicker";
-import { deploymentModelKind, deploymentName, deploymentRevision, deploymentTargets, isLlamaDeployment } from "../deploymentModels";
+import { deploymentModelKind, deploymentName, deploymentRevision, deploymentTargets, isLlamaDeployment, recommendedDeploymentBackend } from "../deploymentModels";
 import type { DeploymentModelKind } from "../deploymentModels";
 import { formatMemory as memorySize } from "../clusterMemory";
 import { automaticDeploymentTarget, deploymentNodeMemory, deploymentQuantOptions, recommendDeploymentQuant } from "../deploymentRecommendation";
@@ -80,12 +80,16 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
   }, [draft?.repository, draft?.artifact_source, selection]);
   // Prefer nodes that report the runtime this model format needs. Manual
   // backend selection narrows the list further.
-  const preferredBackend = draft?.backend
-    || (detail?.local_inference?.mode === "direct" ? "llama"
-      : detail?.local_inference?.mode === "convert" ? "sglang" : "");
+  const preferredBackend = modelKind === "embedding" ? "llama" : draft?.backend
+    || (detail?.local_inference?.mode === "direct" ? "llama" : "");
   const targets = deploymentTargets(view, preferredBackend as "llama" | "sglang" | "");
   const cpuOnly = draft?.n_gpu_layers === 0;
-  const autoTarget = automaticDeploymentTarget(view, cpuOnly, preferredBackend as "llama" | "sglang" | "");
+  // Prefer SGLang for Auto placement of native text models, while retaining
+  // llama-only nodes in the manual target list and as a genuine absent-runtime
+  // fallback. Embedding selection always remains on llama.cpp.
+  const autoBackend = preferredBackend || (modelKind === "chat" && detail?.local_inference?.mode === "convert"
+    && targets.some(node => node.status?.engines?.some(engine => engine.name === "sglang" && engine.known && engine.available)) ? "sglang" : "");
+  const autoTarget = automaticDeploymentTarget(view, cpuOnly, autoBackend as "llama" | "sglang" | "");
   const target = draft?.node_uuid === "auto" ? autoTarget : targets.find(node => node.uuid === draft?.node_uuid);
   const quantOptions = deploymentQuantOptions(detail?.details || selectedModel.current, detail);
   const recommendation = recommendDeploymentQuant(quantOptions, deploymentNodeMemory(target, cpuOnly), draft?.num_ctx || 4096, draft?.num_parallel || 1);
@@ -101,18 +105,7 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
     : detail?.local_inference?.mode === "convert" ? "safetensors" : "unknown";
   // SGLang serves native Safetensors text models only.
   const sglangEligible = modelKind === "chat" && modelFormat === "safetensors";
-  const engineUsable = (engine: ClusterEngineStatus | undefined) => Boolean(engine?.known && engine?.available);
-  const engineUnknown = (engine: ClusterEngineStatus | undefined) => !engine || !engine.known;
-  const recommendedBackend = modelKind === "embedding"
-    // Embeddings are llama.cpp-only; never recommend SGLang for them.
-    ? (engineUsable(llamaEngine) ? "llama" : engineUnknown(llamaEngine) ? "unknown" : "none")
-    : modelKind === "chat"
-      ? (modelFormat === "gguf"
-        ? (engineUsable(llamaEngine) ? "llama" : engineUnknown(llamaEngine) ? "unknown" : "none")
-        : modelFormat === "safetensors"
-          ? (engineUsable(sglangEngine) ? "sglang" : engineUsable(llamaEngine) ? "llama" : engineUnknown(sglangEngine) || engineUnknown(llamaEngine) ? "unknown" : "none")
-          : "unknown")
-      : "unknown";
+  const recommendedBackend = recommendedDeploymentBackend(modelKind, modelFormat, targetEngines);
   const selectedBackend = draft?.backend || "";
   const planBackend = selectedBackend || (recommendedBackend === "sglang" || recommendedBackend === "llama" ? recommendedBackend : "");
   const planEngine = targetEngines.find(item => item.name === planBackend);
@@ -198,7 +191,9 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
                 <p class="text-xs text-gray-500">{t(detectionFailed ? "deployments.detectionFailed" : "deployments.unknownHint")}</p>
               </label>}
               {modelKind !== "unknown" && <p data-deployment-runtime class="col-span-2 rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">
-                {t(`deployments.${modelKind}`)} · {t(`deployments.runtime.${modelKind}`)} · {t("deployments.latest")}
+                {t(`deployments.${modelKind}`)} · {modelKind === "chat"
+                  ? planBackend === "sglang" ? "SGLang" : planBackend === "llama" ? "llama.cpp" : t("deployments.targetBackendUnknown")
+                  : t(`deployments.runtime.${modelKind}`)} · {t("deployments.latest")}
               </p>}
               {modelKind === "chat" && <label class="col-span-2 space-y-1 text-sm" for="deployment-backend">{t("deployments.backend")}
                 <select id="deployment-backend" class={inputClass} value={draft.backend || ""} onChange={e => patch({ backend: e.currentTarget.value as ClusterDeploymentSpec["backend"], quant: e.currentTarget.value === "sglang" ? "" : draft.quant })}>

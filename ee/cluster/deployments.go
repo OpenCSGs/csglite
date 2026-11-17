@@ -665,15 +665,9 @@ func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory 
 		return Deployment{}, errors.New("create deployments on a cluster controller")
 	}
 	spec.Backend = normalizeDeploymentBackend(spec.Backend)
-	placementBackend := spec.Backend
-	if placementBackend == "" && (spec.Quant != "" || spec.Kind == "embedding") {
-		// A GGUF quantization and embedding deployments can only be served by
-		// llama.cpp, so an automatic target must report that engine. Legacy
-		// nodes with no engine report remain eligible as unknown.
-		placementBackend = "llama"
-	}
+	placementBackend := deploymentPlacementBackend(spec)
 	if spec.NodeUUID == "" || spec.NodeUUID == "auto" {
-		node, err := selectDeploymentTarget(m.memberViews(context.Background(), true), m.identity.UUID, spec.NGPULayers == 0, minimumMemory, placementBackend)
+		node, err := selectDeploymentTarget(m.memberViews(context.Background(), true), m.identity.UUID, spec.NGPULayers == 0, minimumMemory, placementBackend, spec.Backend == "")
 		if err != nil {
 			return Deployment{}, err
 		}
@@ -685,6 +679,15 @@ func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory 
 		return Deployment{}, err
 	}
 	st := m.candidateStatus(spec.NodeUUID)
+	if placementBackend == "llama" && st != nil && enginesKnown(st.Engines) && !engineReportedAndAvailable(st.Engines, "llama") {
+		reason := "llama.cpp is not reported as available"
+		for _, engine := range st.Engines {
+			if engine.Name == "llama" && engine.Reason != "" {
+				reason = engine.Reason
+			}
+		}
+		return Deployment{}, fmt.Errorf("llama.cpp is not available on the target node: %s", reason)
+	}
 	if spec.Backend == "sglang" {
 		if st == nil || len(st.Engines) == 0 {
 			return Deployment{}, errors.New("target node did not report SGLang capability; upgrade the node or choose automatic")
