@@ -1,0 +1,13 @@
+# Apple hybrid deployment: SGLang/MLX runs on the macOS host, not in Linux.
+ARG BASE_IMAGE=python:3.12-slim-bookworm
+FROM ${BASE_IMAGE}
+USER root
+ENV HOME=/root PYTHONUNBUFFERED=1 CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER=0
+COPY --from=csglite-binary /csghub-lite /usr/local/bin/csghub-lite
+COPY docker/sglang/launcher.py /opt/csglite-sglang/launcher.py
+EXPOSE 11435
+EXPOSE 11438
+VOLUME ["/root/.csghub-lite"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15m --retries=3 \
+    CMD ["python3", "/opt/csglite-sglang/launcher.py", "health"]
+ENTRYPOINT ["python3", "/opt/csglite-sglang/launcher.py"]

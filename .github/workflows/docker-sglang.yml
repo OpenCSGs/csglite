@@ -1,0 +1,28 @@
+name: SGLang container checks
+on:
+  pull_request:
+    paths: ['docker/sglang/**', '.github/workflows/docker-sglang.yml']
+  push:
+    branches: [main]
+    paths: ['docker/sglang/**', '.github/workflows/docker-sglang.yml']
+jobs:
+  launcher:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - run: python -m unittest discover -s docker/sglang -v
+      - run: bash -n docker/sglang/build.sh
+      - name: Validate Compose and cluster overlays
+        env:
+          MODEL_DIR: /models
+          CSGLITE_SGLANG_IMAGE: csglite-sglang:check
+          RENDER_GID: '109'
+          CSGHUB_LITE_CLUSTER_ADVERTISE_HOST: '192.0.2.10'
+        run: |
+          for platform in cuda rocm apple; do
+            docker compose -f docker/sglang/compose.${platform}.yaml config --quiet
+            docker compose -f docker/sglang/compose.${platform}.yaml -f docker/sglang/compose.cluster.yaml config --quiet
+          done
