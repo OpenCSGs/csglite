@@ -149,11 +149,11 @@ func TestUngatedFeaturesIgnoreTheLicense(t *testing.T) {
 	if ent := m.Verify(licensetest.Encode(t, key, licensetest.Payload(testNow))); ent.Status != license.StatusValid || ent.Limit(license.QuotaMaxClusterNodes) != 0 {
 		t.Fatalf("enterprise cluster cap = %d (%s), want unlimited", ent.Limit(license.QuotaMaxClusterNodes), ent.Status)
 	}
-	// Every tier allows 10 devices; the limit is enforced by the server, the
+	// Every tier allows 5 devices; the limit is enforced by the server, the
 	// local value is only what Settings displays.
 	ent := m.Verify(licensetest.Encode(t, key, licensetest.Payload(testNow)))
-	if ent.Limit(license.QuotaMaxDevices) != 10 || st.Limit(license.QuotaMaxDevices) != 10 {
-		t.Fatalf("device limit = %d licensed / %d unlicensed, want 10", ent.Limit(license.QuotaMaxDevices), st.Limit(license.QuotaMaxDevices))
+	if ent.Limit(license.QuotaMaxDevices) != 5 || st.Limit(license.QuotaMaxDevices) != 5 {
+		t.Fatalf("device limit = %d licensed / %d unlicensed, want 5", ent.Limit(license.QuotaMaxDevices), st.Limit(license.QuotaMaxDevices))
 	}
 
 	// A license that explicitly disables an ungated feature has no effect on it.
