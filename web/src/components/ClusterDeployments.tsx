@@ -193,9 +193,8 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
                 <select id="deployment-backend" class={inputClass} value={draft.backend || ""} onChange={e => patch({ backend: e.currentTarget.value as ClusterDeploymentSpec["backend"], quant: e.currentTarget.value === "sglang" ? "" : draft.quant })}>
                   <option value="">{t("deployments.backendAuto")}</option>
                   <option value="llama" disabled={!enginesKnown || (llamaEngine ? !llamaEngine.available : false)}>{t("deployments.backendLlama")}</option>
-                  <option value="sglang" disabled={!enginesKnown || !sglangEligible || !sglangAvailable}>{t("deployments.backendSGLang")}</option>
+                  <option value="sglang" disabled={!enginesKnown || !sglangEligible || !sglangAvailable}>{t("deployments.backendSGLang")}{sglangEngine?.version ? ` ${sglangEngine.version}` : ""}</option>
                 </select>
-                {effectiveSGLang && sglangEngine?.version && <p class="text-xs text-gray-500">SGLang {sglangEngine.version}</p>}
               </label>}
               {recommendedBackend === "none" && <p role="status" class="col-span-2 text-xs text-red-700">{t("deployments.targetNoRuntime")}</p>}
               {modelKind !== "unknown" && !isLlamaDeployment(modelKind) && <p role="status" class="col-span-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{t("deployments.unsupportedKind")}</p>}

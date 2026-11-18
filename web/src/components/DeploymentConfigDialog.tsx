@@ -10,8 +10,8 @@ import { DeploymentMessage } from "./DeploymentMessage";
 
 const inputClass = "w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500";
 
-export function DeploymentConfigDialog({ deployment, nodeName, allowed, engines, onClose, onSaved }: {
-  deployment: ClusterDeployment; nodeName: string; allowed: boolean;
+export function DeploymentConfigDialog({ deployment, allowed, engines, onClose, onSaved }: {
+  deployment: ClusterDeployment; allowed: boolean;
   engines?: ClusterEngineStatus[]; onClose: () => void; onSaved: () => Promise<unknown>;
 }) {
   const runtimeSupported = isLlamaDeployment(deployment.kind);
@@ -60,7 +60,7 @@ export function DeploymentConfigDialog({ deployment, nodeName, allowed, engines,
     onCancel={event => { if (busy) event.preventDefault(); else onClose(); }}>
     <form onSubmit={save} class="space-y-5 p-6">
       <h2 id={titleID} class="text-lg font-semibold">{t("deployments.editConfig")}</h2>
-      <p class="break-words text-sm text-gray-600">{deployment.name} · {deployment.repository}<br />{nodeName} · {deployment.artifact_source} · {deployment.revision}</p>
+      <p class="break-words text-sm text-gray-600">{deployment.repository}</p>
       <p class="text-sm text-gray-500">{t("deployments.editConfigHint")}</p>
       {deployment.status.engine_plan?.resolved && <div class="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
         <p class="font-medium">{t("deployments.enginePlanTitle", deployment.status.engine_backend === "sglang" ? "SGLang" : "llama.cpp")}</p>
@@ -77,9 +77,8 @@ export function DeploymentConfigDialog({ deployment, nodeName, allowed, engines,
           <select class={inputClass} value={draft.backend || ""} onInput={e => patch({ backend: e.currentTarget.value as ClusterDeploymentConfig["backend"] })}>
             <option value="">{t("deployments.backendAuto")}</option>
             <option value="llama" disabled={!enginesKnown || (llama ? !llamaAvailable : false)}>{t("deployments.backendLlama")}</option>
-            <option value="sglang" disabled={!enginesKnown || !sglangEligible || !sglangAvailable}>{t("deployments.backendSGLang")}</option>
+            <option value="sglang" disabled={!enginesKnown || !sglangEligible || !sglangAvailable}>{t("deployments.backendSGLang")}{sglang?.version ? ` ${sglang.version}` : ""}</option>
           </select>
-          {sglangSelected && sglang?.version && <p class="text-xs text-gray-500">SGLang {sglang.version}</p>}
         </label>}
         {!sglangSelected && <label class="col-span-2 space-y-1 text-sm">{t("deployments.quant")}
           <input class={inputClass} list={quantsID} maxLength={32} value={draft.quant} onInput={e => patch({ quant: e.currentTarget.value })} />
