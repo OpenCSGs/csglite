@@ -186,6 +186,12 @@ type ModelRuntimeSettings struct {
 	// A repository holding several quantizations keeps serving the one the
 	// user picked instead of reverting on the next reload or idle eviction.
 	DType string `json:"dtype,omitempty"`
+	// Backend pins the inference runtime: "llama" or "sglang". Empty follows
+	// the format default -- GGUF on llama.cpp, native Safetensors on SGLang
+	// when it is installed, otherwise llama.cpp's GGUF conversion. An explicit
+	// "sglang" never falls back to conversion: an unavailable runtime is
+	// reported instead of silently serving different weights.
+	Backend string `json:"backend,omitempty"`
 	// KeepAlive is the idle window before the engine is unloaded, in the same
 	// spelling the API and CLI accept: "30s", "1h", or "-1" to keep the model
 	// loaded until it is stopped. Empty follows the runtime default. Without

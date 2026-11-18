@@ -1,0 +1,11 @@
+# Merge with compose.cuda.yaml or compose.rocm.yaml for a public HTTPS worker.
+# No inbound cluster port or advertise-host is needed: the worker dials Master.
+services:
+  csglite:
+    environment:
+      CSGHUB_LITE_CLUSTER_MODE: worker
+      CSGHUB_LITE_CLUSTER_GATEWAY_URL: ${CSGHUB_LITE_CLUSTER_GATEWAY_URL:?Set the HTTPS Master origin}
+      CSGHUB_LITE_CLUSTER_JOIN_TOKEN: ${CSGHUB_LITE_CLUSTER_JOIN_TOKEN:?Set the cluster join token}
+      CSGHUB_LITE_CLUSTER_TLS_CA_FILE: ${CSGHUB_LITE_CLUSTER_TLS_CA_FILE:-}
+      CSGHUB_LITE_CLUSTER_DISCOVERY: none
+      CSGHUB_LITE_CLUSTER_DISABLED: "0"

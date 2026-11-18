@@ -6,6 +6,7 @@ package cluster
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -15,12 +16,15 @@ type DeploymentConfigPatch struct {
 	NumCtx      *int    `json:"num_ctx,omitempty"`
 	NumParallel *int    `json:"num_parallel,omitempty"`
 	NGPULayers  *int    `json:"n_gpu_layers,omitempty"`
+	Backend     *string `json:"backend,omitempty"`
+	SGLangArgs  *string `json:"sglang_args,omitempty"`
 }
 
 var errDeploymentConfigConflict = errors.New("deployment configuration conflict")
 
 func sameDeploymentIdentity(a, b DeploymentSpec) bool {
-	a.Quant, a.NumCtx, a.NumParallel, a.NGPULayers = b.Quant, b.NumCtx, b.NumParallel, b.NGPULayers
+	a.Quant, a.NumCtx, a.NumParallel, a.NGPULayers, a.Backend = b.Quant, b.NumCtx, b.NumParallel, b.NGPULayers, b.Backend
+	a.SGLangArgs = b.SGLangArgs
 	return a == b
 }
 
@@ -28,7 +32,7 @@ func (m *Manager) configureDeployment(id string, generation uint64, patch Deploy
 	if m.opts.Mode == "worker" || !m.store.InCluster() {
 		return Deployment{}, errors.New("configure deployments on the Master")
 	}
-	if generation == 0 || (patch.Quant == nil && patch.NumCtx == nil && patch.NumParallel == nil && patch.NGPULayers == nil) {
+	if generation == 0 || (patch.Quant == nil && patch.NumCtx == nil && patch.NumParallel == nil && patch.NGPULayers == nil && patch.Backend == nil && patch.SGLangArgs == nil) {
 		return Deployment{}, errors.New("generation and at least one configuration parameter are required")
 	}
 	current, exists := m.deployments.get(true, id)
@@ -55,6 +59,15 @@ func (m *Manager) configureDeployment(id string, generation uint64, patch Deploy
 		}
 		if patch.NGPULayers != nil {
 			spec.NGPULayers = *patch.NGPULayers
+		}
+		if patch.Backend != nil {
+			spec.Backend = normalizeDeploymentBackend(*patch.Backend)
+		}
+		if patch.SGLangArgs != nil {
+			spec.SGLangArgs = *patch.SGLangArgs
+		}
+		if strings.TrimSpace(spec.SGLangArgs) != "" && !supportsSGLangDeploymentArgs(st) {
+			return fmt.Errorf("%w: upgrade the target node to use per-deployment SGLang arguments", errDeploymentConfigConflict)
 		}
 		if err := validateDeployment(spec); err != nil {
 			return err

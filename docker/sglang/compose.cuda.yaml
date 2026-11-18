@@ -1,0 +1,30 @@
+services:
+  csglite:
+    image: ${CSGLITE_SGLANG_IMAGE:-csglite-sglang:dev-cu129}
+    platform: linux/amd64
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "127.0.0.1:11435:11435"
+    volumes:
+      - ${CSGLITE_DATA_DIR:-./data}:/root/.csghub-lite
+      # Optional in native mode: models can be downloaded or pulled through
+      # the CSGLite UI/API after the container starts.
+      - ${MODEL_DIR:-./models}:/root/.csghub-lite/models/serving:ro
+    environment:
+      CSGHUB_LITE_VERSION: ${CSGHUB_LITE_VERSION:-latest}
+      CSGHUB_LITE_REGION: ${CSGHUB_LITE_REGION:-CN}
+      SGLANG_START_TIMEOUT: "1800"
+      # Advanced SGLang flags only. CSGLite chooses bounded context, KV and
+      # memory defaults from the model and visible GPUs; override only after
+      # measuring the result.
+      SGLANG_EXTRA_ARGS: '${SGLANG_EXTRA_ARGS:-[]}'
+    shm_size: 8gb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_ID:-0}"]
+              capabilities: [gpu]

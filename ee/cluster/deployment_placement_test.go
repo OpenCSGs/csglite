@@ -20,6 +20,30 @@ func placementNode(id string, free uint64) NodeView {
 	}}
 }
 
+func TestAutomaticEmbeddingPlacementUsesLlamaAndLegacyFallback(t *testing.T) {
+	sg := placementNode("sg", 30<<30)
+	sg.Status.Engines = []EngineStatus{{Name: "sglang", Known: true, Installed: true, Available: true}}
+	llama := placementNode("llama", 16<<30)
+	llama.Status.Engines = []EngineStatus{{Name: "llama", Known: true, Installed: true, Available: true}}
+	legacy := placementNode("legacy", 31<<30)
+	backend := deploymentPlacementBackend(DeploymentSpec{Kind: "embedding"})
+	if backend != "llama" {
+		t.Fatalf("embedding placement backend = %q", backend)
+	}
+	if id, err := selectDeploymentTarget([]NodeView{sg, llama, legacy}, "master", false, 0, backend, true); err != nil || id != "llama" {
+		t.Fatalf("embedding selected %q, %v; want known llama node", id, err)
+	}
+	if id, err := selectDeploymentTarget([]NodeView{legacy}, "master", false, 0, backend, true); err != nil || id != "legacy" {
+		t.Fatalf("legacy automatic fallback = %q, %v", id, err)
+	}
+	if _, err := selectDeploymentTarget([]NodeView{sg}, "master", false, 0, backend, true); err == nil {
+		t.Fatal("embedding was placed on a known SGLang-only node")
+	}
+	if _, err := selectDeploymentTarget([]NodeView{legacy}, "master", false, 0, backend); err == nil {
+		t.Fatal("an unknown legacy node satisfied an explicit engine request")
+	}
+}
+
 func TestSelectDeploymentTarget(t *testing.T) {
 	small := placementNode("small", 12<<30)
 	large := placementNode("large", 24<<30)
@@ -42,11 +66,11 @@ func TestSelectDeploymentTarget(t *testing.T) {
 			case "no-memory":
 				invalid.Status.GPUs[0].VRAMUsed = invalid.Status.GPUs[0].VRAMTotal
 			}
-			id, err := selectDeploymentTarget([]NodeView{small, invalid, large}, "master", false, 0)
+			id, err := selectDeploymentTarget([]NodeView{small, invalid, large}, "master", false, 0, "")
 			if err != nil || id != "large" {
 				t.Fatalf("selected %q, %v; want large", id, err)
 			}
-			if _, err := selectDeploymentTarget([]NodeView{invalid}, "master", false, 0); err == nil {
+			if _, err := selectDeploymentTarget([]NodeView{invalid}, "master", false, 0, ""); err == nil {
 				t.Fatal("ineligible target was selected")
 			}
 		})
@@ -56,11 +80,11 @@ func TestSelectDeploymentTarget(t *testing.T) {
 func TestDeploymentMemoryAndTies(t *testing.T) {
 	a, b := placementNode("a", 24<<30), placementNode("b", 24<<30)
 	a.Status.Inflight = 1
-	if id, _ := selectDeploymentTarget([]NodeView{a, b}, "master", false, 0); id != "b" {
+	if id, _ := selectDeploymentTarget([]NodeView{a, b}, "master", false, 0, ""); id != "b" {
 		t.Fatal("busy node won a memory tie")
 	}
 	a.Status.Inflight = 0
-	if id, _ := selectDeploymentTarget([]NodeView{b, a}, "master", false, 0); id != "a" {
+	if id, _ := selectDeploymentTarget([]NodeView{b, a}, "master", false, 0, ""); id != "a" {
 		t.Fatal("UUID tie break was not deterministic")
 	}
 	a.Status.RAM.Unified = true
@@ -86,11 +110,11 @@ func TestAutoPlacementRechecksRecommendedMemory(t *testing.T) {
 	available := placementNode("still-fits", 12<<30)
 	unknown := placementNode("unknown", 32<<30)
 	unknown.Status.GPUs[0].UsageKnown = false
-	id, err := selectDeploymentTarget([]NodeView{changed, unknown, available}, "master", false, 10<<30)
+	id, err := selectDeploymentTarget([]NodeView{changed, unknown, available}, "master", false, 10<<30, "")
 	if err != nil || id != "still-fits" {
 		t.Fatalf("stale recommendation selected %q: %v", id, err)
 	}
-	if _, err := selectDeploymentTarget([]NodeView{changed, unknown}, "master", false, 10<<30); err == nil {
+	if _, err := selectDeploymentTarget([]NodeView{changed, unknown}, "master", false, 10<<30, ""); err == nil {
 		t.Fatal("assigned a recommended variant without enough reported memory")
 	}
 }
@@ -135,5 +159,33 @@ func TestCreateDeploymentAutoPersistsConcreteAssignment(t *testing.T) {
 				t.Fatal("changing desired state moved an Auto deployment", err)
 			}
 		})
+	}
+}
+
+func TestSelectDeploymentTargetFiltersByEngineCapability(t *testing.T) {
+	sg := placementNode("sg", 24<<30)
+	sg.Status.Engines = []EngineStatus{{Name: "sglang", Known: true, Installed: true, Available: true}}
+	llama := placementNode("llama", 32<<30)
+	llama.Status.Engines = []EngineStatus{{Name: "llama", Known: true, Installed: true, Available: true}}
+	legacy := placementNode("legacy", 40<<30) // no engine report: unknown, never assumed
+
+	if id, err := selectDeploymentTarget([]NodeView{sg, llama, legacy}, "master", false, 0, "sglang"); err != nil || id != "sg" {
+		t.Fatalf("explicit sglang selected %q, %v; want sg", id, err)
+	}
+	if id, err := selectDeploymentTarget([]NodeView{sg, llama, legacy}, "master", false, 0, "llama"); err != nil || id != "llama" {
+		t.Fatalf("explicit llama selected %q, %v; want llama", id, err)
+	}
+	if id, err := selectDeploymentTarget([]NodeView{legacy, llama}, "master", false, 0, "sglang"); err == nil {
+		t.Fatalf("explicit sglang selected an unverified node %q", id)
+	}
+	// Automatic placement prefers a node with a known available engine over an
+	// unknown legacy node, but the legacy node remains eligible when nothing
+	// known is available.
+	if id, err := selectDeploymentTarget([]NodeView{legacy, llama}, "master", false, 0, ""); err != nil || id != "llama" {
+		t.Fatalf("auto selected %q, %v; want known llama node", id, err)
+	}
+	legacyOnly := placementNode("legacy", 24<<30)
+	if id, err := selectDeploymentTarget([]NodeView{legacyOnly}, "master", false, 0, ""); err != nil || id != "legacy" {
+		t.Fatalf("legacy-only auto selected %q, %v", id, err)
 	}
 }

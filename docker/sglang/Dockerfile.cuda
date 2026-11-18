@@ -1,0 +1,52 @@
+# Reduce the official, pinned CUDA 12 runtime to the text-serving dependency set.
+# Flatten via a fresh stage so removed packages do not survive in parent layers.
+ARG BASE_IMAGE=lmsysorg/sglang:v0.5.19-cu129-runtime
+FROM ${BASE_IMAGE} AS reduced
+USER root
+COPY docker/sglang/minimal_runtime.py /opt/csglite/minimal_runtime.py
+RUN /opt/sglang/bin/python /opt/csglite/minimal_runtime.py --apply \
+    && /opt/sglang/bin/python -c "import sglang, torch, transformers; assert torch.version.cuda.startswith('12.'); print(torch.__version__, torch.version.cuda)"
+
+FROM scratch
+COPY --from=reduced / /
+ARG CSGHUB_LITE_VERSION=dev
+LABEL org.opencontainers.image.title="CSGLite + SGLang CUDA 12 text runtime" \
+      org.opencontainers.image.source="https://github.com/OpenCSGs/csglite" \
+      org.opencontainers.image.version=${CSGHUB_LITE_VERSION}
+ENV PATH=/root/.csghub-lite/bin:/opt/sglang/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/cuda/nvvm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
+    CUDA_HOME=/usr/local/cuda \
+    CUDA_VERSION=12.9.2 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    NVIDIA_REQUIRE_CUDA="cuda>=12.9 driver>=535,driver<536 driver>=550,driver<551 driver>=560,driver<561 driver>=565,driver<566 driver>=570,driver<571 driver>=580,driver<581" \
+    LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
+    SGLANG_RUST_BUILD_MODE=never \
+    GDRCOPY_HOME=/usr/src/gdrdrv-2.5.1 \
+    LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8 \
+    HOME=/root PYTHONUNBUFFERED=1 \
+    CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER=0 \
+    CSGHUB_LITE_VERSION=latest \
+    SGLANG_MODEL_NAME=local-sglang \
+    HF_HOME=/root/.csghub-lite/cache/huggingface \
+    XDG_CACHE_HOME=/root/.csghub-lite/cache \
+    SGLANG_CACHE_DIR=/root/.csghub-lite/cache/sglang \
+    SGLANG_JIT_CACHE_DIR=/root/.csghub-lite/cache/sglang/jit \
+    FLASHINFER_WORKSPACE_BASE=/root/.csghub-lite/cache/sglang \
+    TORCHINDUCTOR_CACHE_DIR=/root/.csghub-lite/cache/inductor \
+    SGLANG_WEIGHT_CACHE_SOCKET_TEMPLATE=/root/.csghub-lite/tmp/sglang_weight_cache_{device_uuid}.sock \
+    SGLANG_WEIGHT_CACHE_READY_TEMPLATE=/root/.csghub-lite/tmp/sglang_weight_cache_{device_uuid}.ready \
+    TRITON_CACHE_DIR=/root/.csghub-lite/cache/triton \
+    TORCH_EXTENSIONS_DIR=/root/.csghub-lite/cache/torch-extensions \
+    CUDA_CACHE_PATH=/root/.csghub-lite/cache/cuda \
+    PYTHONPYCACHEPREFIX=/root/.csghub-lite/cache/python \
+    TMPDIR=/root/.csghub-lite/tmp TMP=/root/.csghub-lite/tmp TEMP=/root/.csghub-lite/tmp
+WORKDIR /sgl-workspace/sglang
+COPY --from=csglite-binary /csghub-lite /usr/local/bin/csghub-lite
+COPY docker/sglang/launcher.py docker/sglang/lite_update.py /opt/csglite-sglang/
+EXPOSE 11435 11438
+VOLUME ["/root/.csghub-lite"]
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15m --retries=3 \
+    CMD ["python3", "/opt/csglite-sglang/launcher.py", "health"]
+ENTRYPOINT ["python3", "/opt/csglite-sglang/launcher.py"]

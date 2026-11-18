@@ -742,3 +742,54 @@ func TestRevokedDeploymentUnloadsBusyRuntimeAndPreservesLocalModel(t *testing.T)
 		})
 	}
 }
+
+type planReportingEngine struct {
+	*fakeChatCompletionEngine
+	plan inference.SGLangPlan
+}
+
+func (e *planReportingEngine) EnginePlan() inference.SGLangPlan { return e.plan }
+
+func TestClusterEnginePlanReportsActualRuntimeValues(t *testing.T) {
+	engine := &planReportingEngine{
+		fakeChatCompletionEngine: &fakeChatCompletionEngine{},
+		plan: inference.SGLangPlan{
+			ContextLength: 16384, MaxRunningRequests: 2, MaxTotalTokens: 32768,
+			TensorParallel: 1, MemFractionStatic: 0.12, DType: "bfloat16",
+			ToolCallParser: "qwen25", ReasoningParser: "qwen3", MaxJobs: 2,
+			Sources: map[string]string{"context_length": "request or model setting (resolved)"},
+		},
+	}
+	status := clusterEnginePlan(engine)
+	if status == nil || !status.Resolved || status.ContextLength != 16384 || status.ToolCallParser != "qwen25" || status.MaxJobs != 2 {
+		t.Fatalf("plan status = %+v", status)
+	}
+	if status.Sources["context_length"] == "" {
+		t.Fatalf("plan sources lost: %+v", status)
+	}
+	if clusterEnginePlan(&fakeChatCompletionEngine{}) != nil {
+		t.Fatal("non-plan engine reported a plan")
+	}
+}
+
+func TestClusterEnginePlanDoesNotExposeEnvironmentOrArguments(t *testing.T) {
+	t.Setenv("SGLANG_SECRET_TEST_VALUE", "must-not-leak")
+	engine := &planReportingEngine{
+		fakeChatCompletionEngine: &fakeChatCompletionEngine{},
+		plan: inference.SGLangPlan{
+			ContextLength: 8192, MaxRunningRequests: 1,
+			Env:     []string{"SGLANG_SECRET_TEST_VALUE=must-not-leak"},
+			Args:    []string{"--api-key", "must-not-leak"},
+			Sources: map[string]string{"context_length": "model maximum / default"},
+		},
+	}
+	raw, err := json.Marshal(clusterEnginePlan(engine))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"must-not-leak", "SGLANG_SECRET", "--api-key", "\"Env\"", "\"Args\""} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("engine plan exposed %q: %s", secret, raw)
+		}
+	}
+}

@@ -10,6 +10,7 @@ const (
 	LogsDir                    = "logs"
 	ServerLogFileName          = "csghub-lite.log"
 	LlamaServerLogFileName     = "llama-server.log"
+	SGLangServerLogFileName    = "sglang-server.log"
 	EmbeddingWorkerLogFileName = "embedding-worker.log"
 	DiffusersWorkerLogFileName = "diffusers-worker.log"
 

@@ -89,6 +89,23 @@ func SupportsNativeToolStreaming(eng Engine) bool {
 	return ok && streamer.SupportsNativeToolStreaming()
 }
 
+// ToolCallingCapability marks an engine whose function-calling support is
+// model-dependent and known. Engines that do not implement it (cloud and
+// llama.cpp today) keep their existing behavior.
+type ToolCallingCapability interface {
+	ToolCallingSupported() (bool, string)
+}
+
+// ToolCallingSupport reports whether eng can serve tool requests. known is
+// false for engines that do not declare a capability.
+func ToolCallingSupport(eng Engine) (supported bool, reason string, known bool) {
+	if capability, ok := eng.(ToolCallingCapability); ok {
+		supported, reason = capability.ToolCallingSupported()
+		return supported, reason, true
+	}
+	return true, "", false
+}
+
 // ConvertProgressFunc receives conversion progress updates.
 // If nil, conversion progress is not reported.
 type ConvertProgressFunc func(step string, current, total int)
@@ -109,21 +126,74 @@ func LoadEngineWithProgress(modelDir string, lm *model.LocalModel, progress Conv
 }
 
 func LoadEngineWithSpeculativeProgress(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, speculative SpeculativeConfig) (Engine, error) {
-	return loadEngineWithProgressMode(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, false, speculative)
+	// The pre-backend API is the llama.cpp path. It must stay forced to llama
+	// even when SGLang is installed, or an explicit llama selection would be
+	// silently upgraded to SGLang.
+	return loadEngineWithProgressMode(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, false, speculative, EngineBackendOptions{Backend: LlamaBackend})
+}
+
+// EngineBackendOptions carries the per-load backend selection and the storage
+// root that owns this engine's logs, temp files and caches. The root is passed
+// explicitly so parallel servers in one process do not share a global root.
+type EngineBackendOptions struct {
+	SGLangArgs  string
+	Backend     string
+	StorageRoot string
+	// Context cancels a native SGLang startup (for example when the user stops
+	// a model while it is still loading). Legacy llama.cpp loaders keep their
+	// existing synchronous behavior.
+	Context context.Context
+	// ModelIdentity is the original model repository/name used to select
+	// model-family defaults (tool parser, reasoning parser). A deployment's
+	// served name is an isolated alias, so it must not be used for this.
+	ModelIdentity string
+}
+
+// LoadEngineWithBackendProgress is like LoadEngineWithProgress but honours an
+// explicit backend ("llama" or "sglang"). An empty backend follows the format
+// default, so existing callers keep their behavior.
+func LoadEngineWithBackendProgress(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, options EngineBackendOptions) (Engine, error) {
+	return LoadEngineWithBackendSpeculativeProgress(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, options, SpeculativeConfig{})
+}
+
+func LoadEngineWithBackendSpeculativeProgress(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, options EngineBackendOptions, speculative SpeculativeConfig) (Engine, error) {
+	return loadEngineWithProgressMode(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, false, speculative, options)
 }
 
 // LoadEmbeddingEngineWithProgress is like LoadEngineWithProgress but starts
 // llama-server in embedding mode for OpenAI-compatible /v1/embeddings.
 func LoadEmbeddingEngineWithProgress(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string) (Engine, error) {
-	return loadEngineWithProgressMode(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, true, SpeculativeConfig{})
+	// Embeddings are llama.cpp-only. This wrapper must never auto-select SGLang,
+	// including when the manifest has no pipeline tag to gate on.
+	return loadEngineWithProgressMode(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, true, SpeculativeConfig{}, EngineBackendOptions{Backend: LlamaBackend})
 }
 
-func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, embedding bool, speculative SpeculativeConfig) (Engine, error) {
+// LoadEmbeddingEngineWithBackendProgress accepts the same backend selection as
+// chat loading so a deployment carries one setting. SGLang currently serves
+// text generation only; an explicit SGLang request for embeddings is refused
+// instead of silently serving llama.cpp.
+func LoadEmbeddingEngineWithBackendProgress(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, options EngineBackendOptions) (Engine, error) {
+	return loadEngineWithProgressMode(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, true, SpeculativeConfig{}, options)
+}
+
+func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, embedding bool, speculative SpeculativeConfig, options EngineBackendOptions) (Engine, error) {
 	modelName := ""
 	if lm != nil {
 		modelName = lm.FullName()
 	}
-	log.Printf("INFERENCE %s: resolving model engine in %s dtype=%q", modelName, modelDir, dtype)
+	log.Printf("INFERENCE %s: resolving model engine in %s dtype=%q backend=%q", modelName, modelDir, dtype, options.Backend)
+
+	resolvedBackend, err := ResolveEngineBackend(modelDir, lm, options.Backend, dtype)
+	if err != nil {
+		return nil, err
+	}
+	if resolvedBackend == SGLangBackend {
+		if embedding {
+			return nil, fmt.Errorf("SGLang backend serves text generation and chat only; use the llama backend for embedding models")
+		}
+		return newSGLangEngine(options.Context, modelDir, modelName, options.ModelIdentity, options.StorageRoot, numCtx, numParallel, dtype, verbose, progress, options.SGLangArgs)
+	}
+
 	normalizedDType, err := convert.NormalizeRuntimeDType(dtype)
 	if err != nil {
 		return nil, err

@@ -15,12 +15,26 @@ func hasToolChatFeatures(req api.ChatRequest) bool {
 	return hasChatToolFeatures(req.Messages, req.Tools)
 }
 
+// toolCallingRefusal returns the reason when an engine explicitly declares
+// that it cannot serve tool requests for this model. Engines without a declared
+// capability keep their existing behavior.
+func toolCallingRefusal(eng inference.Engine) (string, bool) {
+	supported, reason, known := inference.ToolCallingSupport(eng)
+	if known && !supported {
+		if strings.TrimSpace(reason) == "" {
+			reason = "function calling is not supported for the selected model"
+		}
+		return reason, true
+	}
+	return "", false
+}
+
 func hasChatToolFeatures(messages []api.Message, tools []api.Tool) bool {
 	if len(tools) > 0 {
 		return true
 	}
 	for _, msg := range messages {
-		if len(msg.ToolCalls) > 0 || msg.Role == "tool" || msg.ToolName != "" || msg.ToolCallID != "" {
+		if len(msg.ToolCalls) > 0 || msg.FunctionCall != nil || msg.Role == "tool" || msg.Role == "function" || msg.ToolName != "" || msg.ToolCallID != "" {
 			return true
 		}
 	}
@@ -28,6 +42,10 @@ func hasChatToolFeatures(messages []api.Message, tools []api.Tool) bool {
 }
 
 func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req api.ChatRequest, eng inference.Engine, opts inference.Options, stream bool) {
+	if reason, refused := toolCallingRefusal(eng); refused {
+		writeError(w, http.StatusBadRequest, reason)
+		return
+	}
 	proxy, ok := eng.(inference.ChatCompletionProxier)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "selected model backend does not support tool calling")
@@ -188,6 +206,8 @@ func ollamaChatRequestToOpenAI(req api.ChatRequest, opts inference.Options) (map
 	return body, nil
 }
 
+func intPtrValue(value int) *int { return &value }
+
 type pendingToolCall struct {
 	ID   string
 	Name string
@@ -202,7 +222,22 @@ func ollamaMessagesToOpenAI(messages []api.Message, tools []api.Tool) ([]map[str
 		switch msg.Role {
 		case "assistant":
 			m := map[string]interface{}{"role": "assistant"}
-			if len(msg.ToolCalls) > 0 {
+			if len(msg.ToolCalls) == 0 && msg.FunctionCall != nil && strings.TrimSpace(msg.FunctionCall.Name) != "" {
+				// Legacy assistant function_call history becomes a tool call so
+				// the backend sees one consistent modern representation.
+				callID := fmt.Sprintf("call_%d_0", assistantCount)
+				pending = append(pending, pendingToolCall{ID: callID, Name: msg.FunctionCall.Name})
+				m["tool_calls"] = []map[string]interface{}{{
+					"id":   callID,
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      msg.FunctionCall.Name,
+						"arguments": toolArgumentsJSONStringForTool(msg.FunctionCall.Arguments, api.Tool{}),
+					},
+				}}
+				m["content"] = nil
+				assistantCount++
+			} else if len(msg.ToolCalls) > 0 {
 				openAIToolCalls := make([]map[string]interface{}, 0, len(msg.ToolCalls))
 				for idx, call := range msg.ToolCalls {
 					callID := call.ID
@@ -230,8 +265,12 @@ func ollamaMessagesToOpenAI(messages []api.Message, tools []api.Tool) ([]map[str
 				m["reasoning_content"] = msg.ReasoningContent
 			}
 			out = append(out, m)
-		case "tool":
-			toolCallID, nextPending := matchPendingToolCall(pending, msg.ToolName)
+		case "tool", "function":
+			toolName := msg.ToolName
+			if toolName == "" {
+				toolName = msg.Name
+			}
+			toolCallID, nextPending := matchPendingToolCall(pending, toolName)
 			pending = nextPending
 			m := map[string]interface{}{
 				"role":    "tool",
@@ -243,8 +282,8 @@ func ollamaMessagesToOpenAI(messages []api.Message, tools []api.Tool) ([]map[str
 			if msg.ToolCallID != "" {
 				m["tool_call_id"] = msg.ToolCallID
 			}
-			if msg.ToolName != "" {
-				m["name"] = msg.ToolName
+			if toolName != "" {
+				m["name"] = toolName
 			}
 			out = append(out, m)
 		default:
@@ -468,6 +507,14 @@ func normalizeOpenAIToolResponse(resp api.OpenAIChatResponse, tools []api.Tool) 
 		}
 	}
 
+	if len(msg.ToolCalls) == 0 && msg.FunctionCall != nil && strings.TrimSpace(msg.FunctionCall.Name) != "" {
+		callID := "call_legacy_0"
+		msg.ToolCalls = []api.ToolCall{{
+			Index: intPtrValue(0), ID: callID, Type: "function",
+			Function: api.ToolFunction{Name: msg.FunctionCall.Name, Arguments: msg.FunctionCall.Arguments},
+		}}
+		msg.FunctionCall = nil
+	}
 	if len(msg.ToolCalls) > 0 {
 		finishReason := "tool_calls"
 		choice.FinishReason = &finishReason

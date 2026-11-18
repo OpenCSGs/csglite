@@ -1,6 +1,7 @@
 package inference
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -52,7 +54,9 @@ func resolveLlamaServerVersion() string {
 	// Linux does not load a co-located .so unless the binary carries an $ORIGIN
 	// RUNPATH, so a runtime installed without patchelf would report no build id
 	// at all and alignment would silently never run.
-	cmd := exec.Command(binary, "--version")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "--version")
 	cmd.Env = appendLlamaLibPath(os.Environ(), filepath.Dir(binary))
 	out, err := cmd.CombinedOutput()
 	if err != nil {

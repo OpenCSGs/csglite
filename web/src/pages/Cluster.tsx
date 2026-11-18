@@ -951,6 +951,10 @@ function OverviewSection({ view }: { view: ClusterView }) {
   );
 }
 
+function engineLabel(name: string): string {
+  return name === "sglang" ? "SGLang" : "llama.cpp";
+}
+
 function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView }) {
   const st = node.status;
   const tone = healthTone(node.health, node.online);
@@ -1006,6 +1010,13 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
         {stateLabel && <div class="mt-1 text-xs text-amber-700">{stateLabel}</div>}
         {st && !st.licensed && <div class="mt-1 text-[11px] text-amber-700">{t("cluster.nodeQuotaExceeded")}</div>}
         {st && st.inflight > 0 && <div class="mt-1 text-[11px] text-indigo-600">{t("cluster.inflightCount", st.inflight)}</div>}
+        {st && <div class="mt-1 text-[11px] text-gray-500" data-node-engines>
+          {st.engines?.some(engine => engine.known)
+            ? st.engines.filter(engine => engine.known).map(engine => t("cluster.engineShort", engineLabel(engine.name),
+              engine.available ? t("cluster.engineAvailable") : engine.installed ? t("cluster.engineUnavailable") : t("cluster.engineNotInstalled"),
+              engine.running)).join(" · ")
+            : t("cluster.enginesUnknown")}
+        </div>}
       </td>
       <td data-label={t("cluster.colGPU")} class={`py-4 ${muted}`}>
         {gpus.length > 0 ? <>
@@ -1091,8 +1102,28 @@ function NodeMetadataDetails({ node }: { node: ClusterNodeView }) {
       {!node.online && <p class="mt-2 text-gray-500">{t("cluster.lastReportedResources")}</p>}
     </section>}
     {st && <section class="mt-3 border-t border-gray-100 pt-3">
+      <p class="mb-2 font-semibold text-gray-900">{t("cluster.enginesTitle")}</p>
+      {st.engines?.some(engine => engine.known) ? <div class="space-y-3">{st.engines.filter(engine => engine.known).map(engine => <div key={engine.name} data-node-engine={engine.name}>
+        <p class="break-words font-medium">{engineLabel(engine.name)} · {engine.version || "—"}</p>
+        <p>{t("cluster.engineStates", engine.installed ? t("cluster.engineInstalled") : t("cluster.engineNotInstalled"),
+          engine.available ? t("cluster.engineAvailable") : t("cluster.engineUnavailable"), engine.running)}</p>
+        <p>{t("cluster.engineFormats", (engine.formats || []).join(", ") || "—")} · {t("cluster.engineTasks", (engine.tasks || []).join(", ") || "—")}</p>
+        {(engine.cuda || engine.rocm) && <p>{t("cluster.engineAccelerator", engine.rocm ? "ROCm" : "CUDA")}</p>}
+        {engine.devices?.length ? <p>{t("cluster.engineDevices", engine.devices.length, engine.devices[0].name, formatMemory(engine.devices[0].memory_total))}</p> : null}
+        {engine.max_jobs ? <p>{t("cluster.engineMaxJobs", engine.max_jobs)}</p> : null}
+        {!engine.available && engine.reason && <p class="text-amber-700">{engine.reason}</p>}
+      </div>)}</div> : <p class="text-gray-500">{t("cluster.enginesUnknown")}</p>}
+      {st.resource_limits?.cpu_cores ? <p class="mt-3 text-gray-500">{t("cluster.resourceLimits", st.resource_limits.cpu_cores,
+        st.resource_limits.memory_bytes ? formatMemory(st.resource_limits.memory_bytes) : t("deployments.memoryUnknown"),
+        st.resource_limits.source === "host" ? t("cluster.hostLimits") : t("cluster.cgroupLimits"))}</p> : null}
+    </section>}
+    {st && <section class="mt-3 border-t border-gray-100 pt-3">
       <p class="font-semibold text-gray-900">{t("cluster.modelsSummary", loaded.length, st.models.length)}</p>
-      {loaded.length ? <ul class="mt-2 space-y-2">{loaded.map(model => <li key={model.id} class="break-words"><p>{model.repo || model.id}</p>{model.repo && <p class="text-[11px] text-gray-400">{model.id}</p>}</li>)}</ul> : <p class="mt-2 text-gray-500">{t("cluster.noLoadedModels")}</p>}
+      {loaded.length ? <ul class="mt-2 space-y-2">{loaded.map(model => <li key={model.id} class="break-words"><p>{model.repo || model.id}</p>{model.repo && <p class="text-[11px] text-gray-400">{model.id}</p>}
+        {model.engine_plan?.resolved && <p class="text-[11px] text-gray-500">{t("cluster.modelEnginePlan", model.engine_backend === "sglang" ? "SGLang" : "llama.cpp",
+          model.engine_plan.context_length ?? "—", model.engine_plan.max_running_requests ?? "—", model.engine_plan.dtype || t("deployments.enginePlanAuto"))}</p>}
+        {model.engine_plan?.speculative_algorithm && <p class="text-[11px] text-gray-500">{t("deployments.sglangSpeculation", model.engine_plan.speculative_algorithm)}</p>}
+      </li>)}</ul> : <p class="mt-2 text-gray-500">{t("cluster.noLoadedModels")}</p>}
     </section>}
   </>;
 }

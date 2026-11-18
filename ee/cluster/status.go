@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"runtime"
 	"time"
+
+	"github.com/opencsgs/csglite/internal/hardware"
 )
 
 // LocalStatus is this node's full status as peers see it.
@@ -42,6 +44,11 @@ func (m *Manager) LocalStatus(ctx context.Context) Status {
 	st.NodeStateManagement = true
 	_, st.DeploymentCapable = m.opts.Host.(DeploymentHost)
 	st.DeploymentConfigurable = st.DeploymentCapable
+	if reporter, ok := m.opts.Host.(EngineStatusReporter); ok {
+		st.Engines = reporter.Engines()
+	}
+	limits := hardware.ContainerLimits()
+	st.ResourceLimits = ResourceLimits{CPUCores: limits.CPUCores, MemoryBytes: limits.MemoryBytes, Source: limits.Source}
 	_, st.ModelManagement = m.opts.Host.(ModelActionHost)
 	st.Models = append(st.Models, m.deploymentModels()...)
 	st.Net.Addrs = m.localAddrs()

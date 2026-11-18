@@ -1,5 +1,10 @@
 # Docker Runtime Images
 
+For the preinstalled **CSGLite + SGLang** runtime (NVIDIA CUDA 12.9, AMD
+integration and cluster environment variables), see
+[the SGLang Docker guide](../../docker/sglang/README.md). The bootstrap images
+described below use llama.cpp.
+
 CSGLite Docker images are bootstrap runtimes. They include the OS and GPU
 runtime dependencies needed to start, then download `csghub-lite` and
 `llama-server` on container startup according to environment variables.
