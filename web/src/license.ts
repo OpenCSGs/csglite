@@ -94,7 +94,7 @@ export function formatLicenseDate(iso: string | undefined | null, locale: string
  * fixed constant and ignores any Extra override, so the UI displays the same
  * number instead of trusting the license payload.
  */
-export const CSGLITE_DEVICE_LIMIT = 10;
+export const CSGLITE_DEVICE_LIMIT = 5;
 
 /** The device cap to display, or null when no license is in effect. */
 export function deviceLimitOf(state: LicenseState | null): number | null {

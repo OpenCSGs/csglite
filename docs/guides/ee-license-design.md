@@ -155,9 +155,9 @@ var Catalog = []FeatureDefinition{ /* 以上全部 */ }
 当前受 License 控制的条目：
 
 - `quota.lite.max_cluster_nodes`：LAN 集群节点数，社区版 2，企业版默认不限。
-- `quota.lite.max_devices`：一个 License 可核销的设备数，所有档位都是 10。
+- `quota.lite.max_devices`：一个 License 可核销的设备数，所有档位都是 5。
   该上限由服务端按 `license_key` 强制并忽略 Extra 覆盖，本地界面与 CLI 直接
-  显示服务端的固定值 10。
+  显示服务端的固定值 5。
 - `quota.lite.max_edge_models`：边缘算力可贡献的模型数，社区版 1，企业版默认
   不限（0）。边缘算力功能本身（`feature.lite.edge_serving`）不再受 License
   控制，所有版本都能把本机已发布的模型通过出站隧道提供给 CSGHub AI gateway，
@@ -349,7 +349,7 @@ type State struct {
 
 ### 5.3 设备核销
 
-一个 License 最多核销 10 台设备，按 `license_key` 永久累计、不解绑。名额由
+一个 License 最多核销 5 台设备，按 `license_key` 永久累计、不解绑。名额由
 服务端强制，本地只负责两件事：在导入前询问是否还有名额，以及把本设备记进
 台账。
 
@@ -452,7 +452,7 @@ Content-Type: application/json
     "grace_until": null
   },
   "features": ["feature.lite.provider_pools", "feature.lite.observability"],
-  "limits": {"quota.lite.max_provider_pools": 0, "quota.lite.max_devices": 10},
+  "limits": {"quota.lite.max_provider_pools": 0, "quota.lite.max_devices": 5},
   "feature_catalog": [
     {"key": "feature.lite.observability", "type": "boolean", "nav_item": "observability"}
   ]
@@ -557,14 +557,14 @@ csghub-lite license features           # 列出 Catalog 及当前是否可用
 
 合计约 1.5 到 2 周，单人。阶段一至三可并行推进后端与前端；阶段五需要
 starhub-server 仓库的 MR 与发版配合。设备核销（导入时按 `license_key` 限制
-10 台）已包含在本期；运行期吊销不在本期范围。
+5 台）已包含在本期；运行期吊销不在本期范围。
 
 ## 12. 未决问题
 
 1. 初始 `Catalog` 划分需产品最终确认，尤其是图像生成和实时语音是否进入 EE。
 2. `ee/LICENSE` 法律文本需法务审阅；是否允许非商业生产使用需明确。
 3. 是否需要 `Edition = "Trial"`（例如 30 天全功能试用）以及试用 License 由谁签发。
-4. ~~席位 `MaxUser` 是否以及如何强制~~：已确定。设备数上限 10，按
+4. ~~席位 `MaxUser` 是否以及如何强制~~：已确定。设备数上限 5，按
    `license_key` 永久累计、不解绑；`MaxUser` 仅作为历史字段保留，不再展示。
 5. License 过期后可观测性等历史数据的只读策略需逐功能确认。
 6. 生产公钥的获取与轮换流程：由哪一方把 CSGHub 签发端公钥交付给 CSGLite 仓库，

@@ -45,7 +45,7 @@ function licensedState(key: string, expire: string): LicenseState {
       expire_time: expire,
     },
     features: [],
-    limits: { "quota.lite.max_devices": 10 },
+    limits: { "quota.lite.max_devices": 5 },
     checked_at: "2026-09-16T00:00:00Z",
   };
 }
@@ -196,11 +196,11 @@ describe("device limits", () => {
   it("shows the server-enforced device limit for a licensed install", () => {
     expect(deviceLimitOf(null)).toBeNull();
     expect(deviceLimitOf(state("none"))).toBeNull();
-    expect(deviceLimitOf(licensedState("k", "2027-01-01T00:00:00Z"))).toBe(10);
+    expect(deviceLimitOf(licensedState("k", "2027-01-01T00:00:00Z"))).toBe(5);
     // The server ignores an Extra override, so the UI must not display one.
     const custom = licensedState("k", "2027-01-01T00:00:00Z");
-    custom.limits = { "quota.lite.max_devices": 5 };
-    expect(deviceLimitOf(custom)).toBe(10);
+    custom.limits = { "quota.lite.max_devices": 9 };
+    expect(deviceLimitOf(custom)).toBe(5);
   });
 
   it("shows installed-license usage independently of cloud account connection", () => {

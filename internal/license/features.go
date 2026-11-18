@@ -17,7 +17,7 @@ const (
 // CSGLiteMaxDevices is the device cap the server enforces for every CSGLite
 // license. The server ignores Extra overrides, so the local display uses this
 // constant rather than the signed payload's limits.
-const CSGLiteMaxDevices = 10
+const CSGLiteMaxDevices = 5
 
 const (
 	// Keys share one flat namespace with CSGHub's own features inside the

@@ -16930,7 +16930,7 @@
           },
           "max_user": {
             "type": "integer",
-            "description": "Historical field from the issuer; CSGLite no longer displays it. The device cap is quota.lite.max_devices (10) and is enforced by the server."
+            "description": "Historical field from the issuer; CSGLite no longer displays it. The device cap is quota.lite.max_devices (5) and is enforced by the server."
           },
           "start_time": {
             "type": "string",

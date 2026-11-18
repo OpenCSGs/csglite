@@ -31,7 +31,7 @@ csghub-lite license features           # 列出功能注册表；EE 列为 yes �
 
 ## 设备核销
 
-一个 License 最多可核销 10 台设备，名额按 License 永久累计，不提供解绑。
+一个 License 最多可核销 5 台设备，名额按 License 永久累计，不提供解绑。
 CLI 安装分两种情况：
 
 - 有运行中的服务时，安装前会向服务端核销本机，名额已满时拒绝安装。
@@ -74,7 +74,7 @@ Status:      valid
 Company:     某某科技有限公司
 Product:     CSGLite
 License ID:  8f2a5b1e-...
-Devices:     10
+Devices:     5
 Valid from:  2026-10-01
 Expires:     2027-10-01
 Grace until: 2027-10-15
