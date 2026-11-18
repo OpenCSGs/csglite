@@ -49,7 +49,18 @@ jobs:
           esac
           EOF
           chmod 700 "${askpass}"
-          GIT_ASKPASS="${askpass}" GIT_TERMINAL_PROMPT=0 \
-            git push https://git-devops.opencsg.com/opensource/csghub-lite.git \
-            "${GITHUB_SHA}:refs/heads/main"
+          export GIT_ASKPASS="${askpass}" GIT_TERMINAL_PROMPT=0
+          url="https://git-devops.opencsg.com/opensource/csghub-lite.git"
+          remote_main="$(git ls-remote "${url}" refs/heads/main | cut -f1)"
+          if [ -n "${remote_main}" ] && ! git cat-file -e "${remote_main}^{commit}" 2>/dev/null; then
+            git fetch --no-tags "${url}" main
+            remote_main="$(git rev-parse FETCH_HEAD)"
+          fi
+          if [ -n "${remote_main}" ] && ! git merge-base --is-ancestor "${remote_main}" "${GITHUB_SHA}"; then
+            echo "GitLab main ${remote_main} is not an ancestor of ${GITHUB_SHA}; force syncing after a history rewrite"
+            git push --force-with-lease=refs/heads/main:"${remote_main}" \
+              "${url}" "${GITHUB_SHA}:refs/heads/main"
+          else
+            git push "${url}" "${GITHUB_SHA}:refs/heads/main"
+          fi
           rm -f "${askpass}"
