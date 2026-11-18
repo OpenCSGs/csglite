@@ -70,6 +70,7 @@ func TestLoginCommandSyncsRunningServerToken(t *testing.T) {
 	})
 	defer server.Close()
 	saveListenAddr(t, strings.TrimPrefix(server.URL, "http://"))
+	seedManualAPIKey(t, "old-account-key")
 
 	cmd := newLoginCmd()
 	cmd.SetArgs([]string{"--token", "test-token"})
@@ -78,6 +79,11 @@ func TestLoginCommandSyncsRunningServerToken(t *testing.T) {
 	}
 	if gotToken != "test-token" {
 		t.Fatalf("synced token = %q, want test-token", gotToken)
+	}
+	// The token starts a new account session, so the previous account's manual
+	// gateway key must not survive it.
+	if got := reloadConfig(t).OpenCSGAPIKey; got != "" {
+		t.Fatalf("manual API key = %q, want it cleared by the login", got)
 	}
 }
 
@@ -94,12 +100,16 @@ func TestRunConfigSetTokenSyncsRunningServerToken(t *testing.T) {
 	})
 	defer server.Close()
 	saveListenAddr(t, strings.TrimPrefix(server.URL, "http://"))
+	seedManualAPIKey(t, "old-account-key")
 
 	if err := runConfigSet(nil, []string{"token", "new-token"}); err != nil {
 		t.Fatalf("runConfigSet(token) error: %v", err)
 	}
 	if gotToken != "new-token" {
 		t.Fatalf("synced token = %q, want new-token", gotToken)
+	}
+	if got := reloadConfig(t).OpenCSGAPIKey; got != "" {
+		t.Fatalf("manual API key = %q, want it cleared by the token change", got)
 	}
 }
 
@@ -129,6 +139,28 @@ func TestEnsureServerSyncsConfiguredToken(t *testing.T) {
 	if gotToken != "existing-token" {
 		t.Fatalf("synced token = %q, want existing-token", gotToken)
 	}
+}
+
+func seedManualAPIKey(t *testing.T, key string) {
+	t.Helper()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+	cfg.OpenCSGAPIKey = key
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("config.Save() error: %v", err)
+	}
+}
+
+func reloadConfig(t *testing.T) *config.Config {
+	t.Helper()
+	config.Reset()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load() error: %v", err)
+	}
+	return cfg
 }
 
 func newTokenSyncTestServer(t *testing.T, authHandler http.HandlerFunc) *httptest.Server {

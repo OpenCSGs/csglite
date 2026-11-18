@@ -37,6 +37,10 @@ func newLoginCmd() *cobra.Command {
 			}
 
 			cfg.Token = token
+			// A new login must not inherit the previous account's manual
+			// gateway key, the same rule the server applies on login.
+			cfg.OpenCSGAPIKey = ""
+			config.NextAuthRevision(cfg)
 			if err := config.Save(cfg); err != nil {
 				return fmt.Errorf("saving config: %w", err)
 			}

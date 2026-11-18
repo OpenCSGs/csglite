@@ -190,6 +190,40 @@ func TestHandleSettingsUpdateServiceURLs(t *testing.T) {
 	}
 }
 
+func TestHandleSettingsUpdateCommunityChangeClearsRejectedToken(t *testing.T) {
+	s := newTestServer(t)
+	s.cfg.ServerURL = config.DefaultServerURL
+	s.cfg.Token = "expired-token"
+	s.cloudTokenInvalid = true
+
+	serverURL := "https://opencsg-stg.com"
+	body, err := json.Marshal(api.SettingsUpdateRequest{ServerURL: &serverURL})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.handleSettingsUpdate(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if s.cloudTokenInvalid {
+		t.Fatal("rejected-token state survived a community switch")
+	}
+	if s.cfg.Token != "" {
+		t.Fatalf("token = %q, want it cleared by the community switch", s.cfg.Token)
+	}
+	if s.cfg.AuthRevision == 0 {
+		t.Fatal("auth revision was not bumped by the community switch")
+	}
+	if s.cloudClearedToken != "expired-token" {
+		t.Fatalf("cleared token = %q, want the previous token", s.cloudClearedToken)
+	}
+}
+
 func TestHandleSettingsUpdateServiceURLsRestoreDefaults(t *testing.T) {
 	s := newTestServer(t)
 	s.cfg.ServerURL = "https://opencsg-stg.com"

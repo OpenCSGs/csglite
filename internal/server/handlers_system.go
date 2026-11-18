@@ -190,8 +190,13 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		if serverURL != strings.TrimSpace(s.cfg.ServerURL) {
 			s.cloudLoginRevision++
 			clear(s.cloudLoginAttempts)
+			if s.cfg.Token != "" {
+				s.cloudClearedToken = s.cfg.Token
+			}
 			s.cfg.Token = ""
 			s.cfg.OpenCSGAPIKey = ""
+			s.cloudTokenInvalid = false
+			config.NextAuthRevision(s.cfg)
 			cloudTokenUpdated = true
 		}
 		serverURLUpdated = serverURL != strings.TrimSpace(s.cfg.ServerURL)
@@ -206,7 +211,12 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		aiGatewayURLUpdated = aiGatewayURL != strings.TrimSpace(s.cfg.AIGatewayURL)
 		if aiGatewayURLUpdated {
+			// The manual key belongs to the old gateway, so this is an auth
+			// change other instances have to see.
+			s.cloudLoginMu.Lock()
 			s.cfg.OpenCSGAPIKey = ""
+			config.NextAuthRevision(s.cfg)
+			s.cloudLoginMu.Unlock()
 			cloudTokenUpdated = true
 		}
 		s.cfg.AIGatewayURL = aiGatewayURL

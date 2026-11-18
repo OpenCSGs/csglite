@@ -2,12 +2,16 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/opencsgs/csglite/internal/region"
+	"github.com/opencsgs/csglite/internal/safefile"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -59,12 +63,17 @@ func (c *Config) TempDir() string {
 }
 
 type Config struct {
-	ServerURL                string                             `json:"server_url"`
-	AIGatewayURL             string                             `json:"ai_gateway_url,omitempty"`
-	CloudProviderEnabled     *bool                              `json:"cloud_provider_enabled,omitempty"`
-	CloudProviderName        string                             `json:"cloud_provider_name,omitempty"`
-	Token                    string                             `json:"token,omitempty"`
-	OpenCSGAPIKey            string                             `json:"opencsg_api_key,omitempty"`
+	ServerURL            string `json:"server_url"`
+	AIGatewayURL         string `json:"ai_gateway_url,omitempty"`
+	CloudProviderEnabled *bool  `json:"cloud_provider_enabled,omitempty"`
+	CloudProviderName    string `json:"cloud_provider_name,omitempty"`
+	Token                string `json:"token,omitempty"`
+	OpenCSGAPIKey        string `json:"opencsg_api_key,omitempty"`
+	// AuthRevision is the cross-process generation of the cloud login. Login
+	// tokens are reused, so a token value alone cannot tell a fresh login from
+	// a stale process writing back the previous one; every login, logout and
+	// community switch bumps this counter and adoption compares it.
+	AuthRevision             uint64                             `json:"auth_revision,omitempty"`
 	HuggingFaceEndpoint      string                             `json:"huggingface_endpoint,omitempty"`
 	HuggingFaceToken         string                             `json:"huggingface_token,omitempty"`
 	ModelScopeEndpoint       string                             `json:"modelscope_endpoint,omitempty"`
@@ -359,6 +368,9 @@ var (
 	globalConfig *Config
 	configOnce   sync.Once
 	configMu     sync.RWMutex
+	// authMergeLogged keeps the "another process changed the login" notice to
+	// one line per process; a stale instance saves often.
+	authMergeLogged bool
 )
 
 func AppHome() (string, error) {
@@ -719,14 +731,40 @@ func Save(cfg *Config) error {
 	}
 
 	cfg.CloudProviderName = NormalizeCloudProviderName(cfg.CloudProviderName)
+	// A stale process saving its whole in-memory config must not overwrite a
+	// login, logout or key change another process applied after its own: when
+	// the disk generation is newer, the credential fields written are the disk
+	// ones. Memory is left untouched so callers keep their own view instead of
+	// having to resync the cloud client after an unrelated save.
+	out := cfg
+	disk, diskErr := readCloudCredentials(cfgPath)
+	if diskErr != nil && !errors.Is(diskErr, fs.ErrNotExist) {
+		log.Printf("config: reading the cloud login from %s failed: %v", cfgPath, diskErr)
+	}
+	if diskErr == nil && disk.AuthRevision > cfg.AuthRevision {
+		if (disk.Token != cfg.Token || disk.OpenCSGAPIKey != cfg.OpenCSGAPIKey) && !authMergeLogged {
+			authMergeLogged = true
+			log.Printf("config: keeping the cloud credential change another csglite process saved after this one started")
+		}
+		merged := *cfg
+		merged.Token = disk.Token
+		// A config with a generation always carries server_url; an empty one is
+		// a damaged write, so keep this process's value instead of blanking it.
+		if disk.ServerURL != "" {
+			merged.ServerURL = disk.ServerURL
+		}
+		merged.OpenCSGAPIKey = disk.OpenCSGAPIKey
+		merged.AuthRevision = disk.AuthRevision
+		out = &merged
+	}
 
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return err
 	}
 
 	globalConfig = cfg
-	if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
+	if err := safefile.Write(cfgPath, data, 0o600); err != nil {
 		return err
 	}
 	return os.Chmod(cfgPath, 0o600)
@@ -736,6 +774,7 @@ func Reset() {
 	configMu.Lock()
 	defer configMu.Unlock()
 	globalConfig = nil
+	authMergeLogged = false
 	configOnce = sync.Once{}
 }
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -80,11 +81,17 @@ func (s *Server) saveCloudAccessToken(token string) error {
 func (s *Server) saveCloudAccessTokenLocked(token string) error {
 	token = strings.TrimSpace(token)
 	previousToken, previousAPIKey := s.cfg.Token, s.cfg.OpenCSGAPIKey
+	previousInvalid, previousRevision := s.cloudTokenInvalid, s.cfg.AuthRevision
 	s.cfg.Token = token
-	// A new account session must not inherit an older manual gateway key.
+	// A new account session must not inherit an older manual gateway key; a
+	// login in another process clears it on disk the same way.
 	s.cfg.OpenCSGAPIKey = ""
+	s.cloudTokenInvalid = false
+	config.NextAuthRevision(s.cfg)
 	if err := config.Save(s.cfg); err != nil {
 		s.cfg.Token, s.cfg.OpenCSGAPIKey = previousToken, previousAPIKey
+		s.cfg.AuthRevision = previousRevision
+		s.cloudTokenInvalid = previousInvalid
 		return err
 	}
 	s.cloudLoginRevision++
@@ -129,18 +136,30 @@ func writeCloudAuthCallbackPage(w http.ResponseWriter, success bool, errCode str
 }
 
 func (s *Server) handleCloudAuthTokenDelete(w http.ResponseWriter, r *http.Request) {
+	// Catch up with a login another instance saved, so the logout clears the
+	// current session and remembers the token it actually cleared.
+	s.adoptExternalCloudCredentials()
 	s.cloudLoginMu.Lock()
 	previousToken, previousAPIKey := s.cfg.Token, s.cfg.OpenCSGAPIKey
+	previousRevision := s.cfg.AuthRevision
 	s.cfg.Token = ""
 	s.cfg.OpenCSGAPIKey = ""
+	config.NextAuthRevision(s.cfg)
 	if err := config.Save(s.cfg); err != nil {
 		s.cfg.Token, s.cfg.OpenCSGAPIKey = previousToken, previousAPIKey
+		s.cfg.AuthRevision = previousRevision
 		writeError(w, http.StatusInternalServerError, "clearing token: "+err.Error())
 		s.cloudLoginMu.Unlock()
 		return
 	}
 	s.cloudLoginRevision++
 	clear(s.cloudLoginAttempts)
+	s.cloudTokenInvalid = false
+	// A repeated logout must not forget the token an earlier one cleared: a
+	// build without auth_revision could otherwise write it back.
+	if previousToken != "" {
+		s.cloudClearedToken = previousToken
+	}
 	s.cloudLoginMu.Unlock()
 	s.refreshCloudCredentials()
 
@@ -160,22 +179,42 @@ func (s *Server) handleCloudAPIKeySave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The key belongs to the account session, so it moves the login generation
+	// and other instances pick it up like a login. Another instance may have
+	// logged in since this page was rendered: apply that first, so the key is
+	// saved on top of the current session instead of writing this process's
+	// older token back with a newer generation.
+	s.adoptExternalCloudCredentials()
+	s.cloudLoginMu.Lock()
+	previousKey, previousRevision := s.cfg.OpenCSGAPIKey, s.cfg.AuthRevision
 	s.cfg.OpenCSGAPIKey = apiKey
+	config.NextAuthRevision(s.cfg)
 	if err := config.Save(s.cfg); err != nil {
+		s.cfg.OpenCSGAPIKey, s.cfg.AuthRevision = previousKey, previousRevision
+		s.cloudLoginMu.Unlock()
 		writeError(w, http.StatusInternalServerError, "saving API key: "+err.Error())
 		return
 	}
+	s.cloudLoginMu.Unlock()
 	s.refreshCloudCredentials()
 
 	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))
 }
 
 func (s *Server) handleCloudAPIKeyDelete(w http.ResponseWriter, r *http.Request) {
+	// Catch up with a login another instance saved before changing the session.
+	s.adoptExternalCloudCredentials()
+	s.cloudLoginMu.Lock()
+	previousKey, previousRevision := s.cfg.OpenCSGAPIKey, s.cfg.AuthRevision
 	s.cfg.OpenCSGAPIKey = ""
+	config.NextAuthRevision(s.cfg)
 	if err := config.Save(s.cfg); err != nil {
+		s.cfg.OpenCSGAPIKey, s.cfg.AuthRevision = previousKey, previousRevision
+		s.cloudLoginMu.Unlock()
 		writeError(w, http.StatusInternalServerError, "clearing API key: "+err.Error())
 		return
 	}
+	s.cloudLoginMu.Unlock()
 	s.refreshCloudCredentials()
 
 	writeJSON(w, http.StatusOK, s.cloudAuthStatus(r.Context()))
@@ -194,7 +233,212 @@ func (s *Server) refreshCloudCredentials() {
 	s.cloudRefreshMu.Unlock()
 }
 
+// adoptExternalCloudCredentials picks up a login, logout or gateway key change
+// another csglite process saved to config.json. The loopback SSO callback port
+// is fixed, so when two instances run only the one holding the port receives
+// the browser redirect; without this the other instance keeps its old session
+// until a restart. The saved login generation decides: a newer one always wins,
+// so a stale process writing its whole config back cannot resurrect a session
+// that was signed out elsewhere. A generation-0 config comes from a build
+// without the field and cannot say when it was written, so it is only adopted
+// when this process has no usable login.
+func (s *Server) adoptExternalCloudCredentials() {
+	s.adoptExternalCloudCredentialsFrom(config.CloudCredentialsOnDisk)
+}
+
+// adoptExternalCloudCredentialsFrom takes the credential source as a parameter
+// so a test can hold the read open and prove a login completed in this process
+// is not overwritten by a snapshot taken before it.
+func (s *Server) adoptExternalCloudCredentialsFrom(read func() (config.CloudCredentials, error)) {
+	if s == nil || s.cfg == nil {
+		return
+	}
+	// A missing or partially written config is nothing to adopt, never a
+	// reason to clear credentials held in memory.
+	creds, err := read()
+	if err != nil {
+		return
+	}
+	s.cloudLoginMu.Lock()
+	// Never hand this instance's community credentials minted for another one.
+	if !credentialsMatchCommunity(creds.ServerURL, s.cfg.ServerURL) {
+		s.cloudLoginMu.Unlock()
+		return
+	}
+	localToken := strings.TrimSpace(s.cfg.Token)
+	// A token value alone cannot tell a fresh login from a stale process
+	// writing the previous one back, because logins reuse tokens. The saved
+	// generation does, and a newer one always wins: it can only have been
+	// written after this process's last auth change.
+	newer := creds.AuthRevision > s.cfg.AuthRevision
+	if !newer {
+		// Generation 0 is a build without auth_revision (mixed versions) or a
+		// config from before it existed. It cannot say when it was written, so
+		// it only applies to an instance with no usable login, and never for
+		// the token this process cleared itself.
+		if creds.AuthRevision != 0 || creds.Token == "" {
+			s.cloudLoginMu.Unlock()
+			return
+		}
+		if !(localToken == "" || s.cloudTokenInvalid) {
+			s.cloudLoginMu.Unlock()
+			return
+		}
+		if creds.Token == localToken || creds.Token == s.cloudClearedToken {
+			s.cloudLoginMu.Unlock()
+			return
+		}
+	}
+	tokenChanged := creds.Token != localToken
+	keyChanged := creds.OpenCSGAPIKey != s.cfg.OpenCSGAPIKey
+	if !tokenChanged && !keyChanged && !newer {
+		s.cloudLoginMu.Unlock()
+		return
+	}
+	s.cfg.Token = creds.Token
+	s.cfg.OpenCSGAPIKey = creds.OpenCSGAPIKey
+	// The generation is monotonic in this process: adopting an older build's
+	// write must not roll it back.
+	if newer {
+		s.cfg.AuthRevision = creds.AuthRevision
+	}
+	cancelled := 0
+	if tokenChanged {
+		// The rejection was about the previous token; a different one starts
+		// unvalidated. A key-only change leaves that state alone.
+		s.cloudTokenInvalid = false
+		if creds.Token == "" {
+			s.cloudClearedToken = localToken
+		}
+		s.cloudLoginRevision++
+		cancelled = len(s.cloudLoginAttempts)
+		clear(s.cloudLoginAttempts)
+	}
+	s.cloudLoginMu.Unlock()
+
+	origin := "another csglite process"
+	if creds.AuthRevision == 0 && !newer {
+		origin = "an instance without auth_revision"
+	}
+	switch {
+	case tokenChanged && creds.Token == "":
+		log.Printf("cloud auth: adopted sign-out written by %s", origin)
+	case tokenChanged:
+		log.Printf("cloud auth: adopted access token written by %s", origin)
+	default:
+		log.Printf("cloud auth: adopted credential change written by %s", origin)
+	}
+	if cancelled > 0 {
+		log.Printf("cloud auth: cancelled %d pending browser login(s); the other instance already signed in", cancelled)
+	}
+	s.refreshCloudCredentials()
+	if tokenChanged && creds.Token != "" {
+		// A license imported offline on this instance can now be written off,
+		// the same trigger a login in this process provides.
+		go s.reportLicenseActivation(s.engineLoadContext())
+	}
+}
+
+// credentialsMatchCommunity reports whether a token written for diskURL may be
+// used against localURL. A config from before server_url was tracked carries no
+// community, so only the default one is safe to assume.
+func credentialsMatchCommunity(diskURL, localURL string) bool {
+	if strings.TrimSpace(diskURL) == "" {
+		return sameCommunityURL(localURL, config.DefaultServerURL)
+	}
+	return sameCommunityURL(diskURL, localURL)
+}
+
+// adoptExternalCredentialsInterval bounds how long a headless instance waits
+// before noticing a login another process saved. It is far below the five
+// minute login wait, and each tick costs one small config read.
+var adoptExternalCredentialsInterval = 15 * time.Second
+
+// adoptExternalCredentialsLoop picks up logins saved by another csglite process
+// for instances that never poll the status endpoint, such as a headless server
+// used only through the OpenAI-compatible API.
+func (s *Server) adoptExternalCredentialsLoop(ctx context.Context) {
+	ticker := time.NewTicker(adoptExternalCredentialsInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.adoptExternalCloudCredentials()
+		}
+	}
+}
+
+// sameCommunityURL compares base community URLs. Scheme and host are matched
+// case-insensitively, a default port counts as absent and a trailing slash is
+// ignored, so a URL edited by hand still matches the one another process wrote.
+func sameCommunityURL(a, b string) bool {
+	ua, errA := url.Parse(strings.TrimSpace(a))
+	ub, errB := url.Parse(strings.TrimSpace(b))
+	if errA != nil || errB != nil || ua.Host == "" || ub.Host == "" {
+		return strings.TrimRight(strings.TrimSpace(a), "/") == strings.TrimRight(strings.TrimSpace(b), "/")
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) &&
+		strings.EqualFold(ua.Hostname(), ub.Hostname()) &&
+		communityPort(ua) == communityPort(ub) &&
+		strings.TrimRight(ua.EscapedPath(), "/") == strings.TrimRight(ub.EscapedPath(), "/")
+}
+
+// communityPort returns the effective port, so "https://host" and
+// "https://host:443" compare equal.
+func communityPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	}
+	return ""
+}
+
+// recordCloudTokenValidation records a definitive authentication answer from
+// the platform for token; a nil error means the token was accepted. The token
+// endpoint answers 404 for an unknown or expired token, so 401, 403 and 404 all
+// count as rejected. Transport and server errors are ignored: a flaky network
+// must not make a working session look unusable, nor an unusable one usable.
+// The answer is only recorded while token is still the session in use, so a
+// slow check cannot label a newer login.
+func (s *Server) recordCloudTokenValidation(token string, err error) {
+	rejected := false
+	if err != nil {
+		httpErr, ok := csghub.AsHTTPError(err)
+		if !ok || (httpErr.StatusCode != http.StatusUnauthorized &&
+			httpErr.StatusCode != http.StatusForbidden &&
+			httpErr.StatusCode != http.StatusNotFound) {
+			return
+		}
+		rejected = true
+	}
+	token = strings.TrimSpace(token)
+	s.cloudLoginMu.Lock()
+	if strings.TrimSpace(s.cfg.Token) != token {
+		s.cloudLoginMu.Unlock()
+		return
+	}
+	changed := s.cloudTokenInvalid != rejected
+	s.cloudTokenInvalid = rejected
+	s.cloudLoginMu.Unlock()
+	if changed {
+		if rejected {
+			log.Printf("cloud auth: the platform rejected the saved access token; waiting for a fresh login")
+		} else {
+			log.Printf("cloud auth: the saved access token is accepted again")
+		}
+	}
+}
+
 func (s *Server) cloudAuthStatus(ctx context.Context) cloudAuthStatus {
+	s.adoptExternalCloudCredentials()
+
 	displayURL := strings.TrimRight(s.cfg.DisplayURL(), "/")
 	loginURL := s.communityLoginURL(ctx)
 
@@ -218,8 +462,12 @@ func (s *Server) cloudAuthStatus(ctx context.Context) cloudAuthStatus {
 	client := csghub.NewClient(s.cfg.ServerURL, token)
 	user, err := client.GetCurrentUser(ctx)
 	if err != nil || user == nil {
+		if err != nil {
+			s.recordCloudTokenValidation(token, err)
+		}
 		return status
 	}
+	s.recordCloudTokenValidation(token, nil)
 
 	status.Authenticated = true
 	status.User = &cloudAuthUser{
@@ -426,6 +674,12 @@ func (s *Server) cloudAPIKey(ctx context.Context) (string, error) {
 	client := csghub.NewClient(s.cfg.ServerURL, token)
 	user, err := client.GetCurrentUser(ctx)
 	if err != nil || user == nil {
+		if err != nil {
+			// An instance used only through this API never polls the status
+			// endpoint; record the rejection so a token written by another
+			// process can replace the dead one.
+			s.recordCloudTokenValidation(token, err)
+		}
 		return "", inference.NewHTTPStatusError(http.StatusUnauthorized, "OpenCSG login expired or token is invalid. Please log in again.")
 	}
 	apiKey, err := s.builtinCloudAPIKey(ctx, client, user)

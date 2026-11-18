@@ -387,8 +387,9 @@ func (s *Server) installLicense(w http.ResponseWriter, data string) (license.Sta
 }
 
 // reportLicenseActivation writes off this device when the license is known and
-// the record still says pending. It runs on startup and after login, never on
-// a timer: an offline instance is allowed to keep working.
+// the record still says pending. It runs on startup, after a login here and
+// when another process's login is adopted, never on a timer: an offline
+// instance is allowed to keep working.
 func (s *Server) reportLicenseActivation(ctx context.Context) {
 	store := s.license.Activations()
 	if store == nil || store.Path() == "" {

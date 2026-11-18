@@ -143,6 +143,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 
 	key, value := strings.TrimSpace(args[0]), args[1]
 	syncToken := false
+	authChanged := false
 	switch key {
 	case "server_url":
 		serverURL := strings.TrimSpace(value)
@@ -153,12 +154,14 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 			syncToken = strings.TrimSpace(cfg.Token) != ""
 			cfg.Token = ""
 			cfg.OpenCSGAPIKey = ""
+			authChanged = true
 		}
 		cfg.ServerURL = serverURL
 	case "ai_gateway_url":
 		gatewayURL := strings.TrimSpace(value)
 		if gatewayURL != strings.TrimSpace(cfg.AIGatewayURL) {
 			cfg.OpenCSGAPIKey = ""
+			authChanged = true
 		}
 		cfg.AIGatewayURL = gatewayURL
 	case "storage_dir":
@@ -202,6 +205,10 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		cfg.ListenAddr = strings.TrimSpace(value)
 	case "token":
 		cfg.Token = strings.TrimSpace(value)
+		// The token starts a new account session, so the manual gateway key of
+		// the previous one goes with it.
+		cfg.OpenCSGAPIKey = ""
+		authChanged = true
 	case "cluster_secret":
 		secret := strings.TrimSpace(value)
 		if len(secret) < cluster.MinAutoFormSecretLen {
@@ -217,6 +224,9 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unknown config key %q (valid: %s)", key, supportedConfigKeys())
 	}
 
+	if authChanged {
+		config.NextAuthRevision(cfg)
+	}
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
@@ -239,17 +249,20 @@ func runConfigUnset(cmd *cobra.Command, args []string) error {
 
 	key := strings.TrimSpace(args[0])
 	syncToken := false
+	authChanged := false
 	switch key {
 	case "server_url":
 		if strings.TrimSpace(cfg.ServerURL) != config.DefaultServerURL {
 			syncToken = strings.TrimSpace(cfg.Token) != ""
 			cfg.Token = ""
 			cfg.OpenCSGAPIKey = ""
+			authChanged = true
 		}
 		cfg.ServerURL = config.DefaultServerURL
 	case "ai_gateway_url":
 		if strings.TrimSpace(cfg.AIGatewayURL) != "" {
 			cfg.OpenCSGAPIKey = ""
+			authChanged = true
 		}
 		cfg.AIGatewayURL = ""
 	case "console_auth_mode":
@@ -262,6 +275,9 @@ func runConfigUnset(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("config key %q cannot be unset (valid: server_url, ai_gateway_url, cluster_secret, cluster_name, console_auth_mode)", key)
 	}
 
+	if authChanged {
+		config.NextAuthRevision(cfg)
+	}
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}

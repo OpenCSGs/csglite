@@ -210,6 +210,25 @@ type Server struct {
 	cloudLoginMu       sync.Mutex
 	cloudLoginAttempts map[string]browserLoginAttempt
 	cloudLoginRevision uint64
+	// cloudTokenInvalid records that the platform rejected cfg.Token (401/403,
+	// or the 404 its token endpoint returns for an unknown or expired token).
+	// It marks the current login as unusable, which is when a token written by
+	// another csglite process may be adopted from config.json.
+	cloudTokenInvalid bool
+	// cloudClearedToken is the token this process last cleared on logout or a
+	// community switch. An instance running a build without auth_revision
+	// writes generation 0, so the token value is the only thing that keeps a
+	// just-cleared login from being adopted back. It cannot tell a legacy
+	// re-login that reuses the same token from that write-back (rejected until
+	// this process restarts), nor an older generation-0 token (adopted).
+	cloudClearedToken string
+	// cfg.Token, cfg.OpenCSGAPIKey and cfg.AuthRevision are written under
+	// cloudLoginMu here and in the login handlers, while many handlers read
+	// them without it and config.Save marshals the whole struct on other
+	// request paths. That is the sharing pattern cfg already had; a full
+	// accessor pass is a separate change, so the background adoption loop
+	// widened an existing unlocked-read window rather than introducing the
+	// first one.
 
 	// modelSettingsMu guards cfg.Inference.Models. It is written by the
 	// model-config handler and read by every engine load, on different request
@@ -455,6 +474,12 @@ func (s *Server) Run(ctx context.Context) error {
 	authCallbackListener, err := net.Listen("tcp", s.authCallbackAddr())
 	if err != nil {
 		log.Printf("cloud auth callback listener unavailable on %s: %v", s.authCallbackAddr(), err)
+		// The SSO port is fixed, so a second csglite process receives the
+		// browser redirect. Say what happens next: the token that process
+		// saves is adopted from the shared config without a restart.
+		if cfgPath, cfgErr := config.ConfigPath(); cfgErr == nil {
+			log.Printf("  if another csglite process owns the SSO callback port, this instance adopts the token it saves to %s", cfgPath)
+		}
 	} else {
 		defer authCallbackListener.Close()
 		s.authCallbackHTTP = &http.Server{
@@ -464,6 +489,7 @@ func (s *Server) Run(ctx context.Context) error {
 			IdleTimeout:       120 * time.Second,
 		}
 	}
+	go s.adoptExternalCredentialsLoop(ctx)
 
 	s.mu.Lock()
 	s.loadCtx = ctx

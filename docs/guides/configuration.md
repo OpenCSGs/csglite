@@ -16,6 +16,10 @@
 
 说明：CLI 和 Web 设置页提供 `storage_dir` 这个便捷配置项。设置它时，csghub-lite 会自动把模型和数据集目录展开为 `model_dir` 与 `dataset_dir`。
 
+`auth_revision` 是内部字段，记录跨进程的登录代际，请勿手动修改。
+
+多个 csghub-lite 实例共享同一个 `config.json`：在一个实例中登录、退出登录或切换社区会改写该文件，其他运行中的实例会跟随这些变化。不同社区之间不会同步登录，实例重启后以文件内容为准。
+
 ## 配置项详解
 
 ### server_url
