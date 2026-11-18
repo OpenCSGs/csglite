@@ -6,7 +6,7 @@ import type { ArtifactSource, MarketplaceModel, MarketplaceModelDetailResponse, 
 import { t } from "../i18n";
 import { canPublishModelInstance, modelInstanceRows, modelInstanceCategory, modelPublication } from "../clusterModels";
 import type { ModelInstanceRow } from "../clusterModels";
-import { SGLangDeploymentArgs, SGLangMTPParams } from "./SGLangDeploymentArgs";
+import { SGLangDeploymentArgs } from "./SGLangDeploymentArgs";
 import { ContextWindowField } from "./ContextWindowField";
 import { DeploymentModelPicker } from "./DeploymentModelPicker";
 import { deploymentModelKind, deploymentName, deploymentRevision, deploymentTargets, isLlamaDeployment, recommendedDeploymentBackend } from "../deploymentModels";
@@ -226,7 +226,6 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
             <label class="col-span-2 space-y-1 text-sm">{t("deployments.name")}<input id="deployment-name" class={inputClass} required maxLength={100} value={draft.name} onInput={e => patch({ name: e.currentTarget.value })} /></label>
             <ContextWindowField kind={modelKind} value={draft.num_ctx} required inputClass={inputClass} onInput={value => patch({ num_ctx: Number(value) })} />
             <label class="space-y-1 text-sm">{t("deployments.parallel")}<input type="number" class={inputClass} min={1} max={16} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
-            {sglangEngine?.deployment_args && <SGLangMTPParams value={draft.sglang_args || ""} onInput={value => patch({ sglang_args: value })} />}
             {sglangEngine?.deployment_args && <SGLangDeploymentArgs value={draft.sglang_args || ""} onInput={value => patch({ sglang_args: value })} />}
           </> : draft.repository.trim() && <details class="col-span-2 rounded-xl border border-gray-200 p-3">
             <summary class="cursor-pointer text-sm text-gray-600">{t("deployments.advanced")}</summary>

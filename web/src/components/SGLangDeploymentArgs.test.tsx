@@ -3,7 +3,7 @@ import { render } from "preact";
 import { useState } from "preact/hooks";
 import { act } from "preact/test-utils";
 import { expect, it, vi } from "vitest";
-import { SGLangDeploymentArgs, SGLangMTPParams } from "./SGLangDeploymentArgs";
+import { SGLangDeploymentArgs } from "./SGLangDeploymentArgs";
 
 vi.hoisted(() => {
   Object.defineProperty(globalThis, "localStorage", {
@@ -12,12 +12,11 @@ vi.hoisted(() => {
   });
 });
 
-it("edits stored MTP flags separately from collapsed advanced arguments", () => {
+it("keeps editable MTP and advanced arguments in one collapsed section", () => {
   const container = document.createElement("div");
   function Form() {
     const [args, setArgs] = useState("--speculative-algorithm=EAGLE --speculative-num-steps 2\n--chunked-prefill-size 4096");
     return <>
-      <SGLangMTPParams value={args} onInput={setArgs} />
       <SGLangDeploymentArgs value={args} onInput={setArgs} />
       <output>{args}</output>
     </>;
@@ -29,7 +28,8 @@ it("edits stored MTP flags separately from collapsed advanced arguments", () => 
   const advanced = container.querySelector("details")!;
   const textarea = advanced.querySelector("textarea")!;
   expect(advanced.open).toBe(false);
-  expect(advanced.contains(algorithm)).toBe(false);
+  expect(advanced.contains(algorithm)).toBe(true);
+  advanced.open = true;
   expect(algorithm.value).toBe("EAGLE");
   expect(steps.value).toBe("2");
   expect(textarea.value).toBe("--chunked-prefill-size 4096");

@@ -4,7 +4,7 @@ import type { ArtifactSource, ClusterDeployment, ClusterDeploymentConfig, Cluste
 import { isLlamaDeployment } from "../deploymentModels";
 import { deploymentQuantOptions } from "../deploymentRecommendation";
 import { t } from "../i18n";
-import { SGLangDeploymentArgs, SGLangMTPParams } from "./SGLangDeploymentArgs";
+import { SGLangDeploymentArgs } from "./SGLangDeploymentArgs";
 import { ContextWindowField } from "./ContextWindowField";
 import { DeploymentMessage } from "./DeploymentMessage";
 
@@ -90,7 +90,6 @@ export function DeploymentConfigDialog({ deployment, nodeName, allowed, engines,
         <label class="space-y-1 text-sm">{t("deployments.parallel")}<input class={inputClass} type="number" min={1} max={16} step={1} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
         {!sglangSelected && <label class="space-y-1 text-sm">{t("deployments.gpuLayers")}<input class={inputClass} type="number" min={-1} max={999} step={1} required value={draft.n_gpu_layers} onInput={e => patch({ n_gpu_layers: Number(e.currentTarget.value) })} /></label>}
         {!sglangSelected && <p class="col-span-2 text-xs text-gray-500">{t("deployments.llamaParamsHint")}</p>}
-        {sglangSelected && sglang?.deployment_args && <SGLangMTPParams value={draft.sglang_args || ""} onInput={value => patch({ sglang_args: value })} />}
         {sglangSelected && sglang?.deployment_args && <SGLangDeploymentArgs value={draft.sglang_args || ""} onInput={value => patch({ sglang_args: value })} />}
       </fieldset> : <p role="status" class="text-sm text-amber-700">{t("deployments.unsupportedKind")}</p>}
       {!allowed && <p role="status" class="text-sm text-amber-700">{t("deployments.configChanged")}</p>}

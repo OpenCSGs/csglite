@@ -22,7 +22,7 @@ function joinArgs(mtp: MTPValues, extra: string) {
 type ArgsProps = { value: string; onInput: (value: string) => void };
 const inputClass = "w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm disabled:bg-gray-50";
 
-export function SGLangMTPParams({ value, onInput }: ArgsProps) {
+function SGLangMTPParams({ value, onInput }: ArgsProps) {
   const { mtp, extra } = splitArgs(value);
   const algorithm = mtp.algorithm || "";
   const enabled = algorithm === "NEXTN" || algorithm === "EAGLE";
@@ -33,7 +33,7 @@ export function SGLangMTPParams({ value, onInput }: ArgsProps) {
       onInput(joinArgs({ "num-steps": "3", "eagle-topk": "1", "num-draft-tokens": "4", ...mtp, algorithm: next }, extra));
     }
   }
-  return <div class="col-span-2 grid grid-cols-3 gap-3">
+  return <div class="grid grid-cols-3 gap-3">
     <label class="col-span-3 space-y-1 text-sm">{t("deployments.mtp")}
       <select class={inputClass} value={algorithm} onChange={event => setAlgorithm(event.currentTarget.value)}>
         <option value="">{t("deployments.enginePlanAuto")}</option>
@@ -58,7 +58,8 @@ export function SGLangDeploymentArgs({ value, onInput }: ArgsProps) {
   const { mtp, extra } = splitArgs(value);
   return <details class="col-span-2 rounded-xl border border-gray-200 p-3">
     <summary class="cursor-pointer text-sm text-gray-600">{t("deployments.sglangArgs")}</summary>
-    <div class="mt-3 space-y-2">
+    <div class="mt-3 space-y-3">
+      <SGLangMTPParams value={value} onInput={onInput} />
       <textarea aria-label={t("deployments.sglangArgs")} class="w-full rounded-lg border border-gray-200 px-3 py-2 font-mono text-xs"
         rows={4} maxLength={2048} spellcheck={false} value={extra}
         placeholder={"--chunked-prefill-size 4096\n--kv-cache-dtype bf16"}
