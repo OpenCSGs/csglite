@@ -221,15 +221,14 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
             </p>}
             <p class="text-xs text-gray-400">{t("deployments.quantEstimateHint")}</p>
           </div>}
+          {draft.repository.trim() && <label class="col-span-2 space-y-1 text-sm">{t("deployments.name")}<input id="deployment-name" class={inputClass} required maxLength={100} value={draft.name} onInput={e => patch({ name: e.currentTarget.value })} /></label>}
           {draft.repository.trim() && effectiveSGLang ? <>
-            <label class="col-span-2 space-y-1 text-sm">{t("deployments.name")}<input id="deployment-name" class={inputClass} required maxLength={100} value={draft.name} onInput={e => patch({ name: e.currentTarget.value })} /></label>
             <ContextWindowField kind={modelKind} value={draft.num_ctx} required inputClass={inputClass} onInput={value => patch({ num_ctx: Number(value) })} />
             <label class="space-y-1 text-sm">{t("deployments.parallel")}<input type="number" class={inputClass} min={1} max={16} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
             {sglangEngine?.deployment_args && <SGLangDeploymentArgs value={draft.sglang_args || ""} onInput={value => patch({ sglang_args: value })} />}
           </> : draft.repository.trim() && <details class="col-span-2 rounded-xl border border-gray-200 p-3">
             <summary class="cursor-pointer text-sm text-gray-600">{t("deployments.advanced")}</summary>
             <div class="mt-4 grid grid-cols-2 gap-4">
-              <label class="col-span-2 space-y-1 text-sm">{t("deployments.name")}<input id="deployment-name" class={inputClass} required maxLength={100} value={draft.name} onInput={e => patch({ name: e.currentTarget.value })} /></label>
               {isLlamaDeployment(modelKind) && <>
                 <ContextWindowField kind={modelKind} value={draft.num_ctx} required inputClass={inputClass} onInput={value => patch({ num_ctx: Number(value) })} />
                 <label class="space-y-1 text-sm">{t("deployments.parallel")}<input type="number" class={inputClass} min={1} max={16} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
