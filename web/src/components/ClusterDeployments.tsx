@@ -6,7 +6,7 @@ import type { ArtifactSource, MarketplaceModel, MarketplaceModelDetailResponse, 
 import { t } from "../i18n";
 import { canPublishModelInstance, modelInstanceRows, modelInstanceCategory, modelPublication } from "../clusterModels";
 import type { ModelInstanceRow } from "../clusterModels";
-import { SGLangDeploymentArgs } from "./SGLangDeploymentArgs";
+import { SGLangDeploymentArgs, SGLangMTPParams } from "./SGLangDeploymentArgs";
 import { ContextWindowField } from "./ContextWindowField";
 import { DeploymentModelPicker } from "./DeploymentModelPicker";
 import { deploymentModelKind, deploymentName, deploymentRevision, deploymentTargets, isLlamaDeployment, recommendedDeploymentBackend } from "../deploymentModels";
@@ -109,13 +109,6 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
   const recommendedBackend = recommendedDeploymentBackend(modelKind, modelFormat, targetEngines);
   const selectedBackend = draft?.backend || "";
   const planBackend = selectedBackend || (recommendedBackend === "sglang" || recommendedBackend === "llama" ? recommendedBackend : "");
-  const planEngine = targetEngines.find(item => item.name === planBackend);
-  const backendSource = selectedBackend
-    ? t("deployments.backendSourceManual")
-    : modelFormat === "unknown"
-      ? t("deployments.backendSourceUnknown")
-      : t("deployments.backendSourceTarget", modelFormat === "gguf" ? "GGUF" : "Safetensors", enginesKnown ? t("deployments.backendSourceEngines") : t("deployments.backendSourceNoEngines"));
-  const sglangDevices = sglangEngine?.devices ?? [];
   const effectiveSGLang = modelKind === "chat" && planBackend === "sglang";
   const quantNoFit = !effectiveSGLang && !draft?.quant && recommendation.state === "no-fit";
   const instances = modelInstanceRows(view.members, [], deployments);
@@ -202,26 +195,9 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
                   <option value="llama" disabled={!enginesKnown || (llamaEngine ? !llamaEngine.available : false)}>{t("deployments.backendLlama")}</option>
                   <option value="sglang" disabled={!enginesKnown || !sglangEligible || !sglangAvailable}>{t("deployments.backendSGLang")}</option>
                 </select>
-                <p class="text-xs text-gray-500">{t("deployments.backendHint")}</p>
-                {!enginesKnown && <p class="text-xs text-amber-700">{t("deployments.targetNoEngineInfo")}</p>}
-                {enginesKnown && !sglangAvailable && <p class="text-xs text-amber-700">{t("deployments.backendUnavailable", sglangEngine?.reason || t("deployments.backendUnknownReason"))}</p>}
-                {sglangAvailable && !sglangEligible && <p class="text-xs text-gray-500">{t("deployments.backendSGLangRequiresSafetensors")}</p>}
+                {effectiveSGLang && sglangEngine?.version && <p class="text-xs text-gray-500">SGLang {sglangEngine.version}</p>}
               </label>}
-              {target && <div data-target-plan class="col-span-2 space-y-1 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
-                <p class="font-medium">{t("deployments.targetPlanTitle", target.name)}</p>
-                {!enginesKnown
-                  ? <p class="text-amber-800">{t("deployments.targetEngineUnknown")}</p>
-                  : <p>{t("deployments.targetEngineState", planEngine ? (planEngine.name === "sglang" ? "SGLang" : "llama.cpp") : t("deployments.targetBackendUnknown"),
-                    planEngine?.version || "—",
-                    planEngine ? (planEngine.available ? t("deployments.engineAvailable") : planEngine.installed ? t("deployments.engineUnavailable") : t("deployments.engineNotInstalled")) : t("deployments.targetBackendUnknown"),
-                    planEngine?.running ?? 0)}</p>}
-                <p>{t("deployments.targetBackendRecommendation", recommendedBackend === "sglang" ? "SGLang" : recommendedBackend === "llama" ? "llama.cpp" : recommendedBackend === "none" ? t("deployments.targetBackendNone") : t("deployments.targetBackendUnknown"), backendSource)}</p>
-                <p>{t("deployments.targetParams", draft.num_ctx, draft.num_parallel)}</p>
-                {planBackend === "sglang" && <p>{t("deployments.targetSGLangResolved")}</p>}
-                {planBackend === "sglang" && sglangDevices.length > 0 && <p>{t("deployments.targetSGLangDevices", sglangDevices.length, sglangDevices[0].name, memorySize(sglangDevices[0].memory_total))}</p>}
-                {modelFormat === "unknown" && <p class="text-amber-800">{t("deployments.targetFormatUnknown")}</p>}
-                {recommendedBackend === "none" && <p class="text-red-700">{t("deployments.targetNoRuntime")}</p>}
-              </div>}
+              {recommendedBackend === "none" && <p role="status" class="col-span-2 text-xs text-red-700">{t("deployments.targetNoRuntime")}</p>}
               {modelKind !== "unknown" && !isLlamaDeployment(modelKind) && <p role="status" class="col-span-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{t("deployments.unsupportedKind")}</p>}
             </>}
           <label class="col-span-2 space-y-1 text-sm" for="deployment-node">{t("deployments.node")}
@@ -246,16 +222,21 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
             </p>}
             <p class="text-xs text-gray-400">{t("deployments.quantEstimateHint")}</p>
           </div>}
-          {draft.repository.trim() && <details class="col-span-2 rounded-xl border border-gray-200 p-3">
+          {draft.repository.trim() && effectiveSGLang ? <>
+            <label class="col-span-2 space-y-1 text-sm">{t("deployments.name")}<input id="deployment-name" class={inputClass} required maxLength={100} value={draft.name} onInput={e => patch({ name: e.currentTarget.value })} /></label>
+            <ContextWindowField kind={modelKind} value={draft.num_ctx} required inputClass={inputClass} onInput={value => patch({ num_ctx: Number(value) })} />
+            <label class="space-y-1 text-sm">{t("deployments.parallel")}<input type="number" class={inputClass} min={1} max={16} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
+            {sglangEngine?.deployment_args && <SGLangMTPParams value={draft.sglang_args || ""} onInput={value => patch({ sglang_args: value })} />}
+            {sglangEngine?.deployment_args && <SGLangDeploymentArgs value={draft.sglang_args || ""} onInput={value => patch({ sglang_args: value })} />}
+          </> : draft.repository.trim() && <details class="col-span-2 rounded-xl border border-gray-200 p-3">
             <summary class="cursor-pointer text-sm text-gray-600">{t("deployments.advanced")}</summary>
             <div class="mt-4 grid grid-cols-2 gap-4">
               <label class="col-span-2 space-y-1 text-sm">{t("deployments.name")}<input id="deployment-name" class={inputClass} required maxLength={100} value={draft.name} onInput={e => patch({ name: e.currentTarget.value })} /></label>
-              {effectiveSGLang && sglangEngine?.deployment_args && <SGLangDeploymentArgs value={draft.sglang_args || ""} onInput={value => patch({ sglang_args: value })} />}
               {isLlamaDeployment(modelKind) && <>
                 <ContextWindowField kind={modelKind} value={draft.num_ctx} required inputClass={inputClass} onInput={value => patch({ num_ctx: Number(value) })} />
                 <label class="space-y-1 text-sm">{t("deployments.parallel")}<input type="number" class={inputClass} min={1} max={16} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
-                {!effectiveSGLang && <label class="space-y-1 text-sm">{t("deployments.gpuLayers")}<input type="number" class={inputClass} min={-1} max={999} required value={draft.n_gpu_layers} onInput={e => patch({ n_gpu_layers: Number(e.currentTarget.value) })} /></label>}
-                <p class="col-span-2 text-xs text-gray-400">{t(effectiveSGLang ? "deployments.sglangParamsHint" : "deployments.llamaParamsHint")}</p>
+                <label class="space-y-1 text-sm">{t("deployments.gpuLayers")}<input type="number" class={inputClass} min={-1} max={999} required value={draft.n_gpu_layers} onInput={e => patch({ n_gpu_layers: Number(e.currentTarget.value) })} /></label>
+                <p class="col-span-2 text-xs text-gray-400">{t("deployments.llamaParamsHint")}</p>
               </>}
               <p class="col-span-2 text-xs text-gray-400">{t("deployments.registryContext")}</p>
             </div>
