@@ -1189,9 +1189,7 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const body = await resp.text();
 
   if (!resp.ok) {
-    const error = new Error(extractErrorMessage(body, contentType, resp.statusText)) as Error & { status?: number };
-    error.status = resp.status;
-    throw error;
+    throw new Error(extractErrorMessage(body, contentType, resp.statusText));
   }
 
   if (!contentType.includes("application/json")) {
@@ -2646,8 +2644,7 @@ export async function getMarketplaceModels(params: {
   page?: number;
   per?: number;
   artifactSource?: ArtifactSource;
-  localInference?: boolean;
-}): Promise<{ data: MarketplaceModel[]; total: number; has_more?: boolean; total_exact?: boolean; partial?: boolean }> {
+}): Promise<{ data: MarketplaceModel[]; total: number; has_more?: boolean; total_exact?: boolean }> {
   const q = new URLSearchParams();
   if (params.search) q.set("search", params.search);
   q.set("sort", params.sort || "trending");
@@ -2656,10 +2653,9 @@ export async function getMarketplaceModels(params: {
   if (params.modelParamsMin) q.set("model_params_min", params.modelParamsMin);
   if (params.modelParamsMax) q.set("model_params_max", params.modelParamsMax);
   if (params.artifactSource) q.set("artifact_source", params.artifactSource);
-  if (params.localInference) q.set("local_inference", "true");
   q.set("page", String(params.page || 1));
   q.set("per", String(params.per || 16));
-  const resp = await fetchJSON<{ data: MarketplaceModel[]; total: number; has_more?: boolean; total_exact?: boolean; partial?: boolean }>(
+  const resp = await fetchJSON<{ data: MarketplaceModel[]; total: number; has_more?: boolean; total_exact?: boolean }>(
     `/api/marketplace/models?${q}`
   );
   return resp;

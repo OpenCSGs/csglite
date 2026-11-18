@@ -2523,14 +2523,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "local_inference",
-            "in": "query",
-            "description": "When enabled, returns only models this machine can run locally. Supported for `artifact_source=opencsg` only; other sources ignore it. Accepts `true` or `1`; `per` must be at most 50.",
-            "schema": {
-              "type": "boolean"
-            }
           }
         ],
         "responses": {
@@ -2543,9 +2535,6 @@
                 }
               }
             }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           },
           "502": {
             "$ref": "#/components/responses/BadGateway"
@@ -17571,9 +17560,6 @@
           "model_params": {
             "type": "number"
           },
-          "model_params_valid": {
-            "type": "boolean"
-          },
           "tensor_type": {
             "type": "string"
           },
@@ -18031,11 +18017,7 @@
           },
           "total_exact": {
             "type": "boolean",
-            "description": "Whether `total` is an exact catalog count. Hugging Face listings set this to false, as do local inference scans that stopped early or hit transient probe failures."
-          },
-          "partial": {
-            "type": "boolean",
-            "description": "Whether this page may be missing locally runnable models. Only present when `local_inference=true` on `artifact_source=opencsg`."
+            "description": "Whether `total` is an exact catalog count. Hugging Face listings set this to false."
           }
         }
       },

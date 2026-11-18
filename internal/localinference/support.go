@@ -105,7 +105,7 @@ func FromMarketplaceModel(format, architecture, className, modelName, libraryNam
 	}
 
 	switch normalizePipelineTag(pipelineTag) {
-	case "text-to-image", "image-to-image", "stable-diffusion":
+	case "text-to-image", "image-to-image":
 		return diffusersSupportForImageTask(architecture, className)
 	case "automatic-speech-recognition":
 		return asrSupport(architecture)
@@ -331,12 +331,9 @@ func unsupportedPipelineTag(pipelineTag string) bool {
 	}
 }
 
-// isImageTask reports whether a pipeline tag routes to the image runtime. The
-// legacy "stable-diffusion" tag predates "text-to-image" but means the same
-// thing, so it must not fall through to llamaSupport().
 func isImageTask(pipelineTag string) bool {
 	switch normalizePipelineTag(pipelineTag) {
-	case "text-to-image", "image-to-image", "stable-diffusion":
+	case "text-to-image", "image-to-image":
 		return true
 	default:
 		return false

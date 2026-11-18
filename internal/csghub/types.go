@@ -113,27 +113,12 @@ type RepoExtraItem struct {
 
 type ModelMetadata struct {
 	ModelParams       float64 `json:"model_params"`
-	ModelParamsValid  *bool   `json:"model_params_valid,omitempty"`
 	TensorType        string  `json:"tensor_type"`
 	Architecture      string  `json:"architecture"`
 	MiniGPUMemoryGB   float64 `json:"mini_gpu_memory_gb"`
 	MiniGPUFinetuneGB float64 `json:"mini_gpu_finetune_gb"`
 	ModelType         string  `json:"model_type"`
 	ClassName         string  `json:"class_name"`
-}
-
-// ValidModelParams returns the parameter count only when the scan that produced
-// it is trusted. The hub flags estimates it cannot vouch for; using those (MoE
-// repositories report total parameters) would hide models this machine can run.
-// A missing flag keeps older payloads working.
-func (m ModelMetadata) ValidModelParams() float64 {
-	if m.ModelParams <= 0 {
-		return 0
-	}
-	if m.ModelParamsValid != nil && !*m.ModelParamsValid {
-		return 0
-	}
-	return m.ModelParams
 }
 
 // RepoFile represents a file in a model repository.

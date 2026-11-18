@@ -47,22 +47,12 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 	if per <= 0 {
 		per = 16
 	}
-	localInference := marketplaceLocalInferenceEnabled(q.Get(marketplaceLocalInferenceFlag))
 
 	requestedFramework := normalizeMarketplaceFramework(q.Get("framework"))
 	requestedTask := normalizeMarketplaceTask(q.Get("task"))
 	artifactSource, err := modelregistry.NormalizeSource(q.Get("artifact_source"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if localInference && artifactSource != modelregistry.SourceOpenCSG {
-		// Only the OpenCSG list exposes the metadata and repository sizes the
-		// local-inference filter needs, so other sources ignore the flag.
-		localInference = false
-	}
-	if localInference && per > marketplaceLocalInferenceMaxPer {
-		writeError(w, http.StatusBadRequest, "per must be at most "+strconv.Itoa(marketplaceLocalInferenceMaxPer)+" when local_inference is enabled")
 		return
 	}
 	listParams := csghub.ModelListParams{
@@ -92,7 +82,7 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	listOptions := modelregistry.ListOptions{
+	models, total, err := registry.ListModels(r.Context(), modelregistry.ListOptions{
 		Search:         listParams.Search,
 		Sort:           listParams.Sort,
 		Page:           listParams.Page,
@@ -102,36 +92,7 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 		UpstreamSource: listParams.Source,
 		ModelParamsMin: listParams.ModelParamsMin,
 		ModelParamsMax: listParams.ModelParamsMax,
-	}
-	if localInference {
-		filter := newMarketplaceLocalInferenceFilter(registry)
-		filter.limits = s.marketplaceResourceLimits()
-		result, err := filter.list(r.Context(), listOptions)
-		if err != nil {
-			if body, ok := getAnyMarketplaceCache(cacheKey); ok {
-				writeCachedMarketplaceResponse(w, body, "stale")
-				return
-			}
-			writeError(w, marketplaceErrorStatus(err), err.Error())
-			return
-		}
-		payload := marketplaceListPayload(result.Models, result.Total, string(artifactSource), page, per, len(result.Models))
-		pagingHasMore, sourceExact := marketplaceListPaging(string(artifactSource), page, per, len(result.Models), result.Total)
-		totalExact := result.TotalExact && sourceExact
-		hasMore := pagingHasMore
-		if !totalExact {
-			// The local scan is a lower bound, so offer a next page only while
-			// this one came back full.
-			hasMore = len(result.Models) == per
-		}
-		payload["has_more"] = hasMore
-		payload["total_exact"] = totalExact
-		payload["partial"] = result.Partial
-		writeMarketplaceListResponse(w, cacheKey, payload, !result.Degraded)
-		return
-	}
-
-	models, total, err := registry.ListModels(r.Context(), listOptions)
+	})
 	if err != nil {
 		if body, ok := getAnyMarketplaceCache(cacheKey); ok {
 			writeCachedMarketplaceResponse(w, body, "stale")
@@ -159,7 +120,7 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 		payload["has_more"] = len(models) == per
 		payload["total_exact"] = false
 	}
-	writeMarketplaceListResponse(w, cacheKey, payload, true)
+	writeMarketplaceListResponse(w, cacheKey, payload)
 }
 
 type marketplaceModelExtrasRequest struct {
@@ -221,6 +182,27 @@ type marketplaceModelDetailResponse struct {
 	LocalModel     marketplaceLocalModelStatus    `json:"local_model"`
 }
 
+func enrichMarketplaceModelSizes(ctx context.Context, client *csghub.Client, models []csghub.Model) error {
+	repoIDs := make([]int, 0, len(models))
+	for _, item := range models {
+		if item.RepositoryID > 0 {
+			repoIDs = append(repoIDs, item.RepositoryID)
+		}
+	}
+	extras, err := client.GetRepoExtras(ctx, repoIDs)
+	if err != nil {
+		return err
+	}
+	sizes := make(map[int]int64, len(extras))
+	for _, item := range extras {
+		sizes[item.RepoID] = item.Size
+	}
+	for i := range models {
+		models[i].RepoSize = sizes[models[i].RepositoryID]
+	}
+	return nil
+}
+
 // GET /api/marketplace/models/{namespace}/{name} -- proxy to CSGHub model detail
 func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Request) {
 	namespace := r.PathValue("namespace")
@@ -244,24 +226,16 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 	}
 	details, err := registry.GetModel(r.Context(), requestedModelID, revision)
 	if err != nil {
-		// A rate limited upstream tells the caller how long to wait; pass it on
-		// so the UI can show a retry hint instead of a raw quota message.
-		if retryAfter, ok := modelregistry.RetryAfter(err); ok {
-			if seconds := int((retryAfter + time.Second - 1) / time.Second); seconds > 0 {
-				w.Header().Set("Retry-After", strconv.Itoa(seconds))
-			}
-		}
-		writeError(w, marketplaceErrorStatus(err), err.Error())
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	if artifactSource == modelregistry.SourceOpenCSG {
-		if filler, ok := registry.(modelregistry.RepoSizeFiller); ok {
-			modelWithSize := []csghub.Model{*details}
-			if err := filler.FillRepoSizes(r.Context(), modelWithSize); err != nil {
-				log.Printf("marketplace model size unavailable for %s: %v", requestedModelID, err)
-			} else {
-				*details = modelWithSize[0]
-			}
+		client := csghub.NewClient(s.cfg.ServerURL, s.cfg.Token)
+		modelWithSize := []csghub.Model{*details}
+		if err := enrichMarketplaceModelSizes(r.Context(), client, modelWithSize); err != nil {
+			log.Printf("marketplace model size unavailable for %s: %v", requestedModelID, err)
+		} else {
+			*details = modelWithSize[0]
 		}
 	}
 
@@ -274,11 +248,8 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 		filesFetched  bool
 		quantizations []marketplaceModelQuantization
 	)
-	// The file tree is needed to resolve the format, the architecture and, for
-	// repositories whose size the list did not report, the size the hardware
-	// gate must judge. Using the same source as the list keeps both verdicts
-	// aligned.
-	if format == "gguf" || format == "" || architecture == "" || details.RepoSize <= 0 {
+	if format == "gguf" || format == "" || architecture == "" ||
+		(artifactSource != modelregistry.SourceOpenCSG && details.RepoSize <= 0) {
 		if fetched, _, err := registry.ListFiles(r.Context(), requestedModelID, revision); err == nil {
 			files = fetched
 			filesFetched = true
@@ -294,7 +265,7 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 		}
 	}
 	enrichMarketplaceModelDetail(details, format, architecture, configMetadata)
-	pipelineTag := marketplaceRoutedTaskTag(details.Tags)
+	pipelineTag := marketplaceModelTaskTag(details.Tags)
 	if format == "gguf" {
 		if !filesFetched {
 			if fetched, _, err := registry.ListFiles(r.Context(), requestedModelID, revision); err == nil {
@@ -314,40 +285,18 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	inferenceFormat := marketplaceModelInferenceFormat(details.Tags)
-	if inferenceFormat == "" {
-		inferenceFormat = format
-	}
-
-	support := localinference.FromMarketplaceModel(
-		inferenceFormat,
-		architecture,
-		details.Metadata.ClassName,
-		details.Path,
-		marketplaceLibraryName(details),
-		pipelineTag,
-	)
-	// Quantized weights cannot be converted even though the upstream framework
-	// tag reports safetensors or pytorch. Keep this verdict in sync with the
-	// list filter, which rejects the same repositories.
-	if support.Supported && !strings.EqualFold(inferenceFormat, "gguf") &&
-		marketplaceLooksLikeQuantizedWeights(marketplaceModelFullName(*details)) {
-		support = api.LocalInferenceSupport{Mode: "none", Architecture: support.Architecture}
-	}
-	// A GGUF verdict never depends on this machine's resources, so GGUF details
-	// must not pay for the hardware probe.
-	if support.Supported && support.Mode != "direct" &&
-		!marketplaceLocalInferenceSizeAllowed(support, *details, s.marketplaceResourceLimits()) {
-		// Keep the architecture for display but do not claim local support for a
-		// repository that cannot be downloaded and converted on this machine.
-		support = api.LocalInferenceSupport{Mode: "none", Architecture: support.Architecture}
-	}
-
 	writeJSON(w, http.StatusOK, marketplaceModelDetailResponse{
-		Details:        details,
-		Quantizations:  quantizations,
-		LocalInference: support,
-		LocalModel:     s.marketplaceLocalModelStatus(details, requestedModelID, artifactSource, revision),
+		Details:       details,
+		Quantizations: quantizations,
+		LocalInference: localinference.FromMarketplaceModel(
+			format,
+			architecture,
+			details.Metadata.ClassName,
+			details.Path,
+			marketplaceLibraryName(details),
+			pipelineTag,
+		),
+		LocalModel: s.marketplaceLocalModelStatus(details, requestedModelID, artifactSource, revision),
 	})
 }
 
@@ -457,7 +406,7 @@ func (s *Server) handleMarketplaceDatasets(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	writeMarketplaceListResponse(w, cacheKey, marketplaceListPayload(datasets, total, string(artifactSource), page, per, len(datasets)), true)
+	writeMarketplaceListResponse(w, cacheKey, marketplaceListPayload(datasets, total, string(artifactSource), page, per, len(datasets)))
 }
 
 type marketplaceLocalDatasetStatus struct {
@@ -557,7 +506,7 @@ func (s *Server) handleMarketplaceDatasetExtras(w http.ResponseWriter, r *http.R
 			response.RepoSize += file.Size
 		}
 	}
-	writeMarketplaceListResponse(w, cacheKey, response, true)
+	writeMarketplaceListResponse(w, cacheKey, response)
 }
 
 func (s *Server) marketplaceLocalDatasetStatus(repository string, source datasetregistry.Source, revision string) marketplaceLocalDatasetStatus {
@@ -651,15 +600,13 @@ func marketplaceListPaging(source string, page, per, count, total int) (hasMore,
 	return (page-1)*per+count < total, true
 }
 
-func writeMarketplaceListResponse(w http.ResponseWriter, cacheKey string, payload interface{}, cacheable bool) {
+func writeMarketplaceListResponse(w http.ResponseWriter, cacheKey string, payload interface{}) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if cacheable {
-		setMarketplaceCache(cacheKey, body)
-	}
+	setMarketplaceCache(cacheKey, body)
 	writeCachedMarketplaceResponse(w, body, "miss")
 }
 
@@ -671,12 +618,6 @@ func writeCachedMarketplaceResponse(w http.ResponseWriter, body []byte, cacheSta
 }
 
 func marketplaceErrorStatus(err error) int {
-	if status, ok := modelregistry.RegistryStatus(err); ok {
-		switch status {
-		case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
-			return status
-		}
-	}
 	var statusErr *artifactregistry.HTTPError
 	if errors.As(err, &statusErr) {
 		switch statusErr.StatusCode {
@@ -840,6 +781,15 @@ func marketplaceLibraryName(details *csghub.Model) string {
 	for _, tag := range details.Tags {
 		if strings.EqualFold(tag.Category, "runtime_framework") && strings.EqualFold(tag.Name, "mlx") {
 			return tag.Name
+		}
+	}
+	return ""
+}
+
+func marketplaceModelTaskTag(tags []csghub.Tag) string {
+	for _, tag := range tags {
+		if tag.Category == "task" {
+			return strings.TrimSpace(tag.Name)
 		}
 	}
 	return ""

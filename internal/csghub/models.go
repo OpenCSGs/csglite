@@ -97,36 +97,7 @@ func (c *Client) GetModelRawFile(ctx context.Context, namespace, name, filePath 
 
 // GetModelTree returns the file tree for a model repository.
 func (c *Client) GetModelTree(ctx context.Context, namespace, name string) ([]RepoFile, error) {
-	var out []RepoFile
-	err := c.walkModelTree(ctx, namespace, name, func(entries []RepoFile) bool {
-		out = append(out, entries...)
-		return true
-	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// GetModelTreeSize sums the file sizes in the repository tree and stops as soon
-// as the total exceeds stopAbove. Repositories with many directories cost one
-// request each, so callers that only need to know whether a repository fits
-// pass their size budget and get a lower bound without walking the whole tree.
-// A stopAbove of zero disables the bound.
-func (c *Client) GetModelTreeSize(ctx context.Context, namespace, name string, stopAbove int64) (int64, error) {
-	var total int64
-	err := c.walkModelTree(ctx, namespace, name, func(entries []RepoFile) bool {
-		for _, entry := range entries {
-			if entry.Type == "file" && entry.Size > 0 {
-				total += entry.Size
-			}
-		}
-		return stopAbove <= 0 || total <= stopAbove
-	})
-	if err != nil {
-		return 0, err
-	}
-	return total, nil
+	return c.getModelTreeRecursive(ctx, namespace, name, "")
 }
 
 func (c *Client) getModelTreePage(ctx context.Context, namespace, name, treePath string) ([]RepoFile, error) {
@@ -144,56 +115,63 @@ func (c *Client) getModelTreePage(ctx context.Context, namespace, name, treePath
 	return resp.Data, nil
 }
 
-// walkModelTree visits the repository tree breadth first. visit returns false to
-// stop the walk early; the entries of the page that stopped it are still
-// delivered.
-func (c *Client) walkModelTree(ctx context.Context, namespace, name string, visit func([]RepoFile) bool) error {
-	root, err := c.getModelTreePage(ctx, namespace, name, "")
+func (c *Client) getModelTreeRecursive(ctx context.Context, namespace, name, treePath string) ([]RepoFile, error) {
+	root, err := c.getModelTreePage(ctx, namespace, name, treePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	seenDirs := make(map[string]struct{})
+	out := make([]RepoFile, 0, len(root))
 	queue := make([]string, 0)
-	enqueue := func(entries []RepoFile) {
-		for _, entry := range entries {
-			if entry.Type != "dir" {
-				continue
-			}
-			dirPath := entry.Path
-			if dirPath == "" {
-				dirPath = entry.Name
-			}
-			if dirPath == "" {
-				continue
-			}
-			if _, ok := seenDirs[dirPath]; ok {
-				continue
-			}
-			seenDirs[dirPath] = struct{}{}
-			queue = append(queue, dirPath)
+	seenDirs := make(map[string]struct{})
+	for _, entry := range root {
+		out = append(out, entry)
+		if entry.Type != "dir" {
+			continue
 		}
+		dirPath := entry.Path
+		if dirPath == "" {
+			dirPath = entry.Name
+		}
+		if dirPath == "" {
+			continue
+		}
+		if _, ok := seenDirs[dirPath]; ok {
+			continue
+		}
+		seenDirs[dirPath] = struct{}{}
+		queue = append(queue, dirPath)
 	}
 
-	if !visit(root) {
-		return nil
-	}
-	enqueue(root)
 	for len(queue) > 0 {
 		dirPath := queue[0]
 		queue = queue[1:]
 
 		children, err := c.getModelTreePage(ctx, namespace, name, dirPath)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if !visit(children) {
-			return nil
+		for _, entry := range children {
+			out = append(out, entry)
+			if entry.Type != "dir" {
+				continue
+			}
+			childPath := entry.Path
+			if childPath == "" {
+				childPath = entry.Name
+			}
+			if childPath == "" {
+				continue
+			}
+			if _, ok := seenDirs[childPath]; ok {
+				continue
+			}
+			seenDirs[childPath] = struct{}{}
+			queue = append(queue, childPath)
 		}
-		enqueue(children)
 	}
 
-	return nil
+	return out, nil
 }
 
 // SearchModels searches for models by keyword.
