@@ -104,6 +104,8 @@ const modelParamsMin = signal(modelParamsMinLimit);
 const modelParamsMax = signal(modelParamsMaxLimit);
 const viewMode = signal<ViewMode>("grid");
 const page = signal(1);
+const localInferenceOnly = signal(false);
+const partialResults = signal(false);
 const perPage = 16;
 
 const models = signal<MarketplaceModel[]>([]);
@@ -147,6 +149,7 @@ function loadLocalDatasets() {
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / perPage)));
 
 async function loadData() {
+  partialResults.value = false;
   if (!artifactSourceReady.value) return;
   const requestID = ++loadDataRequestID;
   loading.value = true;
@@ -165,23 +168,32 @@ async function loadData() {
         page: page.value,
         per: perPage,
         artifactSource: artifactSource.value,
+        localInference: localInferenceOnly.value || undefined,
       });
       if (requestID !== loadDataRequestID) return;
       models.value = res.data || [];
       total.value = res.total;
       hasMore.value = res.has_more ?? false;
       totalExact.value = res.total_exact ?? true;
+      partialResults.value = res.partial ?? false;
       const repoIDs = models.value
         .map((model) => model.repository_id || 0)
         .filter((id) => id > 0);
-      if (repoIDs.length > 0) {
+      // OpenCSG returns the repository size on the list payload, so only the
+      // sources that leave it empty need the extras round trip.
+      const needsSizes = models.value.some(
+        (model) => (model.repository_id || 0) > 0 && !((model.repo_size || 0) > 0),
+      );
+      if (repoIDs.length > 0 && needsSizes) {
         void getMarketplaceModelExtras(repoIDs).then((extras) => {
           if (requestID !== loadDataRequestID) return;
           const sizes = new Map(extras.map((extra) => [extra.repo_id, extra.size]));
-          models.value = models.value.map((model) => ({
-            ...model,
-            repo_size: sizes.get(model.repository_id || 0) ?? model.repo_size,
-          }));
+          models.value = models.value.map((model) => {
+            const size = sizes.get(model.repository_id || 0);
+            // The extras endpoint reports 0 for some large mirrors; keep the
+            // size the list payload already provided instead of clearing it.
+            return { ...model, repo_size: size && size > 0 ? size : model.repo_size };
+          });
         }).catch(() => {});
       }
     } else {
@@ -243,7 +255,7 @@ export function Marketplace() {
   useEffect(() => {
     page.value = 1;
     loadData();
-  }, [artifactSourceReady.value, activeTab.value, artifactSource.value, datasetArtifactSource.value, sortBy.value, frameworkFilter.value, taskFilter.value, datasetTaskFilter.value, datasetLanguageFilter.value, datasetLicenseFilter.value, modelParamsMin.value, modelParamsMax.value]);
+  }, [artifactSourceReady.value, activeTab.value, artifactSource.value, datasetArtifactSource.value, sortBy.value, frameworkFilter.value, taskFilter.value, localInferenceOnly.value, datasetTaskFilter.value, datasetLanguageFilter.value, datasetLicenseFilter.value, modelParamsMin.value, modelParamsMax.value]);
 
   useEffect(() => {
     setSelectedModelPath("");
@@ -285,6 +297,7 @@ export function Marketplace() {
     if (activeTab.value === "models" && source !== "opencsg") {
       modelParamsMin.value = modelParamsMinLimit;
       modelParamsMax.value = modelParamsMaxLimit;
+      localInferenceOnly.value = false;
     }
     const patch = activeTab.value === "models"
       ? { marketplace_model_source: source }
@@ -339,15 +352,23 @@ export function Marketplace() {
       loadLocalDatasets();
     }, { artifactSource: source, revision });
   };
+  const localInferenceSupported = artifactSource.value === "opencsg";
   const hasModelFilters = frameworkFilter.value !== ""
     || taskFilter.value !== ""
+    || localInferenceOnly.value
     || (artifactSource.value === "opencsg" &&
       (modelParamsMin.value !== modelParamsMinLimit || modelParamsMax.value !== modelParamsMaxLimit));
   const clearModelFilters = () => {
     frameworkFilter.value = "";
     taskFilter.value = "";
+    localInferenceOnly.value = false;
     modelParamsMin.value = modelParamsMinLimit;
     modelParamsMax.value = modelParamsMaxLimit;
+  };
+  const modelsEmptyMessage = () => {
+    if (partialResults.value) return t("mp.localInferencePartialEmpty");
+    if (page.value > 1) return localInferenceOnly.value ? t("mp.localInferenceNoMore") : t("mp.noModels");
+    return localInferenceOnly.value ? t("mp.noLocalInferenceModels") : t("mp.noModels");
   };
   const selectedDataset = datasets.value.find((dataset) => dataset.path === selectedDatasetPath);
 
@@ -457,6 +478,21 @@ export function Marketplace() {
                   )}
                 </div>
                 <div class="space-y-5">
+                  <label
+                    class={`flex items-center gap-2 text-xs font-medium select-none ${
+                      localInferenceSupported ? "text-gray-600 cursor-pointer" : "text-gray-400 cursor-not-allowed"
+                    }`}
+                    title={localInferenceSupported ? undefined : t("mp.localInferenceOnlyOpenCSG")}
+                  >
+                    <input
+                      type="checkbox"
+                      class="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed"
+                      checked={localInferenceOnly.value}
+                      disabled={!localInferenceSupported}
+                      onChange={(e) => (localInferenceOnly.value = (e.target as HTMLInputElement).checked)}
+                    />
+                    {t("mp.localInferenceOnly")}
+                  </label>
                   <FilterPillGroup
                     label={t("mp.modelType")}
                     value={frameworkFilter.value}
@@ -518,6 +554,11 @@ export function Marketplace() {
       </div>
 
       {/* Content */}
+      {activeTab.value === "models" && partialResults.value && models.value.length > 0 && (
+        <div class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          {t("mp.localInferencePartial")}
+        </div>
+      )}
       {loading.value ? (
         <div class="text-center py-16 text-gray-400">{t("mp.loading")}</div>
       ) : activeTab.value === "models" ? (
@@ -533,7 +574,7 @@ export function Marketplace() {
                 onOpenDetail={setSelectedModelPath}
               />
             ))}
-            {models.value.length === 0 && <p class="col-span-2 text-center py-16 text-gray-400">{t("mp.noModels")}</p>}
+            {models.value.length === 0 && <p class="col-span-2 text-center py-16 text-gray-400">{modelsEmptyMessage()}</p>}
           </div>
         ) : (
           <div class={isProviderMarketplaceSource(artifactSource.value) ? "space-y-3" : "space-y-0 divide-y divide-gray-100"}>
@@ -547,7 +588,7 @@ export function Marketplace() {
                 onOpenDetail={setSelectedModelPath}
               />
             ))}
-            {models.value.length === 0 && <p class="text-center py-16 text-gray-400">{t("mp.noModels")}</p>}
+            {models.value.length === 0 && <p class="text-center py-16 text-gray-400">{modelsEmptyMessage()}</p>}
           </div>
         )
       ) : viewMode.value === "grid" ? (

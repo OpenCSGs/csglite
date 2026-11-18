@@ -275,6 +275,11 @@ type Server struct {
 	modelMetadata          *modelmetadata.Store
 	desktopBootstrapped    atomic.Bool
 
+	// localInferenceLimits overrides the hardware probe that decides which
+	// Marketplace models fit this machine. Tests set it; production leaves it
+	// nil and the handler probes the hardware (or skips limits in a cluster).
+	localInferenceLimits func() marketplaceLocalInferenceLimits
+
 	// cluster is the LAN compute cluster manager, nil when disabled for this
 	// process. It is started in Run once the API port is bound.
 	cluster       *cluster.Manager

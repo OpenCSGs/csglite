@@ -66,7 +66,11 @@ export function MarketplaceModelDetailDialog({
       })
       .catch((err: any) => {
         if (!cancelled) {
-          setError(err?.message || t("mp.failedLoadDetail"));
+          setError(
+            err?.status === 429
+              ? t("mp.rateLimited")
+              : err?.message || t("mp.failedLoadDetail"),
+          );
         }
       })
       .finally(() => {

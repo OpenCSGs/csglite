@@ -287,6 +287,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		s.applyRuntimeSettingsUpdate(serverURLUpdated, aiGatewayURLUpdated, cloudTokenUpdated)
 		if registrySettingsUpdated {
 			clearMarketplaceCache()
+			clearMarketplaceLocalInferenceCache()
 		}
 	}
 	if dirsUpdated {

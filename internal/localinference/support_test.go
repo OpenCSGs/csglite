@@ -115,6 +115,20 @@ func TestFromMarketplaceModelTextToImageAllowsMissingClassName(t *testing.T) {
 	}
 }
 
+func TestFromMarketplaceModelStableDiffusionTag(t *testing.T) {
+	support := FromMarketplaceModel("safetensors", "", "", "owner/sd-model", "", "stable-diffusion")
+	if !support.Supported || support.Runtime != "diffusers" || support.Mode != "image" {
+		t.Fatalf("support = %#v, want diffusers image", support)
+	}
+}
+
+func TestFromMarketplaceModelStableDiffusionGGUFUnsupported(t *testing.T) {
+	support := FromMarketplaceModel("gguf", "", "", "owner/sd-model", "", "stable-diffusion")
+	if support.Supported || support.Mode != "none" {
+		t.Fatalf("support = %#v, want unsupported", support)
+	}
+}
+
 func TestFromMarketplaceStableVideoDiffusionUnsupported(t *testing.T) {
 	support := FromMarketplace("safetensors", "", "StableVideoDiffusionPipeline")
 	if support.Supported || support.Mode != "none" {
