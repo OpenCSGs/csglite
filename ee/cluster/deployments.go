@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/safefile"
 )
 
@@ -34,6 +35,7 @@ type DeploymentSpec struct {
 	// Backend pins the inference runtime: "llama", "sglang", or "" for the
 	// format default. SGLang is text-generation only.
 	Backend     string `json:"backend,omitempty"`
+	SGLangArgs  string `json:"sglang_args,omitempty"`
 	Kind        string `json:"kind"`
 	NumCtx      int    `json:"num_ctx"`
 	NumParallel int    `json:"num_parallel"`
@@ -221,6 +223,17 @@ func normalizeDeploymentBackend(value string) string {
 	return value
 }
 
+func supportsSGLangDeploymentArgs(st *Status) bool {
+	if st != nil {
+		for _, engine := range st.Engines {
+			if engine.Name == "sglang" && engine.DeploymentArgs {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func validateDeployment(d DeploymentSpec) error {
 	if strings.TrimSpace(d.Name) == "" || len(d.Name) > 100 {
 		return errors.New("deployment name is required (maximum 100 characters)")
@@ -255,6 +268,14 @@ func validateDeployment(d DeploymentSpec) error {
 	}
 	if strings.EqualFold(strings.TrimSpace(d.Backend), "sglang") && d.Kind != "chat" {
 		return errors.New("the SGLang backend serves text generation and chat only")
+	}
+	if strings.TrimSpace(d.SGLangArgs) != "" {
+		if normalizeDeploymentBackend(d.Backend) != "sglang" || d.Kind != "chat" || d.Quant != "" {
+			return errors.New("SGLang tuning arguments require the SGLang chat backend without GGUF quantization")
+		}
+		if _, err := inference.ParseSGLangDeploymentArgs(d.SGLangArgs); err != nil {
+			return err
+		}
 	}
 	// Explicit context sizes follow model/runtime support, as local model settings
 	// do. A fixed 128K ceiling incorrectly rejects native 256K and longer models.
@@ -679,6 +700,9 @@ func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory 
 		return Deployment{}, err
 	}
 	st := m.candidateStatus(spec.NodeUUID)
+	if strings.TrimSpace(spec.SGLangArgs) != "" && !supportsSGLangDeploymentArgs(st) {
+		return Deployment{}, errors.New("upgrade the target node to use per-deployment SGLang arguments")
+	}
 	if placementBackend == "llama" && st != nil && enginesKnown(st.Engines) && !engineReportedAndAvailable(st.Engines, "llama") {
 		reason := "llama.cpp is not reported as available"
 		for _, engine := range st.Engines {

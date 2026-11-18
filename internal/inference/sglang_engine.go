@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -45,7 +46,7 @@ type sglangEngine struct {
 	closeOnce sync.Once
 }
 
-func newSGLangEngine(ctx context.Context, modelDir, modelName, modelIdentity, storageRoot string, numCtx, numParallel int, dtype string, verbose bool, progress ConvertProgressFunc) (*sglangEngine, error) {
+func newSGLangEngine(ctx context.Context, modelDir, modelName, modelIdentity, storageRoot string, numCtx, numParallel int, dtype string, verbose bool, progress ConvertProgressFunc, deploymentArgs string) (*sglangEngine, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -63,16 +64,18 @@ func newSGLangEngine(ctx context.Context, modelDir, modelName, modelIdentity, st
 	}
 	gpus, _ := hardware.QueryNVIDIAGPUs()
 	plan, err := PlanSGLangLaunch(SGLangLaunchOptions{
-		ModelDir:      modelDir,
-		ModelName:     modelName,
-		ModelIdentity: modelIdentity,
-		StorageRoot:   storageRoot,
-		NumCtx:        numCtx,
-		NumParallel:   numParallel,
-		DType:         dtype,
-		Port:          port,
-		GPUs:          gpus,
-		Devices:       info.Devices,
+		DeploymentArgs: deploymentArgs,
+		RuntimeVersion: info.Version,
+		ModelDir:       modelDir,
+		ModelName:      modelName,
+		ModelIdentity:  modelIdentity,
+		StorageRoot:    storageRoot,
+		NumCtx:         numCtx,
+		NumParallel:    numParallel,
+		DType:          dtype,
+		Port:           port,
+		GPUs:           gpus,
+		Devices:        info.Devices,
 	})
 	if err != nil {
 		return nil, err
@@ -146,8 +149,47 @@ func newSGLangEngine(ctx context.Context, modelDir, modelName, modelIdentity, st
 		_ = engine.Close()
 		return nil, err
 	}
+	// Read actual capacity from the worker, including when SGLang caps an
+	// explicit pool size to the GPU budget.
+	if engine.plan.MaxTotalTokens == 0 || readSGLangModelConfig(modelDir).hasHybridAttention() {
+		if capacity := sglangTokenCapacity(ctx, port); capacity > 0 {
+			engine.plan.MaxTotalTokens = capacity
+			engine.plan.Sources["max_total_tokens"] = "reported by SGLang worker"
+		}
+	}
 	log.Printf("SGLANG: ready model=%q url=http://127.0.0.1:%d", modelName, port)
 	return engine, nil
+}
+
+func sglangTokenCapacity(ctx context.Context, port int) int {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/get_server_info", port), nil)
+	if err != nil {
+		return 0
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	var info struct {
+		InternalStates []struct {
+			MemoryUsage struct {
+				TokenCapacity int `json:"token_capacity"`
+			} `json:"memory_usage"`
+		} `json:"internal_states"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&info) != nil {
+		return 0
+	}
+	capacity := 0
+	for _, state := range info.InternalStates {
+		n := state.MemoryUsage.TokenCapacity
+		if n > 0 && (capacity == 0 || n < capacity) {
+			capacity = n
+		}
+	}
+	return capacity
 }
 
 func newSGLangOpenAIEngine(baseURL, modelName string) *openAIEngine {

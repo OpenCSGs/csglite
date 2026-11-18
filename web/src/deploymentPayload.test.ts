@@ -11,11 +11,12 @@ const draft: ClusterDeploymentSpec = {
 describe("deployment payload", () => {
   it("clears a stale GGUF quant and pins the displayed target for auto SGLang", () => {
     const payload = buildClusterDeploymentRequest({
-      draft, modelKind: "chat", effectiveSGLang: true,
+      draft: { ...draft, sglang_args: "--chunked-prefill-size 4096\n--kv-cache-dtype bf16" }, modelKind: "chat", effectiveSGLang: true,
       recommendedQuant: "q4_k_m", recommendedRequired: 9e9, targetUUID: "gpu-worker",
     });
     expect(payload.backend).toBe("sglang");
     expect(payload.quant).toBe("");
+    expect(payload.sglang_args).toBe("--chunked-prefill-size 4096\n--kv-cache-dtype bf16");
     expect(payload.minimum_memory_bytes).toBeUndefined();
     expect(payload.node_uuid).toBe("gpu-worker");
     expect(payload.repository).toBe("Qwen/Qwen2.5-1.5B-Instruct");

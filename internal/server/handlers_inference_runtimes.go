@@ -92,19 +92,20 @@ func (s *Server) Engines() []cluster.EngineStatus {
 	out := make([]cluster.EngineStatus, 0, len(capabilities))
 	for _, capability := range capabilities {
 		status := cluster.EngineStatus{
-			Name:        capability.Backend,
-			Known:       capability.Known,
-			Installed:   capability.Installed,
-			Available:   capability.Available,
-			Running:     counts[capability.Backend],
-			Version:     capability.Version,
-			Reason:      capability.Reason,
-			CUDA:        capability.CUDA,
-			ROCM:        capability.ROCM,
-			Formats:     capability.Formats,
-			Tasks:       capability.Tasks,
-			ToolCalling: capability.ToolCalling,
-			MaxJobs:     capability.MaxJobs,
+			DeploymentArgs: capability.Backend == inference.SGLangBackend,
+			Name:           capability.Backend,
+			Known:          capability.Known,
+			Installed:      capability.Installed,
+			Available:      capability.Available,
+			Running:        counts[capability.Backend],
+			Version:        capability.Version,
+			Reason:         capability.Reason,
+			CUDA:           capability.CUDA,
+			ROCM:           capability.ROCM,
+			Formats:        capability.Formats,
+			Tasks:          capability.Tasks,
+			ToolCalling:    capability.ToolCalling,
+			MaxJobs:        capability.MaxJobs,
 		}
 		for _, device := range capability.Devices {
 			status.Devices = append(status.Devices, cluster.EngineDevice{

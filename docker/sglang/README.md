@@ -116,6 +116,16 @@ CA 放入同一数据目录，例如 `data/certs/gateway-ca.pem`，并设置容�
 
 ## 参数策略
 
+创建 SGLang 部署或在停止后编辑部署时，可在「高级参数」填写多组
+`--flag value` 或 `--flag=value`，每组可换行。部署参数优先于节点环境变量，
+留空时使用自动设置。允许调整预填充分块、CUDA Graph 批次、KV 池、显存比例、
+投机解码和解析器。模型路径、端口和鉴权由 Lite 管理。
+
+对单卡 A100 SXM4 80GB、SGLang 0.5.19 上的原版 Qwen3.8-27B BF16，
+当上下文不超过 8192 且并发不超过 4 时，Lite 自动使用模型内置 MTP
+（NEXTN，3 步，top-k 1，4 个 draft tokens）。可填入
+`--speculative-algorithm none` 关闭自动投机解码。更长上下文或其他设备需独立验证。
+
 native 模式不再沿用固定服务的 `8192`/`0.8` 调参。默认值来自模型元数据、请求和
 目标节点可见资源：
 

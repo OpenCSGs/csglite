@@ -120,18 +120,19 @@ type ModelPerf struct {
 // EnginePlanStatus is the read-only runtime plan a worker actually started.
 // Values not yet known before download/load remain absent rather than guessed.
 type EnginePlanStatus struct {
-	Resolved           bool              `json:"resolved"`
-	Source             string            `json:"source,omitempty"`
-	ContextLength      int               `json:"context_length,omitempty"`
-	MaxRunningRequests int               `json:"max_running_requests,omitempty"`
-	MaxTotalTokens     int               `json:"max_total_tokens,omitempty"`
-	TensorParallel     int               `json:"tensor_parallel,omitempty"`
-	MemFractionStatic  float64           `json:"mem_fraction_static,omitempty"`
-	DType              string            `json:"dtype,omitempty"`
-	ToolCallParser     string            `json:"tool_call_parser,omitempty"`
-	ReasoningParser    string            `json:"reasoning_parser,omitempty"`
-	MaxJobs            int               `json:"max_jobs,omitempty"`
-	Sources            map[string]string `json:"sources,omitempty"`
+	SpeculativeAlgorithm string            `json:"speculative_algorithm,omitempty"`
+	Resolved             bool              `json:"resolved"`
+	Source               string            `json:"source,omitempty"`
+	ContextLength        int               `json:"context_length,omitempty"`
+	MaxRunningRequests   int               `json:"max_running_requests,omitempty"`
+	MaxTotalTokens       int               `json:"max_total_tokens,omitempty"`
+	TensorParallel       int               `json:"tensor_parallel,omitempty"`
+	MemFractionStatic    float64           `json:"mem_fraction_static,omitempty"`
+	DType                string            `json:"dtype,omitempty"`
+	ToolCallParser       string            `json:"tool_call_parser,omitempty"`
+	ReasoningParser      string            `json:"reasoning_parser,omitempty"`
+	MaxJobs              int               `json:"max_jobs,omitempty"`
+	Sources              map[string]string `json:"sources,omitempty"`
 }
 
 // ModelStatus is one model present on a node.
@@ -184,20 +185,21 @@ type EngineDevice struct {
 // states: the Python package can be installed on a CPU-only container, and an
 // installed runtime can have no model loaded.
 type EngineStatus struct {
-	Name        string         `json:"name"`
-	Known       bool           `json:"known"`
-	Installed   bool           `json:"installed"`
-	Available   bool           `json:"available"`
-	Running     int            `json:"running"`
-	Version     string         `json:"version,omitempty"`
-	Reason      string         `json:"reason,omitempty"`
-	CUDA        bool           `json:"cuda,omitempty"`
-	ROCM        bool           `json:"rocm,omitempty"`
-	Devices     []EngineDevice `json:"devices,omitempty"`
-	Formats     []string       `json:"formats,omitempty"`
-	Tasks       []string       `json:"tasks,omitempty"`
-	ToolCalling string         `json:"tool_calling,omitempty"`
-	MaxJobs     int            `json:"max_jobs,omitempty"`
+	DeploymentArgs bool           `json:"deployment_args,omitempty"`
+	Name           string         `json:"name"`
+	Known          bool           `json:"known"`
+	Installed      bool           `json:"installed"`
+	Available      bool           `json:"available"`
+	Running        int            `json:"running"`
+	Version        string         `json:"version,omitempty"`
+	Reason         string         `json:"reason,omitempty"`
+	CUDA           bool           `json:"cuda,omitempty"`
+	ROCM           bool           `json:"rocm,omitempty"`
+	Devices        []EngineDevice `json:"devices,omitempty"`
+	Formats        []string       `json:"formats,omitempty"`
+	Tasks          []string       `json:"tasks,omitempty"`
+	ToolCalling    string         `json:"tool_calling,omitempty"`
+	MaxJobs        int            `json:"max_jobs,omitempty"`
 }
 
 // ResourceLimits is the CPU/memory budget the node process actually has,

@@ -170,6 +170,7 @@ export interface InferenceRuntimeCapability {
 // Cluster wire status uses "name" rather than "backend"; the states are the
 // same installed/available/running triple.
 export interface ClusterEngineStatus {
+  deployment_args?: boolean;
   name: "llama" | "sglang";
   known: boolean;
   installed: boolean;
@@ -187,6 +188,7 @@ export interface ClusterEngineStatus {
 }
 
 export interface EnginePlanStatus {
+  speculative_algorithm?: string;
   resolved: boolean;
   source?: string;
   context_length?: number;
@@ -3910,6 +3912,7 @@ export async function createEmbeddings(model: string, input: string, source?: st
 }
 
 export interface ClusterDeploymentSpec {
+  sglang_args?: string;
   name: string; node_uuid?: string; repository: string; artifact_source: string;
   revision: string; quant: string; kind: "chat" | "embedding";
   backend?: "" | "auto" | "llama" | "sglang";
@@ -3932,7 +3935,7 @@ export function createClusterDeployment(spec: ClusterDeploymentCreateRequest): P
 export function updateClusterDeployment(id: string, desired: "running" | "stopped" | "deleted"): Promise<ClusterDeployment> {
   return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ desired }) });
 }
-export type ClusterDeploymentConfig = Pick<ClusterDeploymentSpec, "quant" | "num_ctx" | "num_parallel" | "n_gpu_layers" | "backend">;
+export type ClusterDeploymentConfig = Pick<ClusterDeploymentSpec, "quant" | "num_ctx" | "num_parallel" | "n_gpu_layers" | "backend" | "sglang_args">;
 export function configureClusterDeployment(id: string, generation: number, config: ClusterDeploymentConfig): Promise<ClusterDeployment> {
   return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ generation, config }) });
 }

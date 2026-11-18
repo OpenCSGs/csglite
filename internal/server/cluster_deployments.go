@@ -212,7 +212,7 @@ func (h *clusterHost) StartDeployment(ctx context.Context, d cluster.Deployment,
 	if d.Kind == "embedding" {
 		engine, err = loadEmbeddingEngineWithProgress(dir, &copyModel, progress, false, d.NumCtx, d.NumParallel, d.NGPULayers, "", "", d.Quant)
 	} else if effectiveBackend == inference.SGLangBackend {
-		engine, err = loadEngineWithBackendSpeculativeProgress(dir, &copyModel, progress, false, d.NumCtx, d.NumParallel, d.NGPULayers, "", "", d.Quant, inference.EngineBackendOptions{Backend: backend, StorageRoot: h.s.storageRoot, Context: ctx, ModelIdentity: d.Repository}, inference.SpeculativeConfig{})
+		engine, err = loadEngineWithBackendSpeculativeProgress(dir, &copyModel, progress, false, d.NumCtx, d.NumParallel, d.NGPULayers, "", "", d.Quant, inference.EngineBackendOptions{Backend: backend, StorageRoot: h.s.storageRoot, Context: ctx, ModelIdentity: d.Repository, SGLangArgs: d.SGLangArgs}, inference.SpeculativeConfig{})
 	} else {
 		engine, err = loadEngineWithProgress(dir, &copyModel, progress, false, d.NumCtx, d.NumParallel, d.NGPULayers, "", "", d.Quant)
 	}
@@ -406,17 +406,18 @@ func clusterEnginePlan(engine inference.Engine) *cluster.EnginePlanStatus {
 	}
 	plan := provider.EnginePlan()
 	return &cluster.EnginePlanStatus{
-		Resolved:           true,
-		Source:             "worker-start",
-		ContextLength:      plan.ContextLength,
-		MaxRunningRequests: plan.MaxRunningRequests,
-		MaxTotalTokens:     plan.MaxTotalTokens,
-		TensorParallel:     plan.TensorParallel,
-		MemFractionStatic:  plan.MemFractionStatic,
-		DType:              plan.DType,
-		ToolCallParser:     plan.ToolCallParser,
-		ReasoningParser:    plan.ReasoningParser,
-		MaxJobs:            plan.MaxJobs,
-		Sources:            plan.Sources,
+		Resolved:             true,
+		SpeculativeAlgorithm: plan.SpeculativeAlgorithm,
+		Source:               "worker-start",
+		ContextLength:        plan.ContextLength,
+		MaxRunningRequests:   plan.MaxRunningRequests,
+		MaxTotalTokens:       plan.MaxTotalTokens,
+		TensorParallel:       plan.TensorParallel,
+		MemFractionStatic:    plan.MemFractionStatic,
+		DType:                plan.DType,
+		ToolCallParser:       plan.ToolCallParser,
+		ReasoningParser:      plan.ReasoningParser,
+		MaxJobs:              plan.MaxJobs,
+		Sources:              plan.Sources,
 	}
 }

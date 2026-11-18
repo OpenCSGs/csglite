@@ -36,15 +36,17 @@ const (
 // is testable without a GPU. StorageRoot keeps this engine's logs, temp files
 // and caches independent of other servers in the same process.
 type SGLangLaunchOptions struct {
-	ModelDir      string
-	ModelName     string
-	ModelIdentity string
-	StorageRoot   string
-	NumCtx        int
-	NumParallel   int
-	DType         string
-	Port          int
-	GPUs          []hardware.GPU
+	DeploymentArgs string
+	RuntimeVersion string
+	ModelDir       string
+	ModelName      string
+	ModelIdentity  string
+	StorageRoot    string
+	NumCtx         int
+	NumParallel    int
+	DType          string
+	Port           int
+	GPUs           []hardware.GPU
 	// Devices is the runtime's PyTorch-visible device list. It is preferred
 	// over nvidia-smi because it already honours CUDA_VISIBLE_DEVICES order.
 	Devices []SGLangDevice
@@ -54,21 +56,22 @@ type SGLangLaunchOptions struct {
 // API reports, so the UI shows the limits that are actually passed to SGLang.
 // Sources records why each automatic value was chosen.
 type SGLangPlan struct {
-	Args               []string
-	Env                []string
-	ContextLength      int
-	MaxRunningRequests int
-	MaxTotalTokens     int
-	MemFractionStatic  float64
-	TensorParallel     int
-	BaseGPU            int
-	DType              string
-	ToolCallParser     string
-	ReasoningParser    string
-	ToolCalling        bool
-	ToolCallingReason  string
-	MaxJobs            int
-	Sources            map[string]string
+	Args                 []string
+	Env                  []string
+	ContextLength        int
+	MaxRunningRequests   int
+	MaxTotalTokens       int
+	MemFractionStatic    float64
+	TensorParallel       int
+	BaseGPU              int
+	DType                string
+	SpeculativeAlgorithm string
+	ToolCallParser       string
+	ReasoningParser      string
+	ToolCalling          bool
+	ToolCallingReason    string
+	MaxJobs              int
+	Sources              map[string]string
 }
 
 type sglangModelConfig struct {
@@ -77,6 +80,8 @@ type sglangModelConfig struct {
 	TorchDType            string             `json:"torch_dtype"`
 	DType                 string             `json:"dtype"`
 	NumHiddenLayers       int                `json:"num_hidden_layers"`
+	MTPHiddenLayers       int                `json:"mtp_num_hidden_layers"`
+	LayerTypes            []string           `json:"layer_types"`
 	NumAttentionHeads     int                `json:"num_attention_heads"`
 	NumKeyValueHeads      int                `json:"num_key_value_heads"`
 	HeadDim               int                `json:"head_dim"`
@@ -115,6 +120,11 @@ func readSGLangModelConfig(modelDir string) sglangModelConfig {
 }
 
 func readSGLangChatTemplate(modelDir string) string {
+	if data, err := os.ReadFile(filepath.Join(modelDir, "chat_template.jinja")); err == nil {
+		if template := strings.TrimSpace(string(data)); template != "" {
+			return template
+		}
+	}
 	data, err := os.ReadFile(filepath.Join(modelDir, "tokenizer_config.json"))
 	if err != nil {
 		return ""
@@ -256,6 +266,11 @@ func PlanSGLangLaunch(opts SGLangLaunchOptions) (SGLangPlan, error) {
 	if err != nil {
 		return SGLangPlan{}, err
 	}
+	manual, err := ParseSGLangDeploymentArgs(opts.DeploymentArgs)
+	if err != nil {
+		return SGLangPlan{}, err
+	}
+	extra = mergeSGLangDeploymentArgs(extra, manual)
 	if err := sglangRejectDuplicateManagedFlags(extra); err != nil {
 		return SGLangPlan{}, err
 	}
@@ -290,6 +305,11 @@ func PlanSGLangLaunch(opts SGLangLaunchOptions) (SGLangPlan, error) {
 	} else {
 		plan.MaxTotalTokens = plan.ContextLength * plan.MaxRunningRequests
 		plan.Sources["max_total_tokens"] = "context x concurrency"
+		if cfg.hasHybridAttention() {
+			// SGLang profiles the KV and recurrent-state pools together. A
+			// context-times-concurrency cap is not the physical capacity.
+			plan.Sources["max_total_tokens"] = "profiled by SGLang at startup"
+		}
 	}
 	if plan.TensorParallel, err = sglangTensorParallel(extra, gpus); err != nil {
 		return SGLangPlan{}, err
@@ -358,6 +378,7 @@ func PlanSGLangLaunch(opts SGLangLaunchOptions) (SGLangPlan, error) {
 		}
 	}
 
+	autoMTP := autoQwen38MTP(opts, cfg, plan, gpus, manual, extra)
 	if extraFlags["--mem-fraction-static"] {
 		value, _ := sglangFlagValue(extra, "--mem-fraction-static")
 		fraction, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
@@ -366,6 +387,9 @@ func PlanSGLangLaunch(opts SGLangLaunchOptions) (SGLangPlan, error) {
 		}
 		plan.MemFractionStatic = fraction
 		plan.Sources["mem_fraction_static"] = "SGLANG_EXTRA_ARGS"
+	} else if autoMTP && strings.TrimSpace(os.Getenv(sglangMemFractionEnv)) == "" {
+		plan.MemFractionStatic = 0.90
+		plan.Sources["mem_fraction_static"] = "Qwen3.8 A100 MTP profile"
 	} else {
 		kvWidth := sglangKVElementBytes(plan.DType, extra)
 		fraction, source, err := sglangMemFraction(opts.ModelDir, cfg, plan, gpus, kvWidth)
@@ -392,7 +416,14 @@ func PlanSGLangLaunch(opts SGLangLaunchOptions) (SGLangPlan, error) {
 		args = append(args, flag, value)
 	}
 	addFlag("--context-length", strconv.Itoa(plan.ContextLength))
-	addFlag("--max-total-tokens", strconv.Itoa(plan.MaxTotalTokens))
+	if autoMTP {
+		plan.Sources["max_total_tokens"] = "Qwen3.8 A100 MTP profile"
+	}
+	if !cfg.hasHybridAttention() || extraFlags["--max-total-tokens"] || autoMTP {
+		addFlag("--max-total-tokens", strconv.Itoa(plan.MaxTotalTokens))
+	} else {
+		plan.MaxTotalTokens = 0
+	}
 	addFlag("--max-running-requests", strconv.Itoa(plan.MaxRunningRequests))
 	if !extraFlags["--tp-size"] && !extraFlags["--tensor-parallel-size"] {
 		args = append(args, "--tp-size", strconv.Itoa(plan.TensorParallel))
@@ -412,7 +443,18 @@ func PlanSGLangLaunch(opts SGLangLaunchOptions) (SGLangPlan, error) {
 	if plan.ReasoningParser != "" {
 		addFlag("--reasoning-parser", plan.ReasoningParser)
 	}
+	if autoMTP {
+		args = append(args, "--speculative-algorithm", "NEXTN", "--speculative-num-steps", "3",
+			"--speculative-eagle-topk", "1", "--speculative-num-draft-tokens", "4")
+		addFlag("--cuda-graph-max-bs-decode", strconv.Itoa(plan.MaxRunningRequests))
+		plan.Sources["speculative_algorithm"] = "Qwen3.8 A100 MTP profile"
+	}
 	args = append(args, extra...)
+	for i := 0; i < len(manual); i += 2 {
+		key := strings.ReplaceAll(strings.TrimPrefix(manual[i], "--"), "-", "_")
+		plan.Sources[key] = "deployment arguments"
+	}
+	plan.SpeculativeAlgorithm, _ = sglangFlagValue(args, "--speculative-algorithm")
 	plan.Args = args
 	plan.Env = sglangProcessEnv(opts.StorageRoot)
 	return plan, nil
@@ -773,6 +815,63 @@ func sglangKVElementBytes(dtype string, extra []string) uint64 {
 	return 2
 }
 
+// hybridKVLayers recognizes explicit Qwen-style full/linear attention layouts.
+// Unknown layouts keep the original conservative all-layer estimate.
+func (cfg sglangModelConfig) hybridKVLayers() (full int, hybrid bool) {
+	if len(cfg.LayerTypes) != cfg.NumHiddenLayers || len(cfg.LayerTypes) == 0 {
+		return cfg.NumHiddenLayers, false
+	}
+	for _, kind := range cfg.LayerTypes {
+		switch kind {
+		case "full_attention":
+			full++
+		case "linear_attention":
+		default:
+			return cfg.NumHiddenLayers, false
+		}
+	}
+	if full > 0 && full < cfg.NumHiddenLayers {
+		return full, true
+	}
+	return cfg.NumHiddenLayers, false
+}
+
+// Keep automatic MTP inside the hardware, version, and request limits used
+// in the BF16 QA benchmark. Larger service profiles can opt in explicitly.
+func autoQwen38MTP(opts SGLangLaunchOptions, cfg sglangModelConfig, plan SGLangPlan, gpus []hardware.GPU, manual, extra []string) bool {
+	identity := opts.ModelIdentity
+	if identity == "" {
+		identity = opts.ModelName
+	}
+	if !strings.EqualFold(identity, "Qwen/Qwen3.8-27B") &&
+		!strings.EqualFold(identity, "modelscope/Qwen/Qwen3.8-27B") &&
+		!strings.EqualFold(identity, "huggingface/Qwen/Qwen3.8-27B") {
+		return false
+	}
+	if opts.RuntimeVersion != "0.5.19" || cfg.MTPHiddenLayers != 1 || !cfg.hasHybridAttention() ||
+		plan.ContextLength > 8192 || plan.MaxRunningRequests > 4 || plan.TensorParallel != 1 ||
+		plan.DType != "bfloat16" || plan.BaseGPU >= len(gpus) {
+		return false
+	}
+	gpu := gpus[plan.BaseGPU]
+	if gpu.Name != "NVIDIA A100-SXM4-80GB" || gpu.MemoryTotal < 79<<30 {
+		return false
+	}
+	for _, args := range [][]string{manual, extra} {
+		for flag := range sglangFlagSet(args) {
+			if strings.HasPrefix(flag, "--speculative-") || flag == "--disable-cuda-graph" || flag == "--enable-torch-compile" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (cfg sglangModelConfig) hasHybridAttention() bool {
+	_, hybrid := cfg.hybridKVLayers()
+	return hybrid
+}
+
 func sglangKVBytesPerToken(cfg sglangModelConfig, elementBytes uint64) uint64 {
 	if cfg.NumHiddenLayers <= 0 || cfg.NumAttentionHeads <= 0 || cfg.HiddenSize <= 0 {
 		return 0
@@ -790,7 +889,8 @@ func sglangKVBytesPerToken(cfg sglangModelConfig, elementBytes uint64) uint64 {
 	}
 	// K and V, elementBytes per element (4 for an FP32 cache, 2 for bf16/fp16,
 	// 1 for FP8/NVFP4).
-	return uint64(2*cfg.NumHiddenLayers*kvHeads*headDim) * elementBytes
+	layers, _ := cfg.hybridKVLayers()
+	return uint64(2*layers*kvHeads*headDim) * elementBytes
 }
 
 // sglangVisibleGPUs honours CUDA_VISIBLE_DEVICES so memory sizing and the
@@ -1140,19 +1240,21 @@ func SelectSGLangReasoningParser(modelDir, modelName string) string {
 func SGLangPlanForModel(modelDir, modelName, storageRoot string, numCtx, numParallel int) (SGLangPlan, error) {
 	gpus, _ := hardware.QueryNVIDIAGPUs()
 	var devices []SGLangDevice
-	if runtimeInfo := SGLangRuntimeInfo(); runtimeInfo.Available {
+	runtimeInfo := SGLangRuntimeInfo()
+	if runtimeInfo.Available {
 		devices = runtimeInfo.Devices
 	}
 	return PlanSGLangLaunch(SGLangLaunchOptions{
-		ModelDir:      modelDir,
-		ModelName:     modelName,
-		ModelIdentity: modelName,
-		StorageRoot:   storageRoot,
-		NumCtx:        numCtx,
-		NumParallel:   numParallel,
-		Port:          0,
-		GPUs:          gpus,
-		Devices:       devices,
+		ModelDir:       modelDir,
+		ModelName:      modelName,
+		ModelIdentity:  modelName,
+		RuntimeVersion: runtimeInfo.Version,
+		StorageRoot:    storageRoot,
+		NumCtx:         numCtx,
+		NumParallel:    numParallel,
+		Port:           0,
+		GPUs:           gpus,
+		Devices:        devices,
 	})
 }
 

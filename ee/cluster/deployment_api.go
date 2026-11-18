@@ -48,6 +48,9 @@ func (m *Manager) sendDeployment(ctx context.Context, d Deployment) (Deployment,
 	if st == nil || !st.DeploymentCapable || st.ManagedBy != m.identity.UUID {
 		return Deployment{}, errors.New("target node has not authorized this controller")
 	}
+	if d.Desired == "running" && strings.TrimSpace(d.SGLangArgs) != "" && !supportsSGLangDeploymentArgs(st) {
+		return Deployment{}, errors.New("upgrade the target node to use per-deployment SGLang arguments")
+	}
 	var result Deployment
 	if m.opts.Mode == "gateway" {
 		g := m.publicHub()

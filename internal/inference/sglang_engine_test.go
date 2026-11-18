@@ -143,7 +143,7 @@ func startTestSGLang(t *testing.T, mode string) (*sglangEngine, string) {
 	requestPath := filepath.Join(t.TempDir(), "request.json")
 	t.Setenv("SGLANG_TEST_REQUEST", requestPath)
 	dir := writeSGLangTestModel(t, tinyLlamaConfig, "model.safetensors")
-	engine, err := newSGLangEngine(context.Background(), dir, "tiny-llama", "tiny-llama", t.TempDir(), 0, 1, "", false, nil)
+	engine, err := newSGLangEngine(context.Background(), dir, "tiny-llama", "tiny-llama", t.TempDir(), 0, 1, "", false, nil, "")
 	if err != nil {
 		t.Fatalf("newSGLangEngine: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestSGLangEngineStartupFailureReportsOutput(t *testing.T) {
 	useFakeSGLangRuntime(t, "exit")
 	t.Setenv(sglangReadyTimeoutEnv, "3s")
 	dir := writeSGLangTestModel(t, tinyLlamaConfig, "model.safetensors")
-	_, err := newSGLangEngine(context.Background(), dir, "tiny-llama", "tiny-llama", t.TempDir(), 0, 1, "", false, nil)
+	_, err := newSGLangEngine(context.Background(), dir, "tiny-llama", "tiny-llama", t.TempDir(), 0, 1, "", false, nil, "")
 	if err == nil {
 		t.Fatal("startup failure returned no error")
 	}
@@ -293,7 +293,7 @@ func TestSGLangEngineReadinessTimeoutKillsProcessGroup(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	t.Setenv("SGLANG_TEST_CHILD_PID_FILE", pidFile)
 	dir := writeSGLangTestModel(t, tinyLlamaConfig, "model.safetensors")
-	_, err := newSGLangEngine(context.Background(), dir, "tiny-llama", "tiny-llama", t.TempDir(), 0, 1, "", false, nil)
+	_, err := newSGLangEngine(context.Background(), dir, "tiny-llama", "tiny-llama", t.TempDir(), 0, 1, "", false, nil, "")
 	if err == nil || !strings.Contains(err.Error(), "timeout") {
 		t.Fatalf("error = %v, want readiness timeout", err)
 	}
@@ -312,7 +312,7 @@ func TestSGLangEngineCloseReleasesProcessGroupAndPort(t *testing.T) {
 	_ = engine.Close()
 	t.Setenv("SGLANG_TEST_CHILD_PID_FILE", pidFile)
 	dir := writeSGLangTestModel(t, tinyLlamaConfig, "model.safetensors")
-	engine, err := newSGLangEngine(context.Background(), dir, "tiny-llama", "tiny-llama", t.TempDir(), 0, 1, "", false, nil)
+	engine, err := newSGLangEngine(context.Background(), dir, "tiny-llama", "tiny-llama", t.TempDir(), 0, 1, "", false, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestSGLangEngineCloseReapsWorkerWhenParentExitsFirst(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	t.Setenv("SGLANG_TEST_CHILD_PID_FILE", pidFile)
 	dir := writeSGLangTestModel(t, tinyLlamaConfig, "model.safetensors")
-	engine, err := newSGLangEngine(context.Background(), dir, "tiny-llama", "tiny-llama", t.TempDir(), 0, 1, "", false, nil)
+	engine, err := newSGLangEngine(context.Background(), dir, "tiny-llama", "tiny-llama", t.TempDir(), 0, 1, "", false, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

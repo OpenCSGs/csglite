@@ -4,6 +4,7 @@ import type { ArtifactSource, ClusterDeployment, ClusterDeploymentConfig, Cluste
 import { isLlamaDeployment } from "../deploymentModels";
 import { deploymentQuantOptions } from "../deploymentRecommendation";
 import { t } from "../i18n";
+import { SGLangDeploymentArgs } from "./SGLangDeploymentArgs";
 import { ContextWindowField } from "./ContextWindowField";
 import { DeploymentMessage } from "./DeploymentMessage";
 
@@ -17,7 +18,7 @@ export function DeploymentConfigDialog({ deployment, nodeName, allowed, engines,
   const canEdit = allowed && runtimeSupported;
   const dialog = useRef<HTMLDialogElement>(null);
   const titleID = useId(), quantsID = useId();
-  const [draft, setDraft] = useState<ClusterDeploymentConfig>(() => ({ quant: deployment.quant || "", backend: deployment.backend || "",
+  const [draft, setDraft] = useState<ClusterDeploymentConfig>(() => ({ quant: deployment.quant || "", sglang_args: deployment.sglang_args || "", backend: deployment.backend || "",
     num_ctx: deployment.num_ctx, num_parallel: deployment.num_parallel, n_gpu_layers: deployment.n_gpu_layers }));
   const [quants, setQuants] = useState<string[]>([]);
   const [modelFormat, setModelFormat] = useState<"gguf" | "safetensors" | "unknown">("unknown");
@@ -50,7 +51,7 @@ export function DeploymentConfigDialog({ deployment, nodeName, allowed, engines,
     setBusy(true); setError("");
     try {
       await configureClusterDeployment(deployment.id, deployment.generation, { ...draft, backend: deployment.kind === "chat" ? draft.backend : "",
-        quant: sglangSelected ? "" : draft.quant.trim() });
+        quant: sglangSelected ? "" : draft.quant.trim(), sglang_args: sglangSelected ? draft.sglang_args : "" });
       await onSaved();
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -68,6 +69,7 @@ export function DeploymentConfigDialog({ deployment, nodeName, allowed, engines,
         <p>{t("deployments.enginePlanModel", deployment.status.engine_plan.dtype || t("deployments.enginePlanAuto"),
           deployment.status.engine_plan.tool_call_parser || t("deployments.enginePlanNone"),
           deployment.status.engine_plan.reasoning_parser || t("deployments.enginePlanNone"))}</p>
+        {deployment.status.engine_plan.speculative_algorithm && <p>{t("deployments.sglangSpeculation", deployment.status.engine_plan.speculative_algorithm)}</p>}
         {deployment.status.engine_plan.max_jobs ? <p>{t("cluster.engineMaxJobs", deployment.status.engine_plan.max_jobs)}</p> : null}
       </div>}
       {runtimeSupported ? <fieldset disabled={busy || !canEdit} class="grid grid-cols-2 gap-4">
@@ -84,6 +86,7 @@ export function DeploymentConfigDialog({ deployment, nodeName, allowed, engines,
           {enginesKnown && llama && !llamaAvailable && <p class="text-xs text-amber-700">{t("deployments.backendLlamaUnavailable", llama.reason || t("deployments.backendUnknownReason"))}</p>}
           {sglang?.running ? <p class="text-xs text-gray-500">{t("deployments.targetEngineRunning", sglang.running)}</p> : null}
         </label>}
+        {sglangSelected && sglang?.deployment_args && <SGLangDeploymentArgs value={draft.sglang_args || ""} onInput={value => patch({ sglang_args: value })} />}
         {!sglangSelected && <label class="col-span-2 space-y-1 text-sm">{t("deployments.quant")}
           <input class={inputClass} list={quantsID} maxLength={32} value={draft.quant} onInput={e => patch({ quant: e.currentTarget.value })} />
           <datalist id={quantsID}>{quants.map(quant => <option key={quant} value={quant} />)}</datalist>

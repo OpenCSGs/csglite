@@ -482,3 +482,77 @@ func TestStartSGLangRuntimeProbeUsesFirstStorageRoot(t *testing.T) {
 		t.Fatalf("second server replaced probe root: %q", gotRoot)
 	}
 }
+
+func TestQwenHybridPlanUsesStandaloneTemplateAndWorkerCapacity(t *testing.T) {
+	dir := writeSGLangTestModel(t, `{"architectures":["Qwen3_5ForConditionalGeneration"],"text_config":{"model_type":"qwen3_5_text","num_hidden_layers":4,"num_attention_heads":24,"num_key_value_heads":4,"head_dim":256,"hidden_size":5120,"max_position_embeddings":262144,"layer_types":["linear_attention","linear_attention","linear_attention","full_attention"]}}`, "model.safetensors")
+	if err := os.WriteFile(filepath.Join(dir, "chat_template.jinja"), []byte("{% if tools %}<tool_call><function=example><parameter=name>{% endif %}<think>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(sglangExtraArgsEnv, "")
+	t.Setenv(sglangCompatExtraEnv, "")
+	plan, err := PlanSGLangLaunch(SGLangLaunchOptions{
+		ModelDir: dir, ModelName: "deployment/test", ModelIdentity: "Qwen/Qwen3.8-27B",
+		NumCtx: 160000, NumParallel: 10, GPUs: a100(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ToolCallParser != "qwen3_coder" || plan.ReasoningParser != "qwen3" {
+		t.Fatalf("parsers tool=%q reasoning=%q", plan.ToolCallParser, plan.ReasoningParser)
+	}
+	if plan.MaxTotalTokens != 0 || sglangFlagSet(plan.Args)["--max-total-tokens"] {
+		t.Fatalf("hybrid capacity should be profiled by SGLang: %v", plan.Args)
+	}
+	if got := sglangKVBytesPerToken(readSGLangModelConfig(dir), 2); got != 4096 {
+		t.Fatalf("full-attention KV bytes/token = %d, want 4096", got)
+	}
+}
+
+func TestSGLangDeploymentTuningOverridesNodeArguments(t *testing.T) {
+	dir := writeSGLangTestModel(t, `{"model_type":"qwen2"}`, "model.safetensors")
+	t.Setenv(sglangExtraArgsEnv, `["--chunked-prefill-size=8192","--mem-fraction-static","0.80","--speculative-algorithm","NEXTN"]`)
+	plan, err := PlanSGLangLaunch(SGLangLaunchOptions{
+		ModelDir: dir, ModelName: "qwen", NumCtx: 4096,
+		DeploymentArgs: "--chunked-prefill-size 4096\n--mem-fraction-static=0.85 --speculative-algorithm none",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, _ := sglangFlagValue(plan.Args, "--chunked-prefill-size"); value != "4096" || plan.MemFractionStatic != .85 || sglangFlagSet(plan.Args)["--speculative-algorithm"] {
+		t.Fatalf("unexpected tuning flags: %v", plan.Args)
+	}
+	for _, raw := range []string{"--model-path /root/model", "--port 40000", "--trust-remote-code true", "--chunked-prefill-size", "--max-total-tokens 1024 --max-total-tokens=2048", "--mem-fraction-static NaN"} {
+		if _, err := ParseSGLangDeploymentArgs(raw); err == nil {
+			t.Errorf("accepted %q", raw)
+		}
+	}
+}
+
+func TestQwen38AutomaticMTPRespectsTestedLimits(t *testing.T) {
+	dir := writeSGLangTestModel(t, `{"architectures":["Qwen3_5ForConditionalGeneration"],"text_config":{"dtype":"bfloat16","mtp_num_hidden_layers":1,"num_hidden_layers":4,"num_attention_heads":24,"num_key_value_heads":4,"head_dim":256,"hidden_size":5120,"max_position_embeddings":262144,"layer_types":["linear_attention","linear_attention","linear_attention","full_attention"]}}`, "model.safetensors")
+	t.Setenv(sglangExtraArgsEnv, "")
+	t.Setenv(sglangCompatExtraEnv, "")
+	t.Setenv(sglangMemFractionEnv, "")
+	opts := SGLangLaunchOptions{ModelDir: dir, ModelIdentity: "Qwen/Qwen3.8-27B",
+		RuntimeVersion: "0.5.19", NumCtx: 8192, NumParallel: 4,
+		Devices: []SGLangDevice{{Name: "NVIDIA A100-SXM4-80GB", MemoryTotal: 80 << 30}},
+	}
+	plan, err := PlanSGLangLaunch(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alg, _ := sglangFlagValue(plan.Args, "--speculative-algorithm"); alg != "NEXTN" ||
+		plan.MaxTotalTokens != 32768 || plan.MemFractionStatic != .90 {
+		t.Fatalf("wrong A100 MTP plan: %v", plan.Args)
+	}
+	opts.DeploymentArgs = "--speculative-algorithm none"
+	plan, err = PlanSGLangLaunch(opts)
+	if err != nil || sglangFlagSet(plan.Args)["--speculative-algorithm"] {
+		t.Fatalf("manual opt-out failed: %v %v", plan.Args, err)
+	}
+	opts.DeploymentArgs, opts.NumCtx = "", 160000
+	plan, err = PlanSGLangLaunch(opts)
+	if err != nil || sglangFlagSet(plan.Args)["--speculative-algorithm"] {
+		t.Fatalf("MTP escaped tested context: %v %v", plan.Args, err)
+	}
+}

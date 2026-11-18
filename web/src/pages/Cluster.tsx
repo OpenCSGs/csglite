@@ -1122,6 +1122,7 @@ function NodeMetadataDetails({ node }: { node: ClusterNodeView }) {
       {loaded.length ? <ul class="mt-2 space-y-2">{loaded.map(model => <li key={model.id} class="break-words"><p>{model.repo || model.id}</p>{model.repo && <p class="text-[11px] text-gray-400">{model.id}</p>}
         {model.engine_plan?.resolved && <p class="text-[11px] text-gray-500">{t("cluster.modelEnginePlan", model.engine_backend === "sglang" ? "SGLang" : "llama.cpp",
           model.engine_plan.context_length ?? "—", model.engine_plan.max_running_requests ?? "—", model.engine_plan.dtype || t("deployments.enginePlanAuto"))}</p>}
+        {model.engine_plan?.speculative_algorithm && <p class="text-[11px] text-gray-500">{t("deployments.sglangSpeculation", model.engine_plan.speculative_algorithm)}</p>}
       </li>)}</ul> : <p class="mt-2 text-gray-500">{t("cluster.noLoadedModels")}</p>}
     </section>}
   </>;

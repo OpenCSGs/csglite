@@ -1448,7 +1448,7 @@ function RunParamsDialog({
               {sglangPlan && (
                 <div class="md:col-span-2 space-y-1 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
                   <p class="font-medium">{t("lib.runSGLangPlanTitle")}</p>
-                  <p>{t("lib.runSGLangPlanLimits", sglangPlan.context_length, sglangPlan.max_running_requests, sglangPlan.max_total_tokens, sglangPlan.tensor_parallel)}</p>
+                  <p>{t("lib.runSGLangPlanLimits", sglangPlan.context_length, sglangPlan.max_running_requests, sglangPlan.max_total_tokens || t("deployments.enginePlanAuto"), sglangPlan.tensor_parallel)}</p>
                   {sglangPlan.mem_fraction_static ? <p>{t("lib.runSGLangPlanMemory", sglangPlan.mem_fraction_static.toFixed(3))}</p> : null}
                   <p class={sglangPlan.tool_calling_supported ? "" : "text-amber-800"}>
                     {sglangPlan.tool_calling_supported

@@ -136,6 +136,7 @@ func LoadEngineWithSpeculativeProgress(modelDir string, lm *model.LocalModel, pr
 // root that owns this engine's logs, temp files and caches. The root is passed
 // explicitly so parallel servers in one process do not share a global root.
 type EngineBackendOptions struct {
+	SGLangArgs  string
 	Backend     string
 	StorageRoot string
 	// Context cancels a native SGLang startup (for example when the user stops
@@ -190,7 +191,7 @@ func loadEngineWithProgressMode(modelDir string, lm *model.LocalModel, progress 
 		if embedding {
 			return nil, fmt.Errorf("SGLang backend serves text generation and chat only; use the llama backend for embedding models")
 		}
-		return newSGLangEngine(options.Context, modelDir, modelName, options.ModelIdentity, options.StorageRoot, numCtx, numParallel, dtype, verbose, progress)
+		return newSGLangEngine(options.Context, modelDir, modelName, options.ModelIdentity, options.StorageRoot, numCtx, numParallel, dtype, verbose, progress, options.SGLangArgs)
 	}
 
 	normalizedDType, err := convert.NormalizeRuntimeDType(dtype)

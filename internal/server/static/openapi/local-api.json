@@ -21697,6 +21697,11 @@
           "repository"
         ],
         "properties": {
+          "sglang_args": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Optional SGLang tuning flags as whitespace-separated --flag value or --flag=value pairs. Requires the SGLang chat backend. An empty string restores automatic settings."
+          },
           "name": {
             "type": "string",
             "maxLength": 100
@@ -21964,6 +21969,11 @@
         "additionalProperties": false,
         "description": "At least one setting. Omitted fields retain their values. Null values are treated as omitted. Empty quant selects model default; zero GPU layers selects CPU-only execution.",
         "properties": {
+          "sglang_args": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Optional SGLang tuning flags as whitespace-separated --flag value or --flag=value pairs. Requires the SGLang chat backend. An empty string restores automatic settings."
+          },
           "quant": {
             "type": "string",
             "description": "Optional GGUF quantization/runtime dtype."
@@ -22284,6 +22294,10 @@
           "running"
         ],
         "properties": {
+          "deployment_args": {
+            "type": "boolean",
+            "description": "The worker supports per-deployment SGLang tuning flags."
+          },
           "name": {
             "type": "string",
             "enum": [
@@ -22375,6 +22389,10 @@
           "resolved"
         ],
         "properties": {
+          "speculative_algorithm": {
+            "type": "string",
+            "description": "Speculative decoding algorithm passed to the worker runtime."
+          },
           "resolved": {
             "type": "boolean",
             "description": "True when the worker actually started this plan; false/absent means the target has not resolved it yet."
