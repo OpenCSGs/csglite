@@ -45,6 +45,22 @@ type Registry interface {
 	DownloadSnapshot(context.Context, string, string, string, []string, csghub.SnapshotProgressFunc) ([]csghub.RepoFile, string, error)
 }
 
+// RepoSizeFiller is implemented by registries that can fill csghub.Model.RepoSize
+// in a batch. OpenCSG answers a whole batch in one call. It is optional so test
+// doubles do not have to implement it.
+type RepoSizeFiller interface {
+	FillRepoSizes(context.Context, []csghub.Model) error
+}
+
+// FileSizeFiller is implemented by registries whose metadata can leave the
+// repository size unknown. It sums the file tree instead, which costs one
+// request per directory, so callers bound how many models they pass and give
+// the smallest size they would reject. It is optional so test doubles do not
+// have to implement it.
+type FileSizeFiller interface {
+	FillFileSizes(context.Context, []csghub.Model, int64) error
+}
+
 func NormalizeSource(value string) (Source, error) {
 	return artifactregistry.NormalizeSource(value)
 }

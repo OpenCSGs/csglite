@@ -103,6 +103,12 @@ func newTestServer(t *testing.T) *Server {
 func newTestServerWithConfig(t *testing.T, cfg *config.Config) *Server {
 	t.Helper()
 	s := New(cfg, "test")
+	// Tests must not probe the real hardware: it is slow and makes the result
+	// depend on the machine running them. Individual tests inject their own
+	// limits where the size gate matters.
+	s.localInferenceLimits = func() marketplaceLocalInferenceLimits {
+		return marketplaceLocalInferenceLimits{}
+	}
 	t.Cleanup(s.shutdownRuntime)
 	return s
 }
