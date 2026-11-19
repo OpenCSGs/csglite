@@ -590,14 +590,20 @@ func (st *pullJobStore) activeModelPulls() ([]string, []cluster.PullStatus) {
 		}
 		job.mu.Lock()
 		if job.kind == "model" && (job.status == pullJobRunning || job.status == pullJobQueued) {
+			speed := job.progress.SpeedBytesPerSec
+			if job.speed != nil {
+				// A stalled job must not keep advertising its old rate to peers.
+				speed = int64(job.speed.Rate(time.Now()))
+			}
 			names = append(names, job.name)
 			pulls = append(pulls, cluster.PullStatus{
-				Model:          job.name,
-				Source:         job.source,
-				Status:         job.status,
-				CompletedBytes: job.progress.CompletedBytes,
-				TotalBytes:     job.progress.TotalBytes,
-				Detail:         job.progress.Status,
+				Model:            job.name,
+				Source:           job.source,
+				Status:           job.status,
+				CompletedBytes:   job.progress.CompletedBytes,
+				TotalBytes:       job.progress.TotalBytes,
+				SpeedBytesPerSec: speed,
+				Detail:           job.progress.Status,
 			})
 		}
 		job.mu.Unlock()

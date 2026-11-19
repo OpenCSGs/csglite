@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/opencsgs/csglite/internal/cloud"
@@ -43,6 +44,7 @@ type pullJob struct {
 	updatedAt   time.Time
 	completedAt *time.Time
 	progress    api.PullResponse
+	speed       *csghub.SpeedMeter
 	err         string
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -165,10 +167,7 @@ func (s *Server) handlePullJobCancel(w http.ResponseWriter, r *http.Request) {
 	status := job.status
 	if job.cancel != nil && job.status != pullJobSucceeded && job.status != pullJobFailed && job.status != pullJobCancelled {
 		job.cancel()
-		job.status = pullJobCancelled
-		now := time.Now()
-		job.updatedAt = now
-		job.completedAt = &now
+		job.cancelLocked()
 	}
 	job.mu.Unlock()
 	s.pullJobs.clearActive(job)
@@ -281,20 +280,13 @@ func (s *Server) runPullJob(job *pullJob) {
 	ctx := job.ctx
 	log.Printf("PULL JOB %s: started kind=%s name=%q", job.id, job.kind, job.name)
 
-	lastProgressLog := time.Time{}
+	lastProgressLog := atomic.Int64{}
 	progress := func(p csghub.SnapshotProgress) {
-		resp := api.PullResponse{
-			Status:         fmt.Sprintf("downloading %s", p.FileName),
-			Digest:         p.FileName,
-			Total:          p.BytesTotal,
-			Completed:      p.BytesCompleted,
-			TotalBytes:     p.BytesTotalAll,
-			CompletedBytes: p.BytesCompletedAll,
-		}
-		job.setProgress(resp)
-		if time.Since(lastProgressLog) >= 5*time.Second || (p.BytesTotal > 0 && p.BytesCompleted >= p.BytesTotal) {
+		job.setProgress(pullProgressResponse(p, 0))
+		now := time.Now()
+		if now.Sub(time.Unix(0, lastProgressLog.Load())) >= 5*time.Second || (p.BytesTotal > 0 && p.BytesCompleted >= p.BytesTotal) {
 			log.Printf("PULL JOB %s: pulling file=%s completed=%d total=%d", job.id, p.FileName, p.BytesCompleted, p.BytesTotal)
-			lastProgressLog = time.Now()
+			lastProgressLog.Store(now.UnixNano())
 		}
 	}
 
@@ -564,6 +556,12 @@ func remoteDatasetPullSpec(datasetID, sourceValue string) (string, datasetregist
 func pullJobResponse(job *pullJob) api.PullJobResponse {
 	job.mu.Lock()
 	defer job.mu.Unlock()
+	progress := job.progress
+	if job.speed != nil && (job.status == pullJobRunning || job.status == pullJobQueued) {
+		// Report the live rate so a stalled transfer stops showing the speed
+		// it had before it stalled.
+		progress.SpeedBytesPerSec = int64(job.speed.Rate(time.Now()))
+	}
 	return api.PullJobResponse{
 		ID:             job.id,
 		Status:         job.status,
@@ -576,7 +574,7 @@ func pullJobResponse(job *pullJob) api.PullJobResponse {
 		CreatedAt:      job.createdAt,
 		UpdatedAt:      job.updatedAt,
 		CompletedAt:    job.completedAt,
-		Progress:       job.progress,
+		Progress:       progress,
 		Error:          job.err,
 	}
 }
@@ -588,11 +586,24 @@ func (j *pullJob) setRunning() {
 	j.updatedAt = time.Now()
 }
 
+// setProgress records a download callback. The speed is derived from
+// progress.CompletedBytes with the job's own meter, so any SpeedBytesPerSec
+// set by the caller is replaced.
 func (j *pullJob) setProgress(progress api.PullResponse) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.status == pullJobCancelled || j.status == pullJobSucceeded || j.status == pullJobFailed {
+		// A late callback from an aborted transfer must not revive the
+		// progress (or its speed) of a finished job.
+		return
+	}
+	if j.speed == nil {
+		j.speed = csghub.NewSpeedMeter(3 * time.Second)
+	}
+	now := time.Now()
+	progress.SpeedBytesPerSec = int64(j.speed.Update(progress.CompletedBytes, now))
 	j.progress = progress
-	j.updatedAt = time.Now()
+	j.updatedAt = now
 }
 
 func (j *pullJob) setSucceeded() {
@@ -602,6 +613,7 @@ func (j *pullJob) setSucceeded() {
 	j.status = pullJobSucceeded
 	j.updatedAt = now
 	j.completedAt = &now
+	j.speed = nil
 	j.progress = api.PullResponse{Status: "success"}
 }
 
@@ -612,6 +624,7 @@ func (j *pullJob) setFailed(err error) {
 	j.status = pullJobFailed
 	j.updatedAt = now
 	j.completedAt = &now
+	j.speed = nil
 	if err != nil {
 		j.err = err.Error()
 		j.progress = api.PullResponse{Status: "error: " + err.Error()}
@@ -621,10 +634,17 @@ func (j *pullJob) setFailed(err error) {
 func (j *pullJob) setCancelled() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.cancelLocked()
+}
+
+// cancelLocked records the cancelled state; the caller holds j.mu.
+func (j *pullJob) cancelLocked() {
 	now := time.Now()
 	j.status = pullJobCancelled
 	j.updatedAt = now
 	j.completedAt = &now
+	j.speed = nil
+	j.progress.SpeedBytesPerSec = 0
 }
 
 func newPullJobID() (string, error) {

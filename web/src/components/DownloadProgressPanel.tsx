@@ -1,55 +1,6 @@
 import { locale, t } from "../i18n";
-import { clearDownloadTask, pauseDownload, startDownload } from "../downloads";
+import { formatSpeed } from "../utils/format";
 import type { DownloadTask } from "../downloads";
-
-export function DownloadTableCell({ task, onComplete, showActions = true, compact = false }: { task?: DownloadTask; onComplete?: () => void; showActions?: boolean; compact?: boolean }) {
-  void locale.value;
-  if (!task) {
-    return <span class="text-xs text-gray-300">{t("downloads.none")}</span>;
-  }
-  const isComplete = isDownloadComplete(task);
-  const canResume = task.status === "paused" || task.status === "error";
-  const isDownloading = task.status === "downloading";
-  return (
-    <div class={compact ? "w-20 min-w-0 max-w-20" : "w-full min-w-0 max-w-full"}>
-      <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
-        <span class="ml-auto shrink-0 text-xs text-gray-400">{displayPercent(task)}%</span>
-        {showActions && !isComplete && canResume && (
-          <button
-            onClick={() => startDownload(task.kind, task.name, onComplete, {
-              artifactSource: task.artifactSource,
-              revision: task.revision,
-              quants: task.quants,
-            })}
-            class="shrink-0 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
-          >
-            {t("downloads.resume")}
-          </button>
-        )}
-        {showActions && !isComplete && isDownloading && (
-          <button
-            onClick={() => pauseDownload(task.kind, task.name, { artifactSource: task.artifactSource, revision: task.revision })}
-            class="shrink-0 text-xs text-indigo-600 hover:text-indigo-700 font-medium"
-          >
-            {t("downloads.pause")}
-          </button>
-        )}
-        {showActions && !isComplete && !isDownloading && (
-          <button
-            onClick={() => {
-              if (task.kind === "model" && !window.confirm(t("downloads.removePartialConfirm", task.name))) return;
-              void clearDownloadTask(task);
-            }}
-            class="shrink-0 text-xs text-gray-400 hover:text-gray-600"
-          >
-            {task.kind === "model" ? t("downloads.removePartial") : t("downloads.clear")}
-          </button>
-        )}
-      </div>
-      <ProgressBar task={task} />
-    </div>
-  );
-}
 
 export function DownloadProgressCell({
   task,
@@ -72,10 +23,15 @@ export function DownloadProgressCell({
     return <span class="block max-w-full truncate text-xs font-medium text-amber-600">{t("downloads.interrupted")}</span>;
   }
   if (task.status === "downloading" || task.status === "queued") {
+    const speed = formatSpeed(task.speedBytesPerSec);
     return (
-      <div class="w-20 min-w-0 max-w-20" title={t("downloads.downloadingPercent", displayPercent(task))}>
-        <div class="mb-1 text-right text-xs text-gray-400">{displayPercent(task)}%</div>
+      <div
+        class="w-20 min-w-0 max-w-20"
+        title={[speed, t("downloads.downloadingPercent", displayPercent(task))].filter(Boolean).join(" · ")}
+      >
+        <div class="mb-1 text-right text-xs text-gray-400 tabular-nums">{displayPercent(task)}%</div>
         <ProgressBar task={task} />
+        <div class="mt-1 h-4 truncate text-right text-xs text-gray-400 tabular-nums">{speed}</div>
       </div>
     );
   }

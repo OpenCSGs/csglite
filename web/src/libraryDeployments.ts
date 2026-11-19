@@ -32,6 +32,7 @@ export function deploymentLibraryRows(deployments: ClusterDeployment[], running:
         modified_at: d.created_at || d.status.updated_at, category: d.kind },
       task: { key: id, kind: "model", name: d.repository, status, percent: complete ? 100 : Math.min(99.9, progress.percent ?? 0),
         statusText: phase, currentFile: d.status.detail, completedBytes: progress.completed, totalBytes: progress.total ?? 0,
+        speedBytesPerSec: phase === "downloading" ? Math.max(0, d.status.speed_bytes_per_sec || 0) : 0,
         error: d.status.error, artifactSource: source, revision: d.revision, createdAt: d.created_at, updatedAt: d.status.updated_at, files: {} },
       downloadOnly: !complete, deployment: d,
     }];

@@ -94,12 +94,13 @@ type NetStatus struct {
 
 // PullStatus is one model download in progress on a node.
 type PullStatus struct {
-	Model          string `json:"model"`
-	Source         string `json:"source,omitempty"`
-	Status         string `json:"status"`
-	CompletedBytes int64  `json:"completed_bytes,omitempty"`
-	TotalBytes     int64  `json:"total_bytes,omitempty"`
-	Detail         string `json:"detail,omitempty"`
+	Model            string `json:"model"`
+	Source           string `json:"source,omitempty"`
+	Status           string `json:"status"`
+	CompletedBytes   int64  `json:"completed_bytes,omitempty"`
+	TotalBytes       int64  `json:"total_bytes,omitempty"`
+	SpeedBytesPerSec int64  `json:"speed_bytes_per_sec,omitempty"`
+	Detail           string `json:"detail,omitempty"`
 }
 
 // JobsStatus lists background work that competes for disk and GPU.

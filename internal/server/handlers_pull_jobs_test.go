@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/internal/cloud"
+	"github.com/opencsgs/csglite/internal/csghub"
 	"github.com/opencsgs/csglite/internal/dataset"
 	"github.com/opencsgs/csglite/pkg/api"
 )
@@ -22,14 +23,46 @@ func TestActiveModelPullsReportsByteProgress(t *testing.T) {
 	store.add(&pullJob{
 		id: "job-1", kind: "model", name: "Qwen/Qwen3-ASR-0.6B", source: "modelscope",
 		status:   pullJobRunning,
-		progress: api.PullResponse{Status: "copying model.safetensors", CompletedBytes: 12, TotalBytes: 40},
+		progress: api.PullResponse{Status: "copying model.safetensors", CompletedBytes: 12, TotalBytes: 40, SpeedBytesPerSec: 7},
 	})
 	names, pulls := store.activeModelPulls()
 	if len(names) != 1 || names[0] != "Qwen/Qwen3-ASR-0.6B" || len(pulls) != 1 {
 		t.Fatalf("names=%v pulls=%+v", names, pulls)
 	}
-	if pulls[0].CompletedBytes != 12 || pulls[0].TotalBytes != 40 || pulls[0].Detail != "copying model.safetensors" {
+	if pulls[0].CompletedBytes != 12 || pulls[0].TotalBytes != 40 || pulls[0].Detail != "copying model.safetensors" || pulls[0].SpeedBytesPerSec != 7 {
 		t.Fatalf("pull = %+v", pulls[0])
+	}
+}
+
+func TestPullJobProgressReportsTransferSpeed(t *testing.T) {
+	job := &pullJob{}
+	job.setProgress(api.PullResponse{Status: "downloading a", CompletedBytes: 0})
+	if job.progress.SpeedBytesPerSec != 0 {
+		t.Fatalf("first sample speed = %d, want 0", job.progress.SpeedBytesPerSec)
+	}
+	for i := int64(1); i <= 2; i++ {
+		time.Sleep(120 * time.Millisecond)
+		job.setProgress(api.PullResponse{Status: "downloading a", CompletedBytes: i << 20})
+	}
+	if job.progress.SpeedBytesPerSec <= 0 {
+		t.Fatalf("speed = %d, want > 0", job.progress.SpeedBytesPerSec)
+	}
+}
+
+func TestPullJobCancelClearsSpeed(t *testing.T) {
+	job := &pullJob{
+		status:   pullJobRunning,
+		progress: api.PullResponse{Status: "downloading a", CompletedBytes: 12, SpeedBytesPerSec: 4096},
+		speed:    csghub.NewSpeedMeter(0),
+	}
+	job.setCancelled()
+	if job.progress.SpeedBytesPerSec != 0 {
+		t.Fatalf("cancelled speed = %d, want 0", job.progress.SpeedBytesPerSec)
+	}
+	// A callback that was already in flight must not revive the job.
+	job.setProgress(api.PullResponse{Status: "downloading b", CompletedBytes: 1 << 20})
+	if job.progress.Status != "downloading a" || job.progress.SpeedBytesPerSec != 0 {
+		t.Fatalf("progress after cancel = %+v, want unchanged", job.progress)
 	}
 }
 
@@ -310,5 +343,119 @@ func TestReportModelDownloadFailureSendsModelID(t *testing.T) {
 	}
 	if ext.ReportFrom != "csglite" {
 		t.Fatalf("report_from = %q, want csglite", ext.ReportFrom)
+	}
+}
+
+// liveSpeedMeter returns a meter whose newest sample is at now, so Rate(now)
+// reports five times bytesPerInterval per second.
+func liveSpeedMeter(now time.Time, bytesPerInterval int64) *csghub.SpeedMeter {
+	m := csghub.NewSpeedMeter(3 * time.Second)
+	start := now.Add(-400 * time.Millisecond)
+	m.Update(0, start)
+	m.Update(bytesPerInterval, start.Add(200*time.Millisecond))
+	m.Update(2*bytesPerInterval, start.Add(400*time.Millisecond))
+	return m
+}
+
+func TestPullJobResponseReportsLiveSpeed(t *testing.T) {
+	job := &pullJob{
+		id: "job-live", kind: "model", name: "Qwen/x", status: pullJobRunning,
+		progress: api.PullResponse{Status: "downloading a", CompletedBytes: 2 << 20, SpeedBytesPerSec: 999},
+		speed:    liveSpeedMeter(time.Now(), 1<<20),
+	}
+	if got := pullJobResponse(job).Progress.SpeedBytesPerSec; got != 5<<20 {
+		t.Fatalf("running speed = %d, want %d", got, int64(5<<20))
+	}
+
+	job.status = pullJobSucceeded
+	if got := pullJobResponse(job).Progress.SpeedBytesPerSec; got != 999 {
+		t.Fatalf("finished speed = %d, want the stored 999", got)
+	}
+
+	job.status = pullJobRunning
+	job.speed = nil
+	if got := pullJobResponse(job).Progress.SpeedBytesPerSec; got != 999 {
+		t.Fatalf("fallback speed = %d, want 999", got)
+	}
+}
+
+func TestActiveModelPullsReportsLiveSpeed(t *testing.T) {
+	store := newPullJobStore()
+	now := time.Now()
+	store.add(&pullJob{
+		id: "job-live", kind: "model", name: "Qwen/live", source: "opencsg", status: pullJobRunning,
+		progress: api.PullResponse{Status: "downloading a", CompletedBytes: 2 << 20, SpeedBytesPerSec: 999},
+		speed:    liveSpeedMeter(now, 1<<20),
+	})
+	store.add(&pullJob{
+		id: "job-stalled", kind: "model", name: "Qwen/stalled", source: "opencsg", status: pullJobRunning,
+		progress: api.PullResponse{Status: "downloading b", CompletedBytes: 1 << 20, SpeedBytesPerSec: 4096},
+		speed:    liveSpeedMeter(now.Add(-10*time.Second), 1<<20),
+	})
+
+	_, pulls := store.activeModelPulls()
+	byName := make(map[string]int64, len(pulls))
+	for _, p := range pulls {
+		byName[p.Model] = p.SpeedBytesPerSec
+	}
+	if got := byName["Qwen/live"]; got != 5<<20 {
+		t.Fatalf("live speed = %d, want %d", got, int64(5<<20))
+	}
+	if got := byName["Qwen/stalled"]; got != 0 {
+		t.Fatalf("stalled speed = %d, want 0", got)
+	}
+}
+
+func TestPullJobProgressIgnoresCallbacksAfterFinish(t *testing.T) {
+	for _, status := range []string{pullJobSucceeded, pullJobFailed, pullJobCancelled} {
+		t.Run(status, func(t *testing.T) {
+			job := &pullJob{
+				status:   status,
+				progress: api.PullResponse{Status: "downloading a", CompletedBytes: 12, SpeedBytesPerSec: 4096},
+			}
+			job.setProgress(api.PullResponse{Status: "downloading b", CompletedBytes: 1 << 20})
+			if job.progress.Status != "downloading a" || job.progress.SpeedBytesPerSec != 4096 {
+				t.Fatalf("progress = %+v, want unchanged", job.progress)
+			}
+			if job.speed != nil {
+				t.Fatal("finished job must not allocate a meter")
+			}
+		})
+	}
+}
+
+func TestPullJobGetExposesTransferSpeed(t *testing.T) {
+	s := newTestServer(t)
+	job := &pullJob{
+		id: "job-speed", kind: "model", name: "Qwen/x", status: pullJobRunning,
+		progress: api.PullResponse{Status: "downloading a", CompletedBytes: 2 << 20, TotalBytes: 4 << 20},
+		speed:    liveSpeedMeter(time.Now(), 1<<20),
+	}
+	s.pullJobs.add(job)
+
+	progress := func() map[string]any {
+		req := httptest.NewRequest(http.MethodGet, "/api/pull/jobs/job-speed", nil)
+		req.SetPathValue("jobID", "job-speed")
+		rec := httptest.NewRecorder()
+		s.handlePullJobGet(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Progress map[string]any `json:"progress"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return body.Progress
+	}
+
+	if p := progress(); p["speed_bytes_per_sec"] != float64(5<<20) {
+		t.Fatalf("speed = %v, want %d", p["speed_bytes_per_sec"], int64(5<<20))
+	}
+
+	job.setSucceeded()
+	if p := progress(); p["speed_bytes_per_sec"] != nil {
+		t.Fatalf("finished job must omit the speed, got %v", p["speed_bytes_per_sec"])
 	}
 }

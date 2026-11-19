@@ -13,7 +13,8 @@ import {
 } from "../api/client";
 import type { ArtifactSource, MarketplaceModel, MarketplaceDataset, MarketplaceModelQuantization, MarketplaceTag } from "../api/client";
 import { t, locale } from "../i18n";
-import { startDownload, getDownloadTask } from "../downloads";
+import { formatSpeed } from "../utils/format";
+import { startDownload, getDownloadTask, type DownloadSummary } from "../downloads";
 import { normalizeMarketplaceModelSource } from "../modelSources";
 import { datasetMarketplaceMetadata } from "../datasetMetadata";
 import {
@@ -1029,7 +1030,7 @@ function ModelCard({
   onOpenDetail,
 }: {
   model: MarketplaceModel;
-  pulling?: { status: string; percent: number; error?: string };
+  pulling?: DownloadSummary;
   isLocal?: boolean;
   onDownload: (path: string) => void;
   onOpenDetail: (path: string) => void;
@@ -1110,7 +1111,7 @@ function ModelGridCard({
   onOpenDetail,
 }: {
   model: MarketplaceModel;
-  pulling?: { status: string; percent: number; error?: string };
+  pulling?: DownloadSummary;
   isLocal?: boolean;
   onDownload: (path: string) => void;
   onOpenDetail: (path: string) => void;
@@ -1219,7 +1220,7 @@ function ProviderModelGridCard({
   onOpenDetail,
 }: {
   model: MarketplaceModel;
-  pulling?: { status: string; percent: number; error?: string };
+  pulling?: DownloadSummary;
   isLocal?: boolean;
   onDownload: (path: string) => void;
   onOpenDetail: (path: string) => void;
@@ -1277,7 +1278,7 @@ function DatasetGridCard({
   onOpenDetail,
 }: {
   dataset: MarketplaceDataset;
-  pulling?: { status: string; percent: number; error?: string };
+  pulling?: DownloadSummary;
   isLocal?: boolean;
   onDownload: (dataset: MarketplaceDataset) => void;
   onOpenDetail: () => void;
@@ -1367,7 +1368,7 @@ function DatasetCard({
   onOpenDetail,
 }: {
   dataset: MarketplaceDataset;
-  pulling?: { status: string; percent: number; error?: string };
+  pulling?: DownloadSummary;
   isLocal?: boolean;
   onDownload: (dataset: MarketplaceDataset) => void;
   onOpenDetail: () => void;
@@ -1443,7 +1444,7 @@ function ProviderDatasetGridCard({
   onOpenDetail,
 }: {
   dataset: MarketplaceDataset;
-  pulling?: { status: string; percent: number; error?: string };
+  pulling?: DownloadSummary;
   isLocal?: boolean;
   onDownload: (dataset: MarketplaceDataset) => void;
   onOpenDetail: () => void;
@@ -1620,7 +1621,7 @@ function ArtifactDownloadAction({
   compact,
   onDownload,
 }: {
-  pulling?: { status: string; percent: number; error?: string };
+  pulling?: DownloadSummary;
   isLocal?: boolean;
   tone: ArtifactActionTone;
   compact: boolean;
@@ -1661,15 +1662,16 @@ function ArtifactDownloadAction({
     }
     if (compact) {
       return (
-        <span class={`font-medium ${color}`}>
+        <span class={`font-medium ${color}`} title={formatSpeed(pulling.speedBytesPerSec) || undefined}>
           {pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}
         </span>
       );
     }
     return (
       <div>
-        <div class={`mb-1 text-right text-xs font-medium ${color}`}>
-          {pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}
+        <div class={`mb-1 flex items-baseline justify-between gap-2 text-right text-xs font-medium ${color}`}>
+          <span class="tabular-nums text-gray-400">{formatSpeed(pulling.speedBytesPerSec)}</span>
+          <span class="tabular-nums">{pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}</span>
         </div>
         <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
           <div class={`h-full rounded-full transition-all duration-300 ${bar}`} style={{ width: `${Math.max(pulling.percent, 3)}%` }} />

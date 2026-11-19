@@ -107,6 +107,7 @@ func (h *clusterHost) PrepareDeployment(ctx context.Context, d cluster.Deploymen
 	var progressMu sync.Mutex
 	lastCheck := time.Time{}
 	lastReport := time.Time{}
+	speed := csghub.NewSpeedMeter(5 * time.Second)
 	var quants []string
 	if d.Quant != "" {
 		quants = []string{d.Quant}
@@ -126,7 +127,13 @@ func (h *clusterHost) PrepareDeployment(ctx context.Context, d cluster.Deploymen
 		// Receipts are durable; avoid an fsync for every downloaded chunk.
 		if time.Since(lastReport) >= 500*time.Millisecond {
 			lastReport = time.Now()
-			report(cluster.DeploymentStatus{Phase: "downloading", Detail: p.FileName, CompletedBytes: p.BytesCompletedAll, TotalBytes: p.BytesTotalAll})
+			report(cluster.DeploymentStatus{
+				Phase:            "downloading",
+				Detail:           p.FileName,
+				CompletedBytes:   p.BytesCompletedAll,
+				TotalBytes:       p.BytesTotalAll,
+				SpeedBytesPerSec: int64(speed.Update(p.BytesCompletedAll, lastReport)),
+			})
 		}
 	})
 	if diskErr != nil {

@@ -38,13 +38,14 @@ type DeploymentSpec struct {
 }
 
 type DeploymentStatus struct {
-	Phase          string    `json:"phase"`
-	Error          string    `json:"error,omitempty"`
-	Detail         string    `json:"detail,omitempty"`
-	CompletedBytes int64     `json:"completed_bytes,omitempty"`
-	TotalBytes     int64     `json:"total_bytes,omitempty"`
-	Size           int64     `json:"size,omitempty"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	Phase            string    `json:"phase"`
+	Error            string    `json:"error,omitempty"`
+	Detail           string    `json:"detail,omitempty"`
+	CompletedBytes   int64     `json:"completed_bytes,omitempty"`
+	TotalBytes       int64     `json:"total_bytes,omitempty"`
+	SpeedBytesPerSec int64     `json:"speed_bytes_per_sec,omitempty"`
+	Size             int64     `json:"size,omitempty"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type Deployment struct {

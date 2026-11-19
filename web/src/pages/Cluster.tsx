@@ -51,6 +51,7 @@ import { deploymentProgress } from "../deploymentModels";
 import type { ModelInstanceFilter } from "../clusterModels";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { t, locale } from "../i18n";
+import { formatSpeed } from "../utils/format";
 import { clusterReasonText, canManageNodeState, workerNodeState, clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, stateKey } from "../cluster";
 
 type ClusterTab = "overview" | "discovered" | "models" | "settings";
@@ -1327,6 +1328,7 @@ function ModelsSection({ view }: { view: ClusterView }) {
                   {deployment?.status.phase === "downloading" && progress && <div class="mt-2 min-w-0 space-y-2 text-xs text-indigo-600">
                     <div class="flex items-center gap-2">
                       <progress class="block h-1.5 min-w-0 flex-1" value={progress.percent ?? undefined} max={100} aria-label={t("deployments.phase.downloading")} />
+                      <span class="shrink-0 tabular-nums text-gray-400">{formatSpeed(deployment.status.speed_bytes_per_sec)}</span>
                       <span class="w-12 shrink-0 text-right tabular-nums">{progress.percent === null ? "—" : `${progress.percent}%`}</span>
                     </div>
                     <p class="h-4 truncate text-gray-400" title={deployment.status.detail}>{deployment.status.detail}</p>
@@ -1354,13 +1356,14 @@ function ModelsSection({ view }: { view: ClusterView }) {
 function SyncProgress({ sync }: { sync: ClusterModelSync }) {
   const known = (sync.total_bytes ?? 0) > 0;
   const pct = known ? percentOf(sync.completed_bytes ?? 0, sync.total_bytes ?? 0) : 0;
+  const speed = formatSpeed(sync.speed_bytes_per_sec);
   const label = sync.status === "queued" && !known
     ? t("cluster.syncQueued")
     : known
       ? `${pct}%`
       : t("cluster.cellSyncing");
   return (
-    <div class="mx-auto w-16" title={sync.detail || label}>
+    <div class="mx-auto w-16" title={[sync.detail || label, speed].filter(Boolean).join(" · ")}>
       <div class="h-1.5 overflow-hidden rounded-full bg-indigo-100">
         <div
           class={`h-full rounded-full bg-indigo-600 ${known ? "" : "w-1/2 animate-pulse"}`}
@@ -1368,6 +1371,7 @@ function SyncProgress({ sync }: { sync: ClusterModelSync }) {
         />
       </div>
       <div class="mt-1 text-[10px] font-medium leading-none text-indigo-700">{label}</div>
+      <div class="mt-0.5 h-2.5 text-[10px] leading-none tabular-nums text-gray-400">{speed}</div>
     </div>
   );
 }

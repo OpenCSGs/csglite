@@ -15539,6 +15539,10 @@
           "completed_bytes": {
             "type": "integer",
             "description": "Downloaded bytes across all files selected for this model download."
+          },
+          "speed_bytes_per_sec": {
+            "type": "integer",
+            "description": "Recent average download rate in bytes per second. Absent or 0 while no data is flowing."
           }
         }
       },
@@ -21316,6 +21320,10 @@
           "total_bytes": {
             "type": "integer"
           },
+          "speed_bytes_per_sec": {
+            "type": "integer",
+            "description": "Recent average download rate in bytes per second. Absent or 0 while no data is flowing."
+          },
           "detail": {
             "type": "string"
           }
@@ -21692,6 +21700,11 @@
           "total_bytes": {
             "type": "integer",
             "format": "int64"
+          },
+          "speed_bytes_per_sec": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Recent average download rate in bytes per second. Absent or 0 while no data is flowing."
           },
           "size": {
             "type": "integer",
