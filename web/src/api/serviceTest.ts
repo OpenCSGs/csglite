@@ -57,7 +57,7 @@ export async function testModelService(model: string, protocol: ServiceTestProto
   return {data,blob:undefined,status:response.status,durationMS:durationMS()};
 }
 export function serviceTestText(data:any,protocol:ServiceTestProtocol):string {
-  if(protocol==="chat/completions") return data.choices?.[0]?.message?.content||JSON.stringify(data,null,2);
+  if(protocol==="chat/completions") { const message=data.choices?.[0]?.message; return message?.content||message?.reasoning_content||message?.reasoning||JSON.stringify(data,null,2); }
   if(protocol==="responses") return data.output_text||data.output?.flatMap((item:any)=>item.content||[]).map((item:any)=>item.text||"").join("\n")||JSON.stringify(data,null,2);
   if(protocol==="messages") return data.content?.map((item:any)=>item.text||"").join("\n")||JSON.stringify(data,null,2);
   if(protocol==="audio/transcriptions") return data.text||JSON.stringify(data,null,2);
