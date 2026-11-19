@@ -8,6 +8,7 @@ import type {
 import type { DownloadTask } from "../downloads";
 import { datasetMarketplaceMetadata } from "../datasetMetadata";
 import { locale, t } from "../i18n";
+import { formatSpeed } from "../utils/format";
 import { ArtifactOwnerAvatar } from "./ArtifactOwnerAvatar";
 
 type Props = {
@@ -81,6 +82,7 @@ export function MarketplaceDatasetDetailDialog(props: Props) {
   const title = provider?.huggingface?.pretty_name || provider?.modelscope?.display_name || dataset?.nickname || props.datasetPath;
   const revision = dataset?.revision || dataset?.default_branch || props.revision;
   const sourceURL = dataset?.repository?.http_clone_url;
+  const pullSpeed = formatSpeed(props.pulling?.speedBytesPerSec);
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6" onClick={(event) => {
@@ -99,7 +101,10 @@ export function MarketplaceDatasetDetailDialog(props: Props) {
             {downloaded ? (
               <span class="text-sm font-medium text-indigo-600">{t("mp.downloaded")}</span>
             ) : props.pulling ? (
-              <span class="text-sm font-medium text-indigo-600">{props.pulling.percent > 0 ? `${props.pulling.percent}%` : t("mp.pulling")}</span>
+              <span class="flex items-baseline justify-between gap-2 text-sm font-medium text-indigo-600">
+                <span class="tabular-nums text-gray-400">{pullSpeed}</span>
+                <span class="tabular-nums">{props.pulling.percent > 0 ? `${props.pulling.percent}%` : t("mp.pulling")}</span>
+              </span>
             ) : dataset ? (
               <button onClick={() => props.onDownload(dataset)} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
                 {t("mp.download")}

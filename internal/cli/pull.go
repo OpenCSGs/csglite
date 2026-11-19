@@ -111,6 +111,7 @@ func snapshotProgress() csghub.SnapshotProgressFunc {
 	var mu sync.Mutex
 	completed := make(map[int]bool)
 	active := make(map[int]csghub.SnapshotProgress)
+	meters := make(map[int]*csghub.SpeedMeter)
 	prevActiveCount := 0
 	lastRender := time.Time{}
 
@@ -118,14 +119,25 @@ func snapshotProgress() csghub.SnapshotProgressFunc {
 		mu.Lock()
 		defer mu.Unlock()
 
+		if completed[p.FileIndex] {
+			return
+		}
+
+		meter := meters[p.FileIndex]
+		if meter == nil {
+			meter = csghub.NewSpeedMeter(3 * time.Second)
+			meters[p.FileIndex] = meter
+		}
+		meter.Update(p.BytesCompleted, time.Now())
+
 		done := p.BytesTotal > 0 && p.BytesCompleted >= p.BytesTotal
 
 		if done {
-			if completed[p.FileIndex] {
-				return
-			}
 			completed[p.FileIndex] = true
 			delete(active, p.FileIndex)
+			// Finished files never render a rate again; release the meter so
+			// repositories with many files do not accumulate them.
+			delete(meters, p.FileIndex)
 		} else {
 			active[p.FileIndex] = p
 			if time.Since(lastRender) < 150*time.Millisecond {
@@ -152,14 +164,22 @@ func snapshotProgress() csghub.SnapshotProgressFunc {
 
 		for _, idx := range indices {
 			ap := active[idx]
+			// Read the rate at render time: a file that stopped receiving
+			// data must not keep showing the speed it had before.
+			speed := ""
+			if meter := meters[idx]; meter != nil {
+				if rate := formatSpeed(meter.Rate(time.Now())); rate != "" {
+					speed = "  " + rate
+				}
+			}
 			if ap.BytesTotal > 0 {
 				pct := float64(ap.BytesCompleted) / float64(ap.BytesTotal) * 100
-				fmt.Printf("  [%d/%d] %s  %.1f%% (%s / %s)\n",
+				fmt.Printf("  [%d/%d] %s  %.1f%% (%s / %s)%s\n",
 					ap.FileIndex+1, ap.TotalFiles, ap.FileName,
-					pct, formatBytes(ap.BytesCompleted), formatBytes(ap.BytesTotal))
+					pct, formatBytes(ap.BytesCompleted), formatBytes(ap.BytesTotal), speed)
 			} else {
-				fmt.Printf("  [%d/%d] %s\n",
-					ap.FileIndex+1, ap.TotalFiles, ap.FileName)
+				fmt.Printf("  [%d/%d] %s%s\n",
+					ap.FileIndex+1, ap.TotalFiles, ap.FileName, speed)
 			}
 		}
 		prevActiveCount = len(indices)
@@ -167,20 +187,32 @@ func snapshotProgress() csghub.SnapshotProgressFunc {
 	}
 }
 
+func formatSpeed(bytesPerSecond float64) string {
+	if bytesPerSecond < 1 {
+		return ""
+	}
+	return formatScaled(bytesPerSecond, "/s")
+}
+
 func formatBytes(b int64) string {
+	return formatScaled(float64(b), "")
+}
+
+// formatScaled renders a byte quantity with binary units and one decimal.
+func formatScaled(value float64, suffix string) string {
 	const (
 		kb = 1024
 		mb = kb * 1024
 		gb = mb * 1024
 	)
 	switch {
-	case b >= gb:
-		return fmt.Sprintf("%.1f GB", float64(b)/float64(gb))
-	case b >= mb:
-		return fmt.Sprintf("%.1f MB", float64(b)/float64(mb))
-	case b >= kb:
-		return fmt.Sprintf("%.1f KB", float64(b)/float64(kb))
+	case value >= gb:
+		return fmt.Sprintf("%.1f GB%s", value/gb, suffix)
+	case value >= mb:
+		return fmt.Sprintf("%.1f MB%s", value/mb, suffix)
+	case value >= kb:
+		return fmt.Sprintf("%.1f KB%s", value/kb, suffix)
 	default:
-		return fmt.Sprintf("%d B", b)
+		return fmt.Sprintf("%.0f B%s", value, suffix)
 	}
 }

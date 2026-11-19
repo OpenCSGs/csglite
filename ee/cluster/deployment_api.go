@@ -85,6 +85,20 @@ func (m *Manager) sendDeployment(ctx context.Context, d Deployment) (Deployment,
 	return result, nil
 }
 
+// stalledDownloadSpeed drops the reported rate when the worker produced no new
+// status since the previous poll. The receipt is unchanged, so the speed it
+// carries no longer describes the transfer; reporting it would freeze the last
+// reading on the deployment row.
+func stalledDownloadSpeed(previous, next DeploymentStatus) int64 {
+	if previous.Phase != "downloading" || next.Phase != "downloading" {
+		return next.SpeedBytesPerSec
+	}
+	if next.CompletedBytes == previous.CompletedBytes && !next.UpdatedAt.After(previous.UpdatedAt) {
+		return 0
+	}
+	return next.SpeedBytesPerSec
+}
+
 func (m *Manager) deploymentControllerLoop(ctx context.Context) {
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
@@ -108,6 +122,7 @@ func (m *Manager) deploymentControllerLoop(ctx context.Context) {
 					if !exists || current.Generation != d.Generation {
 						return nil
 					}
+					st.SpeedBytesPerSec = stalledDownloadSpeed(current.Status, st)
 					current.Status = st
 					return nil
 				}); saveErr != nil {
@@ -121,6 +136,30 @@ func (m *Manager) deploymentControllerLoop(ctx context.Context) {
 		case <-tick.C:
 		}
 	}
+}
+
+// stalledDeploymentReceipt is how long an assignment receipt may go without a
+// refresh before its download rate is considered out of date. Running
+// downloads refresh their receipt every 500ms.
+const stalledDeploymentReceipt = 5 * time.Second
+
+// clearStaleDownloadSpeed hides the rate on assignment receipts that stopped
+// being refreshed. Assignment receipts are written by this process, so their
+// updated_at uses the local clock and needs no cross-node skew allowance.
+//
+// Together with SpeedMeter.Rate (local transfers) and stalledDownloadSpeed
+// (receipts a worker stopped advancing), this is what keeps a stalled rate
+// from sticking to a row. The copy keeps the view-time change out of the
+// store.
+func clearStaleDownloadSpeed(all []Deployment, now time.Time) []Deployment {
+	out := make([]Deployment, len(all))
+	copy(out, all)
+	for i := range out {
+		if out[i].Status.Phase == "downloading" && now.Sub(out[i].Status.UpdatedAt) > stalledDeploymentReceipt {
+			out[i].Status.SpeedBytesPerSec = 0
+		}
+	}
+	return out
 }
 
 func (a *adminAPI) HandleDeployments(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +176,7 @@ func (a *adminAPI) HandleDeployments(w http.ResponseWriter, r *http.Request) {
 			assigned = visibleDeployments(assigned)
 		}
 	}
+	assigned = clearStaleDownloadSpeed(assigned, time.Now())
 	writeJSON(w, 200, map[string]any{"deployments": owned, "assignments": assigned})
 }
 

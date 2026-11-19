@@ -1103,6 +1103,7 @@ export interface PullProgress {
   completed?: number;
   total_bytes?: number;
   completed_bytes?: number;
+  speed_bytes_per_sec?: number;
 }
 
 export interface PullJob {
@@ -3405,6 +3406,7 @@ export interface ClusterModelSync {
   status: string;
   completed_bytes?: number;
   total_bytes?: number;
+  speed_bytes_per_sec?: number;
   detail?: string;
 }
 
@@ -3805,7 +3807,7 @@ export interface ClusterDeploymentSpec {
 export interface ClusterDeployment extends ClusterDeploymentSpec {
   id: string; node_uuid: string; controller_uuid: string; generation: number; desired: "running" | "stopped" | "deleted";
   created_at: string;
-  status: { phase: string; error?: string; detail?: string; completed_bytes?: number; total_bytes?: number; size?: number; updated_at: string };
+  status: { phase: string; error?: string; detail?: string; completed_bytes?: number; total_bytes?: number; speed_bytes_per_sec?: number; size?: number; updated_at: string };
 }
 export interface ClusterDeploymentCreateRequest extends ClusterDeploymentSpec {
   minimum_memory_bytes?: number;

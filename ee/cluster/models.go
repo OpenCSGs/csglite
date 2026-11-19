@@ -28,12 +28,13 @@ type ModelNode struct {
 
 // ModelSync is a download of this model that has not finished on a node.
 type ModelSync struct {
-	UUID           string `json:"uuid"`
-	Name           string `json:"name"`
-	Status         string `json:"status"`
-	CompletedBytes int64  `json:"completed_bytes,omitempty"`
-	TotalBytes     int64  `json:"total_bytes,omitempty"`
-	Detail         string `json:"detail,omitempty"`
+	UUID             string `json:"uuid"`
+	Name             string `json:"name"`
+	Status           string `json:"status"`
+	CompletedBytes   int64  `json:"completed_bytes,omitempty"`
+	TotalBytes       int64  `json:"total_bytes,omitempty"`
+	SpeedBytesPerSec int64  `json:"speed_bytes_per_sec,omitempty"`
+	Detail           string `json:"detail,omitempty"`
 }
 
 // ClusterModel is one model with the nodes holding it.
@@ -176,12 +177,13 @@ func attachPulls(byKey map[string]*modelGroup, uuid, name string, st *Status) {
 			continue
 		}
 		group.model.Syncs = append(group.model.Syncs, ModelSync{
-			UUID:           uuid,
-			Name:           name,
-			Status:         pull.Status,
-			CompletedBytes: pull.CompletedBytes,
-			TotalBytes:     pull.TotalBytes,
-			Detail:         pull.Detail,
+			UUID:             uuid,
+			Name:             name,
+			Status:           pull.Status,
+			CompletedBytes:   pull.CompletedBytes,
+			TotalBytes:       pull.TotalBytes,
+			SpeedBytesPerSec: pull.SpeedBytesPerSec,
+			Detail:           pull.Detail,
 		})
 	}
 }

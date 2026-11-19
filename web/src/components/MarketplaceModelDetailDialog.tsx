@@ -9,6 +9,7 @@ import type {
 } from "../api/client";
 import type { DownloadTask } from "../downloads";
 import { locale, t } from "../i18n";
+import { formatSpeed } from "../utils/format";
 import { LocalInferenceBadge } from "./LocalInferenceBadge";
 import {
   localInferenceLabelKey,
@@ -408,8 +409,9 @@ function DetailDownloadAction({
 
     return (
       <div class="min-w-[120px]">
-        <div class="mb-1 text-xs font-medium text-indigo-600">
-          {pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}
+        <div class="mb-1 flex items-baseline justify-between gap-2 text-xs font-medium text-indigo-600">
+          <span class="tabular-nums text-gray-400">{formatSpeed(pulling.speedBytesPerSec)}</span>
+          <span class="tabular-nums">{pulling.percent > 0 ? `${pulling.percent}%` : t("mp.pulling")}</span>
         </div>
         <div class="h-1.5 overflow-hidden rounded-full bg-gray-200">
           <div
