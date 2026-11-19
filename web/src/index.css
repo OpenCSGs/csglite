@@ -41,6 +41,25 @@ select:not([multiple]):is(:not([size]), [size="0"], [size="1"]):disabled {
   cursor: text !important;
 }
 
+/* Keep the scroll thumb visible where the platform hides overlay scrollbars. */
+.scroll-visible {
+  scrollbar-color: #c1c1c1 #fafafa;
+}
+
+.scroll-visible::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.scroll-visible::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: #c1c1c1;
+}
+
+.scroll-visible::-webkit-scrollbar-track {
+  background-color: #fafafa;
+}
+
 @layer components {
   .page-shell {
     @apply mx-auto w-full max-w-screen-2xl p-8;

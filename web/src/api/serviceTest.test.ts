@@ -151,6 +151,7 @@ describe("per-model API testing", () => {
   });
   it("displays text for each API and summarizes embedding vectors without losing the raw response", () => {
     expect(serviceTestText({ choices: [{ message: { content: "chat" } }] }, "chat/completions")).toBe("chat");
+    expect(serviceTestText({ choices: [{ message: { content: "", reasoning_content: "thinking" } }] }, "chat/completions")).toBe("thinking");
     expect(serviceTestText({ output: [{ content: [{ type: "output_text", text: "response" }] }] }, "responses")).toBe("response");
     expect(serviceTestText({ content: [{ type: "text", text: "message" }] }, "messages")).toBe("message");
     const response = { data: [{ index: 0, embedding: Array.from({ length: 12 }, (_, i) => i) }] };
