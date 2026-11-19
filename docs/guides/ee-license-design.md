@@ -625,13 +625,22 @@ CSGHub 已有完整的 License 体系，CSGLite 全部复用，两边只需要�
 
 ### 已安装 License 的设备用量查询
 
-设置页的总额度、已激活和剩余数量属于已安装的 License，与 CSGHub 账号连接无关。
-`GET /api/license/usage` 使用本机已有的签名 PEM 作为凭证，向授权平台发送
-`POST /api/v1/licenses/csglite/activations`，请求 `mode: "status"`。
-此模式只读取激活台账，不新增设备、不更新设备信息、不消耗额度，也不要求用户 access token。
-返回沿用 `used`、`limit`、`over_limit` 和 `recorded: false` 的响应格式。
+设置页的总额度、已激活和剩余数量属于已安装的 License。为避免显示过期、离线或不属于
+本机的数据，已激活和剩余只从已登录的 CSGHub 账号读取：`GET /api/license/cloud`
+背后的 `GET /api/v1/licenses/csglite/status` 返回该账号当前 License 的 `used` 和
+`limit`。
 
-平台必须先支持这个只读模式。旧平台拒绝该模式、网络断开或找不到 License 台账时，
-Lite 保留总额度，将已激活和剩余显示为 `—` 并给出原因，不使用 `claim` / `report`
-冒充查询，不将未知值当成零。查询结果只在内存缓存一分钟，不增加配置文件字段。
-云端 License 下载和导入仍属于账号功能，继续使用已有的登录与权限检查。
+只有同时满足以下条件才显示已激活和剩余，否则显示 `—` 并给出原因：
+
+- 账号已登录；
+- 授权平台可达（在线）；
+- 账号当前 License 的 key 与已安装 License 一致；
+- `used` / `limit` 合法。
+
+未登录时提示登录；离线时提示待同步；key 不一致或账号没有对应 License 时提示不匹配。
+离线时即使之前成功读取过用量也不显示缓存值，避免误导。总额度在没有账号数据时回退到
+`internal/license` 的本地常量 `CSGLiteMaxDevices`（当前为 5）。
+
+免账号的 `GET /api/license/usage`（`POST /api/v1/licenses/csglite/activations`，
+`mode: "status"`）仍保留为本地 API，但设置页不再使用它，也不使用 `claim` / `report`
+冒充查询。云端 License 下载和导入仍属于账号功能，继续使用已有的登录与权限检查。

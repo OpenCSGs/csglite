@@ -426,7 +426,7 @@ export interface LicenseCloudStatus {
   subscription_status: string;
   /** Devices already written off against the license. */
   used: number;
-  /** Device limit; 10 for every CSGLite tier. */
+  /** Device limit; 5 for every CSGLite tier. */
   limit: number;
   env_managed: boolean;
   reason?: string;

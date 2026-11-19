@@ -16,7 +16,6 @@ import {
   deleteLicense,
   getImageRuntimeStatus,
   getLicenseCloud,
-  getLicenseDeviceUsage,
   importLicense,
   importLicenseFromCloud,
   isApiError,
@@ -32,15 +31,14 @@ import type {
   ArtifactSource,
   ContextCompressionMode,
   LicenseCloudStatus,
-  LicenseDeviceUsage,
   LocalDirectoryBrowseResponse,
 } from "../api/client";
 import {
-  installedDeviceUsage,
+  accountDeviceHint,
+  accountDeviceUsage,
   cloudImportAvailability,
   cloudImportErrorMessage,
   deviceLimitOf,
-  deviceUsageHint,
   editionOf,
   formatLicenseDate,
   isLicensed,
@@ -132,9 +130,7 @@ const isRemovingLicense = signal(false);
 const licenseRemoveDialogOpen = signal(false);
 const licenseCloud = signal<LicenseCloudStatus | null>(null);
 const isImportingCloudLicense = signal(false);
-const licenseDeviceStatus = signal<LicenseDeviceUsage | null>(null);
-const licenseDeviceLoading = signal(false);
-let licenseDeviceRequestID = 0;
+const licenseCloudLoading = signal(false);
 let licenseCloudRequestID = 0;
 
 function normalizeObservabilityRetentionDays(days: number | undefined | null): number {
@@ -876,26 +872,15 @@ async function removeInstalledLicense() {
 
 async function loadLicenseCloud() {
   const requestID = ++licenseCloudRequestID;
+  licenseCloudLoading.value = true;
   licenseCloud.value = null;
   try {
     const cloud = await getLicenseCloud();
     if (requestID === licenseCloudRequestID) licenseCloud.value = cloud;
   } catch {
     if (requestID === licenseCloudRequestID) licenseCloud.value = null;
-  }
-}
-
-async function loadLicenseDeviceUsage() {
-  const requestID = ++licenseDeviceRequestID;
-  licenseDeviceLoading.value = true;
-  licenseDeviceStatus.value = null;
-  try {
-    const usage = await getLicenseDeviceUsage();
-    if (requestID === licenseDeviceRequestID) licenseDeviceStatus.value = usage;
-  } catch {
-    if (requestID === licenseDeviceRequestID) licenseDeviceStatus.value = null;
   } finally {
-    if (requestID === licenseDeviceRequestID) licenseDeviceLoading.value = false;
+    if (requestID === licenseCloudRequestID) licenseCloudLoading.value = false;
   }
 }
 
@@ -931,12 +916,9 @@ function LicenseSection() {
   const dateLocale = locale.value;
   const cloud = licenseCloud.value;
   const cloudAvailability = cloudImportAvailability(state, cloud);
-  const deviceUsage = installedDeviceUsage(state, licenseDeviceStatus.value);
+  const deviceUsage = accountDeviceUsage(state, cloud);
   const deviceLimit = deviceLimitOf(state);
   const showDeviceRow = licensed && deviceLimit !== null;
-  useEffect(() => {
-    void loadLicenseDeviceUsage();
-  }, [summary?.key, summary?.expire_time, communitySettings.value?.server_url]);
   // Auto-expand the import form only when nothing is installed. An unreadable
   // or expired file keeps the buttons so the user can replace or remove it.
   const hasFile = state !== null && state.status !== "none";
@@ -1009,7 +991,7 @@ function LicenseSection() {
                     <dd class="mt-1 flex flex-wrap gap-x-6 gap-y-2">
                       {([["settings.licenseDeviceTotal", deviceUsage?.limit ?? deviceLimit], ["settings.licenseDeviceActivated", deviceUsage?.used ?? "—"], ["settings.licenseDeviceRemaining", deviceUsage?.remaining ?? "—"]] as const).map(([label, value]) => <span key={label} class="min-w-0"><span class="block text-xs text-gray-500">{t(label)}</span><span class="text-base font-medium text-gray-900">{value}</span></span>)}
                     </dd>
-                    <dd class="mt-2 text-xs leading-5 text-gray-500" role="status">{t(licenseDeviceLoading.value ? "settings.licenseDeviceLoading" : deviceUsage ? "settings.licenseDeviceLedger" : deviceUsageHint(licenseDeviceStatus.value))}</dd>
+                    <dd class="mt-2 text-xs leading-5 text-gray-500" role="status">{t(licenseCloudLoading.value ? "settings.licenseDeviceLoading" : deviceUsage ? "settings.licenseDeviceAccount" : accountDeviceHint(state, cloud))}</dd>
                     {deviceUsage?.overLimit && <dd role="status" class="mt-1 text-xs text-amber-700">{t("settings.licenseCloudOverLimit")}</dd>}
                   </div>
                 )}
