@@ -1189,7 +1189,9 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const body = await resp.text();
 
   if (!resp.ok) {
-    throw new Error(extractErrorMessage(body, contentType, resp.statusText));
+    const error = new Error(extractErrorMessage(body, contentType, resp.statusText)) as Error & { status?: number };
+    error.status = resp.status;
+    throw error;
   }
 
   if (!contentType.includes("application/json")) {
@@ -2644,7 +2646,9 @@ export async function getMarketplaceModels(params: {
   page?: number;
   per?: number;
   artifactSource?: ArtifactSource;
-}): Promise<{ data: MarketplaceModel[]; total: number; has_more?: boolean; total_exact?: boolean }> {
+  localInference?: boolean;
+  excludePaths?: string[];
+}): Promise<{ data: MarketplaceModel[]; total: number; has_more?: boolean; total_exact?: boolean; partial?: boolean; page_limit_exceeded?: boolean; exclude_paths?: string[] | null }> {
   const q = new URLSearchParams();
   if (params.search) q.set("search", params.search);
   q.set("sort", params.sort || "trending");
@@ -2653,9 +2657,13 @@ export async function getMarketplaceModels(params: {
   if (params.modelParamsMin) q.set("model_params_min", params.modelParamsMin);
   if (params.modelParamsMax) q.set("model_params_max", params.modelParamsMax);
   if (params.artifactSource) q.set("artifact_source", params.artifactSource);
+  if (params.localInference) q.set("local_inference", "true");
+  if (params.excludePaths && params.excludePaths.length > 0) {
+    q.set("exclude_paths", params.excludePaths.join(","));
+  }
   q.set("page", String(params.page || 1));
   q.set("per", String(params.per || 16));
-  const resp = await fetchJSON<{ data: MarketplaceModel[]; total: number; has_more?: boolean; total_exact?: boolean }>(
+  const resp = await fetchJSON<{ data: MarketplaceModel[]; total: number; has_more?: boolean; total_exact?: boolean; partial?: boolean; page_limit_exceeded?: boolean; exclude_paths?: string[] | null }>(
     `/api/marketplace/models?${q}`
   );
   return resp;

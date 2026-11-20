@@ -1,0 +1,1360 @@
+{
+  "version": 1,
+  "note": "Marketplace local-model-filter verdict vectors owned by Lite. criteria is generated from marketplaceLocalModelFilterCapabilities() with -update-local-model-filter-vectors.",
+  "hardware": {
+    "free_disk_bytes": 107374182400,
+    "ram_bytes": 34359738368
+  },
+  "criteria": {
+    "formats": [
+      "gguf",
+      "safetensors",
+      "pytorch"
+    ],
+    "native_formats": [],
+    "tasks": [
+      "text-generation",
+      "text-to-image",
+      "image-to-image",
+      "automatic-speech-recognition",
+      "text-to-speech"
+    ],
+    "convert": {
+      "enabled": true,
+      "architectures": [
+        "AfmoeForCausalLM",
+        "ApertusForCausalLM",
+        "ArceeForCausalLM",
+        "ArcticForCausalLM",
+        "AudioFlamingo3ForConditionalGeneration",
+        "BaiChuanForCausalLM",
+        "BaichuanForCausalLM",
+        "BailingMoeForCausalLM",
+        "BailingMoeV2ForCausalLM",
+        "BailingMoeV3ForCausalLM",
+        "BailingMoeV3VLForConditionalGeneration",
+        "BambaForCausalLM",
+        "BertForMaskedLM",
+        "BertForSequenceClassification",
+        "BertModel",
+        "BitnetForCausalLM",
+        "BloomForCausalLM",
+        "BloomModel",
+        "CamembertModel",
+        "ChameleonForCausalLM",
+        "ChameleonForConditionalGeneration",
+        "ChatGLMForConditionalGeneration",
+        "ChatGLMModel",
+        "ClefModel",
+        "CodeShellForCausalLM",
+        "CogVLMForCausalLM",
+        "Cohere2ForCausalLM",
+        "Cohere2VisionForConditionalGeneration",
+        "CohereForCausalLM",
+        "D1Model",
+        "D1OmniModel",
+        "DbrxForCausalLM",
+        "DeciLMForCausalLM",
+        "DeepseekForCausalLM",
+        "DeepseekOCRForCausalLM",
+        "DeepseekV2ForCausalLM",
+        "DeepseekV3ForCausalLM",
+        "DistilBertForMaskedLM",
+        "DistilBertForSequenceClassification",
+        "DistilBertModel",
+        "Dots1ForCausalLM",
+        "Dots3NoteForCausalLM",
+        "Dots3NoteForConditionalGeneration",
+        "Dots3NoteTextForCausalLM",
+        "DotsOCRForCausalLM",
+        "DreamModel",
+        "EmbeddingGemma2Model",
+        "Ernie4_5ForCausalLM",
+        "Ernie4_5_ForCausalLM",
+        "Ernie4_5_MoeForCausalLM",
+        "EuroBertModel",
+        "Exaone4ForCausalLM",
+        "ExaoneForCausalLM",
+        "ExaoneMoEForCausalLM",
+        "FalconForCausalLM",
+        "FalconH1ForCausalLM",
+        "FalconMambaForCausalLM",
+        "GPT2LMHeadModel",
+        "GPTBigCodeForCausalLM",
+        "GPTNeoXForCausalLM",
+        "GPTRefactForCausalLM",
+        "Gemma2ForCausalLM",
+        "Gemma3ForCausalLM",
+        "Gemma3ForConditionalGeneration",
+        "Gemma3TextModel",
+        "Gemma3nForCausalLM",
+        "Gemma3nForConditionalGeneration",
+        "Gemma4DSparkModel",
+        "Gemma4ForConditionalGeneration",
+        "GemmaForCausalLM",
+        "Glm4ForCausalLM",
+        "Glm4MoeForCausalLM",
+        "Glm4MoeLiteForCausalLM",
+        "Glm4vForConditionalGeneration",
+        "Glm4vMoeForConditionalGeneration",
+        "Glm5NextForConditionalGeneration",
+        "GlmForCausalLM",
+        "GlmMoeDsaForCausalLM",
+        "GlmOcrForConditionalGeneration",
+        "GlmasrModel",
+        "GptOssForCausalLM",
+        "GraniteForCausalLM",
+        "GraniteMoeForCausalLM",
+        "GraniteMoeHybridForCausalLM",
+        "GraniteMoeSWAForCausalLM",
+        "GraniteMoeSharedForCausalLM",
+        "GraniteSWAForCausalLM",
+        "GraniteSpeechForConditionalGeneration",
+        "GraniteSwitchForCausalLM",
+        "Grok1ForCausalLM",
+        "GrokForCausalLM",
+        "GroveMoeForCausalLM",
+        "HYV4ForCausalLM",
+        "HrmTextForCausalLM",
+        "HunYuanDenseV1ForCausalLM",
+        "HunYuanMoEV1ForCausalLM",
+        "HunYuanVLForConditionalGeneration",
+        "IQuestCoderForCausalLM",
+        "Idefics3ForConditionalGeneration",
+        "InternLM2ForCausalLM",
+        "InternLM3ForCausalLM",
+        "InternVisionModel",
+        "JAISLMHeadModel",
+        "Jais2ForCausalLM",
+        "JaisModel",
+        "JambaForCausalLM",
+        "JanusForConditionalGeneration",
+        "JinaBertForMaskedLM",
+        "JinaBertModel",
+        "JinaEmbeddingsV5Model",
+        "K2HorizonForCausalLM",
+        "KORMoForCausalLM",
+        "KevModel",
+        "KimiK25ForConditionalGeneration",
+        "KimiK3ForConditionalGeneration",
+        "KimiLinearForCausalLM",
+        "KimiLinearModel",
+        "KimiVLForConditionalGeneration",
+        "LFM2ForCausalLM",
+        "LLaDAMoEModel",
+        "LLaDAMoEModelLM",
+        "LLaDAModelLM",
+        "LLaMAForCausalLM",
+        "LayaTypedDecisions",
+        "LevModel",
+        "Lfm25AudioTokenizer",
+        "Lfm2AudioForConditionalGeneration",
+        "Lfm2ForCausalLM",
+        "Lfm2Model",
+        "Lfm2MoeForCausalLM",
+        "Lfm2VlForConditionalGeneration",
+        "LightOnOCRForConditionalGeneration",
+        "Llama4ForCausalLM",
+        "Llama4ForConditionalGeneration",
+        "LlamaBidirectionalModel",
+        "LlamaForCausalLM",
+        "LlamaModel",
+        "LlavaStableLMEpochForCausalLM",
+        "MERaLiON2ForConditionalGeneration",
+        "MPTForCausalLM",
+        "MT5ForConditionalGeneration",
+        "MaincoderForCausalLM",
+        "Mamba2ForCausalLM",
+        "MambaForCausalLM",
+        "MambaLMHeadModel",
+        "MapleForCausalLM",
+        "MiMoV2FlashForCausalLM",
+        "MiMoV2ForCausalLM",
+        "MiniCPM3ForCausalLM",
+        "MiniCPMForCausalLM",
+        "MiniCPMV4_6ForConditionalGeneration",
+        "MiniMaxM1ForCausalLM",
+        "MiniMaxM2ForCausalLM",
+        "MiniMaxText01ForCausalLM",
+        "Ministral3ForCausalLM",
+        "Mistral3ForConditionalGeneration",
+        "Mistral4ForCausalLM",
+        "MistralForCausalLM",
+        "MixtralForCausalLM",
+        "ModernBertDecisionModel",
+        "ModernBertForMaskedLM",
+        "ModernBertForSequenceClassification",
+        "ModernBertModel",
+        "MuseGlimmerAssistantModel",
+        "MuseGlimmerForConditionalGeneration",
+        "NemotronForCausalLM",
+        "NemotronHForCausalLM",
+        "NemotronHPuzzleForCausalLM",
+        "NemotronH_Nano_VL_V2",
+        "NeoBERT",
+        "NeoBERTForSequenceClassification",
+        "NeoBERTLMHead",
+        "NimbleModel",
+        "NomicBertModel",
+        "OLMoForCausalLM",
+        "Olmo2ForCausalLM",
+        "Olmo3ForCausalLM",
+        "OlmoForCausalLM",
+        "OlmoeForCausalLM",
+        "OpenELMForCausalLM",
+        "OpenJevModel",
+        "OrionForCausalLM",
+        "PLMForCausalLM",
+        "PLaMo2ForCausalLM",
+        "PLaMo3ForCausalLM",
+        "PaddleOCRVLForConditionalGeneration",
+        "PaddleOCRVisionModel",
+        "PanguEmbeddedForCausalLM",
+        "Phi3ForCausalLM",
+        "Phi4ForCausalLMV",
+        "PhiForCausalLM",
+        "PhiMoEForCausalLM",
+        "Plamo2ForCausalLM",
+        "Plamo3ForCausalLM",
+        "PlamoForCausalLM",
+        "PocketTTSModel",
+        "PplxDeciderModel",
+        "QWenLMHeadModel",
+        "Qwen2AudioForConditionalGeneration",
+        "Qwen2ForCausalLM",
+        "Qwen2Model",
+        "Qwen2MoeForCausalLM",
+        "Qwen2VLForConditionalGeneration",
+        "Qwen2VLModel",
+        "Qwen2_5OmniModel",
+        "Qwen2_5_VLForConditionalGeneration",
+        "Qwen3ASRForConditionalGeneration",
+        "Qwen3ForCausalLM",
+        "Qwen3Model",
+        "Qwen3MoeForCausalLM",
+        "Qwen3NextForCausalLM",
+        "Qwen3OmniMoeForConditionalGeneration",
+        "Qwen3VLForConditionalGeneration",
+        "Qwen3VLMoeForConditionalGeneration",
+        "Qwen3_5ForCausalLM",
+        "Qwen3_5ForConditionalGeneration",
+        "Qwen3_5MoeForCausalLM",
+        "Qwen3_5MoeForConditionalGeneration",
+        "Qwen4ExpForCausalLM",
+        "Qwen4ExpForConditionalGeneration",
+        "QwenForCausalLM",
+        "RADIOModel",
+        "RND1",
+        "RWForCausalLM",
+        "RWKV6Qwen2ForCausalLM",
+        "RWKV7ForCausalLM",
+        "RobertaForSequenceClassification",
+        "RobertaModel",
+        "RuGPT3XLForCausalLM",
+        "Rwkv6ForCausalLM",
+        "Rwkv7ForCausalLM",
+        "RwkvHybridForCausalLM",
+        "Sarashina2VisionForCausalLM",
+        "SarvamMoEForCausalLM",
+        "SeedOssForCausalLM",
+        "SmallThinkerForCausalLM",
+        "SmolLM3ForCausalLM",
+        "SmolVLMForConditionalGeneration",
+        "SolarOpenForCausalLM",
+        "Spark2_5ForCausalLM",
+        "StableLMEpochForCausalLM",
+        "StableLmForCausalLM",
+        "Starcoder2ForCausalLM",
+        "Step3p5ForCausalLM",
+        "StepVLForConditionalGeneration",
+        "T5EncoderModel",
+        "T5ForConditionalGeneration",
+        "T5WithLMHeadModel",
+        "UMT5ForConditionalGeneration",
+        "UMT5Model",
+        "UltravoxModel",
+        "VLlama3ForCausalLM",
+        "VoxtralForConditionalGeneration",
+        "WavTokenizerDec",
+        "XLMRobertaForSequenceClassification",
+        "XLMRobertaModel",
+        "XverseForCausalLM",
+        "YoutuForCausalLM",
+        "YoutuVLForConditionalGeneration",
+        "modeling_grove_moe.GroveMoeForCausalLM",
+        "modeling_sarvam_moe.SarvamMoEForCausalLM"
+      ],
+      "disk_multiplier": 2
+    },
+    "task_aliases": {
+      "stable-diffusion": "text-to-image"
+    },
+    "image_pipeline_substrings": [
+      "texttoimage",
+      "pipelinefortext2image",
+      "qwenimage",
+      "flux",
+      "stablediffusion",
+      "stablecascade",
+      "wuerstchen",
+      "kandinsky",
+      "pixart",
+      "auraflow",
+      "sana",
+      "lumina",
+      "kolors",
+      "cogview",
+      "hunyuan",
+      "dit",
+      "glmpipeline",
+      "glmimage",
+      "zimage",
+      "ovisimage",
+      "prxpipeline",
+      "latentconsistency",
+      "deepfloyd",
+      "image2image",
+      "img2img",
+      "inpaint",
+      "depth2img",
+      "kontext",
+      "edit"
+    ],
+    "image_class_fallback_substrings": [
+      "pipeline"
+    ],
+    "image_unsupported_class_substrings": [
+      "videodiffusion",
+      "texttovideo",
+      "imagetovideo",
+      "image2video",
+      "video2video",
+      "videopipeline"
+    ],
+    "asr_name_families": [
+      "SenseVoiceSmall",
+      "Fun-ASR-Nano-2512",
+      "GLM-ASR-Nano-2512",
+      "Whisper-large-v3",
+      "Whisper-large-v3-turbo",
+      "Qwen3-ASR-0.6B",
+      "Qwen3-ASR-1.7B",
+      "Paraformer-zh",
+      "Paraformer-zh-streaming"
+    ],
+    "asr_arch_substrings": [
+      "GlmAsrForConditionalGeneration",
+      "Qwen3ASRForConditionalGeneration",
+      "WhisperForConditionalGeneration",
+      "Wav2Vec2ForCTC",
+      "HubertForCTC",
+      "SEWForCTC",
+      "SEWDForCTC",
+      "Data2VecAudioForCTC",
+      "UniSpeechForCTC",
+      "UniSpeechSatForCTC",
+      "WavLMForCTC",
+      "Speech2TextForConditionalGeneration",
+      "SpeechEncoderDecoderModel"
+    ],
+    "tts_name_families": [
+      "CosyVoice",
+      "Spark-TTS",
+      "IndexTTS",
+      "F5-TTS",
+      "Kokoro",
+      "ChatTTS",
+      "OuteTTS",
+      "Fish-Speech",
+      "GPT-SoVITS",
+      "MegaTTS",
+      "Orpheus-TTS",
+      "XTTS",
+      "Zonos",
+      "Higgs-Audio",
+      "SambertHifigan"
+    ],
+    "tts_name_tokens": [
+      "tts"
+    ],
+    "tts_task_arch_substrings": [
+      "VitsModel",
+      "BarkModel",
+      "SpeechT5ForTextToSpeech",
+      "FastSpeech2Conformer",
+      "ParlerTTSForConditionalGeneration",
+      "CsmForConditionalGeneration",
+      "DiaForConditionalGeneration"
+    ],
+    "tts_backend_arch_substrings": [
+      "Qwen3TTS",
+      "VitsModel",
+      "BarkModel",
+      "SpeechT5ForTextToSpeech",
+      "FastSpeech2Conformer",
+      "ParlerTTSForConditionalGeneration",
+      "CsmForConditionalGeneration",
+      "DiaForConditionalGeneration"
+    ],
+    "tts_backend_name_substrings": [
+      "kokoro"
+    ],
+    "diffusion_gguf_architectures": [
+      "aura",
+      "chroma",
+      "flux",
+      "hidream",
+      "lumina2",
+      "qwen_image",
+      "sd1",
+      "sd3",
+      "sdxl"
+    ],
+    "allow_empty_image_class": true,
+    "unsupported_format_tags": [
+      "jax",
+      "joblib",
+      "onnx",
+      "paddle",
+      "paddlepaddle",
+      "tensorflow"
+    ],
+    "unsupported_runtime_tags": [
+      "flax",
+      "onnx",
+      "paddle",
+      "paddlepaddle",
+      "tensorflow",
+      "tflite"
+    ],
+    "quant_substrings": [
+      "awq",
+      "gptq",
+      "fp4",
+      "fp8",
+      "mlx",
+      "w4a16",
+      "w8a8"
+    ],
+    "quant_tokens": [
+      "int4",
+      "int8",
+      "4bit",
+      "8bit",
+      "4bits",
+      "8bits"
+    ],
+    "gguf_non_text_keywords": [
+      "flux",
+      "sdxl",
+      "sd1",
+      "sd-1.5",
+      "sd3",
+      "sd-3",
+      "stable-diffusion",
+      "stable_diffusion",
+      "stable-cascade",
+      "stable_cascade",
+      "qwen-image",
+      "qwen_image",
+      "hidream",
+      "pixart",
+      "kolors",
+      "wuerstchen",
+      "sana",
+      "cogview",
+      "zimage",
+      "z-image",
+      "z_image",
+      "kandinsky",
+      "deepfloyd",
+      "latentconsistency",
+      "latent-consistency",
+      "latent_consistency",
+      "glmimage",
+      "glm-image",
+      "glm_image",
+      "ovisimage",
+      "ovis-image",
+      "ovis_image",
+      "wan2",
+      "hunyuanvideo",
+      "hunyuan-video",
+      "hunyuan_video",
+      "ltx-video",
+      "ltx_video",
+      "ltxv",
+      "cogvideox",
+      "mochi",
+      "animatediff"
+    ]
+  },
+  "cases": [
+    {
+      "name": "phi-4-convertible",
+      "repository": "microsoft/phi-4",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "Phi3ForCausalLM",
+        "class_name": "",
+        "model_params": 14.66,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 30.23
+      },
+      "stats": {
+        "total_size": 29300000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "Phi3ForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "convert"
+      }
+    },
+    {
+      "name": "llama-4-scout-unknown-format",
+      "repository": "unsloth/unsloth_Llama-4-Scout-17B-16E-Instruct",
+      "tags": [
+        {
+          "name": "pytorch",
+          "category": "task"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "Llama4ForConditionalGeneration",
+        "class_name": "",
+        "model_params": 108.64,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 205.23
+      },
+      "stats": {
+        "total_size": 0
+      },
+      "lite_input": {
+        "format": "",
+        "architecture": "Llama4ForConditionalGeneration",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "sdxl-missing-size",
+      "repository": "stabilityai/stabilityai_stable-diffusion-xl-base-1.0",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "stable-diffusion",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "",
+        "class_name": "StableDiffusionXLPipeline",
+        "model_params": 0,
+        "model_params_valid": false,
+        "mini_gpu_memory_gb": 0
+      },
+      "stats": {
+        "total_size": 0
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "",
+        "class_name": "StableDiffusionXLPipeline",
+        "library_name": "",
+        "pipeline_tag": "stable-diffusion"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "image"
+      }
+    },
+    {
+      "name": "qwen3-2-4t-too-large",
+      "repository": "Qwen/Qwen3.8-2.4T-A95B",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "Qwen3MoeForCausalLM",
+        "class_name": "",
+        "model_params": 2446.18,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 4564.56
+      },
+      "stats": {
+        "total_size": 4400000000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "Qwen3MoeForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "deepseek-r1-fp4-quantized",
+      "repository": "nvidia/DeepSeek-R1-0528-FP4",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "DeepseekV3ForCausalLM",
+        "class_name": "",
+        "model_params": 396.77,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 402.93
+      },
+      "stats": {
+        "total_size": 200000000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "DeepseekV3ForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "glm-4-6-too-large",
+      "repository": "zai-org/GLM-4.6",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "Glm4MoeForCausalLM",
+        "class_name": "",
+        "model_params": 356,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 671
+      },
+      "stats": {
+        "total_size": 700000000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "Glm4MoeForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "gguf-text-fits",
+      "repository": "bartowski/Qwen2.5-7B-Instruct-GGUF",
+      "tags": [
+        {
+          "name": "gguf",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "qwen2",
+        "class_name": "",
+        "model_params": 7.6,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 5.5,
+        "quantizations": [
+          {
+            "type": "Q4_K_M",
+            "mini_gpu_memory_gb": 5.5
+          }
+        ]
+      },
+      "stats": {
+        "total_size": 4700000000
+      },
+      "lite_input": {
+        "format": "gguf",
+        "architecture": "qwen2",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "direct"
+      }
+    },
+    {
+      "name": "gguf-dual-format",
+      "repository": "acme/qwen2-7b-gguf-safetensors",
+      "tags": [
+        {
+          "name": "gguf",
+          "category": "framework"
+        },
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "Qwen2ForCausalLM",
+        "class_name": "",
+        "model_params": 7.6,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 5.5
+      },
+      "stats": {
+        "total_size": 15000000000
+      },
+      "lite_input": {
+        "format": "gguf",
+        "architecture": "Qwen2ForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "direct"
+      }
+    },
+    {
+      "name": "gguf-metadata-missing",
+      "repository": "acme/qwen2-7b-instruct-gguf",
+      "tags": [
+        {
+          "name": "gguf",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "",
+        "class_name": "",
+        "model_params": 0,
+        "model_params_valid": false,
+        "mini_gpu_memory_gb": 0
+      },
+      "stats": {
+        "total_size": 4700000000
+      },
+      "lite_input": {
+        "format": "gguf",
+        "architecture": "",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "direct"
+      }
+    },
+    {
+      "name": "gguf-image-keyword",
+      "repository": "black-forest-labs/FLUX.1-dev-GGUF",
+      "tags": [
+        {
+          "name": "gguf",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "",
+        "class_name": "",
+        "model_params": 12,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 24
+      },
+      "stats": {
+        "total_size": 12000000000
+      },
+      "lite_input": {
+        "format": "gguf",
+        "architecture": "",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "gguf-image-class",
+      "repository": "acme/flux-dev-gguf",
+      "tags": [
+        {
+          "name": "gguf",
+          "category": "framework"
+        }
+      ],
+      "metadata": {
+        "architecture": "",
+        "class_name": "FluxPipeline",
+        "model_params": 12,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 24
+      },
+      "stats": {
+        "total_size": 12000000000
+      },
+      "lite_input": {
+        "format": "gguf",
+        "architecture": "",
+        "class_name": "FluxPipeline",
+        "library_name": "",
+        "pipeline_tag": ""
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "image-class-fallback",
+      "repository": "acme/flux-image-pipeline",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "",
+        "class_name": "FluxPipeline",
+        "model_params": 0,
+        "model_params_valid": false,
+        "mini_gpu_memory_gb": 0
+      },
+      "stats": {
+        "total_size": 20000000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "",
+        "class_name": "FluxPipeline",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "image"
+      }
+    },
+    {
+      "name": "video-class-excluded",
+      "repository": "acme/video-diffusion-pipeline",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "",
+        "class_name": "VideoDiffusionPipeline",
+        "model_params": 0,
+        "model_params_valid": false,
+        "mini_gpu_memory_gb": 0
+      },
+      "stats": {
+        "total_size": 10000000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "",
+        "class_name": "VideoDiffusionPipeline",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "asr-family",
+      "repository": "openai/whisper-large-v3",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "",
+        "class_name": "",
+        "model_params": 1.55,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 0
+      },
+      "stats": {
+        "total_size": 3100000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "asr"
+      }
+    },
+    {
+      "name": "tts-name",
+      "repository": "hexgrad/Kokoro-82M",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "",
+        "class_name": "",
+        "model_params": 0.082,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 0
+      },
+      "stats": {
+        "total_size": 350000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "tts"
+      }
+    },
+    {
+      "name": "quantized-repo-name",
+      "repository": "TheBloke/Llama-2-7B-AWQ",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "LlamaForCausalLM",
+        "class_name": "",
+        "model_params": 6.7,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 13
+      },
+      "stats": {
+        "total_size": 14000000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "LlamaForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "mlx-quantized-image",
+      "repository": "mlx-community/Qwen-Image-2.1",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "mlx",
+          "category": "runtime_framework"
+        },
+        {
+          "name": "text-to-image",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "",
+        "class_name": "QwenImage21Pipeline",
+        "model_params": 0,
+        "model_params_valid": false,
+        "mini_gpu_memory_gb": 0
+      },
+      "stats": {
+        "total_size": 30000000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "",
+        "class_name": "QwenImage21Pipeline",
+        "library_name": "mlx",
+        "pipeline_tag": "text-to-image"
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "missing-metadata-text",
+      "repository": "acme/no-metadata-text",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "",
+        "class_name": "",
+        "model_params": 0,
+        "model_params_valid": false,
+        "mini_gpu_memory_gb": 0
+      },
+      "stats": {
+        "total_size": 0
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "missing-params",
+      "repository": "acme/qwen2-7b-instruct",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "Qwen2ForCausalLM",
+        "class_name": "",
+        "model_params": 0,
+        "model_params_valid": false,
+        "mini_gpu_memory_gb": 10
+      },
+      "stats": {
+        "total_size": 14000000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "Qwen2ForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "convert"
+      }
+    },
+    {
+      "name": "missing-memory-gguf",
+      "repository": "acme/qwen2-7b-gguf-no-memory",
+      "tags": [
+        {
+          "name": "gguf",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "qwen2",
+        "class_name": "",
+        "model_params": 7.6,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 0,
+        "quantizations": [
+          {
+            "type": "Q4_K_M",
+            "mini_gpu_memory_gb": 0
+          }
+        ]
+      },
+      "stats": {
+        "total_size": 4700000000
+      },
+      "lite_input": {
+        "format": "gguf",
+        "architecture": "qwen2",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "direct"
+      }
+    },
+    {
+      "name": "non-convertible-arch",
+      "repository": "acme/mystery-model",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "MysteryForCausalLM",
+        "class_name": "",
+        "model_params": 7,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 10
+      },
+      "stats": {
+        "total_size": 14000000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "MysteryForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": false,
+        "mode": "none"
+      }
+    },
+    {
+      "name": "gguf-quantizations-object",
+      "repository": "acme/qwen2-7b-gguf-object-quants",
+      "tags": [
+        {
+          "name": "gguf",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "Qwen2ForCausalLM",
+        "class_name": "",
+        "model_params": 7.6,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 0,
+        "quantizations": {
+          "Q4_K_M": {
+            "mini_gpu_memory_gb": 4.5
+          }
+        }
+      },
+      "stats": {
+        "total_size": 4700000000
+      },
+      "lite_input": {
+        "format": "gguf",
+        "architecture": "Qwen2ForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "direct"
+      }
+    },
+    {
+      "name": "gguf-dual-format-quantizations-string",
+      "repository": "acme/qwen2-7b-gguf-string-quants",
+      "tags": [
+        {
+          "name": "gguf",
+          "category": "framework"
+        },
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "text-generation",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "Qwen2ForCausalLM",
+        "class_name": "",
+        "model_params": 7.6,
+        "model_params_valid": true,
+        "mini_gpu_memory_gb": 0,
+        "quantizations": "Q4_K_M"
+      },
+      "stats": {
+        "total_size": 4700000000
+      },
+      "lite_input": {
+        "format": "gguf",
+        "architecture": "Qwen2ForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "text-generation"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "direct"
+      }
+    },
+    {
+      "name": "sd-task-alias",
+      "repository": "acme/sd-alias-model",
+      "tags": [
+        {
+          "name": "safetensors",
+          "category": "framework"
+        },
+        {
+          "name": "stable-diffusion",
+          "category": "task"
+        }
+      ],
+      "metadata": {
+        "architecture": "MysteryForCausalLM",
+        "class_name": "",
+        "model_params": 0,
+        "model_params_valid": false,
+        "mini_gpu_memory_gb": 0
+      },
+      "stats": {
+        "total_size": 6000000000
+      },
+      "lite_input": {
+        "format": "safetensors",
+        "architecture": "MysteryForCausalLM",
+        "class_name": "",
+        "library_name": "",
+        "pipeline_tag": "stable-diffusion"
+      },
+      "lite_expect": {
+        "supported": true,
+        "mode": "image"
+      }
+    }
+  ]
+}

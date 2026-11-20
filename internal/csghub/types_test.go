@@ -123,3 +123,26 @@ func TestListResponseDeserialization(t *testing.T) {
 		t.Fatalf("Data len = %d, want 2", len(resp.Data))
 	}
 }
+
+func TestValidModelParams(t *testing.T) {
+	valid := true
+	invalid := false
+	tests := []struct {
+		name string
+		meta ModelMetadata
+		want float64
+	}{
+		{name: "missing flag keeps older payloads working", meta: ModelMetadata{ModelParams: 7}, want: 7},
+		{name: "valid flag", meta: ModelMetadata{ModelParams: 7, ModelParamsValid: &valid}, want: 7},
+		{name: "invalid flag", meta: ModelMetadata{ModelParams: 7, ModelParamsValid: &invalid}, want: 0},
+		{name: "missing params", meta: ModelMetadata{ModelParamsValid: &valid}, want: 0},
+		{name: "negative params", meta: ModelMetadata{ModelParams: -1, ModelParamsValid: &valid}, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.meta.ValidModelParams(); got != tt.want {
+				t.Fatalf("ValidModelParams() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
