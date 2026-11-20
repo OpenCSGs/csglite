@@ -188,6 +188,7 @@ func (s *Server) refreshCloudCredentials() {
 		s.cloud.SetAccessToken(s.cfg.Token)
 	}
 	clearMarketplaceCache()
+	clearMarketplaceLocalInferenceCache()
 	s.invalidateLicenseCloudCache()
 	s.cloudRefreshMu.Lock()
 	s.cloudRefreshAt = time.Time{}

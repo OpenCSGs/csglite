@@ -218,6 +218,12 @@ type Server struct {
 	// taken, so the two never nest in both directions.
 	modelSettingsMu sync.RWMutex
 
+	// localFilterEndpointMu guards the per-process memo that the hub has no
+	// local-model-filter endpoint. Without it every page of a legacy hub pays a
+	// failing round trip before falling back to the scan.
+	localFilterEndpointMu            sync.Mutex
+	localFilterEndpointUnavailableAt time.Time
+
 	mu           sync.RWMutex
 	engines      map[string]*managedEngine
 	loading      map[string]*engineLoadState
@@ -274,6 +280,11 @@ type Server struct {
 	modelMetadataMu        sync.RWMutex
 	modelMetadata          *modelmetadata.Store
 	desktopBootstrapped    atomic.Bool
+
+	// localInferenceLimits overrides the hardware probe that decides which
+	// Marketplace models fit this machine. Tests set it; production leaves it
+	// nil and the handler probes the hardware (or skips limits in a cluster).
+	localInferenceLimits func() marketplaceLocalInferenceLimits
 
 	// cluster is the LAN compute cluster manager, nil when disabled for this
 	// process. It is started in Run once the API port is bound.

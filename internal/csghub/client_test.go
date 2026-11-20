@@ -157,3 +157,57 @@ func TestGetModelTreeRecursesIntoDirectories(t *testing.T) {
 		t.Fatalf("requests = %#v, want %#v", paths, wantRequests)
 	}
 }
+
+func TestGetModelTreeSizeStopsAboveLimit(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Query().Get("path"))
+		if r.URL.Path != "/api/v1/models/BAAI/bge-m3/tree" {
+			http.NotFound(w, r)
+			return
+		}
+
+		var data []RepoFile
+		switch r.URL.Query().Get("path") {
+		case "":
+			data = []RepoFile{
+				{Type: "dir", Path: "1_Pooling", Name: "1_Pooling"},
+				{Type: "file", Path: "model.safetensors", Name: "model.safetensors", Size: 100},
+			}
+		case "1_Pooling":
+			data = []RepoFile{
+				{Type: "file", Path: "1_Pooling/config.json", Name: "config.json", Size: 10},
+			}
+		default:
+			http.NotFound(w, r)
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(APIResponse[[]RepoFile]{Msg: "OK", Data: data})
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "")
+	total, err := c.GetModelTreeSize(context.Background(), "BAAI", "bge-m3", 50)
+	if err != nil {
+		t.Fatalf("GetModelTreeSize() error = %v", err)
+	}
+	if total != 100 {
+		t.Fatalf("total = %d, want 100 (lower bound from the root page)", total)
+	}
+	if !reflect.DeepEqual(paths, []string{""}) {
+		t.Fatalf("requested paths = %#v, want only the root page", paths)
+	}
+
+	paths = nil
+	total, err = c.GetModelTreeSize(context.Background(), "BAAI", "bge-m3", 0)
+	if err != nil {
+		t.Fatalf("GetModelTreeSize() error = %v", err)
+	}
+	if total != 110 {
+		t.Fatalf("total = %d, want 110 (whole tree)", total)
+	}
+	if !reflect.DeepEqual(paths, []string{"", "1_Pooling"}) {
+		t.Fatalf("requested paths = %#v, want the root page and the directory", paths)
+	}
+}

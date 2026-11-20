@@ -2523,6 +2523,22 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "local_inference",
+            "in": "query",
+            "description": "When enabled, returns only models this machine can run locally. Requires `artifact_source=opencsg`; other sources return 400. Accepts `true` or `1`; `per` must be at most 50.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "exclude_paths",
+            "in": "query",
+            "description": "Candidate cursor for `local_inference`: comma-separated repository paths already evaluated by the client. Only rejected candidates and candidates added to the page are consumed; the response returns the updated list in `exclude_paths`. Reset it when any filter changes.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2536,8 +2552,14 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "502": {
             "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         }
       }
@@ -17564,6 +17586,9 @@
           "model_params": {
             "type": "number"
           },
+          "model_params_valid": {
+            "type": "boolean"
+          },
           "tensor_type": {
             "type": "string"
           },
@@ -18021,7 +18046,25 @@
           },
           "total_exact": {
             "type": "boolean",
-            "description": "Whether `total` is an exact catalog count. Hugging Face listings set this to false."
+            "description": "Whether `total` is an exact catalog count. Hugging Face listings set this to false, as do local inference scans that stopped early or hit transient probe failures."
+          },
+          "partial": {
+            "type": "boolean",
+            "description": "Whether this page may be missing locally runnable models. Only present when `local_inference=true` on `artifact_source=opencsg`."
+          },
+          "page_limit_exceeded": {
+            "type": "boolean",
+            "description": "Whether the OpenCSG listing stopped paging past its offset limit. Set by both the hub local-model-filter endpoint and the scan fallback; absent for Hugging Face and ModelScope listings. Narrow the filters instead of requesting the next page."
+          },
+          "exclude_paths": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Updated candidate cursor. Returned by the hub local-model-filter endpoint, and null when no candidate was consumed; absent when the backend fell back to the scan path."
           }
         }
       },
