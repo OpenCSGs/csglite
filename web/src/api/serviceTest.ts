@@ -7,13 +7,14 @@ import type { ServiceTestProtocol } from "./serviceTestProtocols";
 export { serviceTestProtocols } from "./serviceTestProtocols";
 export type { ServiceTestProtocol } from "./serviceTestProtocols";
 
-export interface ServiceTestOptions { file?: File; question?: string; questionType?: DecisionQuestionType; choices?: string; voice?: string }
+export interface ServiceTestOptions { file?: File; question?: string; questionType?: DecisionQuestionType; choices?: string; voice?: string; nodeUUID?: string }
 
 async function dataURL(file: File): Promise<string> {
   return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(reader.error);reader.readAsDataURL(file)});
 }
 export async function testModelService(model: string, protocol: ServiceTestProtocol, input: string, signal: AbortSignal, options: ServiceTestOptions = {}) {
-  const endpoint = `/ai-gateway/v1/${protocol}`;
+  const prefix = options.nodeUUID ? `/ai-gateway/providers/${encodeURIComponent(`node:${options.nodeUUID}`)}` : "/ai-gateway";
+  const endpoint = `${prefix}/v1/${protocol}`;
   let body: BodyInit;
   let jsonBody: Record<string, unknown> | undefined;
   if(protocol==="audio/transcriptions" || protocol==="images/edits") {

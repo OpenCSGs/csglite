@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ClusterNodeView, ClusterNodeModelStatus, ClusterNodeStatus, ClusterView, ClusterDeployment, ProviderPool } from "./api/client";
-import { canPublishModelInstance, filterModelInstances, isManagedModelInstance, mergeClusterDeployments, modelInstanceRows, modelRowState, modelNodeState, measuredRate, modelPublication, modelActionAvailability, modelTestServices } from "./clusterModels";
+import { canPublishModelInstance, filterModelInstances, isManagedModelInstance, mergeClusterDeployments, modelInstanceRows, modelRowState, modelNodeState, measuredRate, modelPublication, modelActionAvailability, modelTestTargets } from "./clusterModels";
 const model = (id: string, loaded = true): ClusterNodeModelStatus => ({ id, repo: "org/shared", size: 1024, loaded, loading: false, active: 0, native_tool_streaming: false, perf: { decode_tps: 32.42, samples: 2 } });
 const node = (uuid: string, online: boolean, models: ClusterNodeModelStatus[]): ClusterNodeView => ({ uuid, name: uuid, online, local: false, health: "healthy", status: { models } as ClusterNodeStatus });
 describe("model instance table", () => {
@@ -50,31 +50,46 @@ describe("publication status and lifecycle actions", () => {
     const noAPI = { ...pool(), inference_protocols: [] };
     const fixedElsewhere = { ...pool(), members: [{ id: "other", source: "node:other", model: "qwen" }, ...pool().members] };
     const publication = modelPublication(row, view, [disabled, missing, noAPI, fixedElsewhere, decision, embedding]);
-    expect(modelTestServices(row, view, publication)).toEqual([decision, embedding]);
-    expect(modelTestServices(row, view, publication).map(service => service.model)).toEqual(["public-decision", "public-embedding"]);
-    expect(modelTestServices(row, view, modelPublication(row, view, null))).toEqual([]);
-    expect(modelTestServices(row, view, modelPublication(row, view, []))).toEqual([]);
+    expect(modelTestTargets(row, view, publication)).toEqual([decision, embedding]);
+    expect(modelTestTargets(row, view, publication).map(service => service.model)).toEqual(["public-decision", "public-embedding"]);
+
+  });
+
+  it("tests a running unpublished deployment on its exact node and runtime ID", () => {
+    const d = { ...task(), kind: "embedding" as const };
+    const row = modelInstanceRows([worker()], [], [d]).find(row => row.deployment)!;
+    const unpublished = modelPublication(row, view, []);
+    expect(modelTestTargets(row, view, unpublished)).toMatchObject([
+      { nodeUUID: "worker", model: "deployment/one", category: "embedding" },
+    ]);
+    row.deployment = { ...d, status: { ...d.status, phase: "idle" } };
+    expect(modelTestTargets(row, view, unpublished)).toEqual([]);
+    row.deployment = undefined;
+    expect(canPublishModelInstance(row, view)).toBe(false);
+    expect(modelTestTargets(row, view, unpublished)[0].model).toBe("deployment/one");
+    row.node.online = false;
+    expect(modelTestTargets(row, view, unpublished)).toEqual([]);
   });
 
   it("disables testing for stale, offline, paused and unfinished models while allowing on-demand wakeup", () => {
     const row = modelInstanceRows([worker()], [])[0];
     const publication = modelPublication(row, view, [pool()]);
-    expect(modelTestServices(row, view, publication, true)).toEqual([]);
+    expect(modelTestTargets(row, view, publication, true)).toEqual([]);
     row.node.online = false;
-    expect(modelTestServices(row, view, publication)).toEqual([]);
+    expect(modelTestTargets(row, view, publication)).toEqual([]);
     row.node.online = true;
     row.node.status!.state = "maintenance";
-    expect(modelTestServices(row, view, publication)).toEqual([]);
+    expect(modelTestTargets(row, view, publication)).toEqual([]);
     row.node.status!.state = "active";
     row.model.loaded = false;
-    expect(modelTestServices(row, view, publication)).toHaveLength(1);
+    expect(modelTestTargets(row, view, publication)).toHaveLength(1);
     row.model.loading = true;
-    expect(modelTestServices(row, view, publication)).toEqual([]);
+    expect(modelTestTargets(row, view, publication)).toEqual([]);
     row.model.loading = false;
     row.deployment = task("downloading");
-    expect(modelTestServices(row, view, publication)).toEqual([]);
+    expect(modelTestTargets(row, view, publication)).toEqual([]);
     row.deployment = task("failed");
-    expect(modelTestServices(row, view, publication)).toEqual([]);
+    expect(modelTestTargets(row, view, publication)).toEqual([]);
   });
 
   it("matches publications by exact model ID and node, excluding unrelated sources and repository aliases", () => {

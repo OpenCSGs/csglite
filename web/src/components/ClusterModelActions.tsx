@@ -1,9 +1,10 @@
 import { createPortal } from "preact/compat";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
-import type { ClusterDeployment, ClusterView, ProviderPool } from "../api/client";
+import type { ClusterDeployment, ClusterView } from "../api/client";
+import type { InferenceTestTarget } from "../api/serviceTestProtocols";
 import { deleteClusterDeployment, manageClusterNodeModel, updateClusterDeployment } from "../api/client";
 import type { ModelInstanceRow } from "../clusterModels";
-import { canPublishModelInstance, modelActionAvailability, modelPublication, modelTestServices } from "../clusterModels";
+import { canPublishModelInstance, modelActionAvailability, modelPublication, modelTestTargets } from "../clusterModels";
 import { t } from "../i18n";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { InferenceTestDialog } from "./InferenceTestDialog";
@@ -14,7 +15,7 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
   row: ModelInstanceRow; rows: ModelInstanceRow[]; view: ClusterView; publication: ReturnType<typeof modelPublication>;
   stale: boolean; busy: boolean; onPublish: () => void; onChanged: () => Promise<unknown>; onSync?: () => void; syncBusy: boolean;
 }) {
-  const [testing, setTesting] = useState<ProviderPool[] | null>(null);
+  const [testing, setTesting] = useState<InferenceTestTarget[] | null>(null);
   const [editing, setEditing] = useState<ClusterDeployment | null>(null);
   const [confirm, setConfirm] = useState<"unload" | "delete" | null>(null);
   const [busy, setBusy] = useState(false);
@@ -25,7 +26,7 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
   const menu = useRef<HTMLDivElement>(null);
   const menuID = `cluster-model-actions-${encodeURIComponent(row.key)}`;
   const unavailable = busy || parentBusy || stale;
-  const testServices = modelTestServices(row, view, publication, unavailable);
+  const testTargets = modelTestTargets(row, view, publication, unavailable);
   const actions = modelActionAvailability(row, view, unavailable, rows);
   const publishable = !unavailable && publication.state === "unpublished" && canPublishModelInstance(row, view);
   const publishReason = stale ? "cluster.modelStatusStale" : publication.state === "unknown" ? "cluster.publicationRefreshFailed"
@@ -89,7 +90,7 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
       <button type="button" role="menuitem" class={itemClass} disabled={!actions.unload} title={!actions.unload ? t(actions.reason) : undefined} onClick={() => act(() => setConfirm("unload"))}>{t(stopLabel)}</button>
       {d && <button type="button" role="menuitem" class={itemClass} disabled={!actions.edit} title={!actions.edit ? t(actions.editReason) : undefined} onClick={() => act(() => setEditing(d))}>{t("deployments.editConfig")}</button>}
       {onSync && <button type="button" role="menuitem" class={itemClass} disabled={!actions.sync || syncBusy || unavailable} title={!actions.sync ? t(actions.reason) : undefined} onClick={() => act(onSync)}>{t(syncBusy ? "cluster.syncing" : "cluster.syncAll")}</button>}
-      <button type="button" role="menuitem" class={itemClass} disabled={!testServices.length} title={!testServices.length ? t(stale ? "cluster.modelStatusStale" : publication.state === "unpublished" ? "cluster.modelTestPublishFirst" : "cluster.modelTestUnavailable") : undefined} onClick={() => act(() => setTesting(testServices))}>{t("services.test")}</button>
+      <button type="button" role="menuitem" class={itemClass} disabled={!testTargets.length} title={!testTargets.length ? t(stale ? "cluster.modelStatusStale" : "cluster.modelTestUnavailable") : undefined} onClick={() => act(() => setTesting(testTargets))}>{t("services.test")}</button>
       <div class="my-1 border-t border-gray-100" />
       <button type="button" role="menuitem" class={`${itemClass} text-rose-600`} disabled={!actions.delete} title={!actions.delete ? t(actions.reason) : undefined} onClick={() => act(() => setConfirm("delete"))}>{t("cluster.modelDelete")}</button>
     </div>, document.body)}

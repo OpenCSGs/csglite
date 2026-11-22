@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ProviderPool, DecisionQuestionType } from "../api/client";
+import type { DecisionQuestionType } from "../api/client";
 import { serviceTestText, testModelService, serviceTestProtocols } from "../api/serviceTest";
 import type { ServiceTestProtocol } from "../api/serviceTest";
+import type { InferenceTestTarget } from "../api/serviceTestProtocols";
 import { canSendDecision } from "../utils/decision";
 import { t } from "../i18n";
 
@@ -17,7 +18,7 @@ const protocols: Record<ServiceTestProtocol, string> = {
   "audio/speech": "OpenAI · Audio Speech",
 };
 
-export function InferenceTestDialog({ service: initialService, services = [initialService], onClose }: { service: ProviderPool; services?: ProviderPool[]; onClose: () => void }) {
+export function InferenceTestDialog({ service: initialService, services = [initialService], onClose }: { service: InferenceTestTarget; services?: InferenceTestTarget[]; onClose: () => void }) {
   const [serviceID, setServiceID] = useState(initialService.id);
   const service = services.find(candidate => candidate.id === serviceID) || initialService;
   const dialog = useRef<HTMLDialogElement>(null);
@@ -54,7 +55,7 @@ export function InferenceTestDialog({ service: initialService, services = [initi
     activeRequest.current = request;
     setRunning(true); setError(""); setResult(null); setStopped(false);
     try {
-      const response = await testModelService(service.model, protocol, input.trim(), request.signal, {file,voice,question,questionType,choices});
+      const response = await testModelService(service.model, protocol, input.trim(), request.signal, {file,voice,question,questionType,choices,nodeUUID:service.nodeUUID});
       if (activeRequest.current === request) setResult(response);
     } catch (err) {
       if (activeRequest.current === request) {
