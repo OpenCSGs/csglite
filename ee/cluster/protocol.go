@@ -159,6 +159,7 @@ type Status struct {
 	ManagedBy              string `json:"managed_by,omitempty"`
 	DeploymentCapable      bool   `json:"deployment_capable,omitempty"`
 	DeploymentConfigurable bool   `json:"deployment_configurable,omitempty"`
+	DeploymentKeepAlive    bool   `json:"deployment_keep_alive,omitempty"`
 	UUID                   string `json:"uuid"`
 	Name                   string `json:"name"`
 	Version                string `json:"version"`

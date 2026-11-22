@@ -42,11 +42,11 @@ func TestSelectDeploymentTarget(t *testing.T) {
 			case "no-memory":
 				invalid.Status.GPUs[0].VRAMUsed = invalid.Status.GPUs[0].VRAMTotal
 			}
-			id, err := selectDeploymentTarget([]NodeView{small, invalid, large}, "master", false, 0)
+			id, err := selectDeploymentTarget([]NodeView{small, invalid, large}, "master", false, 0, false)
 			if err != nil || id != "large" {
 				t.Fatalf("selected %q, %v; want large", id, err)
 			}
-			if _, err := selectDeploymentTarget([]NodeView{invalid}, "master", false, 0); err == nil {
+			if _, err := selectDeploymentTarget([]NodeView{invalid}, "master", false, 0, false); err == nil {
 				t.Fatal("ineligible target was selected")
 			}
 		})
@@ -56,11 +56,11 @@ func TestSelectDeploymentTarget(t *testing.T) {
 func TestDeploymentMemoryAndTies(t *testing.T) {
 	a, b := placementNode("a", 24<<30), placementNode("b", 24<<30)
 	a.Status.Inflight = 1
-	if id, _ := selectDeploymentTarget([]NodeView{a, b}, "master", false, 0); id != "b" {
+	if id, _ := selectDeploymentTarget([]NodeView{a, b}, "master", false, 0, false); id != "b" {
 		t.Fatal("busy node won a memory tie")
 	}
 	a.Status.Inflight = 0
-	if id, _ := selectDeploymentTarget([]NodeView{b, a}, "master", false, 0); id != "a" {
+	if id, _ := selectDeploymentTarget([]NodeView{b, a}, "master", false, 0, false); id != "a" {
 		t.Fatal("UUID tie break was not deterministic")
 	}
 	a.Status.RAM.Unified = true
@@ -86,11 +86,11 @@ func TestAutoPlacementRechecksRecommendedMemory(t *testing.T) {
 	available := placementNode("still-fits", 12<<30)
 	unknown := placementNode("unknown", 32<<30)
 	unknown.Status.GPUs[0].UsageKnown = false
-	id, err := selectDeploymentTarget([]NodeView{changed, unknown, available}, "master", false, 10<<30)
+	id, err := selectDeploymentTarget([]NodeView{changed, unknown, available}, "master", false, 10<<30, false)
 	if err != nil || id != "still-fits" {
 		t.Fatalf("stale recommendation selected %q: %v", id, err)
 	}
-	if _, err := selectDeploymentTarget([]NodeView{changed, unknown}, "master", false, 10<<30); err == nil {
+	if _, err := selectDeploymentTarget([]NodeView{changed, unknown}, "master", false, 10<<30, false); err == nil {
 		t.Fatal("assigned a recommended variant without enough reported memory")
 	}
 }

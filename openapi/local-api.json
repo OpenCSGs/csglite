@@ -20842,6 +20842,10 @@
           "deployment_configurable": {
             "type": "boolean",
             "description": "Node supports changing quantization and runtime settings on stopped deployments. Missing/false requires a target-node upgrade."
+          },
+          "deployment_keep_alive": {
+            "type": "boolean",
+            "description": "The node supports unloading idle deployment runtimes using keep_alive."
           }
         }
       },
@@ -21659,6 +21663,10 @@
             "minimum": -1,
             "maximum": 999,
             "default": -1
+          },
+          "keep_alive": {
+            "type": "string",
+            "description": "Deployment idle duration, such as 30s, 5m or 1h. Omit, use an empty string, or set -1 to keep the runtime loaded. Finite durations require a target advertising deployment_keep_alive."
           }
         }
       },
@@ -21676,6 +21684,7 @@
               "downloading",
               "loading",
               "ready",
+              "idle",
               "stopping",
               "stopped",
               "failed",
@@ -21684,7 +21693,7 @@
               "deleting",
               "deleted"
             ],
-            "description": "ready means the runtime is loaded without a detected terminal backend fault. Startup failures, inference out-of-memory/compute failures and unexpected process exits set failed, even if the HTTP process is still alive. Failed deployments require an explicit retry and remain failed across restarts."
+            "description": "ready means the runtime is loaded without a detected terminal backend fault. Startup failures, inference out-of-memory/compute failures and unexpected process exits set failed, even if the HTTP process is still alive. Failed deployments require an explicit retry and remain failed across restarts. Idle means the keep-alive window elapsed and the runtime was unloaded. Cached files are retained and starting the deployment explicitly loads it again."
           },
           "error": {
             "type": "string",
@@ -21866,6 +21875,10 @@
             "minimum": -1,
             "maximum": 999,
             "default": -1
+          },
+          "keep_alive": {
+            "type": "string",
+            "description": "Change the deployment idle duration. Omission retains the existing value; empty or -1 clears the timeout."
           }
         }
       },

@@ -79,8 +79,12 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
   }, [draft?.repository, draft?.artifact_source, selection]);
   const targets = deploymentTargets(view);
   const cpuOnly = draft?.n_gpu_layers === 0;
-  const autoTarget = automaticDeploymentTarget(view, cpuOnly);
+  const keepAlive = draft?.keep_alive?.trim();
+  const needsKeepAlive = !!keepAlive && keepAlive !== "-1";
+  const autoTarget = automaticDeploymentTarget(view, cpuOnly, needsKeepAlive);
   const target = draft?.node_uuid === "auto" ? autoTarget : targets.find(node => node.uuid === draft?.node_uuid);
+  const keepAliveUnsupported = needsKeepAlive && (draft?.node_uuid === "auto"
+    ? !targets.some(node => node.status?.deployment_keep_alive) : !!target && !target.status?.deployment_keep_alive);
   const quantOptions = deploymentQuantOptions(detail?.details || selectedModel.current, detail);
   const recommendation = recommendDeploymentQuant(quantOptions, deploymentNodeMemory(target, cpuOnly), draft?.num_ctx || 4096, draft?.num_parallel || 1);
   const quantNoFit = !draft?.quant && recommendation.state === "no-fit";
@@ -104,11 +108,11 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
       revision: deploymentRevision(model, current.artifact_source as ArtifactSource), quant: "", ...(isLlamaDeployment(kind) ? { kind } : {}) }));
   };
   const save = async (event: Event) => {
-    event.preventDefault(); if (stale || busy || !draft || detecting || !isLlamaDeployment(modelKind)) return;
+    event.preventDefault(); if (stale || busy || !draft || detecting || keepAliveUnsupported || !isLlamaDeployment(modelKind)) return;
     if (!target) { setFormError(t("deployments.chooseNode")); return; }
     if (quantNoFit) { setFormError(t("deployments.quantNoFit")); return; }
     setBusy(true); setFormError("");
-    try { await createClusterDeployment({ ...draft, quant: draft.quant || recommendation.quant || "",
+    try { await createClusterDeployment({ ...draft, keep_alive: keepAlive || undefined, quant: draft.quant || recommendation.quant || "",
       minimum_memory_bytes: !draft.quant && recommendation.required ? Math.ceil(recommendation.required) : undefined,
       repository: draft.repository.trim(), kind: modelKind }); setDraft(null); await onChanged(); }
     catch (e) { setFormError((e as Error).message); }
@@ -187,14 +191,19 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
                 <label class="space-y-1 text-sm">{t("deployments.parallel")}<input type="number" class={inputClass} min={1} max={16} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
                 <label class="space-y-1 text-sm">{t("deployments.gpuLayers")}<input type="number" class={inputClass} min={-1} max={999} required value={draft.n_gpu_layers} onInput={e => patch({ n_gpu_layers: Number(e.currentTarget.value) })} /></label>
                 <p class="col-span-2 text-xs text-gray-400">{t("deployments.llamaParamsHint")}</p>
+                <label class="col-span-2 space-y-1 text-sm">{t("deployments.keepAlive")}
+                  <input class={inputClass} placeholder="-1" value={draft.keep_alive ?? ""} onInput={e => patch({ keep_alive: e.currentTarget.value })} />
+                  <span class="block text-xs text-gray-500">{t("deployments.keepAliveHint")}</span>
+                </label>
               </>}
               <p class="col-span-2 text-xs text-gray-400">{t("deployments.registryContext")}</p>
             </div>
           </details>}
         </fieldset>
         {stale && <p role="status" class="text-sm text-amber-700">{t("cluster.modelStatusStale")}</p>}
+        {keepAliveUnsupported && <p role="status" class="text-sm text-amber-700">{t("deployments.keepAliveUpgradeNode")}</p>}
         {formError && <p role="alert" class="text-sm text-red-600">{formError}</p>}
-        <div class="flex justify-end gap-2"><button type="button" class={buttonClass} disabled={busy} onClick={() => setDraft(null)}>{t("deployments.cancel")}</button><button class={primaryClass} disabled={stale || busy || detecting || quantNoFit || !/^[^/\s]+\/[^/\s]+$/.test(draft.repository.trim()) || !target || !isLlamaDeployment(modelKind)}>{t(busy ? "deployments.saving" : "deployments.deploy")}</button></div>
+        <div class="flex justify-end gap-2"><button type="button" class={buttonClass} disabled={busy} onClick={() => setDraft(null)}>{t("deployments.cancel")}</button><button class={primaryClass} disabled={stale || busy || detecting || quantNoFit || keepAliveUnsupported || !/^[^/\s]+\/[^/\s]+$/.test(draft.repository.trim()) || !target || !isLlamaDeployment(modelKind)}>{t(busy ? "deployments.saving" : "deployments.deploy")}</button></div>
       </form>}
     </dialog>
     <dialog ref={publisher} class="w-full max-w-md rounded-2xl p-6 shadow-xl backdrop:bg-black/30" onCancel={e => { if (busy) e.preventDefault(); else setPublishing(null); }}>

@@ -18,6 +18,7 @@ import (
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/modelregistry"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 func (h *clusterHost) deploymentModelManager(_ cluster.Deployment) *model.Manager {
@@ -156,6 +157,13 @@ func (h *clusterHost) StartDeployment(ctx context.Context, d cluster.Deployment,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	keepAlive, set, err := api.ParseKeepAlive(d.KeepAlive)
+	if err != nil {
+		return fmt.Errorf("keep_alive %w", err)
+	}
+	if !set {
+		keepAlive = api.KeepAliveForever
+	}
 	mgr := h.deploymentModelManager(d)
 	artifact := deploymentArtifactID(d)
 	unlock, err := mgr.LockArtifact(ctx, artifact)
@@ -224,7 +232,7 @@ func (h *clusterHost) StartDeployment(ctx context.Context, d cluster.Deployment,
 		_ = engine.Close()
 		return nil
 	}
-	h.s.engines[key] = &managedEngine{engine: engine, deploymentModel: lm, deploymentName: d.Name, numCtx: d.NumCtx, numParallel: d.NumParallel, nGPULayers: d.NGPULayers, dtype: d.Quant, lastUsed: time.Now(), keepAlive: -1}
+	h.s.engines[key] = &managedEngine{engine: engine, deploymentModel: lm, deploymentName: d.Name, numCtx: d.NumCtx, numParallel: d.NumParallel, nGPULayers: d.NGPULayers, dtype: d.Quant, lastUsed: time.Now(), keepAlive: keepAlive}
 	h.s.mu.Unlock()
 	return nil
 }
@@ -257,6 +265,21 @@ func (h *clusterHost) stopDeployment(d cluster.Deployment, force bool) error {
 	}
 	delete(h.s.engines, key)
 	return nil
+}
+
+func (h *clusterHost) ExpireDeployment(d cluster.Deployment, now time.Time) (bool, error) {
+	key := engineCacheKey(d.ModelID(), deploymentEngineMode(d))
+	h.s.mu.Lock()
+	defer h.s.mu.Unlock()
+	me := h.s.engines[key]
+	if me == nil || me.keepAliveForever() || me.activeRequests > 0 || now.Before(me.expiresAt()) {
+		return false, nil
+	}
+	if err := me.engine.Close(); err != nil {
+		return false, fmt.Errorf("unloading idle deployment: %w", err)
+	}
+	delete(h.s.engines, key)
+	return true, nil
 }
 
 func (h *clusterHost) DeploymentRunning(d cluster.Deployment) bool {
@@ -372,5 +395,9 @@ func (h *clusterHost) InspectDeployment(d cluster.Deployment) (cluster.ModelStat
 	if info.DecisionOnly {
 		category = "decision"
 	}
-	return cluster.ModelStatus{ID: d.ModelID(), DeploymentID: d.ID, Repo: d.Repository, Source: d.ArtifactSource, Size: info.Size, Format: info.Format, PipelineTag: info.PipelineTag, Category: category, Loaded: true, Slots: d.NumParallel, Active: me.activeRequests, NGPULayers: d.NGPULayers, NativeToolStreaming: inference.SupportsNativeToolStreaming(me.engine), TypedDecisions: info.TypedDecisions, DecisionOnly: info.DecisionOnly, HasMMProj: info.HasMMProj}, true
+	var expiresAt *time.Time
+	if expires := me.expiresAt(); !expires.IsZero() {
+		expiresAt = &expires
+	}
+	return cluster.ModelStatus{ID: d.ModelID(), DeploymentID: d.ID, Repo: d.Repository, Source: d.ArtifactSource, Size: info.Size, Format: info.Format, PipelineTag: info.PipelineTag, Category: category, Loaded: true, Slots: d.NumParallel, Active: me.activeRequests, ExpiresAt: expiresAt, NGPULayers: d.NGPULayers, NativeToolStreaming: inference.SupportsNativeToolStreaming(me.engine), TypedDecisions: info.TypedDecisions, DecisionOnly: info.DecisionOnly, HasMMProj: info.HasMMProj}, true
 }

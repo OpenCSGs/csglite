@@ -3296,6 +3296,7 @@ export interface ClusterNodeStatus {
   managed_by?: string;
   deployment_capable?: boolean;
   deployment_configurable?: boolean;
+  deployment_keep_alive?: boolean;
   uuid: string;
   name: string;
   version: string;
@@ -3804,7 +3805,7 @@ export async function createEmbeddings(model: string, input: string, source?: st
 export interface ClusterDeploymentSpec {
   name: string; node_uuid?: string; repository: string; artifact_source: string;
   revision: string; quant: string; kind: "chat" | "embedding";
-  num_ctx: number; num_parallel: number; n_gpu_layers: number;
+  num_ctx: number; num_parallel: number; n_gpu_layers: number; keep_alive?: string;
 }
 export interface ClusterDeployment extends ClusterDeploymentSpec {
   id: string; node_uuid: string; controller_uuid: string; generation: number; desired: "running" | "stopped" | "deleted";
@@ -3823,7 +3824,7 @@ export function createClusterDeployment(spec: ClusterDeploymentCreateRequest): P
 export function updateClusterDeployment(id: string, desired: "running" | "stopped" | "deleted"): Promise<ClusterDeployment> {
   return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ desired }) });
 }
-export type ClusterDeploymentConfig = Pick<ClusterDeploymentSpec, "quant" | "num_ctx" | "num_parallel" | "n_gpu_layers">;
+export type ClusterDeploymentConfig = Pick<ClusterDeploymentSpec, "quant" | "num_ctx" | "num_parallel" | "n_gpu_layers" | "keep_alive">;
 export function configureClusterDeployment(id: string, generation: number, config: ClusterDeploymentConfig): Promise<ClusterDeployment> {
   return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ generation, config }) });
 }
