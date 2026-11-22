@@ -1,6 +1,7 @@
 import type { ClusterDeployment, ClusterModelDistribution, ClusterModelSync, ClusterNodeModelStatus, ClusterNodeView, ClusterView, ProviderPool } from "./api/client";
 import { candidateCategory } from "./utils/modelServices";
 import { serviceTestProtocols } from "./api/serviceTestProtocols";
+import type { InferenceTestTarget } from "./api/serviceTestProtocols";
 import { deploymentPhaseKey, isLlamaDeployment } from "./deploymentModels";
 
 export interface ModelInstanceRow {
@@ -64,12 +65,19 @@ export function isManagedModelInstance(row: ModelInstanceRow): boolean {
   return !!row.deployment || !!row.model.deployment_id || row.model.id.startsWith("deployment/");
 }
 
+function modelInstanceAvailable(row: ModelInstanceRow, view: ClusterView): boolean {
+  return view.mode !== "worker" && row.node.online && !!row.node.status?.accept_work && row.node.status.state === "active"
+    && !row.model.loading && !row.sync && modelInstanceCategory(row) !== "unsupported";
+}
+
+function readyDeployment(row: ModelInstanceRow): boolean {
+  return row.deployment?.desired === "running" && row.deployment.status.phase === "ready" && row.model.loaded;
+}
+
 export function canPublishModelInstance(row: ModelInstanceRow, view: ClusterView): boolean {
-  if (view.mode === "worker" || !row.node.online || !row.node.status?.accept_work || row.node.status.state !== "active"
-    || row.model.loading || !!row.sync || modelInstanceCategory(row) === "unsupported") return false;
-  const task = row.deployment;
-  if (isManagedModelInstance(row) && !task) return false;
-  return !task || (task.controller_uuid === view.node.uuid && task.desired === "running" && task.status.phase === "ready" && row.model.loaded);
+  if (!modelInstanceAvailable(row, view)) return false;
+  if (!isManagedModelInstance(row)) return true;
+  return row.deployment?.controller_uuid === view.node.uuid && readyDeployment(row);
 }
 
 // Match runtime IDs and their source scope, never just a repository name.
@@ -84,9 +92,22 @@ export function modelPublication(row: ModelInstanceRow, view: ClusterView, pools
   return { state: !services.length ? "unpublished" as const : activeServices.length ? "published" as const : "disabled" as const, services, activeServices };
 }
 
-export function modelTestServices(row: ModelInstanceRow, view: ClusterView, publication: ReturnType<typeof modelPublication>, unavailable = false): ProviderPool[] {
-  if (unavailable || !canPublishModelInstance(row, view)) return [];
-  return publication.activeServices.filter(service => serviceTestProtocols(service).length > 0);
+export function modelTestTargets(row: ModelInstanceRow, view: ClusterView, publication: ReturnType<typeof modelPublication>, unavailable = false): InferenceTestTarget[] {
+  if (unavailable || row.node.status?.licensed === false || !modelInstanceAvailable(row, view)
+    || (row.deployment && !readyDeployment(row))) return [];
+  const services = publication.activeServices.filter(service => serviceTestProtocols(service).length > 0);
+  if (services.length) return services;
+  if (!row.model.loaded) return [];
+  return [{
+    id: row.key,
+    name: row.deployment?.name || row.model.repo || row.model.id,
+    model: row.model.id,
+    nodeUUID: row.node.uuid,
+    category: modelInstanceCategory(row),
+    typed_decisions: row.model.typed_decisions,
+    decision_only: row.model.decision_only,
+    vision: row.model.has_mmproj,
+  }];
 }
 
 export function modelActionAvailability(row: ModelInstanceRow, view: ClusterView, stale = false, rows: ModelInstanceRow[] = []) {

@@ -159,3 +159,13 @@ describe("per-model API testing", () => {
     expect(response.data[0].embedding).toHaveLength(12);
   });
 });
+
+it("tests an unpublished instance through the fixed-node provider route", async () => {
+  environment();
+  const fetcher = vi.fn().mockResolvedValue(new Response('{"data":[]}'));
+  vi.stubGlobal("fetch", fetcher);
+  const nodeUUID = "613880ae-f467-4b59-8696-29692acf1113";
+  await testModelService("deployment/one", "embeddings", "hello", new AbortController().signal, { nodeUUID });
+  expect(fetcher.mock.calls[0][0]).toBe(`/ai-gateway/providers/node%3A${nodeUUID}/v1/embeddings`);
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ model: "deployment/one", input: "hello", encoding_format: "float" });
+});

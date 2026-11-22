@@ -293,6 +293,16 @@ func TestDeploymentLANToUnifiedGateway(t *testing.T) {
 	}
 	clusterWait(t, "ready deployment on worker", func() bool { return worker.cluster.DeploymentReady(d.ModelID()) })
 	clusterWait(t, "deployment inventory on master", func() bool { return master.cluster.RemoteHasModel(d.ModelID()) })
+	directPath := "/ai-gateway/providers/node%3A" + worker.cluster.Identity().UUID + "/v1/chat/completions"
+	directBody := `{"model":"` + d.ModelID() + `","messages":[{"role":"user","content":"hi"}]}`
+	rec = httptest.NewRecorder()
+	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, directPath, strings.NewReader(directBody)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "managed worker reply") {
+		t.Fatalf("unpublished worker inference %d %s", rec.Code, rec.Body)
+	}
+	if pools := config.GetProviderPools(); len(pools) != 0 {
+		t.Fatalf("direct inference created published services: %+v", pools)
+	}
 	rec = httptest.NewRecorder()
 	body = `{"name":"managed-service","model":"managed-service","policy":"fixed","category":"chat","members":[{"id":"managed","source":"node:` + worker.cluster.Identity().UUID + `","model":"` + d.ModelID() + `"}]}`
 	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/provider-pools", strings.NewReader(body)))
@@ -314,6 +324,11 @@ func TestDeploymentLANToUnifiedGateway(t *testing.T) {
 	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ai-gateway/v1/chat/completions", strings.NewReader(`{"model":"managed-service","messages":[{"role":"user","content":"hi"}]}`)))
 	if rec.Code == http.StatusOK {
 		t.Fatal("gateway restarted a stopped deployment")
+	}
+	rec = httptest.NewRecorder()
+	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, directPath, strings.NewReader(directBody)))
+	if rec.Code == http.StatusOK {
+		t.Fatal("direct inference restarted a stopped deployment")
 	}
 }
 
