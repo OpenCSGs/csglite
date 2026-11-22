@@ -17,6 +17,7 @@ import {
   isFeatureNotLicensedError,
   joinCluster,
   leaveCluster,
+  removeClusterNode,
   rotateClusterToken,
   setClusterNodeState,
   syncClusterModel,
@@ -64,6 +65,7 @@ const activeTab = signal<ClusterTab>("overview");
 const view = signal<ClusterView | null>(null);
 const viewLoaded = signal(false);
 const viewError = signal("");
+let viewRevision = 0;
 const featureDisabled = signal(false);
 
 /** Set when join/invite hits the Community node cap (403 feature_not_licensed). */
@@ -160,8 +162,10 @@ async function copyText(text: string, key: string) {
 
 async function loadView() {
   if (featureDisabled.value) return;
+  const revision = viewRevision;
   try {
     const next = await getCluster();
+    if (revision !== viewRevision) return;
     if (next.mode === "worker" && activeTab.value !== "overview" && activeTab.value !== "settings") activeTab.value = "overview";
     if (view.value?.node.uuid !== next.node.uuid || view.value?.cluster?.uuid !== next.cluster?.uuid || view.value?.mode !== next.mode) {
       models.value = []; modelDeployments.value = []; recommendations.value = []; modelsError.value = "";
@@ -175,6 +179,7 @@ async function loadView() {
       activeTab.value = "overview";
     }
   } catch (err) {
+    if (revision !== viewRevision) return;
     if (isClusterDisabledError(err)) {
       featureDisabled.value = true;
     } else {
@@ -910,18 +915,45 @@ function sortMembers(members: ClusterNodeView[]): ClusterNodeView[] {
   });
 }
 
-function OverviewSection({ view }: { view: ClusterView }) {
-  const members = sortMembers(view.members);
+function OverviewSection({ view: current }: { view: ClusterView }) {
+  const [removeTarget, setRemoveTarget] = useState<ClusterNodeView | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const members = sortMembers(current.members);
+  const targetStillMember = !!removeTarget && current.members.some(member => member.uuid === removeTarget.uuid);
+  const remove = async () => {
+    if (!removeTarget || !targetStillMember || removing) return;
+    setRemoving(true);
+    overviewError.value = "";
+    try {
+      const next = await removeClusterNode(removeTarget.uuid);
+      if (view.value?.cluster?.uuid === next.cluster?.uuid) {
+        // Ignore polls taken before the removal was committed on the server.
+        viewRevision++;
+        view.value = next;
+        viewError.value = "";
+        if (staticEditUUID.value === removeTarget.uuid) staticEditUUID.value = "";
+        if (next.mode === "gateway") {
+          tokenInfo.value = null;
+          createdToken.value = "";
+        }
+      }
+    } catch (err) {
+      overviewError.value = errorMessage(err);
+    } finally {
+      setRemoveTarget(null);
+      setRemoving(false);
+    }
+  };
   return (
     <section class="bg-white rounded-xl border border-gray-200 p-4 sm:p-6">
       <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
-          <h2 class="text-lg font-bold text-gray-900">{view.cluster?.name}</h2>
+          <h2 class="text-lg font-bold text-gray-900">{current.cluster?.name}</h2>
         </div>
         <span class="text-sm text-gray-400">{t("dash.updates")}</span>
       </div>
       {overviewError.value && (
-        <p class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{overviewError.value}</p>
+        <p role="alert" class="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{overviewError.value}</p>
       )}
       <div class="cluster-members" data-cluster-overview>
         <table class="cluster-members-table w-full table-fixed text-sm">
@@ -943,16 +975,20 @@ function OverviewSection({ view }: { view: ClusterView }) {
           </thead>
           <tbody>
             {members.map((m) => (
-              <MemberRow key={m.uuid} node={m} view={view} />
+              <MemberRow key={m.uuid} node={m} view={current} onRemove={current.mode !== "worker" && !m.local ? () => setRemoveTarget(m) : undefined} />
             ))}
           </tbody>
         </table>
       </div>
+      <ConfirmDialog open={removeTarget !== null} title={t("cluster.removeNode")} name={removeTarget?.name}
+        description={t(current.mode === "gateway" ? "cluster.removePublicNodeHint" : "cluster.removeNodeHint")}
+        confirmLabel={t("cluster.removeNode")} busy={removing} busyLabel={t("cluster.removingNode")}
+        confirmDisabled={!targetStillMember} onCancel={() => setRemoveTarget(null)} onConfirm={() => void remove()} />
     </section>
   );
 }
 
-function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView }) {
+function MemberRow({ node, view, onRemove }: { node: ClusterNodeView; view: ClusterView; onRemove?: () => void }) {
   const st = node.status;
   const tone = healthTone(node.health, node.online);
   const gpus = st?.gpus ?? [];
@@ -1026,26 +1062,30 @@ function MemberRow({ node, view }: { node: ClusterNodeView; view: ClusterView })
         {st ? <><span class="font-medium tabular-nums">{loaded.length}</span><span class="ml-1 text-xs text-gray-400">/ {st.models.length}</span></> : "—"}
       </td>
       <td data-label={t("cluster.colActions")} class="py-3 text-right">
-        {canManageNodeState(view, node) ? (
-          <select
-            class="max-w-full rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            value={node.local ? (view.mode === "worker" ? workerNodeState(view.settings) : view.settings.state) : st?.state ?? "active"}
-            disabled={stateSaving.value || !node.online}
-            onChange={(e) => void changeNodeState(node.uuid, (e.target as HTMLSelectElement).value as ClusterNodeState)}
-            aria-label={t("cluster.nodeStateFor", node.name)}
-            title={t(view.mode === "worker" ? "cluster.workerStateOverviewHint" : "cluster.stateSelectorHint")}
-          >
-            <option value="active">{t("cluster.stateActive")}</option>
-            <option value="drain">{t("cluster.stateDrain")}</option>
-            <option value="maintenance">{t("cluster.stateMaintenance")}</option>
-          </select>
-        ) : view.mode && view.mode !== "lan" ? (
-          <span class="text-xs text-gray-500">{t("cluster.publicTunnel")}</span>
-        ) : (
-          <button type="button" class="text-xs text-indigo-600 hover:underline" onClick={() => startStaticEdit(node)}>
-            {t("cluster.setStaticAddress")}
-          </button>
-        )}
+        <div class="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+          {canManageNodeState(view, node) ? (
+            <select
+              class="max-w-full rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              value={node.local ? (view.mode === "worker" ? workerNodeState(view.settings) : view.settings.state) : st?.state ?? "active"}
+              disabled={stateSaving.value || !node.online}
+              onChange={(e) => void changeNodeState(node.uuid, (e.target as HTMLSelectElement).value as ClusterNodeState)}
+              aria-label={t("cluster.nodeStateFor", node.name)}
+              title={t(view.mode === "worker" ? "cluster.workerStateOverviewHint" : "cluster.stateSelectorHint")}
+            >
+              <option value="active">{t("cluster.stateActive")}</option>
+              <option value="drain">{t("cluster.stateDrain")}</option>
+              <option value="maintenance">{t("cluster.stateMaintenance")}</option>
+            </select>
+          ) : view.mode && view.mode !== "lan" ? (
+            <span class="text-xs text-gray-500">{t("cluster.publicTunnel")}</span>
+          ) : (
+            <button type="button" class="text-xs text-indigo-600 hover:underline" onClick={() => startStaticEdit(node)}>
+              {t("cluster.setStaticAddress")}
+            </button>
+          )}
+          {onRemove && <button type="button" class="text-xs text-rose-600 hover:underline"
+            aria-label={t("cluster.removeNodeNamed", node.name)} onClick={onRemove}>{t("cluster.removeNode")}</button>}
+        </div>
       </td>
     </tr>
   );

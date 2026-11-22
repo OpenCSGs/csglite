@@ -223,9 +223,24 @@ func TestPublicClusterReusesMembershipAndScheduler(t *testing.T) {
 	if len(gateway.store.Members()) != 1 {
 		t.Fatal("reconnection duplicated membership")
 	}
-	if err = gateway.RemoveMember(ctx, restarted.identity.UUID); err != nil {
-		t.Fatal(err)
+	removeNode := func(nodeUUID string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodDelete, "/api/cluster/nodes/"+nodeUUID, nil)
+		req.SetPathValue("uuid", nodeUUID)
+		rec := httptest.NewRecorder()
+		gateway.Admin().HandleNodeRemove(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("remove node: %d %s", rec.Code, rec.Body)
+		}
+		var view ClusterView
+		if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+			t.Fatal(err)
+		}
+		if len(view.Members) != 1 || view.Members[0].UUID != gateway.identity.UUID {
+			t.Fatalf("unexpected membership after removal: %+v", view.Members)
+		}
 	}
+	removeNode(restarted.identity.UUID)
 	assertWorkerGatewayOnline(t, restarted, gateway.identity.UUID, false)
 	if _, ok := gateway.publicHub().Snapshot(restarted.identity.UUID); ok {
 		t.Fatal("removed member remained connected")
@@ -236,6 +251,24 @@ func TestPublicClusterReusesMembershipAndScheduler(t *testing.T) {
 	}
 	if gateway.authorizePublic(ctx, restarted.identity.UUID, proof) == nil {
 		t.Fatal("removed identity was still admitted")
+	}
+
+	newToken := gateway.store.JoinToken()
+	if newToken == token {
+		t.Fatal("removing an online worker did not rotate the join token")
+	}
+	if _, err := extra.Join(ctx, newToken, ""); err != nil {
+		t.Fatal(err)
+	}
+	uuid := extra.identity.UUID
+	extra.Stop()
+	waitPublic(t, func() bool {
+		_, connected := gateway.publicHub().Snapshot(uuid)
+		return !connected
+	})
+	removeNode(uuid)
+	if _, ok := gateway.store.Member(uuid); ok || gateway.store.JoinToken() == newToken {
+		t.Fatal("offline removal did not revoke membership and rotate the join token")
 	}
 }
 

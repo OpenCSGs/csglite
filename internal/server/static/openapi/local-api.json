@@ -8860,7 +8860,7 @@
           "Cluster"
         ],
         "summary": "Remove a member",
-        "description": "Drops the member, tells it, and lets gossip carry a tombstone so it is not re-added by a stale peer. Use DELETE /api/cluster to remove this node itself. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available.",
+        "description": "Removes a remote member whether it is online or offline. Public Masters disconnect any active tunnel, revoke the member identity and rotate the join token. LAN peers notify reachable nodes and distribute the tombstone by gossip. Use DELETE /api/cluster to remove this node itself. Public Slave workers receive 403 master_required.",
         "operationId": "removeClusterNode",
         "parameters": [
           {
