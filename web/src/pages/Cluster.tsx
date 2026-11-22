@@ -53,7 +53,7 @@ import type { ModelInstanceFilter } from "../clusterModels";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { t, locale } from "../i18n";
 import { formatSpeed } from "../utils/format";
-import { clusterReasonText, canManageNodeState, workerNodeState, clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, stateKey } from "../cluster";
+import { clusterReasonText, canManageNodeState, workerNodeState, clusterNodeRole, fmtGB, fmtGBPairShort, fmtGBShort, fmtSeconds, formatAdmissionCode, healthDotClass, healthKey, healthTone, isNoiseHostname, isValidAdmissionCode, nodeLimitLabel, normalizeAdmissionCode, percentOf, secondsUntil, stateKey } from "../cluster";
 
 type ClusterTab = "overview" | "discovered" | "models" | "settings";
 
@@ -563,6 +563,12 @@ export function Cluster() {
           <p class="mt-2 max-w-2xl text-sm leading-6 text-gray-600">{t(current?.mode === "worker" ? "cluster.workerConnectSubtitle" : publicMode ? "cluster.publicSubtitle" : "cluster.subtitle")}</p>
         </div>
         {current?.cluster && current.mode !== "worker" && <HeaderStats view={current} />}
+        {current && !current.cluster && current.node?.name && (
+          <div class="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-medium text-gray-600 shadow-sm">
+            <span class={`h-2 w-2 rounded-full ${current.active === false ? "bg-gray-300" : "bg-emerald-500"}`} aria-hidden="true" />
+            <span>{t("cluster.thisMachineLabel", current.node.name)}</span>
+          </div>
+        )}
       </div>}
 
       {current && viewError.value && <p role="alert" class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{t("cluster.staleView")} {viewError.value}</p>}
@@ -665,34 +671,16 @@ function CopyButton({ text, id, tone = "gray" }: { text: string; id: string; ton
 
 const enablingCluster = signal(false);
 
-function DormantNotice({ current }: { current: ClusterView }) {
-  if (current.active !== false) return null;
-  const enable = async () => {
-    enablingCluster.value = true;
-    try {
-      view.value = await enableCluster();
-    } catch (err: any) {
-      viewError.value = err?.message || t("cluster.unknownError");
-    } finally {
-      enablingCluster.value = false;
-    }
-  };
-  return (
-    <div class="flex flex-col items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/70 p-5 text-sm text-gray-700 sm:flex-row sm:items-center sm:p-6" data-cluster-network>
-      <div>
-        <div class="font-semibold text-gray-900">{t("cluster.dormantTitle")}</div>
-        <p class="mt-1 text-xs leading-5 text-gray-500">{t(current.mode === "worker" ? "cluster.workerDormantDesc" : "cluster.dormantDesc")}</p>
-      </div>
-      <button
-        type="button"
-        disabled={enablingCluster.value}
-        onClick={enable}
-        class="shrink-0 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 disabled:opacity-50"
-      >
-        {enablingCluster.value ? t("cluster.enabling") : t("cluster.enableAction")}
-      </button>
-    </div>
-  );
+async function enableClusterNetwork() {
+  enablingCluster.value = true;
+  try {
+    view.value = await enableCluster();
+    await Promise.all([loadAdmissionCode(), loadDiscovered()]);
+  } catch (err: any) {
+    viewError.value = err?.message || t("cluster.unknownError");
+  } finally {
+    enablingCluster.value = false;
+  }
 }
 
 function AutoFormNotice({ view }: { view: ClusterView }) {
@@ -705,130 +693,446 @@ function AutoFormNotice({ view }: { view: ClusterView }) {
   );
 }
 
+function CreatedTokenBanner({ dismissible = false }: { dismissible?: boolean }) {
+  if (!createdToken.value) return null;
+  return (
+    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 sm:p-5">
+      <div class="flex items-start justify-between gap-3">
+        <p class="text-sm font-semibold text-amber-900">{t(dismissible ? "cluster.createdBannerTitle" : "cluster.joinTokenCreated")}</p>
+        {dismissible && (
+          <button
+            type="button"
+            onClick={() => (createdToken.value = "")}
+            class="rounded-md px-1.5 py-0.5 text-sm leading-none text-amber-700 hover:bg-amber-100 hover:text-amber-900"
+            aria-label={t("dash.close")}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <div class="mt-2.5 flex gap-2">
+        <input
+          readOnly
+          class="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-sm text-amber-950"
+          value={createdToken.value}
+          onFocus={(e) => (e.target as HTMLInputElement).select()}
+        />
+        <CopyButton text={createdToken.value} id="created-token" tone="amber" />
+      </div>
+      <p class="mt-2 text-xs leading-5 text-amber-800">{t("cluster.joinTokenHint", "csghub-lite cluster join <token>", JOIN_TOKEN_ENV)}</p>
+    </div>
+  );
+}
+
 function NotInCluster({ view }: { view: ClusterView }) {
+  const isLAN = !view.mode || view.mode === "lan";
+  const [intent, setIntent] = useState<"create" | "join">(view.mode === "worker" ? "join" : "create");
+  const [joinMethod, setJoinMethod] = useState<"code" | "token">("code");
+  const [showJoinAddress, setShowJoinAddress] = useState(false);
+  const [showDiscovered, setShowDiscovered] = useState(false);
+
+  const activeIntent = view.mode === "worker" ? "join" : view.mode === "gateway" ? "create" : intent;
   const code = admissionCode.value;
   const remaining = codeCountdown.value ?? secondsUntil(code?.expires_at);
+  const discoveredList = discovered.value;
+
   return (
-    <div class={`space-y-6 ${view.mode === "worker" || view.mode === "gateway" ? "max-w-3xl" : ""}`} data-cluster-connect>
+    <div class={`space-y-5 ${isLAN ? "max-w-4xl" : "max-w-3xl"}`} data-cluster-connect>
       <CapBanner />
       <AutoFormNotice view={view} />
-      <section class="overflow-hidden rounded-xl border border-gray-200 bg-white" data-cluster-setup>
-      <DormantNotice current={view} />
-      <div class={`grid ${!view.mode || view.mode === "lan" ? "divide-y divide-gray-200 lg:grid-cols-2 lg:divide-x lg:divide-y-0" : ""}`} data-cluster-forms>
-        {/* Create */}
-        {view.mode !== "worker" && <section class="min-w-0 p-5 sm:p-6">
-          <h2 class="text-lg font-bold text-gray-900">{t("cluster.createTitle")}</h2>
-          <p class="mt-1 text-sm text-gray-500">{t("cluster.createDesc")}</p>
-          {createdToken.value ? (
-            <div class="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-              <p class="text-sm font-semibold text-amber-900">{t("cluster.joinTokenCreated")}</p>
-              <div class="mt-2 flex gap-2">
-                <input
-                  readOnly
-                  class="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-sm text-amber-900"
-                  value={createdToken.value}
-                  onFocus={(e) => (e.target as HTMLInputElement).select()}
-                />
-                <CopyButton text={createdToken.value} id="created-token" tone="amber" />
-              </div>
-              <p class="mt-2 text-xs text-amber-800">{t("cluster.joinTokenHint", "csghub-lite cluster join <token>", JOIN_TOKEN_ENV)}</p>
+
+      {/* LAN mode: two clear intent cards so the user immediately knows what to pick */}
+      {isLAN && (
+        <div class="grid gap-4 sm:grid-cols-2" role="tablist" aria-label={t("cluster.title")}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeIntent === "create"}
+            onClick={() => setIntent("create")}
+            class={`group relative flex items-start gap-4 rounded-2xl border p-5 text-left transition-all ${
+              activeIntent === "create"
+                ? "border-indigo-500 bg-indigo-50/40 shadow-sm ring-1 ring-indigo-500"
+                : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50/60"
+            }`}
+          >
+            <div
+              class={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-colors ${
+                activeIntent === "create" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-500 group-hover:bg-gray-200/70"
+              }`}
+            >
+              <svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="12" cy="5" r="2.5" />
+                <circle cx="5.5" cy="18" r="2.5" />
+                <circle cx="18.5" cy="18" r="2.5" />
+                <path stroke-linecap="round" d="M12 7.5v4.5m0 0-4.5 4.2M12 12l4.5 4.2" />
+              </svg>
             </div>
-          ) : (
-            <div class="mt-4 space-y-3">
-              <div>
-                <label class="mb-1 block text-sm font-medium text-gray-700">{t("cluster.createName")}</label>
-                <input
-                  class="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  value={createName.value}
-                  placeholder={t("cluster.createNamePlaceholder")}
-                  disabled={creating.value}
-                  onInput={(e) => (createName.value = (e.target as HTMLInputElement).value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void handleCreate();
-                  }}
-                />
+            <div class="min-w-0 flex-1 pr-5">
+              <span
+                class={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                  activeIntent === "create" ? "bg-indigo-100 text-indigo-700" : "bg-gray-100 text-gray-500"
+                }`}
+              >
+                {t("cluster.setupCreateTag")}
+              </span>
+              <div class="mt-1.5 text-base font-bold text-gray-900">{t("cluster.setupCreateCardTitle")}</div>
+              <p class="mt-1 text-xs leading-5 text-gray-500">{t("cluster.setupCreateCardDesc")}</p>
+            </div>
+            <span
+              aria-hidden="true"
+              class={`absolute right-4 top-4 flex h-5 w-5 items-center justify-center rounded-full border transition-colors ${
+                activeIntent === "create" ? "border-indigo-600 bg-indigo-600 text-white" : "border-gray-300 bg-white"
+              }`}
+            >
+              {activeIntent === "create" && (
+                <svg class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.25a1 1 0 0 1-1.42 0l-3.3-3.32a1 1 0 1 1 1.42-1.41l2.59 2.606 6.49-6.535a1 1 0 0 1 1.414-.006Z" clip-rule="evenodd" />
+                </svg>
+              )}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeIntent === "join"}
+            onClick={() => setIntent("join")}
+            class={`group relative flex items-start gap-4 rounded-2xl border p-5 text-left transition-all ${
+              activeIntent === "join"
+                ? "border-indigo-500 bg-indigo-50/40 shadow-sm ring-1 ring-indigo-500"
+                : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50/60"
+            }`}
+          >
+            <div
+              class={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-colors ${
+                activeIntent === "join" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-500 group-hover:bg-gray-200/70"
+              }`}
+            >
+              <svg aria-hidden="true" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 7h3a4 4 0 0 1 0 8h-3m-6 0H6a4 4 0 0 1 0-8h3m-1 4h8" />
+              </svg>
+            </div>
+            <div class="min-w-0 flex-1 pr-5">
+              <span
+                class={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                  activeIntent === "join" ? "bg-indigo-100 text-indigo-700" : "bg-gray-100 text-gray-500"
+                }`}
+              >
+                {t("cluster.setupJoinTag")}
+              </span>
+              <div class="mt-1.5 text-base font-bold text-gray-900">{t("cluster.setupJoinCardTitle")}</div>
+              <p class="mt-1 text-xs leading-5 text-gray-500">{t("cluster.setupJoinCardDesc")}</p>
+            </div>
+            <span
+              aria-hidden="true"
+              class={`absolute right-4 top-4 flex h-5 w-5 items-center justify-center rounded-full border transition-colors ${
+                activeIntent === "join" ? "border-indigo-600 bg-indigo-600 text-white" : "border-gray-300 bg-white"
+              }`}
+            >
+              {activeIntent === "join" && (
+                <svg class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.2 7.25a1 1 0 0 1-1.42 0l-3.3-3.32a1 1 0 1 1 1.42-1.41l2.59 2.606 6.49-6.535a1 1 0 0 1 1.414-.006Z" clip-rule="evenodd" />
+                </svg>
+              )}
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* Main focused setup card */}
+      <section class="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm" data-cluster-setup>
+        {activeIntent === "create" ? (
+          <div data-cluster-forms>
+            <div class="p-6">
+              <h2 class="text-lg font-bold text-gray-900">{t("cluster.createTitle")}</h2>
+              <p class="mt-1 text-sm text-gray-500">{t("cluster.createDesc")}</p>
+
+              {createdToken.value ? (
+                <div class="mt-5">
+                  <CreatedTokenBanner />
+                </div>
+              ) : (
+                <div class="mt-5 space-y-3">
+                  <div>
+                    <label class="mb-1.5 block text-sm font-medium text-gray-700">{t("cluster.createName")}</label>
+                    <div class="flex flex-col gap-3 sm:flex-row">
+                      <input
+                        class="min-w-0 flex-1 rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        value={createName.value}
+                        placeholder={t("cluster.createNamePlaceholder")}
+                        disabled={creating.value}
+                        onInput={(e) => (createName.value = (e.target as HTMLInputElement).value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void handleCreate();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleCreate()}
+                        disabled={creating.value}
+                        class="shrink-0 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:opacity-60"
+                      >
+                        {creating.value ? t("cluster.creating") : t("cluster.createAction")}
+                      </button>
+                    </div>
+                  </div>
+                  {createError.value && <p class="text-sm text-red-600">{createError.value}</p>}
+                  {view.active === false && (
+                    <p class="flex items-center gap-1.5 text-xs text-gray-400">
+                      <svg aria-hidden="true" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clip-rule="evenodd" />
+                      </svg>
+                      <span>{t("cluster.setupAutoEnableHint")}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {isLAN && (
+              <div class="border-t border-gray-100 bg-gray-50/70 px-6 py-4">
+                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">{t("cluster.setupAfterCreateTitle")}</p>
+                <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div class="rounded-xl border border-gray-200/80 bg-white p-3.5">
+                    <div class="text-xs font-semibold text-gray-900">{t("cluster.setupAfterCreateCodeTitle")}</div>
+                    <p class="mt-1 text-xs leading-5 text-gray-500">{t("cluster.setupAfterCreateCodeDesc")}</p>
+                  </div>
+                  <div class="rounded-xl border border-gray-200/80 bg-white p-3.5">
+                    <div class="text-xs font-semibold text-gray-900">{t("cluster.setupAfterCreateTokenTitle")}</div>
+                    <p class="mt-1 text-xs leading-5 text-gray-500">{t("cluster.setupAfterCreateTokenDesc")}</p>
+                  </div>
+                </div>
               </div>
-              {createError.value && <p class="text-sm text-red-600">{createError.value}</p>}
+            )}
+          </div>
+        ) : (
+          <div class="p-6" data-cluster-forms>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-bold text-gray-900">{t(isLAN ? "cluster.setupJoinCardTitle" : "cluster.joinTitle")}</h2>
+                {!isLAN && <p class="mt-1 text-sm text-gray-500">{t("cluster.workerJoinDesc")}</p>}
+              </div>
+              {isLAN && (
+                <div class="inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setJoinMethod("code")}
+                    class={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                      joinMethod === "code" ? "bg-white text-indigo-700 shadow-sm" : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    <span>{t("cluster.joinMethodCode")}</span>
+                    <span class={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${joinMethod === "code" ? "bg-indigo-50 text-indigo-600" : "bg-gray-200/70 text-gray-500"}`}>
+                      {t("cluster.joinMethodRecommended")}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setJoinMethod("token")}
+                    class={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                      joinMethod === "token" ? "bg-white text-indigo-700 shadow-sm" : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    {t("cluster.joinMethodToken")}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {isLAN && joinMethod === "code" ? (
+              <div class="mt-5 space-y-5">
+                {/* Step-by-step instructions for admission code */}
+                <ol class="space-y-3 text-sm text-gray-600">
+                  <li class="flex items-start gap-3">
+                    <span class={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${view.active === false ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>
+                      {view.active === false ? "1" : "✓"}
+                    </span>
+                    <div class="min-w-0 flex-1">
+                      {view.active === false ? (
+                        <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-2.5">
+                          <span class="text-xs leading-5 text-amber-900">{t("cluster.joinCodeStep1OffTitle", view.node.name)}</span>
+                          <button
+                            type="button"
+                            disabled={enablingCluster.value}
+                            onClick={() => void enableClusterNetwork()}
+                            class="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
+                          >
+                            {enablingCluster.value ? t("cluster.enabling") : t("cluster.joinCodeEnableAction")}
+                          </button>
+                        </div>
+                      ) : (
+                        <span class="text-gray-700">{t("cluster.joinCodeStep1On", view.node.name)}</span>
+                      )}
+                    </div>
+                  </li>
+                  <li class="flex items-start gap-3">
+                    <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700">2</span>
+                    <span>{t("cluster.joinCodeStep2", view.node.name)}</span>
+                  </li>
+                  <li class="flex items-start gap-3">
+                    <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700">3</span>
+                    <span>{t("cluster.joinCodeStep3")}</span>
+                  </li>
+                </ol>
+
+                {/* Admission code display */}
+                <div class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-gray-200 bg-gray-50/80 px-5 py-4">
+                  <div>
+                    <div class="text-xs font-medium uppercase tracking-wide text-gray-400">{t("cluster.admissionTitle")}</div>
+                    {code ? (
+                      <div class="mt-1 font-mono text-3xl font-bold tracking-[0.2em] text-gray-950 select-all">
+                        {formatAdmissionCode(code.code)}
+                      </div>
+                    ) : (
+                      <div class="mt-1 text-sm text-gray-400">{admissionCodeError.value || t("cluster.loading")}</div>
+                    )}
+                  </div>
+                  {code && (
+                    <div class="flex items-center gap-3">
+                      <span class="text-xs text-gray-400">
+                        {remaining !== null && remaining > 0 ? t("cluster.admissionExpiresIn", fmtSeconds(remaining)) : t("cluster.admissionRefreshing")}
+                      </span>
+                      <CopyButton text={code.code} id="admission-code" />
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div class="mt-5 space-y-4">
+                {isLAN && <p class="text-sm text-gray-500">{t("cluster.joinDesc")}</p>}
+                <div>
+                  <label class="mb-1.5 block text-sm font-medium text-gray-700">{t("cluster.joinToken")}</label>
+                  <input
+                    class="w-full rounded-xl border border-gray-200 px-3.5 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={joinToken.value}
+                    placeholder={t("cluster.joinTokenPlaceholder")}
+                    disabled={joining.value}
+                    spellcheck={false}
+                    onInput={(e) => (joinToken.value = (e.target as HTMLInputElement).value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void handleJoin();
+                    }}
+                  />
+                </div>
+
+                {!isLAN || showJoinAddress ? (
+                  <div>
+                    <label class="mb-1.5 block text-sm font-medium text-gray-700">
+                      {t(view.mode === "worker" ? "cluster.masterAddress" : "cluster.joinAddress")}
+                    </label>
+                    <input
+                      class="w-full rounded-xl border border-gray-200 px-3.5 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      value={joinAddress.value}
+                      placeholder={view.mode === "worker" ? view.gateway_url : t("cluster.joinAddressPlaceholder")}
+                      disabled={joining.value}
+                      spellcheck={false}
+                      onInput={(e) => (joinAddress.value = (e.target as HTMLInputElement).value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void handleJoin();
+                      }}
+                    />
+                    <p class="mt-1.5 text-xs text-gray-400">
+                      {t(view.mode === "worker" ? "cluster.masterAddressHint" : "cluster.joinAddressHint")}
+                    </p>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowJoinAddress(true)}
+                    class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:underline"
+                  >
+                    <span>+ {t("cluster.joinAdvancedToggle")}</span>
+                  </button>
+                )}
+
+                {joinError.value && <p class="text-sm text-red-600">{joinError.value}</p>}
+
+                <div class="flex flex-wrap items-center gap-4 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleJoin()}
+                    disabled={joining.value}
+                    class="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:opacity-60"
+                  >
+                    {joining.value ? t("cluster.joining") : t("cluster.joinAction")}
+                  </button>
+                  {view.active === false && (
+                    <span class="text-xs text-gray-400">
+                      {t(view.mode === "worker" ? "cluster.workerDormantDesc" : "cluster.setupAutoEnableHint")}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Compact LAN discovery bar at the bottom (LAN mode only) */}
+      {isLAN && (
+        <section class="overflow-hidden rounded-2xl border border-gray-200 bg-white" data-cluster-network>
+          <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
+            <div class="flex min-w-0 items-center gap-3">
+              <span class={`h-2 w-2 shrink-0 rounded-full ${view.active === false ? "bg-gray-300" : "bg-emerald-500"}`} aria-hidden="true" />
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-gray-900">{t("cluster.discoveryBarTitle")}</div>
+                <p class="text-xs text-gray-500">
+                  {view.active === false
+                    ? t("cluster.discoveryBarOff")
+                    : discoveredList.length > 0
+                      ? t("cluster.discoveryBarFound", discoveredList.length)
+                      : t("cluster.discoveryBarEmpty")}
+                </p>
+              </div>
+            </div>
+            {view.active === false ? (
               <button
                 type="button"
-                onClick={() => void handleCreate()}
-                disabled={creating.value}
-                class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
+                disabled={enablingCluster.value}
+                onClick={() => void enableClusterNetwork()}
+                class="shrink-0 rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
               >
-                {creating.value ? t("cluster.creating") : t("cluster.createAction")}
+                {enablingCluster.value ? t("cluster.enabling") : t("cluster.enableAction")}
               </button>
+            ) : discoveredList.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setShowDiscovered((v) => !v)}
+                class="shrink-0 rounded-lg border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                {showDiscovered ? t("cluster.discoveryBarHide") : t("cluster.discoveryBarShow")}
+              </button>
+            ) : null}
+          </div>
+          {view.active !== false && showDiscovered && discoveredList.length > 0 && (
+            <div class="border-t border-gray-100 px-5 py-4">
+              <p class="mb-3 text-xs text-gray-500">{t("cluster.discoveredDescReadOnly")}</p>
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-gray-100 text-left text-xs text-gray-500">
+                    <th class="pb-2 pr-3 font-medium">{t("cluster.colNode")}</th>
+                    <th class="pb-2 pr-3 font-medium">{t("cluster.colAddress")}</th>
+                    <th class="pb-2 pr-3 font-medium">{t("cluster.colVersion")}</th>
+                    <th class="pb-2 font-medium text-right">{t("cluster.colStatus")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {discoveredList.map((n) => (
+                    <tr key={n.uuid} class="border-b border-gray-50 last:border-0">
+                      <td class="py-2.5 pr-3 font-medium text-gray-900">{n.name}</td>
+                      <td class="py-2.5 pr-3 font-mono text-xs text-gray-600">{n.addr}</td>
+                      <td class="py-2.5 pr-3 text-xs text-gray-500">{n.version || "—"}</td>
+                      <td class="py-2.5 text-right text-xs text-gray-400">
+                        {n.cluster_uuid ? t("cluster.inAnotherCluster") : t("cluster.notPaired")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
-        </section>}
-
-        {/* Join */}
-        {view.mode !== "gateway" && <section class="min-w-0 p-5 sm:p-6">
-          <h2 class="text-lg font-bold text-gray-900">{t("cluster.joinTitle")}</h2>
-          <p class="mt-1 text-sm text-gray-500">{t(view.mode === "worker" ? "cluster.workerJoinDesc" : "cluster.joinDesc")}</p>
-          <div class="mt-4 space-y-3">
-            <div>
-              <label class="mb-1 block text-sm font-medium text-gray-700">{t("cluster.joinToken")}</label>
-              <input
-                class="w-full rounded-lg border border-gray-200 px-3 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={joinToken.value}
-                placeholder={t("cluster.joinTokenPlaceholder")}
-                disabled={joining.value}
-                spellcheck={false}
-                onInput={(e) => (joinToken.value = (e.target as HTMLInputElement).value)}
-              />
-            </div>
-            <div>
-              <label class="mb-1 block text-sm font-medium text-gray-700">{t(view.mode === "worker" ? "cluster.masterAddress" : "cluster.joinAddress")}</label>
-              <input
-                class="w-full rounded-lg border border-gray-200 px-3 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={joinAddress.value}
-                placeholder={view.mode === "worker" ? view.gateway_url : t("cluster.joinAddressPlaceholder")}
-                disabled={joining.value}
-                spellcheck={false}
-                onInput={(e) => (joinAddress.value = (e.target as HTMLInputElement).value)}
-              />
-              <p class="mt-1 text-xs text-gray-400">{t(view.mode === "worker" ? "cluster.masterAddressHint" : "cluster.joinAddressHint")}</p>
-            </div>
-            {joinError.value && <p class="text-sm text-red-600">{joinError.value}</p>}
-            <button
-              type="button"
-              onClick={() => void handleJoin()}
-              disabled={joining.value}
-              class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
-            >
-              {joining.value ? t("cluster.joining") : t("cluster.joinAction")}
-            </button>
-          </div>
-        </section>}
-      </div>
-      </section>
-
-      {(!view.mode || view.mode === "lan") && <>
-      {/* Admission code */}
-      <section class="bg-white rounded-xl border border-gray-200 p-6">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h2 class="text-lg font-bold text-gray-900">{t("cluster.admissionTitle")}</h2>
-            <p class="mt-1 text-sm text-gray-500">{t("cluster.admissionDesc", view.node.name)}</p>
-          </div>
-          {code ? (
-            <div class="flex items-center gap-3">
-              <span class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 font-mono text-2xl font-semibold tracking-[0.3em] text-gray-900">
-                {code.code}
-              </span>
-              <div class="text-xs text-gray-400">
-                {remaining !== null && remaining > 0 ? t("cluster.admissionExpiresIn", fmtSeconds(remaining)) : t("cluster.admissionRefreshing")}
-              </div>
-              <CopyButton text={code.code} id="admission-code" />
-            </div>
-          ) : (
-            <span class="text-sm text-gray-400">{admissionCodeError.value || t("cluster.loading")}</span>
-          )}
-        </div>
-      </section>
-
-      <DiscoveredSection readOnly />
-      </>}
+        </section>
+      )}
     </div>
   );
 }
@@ -838,6 +1142,7 @@ function NotInCluster({ view }: { view: ClusterView }) {
 function InCluster({ view }: { view: ClusterView }) {
   return (
     <div class="space-y-6">
+      <CreatedTokenBanner dismissible />
       {view.model_source_mixed && (!view.mode || view.mode === "lan") && (
         <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <span class="font-semibold">{t("cluster.mixedSourceTitle")}</span> {t("cluster.mixedSourceDesc")}

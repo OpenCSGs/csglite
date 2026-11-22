@@ -139,6 +139,13 @@ export function isValidAdmissionCode(input: string): boolean {
   return /^\d{8}$/.test(normalizeAdmissionCode(input));
 }
 
+/** Formats an 8-digit admission code as "1234 5678" for easier visual scanning. */
+export function formatAdmissionCode(code: string): string {
+  const digits = normalizeAdmissionCode(code);
+  if (digits.length === 8) return `${digits.slice(0, 4)} ${digits.slice(4)}`;
+  return code;
+}
+
 /** Seconds until an ISO timestamp, floored at 0; null when unparsable. */
 export function secondsUntil(iso: string | undefined, now: number = Date.now()): number | null {
   if (!iso) return null;
