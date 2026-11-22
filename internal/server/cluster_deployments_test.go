@@ -742,3 +742,42 @@ func TestRevokedDeploymentUnloadsBusyRuntimeAndPreservesLocalModel(t *testing.T)
 		})
 	}
 }
+
+func TestDeploymentKeepAliveExpiresOnlyWhenIdle(t *testing.T) {
+	s, h, d := deploymentRuntimeFixture(t)
+	d.KeepAlive = "5m"
+	engine := &countedDeploymentEngine{}
+	old := loadEngineWithProgress
+	t.Cleanup(func() { loadEngineWithProgress = old })
+	loadEngineWithProgress = func(string, *model.LocalModel, inference.ConvertProgressFunc, bool, int, int, int, string, string, string) (inference.Engine, error) {
+		return engine, nil
+	}
+	if err := h.StartDeployment(context.Background(), d, func(cluster.DeploymentStatus) {}); err != nil {
+		t.Fatal(err)
+	}
+	key := engineCacheKey(d.ModelID(), engineModeChat)
+	me := s.engines[key]
+	expires := me.expiresAt()
+	if me.keepAlive != 5*time.Minute {
+		t.Fatalf("runtime keep-alive = %v", me.keepAlive)
+	}
+	s.evictExpired(expires.Add(time.Second))
+	release := s.beginEngineUse(d.ModelID(), engineModeChat, engine)
+	if expired, err := h.ExpireDeployment(d, expires.Add(time.Second)); expired || err != nil {
+		t.Fatalf("expired a busy deployment: %v, %v", expired, err)
+	}
+	release()
+	expires = me.expiresAt()
+	if expired, err := h.ExpireDeployment(d, expires.Add(-time.Second)); expired || err != nil {
+		t.Fatalf("expired before new deadline: %v, %v", expired, err)
+	}
+	if expired, err := h.ExpireDeployment(d, expires); !expired || err != nil {
+		t.Fatalf("expiry at idle deadline: %v, %v", expired, err)
+	}
+	if h.DeploymentRunning(d) || engine.closed.Load() != 1 {
+		t.Fatal("expired runtime was not released")
+	}
+	if _, err := s.manager.Get(deploymentArtifactID(d)); err != nil {
+		t.Fatalf("expiry removed cached artifacts: %v", err)
+	}
+}

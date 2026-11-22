@@ -107,7 +107,7 @@ export function modelActionAvailability(row: ModelInstanceRow, view: ClusterView
     editReason: !available ? (stale ? "cluster.modelStatusStale" : !owned ? "cluster.modelReadOnly" : !row.node.online ? "cluster.healthOffline" : "cluster.modelApplying")
       : d && !isLlamaDeployment(d.kind) ? "deployments.unsupportedKind"
       : !row.node.status?.deployment_configurable ? "deployments.configUpgradeNode" : "deployments.configStopFirst",
-    start: available && !!d && d.desired !== "deleted" && (phase === "stopped" || phase === "failed")
+    start: available && !!d && d.desired !== "deleted" && (phase === "stopped" || phase === "idle" || phase === "failed")
       && row.node.status?.state === "active" && !!row.node.status.accept_work && row.node.status.licensed !== false,
     unload: available && (d ? d.desired === "running" && phase !== "stopped" && phase !== "deleted" : ordinaryReady && row.model.loaded),
     delete: available && (d ? phase !== "deleted" : ordinaryReady && !referenced),
@@ -124,7 +124,7 @@ export function modelInstanceFilter(row: ModelInstanceRow): ModelInstanceFilter 
   if (state === "cluster.healthOffline") return "offline";
   if (["deployments.phase.failed", "deployments.phase.blocked", "deployments.phase.unreachable"].includes(state)) return "failed";
   if (state === "cluster.instanceRunning") return "running";
-  if (["cluster.instanceSleeping", "deployments.phase.stopped"].includes(state)) return "inactive";
+  if (["cluster.instanceSleeping", "deployments.phase.stopped", "deployments.phase.idle"].includes(state)) return "inactive";
   return "preparing";
 }
 

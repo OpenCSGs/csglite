@@ -15,12 +15,14 @@ type DeploymentConfigPatch struct {
 	NumCtx      *int    `json:"num_ctx,omitempty"`
 	NumParallel *int    `json:"num_parallel,omitempty"`
 	NGPULayers  *int    `json:"n_gpu_layers,omitempty"`
+	KeepAlive   *string `json:"keep_alive,omitempty"`
 }
 
 var errDeploymentConfigConflict = errors.New("deployment configuration conflict")
 
 func sameDeploymentIdentity(a, b DeploymentSpec) bool {
 	a.Quant, a.NumCtx, a.NumParallel, a.NGPULayers = b.Quant, b.NumCtx, b.NumParallel, b.NGPULayers
+	a.KeepAlive = b.KeepAlive
 	return a == b
 }
 
@@ -28,7 +30,7 @@ func (m *Manager) configureDeployment(id string, generation uint64, patch Deploy
 	if m.opts.Mode == "worker" || !m.store.InCluster() {
 		return Deployment{}, errors.New("configure deployments on the Master")
 	}
-	if generation == 0 || (patch.Quant == nil && patch.NumCtx == nil && patch.NumParallel == nil && patch.NGPULayers == nil) {
+	if generation == 0 || (patch.Quant == nil && patch.NumCtx == nil && patch.NumParallel == nil && patch.NGPULayers == nil && patch.KeepAlive == nil) {
 		return Deployment{}, errors.New("generation and at least one configuration parameter are required")
 	}
 	current, exists := m.deployments.get(true, id)
@@ -55,6 +57,16 @@ func (m *Manager) configureDeployment(id string, generation uint64, patch Deploy
 		}
 		if patch.NGPULayers != nil {
 			spec.NGPULayers = *patch.NGPULayers
+		}
+		if patch.KeepAlive != nil {
+			keepAlive, err := normalizeDeploymentKeepAlive(*patch.KeepAlive)
+			if err != nil {
+				return err
+			}
+			if keepAlive != "" && !st.DeploymentKeepAlive {
+				return fmt.Errorf("%w: upgrade the target node to support deployment keep_alive", errDeploymentConfigConflict)
+			}
+			spec.KeepAlive = keepAlive
 		}
 		if err := validateDeployment(spec); err != nil {
 			return err

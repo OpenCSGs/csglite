@@ -42,6 +42,7 @@ func (m *Manager) LocalStatus(ctx context.Context) Status {
 	st.NodeStateManagement = true
 	_, st.DeploymentCapable = m.opts.Host.(DeploymentHost)
 	st.DeploymentConfigurable = st.DeploymentCapable
+	_, st.DeploymentKeepAlive = m.opts.Host.(DeploymentIdleExpiry)
 	_, st.ModelManagement = m.opts.Host.(ModelActionHost)
 	st.Models = append(st.Models, m.deploymentModels()...)
 	st.Net.Addrs = m.localAddrs()

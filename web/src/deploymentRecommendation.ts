@@ -7,8 +7,8 @@ export type { DeploymentMemory };
 
 const GiB = 1024 ** 3;
 /** Match the controller's Auto placement, including its deterministic tie break. */
-export function automaticDeploymentTarget(view: ClusterView, cpuOnly = false): ClusterNodeView | undefined {
-  return deploymentTargets(view).map(node => ({ node, memory: deploymentNodeMemory(node, cpuOnly) }))
+export function automaticDeploymentTarget(view: ClusterView, cpuOnly = false, needsKeepAlive = false): ClusterNodeView | undefined {
+  return deploymentTargets(view).filter(node => !needsKeepAlive || node.status?.deployment_keep_alive).map(node => ({ node, memory: deploymentNodeMemory(node, cpuOnly) }))
     .filter(item => item.memory.free !== 0)
     .sort((a, b) => Number(b.memory.gpu) - Number(a.memory.gpu)
       || Number(b.memory.free !== null) - Number(a.memory.free !== null)
