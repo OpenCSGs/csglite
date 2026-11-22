@@ -8,6 +8,7 @@ import {
   fmtGB,
   fmtGBPair,
   fmtSeconds,
+  formatAdmissionCode,
   healthKey,
   healthTone,
   isValidAdmissionCode,
@@ -93,6 +94,9 @@ describe("admission code", () => {
     expect(isValidAdmissionCode("12345678")).toBe(true);
     expect(isValidAdmissionCode("1234567")).toBe(false);
     expect(isValidAdmissionCode("abcd1234")).toBe(false);
+    expect(formatAdmissionCode("12345678")).toBe("1234 5678");
+    expect(formatAdmissionCode("1234-5678")).toBe("1234 5678");
+    expect(formatAdmissionCode("abc")).toBe("abc");
   });
 });
 
