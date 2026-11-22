@@ -1310,6 +1310,12 @@ function MemberRow({ node, view, onRemove }: { node: ClusterNodeView; view: Clus
   const stateLabel = stateName && stateName !== "active" ? t(stateKey(stateName)) : "";
   const muted = node.online ? "" : "text-gray-400";
   const editingStatic = staticEditUUID.value === node.uuid;
+  const canSetState = canManageNodeState(view, node);
+  const canSetAddress = !canSetState && (!view.mode || view.mode === "lan");
+  const selectedState = node.local
+    ? (view.mode === "worker" ? workerNodeState(view.settings) : view.settings.state)
+    : st?.state ?? "active";
+  const selectedAction = canSetState ? selectedState : "";
 
   return (
     <tr class={`border-b border-gray-100 align-middle last:border-0 ${node.online ? "" : "bg-gray-50/60"}`}>
@@ -1367,30 +1373,30 @@ function MemberRow({ node, view, onRemove }: { node: ClusterNodeView; view: Clus
         {st ? <><span class="font-medium tabular-nums">{loaded.length}</span><span class="ml-1 text-xs text-gray-400">/ {st.models.length}</span></> : "—"}
       </td>
       <td data-label={t("cluster.colActions")} class="py-3 text-right">
-        <div class="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
-          {canManageNodeState(view, node) ? (
-            <select
-              class="max-w-full rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              value={node.local ? (view.mode === "worker" ? workerNodeState(view.settings) : view.settings.state) : st?.state ?? "active"}
-              disabled={stateSaving.value || !node.online}
-              onChange={(e) => void changeNodeState(node.uuid, (e.target as HTMLSelectElement).value as ClusterNodeState)}
-              aria-label={t("cluster.nodeStateFor", node.name)}
-              title={t(view.mode === "worker" ? "cluster.workerStateOverviewHint" : "cluster.stateSelectorHint")}
-            >
-              <option value="active">{t("cluster.stateActive")}</option>
-              <option value="drain">{t("cluster.stateDrain")}</option>
-              <option value="maintenance">{t("cluster.stateMaintenance")}</option>
-            </select>
-          ) : view.mode && view.mode !== "lan" ? (
-            <span class="text-xs text-gray-500">{t("cluster.publicTunnel")}</span>
-          ) : (
-            <button type="button" class="text-xs text-indigo-600 hover:underline" onClick={() => startStaticEdit(node)}>
-              {t("cluster.setStaticAddress")}
-            </button>
-          )}
-          {onRemove && <button type="button" class="text-xs text-rose-600 hover:underline"
-            aria-label={t("cluster.removeNodeNamed", node.name)} onClick={onRemove}>{t("cluster.removeNode")}</button>}
-        </div>
+        {canSetState || canSetAddress || onRemove ? (
+          <select
+            class="max-w-full rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            value={selectedAction}
+            disabled={stateSaving.value || (!node.online && !onRemove && !canSetAddress)}
+            onChange={event => {
+              const action = event.currentTarget.value;
+              event.currentTarget.value = selectedAction;
+              if (action === "remove") onRemove?.();
+              else if (action === "set-static-address") startStaticEdit(node);
+              else if (canSetState && node.online) void changeNodeState(node.uuid, action as ClusterNodeState);
+            }}
+            aria-label={t(onRemove || canSetAddress ? "cluster.nodeActionsFor" : "cluster.nodeStateFor", node.name)}
+            title={canSetState ? t(view.mode === "worker" ? "cluster.workerStateOverviewHint" : "cluster.stateSelectorHint") : undefined}
+          >
+            {canSetState ? <>
+              <option value="active" disabled={!node.online}>{t("cluster.stateActive")}</option>
+              <option value="drain" disabled={!node.online}>{t("cluster.stateDrain")}</option>
+              <option value="maintenance" disabled={!node.online}>{t("cluster.stateMaintenance")}</option>
+            </> : <option value="" disabled>{t("cluster.colActions")}</option>}
+            {canSetAddress && <option value="set-static-address">{t("cluster.setStaticAddress")}</option>}
+            {onRemove && <option value="remove">{t("cluster.removeNodeAction")}</option>}
+          </select>
+        ) : <span class="text-xs text-gray-500">{t("cluster.publicTunnel")}</span>}
       </td>
     </tr>
   );
