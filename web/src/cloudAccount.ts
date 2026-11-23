@@ -1,5 +1,5 @@
 import { signal } from "@preact/signals";
-import { clearCloudAPIKey, getCloudAuthStatus, saveCloudAPIKey, saveSettings } from "./api/client";
+import { clearCloudAPIKey, getCloudAuthStatus, saveCloudAPIKey, saveCloudToken, saveSettings } from "./api/client";
 import type { AppSettings, CloudAuthStatus } from "./api/client";
 import { COMMUNITY_SITES, matchCommunitySite } from "./data/communitySites";
 import { t } from "./i18n";
@@ -20,6 +20,14 @@ export async function updateManualCloudAPIKey(apiKey: string | null): Promise<vo
   const status = apiKey === null ? await clearCloudAPIKey() : await saveCloudAPIKey(apiKey);
   setCloudAuth(status);
   window.dispatchEvent(new Event("csghub:providers-changed"));
+}
+
+export async function connectCloudWithAccessToken(token: string): Promise<CloudAuthStatus> {
+  await waitForCommunitySelection();
+  const status = await saveCloudToken(token);
+  setCloudAuth(status);
+  window.dispatchEvent(new Event("csghub:providers-changed"));
+  return status;
 }
 
 // Pages open the same connection dialog hosted by the application sidebar.
