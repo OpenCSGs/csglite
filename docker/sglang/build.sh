@@ -8,10 +8,17 @@ case "${platform}" in
     linux/arm64) arch=arm64 ;;
     *) echo "Supported PLATFORM values: linux/amd64, linux/arm64" >&2; exit 64 ;;
 esac
-: "${BASE_IMAGE:=lmsysorg/sglang:v0.5.19-cu129-runtime}"
-: "${IMAGE_TAG:=csglite-sglang:dev-cu129}"
 : "${CSGHUB_LITE_VERSION:=}"
 : "${DOCKERFILE:=docker/sglang/Dockerfile.cuda}"
+if [[ "${DOCKERFILE##*/}" == Dockerfile.rocm ]]; then
+    if [[ "${platform}" != linux/amd64 ]]; then
+        echo "The ROCm image requires PLATFORM=linux/amd64." >&2
+        exit 64
+    fi
+    : "${IMAGE_TAG:=csglite-sglang:dev-rocm-gfx90a}"
+else
+    : "${IMAGE_TAG:=csglite-sglang:dev-cu129}"
+fi
 
 build_root="${CSGHUB_LITE_BUILD_ROOT:-${HOME}/.csghub-lite/tmp/sglang-build}"
 mkdir -p "${build_root}"
@@ -47,8 +54,14 @@ fi
 CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" go build -trimpath \
     -ldflags "-s -w -X main.version=${build_version}" \
     -o "${build_dir}/csghub-lite" ./cmd/csghub-lite
-docker build --platform "${platform}" \
-    --build-context "csglite-binary=${build_dir}" \
-    --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
-    --build-arg "CSGHUB_LITE_VERSION=${CSGHUB_LITE_VERSION}" \
-    -f "${DOCKERFILE}" -t "${IMAGE_TAG}" .
+build_args=(
+    --platform "${platform}"
+    --build-context "csglite-binary=${build_dir}"
+    --build-arg "CSGHUB_LITE_VERSION=${CSGHUB_LITE_VERSION}"
+    -f "${DOCKERFILE}"
+    -t "${IMAGE_TAG}"
+)
+if [[ -n "${BASE_IMAGE:-}" ]]; then
+    build_args+=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
+fi
+docker build "${build_args[@]}" "$@" .

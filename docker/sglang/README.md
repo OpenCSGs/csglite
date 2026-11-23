@@ -69,6 +69,39 @@ Go binary 不会自动让它获得 native 入口行为。native 镜像标签为
 首次迁移入口后，日常只需更新 Lite binary，无需重建
 SGLang/CUDA runtime。历史 tag 和 digest 不会被修改。
 
+## AMD ROCm 运行时
+
+默认镜像面向 Linux x86_64 的 AMD Instinct MI210、MI250 和 MI250X（`gfx90a`）。
+包含 Lite、SGLang 0.5.19、ROCm 7.2.4 用户态、PyTorch 2.11 ROCm 和该架构的
+SGLang kernel。默认使用 Triton attention，适用于 BF16/FP16 文本模型。
+模型可在 Lite 启动后通过 UI 或 API 下载。构建使用独立阶段编译 kernel，
+最终镜像保留运行和 Triton JIT 所需的环境。
+
+```bash
+make build-web
+DOCKERFILE=docker/sglang/Dockerfile.rocm \
+CSGHUB_LITE_VERSION=1.0.6-sglang.1 \
+IMAGE_TAG=csglite-sglang:dev-rocm-gfx90a \
+./docker/sglang/build.sh
+```
+
+MI300/MI325（`gfx942`）及 MI350（`gfx950`）需要分别传入
+`--build-arg ROCM_GPU_ARCH=gfx942` 或 `--build-arg ROCM_GPU_ARCH=gfx950`，
+并使用各自的镜像标签。
+
+在安装了 AMDGPU 驱动的 Linux 主机上启动，Compose 会映射 `/dev/kfd` 和
+`/dev/dri`。多卡节点用 `GPU_ID` 选择卡，默认卡号为 `0`。
+
+```bash
+export CSGLITE_SGLANG_IMAGE=opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-rocm724-gfx90a
+export RENDER_GID="$(getent group render | cut -d: -f3)"
+docker compose -f docker/sglang/compose.rocm.yaml pull
+docker compose -f docker/sglang/compose.rocm.yaml up -d
+```
+
+加入集群时，将下文的 `compose.cuda.yaml` 替换为 `compose.rocm.yaml`，其余按
+同一套启动参数配置。
+
 ## 启动（native managed，默认）
 
 从仓库根目录启动。`MODEL_DIR` 可选；不设置时容器启动后通过 UI/API 下载或挂载模型。
