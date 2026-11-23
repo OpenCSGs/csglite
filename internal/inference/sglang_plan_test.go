@@ -366,6 +366,7 @@ func TestSGLangProbeHelperProcess(t *testing.T) {
 }
 
 func TestProbeSGLangPythonParsesRuntimeJSON(t *testing.T) {
+	t.Setenv(sglangROCmArchEnv, "")
 	t.Setenv("GO_WANT_SGLANG_PROBE_HELPER", "1")
 	original := sglangProbeCommand
 	sglangProbeCommand = func(context.Context, string, ...string) *exec.Cmd {
@@ -387,6 +388,30 @@ func TestProbeSGLangPythonParsesRuntimeJSON(t *testing.T) {
 	if !probed.Installed || probed.Available || !strings.Contains(probed.Reason, "no visible CUDA/ROCm GPU") {
 		t.Fatalf("CPU-only probe = %+v", probed)
 	}
+
+	matchingGPU := `{"index":0,"name":"AMD Instinct MI210","arch":"gfx90a:sramecc+:xnack-"}`
+	mismatchedGPU := `{"index":1,"name":"AMD Instinct MI300X","arch":"gfx942"}`
+	for _, tt := range []struct {
+		name, target, devices, reason string
+		rocm                          bool
+	}{
+		{"matching image", "gfx90a", matchingGPU, "", true},
+		{"mismatched image", "gfx90a", mismatchedGPU, "GPU 1 reports gfx942", true},
+		{"mixed visible architectures", "gfx90a", matchingGPU + "," + mismatchedGPU, "GPU 1 reports gfx942", true},
+		{"missing architecture", "gfx90a", `{"index":0}`, "GPU 0 reports unknown architecture", true},
+		{"CUDA runtime in ROCm image", "gfx90a", `{"index":0}`, "require ROCm PyTorch", false},
+		{"unrestricted native runtime", "", mismatchedGPU, "", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(sglangROCmArchEnv, tt.target)
+			t.Setenv("SGLANG_PROBE_JSON", fmt.Sprintf(`{"installed":true,"cuda":true,"rocm":%t,"devices":[%s]}`, tt.rocm, tt.devices))
+			got := probeSGLangPython(os.Args[0], t.TempDir())
+			if !got.Known || !got.Installed || got.Available != (tt.reason == "") || !strings.Contains(got.Reason, tt.reason) {
+				t.Fatalf("probe = %+v, want availability %t and reason containing %q", got, tt.reason == "", tt.reason)
+			}
+		})
+	}
+
 }
 
 func TestDeploymentAliasKeepsOriginalModelIdentityForParser(t *testing.T) {

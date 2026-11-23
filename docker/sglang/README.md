@@ -87,13 +87,13 @@ IMAGE_TAG=csglite-sglang:dev-rocm-gfx90a \
 
 MI300/MI325（`gfx942`）及 MI350（`gfx950`）需要分别传入
 `--build-arg ROCM_GPU_ARCH=gfx942` 或 `--build-arg ROCM_GPU_ARCH=gfx950`，
-并使用各自的镜像标签。
+并使用各自的镜像标签。Lite 校验所有可见 GPU 的架构，架构不匹配时将 SGLang 上报为不可用。
 
 在安装了 AMDGPU 驱动的 Linux 主机上启动，Compose 会映射 `/dev/kfd` 和
 `/dev/dri`。多卡节点用 `GPU_ID` 选择卡，默认卡号为 `0`。
 
 ```bash
-export CSGLITE_SGLANG_IMAGE=opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-rocm724-gfx90a
+export CSGLITE_SGLANG_IMAGE=opencsg-registry.cn-beijing.cr.aliyuncs.com/opencsghq/csglite:sglang-v0.5.19-rocm724-gfx90a-r2
 export RENDER_GID="$(getent group render | cut -d: -f3)"
 docker compose -f docker/sglang/compose.rocm.yaml pull
 docker compose -f docker/sglang/compose.rocm.yaml up -d

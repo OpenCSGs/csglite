@@ -226,6 +226,11 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
             <p class="text-xs text-gray-400">{t("deployments.quantEstimateHint")}</p>
           </div>}
           {draft.repository.trim() && <label class="col-span-2 space-y-1 text-sm">{t("deployments.name")}<input id="deployment-name" class={inputClass} required maxLength={100} value={draft.name} onInput={e => patch({ name: e.currentTarget.value })} /></label>}
+          {draft.repository.trim() && isLlamaDeployment(modelKind) && <label class="col-span-2 space-y-1 text-sm" for="deployment-keep-alive">
+            {t("deployments.keepAlive")}
+            <input id="deployment-keep-alive" class={inputClass} placeholder="-1" value={draft.keep_alive ?? ""} onInput={e => patch({ keep_alive: e.currentTarget.value })} />
+            <span class="block text-xs text-gray-500">{t("deployments.keepAliveHint")}</span>
+          </label>}
           {draft.repository.trim() && effectiveSGLang ? <>
             <ContextWindowField kind={modelKind} value={draft.num_ctx} required inputClass={inputClass} onInput={value => patch({ num_ctx: Number(value) })} />
             <label class="space-y-1 text-sm">{t("deployments.parallel")}<input type="number" class={inputClass} min={1} max={16} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
@@ -238,10 +243,6 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
                 <label class="space-y-1 text-sm">{t("deployments.parallel")}<input type="number" class={inputClass} min={1} max={16} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
                 <label class="space-y-1 text-sm">{t("deployments.gpuLayers")}<input type="number" class={inputClass} min={-1} max={999} required value={draft.n_gpu_layers} onInput={e => patch({ n_gpu_layers: Number(e.currentTarget.value) })} /></label>
                 <p class="col-span-2 text-xs text-gray-400">{t("deployments.llamaParamsHint")}</p>
-                <label class="col-span-2 space-y-1 text-sm">{t("deployments.keepAlive")}
-                  <input class={inputClass} placeholder="-1" value={draft.keep_alive ?? ""} onInput={e => patch({ keep_alive: e.currentTarget.value })} />
-                  <span class="block text-xs text-gray-500">{t("deployments.keepAliveHint")}</span>
-                </label>
               </>}
               <p class="col-span-2 text-xs text-gray-400">{t("deployments.registryContext")}</p>
             </div>

@@ -30,6 +30,7 @@ const LlamaBackend = "llama"
 const (
 	sglangPythonEnv       = "CSGHUB_LITE_SGLANG_PYTHON"
 	sglangDisabledEnv     = "CSGHUB_LITE_SGLANG_DISABLE"
+	sglangROCmArchEnv     = "CSGHUB_LITE_SGLANG_ROCM_ARCH"
 	sglangReadyTimeoutEnv = "CSGHUB_LITE_SGLANG_READY_TIMEOUT"
 )
 
@@ -226,7 +227,8 @@ try:
     if info["cuda"]:
         for index in range(torch.cuda.device_count()):
             props = torch.cuda.get_device_properties(index)
-            info["devices"].append({"index": index, "name": props.name, "total": int(props.total_memory)})
+            info["devices"].append({"index": index, "name": props.name, "total": int(props.total_memory),
+                                    "arch": getattr(props, "gcnArchName", "")})
 except Exception as exc:
     info["error"] = "%s: %s" % (type(exc).__name__, exc)
 print(json.dumps(info))`
@@ -248,6 +250,7 @@ func probeSGLangPython(python, storageRoot string) SGLangRuntime {
 			Index int    `json:"index"`
 			Name  string `json:"name"`
 			Total uint64 `json:"total"`
+			Arch  string `json:"arch"`
 		} `json:"devices"`
 	}
 	text := strings.TrimSpace(string(output))
@@ -284,6 +287,24 @@ func probeSGLangPython(python, storageRoot string) SGLangRuntime {
 	case len(probed.Devices) == 0:
 		probed.Reason = "SGLang is installed but PyTorch reports no usable GPU device"
 	default:
+		if target := strings.TrimSpace(os.Getenv(sglangROCmArchEnv)); target != "" {
+			if !probed.ROCM {
+				probed.Reason = fmt.Sprintf("SGLang kernels for %s require ROCm PyTorch", target)
+				return probed
+			}
+			for _, device := range payload.Devices {
+				// ROCm appends feature suffixes such as :sramecc+:xnack-.
+				arch, _, _ := strings.Cut(strings.TrimSpace(device.Arch), ":")
+				if arch == target {
+					continue
+				}
+				if arch == "" {
+					arch = "unknown architecture"
+				}
+				probed.Reason = fmt.Sprintf("SGLang ROCm kernels target %s, but GPU %d reports %s", target, device.Index, arch)
+				return probed
+			}
+		}
 		probed.Available = true
 	}
 	return probed

@@ -143,6 +143,7 @@ native SGLang 只在 Linux + CUDA/ROCm 上可用；macOS/Windows 继续使用 ll
 | `CSGHUB_LITE_SGLANG_PYTHON` | 指定带 SGLang 的 Python 解释器；优先级最高 | 自动探测 `/opt/sglang/bin/python`、Lite 运行时目录、`PATH` |
 | `CSGHUB_LITE_SGLANG_DISABLE` | `1` 时禁用 native SGLang（legacy 固定模型容器会自动设置） | 未设置 |
 | `CSGHUB_LITE_SGLANG_REQUIRE` | `1` 时即使未找到解释器也视为“已配置 SGLang”；探测失败必须报错而不是回退转换 | 未设置 |
+| `CSGHUB_LITE_SGLANG_ROCM_ARCH` | 指定 SGLang ROCm 算子的编译目标，设置后校验所有可见 GPU 的架构 | ROCm 镜像自动设置为编译目标 |
 | `CSGHUB_LITE_SGLANG_READY_TIMEOUT` | 等待 `/health` 的启动超时，支持 `45m` 或秒数 | `30m` |
 | `CSGHUB_LITE_SGLANG_TP_SIZE` / `SGLANG_TP_SIZE` | 显式张量并行卡数；默认单卡。超过可见 GPU 数会报错 | `1` |
 | `CSGHUB_LITE_SGLANG_BASE_GPU_ID` / `SGLANG_BASE_GPU_ID` | 起始 GPU 偏移，参与显存估算 | `0` |

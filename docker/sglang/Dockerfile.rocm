@@ -97,6 +97,7 @@ LABEL org.opencontainers.image.title="CSGLite + SGLang ROCm text runtime" \
 ENV HOME=/root \
     PATH=/root/.csghub-lite/bin:/opt/sglang/bin:${PATH} \
     ROCM_HOME=/opt/rocm \
+    CSGHUB_LITE_SGLANG_ROCM_ARCH=${ROCM_GPU_ARCH} \
     SGLANG_USE_AITER=0 \
     SGLANG_EXTRA_ARGS='["--attention-backend","triton"]' \
     PYTHONUNBUFFERED=1 \
