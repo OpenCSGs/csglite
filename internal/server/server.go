@@ -1243,9 +1243,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		if me, ok := s.engines[cacheKey]; ok {
 			log.Printf("reloading model %s %s engine due to config change (num_ctx %d->%d, parallel %d->%d, n_gpu_layers %d->%d, cache_type_k %q->%q, cache_type_v %q->%q, dtype %q->%q, speculative %q->%q)", modelID, mode, me.numCtx, effectiveNumCtx, me.numParallel, effectiveNumParallel, me.nGPULayers, effectiveNGPULayers, me.cacheTypeK, normalizedCacheTypeK, me.cacheTypeV, normalizedCacheTypeV, me.dtype, normalizedDType, me.speculativeKey, speculativeKey)
 			oldEngine = me.engine
-			if me.effectiveBackend == effectiveBackend {
-				nextKeepAlive = me.keepAlive
-			}
+			nextKeepAlive = me.keepAlive
 			delete(s.engines, cacheKey)
 		}
 		s.mu.Unlock()
