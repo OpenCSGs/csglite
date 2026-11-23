@@ -25,6 +25,7 @@ import (
 var ErrGatewayUnreachable = errors.New("the CSGHub AI gateway does not provide the edge serving API (HTTP 404)")
 
 var ErrModelUnavailable = errors.New("the selected model is unavailable for edge serving")
+var ErrUseModelService = errors.New("this local model is already available through a model service; select the model service to apply")
 
 // APIError is a gateway API failure, carrying the HTTP status so the local
 // API can pass it on.
@@ -221,6 +222,9 @@ func (m *Manager) Submit(ctx context.Context, req SubmitRequest) (json.RawMessag
 	}
 	if IsRoutedModelID(req.LocalModelID) && !selected.Ready {
 		return nil, ErrModelUnavailable
+	}
+	if selected.CoveredByService {
+		return nil, ErrUseModelService
 	}
 	gatewayURL, userToken := m.host.Cloud()
 	if _, err := m.ensureRegistered(ctx, gatewayURL, userToken); err != nil {

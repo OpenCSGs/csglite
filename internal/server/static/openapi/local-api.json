@@ -7729,7 +7729,7 @@
           "Edge"
         ],
         "summary": "Get edge serving status",
-        "description": "Connector state plus local models and published AI Gateway model services that can be shared. A model service can use cluster members.",
+        "description": "Connector state plus local models and published AI Gateway model services that can be shared. A local model already covered by a shareable model service is offered through that service.",
         "operationId": "getEdgeStatus",
         "responses": {
           "200": {
@@ -7919,7 +7919,7 @@
             }
           },
           "409": {
-            "description": "The selected model service is no longer available for sharing.",
+            "description": "The selected model service is no longer available, or the selected local model must be shared through a model service.",
             "content": {
               "application/json": {
                 "schema": {

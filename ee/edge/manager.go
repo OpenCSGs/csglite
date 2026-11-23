@@ -77,6 +77,9 @@ type Model struct {
 	ContextLength int64  `json:"context_length,omitempty"`
 	// ActiveRequests counts the requests this model is serving right now.
 	ActiveRequests int `json:"active_requests,omitempty"`
+	// CoveredByService hides a duplicate local choice from new applications
+	// while keeping its ID advertised for existing applications.
+	CoveredByService bool `json:"-"`
 }
 
 // Host is what the edge connector needs from the CSGLite server.

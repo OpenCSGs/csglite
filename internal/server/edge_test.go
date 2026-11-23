@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -115,6 +116,83 @@ func TestEdgeServableModel(t *testing.T) {
 		if got := edgeServableModel(c.info); got != c.want {
 			t.Errorf("edgeServableModel(%+v) = %v, want %v", c.info, got, c.want)
 		}
+	}
+}
+
+func TestEdgeOffersLocalModelThroughItsPublishedService(t *testing.T) {
+	s := newTestServer(t)
+	const localID = "acme/chat"
+	const otherID = "other/chat"
+	for i, namespace := range []string{"acme", "other"} {
+		mustSaveLocalModel(t, s.cfg.ModelDir, &model.LocalModel{
+			Namespace: namespace, Name: "chat", Format: model.FormatGGUF, PipelineTag: "text-generation",
+			Size: 1 << 20, Files: []string{"model.gguf"}, DownloadedAt: time.Unix(int64(i+1), 0),
+		})
+	}
+	alias := s.localInferenceModelID(localID)
+	if alias != "chat" {
+		t.Fatalf("expected a short inference alias, got %q", alias)
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/edge/applications" {
+			t.Errorf("unexpected request to the gateway: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[],"total":0}`))
+	}))
+	defer gateway.Close()
+	s.cfg.AIGatewayURL, s.cfg.Token = gateway.URL, "test-token"
+	host := edgeHost{s}
+	manager, err := edge.New(host, t.TempDir(), "test-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := config.ProviderPool{
+		ID: "chat-service", Name: "Chat service", Model: "published-chat", Enabled: true, Policy: "fixed",
+		Members: []config.ProviderPoolMember{{ID: "local", Source: "local", Model: alias}},
+	}
+	serviceID := edge.ModelServiceID(pool.ID)
+	catalog := func() map[string]edge.Model {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		s.handleEdgeStatus(rec, httptest.NewRequest(http.MethodGet, "/api/edge", nil), manager)
+		var status edgeStatusResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+			t.Fatal(err)
+		}
+		choices := make(map[string]edge.Model, len(status.Models))
+		for _, choice := range status.Models {
+			choices[choice.ID] = choice
+		}
+		return choices
+	}
+	if err := config.SaveProviderPools([]config.ProviderPool{pool}); err != nil {
+		t.Fatal(err)
+	}
+	choices := catalog()
+	if len(choices) != 2 || choices[otherID].ID != otherID || !choices[serviceID].Ready {
+		t.Fatalf("expected the published service and the separate same-name model, got %+v", choices)
+	}
+	advertised := host.Models(t.Context())
+	if !slices.ContainsFunc(advertised, func(m edge.Model) bool { return m.ID == localID && m.Ready && m.CoveredByService }) {
+		t.Fatalf("the existing local binding must remain advertised: %+v", advertised)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/edge/applications", strings.NewReader(`{"model_name":"chat","local_model_id":"chat"}`))
+	req.Header.Set("Accept-Language", "zh-CN")
+	s.handleEdgeSubmit(rec, req, manager)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "请选择对应的模型服务") {
+		t.Fatalf("duplicate local submission returned %d: %s", rec.Code, rec.Body)
+	}
+
+	pool.Members[0].Disabled = true
+	if err := config.SaveProviderPools([]config.ProviderPool{pool}); err != nil {
+		t.Fatal(err)
+	}
+	choices = catalog()
+	if len(choices) != 2 || choices[localID].ID != localID || choices[otherID].ID != otherID {
+		t.Fatalf("an unavailable service replaced a local choice: %+v", choices)
 	}
 }
 

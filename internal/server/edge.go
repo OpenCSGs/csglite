@@ -157,6 +157,10 @@ func (h edgeHost) modelRoute(id, protocol string) (model, source string, err err
 // Models lists local models and published AI Gateway chat services.
 func (h edgeHost) Models(context.Context) []edge.Model {
 	out := h.localModels()
+	localByID := make(map[string]int, len(out))
+	for i, model := range out {
+		localByID[model.ID] = i
+	}
 	for _, pool := range config.GetProviderPools() {
 		if !pool.Enabled {
 			continue
@@ -164,6 +168,17 @@ func (h edgeHost) Models(context.Context) []edge.Model {
 		details, _ := h.s.providerPoolDetails(pool)
 		if !slices.Contains(details.InferenceProtocols, "chat/completions") {
 			continue
+		}
+		for i, member := range pool.Members {
+			if pool.Policy == config.ProviderPoolPolicyFixed && i > 0 {
+				break
+			}
+			if member.Source == "local" && details.SourceStates[member.ID] == "configured" {
+				id := h.s.resolveLocalModelStorageID(member.Model)
+				if index, ok := localByID[id]; ok {
+					out[index].CoveredByService = true
+				}
+			}
 		}
 		out = append(out, edge.Model{
 			ID: edge.ModelServiceID(pool.ID), Name: pool.Model,
@@ -304,6 +319,7 @@ func (s *Server) withEdge(next func(http.ResponseWriter, *http.Request, *edge.Ma
 func (s *Server) handleEdgeStatus(w http.ResponseWriter, r *http.Request, m *edge.Manager) {
 	_, token := edgeHost{s}.Cloud()
 	models := edgeHost{s}.Models(r.Context())
+	models = slices.DeleteFunc(models, func(model edge.Model) bool { return model.CoveredByService })
 	if models == nil {
 		models = []edge.Model{}
 	}
@@ -345,6 +361,9 @@ func (s *Server) handleEdgeSubmit(w http.ResponseWriter, r *http.Request, m *edg
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	if !edge.IsRoutedModelID(req.LocalModelID) {
+		req.LocalModelID = s.resolveLocalModelStorageID(req.LocalModelID)
 	}
 	limit := s.edgeModelLimit()
 	if limit > 0 {
@@ -458,6 +477,14 @@ func (s *Server) handleEdgeStatements(w http.ResponseWriter, r *http.Request, m 
 // can show the gateway's message (for example a review conflict). The
 // gateway's own 404 page is reported as a missing edge API in the caller's language.
 func writeEdgeError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, edge.ErrUseModelService) {
+		message := err.Error()
+		if strings.HasPrefix(requestLocale(r), "zh") {
+			message = "此本地模型已通过模型服务提供，请选择对应的模型服务申请。"
+		}
+		writeError(w, http.StatusConflict, message)
+		return
+	}
 	if errors.Is(err, edge.ErrModelUnavailable) {
 		message := err.Error()
 		if strings.HasPrefix(requestLocale(r), "zh") {
