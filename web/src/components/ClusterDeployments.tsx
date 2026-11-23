@@ -228,7 +228,7 @@ export function ClusterDeploymentControls({ view, deployments, publications, sta
           {draft.repository.trim() && <label class="col-span-2 space-y-1 text-sm">{t("deployments.name")}<input id="deployment-name" class={inputClass} required maxLength={100} value={draft.name} onInput={e => patch({ name: e.currentTarget.value })} /></label>}
           {draft.repository.trim() && isLlamaDeployment(modelKind) && <label class="col-span-2 space-y-1 text-sm" for="deployment-keep-alive">
             {t("deployments.keepAlive")}
-            <input id="deployment-keep-alive" class={inputClass} placeholder="-1" value={draft.keep_alive ?? ""} onInput={e => patch({ keep_alive: e.currentTarget.value })} />
+            <input id="deployment-keep-alive" class={inputClass} placeholder="-1" value={draft.keep_alive ?? (effectiveSGLang ? "-1" : "")} onInput={e => patch({ keep_alive: e.currentTarget.value })} />
             <span class="block text-xs text-gray-500">{t("deployments.keepAliveHint")}</span>
           </label>}
           {draft.repository.trim() && effectiveSGLang ? <>

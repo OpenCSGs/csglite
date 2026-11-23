@@ -194,3 +194,55 @@ func TestSGLangLoadUsesRequestContextOverSavedSetting(t *testing.T) {
 		t.Fatalf("loader received num_parallel=%d, want the explicit request 1", gotNumParallel)
 	}
 }
+
+func TestSGLangKeepAliveDefaultAndOverrides(t *testing.T) {
+	s, _ := newSGLangConfigTestServer(t)
+	const modelID = "test/native"
+	storageID := s.resolveLocalModelStorageID(modelID)
+	s.cfg.Inference.SetModelSettings(storageID, config.ModelRuntimeSettings{Backend: inference.SGLangBackend})
+	original := loadEngineWithBackendSpeculativeProgress
+	loadEngineWithBackendSpeculativeProgress = func(string, *model.LocalModel, inference.ConvertProgressFunc, bool, int, int, int, string, string, string, inference.EngineBackendOptions, inference.SpeculativeConfig) (inference.Engine, error) {
+		return &fakeChatCompletionEngine{}, nil
+	}
+	t.Cleanup(func() { loadEngineWithBackendSpeculativeProgress = original })
+
+	rec, response := modelConfigRequest(t, s, http.MethodGet, modelID, "")
+	if rec.Code != http.StatusOK || response.GlobalKeepAlive != "-1" || response.EffectiveKeepAlive != "-1" {
+		t.Fatalf("default model config = %d %s, want keep-alive -1", rec.Code, rec.Body)
+	}
+
+	cacheKey := engineCacheKey(storageID, engineModeChat)
+	for _, test := range []struct {
+		name      string
+		saved     string
+		requested string
+		want      time.Duration
+	}{
+		{name: "default", want: api.KeepAliveForever},
+		{name: "saved override", saved: "30s", want: 30 * time.Second},
+		{name: "request override", saved: "30s", requested: "2m", want: 2 * time.Minute},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s.closeEngineKey(cacheKey)
+			s.cfg.Inference.SetModelSettings(storageID, config.ModelRuntimeSettings{
+				Backend:   inference.SGLangBackend,
+				KeepAlive: test.saved,
+			})
+			body := `{"model":"test/native","keep_alive":"` + test.requested + `"}`
+			request := httptest.NewRequest(http.MethodPost, "/api/load", strings.NewReader(body))
+			recorder := httptest.NewRecorder()
+			s.handleLoad(recorder, request)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("load = %d %s", recorder.Code, recorder.Body)
+			}
+			if got := s.engines[cacheKey].keepAlive; got != test.want {
+				t.Fatalf("loaded keep-alive = %s, want %s", got, test.want)
+			}
+		})
+	}
+
+	rec, response = modelConfigRequest(t, s, http.MethodGet, modelID, "")
+	if rec.Code != http.StatusOK || response.EffectiveKeepAlive != "30s" {
+		t.Fatalf("saved model config = %d %s, want keep-alive 30s", rec.Code, rec.Body)
+	}
+}

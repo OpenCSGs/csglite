@@ -20,7 +20,7 @@ export function buildClusterDeploymentRequest(input: DeploymentPayloadInput): Cl
   const { draft, modelKind, effectiveSGLang, recommendedQuant, recommendedRequired, targetUUID } = input;
   return {
     ...draft,
-    keep_alive: draft.keep_alive?.trim() || undefined,
+    keep_alive: draft.keep_alive?.trim() || (effectiveSGLang ? "-1" : undefined),
     sglang_args: effectiveSGLang ? draft.sglang_args?.trim() || undefined : undefined,
     repository: draft.repository.trim(),
     kind: modelKind === "embedding" ? "embedding" : "chat",

@@ -16273,7 +16273,7 @@
           },
           "global_keep_alive": {
             "type": "string",
-            "description": "Idle window this model would use with no per-model setting. It differs by runtime: recognition and speech models idle out later than text models."
+            "description": "Idle window this model would use with no per-model setting. SGLang defaults to -1 (keep loaded), recognition and speech engines default to 15m, and other engines default to 5m."
           },
           "effective_keep_alive": {
             "type": "string",

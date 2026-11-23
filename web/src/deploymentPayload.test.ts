@@ -15,6 +15,7 @@ describe("deployment payload", () => {
       recommendedQuant: "q4_k_m", recommendedRequired: 9e9, targetUUID: "gpu-worker",
     });
     expect(payload.backend).toBe("sglang");
+    expect(payload.keep_alive).toBe("-1");
     expect(payload.quant).toBe("");
     expect(payload.sglang_args).toBe("--chunked-prefill-size 4096\n--kv-cache-dtype bf16");
     expect(payload.minimum_memory_bytes).toBeUndefined();
@@ -28,6 +29,7 @@ describe("deployment payload", () => {
       recommendedQuant: "q5_k_m", recommendedRequired: 8.2e9, targetUUID: "llama-node",
     });
     expect(payload.backend).toBe("");
+    expect(payload.keep_alive).toBeUndefined();
     expect(payload.quant).toBe("q5_k_m");
     expect(payload.minimum_memory_bytes).toBe(8.2e9);
   });

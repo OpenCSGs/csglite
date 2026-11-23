@@ -268,6 +268,11 @@ func (s *Server) modelConfigResponse(modelID, modelDir string) api.ModelConfigRe
 	backend := s.modelBackendSetting(modelID)
 	dtype := s.modelDTypeSetting(modelID)
 	effectiveBackend := inference.EffectiveBackend(modelDir, lm, backend, dtype)
+	runtimeKind := s.modelRuntimeKind(modelID)
+	defaultKeepAlive := defaultKeepAliveForRuntime(runtimeKind)
+	if !keepAliveSet {
+		keepAliveSetting = defaultKeepAlive
+	}
 	response := api.ModelConfigResponse{
 		Model:                modelID,
 		NumCtx:               setting,
@@ -279,9 +284,9 @@ func (s *Server) modelConfigResponse(modelID, modelDir string) api.ModelConfigRe
 		EffectiveNumParallel: inference.ResolveNumParallelWithModelSetting(0, parallelSetting, s.cfg.Inference.LlamaNumParallel),
 		DType:                dtype,
 		KeepAlive:            savedKeepAlive,
-		GlobalKeepAlive:      api.FormatKeepAlive(s.defaultKeepAliveFor(modelID)),
-		EffectiveKeepAlive:   api.FormatKeepAlive(s.effectiveModelKeepAlive(modelID)),
-		Runtime:              s.modelRuntimeKind(modelID),
+		GlobalKeepAlive:      api.FormatKeepAlive(defaultKeepAlive),
+		EffectiveKeepAlive:   api.FormatKeepAlive(keepAliveSetting),
+		Runtime:              runtimeKind,
 		Backend:              backend,
 		EffectiveBackend:     effectiveBackend,
 		Backends:             s.inferenceRuntimeCapabilities(),

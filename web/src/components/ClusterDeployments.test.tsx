@@ -63,7 +63,7 @@ it("lets a new native SGLang deployment set idle keep-alive", async () => {
   });
 
   const keepAlive = document.querySelector<HTMLInputElement>("#deployment-keep-alive");
-  expect(keepAlive).not.toBeNull();
+  expect(keepAlive?.value).toBe("-1");
   await act(() => {
     keepAlive!.value = "5m";
     keepAlive!.dispatchEvent(new Event("input", { bubbles: true }));

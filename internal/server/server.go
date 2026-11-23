@@ -837,16 +837,15 @@ func (s *Server) displayVersion() string {
 	return "dev"
 }
 
-// defaultKeepAliveFor reports the idle window a model gets with no per-model
-// setting, for a caller that does not already know which runtime serves it.
-// Recognition and speech models idle out later than text models, and working
-// this out reads the model directory, so the load paths pass their own runtime
-// default to resolveModelKeepAlive instead of calling this.
-func (s *Server) defaultKeepAliveFor(modelID string) time.Duration {
-	if s.modelUsesASREngine(modelID) || s.modelUsesTTSEngine(modelID) {
+func defaultKeepAliveForRuntime(runtimeKind string) time.Duration {
+	switch runtimeKind {
+	case api.ModelRuntimeSGLang:
+		return api.KeepAliveForever
+	case api.ModelRuntimePythonASR, api.ModelRuntimePythonTTS:
 		return DefaultSpeechKeepAlive
+	default:
+		return DefaultKeepAlive
 	}
-	return DefaultKeepAlive
 }
 
 // resolveModelKeepAlive picks the idle window for a load that carries none of
@@ -871,7 +870,7 @@ func (s *Server) resolveModelKeepAlive(modelID string, runtimeDefault time.Durat
 // reports what the next load of the model would use with no keep-alive of its
 // own.
 func (s *Server) effectiveModelKeepAlive(modelID string) time.Duration {
-	return s.resolveModelKeepAlive(modelID, s.defaultKeepAliveFor(modelID))
+	return s.resolveModelKeepAlive(modelID, defaultKeepAliveForRuntime(s.modelRuntimeKind(modelID)))
 }
 
 // applyModelKeepAlive updates the idle window of whichever engine currently
@@ -1140,7 +1139,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	// llama.cpp defaults, which would either reserve an unbounded KV pool or
 	// ignore the per-model setting.
 	lmForBackend, _ := s.manager.Get(modelID)
-	effectiveBackend := inference.EffectiveBackend(modelDir, lmForBackend, requestedBackend, normalizedDType)
+	effectiveBackend := inference.EffectiveBackend(modelDir, lmForBackend, loadBackend, normalizedDType)
 	if mode == engineModeChat && effectiveBackend == inference.SGLangBackend {
 		// Request context wins over the persisted per-model setting. Only a
 		// request that names no context (below the minimum) falls back to the
@@ -1154,7 +1153,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	}
 	// Resolved with the other per-model settings, before the engine lock is
 	// taken: reading them touches the config and the model directory.
-	resolvedKeepAlive := s.resolveModelKeepAlive(modelID, DefaultKeepAlive)
+	resolvedKeepAlive := s.resolveModelKeepAlive(modelID, defaultKeepAliveForRuntime(effectiveBackend))
 	effectiveNGPULayers := inference.ResolveNGPULayers(normalizedNGPULayers)
 	loadConfigKey := fmt.Sprintf(
 		"%d|%d|%d|%s|%s|%s|%s|%s",
@@ -1244,7 +1243,9 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		if me, ok := s.engines[cacheKey]; ok {
 			log.Printf("reloading model %s %s engine due to config change (num_ctx %d->%d, parallel %d->%d, n_gpu_layers %d->%d, cache_type_k %q->%q, cache_type_v %q->%q, dtype %q->%q, speculative %q->%q)", modelID, mode, me.numCtx, effectiveNumCtx, me.numParallel, effectiveNumParallel, me.nGPULayers, effectiveNGPULayers, me.cacheTypeK, normalizedCacheTypeK, me.cacheTypeV, normalizedCacheTypeV, me.dtype, normalizedDType, me.speculativeKey, speculativeKey)
 			oldEngine = me.engine
-			nextKeepAlive = me.keepAlive
+			if me.effectiveBackend == effectiveBackend {
+				nextKeepAlive = me.keepAlive
+			}
 			delete(s.engines, cacheKey)
 		}
 		s.mu.Unlock()
