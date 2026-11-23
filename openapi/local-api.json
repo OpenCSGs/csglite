@@ -579,6 +579,28 @@
         }
       }
     },
+    "/api/inference/runtimes": {
+      "get": {
+        "tags": [
+          "Models"
+        ],
+        "summary": "List local inference runtime capability",
+        "operationId": "listInferenceRuntimes",
+        "description": "Reports which inference backends can start on this machine and the visible NVIDIA GPUs used to size SGLang context, KV and memory defaults. Unavailable backends include a reason; a client must not offer them.",
+        "responses": {
+          "200": {
+            "description": "Runtime capability and visible GPUs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InferenceRuntimesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/models/{model}/config": {
       "get": {
         "tags": [
@@ -15205,7 +15227,8 @@
               "system",
               "user",
               "assistant",
-              "tool"
+              "tool",
+              "function"
             ]
           },
           "content": {
@@ -15241,6 +15264,14 @@
           },
           "meta": {
             "$ref": "#/components/schemas/MessageMeta"
+          },
+          "function_call": {
+            "$ref": "#/components/schemas/OpenAIFunctionCall",
+            "description": "Legacy assistant function call; normalized to tool_calls before reaching a backend."
+          },
+          "name": {
+            "type": "string",
+            "description": "Legacy OpenAI role:\"function\" name. ToolName is the Ollama-style equivalent."
           }
         }
       },
@@ -16196,7 +16227,9 @@
           "keep_alive",
           "global_keep_alive",
           "effective_keep_alive",
-          "runtime"
+          "runtime",
+          "backend",
+          "effective_backend"
         ],
         "properties": {
           "model": {
@@ -16240,7 +16273,7 @@
           },
           "global_keep_alive": {
             "type": "string",
-            "description": "Idle window this model would use with no per-model setting. It differs by runtime: recognition and speech models idle out later than text models."
+            "description": "Idle window this model would use with no per-model setting. SGLang defaults to -1 (keep loaded), recognition and speech engines default to 15m, and other engines default to 5m."
           },
           "effective_keep_alive": {
             "type": "string",
@@ -16250,11 +16283,39 @@
             "type": "string",
             "enum": [
               "llama",
+              "sglang",
               "python-asr",
               "python-tts",
               "diffusers"
             ],
-            "description": "Runtime that serves this model. The llama.cpp load options apply only to \"llama\"; the pipeline tag does not determine this, since an embedding model runs on llama.cpp when its weights convert to GGUF and in the Python embedding runtime when they do not."
+            "description": "Runtime that serves this model. The llama.cpp load options apply only to \"llama\"; \"sglang\" serves native Safetensors weights with its own bounded context and concurrency flags. The pipeline tag does not determine this."
+          },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "",
+              "llama",
+              "sglang"
+            ],
+            "description": "Backend pinned for this model; empty follows the format default (GGUF -> llama, native Safetensors -> SGLang when available, otherwise llama.cpp conversion)."
+          },
+          "effective_backend": {
+            "type": "string",
+            "enum": [
+              "llama",
+              "sglang"
+            ],
+            "description": "Backend a load would use right now. It can differ from backend when the setting is automatic or a persisted dtype keeps the model on llama.cpp."
+          },
+          "backends": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InferenceRuntimeCapability"
+            },
+            "description": "Runtime capability of this machine, so a client never offers a backend that cannot start."
+          },
+          "sglang": {
+            "$ref": "#/components/schemas/SGLangRuntimeSettings"
           }
         }
       },
@@ -16278,6 +16339,16 @@
           "keep_alive": {
             "type": "string",
             "description": "Idle window before the model is unloaded: a duration such as \"30s\" or \"1h\", or \"-1\" to keep it loaded until stopped. Send an empty string to clear the setting and follow the runtime default."
+          },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "",
+              "auto",
+              "llama",
+              "sglang"
+            ],
+            "description": "Inference backend. Empty or auto follows the format default. An explicit sglang is accepted only for native Safetensors weights on a Linux host with SGLang installed; it fails with the availability reason instead of converting the model to GGUF."
           }
         }
       },
@@ -19244,6 +19315,27 @@
             "type": "object",
             "additionalProperties": true,
             "description": "OpenAI response format, such as {\"type\":\"json_object\"} or {\"type\":\"json_schema\",\"json_schema\":{...}}. Local llama.cpp models enforce it with a grammar."
+          },
+          "functions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenAIFunction"
+            },
+            "description": "Legacy function declarations; normalized to tools when tools is absent."
+          },
+          "function_call": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Legacy function selection; normalized to tool_choice."
           }
         }
       },
@@ -20628,6 +20720,16 @@
           "has_mmproj": {
             "type": "boolean",
             "description": "Supports local vision image input."
+          },
+          "engine_backend": {
+            "type": "string",
+            "enum": [
+              "llama",
+              "sglang"
+            ]
+          },
+          "engine_plan": {
+            "$ref": "#/components/schemas/EnginePlanStatus"
           }
         }
       },
@@ -20842,6 +20944,16 @@
           "deployment_configurable": {
             "type": "boolean",
             "description": "Node supports changing quantization and runtime settings on stopped deployments. Missing/false requires a target-node upgrade."
+          },
+          "engines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClusterEngineStatus"
+            },
+            "description": "Installed/available/running engines reported by the node. Omitted by older nodes; absence means unknown, not unavailable."
+          },
+          "resource_limits": {
+            "$ref": "#/components/schemas/InferenceResourceLimits"
           },
           "deployment_keep_alive": {
             "type": "boolean",
@@ -21601,6 +21713,11 @@
           "repository"
         ],
         "properties": {
+          "sglang_args": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Optional SGLang tuning flags as whitespace-separated --flag value or --flag=value pairs. Requires the SGLang chat backend. An empty string restores automatic settings."
+          },
           "name": {
             "type": "string",
             "maxLength": 100
@@ -21668,6 +21785,16 @@
             "maximum": 999,
             "default": -1
           },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "",
+              "auto",
+              "llama",
+              "sglang"
+            ],
+            "description": "Inference backend for a chat deployment. Empty follows the format default. SGLang is text-generation only and requires native Safetensors weights; a worker without SGLang fails the deployment with the runtime reason."
+          },
           "keep_alive": {
             "type": "string",
             "description": "Deployment idle duration, such as 30s, 5m or 1h. Omit, use an empty string, or set -1 to keep the runtime loaded. Finite durations require a target advertising deployment_keep_alive."
@@ -21726,6 +21853,16 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "engine_backend": {
+            "type": "string",
+            "enum": [
+              "llama",
+              "sglang"
+            ]
+          },
+          "engine_plan": {
+            "$ref": "#/components/schemas/EnginePlanStatus"
           }
         }
       },
@@ -21858,6 +21995,11 @@
         "additionalProperties": false,
         "description": "At least one setting. Omitted fields retain their values. Null values are treated as omitted. Empty quant selects model default; zero GPU layers selects CPU-only execution.",
         "properties": {
+          "sglang_args": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Optional SGLang tuning flags as whitespace-separated --flag value or --flag=value pairs. Requires the SGLang chat backend. An empty string restores automatic settings."
+          },
           "quant": {
             "type": "string",
             "description": "Optional GGUF quantization/runtime dtype."
@@ -21879,6 +22021,16 @@
             "minimum": -1,
             "maximum": 999,
             "default": -1
+          },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "",
+              "auto",
+              "llama",
+              "sglang"
+            ],
+            "description": "Inference backend. Editable only while the deployment is stopped, like the other runtime settings."
           },
           "keep_alive": {
             "type": "string",
@@ -21920,6 +22072,396 @@
           "checked_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "InferenceRuntimeCapability": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "backend",
+          "known",
+          "installed",
+          "available",
+          "running"
+        ],
+        "properties": {
+          "backend": {
+            "type": "string",
+            "enum": [
+              "llama",
+              "sglang"
+            ]
+          },
+          "available": {
+            "type": "boolean",
+            "description": "The runtime can actually start (for SGLang: Linux with a visible CUDA/ROCm GPU)."
+          },
+          "version": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "User-facing explanation when the backend cannot start, such as a missing SGLang installation, a non-Linux platform, or a missing llama-server binary."
+          },
+          "known": {
+            "type": "boolean",
+            "description": "False when the runtime has not been probed yet; an older node that did not report engines is unknown, never assumed installed."
+          },
+          "installed": {
+            "type": "boolean",
+            "description": "The runtime is present on disk/importable, independent of whether it can run."
+          },
+          "running": {
+            "type": "integer",
+            "description": "Models currently loaded on this engine."
+          },
+          "cuda": {
+            "type": "boolean"
+          },
+          "rocm": {
+            "type": "boolean"
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InferenceEngineDevice"
+            }
+          },
+          "max_jobs": {
+            "type": "integer",
+            "description": "Conservative compilation parallelism for this container."
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tool_calling": {
+            "type": "string",
+            "description": "\"model-dependent\": capability is decided per model and reported in model settings."
+          }
+        }
+      },
+      "InferenceGPU": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "name",
+          "memory_total",
+          "memory_used"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "memory_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total VRAM in bytes; 0 when the driver does not report it."
+          },
+          "memory_used": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "InferenceRuntimesResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "runtimes"
+        ],
+        "properties": {
+          "runtimes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InferenceRuntimeCapability"
+            }
+          },
+          "gpus": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InferenceGPU"
+            },
+            "description": "Visible NVIDIA GPUs used to size SGLang defaults."
+          },
+          "limits": {
+            "$ref": "#/components/schemas/InferenceResourceLimits"
+          }
+        }
+      },
+      "SGLangRuntimeSettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "context_length",
+          "max_running_requests",
+          "max_total_tokens",
+          "tensor_parallel",
+          "tool_calling_supported"
+        ],
+        "properties": {
+          "context_length": {
+            "type": "integer",
+            "description": "--context-length: the model maximum, capped to a conservative default unless explicitly requested."
+          },
+          "max_running_requests": {
+            "type": "integer",
+            "description": "--max-running-requests: the resolved num_parallel concurrency limit."
+          },
+          "max_total_tokens": {
+            "type": "integer",
+            "description": "--max-total-tokens: the bounded KV pool size."
+          },
+          "tensor_parallel": {
+            "type": "integer",
+            "description": "--tp-size. Defaults to 1 (one GPU) unless SGLANG_TP_SIZE or SGLANG_EXTRA_ARGS selects more."
+          },
+          "mem_fraction_static": {
+            "type": "number",
+            "description": "--mem-fraction-static, estimated from weights, KV pool and visible VRAM. Omitted when no GPU memory is reported."
+          },
+          "dtype": {
+            "type": "string",
+            "description": "--dtype derived from the model config."
+          },
+          "tool_call_parser": {
+            "type": "string",
+            "description": "--tool-call-parser selected for a known model family. Empty when the family is unknown."
+          },
+          "tool_calling_supported": {
+            "type": "boolean",
+            "description": "False when the model family has no verified SGLang tool-call parser; function calling must not be advertised for it."
+          },
+          "tool_calling_reason": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why a plan could not be built, such as an invalid SGLANG_EXTRA_ARGS value."
+          },
+          "reasoning_parser": {
+            "type": "string",
+            "description": "--reasoning-parser selected for a reasoning model family."
+          },
+          "max_jobs": {
+            "type": "integer",
+            "description": "MAX_JOBS chosen from the container CPU/memory budget unless explicitly overridden."
+          },
+          "sources": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Why each automatic value was chosen (request, model setting, model metadata, env or SGLANG_EXTRA_ARGS)."
+          }
+        }
+      },
+      "InferenceEngineDevice": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "name",
+          "memory_total"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "memory_total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "InferenceResourceLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cpu_cores": {
+            "type": "integer",
+            "description": "Effective CPU cores, including a container cgroup quota."
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Effective memory limit; 0 when unknown."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "cgroup-v2",
+              "cgroup-v1",
+              "host"
+            ]
+          }
+        }
+      },
+      "ClusterEngineStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "known",
+          "installed",
+          "available",
+          "running"
+        ],
+        "properties": {
+          "deployment_args": {
+            "type": "boolean",
+            "description": "The worker supports per-deployment SGLang tuning flags."
+          },
+          "name": {
+            "type": "string",
+            "enum": [
+              "llama",
+              "sglang"
+            ]
+          },
+          "known": {
+            "type": "boolean"
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "running": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "cuda": {
+            "type": "boolean"
+          },
+          "rocm": {
+            "type": "boolean"
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InferenceEngineDevice"
+            }
+          },
+          "max_jobs": {
+            "type": "integer"
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tool_calling": {
+            "type": "string"
+          }
+        }
+      },
+      "OpenAIFunctionCall": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "arguments": {}
+        }
+      },
+      "OpenAIFunction": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "parameters": {}
+        }
+      },
+      "EnginePlanStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resolved"
+        ],
+        "properties": {
+          "speculative_algorithm": {
+            "type": "string",
+            "description": "Speculative decoding algorithm passed to the worker runtime."
+          },
+          "resolved": {
+            "type": "boolean",
+            "description": "True when the worker actually started this plan; false/absent means the target has not resolved it yet."
+          },
+          "source": {
+            "type": "string"
+          },
+          "context_length": {
+            "type": "integer"
+          },
+          "max_running_requests": {
+            "type": "integer"
+          },
+          "max_total_tokens": {
+            "type": "integer"
+          },
+          "tensor_parallel": {
+            "type": "integer"
+          },
+          "mem_fraction_static": {
+            "type": "number"
+          },
+          "dtype": {
+            "type": "string"
+          },
+          "tool_call_parser": {
+            "type": "string"
+          },
+          "reasoning_parser": {
+            "type": "string"
+          },
+          "max_jobs": {
+            "type": "integer"
+          },
+          "sources": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
           }
         }
       }

@@ -80,7 +80,12 @@ func deploymentArtifactID(d cluster.Deployment) string {
 }
 
 func (h *clusterHost) PrepareDeployment(ctx context.Context, d cluster.Deployment, report func(cluster.DeploymentStatus)) (int64, error) {
-	if _, err := convert.NormalizeRuntimeDType(d.Quant); err != nil {
+	backend := strings.ToLower(strings.TrimSpace(d.Backend))
+	if backend == inference.SGLangBackend {
+		if info := inference.SGLangRuntimeInfo(); !info.Available {
+			return 0, fmt.Errorf("SGLang backend requested but unavailable: %s", info.Reason)
+		}
+	} else if _, err := convert.NormalizeRuntimeDType(d.Quant); err != nil {
 		return 0, err
 	}
 	mgr := h.deploymentModelManager(d)
@@ -110,7 +115,7 @@ func (h *clusterHost) PrepareDeployment(ctx context.Context, d cluster.Deploymen
 	lastReport := time.Time{}
 	speed := csghub.NewSpeedMeter(5 * time.Second)
 	var quants []string
-	if d.Quant != "" {
+	if d.Quant != "" && backend != inference.SGLangBackend {
 		quants = []string{d.Quant}
 	}
 	lm, err := mgr.EnsureFrom(pullCtx, d.Repository, d.ArtifactSource, d.Revision, quants, func(p csghub.SnapshotProgress) {
@@ -179,7 +184,17 @@ func (h *clusterHost) StartDeployment(ctx context.Context, d cluster.Deployment,
 	if err != nil {
 		return err
 	}
-	if d.Quant != "" {
+	backend := strings.ToLower(strings.TrimSpace(d.Backend))
+	if d.Kind == "embedding" {
+		if backend == inference.SGLangBackend {
+			return errors.New("the SGLang backend serves text generation and chat only")
+		}
+		backend = inference.LlamaBackend
+	}
+	if backend == inference.SGLangBackend && d.Quant != "" {
+		return errors.New("the SGLang backend serves native Safetensors weights; clear the quantization")
+	}
+	if d.Quant != "" && backend != inference.SGLangBackend {
 		if _, ok, err := convert.FindGGUFForDType(dir, d.Quant); err != nil {
 			return err
 		} else if !ok && !convert.HasConvertibleHFWeights(dir) {
@@ -207,11 +222,15 @@ func (h *clusterHost) StartDeployment(ctx context.Context, d cluster.Deployment,
 	progress := func(step string, current, total int) {
 		report(cluster.DeploymentStatus{Phase: "loading", Detail: step, Size: lm.Size})
 	}
-	loader := loadEngineWithProgress
+	effectiveBackend := inference.EffectiveBackend(dir, &copyModel, backend, d.Quant)
+	var engine inference.Engine
 	if d.Kind == "embedding" {
-		loader = loadEmbeddingEngineWithProgress
+		engine, err = loadEmbeddingEngineWithProgress(dir, &copyModel, progress, false, d.NumCtx, d.NumParallel, d.NGPULayers, "", "", d.Quant)
+	} else if effectiveBackend == inference.SGLangBackend {
+		engine, err = loadEngineWithBackendSpeculativeProgress(dir, &copyModel, progress, false, d.NumCtx, d.NumParallel, d.NGPULayers, "", "", d.Quant, inference.EngineBackendOptions{Backend: backend, StorageRoot: h.s.storageRoot, Context: ctx, ModelIdentity: d.Repository, SGLangArgs: d.SGLangArgs}, inference.SpeculativeConfig{})
+	} else {
+		engine, err = loadEngineWithProgress(dir, &copyModel, progress, false, d.NumCtx, d.NumParallel, d.NGPULayers, "", "", d.Quant)
 	}
-	engine, err := loader(dir, &copyModel, progress, false, d.NumCtx, d.NumParallel, d.NGPULayers, "", "", d.Quant)
 	if err != nil {
 		return err
 	}
@@ -225,6 +244,7 @@ func (h *clusterHost) StartDeployment(ctx context.Context, d cluster.Deployment,
 		_ = engine.Close()
 		return err
 	}
+	report(cluster.DeploymentStatus{Phase: "loading", EngineBackend: effectiveBackend, EnginePlan: clusterEnginePlan(engine)})
 	key := engineCacheKey(d.ModelID(), deploymentEngineMode(d))
 	h.s.mu.Lock()
 	if _, exists := h.s.engines[key]; exists {
@@ -232,7 +252,7 @@ func (h *clusterHost) StartDeployment(ctx context.Context, d cluster.Deployment,
 		_ = engine.Close()
 		return nil
 	}
-	h.s.engines[key] = &managedEngine{engine: engine, deploymentModel: lm, deploymentName: d.Name, numCtx: d.NumCtx, numParallel: d.NumParallel, nGPULayers: d.NGPULayers, dtype: d.Quant, lastUsed: time.Now(), keepAlive: keepAlive}
+	h.s.engines[key] = &managedEngine{engine: engine, deploymentModel: lm, deploymentName: d.Name, numCtx: d.NumCtx, numParallel: d.NumParallel, nGPULayers: d.NGPULayers, dtype: d.Quant, backend: backend, effectiveBackend: effectiveBackend, lastUsed: time.Now(), keepAlive: keepAlive}
 	h.s.mu.Unlock()
 	return nil
 }
@@ -399,5 +419,39 @@ func (h *clusterHost) InspectDeployment(d cluster.Deployment) (cluster.ModelStat
 	if expires := me.expiresAt(); !expires.IsZero() {
 		expiresAt = &expires
 	}
-	return cluster.ModelStatus{ID: d.ModelID(), DeploymentID: d.ID, Repo: d.Repository, Source: d.ArtifactSource, Size: info.Size, Format: info.Format, PipelineTag: info.PipelineTag, Category: category, Loaded: true, Slots: d.NumParallel, Active: me.activeRequests, ExpiresAt: expiresAt, NGPULayers: d.NGPULayers, NativeToolStreaming: inference.SupportsNativeToolStreaming(me.engine), TypedDecisions: info.TypedDecisions, DecisionOnly: info.DecisionOnly, HasMMProj: info.HasMMProj}, true
+	return cluster.ModelStatus{ID: d.ModelID(), DeploymentID: d.ID, Repo: d.Repository, Source: d.ArtifactSource, Size: info.Size, Format: info.Format, PipelineTag: info.PipelineTag, Category: category, Loaded: true, Slots: d.NumParallel, Active: me.activeRequests, ExpiresAt: expiresAt, NGPULayers: d.NGPULayers, NativeToolStreaming: inference.SupportsNativeToolStreaming(me.engine), EngineBackend: me.effectiveBackend, EnginePlan: clusterEnginePlan(me.engine), TypedDecisions: info.TypedDecisions, DecisionOnly: info.DecisionOnly, HasMMProj: info.HasMMProj}, true
+}
+
+// Engines forwards the server's engine capability to the cluster manager.
+// clusterHost is the value actually registered as cluster.Manager's Host; a
+// method on *Server alone would never reach the wire.
+func (h *clusterHost) Engines() []cluster.EngineStatus {
+	return h.s.Engines()
+}
+
+type enginePlanProvider interface {
+	EnginePlan() inference.SGLangPlan
+}
+
+func clusterEnginePlan(engine inference.Engine) *cluster.EnginePlanStatus {
+	provider, ok := engine.(enginePlanProvider)
+	if !ok {
+		return nil
+	}
+	plan := provider.EnginePlan()
+	return &cluster.EnginePlanStatus{
+		Resolved:             true,
+		SpeculativeAlgorithm: plan.SpeculativeAlgorithm,
+		Source:               "worker-start",
+		ContextLength:        plan.ContextLength,
+		MaxRunningRequests:   plan.MaxRunningRequests,
+		MaxTotalTokens:       plan.MaxTotalTokens,
+		TensorParallel:       plan.TensorParallel,
+		MemFractionStatic:    plan.MemFractionStatic,
+		DType:                plan.DType,
+		ToolCallParser:       plan.ToolCallParser,
+		ReasoningParser:      plan.ReasoningParser,
+		MaxJobs:              plan.MaxJobs,
+		Sources:              plan.Sources,
+	}
 }

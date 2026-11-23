@@ -1,0 +1,126 @@
+# Build the ROCm text runtime and native kernels for the Instinct CDNA targets.
+ARG BASE_IMAGE=rocm/dev-ubuntu-24.04@sha256:bdc8e61026cbb844ede93d44d2c50055f51ebb2041906b60182bf3bee3139054
+ARG TORCH_IMAGE=torch-base
+FROM ${BASE_IMAGE} AS python-base
+RUN apt-get update && apt-get install -y --no-install-recommends python3-venv ca-certificates && rm -rf /var/lib/apt/lists/*
+
+FROM python-base AS torch-base
+RUN python3 -m venv /opt/sglang
+ENV PATH=/opt/sglang/bin:$PATH
+RUN python -m pip install --no-cache-dir \
+      --extra-index-url https://download.pytorch.org/whl/rocm7.2 \
+      'torch==2.11.0+rocm7.2' \
+    && python -m pip check \
+    && python -c "import torch; targets = torch._C._cuda_getArchFlags().split(); print(torch.__version__, torch.version.hip, targets); assert torch.version.hip and 'gfx90a' in targets" \
+    && ! python -m pip list --format=freeze | grep -Ei '^nvidia-.*(cu12|cu13)'
+
+FROM ${TORCH_IMAGE} AS sglang-source
+ARG SGLANG_VERSION=0.5.19
+ARG SGLANG_SOURCE=https://codeload.github.com/sgl-project/sglang/tar.gz/refs/tags/v${SGLANG_VERSION}
+ARG SGLANG_SOURCE_SHA256=d70fbae611d62f374945a974fc7722164d0298a061d5340a63e88a5161115c23
+ENV PATH=/opt/sglang/bin:$PATH
+WORKDIR /opt/build
+RUN curl --fail --location --retry 3 "$SGLANG_SOURCE" -o sglang.tar.gz \
+    && echo "$SGLANG_SOURCE_SHA256  sglang.tar.gz" | sha256sum --check \
+    && tar -xzf sglang.tar.gz --strip-components=1 \
+    && rm sglang.tar.gz
+
+FROM sglang-source AS rocm-headers
+# PyTorch bundles the shared libraries. Extract only the matching SDK headers
+# for the compiler so the build does not download duplicate ROCm libraries.
+RUN apt-get update \
+    && mkdir /opt/rocm-headers \
+    && cd /opt/rocm-headers \
+    && apt-get download hipblas-common-dev hipblas-dev hipblaslt-dev hipcub-dev hipsolver-dev hipsparse-dev \
+        rocblas-dev rocprim-dev rocrand-dev rocsolver-dev rocsparse-dev rocthrust-dev \
+    && for package in ./*.deb; do dpkg-deb --extract "$package" .; done \
+    && mv ./opt/rocm-*/include /opt/rocm-extra-headers \
+    && rm -rf /opt/rocm-headers /var/lib/apt/lists/*
+
+FROM sglang-source AS rocm-kernel
+ARG ROCM_GPU_ARCH=gfx90a
+ARG MAX_JOBS=2
+ARG PIP_INDEX_URL=https://pypi.org/simple
+RUN --mount=type=bind,from=rocm-headers,source=/opt/rocm-extra-headers,target=/opt/headers \
+    cp -a /opt/headers/. /opt/rocm/include/
+# The 0.5.19 ROCm build only permits newer CDNA targets out of the box.
+# MI210 uses the same software FP8 storage type as gfx942 in these helpers.
+# Model execution on gfx90a uses BF16/FP16 and Triton attention.
+RUN python -m pip install --no-cache-dir setuptools wheel ninja \
+    && cd python/sglang/kernels/aot \
+    && cp pyproject_rocm.toml pyproject.toml \
+    && sed -i 's/\["gfx942", "gfx950", "gfx1250"\]/["gfx90a", "gfx942", "gfx950", "gfx1250"]/; s/amdgpu_target == "gfx942" else "-DHIP_FP8_TYPE_E4M3"/amdgpu_target in {"gfx90a", "gfx942"} else "-DHIP_FP8_TYPE_E4M3"/' setup_rocm.py \
+    && ROCM_HOME=/opt/rocm AMDGPU_TARGET="$ROCM_GPU_ARCH" PYTORCH_ROCM_ARCH="$ROCM_GPU_ARCH" \
+       MAX_JOBS="$MAX_JOBS" python setup_rocm.py bdist_wheel \
+    && mkdir /wheels \
+    && cp dist/*.whl /wheels/
+
+FROM sglang-source AS sglang-python
+ARG PIP_INDEX_URL=https://pypi.org/simple
+# xgrammar imports the triton module supplied by PyTorch's triton-rocm.
+# Record that provider in the pinned wheel so pip cannot overlay CUDA Triton.
+RUN --mount=type=cache,target=/root/.cache/pip python -m pip install wheel \
+    && python -m pip download --no-deps --only-binary=:all: --dest /opt/xgrammar 'xgrammar==0.2.1' \
+    && python -m wheel unpack --dest /opt/xgrammar /opt/xgrammar/*.whl \
+    && sed -i 's/^Requires-Dist: triton;/Requires-Dist: triton-rocm;/' /opt/xgrammar/xgrammar-0.2.1/*.dist-info/METADATA \
+    && grep -q '^Requires-Dist: triton-rocm;' /opt/xgrammar/xgrammar-0.2.1/*.dist-info/METADATA \
+    && mkdir /wheels \
+    && python -m wheel pack --dest-dir /wheels /opt/xgrammar/xgrammar-0.2.1 \
+    && rm -rf /opt/xgrammar
+
+# Use SGLang's non-CUDA dependencies pinned against the installed ROCm stack.
+# Install the inference runtime without AITER, diffusion, or Rust extensions.
+RUN --mount=type=cache,target=/root/.cache/pip python -m pip list --format=freeze | grep -E '^(torch|triton)' > /opt/rocm-pins.txt \
+    && python -m pip install --extra-index-url https://download.pytorch.org/whl/rocm7.2 \
+       -c /opt/rocm-pins.txt 'torchvision==0.26.0+rocm7.2' \
+    && cp python/pyproject_other.toml python/pyproject.toml \
+    && SGLANG_BUILD_RUST_EXTS=none SETUPTOOLS_SCM_PRETEND_VERSION="$SGLANG_VERSION" \
+       python -m pip install -c /opt/rocm-pins.txt 'compressed-tensors==0.16.0' './python[runtime_common]' /wheels/xgrammar*.whl \
+    && python -m pip check \
+    && ! python -m pip list --format=freeze | grep -Ei "^(nvidia-|triton==)"
+
+FROM sglang-python AS sglang-runtime
+COPY --from=rocm-kernel /wheels /wheels
+RUN python -m pip install --no-cache-dir --no-deps /wheels/sglang_kernel*.whl \
+    && python -c 'import sglang, torch, triton, sgl_kernel, xgrammar; assert torch.version.hip and triton.__version__ == "3.6.0"; print(sglang.__version__, torch.version.hip, sgl_kernel.__file__)'
+
+FROM python-base
+RUN --mount=type=bind,from=rocm-headers,source=/opt/rocm-extra-headers,target=/opt/headers \
+    cp -a /opt/headers/. /opt/rocm/include/
+COPY --from=sglang-runtime /opt/sglang /opt/sglang
+ARG CSGHUB_LITE_VERSION=dev
+ARG ROCM_GPU_ARCH=gfx90a
+LABEL org.opencontainers.image.title="CSGLite + SGLang ROCm text runtime" \
+      org.opencontainers.image.source="https://github.com/OpenCSGs/csglite" \
+      org.opencontainers.image.version=${CSGHUB_LITE_VERSION} \
+      io.opencsg.rocm.arch=${ROCM_GPU_ARCH}
+ENV HOME=/root \
+    PATH=/root/.csghub-lite/bin:/opt/sglang/bin:${PATH} \
+    ROCM_HOME=/opt/rocm \
+    CSGHUB_LITE_SGLANG_ROCM_ARCH=${ROCM_GPU_ARCH} \
+    SGLANG_USE_AITER=0 \
+    SGLANG_EXTRA_ARGS='["--attention-backend","triton"]' \
+    PYTHONUNBUFFERED=1 \
+    CSGHUB_LITE_AUTO_INSTALL_LLAMA_SERVER=0 \
+    CSGHUB_LITE_VERSION=latest \
+    SGLANG_MODEL_NAME=local-sglang \
+    HF_HOME=/root/.csghub-lite/cache/huggingface \
+    XDG_CACHE_HOME=/root/.csghub-lite/cache \
+    SGLANG_CACHE_DIR=/root/.csghub-lite/cache/sglang \
+    SGLANG_JIT_CACHE_DIR=/root/.csghub-lite/cache/sglang/jit \
+    TORCHINDUCTOR_CACHE_DIR=/root/.csghub-lite/cache/inductor \
+    SGLANG_WEIGHT_CACHE_SOCKET_TEMPLATE=/root/.csghub-lite/tmp/sglang_weight_cache_{device_uuid}.sock \
+    SGLANG_WEIGHT_CACHE_READY_TEMPLATE=/root/.csghub-lite/tmp/sglang_weight_cache_{device_uuid}.ready \
+    TRITON_CACHE_DIR=/root/.csghub-lite/cache/triton \
+    TORCH_EXTENSIONS_DIR=/root/.csghub-lite/cache/torch-extensions \
+    PYTHONPYCACHEPREFIX=/root/.csghub-lite/cache/python \
+    TMPDIR=/root/.csghub-lite/tmp TMP=/root/.csghub-lite/tmp TEMP=/root/.csghub-lite/tmp
+COPY --from=csglite-binary /csghub-lite /usr/local/bin/csghub-lite
+COPY docker/sglang/launcher.py docker/sglang/lite_update.py /opt/csglite-sglang/
+RUN csghub-lite --version
+EXPOSE 11435 11438
+VOLUME ["/root/.csghub-lite"]
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15m --retries=3 \
+    CMD ["python3", "/opt/csglite-sglang/launcher.py", "health"]
+ENTRYPOINT ["python3", "/opt/csglite-sglang/launcher.py"]

@@ -132,7 +132,114 @@ export interface ModelConfigResponse {
   // for a model served by a Python runtime, and the pipeline tag cannot say
   // which one it is: an embedding model runs on llama.cpp when its weights
   // convert to GGUF and in the Python runtime when they do not.
-  runtime?: "llama" | "python-asr" | "python-tts" | "diffusers";
+  runtime?: "llama" | "sglang" | "python-asr" | "python-tts" | "diffusers";
+  // Backend pinned for this model; "" follows the format default.
+  backend?: "" | "llama" | "sglang";
+  // Backend a load would use right now.
+  effective_backend?: "llama" | "sglang";
+  // Which runtimes this machine can actually start.
+  backends?: InferenceRuntimeCapability[];
+  // SGLang plan and function-calling capability, present only when SGLang is
+  // the effective backend.
+  sglang?: SGLangRuntimeSettings;
+}
+
+export interface InferenceEngineDevice {
+  index: number;
+  name: string;
+  memory_total: number;
+}
+
+export interface InferenceRuntimeCapability {
+  backend: "llama" | "sglang";
+  known: boolean;
+  installed: boolean;
+  available: boolean;
+  running: number;
+  version?: string;
+  reason?: string;
+  cuda?: boolean;
+  rocm?: boolean;
+  devices?: InferenceEngineDevice[];
+  max_jobs?: number;
+  formats?: string[];
+  tasks?: string[];
+  tool_calling?: string;
+}
+
+// Cluster wire status uses "name" rather than "backend"; the states are the
+// same installed/available/running triple.
+export interface ClusterEngineStatus {
+  deployment_args?: boolean;
+  name: "llama" | "sglang";
+  known: boolean;
+  installed: boolean;
+  available: boolean;
+  running: number;
+  version?: string;
+  reason?: string;
+  cuda?: boolean;
+  rocm?: boolean;
+  devices?: InferenceEngineDevice[];
+  max_jobs?: number;
+  formats?: string[];
+  tasks?: string[];
+  tool_calling?: string;
+}
+
+export interface EnginePlanStatus {
+  speculative_algorithm?: string;
+  resolved: boolean;
+  source?: string;
+  context_length?: number;
+  max_running_requests?: number;
+  max_total_tokens?: number;
+  tensor_parallel?: number;
+  mem_fraction_static?: number;
+  dtype?: string;
+  tool_call_parser?: string;
+  reasoning_parser?: string;
+  max_jobs?: number;
+  sources?: Record<string, string>;
+}
+
+export interface InferenceResourceLimits {
+  cpu_cores?: number;
+  memory_bytes?: number;
+  source?: string;
+}
+
+export interface InferenceGPU {
+  index: number;
+  name: string;
+  memory_total: number;
+  memory_used: number;
+}
+
+export interface InferenceRuntimesResponse {
+  runtimes: InferenceRuntimeCapability[];
+  gpus?: InferenceGPU[];
+  limits?: InferenceResourceLimits;
+}
+
+export interface SGLangRuntimeSettings {
+  context_length: number;
+  max_running_requests: number;
+  max_total_tokens: number;
+  tensor_parallel: number;
+  mem_fraction_static?: number;
+  dtype?: string;
+  tool_call_parser?: string;
+  reasoning_parser?: string;
+  tool_calling_supported: boolean;
+  tool_calling_reason?: string;
+  max_jobs?: number;
+  sources?: Record<string, string>;
+  reason?: string;
+}
+
+export async function getInferenceRuntimes(): Promise<InferenceRuntimesResponse> {
+  return fetchJSON<InferenceRuntimesResponse>("/api/inference/runtimes", { cache: "no-store" });
 }
 
 export interface ModelUploadResponse {
@@ -1334,6 +1441,7 @@ export interface ModelConfigUpdate {
   num_parallel?: number;
   dtype?: string;
   keep_alive?: string;
+  backend?: "" | "auto" | "llama" | "sglang";
 }
 
 // Every setting is optional: omitting one leaves the saved value untouched, so
@@ -3264,6 +3372,8 @@ export interface ClusterGPUStatus {
 }
 
 export interface ClusterNodeModelStatus {
+  engine_backend?: "llama" | "sglang";
+  engine_plan?: EnginePlanStatus;
   typed_decisions?: boolean;
   decision_only?: boolean;
   id: string;
@@ -3296,6 +3406,8 @@ export interface ClusterNodeStatus {
   managed_by?: string;
   deployment_capable?: boolean;
   deployment_configurable?: boolean;
+  engines?: ClusterEngineStatus[];
+  resource_limits?: InferenceResourceLimits;
   deployment_keep_alive?: boolean;
   uuid: string;
   name: string;
@@ -3807,14 +3919,16 @@ export async function createEmbeddings(model: string, input: string, source?: st
 }
 
 export interface ClusterDeploymentSpec {
+  sglang_args?: string;
   name: string; node_uuid?: string; repository: string; artifact_source: string;
   revision: string; quant: string; kind: "chat" | "embedding";
+  backend?: "" | "auto" | "llama" | "sglang";
   num_ctx: number; num_parallel: number; n_gpu_layers: number; keep_alive?: string;
 }
 export interface ClusterDeployment extends ClusterDeploymentSpec {
   id: string; node_uuid: string; controller_uuid: string; generation: number; desired: "running" | "stopped" | "deleted";
   created_at: string;
-  status: { phase: string; error?: string; detail?: string; completed_bytes?: number; total_bytes?: number; speed_bytes_per_sec?: number; size?: number; updated_at: string };
+  status: { phase: string; error?: string; detail?: string; completed_bytes?: number; total_bytes?: number; speed_bytes_per_sec?: number; size?: number; engine_backend?: "llama" | "sglang"; engine_plan?: EnginePlanStatus; updated_at: string };
 }
 export interface ClusterDeploymentCreateRequest extends ClusterDeploymentSpec {
   minimum_memory_bytes?: number;
@@ -3828,7 +3942,7 @@ export function createClusterDeployment(spec: ClusterDeploymentCreateRequest): P
 export function updateClusterDeployment(id: string, desired: "running" | "stopped" | "deleted"): Promise<ClusterDeployment> {
   return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ desired }) });
 }
-export type ClusterDeploymentConfig = Pick<ClusterDeploymentSpec, "quant" | "num_ctx" | "num_parallel" | "n_gpu_layers" | "keep_alive">;
+export type ClusterDeploymentConfig = Pick<ClusterDeploymentSpec, "quant" | "num_ctx" | "num_parallel" | "n_gpu_layers" | "backend" | "sglang_args" | "keep_alive">;
 export function configureClusterDeployment(id: string, generation: number, config: ClusterDeploymentConfig): Promise<ClusterDeployment> {
   return fetchJSONWithApiError(`/api/cluster/deployments/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ generation, config }) });
 }

@@ -20,9 +20,11 @@ import { deploymentPhaseKey } from "../deploymentModels";
 import { downloadRowOriginKey, modelOriginKey } from "../artifactOrigin";
 import { displayLocalModelID } from "../modelIds";
 import { formatTableDateTime } from "../utils/tableDateTime";
+import { SGLANG_DTYPE_OPTIONS, isSGLangCompatibleDType, persistedDTypeForBackend, sanitizeLoadOptionsForBackend } from "../modelRunOptions";
 
 type FormatFilter = "all" | "gguf" | "safetensors";
 type RunModelParams = {
+  backend: string;
   numCtx: string;
   numParallel: string;
   nGpuLayers: string;
@@ -121,6 +123,7 @@ let loadModelsRequestID = 0;
 
 function defaultRunParams(): RunModelParams {
   return {
+    backend: "",
     numCtx: "",
     numParallel: "",
     nGpuLayers: "",
@@ -139,6 +142,7 @@ function defaultRunParams(): RunModelParams {
 function normalizeRunParams(raw: any): RunModelParams {
   const defaults = defaultRunParams();
   return {
+    backend: String(raw?.backend ?? defaults.backend),
     numCtx: String(raw?.numCtx ?? raw?.num_ctx ?? defaults.numCtx),
     numParallel: String(raw?.numParallel ?? raw?.num_parallel ?? defaults.numParallel),
     nGpuLayers: String(raw?.nGpuLayers ?? raw?.n_gpu_layers ?? defaults.nGpuLayers),
@@ -168,6 +172,7 @@ function saveRunParams(params: RunModelParams) {
     // /api/models/{model}/config, so they must not also be remembered
     // browser-wide for every other model.
     const {
+      backend: _perModelBackend,
       numCtx: _perModelCtx,
       numParallel: _perModelParallel,
       dtype: _perModelDType,
@@ -714,7 +719,7 @@ export function Library() {
   const openRunDialog = (model: ModelInfo) => {
     // numCtx, numParallel, dtype and keepAlive come from this model's saved
     // settings, not from the shared params.
-    runParams.value = { ...loadSavedRunParams(), numCtx: "", numParallel: "", dtype: "", keepAlive: "" };
+    runParams.value = { ...loadSavedRunParams(), backend: "", numCtx: "", numParallel: "", dtype: "", keepAlive: "" };
     runDialogError.value = "";
     runDialogGGUFQuants.value = [];
     runDialogQuantsLoading.value = model.format === "gguf";
@@ -730,6 +735,7 @@ export function Library() {
       runDialogModelConfig.value = info;
       runParams.value = {
         ...runParams.value,
+        backend: info.backend || "",
         numCtx: numCtxApplies(model) && info.num_ctx > 0 ? String(info.num_ctx) : "",
         numParallel: info.num_parallel > 0 ? String(info.num_parallel) : "",
         dtype: info.dtype || runParams.value.dtype,
@@ -791,6 +797,9 @@ export function Library() {
       return;
     }
     saveRunParams(runParams.value);
+    const savedBackend = runParams.value.backend as "" | "llama" | "sglang";
+    const effectiveBackendForSave = savedBackend || runDialogModelConfig.value?.effective_backend || "";
+    const effectiveOptions = sanitizeLoadOptionsForBackend(options, effectiveBackendForSave);
     // Only write back settings the dialog actually showed. Its fields start
     // blank and are filled by an async fetch, so saving before that lands -- or
     // after it failed -- would persist empty values over the model's saved ones
@@ -808,7 +817,16 @@ export function Library() {
           // llama.cpp options, so the dialog does not show them and the save
           // must leave whatever is stored for them alone.
           ...(numCtxApplies(model)
-            ? { num_ctx: options.num_ctx ?? 0, num_parallel: options.num_parallel ?? 0, dtype: options.dtype ?? "" }
+            ? {
+                num_ctx: options.num_ctx ?? 0,
+                num_parallel: options.num_parallel ?? 0,
+                // SGLang cannot serve a GGUF quantization; selecting it clears
+                // the llama.cpp dtype so the saved pair stays compatible.
+                dtype: persistedDTypeForBackend(effectiveOptions.dtype, effectiveBackendForSave),
+                // Embedding models never use SGLang, so their saved backend is
+                // left untouched.
+                ...(isEmbeddingModel(model) ? {} : { backend: runParams.value.backend as "" | "auto" | "llama" | "sglang" }),
+              }
             : {}),
           keep_alive: options.keep_alive ?? "",
         });
@@ -820,7 +838,7 @@ export function Library() {
     runDialogModel.value = null;
     runDialogError.value = "";
     runDialogModelConfig.value = null;
-    await handleRun(model.name, options);
+    await handleRun(model.name, effectiveOptions);
   };
 
   const toggleSort = (field: "name" | "size" | "modified_at") => {
@@ -1347,6 +1365,16 @@ function RunParamsDialog({
   const modelMaxNumCtx = modelConfig?.model_max_num_ctx ?? 0;
   const typedNumCtx = Number(params.numCtx.trim());
   const numCtxAboveModelMax = modelMaxNumCtx > 0 && Number.isInteger(typedNumCtx) && typedNumCtx > modelMaxNumCtx;
+  const backendLabel = (value?: string) => value === "sglang" ? t("lib.runBackendSGLang") : t("lib.runBackendLlama");
+  const sglangCapability = modelConfig?.backends?.find((item) => item.backend === "sglang");
+  const llamaCapability = modelConfig?.backends?.find((item) => item.backend === "llama");
+  const sglangAvailable = Boolean(sglangCapability?.known && sglangCapability?.available);
+  const sglangEffective = !embeddingModel && (params.backend === "sglang"
+    || (!params.backend && modelConfig?.effective_backend === "sglang"));
+  const savedBackend = modelConfig?.backend || "";
+  const draftMatchesSaved = params.backend === savedBackend;
+  const sglangPlan = sglangEffective && draftMatchesSaved ? modelConfig?.sglang : undefined;
+  const planPending = sglangEffective && !draftMatchesSaved;
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
@@ -1386,6 +1414,53 @@ function RunParamsDialog({
             )
           ) : (
             <>
+              {!embeddingModel && modelConfig && (
+                <div class="md:col-span-2">
+                  <label class="block text-sm font-medium text-gray-700 mb-1">{t("lib.runBackend")}</label>
+                  <select
+                    value={params.backend}
+                    disabled={disabled}
+                    onChange={(e) => {
+                      const value = (e.currentTarget as HTMLSelectElement).value;
+                      onChange("backend", value);
+                      if (value === "sglang" && !isSGLangCompatibleDType(params.dtype)) {
+                        onChange("dtype", "");
+                      }
+                    }}
+                    class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  >
+                    <option value="">{t("lib.runBackendAuto", backendLabel(modelConfig.effective_backend))}</option>
+                    <option value="llama" disabled={Boolean(llamaCapability?.known && !llamaCapability.available)}>{t("lib.runBackendLlama")}</option>
+                    <option value="sglang" disabled={!sglangAvailable || ggufModel}>{t("lib.runBackendSGLang")}</option>
+                  </select>
+                  <p class="text-xs text-gray-400 mt-1">{draftMatchesSaved
+                    ? t("lib.runBackendEffective", backendLabel(modelConfig.effective_backend))
+                    : t("lib.runBackendSaved", backendLabel(savedBackend || modelConfig.effective_backend), backendLabel(params.backend || modelConfig.effective_backend))}</p>
+                  {!sglangAvailable && (
+                    <p class="text-xs text-amber-700 mt-1">{t("lib.runBackendSGLangUnavailable", sglangCapability?.reason || "")}</p>
+                  )}
+                  {llamaCapability?.known && !llamaCapability.available && (
+                    <p class="text-xs text-amber-700 mt-1">{t("lib.runBackendLlamaUnavailable", llamaCapability.reason || "")}</p>
+                  )}
+                  {ggufModel && <p class="text-xs text-gray-400 mt-1">{t("lib.runBackendGGUFOnly")}</p>}
+                </div>
+              )}
+              {sglangPlan && (
+                <div class="md:col-span-2 space-y-1 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                  <p class="font-medium">{t("lib.runSGLangPlanTitle")}</p>
+                  <p>{t("lib.runSGLangPlanLimits", sglangPlan.context_length, sglangPlan.max_running_requests, sglangPlan.max_total_tokens || t("deployments.enginePlanAuto"), sglangPlan.tensor_parallel)}</p>
+                  {sglangPlan.mem_fraction_static ? <p>{t("lib.runSGLangPlanMemory", sglangPlan.mem_fraction_static.toFixed(3))}</p> : null}
+                  <p class={sglangPlan.tool_calling_supported ? "" : "text-amber-800"}>
+                    {sglangPlan.tool_calling_supported
+                      ? t("lib.runSGLangToolsSupported", sglangPlan.tool_call_parser || "")
+                      : t("lib.runSGLangToolsUnsupported", sglangPlan.tool_calling_reason || "")}
+                  </p>
+                  {sglangPlan.reason && <p class="text-red-700">{sglangPlan.reason}</p>}
+                </div>
+              )}
+              {planPending && <div class="md:col-span-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {t("lib.runSGLangPlanPending")}
+              </div>}
               <div>
                 <ContextWindowField
                   disabled={disabled}
@@ -1416,7 +1491,9 @@ function RunParamsDialog({
                   value={params.numParallel}
                   min={1}
                   placeholder={String(modelConfig?.global_num_parallel || 1)}
-                  hint={embeddingModel ? t("lib.runParamNumParallelEmbeddingHint") : t("lib.runParamNumParallelHint")}
+                  hint={sglangEffective
+                    ? t("lib.runParamNumParallelSGLangHint")
+                    : embeddingModel ? t("lib.runParamNumParallelEmbeddingHint") : t("lib.runParamNumParallelHint")}
                   onInput={(value) => onChange("numParallel", value)}
                 />
                 {modelConfig && (
@@ -1425,25 +1502,38 @@ function RunParamsDialog({
                   </p>
                 )}
               </div>
-              <RunNumberField
-                label={t("lib.runParamNGPULayers")}
-                value={params.nGpuLayers}
-                min={0}
-                placeholder="40"
-                hint={t("lib.runParamNGPULayersHint")}
-                onInput={(value) => onChange("nGpuLayers", value)}
-              />
-              <RunSelectField
-                label={ggufModel ? t("lib.runParamGGUFQuant") : t("lib.runParamDType")}
-                value={params.dtype}
-                options={dtypeOptions}
-                defaultLabel={ggufModel ? t("lib.runParamGGUFQuantDefault") : undefined}
-                hint={ggufModel
-                  ? (quantsLoading ? t("lib.runParamGGUFQuantLoading") : t("lib.runParamGGUFQuantHint"))
-                  : t("lib.runParamDTypeHint")}
-                onInput={(value) => onChange("dtype", value)}
-              />
-              {!embeddingModel && (
+              {!sglangEffective && (
+                <RunNumberField
+                  label={t("lib.runParamNGPULayers")}
+                  value={params.nGpuLayers}
+                  min={0}
+                  placeholder="40"
+                  hint={t("lib.runParamNGPULayersHint")}
+                  onInput={(value) => onChange("nGpuLayers", value)}
+                />
+              )}
+              {sglangEffective ? (
+                <RunSelectField
+                  label={t("lib.runParamSGLangDType")}
+                  value={params.dtype}
+                  options={SGLANG_DTYPE_OPTIONS}
+                  defaultLabel={t("lib.runParamSGLangDTypeAuto")}
+                  hint={t("lib.runParamSGLangDTypeHint")}
+                  onInput={(value) => onChange("dtype", value)}
+                />
+              ) : (
+                <RunSelectField
+                  label={ggufModel ? t("lib.runParamGGUFQuant") : t("lib.runParamDType")}
+                  value={params.dtype}
+                  options={dtypeOptions}
+                  defaultLabel={ggufModel ? t("lib.runParamGGUFQuantDefault") : undefined}
+                  hint={ggufModel
+                    ? (quantsLoading ? t("lib.runParamGGUFQuantLoading") : t("lib.runParamGGUFQuantHint"))
+                    : t("lib.runParamDTypeHint")}
+                  onInput={(value) => onChange("dtype", value)}
+                />
+              )}
+              {!embeddingModel && !sglangEffective && (
                 <>
                   <RunSelectField
                     label={t("lib.runParamCacheTypeK")}
@@ -1463,7 +1553,7 @@ function RunParamsDialog({
               )}
             </>
           )}
-          {!runtimeManagedModel && !embeddingModel && (
+          {!runtimeManagedModel && !embeddingModel && !sglangEffective && (
             <details
               class="group md:col-span-2 border-t border-gray-100 pt-4"
               open={params.specType !== ""}

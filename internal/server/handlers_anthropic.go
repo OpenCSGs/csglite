@@ -687,6 +687,10 @@ func (s *Server) handleAnthropicMessagesWithTools(
 	inputTokens int,
 	id string,
 ) {
+	if reason, refused := toolCallingRefusal(eng); refused {
+		writeAnthropicErrorWithType(w, http.StatusBadRequest, "invalid_request_error", reason)
+		return
+	}
 	_, ok := eng.(inference.ChatCompletionProxier)
 	if !ok {
 		writeAnthropicErrorWithType(w, http.StatusBadRequest, "invalid_request_error", "selected model backend does not support tool calling")

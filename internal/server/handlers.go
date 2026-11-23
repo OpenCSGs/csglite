@@ -429,6 +429,10 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	stopped := false
 	modelID := s.resolveLocalModelStorageID(req.Model)
 	for _, key := range []string{engineCacheKey(modelID, engineModeChat), engineCacheKey(modelID, engineModeEmbed)} {
+		if cancel, ok := s.loadCancels[key]; ok {
+			cancel()
+			stopped = true
+		}
 		if me, ok := s.engines[key]; ok {
 			me.engine.Close()
 			delete(s.engines, key)

@@ -118,6 +118,24 @@ type ModelPerf struct {
 	Samples     int     `json:"samples,omitempty"`
 }
 
+// EnginePlanStatus is the read-only runtime plan a worker actually started.
+// Values not yet known before download/load remain absent rather than guessed.
+type EnginePlanStatus struct {
+	SpeculativeAlgorithm string            `json:"speculative_algorithm,omitempty"`
+	Resolved             bool              `json:"resolved"`
+	Source               string            `json:"source,omitempty"`
+	ContextLength        int               `json:"context_length,omitempty"`
+	MaxRunningRequests   int               `json:"max_running_requests,omitempty"`
+	MaxTotalTokens       int               `json:"max_total_tokens,omitempty"`
+	TensorParallel       int               `json:"tensor_parallel,omitempty"`
+	MemFractionStatic    float64           `json:"mem_fraction_static,omitempty"`
+	DType                string            `json:"dtype,omitempty"`
+	ToolCallParser       string            `json:"tool_call_parser,omitempty"`
+	ReasoningParser      string            `json:"reasoning_parser,omitempty"`
+	MaxJobs              int               `json:"max_jobs,omitempty"`
+	Sources              map[string]string `json:"sources,omitempty"`
+}
+
 // ModelStatus is one model present on a node.
 type ModelStatus struct {
 	HasMMProj      bool   `json:"has_mmproj,omitempty"`
@@ -128,20 +146,22 @@ type ModelStatus struct {
 	// Repo and Source are what a pull job needs to fetch this model:
 	// "namespace/name" and the artifact source. The public ID alone is not
 	// enough, because an OpenCSG model is advertised under its short name.
-	Repo                string     `json:"repo,omitempty"`
-	Source              string     `json:"source,omitempty"`
-	Size                int64      `json:"size"`
-	Format              string     `json:"format,omitempty"`
-	PipelineTag         string     `json:"pipeline_tag,omitempty"`
-	Category            string     `json:"category,omitempty"`
-	Loaded              bool       `json:"loaded"`
-	Loading             bool       `json:"loading"`
-	Slots               int        `json:"slots,omitempty"`
-	Active              int        `json:"active"`
-	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
-	NGPULayers          int        `json:"n_gpu_layers,omitempty"`
-	NativeToolStreaming bool       `json:"native_tool_streaming"`
-	Perf                *ModelPerf `json:"perf,omitempty"`
+	Repo                string            `json:"repo,omitempty"`
+	Source              string            `json:"source,omitempty"`
+	Size                int64             `json:"size"`
+	Format              string            `json:"format,omitempty"`
+	PipelineTag         string            `json:"pipeline_tag,omitempty"`
+	Category            string            `json:"category,omitempty"`
+	Loaded              bool              `json:"loaded"`
+	Loading             bool              `json:"loading"`
+	Slots               int               `json:"slots,omitempty"`
+	Active              int               `json:"active"`
+	ExpiresAt           *time.Time        `json:"expires_at,omitempty"`
+	NGPULayers          int               `json:"n_gpu_layers,omitempty"`
+	NativeToolStreaming bool              `json:"native_tool_streaming"`
+	EngineBackend       string            `json:"engine_backend,omitempty"`
+	EnginePlan          *EnginePlanStatus `json:"engine_plan,omitempty"`
+	Perf                *ModelPerf        `json:"perf,omitempty"`
 }
 
 // ModelSource is where a node downloads models from; members whose sources
@@ -152,19 +172,60 @@ type ModelSource struct {
 	ModelScopeEndpoint string `json:"modelscope_endpoint,omitempty"`
 }
 
+// EngineDevice is one accelerator a runtime can actually use. For SGLang this
+// is PyTorch's visible device list, which already honours CUDA_VISIBLE_DEVICES.
+type EngineDevice struct {
+	Index       int    `json:"index"`
+	Name        string `json:"name"`
+	MemoryTotal uint64 `json:"memory_total"`
+}
+
+// EngineStatus is one inference engine on this node. Known distinguishes an
+// older node that did not report engine information from a runtime that was
+// probed and found absent. Installed, Available and Running are separate
+// states: the Python package can be installed on a CPU-only container, and an
+// installed runtime can have no model loaded.
+type EngineStatus struct {
+	DeploymentArgs bool           `json:"deployment_args,omitempty"`
+	Name           string         `json:"name"`
+	Known          bool           `json:"known"`
+	Installed      bool           `json:"installed"`
+	Available      bool           `json:"available"`
+	Running        int            `json:"running"`
+	Version        string         `json:"version,omitempty"`
+	Reason         string         `json:"reason,omitempty"`
+	CUDA           bool           `json:"cuda,omitempty"`
+	ROCM           bool           `json:"rocm,omitempty"`
+	Devices        []EngineDevice `json:"devices,omitempty"`
+	Formats        []string       `json:"formats,omitempty"`
+	Tasks          []string       `json:"tasks,omitempty"`
+	ToolCalling    string         `json:"tool_calling,omitempty"`
+	MaxJobs        int            `json:"max_jobs,omitempty"`
+}
+
+// ResourceLimits is the CPU/memory budget the node process actually has,
+// including a container cgroup limit.
+type ResourceLimits struct {
+	CPUCores    int    `json:"cpu_cores,omitempty"`
+	MemoryBytes uint64 `json:"memory_bytes,omitempty"`
+	Source      string `json:"source,omitempty"`
+}
+
 // Status is everything a node tells its peers about itself.
 type Status struct {
-	NodeStateManagement    bool   `json:"node_state_management,omitempty"`
-	ModelManagement        bool   `json:"model_management,omitempty"`
-	ManagedBy              string `json:"managed_by,omitempty"`
-	DeploymentCapable      bool   `json:"deployment_capable,omitempty"`
-	DeploymentConfigurable bool   `json:"deployment_configurable,omitempty"`
-	DeploymentKeepAlive    bool   `json:"deployment_keep_alive,omitempty"`
-	UUID                   string `json:"uuid"`
-	Name                   string `json:"name"`
-	Version                string `json:"version"`
-	Protocol               int    `json:"protocol"`
-	ClusterUUID            string `json:"cluster_uuid,omitempty"`
+	NodeStateManagement    bool           `json:"node_state_management,omitempty"`
+	ModelManagement        bool           `json:"model_management,omitempty"`
+	ManagedBy              string         `json:"managed_by,omitempty"`
+	DeploymentCapable      bool           `json:"deployment_capable,omitempty"`
+	DeploymentConfigurable bool           `json:"deployment_configurable,omitempty"`
+	DeploymentKeepAlive    bool           `json:"deployment_keep_alive,omitempty"`
+	Engines                []EngineStatus `json:"engines,omitempty"`
+	ResourceLimits         ResourceLimits `json:"resource_limits,omitempty"`
+	UUID                   string         `json:"uuid"`
+	Name                   string         `json:"name"`
+	Version                string         `json:"version"`
+	Protocol               int            `json:"protocol"`
+	ClusterUUID            string         `json:"cluster_uuid,omitempty"`
 	// Licensed reports whether cluster size fits this node's quota, in either edition.
 	// ClusterView.Licensed separately reports the Enterprise license.
 	Licensed    bool          `json:"licensed"`

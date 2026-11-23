@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ClusterDeployment, ClusterNodeView, ClusterView, MarketplaceModel } from "./api/client";
-import { localDeploymentAssignments, deploymentProgress, deploymentModelKind, deploymentName, deploymentRevision, deploymentTargets, workerDeploymentAssignments } from "./deploymentModels";
+import { localDeploymentAssignments, deploymentProgress, deploymentModelKind, deploymentName, deploymentRevision, deploymentTargets, workerDeploymentAssignments, recommendedDeploymentBackend } from "./deploymentModels";
 
 describe("deployment model task detection", () => {
   const base = { path: "org/chat-image-ASR", tags: [] } as unknown as MarketplaceModel;
@@ -34,6 +34,20 @@ describe("deployment model task detection", () => {
 });
 
 describe("deployment target eligibility", () => {
+  const llama = { name: "llama" as const, known: true, installed: true, available: true, running: 0 };
+  const sglang = { name: "sglang" as const, known: true, installed: true, available: true, running: 0 };
+  it("uses target format/task and never sends embedding to SGLang", () => {
+    expect(recommendedDeploymentBackend("embedding", "safetensors", [llama, sglang])).toBe("llama");
+    expect(recommendedDeploymentBackend("embedding", "safetensors", [sglang])).toBe("unknown");
+    expect(recommendedDeploymentBackend("chat", "gguf", [llama, sglang])).toBe("llama");
+    expect(recommendedDeploymentBackend("chat", "safetensors", [llama, sglang])).toBe("sglang");
+  });
+  it("keeps unknown honest and falls back only when SGLang is actually absent", () => {
+    expect(recommendedDeploymentBackend("chat", "safetensors", [])).toBe("unknown");
+    expect(recommendedDeploymentBackend("chat", "safetensors", [llama, { ...sglang, known: false, available: false }])).toBe("unknown");
+    expect(recommendedDeploymentBackend("chat", "safetensors", [llama, { ...sglang, available: false }])).toBe("none");
+    expect(recommendedDeploymentBackend("chat", "safetensors", [llama, { ...sglang, installed: false, available: false }])).toBe("llama");
+  });
   it("excludes offline, paused, unlicensed and foreign-controller nodes", () => {
     const node = { uuid: "worker", online: true, status: { deployment_capable: true, managed_by: "master", licensed: true, accept_work: true, state: "active" } } as ClusterNodeView;
     const view = { node: { uuid: "master" }, members: [

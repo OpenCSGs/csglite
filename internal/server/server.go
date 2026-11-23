@@ -58,19 +58,21 @@ const (
 
 type managedEngine struct {
 	// Metadata for isolated deployment engines, which are outside the local library.
-	deploymentModel *model.LocalModel
-	deploymentName  string
-	engine          inference.Engine
-	numCtx          int
-	numParallel     int
-	nGPULayers      int
-	cacheTypeK      string
-	cacheTypeV      string
-	dtype           string
-	speculativeKey  string
-	lastUsed        time.Time
-	keepAlive       time.Duration
-	activeRequests  int
+	deploymentModel  *model.LocalModel
+	deploymentName   string
+	engine           inference.Engine
+	numCtx           int
+	numParallel      int
+	nGPULayers       int
+	cacheTypeK       string
+	cacheTypeV       string
+	dtype            string
+	backend          string
+	effectiveBackend string
+	speculativeKey   string
+	lastUsed         time.Time
+	keepAlive        time.Duration
+	activeRequests   int
 }
 
 // loadStepState records the latest load/conversion progress step for a model
@@ -221,6 +223,7 @@ type Server struct {
 	mu           sync.RWMutex
 	engines      map[string]*managedEngine
 	loading      map[string]*engineLoadState
+	loadCancels  map[string]context.CancelFunc
 	selfHeal     map[string]selfHealBreakerState
 	imageEngines map[string]*managedImageEngine
 	imageLoading map[string]*imageEngineLoadState
@@ -327,6 +330,7 @@ func New(cfg *config.Config, version string) *Server {
 		cloud:             cloudSvc,
 		engines:           make(map[string]*managedEngine),
 		loading:           make(map[string]*engineLoadState),
+		loadCancels:       make(map[string]context.CancelFunc),
 		poolCurrent:       make(map[string]int),
 		poolRuntime:       make(map[string]*providerPoolMemberRuntime),
 		poolAffinity:      make(map[string]providerPoolAffinityEntry),
@@ -348,6 +352,9 @@ func New(cfg *config.Config, version string) *Server {
 		logBuf:            logBuf,
 	}
 	s.appShells = newAIAppShellManager()
+	// Probe SGLang once in the background. Node status and the runtime
+	// capability endpoint must never wait for the PyTorch import.
+	inference.StartSGLangRuntimeProbeWithRoot(storageRoot)
 	if store, err := observability.Open(storageRoot); err != nil {
 		log.Printf("OBSERVABILITY: database unavailable: %v", err)
 	} else {
@@ -830,16 +837,15 @@ func (s *Server) displayVersion() string {
 	return "dev"
 }
 
-// defaultKeepAliveFor reports the idle window a model gets with no per-model
-// setting, for a caller that does not already know which runtime serves it.
-// Recognition and speech models idle out later than text models, and working
-// this out reads the model directory, so the load paths pass their own runtime
-// default to resolveModelKeepAlive instead of calling this.
-func (s *Server) defaultKeepAliveFor(modelID string) time.Duration {
-	if s.modelUsesASREngine(modelID) || s.modelUsesTTSEngine(modelID) {
+func defaultKeepAliveForRuntime(runtimeKind string) time.Duration {
+	switch runtimeKind {
+	case api.ModelRuntimeSGLang:
+		return api.KeepAliveForever
+	case api.ModelRuntimePythonASR, api.ModelRuntimePythonTTS:
 		return DefaultSpeechKeepAlive
+	default:
+		return DefaultKeepAlive
 	}
-	return DefaultKeepAlive
 }
 
 // resolveModelKeepAlive picks the idle window for a load that carries none of
@@ -864,7 +870,7 @@ func (s *Server) resolveModelKeepAlive(modelID string, runtimeDefault time.Durat
 // reports what the next load of the model would use with no keep-alive of its
 // own.
 func (s *Server) effectiveModelKeepAlive(modelID string) time.Duration {
-	return s.resolveModelKeepAlive(modelID, s.defaultKeepAliveFor(modelID))
+	return s.resolveModelKeepAlive(modelID, defaultKeepAliveForRuntime(s.modelRuntimeKind(modelID)))
 }
 
 // applyModelKeepAlive updates the idle window of whichever engine currently
@@ -985,13 +991,21 @@ func loadedDTypeMatchesRequest(loaded, requested string) bool {
 }
 
 var loadEngineWithProgress = inference.LoadEngineWithProgress
+var loadEngineWithBackendProgress = inference.LoadEngineWithBackendProgress
 var loadEngineWithSpeculativeProgress = func(modelDir string, lm *model.LocalModel, progress inference.ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, speculative inference.SpeculativeConfig) (inference.Engine, error) {
 	if !speculative.Enabled() {
 		return loadEngineWithProgress(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype)
 	}
 	return inference.LoadEngineWithSpeculativeProgress(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, speculative)
 }
+var loadEngineWithBackendSpeculativeProgress = func(modelDir string, lm *model.LocalModel, progress inference.ConvertProgressFunc, verbose bool, numCtx, numParallel, nGPULayers int, cacheTypeK, cacheTypeV, dtype string, options inference.EngineBackendOptions, speculative inference.SpeculativeConfig) (inference.Engine, error) {
+	if !speculative.Enabled() {
+		return loadEngineWithBackendProgress(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, options)
+	}
+	return inference.LoadEngineWithBackendSpeculativeProgress(modelDir, lm, progress, verbose, numCtx, numParallel, nGPULayers, cacheTypeK, cacheTypeV, dtype, options, speculative)
+}
 var loadEmbeddingEngineWithProgress = inference.LoadEmbeddingEngineWithProgress
+var loadEmbeddingEngineWithBackendProgress = inference.LoadEmbeddingEngineWithBackendProgress
 var rocmSingleEngineMode = inference.ROCMSingleEngineMode
 var newDiffusersEngine = func(ctx context.Context, modelName, modelDir string, runtimeManager *imagegen.RuntimeManager) (imagegen.Engine, error) {
 	return imagegen.NewDiffusersEngine(ctx, modelName, modelDir, runtimeManager)
@@ -1029,7 +1043,22 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	if strings.HasPrefix(modelID, cluster.DeploymentModelPrefix) {
 		return s.deploymentInferenceEngine(modelID, mode)
 	}
+	// Resolve the load context before taking the engine lock below: the helper
+	// takes the same lock, and deriving it while holding the write lock
+	// deadlocks the load.
+	baseLoadCtx := s.engineLoadContext()
 	modelID = s.resolveLocalModelStorageID(modelID)
+	requestedBackend := s.modelBackendSetting(modelID)
+	loadBackend := requestedBackend
+	if mode == engineModeEmbed {
+		if requestedBackend == inference.SGLangBackend {
+			return nil, fmt.Errorf("SGLang backend serves text generation and chat only; model %q uses the embedding runtime", modelID)
+		}
+		// An automatic backend must not route a Safetensors embedding model to
+		// SGLang, which does not serve this modality. Keep the existing llama.cpp
+		// embedding behavior unless the user explicitly pinned llama.
+		loadBackend = inference.LlamaBackend
+	}
 	normalizedCacheTypeK, err := inference.NormalizeCacheType(cacheTypeK)
 	if err != nil {
 		return nil, err
@@ -1072,7 +1101,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 	// A caller that named a dtype still takes the long route: this shortcut
 	// skips the numCtx/numParallel/nGPULayers/cache comparison entirely, and a
 	// load naming only a dtype carries no runtime override to force it open.
-	if ok && !runtimeOverrides && requestedDType == "" && loadedDTypeMatchesRequest(me.dtype, normalizedDType) && (!speculativeRequested || me.speculativeKey == speculativeKey) {
+	if ok && !runtimeOverrides && requestedDType == "" && loadedDTypeMatchesRequest(me.dtype, normalizedDType) && me.backend == requestedBackend && (!speculativeRequested || me.speculativeKey == speculativeKey) {
 		me.lastUsed = time.Now()
 		eng := me.engine
 		s.mu.Unlock()
@@ -1104,12 +1133,30 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		}
 	}
 	effectiveNumParallel := inference.ResolveNumParallelWithModelSetting(numParallel, s.modelNumParallelSetting(modelID), s.cfg.Inference.LlamaNumParallel)
+	// SGLang has its own bounded context and concurrency defaults: its
+	// --context-length is the model maximum and --max-running-requests is the
+	// slot count. Resolve them from the model metadata instead of reusing the
+	// llama.cpp defaults, which would either reserve an unbounded KV pool or
+	// ignore the per-model setting.
+	lmForBackend, _ := s.manager.Get(modelID)
+	effectiveBackend := inference.EffectiveBackend(modelDir, lmForBackend, loadBackend, normalizedDType)
+	if mode == engineModeChat && effectiveBackend == inference.SGLangBackend {
+		// Request context wins over the persisted per-model setting. Only a
+		// request that names no context (below the minimum) falls back to the
+		// saved setting.
+		requestedCtx := numCtx
+		if requestedCtx < minModelNumCtx {
+			requestedCtx = s.modelNumCtxSetting(modelID)
+		}
+		effectiveNumCtx = inference.ResolveSGLangNumCtx(modelDir, requestedCtx)
+		effectiveNumParallel = inference.ResolveSGLangNumParallel(numParallel, s.modelNumParallelSetting(modelID), s.cfg.Inference.LlamaNumParallel)
+	}
 	// Resolved with the other per-model settings, before the engine lock is
 	// taken: reading them touches the config and the model directory.
-	resolvedKeepAlive := s.resolveModelKeepAlive(modelID, DefaultKeepAlive)
+	resolvedKeepAlive := s.resolveModelKeepAlive(modelID, defaultKeepAliveForRuntime(effectiveBackend))
 	effectiveNGPULayers := inference.ResolveNGPULayers(normalizedNGPULayers)
 	loadConfigKey := fmt.Sprintf(
-		"%d|%d|%d|%s|%s|%s|%s",
+		"%d|%d|%d|%s|%s|%s|%s|%s",
 		effectiveNumCtx,
 		effectiveNumParallel,
 		effectiveNGPULayers,
@@ -1117,6 +1164,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		normalizedCacheTypeV,
 		normalizedDType,
 		speculativeKey,
+		requestedBackend,
 	)
 	// Only a dtype the caller named is checked for a pending conversion: the
 	// check parses the header of every GGUF in the model directory, and the
@@ -1135,7 +1183,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		s.mu.Lock()
 
 		if me, ok := s.engines[cacheKey]; ok {
-			if !requestedOverrides && requestedDType == "" && loadedDTypeMatchesRequest(me.dtype, normalizedDType) {
+			if !requestedOverrides && requestedDType == "" && loadedDTypeMatchesRequest(me.dtype, normalizedDType) && me.backend == requestedBackend {
 				me.lastUsed = time.Now()
 				eng := me.engine
 				s.mu.Unlock()
@@ -1143,7 +1191,7 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 			}
 			dtypeReady := normalizedDType == "" || (loadedDTypeMatchesRequest(me.dtype, normalizedDType) && !needsRequestedDTypeConversion)
 			speculativeReady := !speculativeRequested || me.speculativeKey == speculativeKey
-			if me.numCtx == effectiveNumCtx && me.numParallel == effectiveNumParallel && me.nGPULayers == effectiveNGPULayers && me.cacheTypeK == normalizedCacheTypeK && me.cacheTypeV == normalizedCacheTypeV && speculativeReady && dtypeReady {
+			if me.numCtx == effectiveNumCtx && me.numParallel == effectiveNumParallel && me.nGPULayers == effectiveNGPULayers && me.cacheTypeK == normalizedCacheTypeK && me.cacheTypeV == normalizedCacheTypeV && me.backend == requestedBackend && speculativeReady && dtypeReady {
 				me.lastUsed = time.Now()
 				eng := me.engine
 				s.mu.Unlock()
@@ -1182,6 +1230,8 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 			configKey: loadConfigKey,
 		}
 		s.loading[cacheKey] = state
+		loadCtx, cancelLoad := context.WithCancel(baseLoadCtx)
+		s.loadCancels[cacheKey] = cancelLoad
 		nextKeepAlive := resolvedKeepAlive
 		log.Printf("MODEL %s: %s engine load started num_ctx=%d num_parallel=%d n_gpu_layers=%d cache_type_k=%q cache_type_v=%q dtype=%q speculative=%q keep_alive=%s", modelID, mode, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType, speculativeKey, api.FormatKeepAlive(nextKeepAlive))
 
@@ -1213,8 +1263,14 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 		}
 		loadStarted := time.Now()
 		if err == nil {
+			// Preserve the legacy llama.cpp loader hooks for every non-SGLang
+			// load. Only a selected native SGLang engine takes the new path;
+			// this keeps existing tests and conversion behavior intact and
+			// ensures no conversion runs when SGLang is the chosen runtime.
 			if mode == engineModeEmbed {
 				state.engine, err = loadEmbeddingEngineWithProgress(modelDir, lm, progress, false, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType)
+			} else if effectiveBackend == inference.SGLangBackend {
+				state.engine, err = loadEngineWithBackendSpeculativeProgress(modelDir, lm, progress, false, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType, inference.EngineBackendOptions{Backend: loadBackend, StorageRoot: s.storageRoot, Context: loadCtx, ModelIdentity: s.modelIdentityForLoad(modelID)}, speculative)
 			} else {
 				state.engine, err = loadEngineWithSpeculativeProgress(modelDir, lm, progress, false, effectiveNumCtx, effectiveNumParallel, effectiveNGPULayers, normalizedCacheTypeK, normalizedCacheTypeV, normalizedDType, speculative)
 			}
@@ -1227,18 +1283,22 @@ func (s *Server) getOrLoadEngineFullMode(modelID string, progress inference.Conv
 
 		s.mu.Lock()
 		delete(s.loading, cacheKey)
+		delete(s.loadCancels, cacheKey)
+		cancelLoad()
 		if state.err == nil {
 			s.engines[cacheKey] = &managedEngine{
-				engine:         state.engine,
-				numCtx:         effectiveNumCtx,
-				numParallel:    effectiveNumParallel,
-				nGPULayers:     effectiveNGPULayers,
-				cacheTypeK:     normalizedCacheTypeK,
-				cacheTypeV:     normalizedCacheTypeV,
-				dtype:          normalizedDType,
-				speculativeKey: speculativeKey,
-				lastUsed:       time.Now(),
-				keepAlive:      nextKeepAlive,
+				engine:           state.engine,
+				numCtx:           effectiveNumCtx,
+				numParallel:      effectiveNumParallel,
+				nGPULayers:       effectiveNGPULayers,
+				cacheTypeK:       normalizedCacheTypeK,
+				cacheTypeV:       normalizedCacheTypeV,
+				dtype:            normalizedDType,
+				backend:          requestedBackend,
+				effectiveBackend: effectiveBackend,
+				speculativeKey:   speculativeKey,
+				lastUsed:         time.Now(),
+				keepAlive:        nextKeepAlive,
 			}
 		}
 		close(state.done)
@@ -1734,4 +1794,20 @@ func (s *Server) closeAllEngines() {
 		me.engine.Close()
 		delete(s.asrEngines, id)
 	}
+}
+
+// modelIdentityForLoad returns the original model repository used for
+// model-family defaults. It is deliberately separate from the served alias.
+func (s *Server) modelIdentityForLoad(modelID string) string {
+	if s.manager == nil {
+		return modelID
+	}
+	lm, err := s.manager.Get(modelID)
+	if err != nil || lm == nil {
+		return modelID
+	}
+	if repo := strings.TrimSpace(lm.Repository); repo != "" {
+		return repo
+	}
+	return lm.FullName()
 }

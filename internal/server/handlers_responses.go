@@ -301,6 +301,10 @@ func (s *Server) handleOpenAIResponsesWithTools(
 	eng inference.Engine,
 	opts inference.Options,
 ) {
+	if reason, refused := toolCallingRefusal(eng); refused {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", reason)
+		return
+	}
 	_, ok := eng.(inference.ChatCompletionProxier)
 	if !ok {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "selected model backend does not support tool calling")

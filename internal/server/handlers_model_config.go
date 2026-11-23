@@ -57,6 +57,12 @@ func (s *Server) modelDTypeSetting(modelID string) string {
 	return strings.TrimSpace(s.modelSettings(modelID).DType)
 }
 
+// modelBackendSetting returns the inference backend pinned for modelID, or ""
+// when the model follows its format default.
+func (s *Server) modelBackendSetting(modelID string) string {
+	return strings.TrimSpace(s.modelSettings(modelID).Backend)
+}
+
 // modelKeepAliveSetting returns the per-model idle window saved for modelID and
 // whether the model has one. An unparsable saved value is reported as absent
 // rather than failing the load it is resolved for.
@@ -186,7 +192,37 @@ func (s *Server) handleModelConfigUpdateForID(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	// An explicit backend is validated against the settings that would actually
+	// be saved, including a dtype/quantization the request leaves unchanged. A
+	// saved SGLang choice is applied to every later load that names none, so an
+	// unavailable runtime, GGUF-only weights or an incompatible quantization
+	// must not become a setting that fails on the next chat request.
 	storageID := s.resolveLocalModelStorageID(modelID)
+	current := s.cfg.Inference.ModelSettings(storageID)
+	normalizedBackend := ""
+	if req.Backend != nil {
+		normalizedBackend, err = inference.NormalizeBackend(*req.Backend)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	mergedBackend := current.Backend
+	if req.Backend != nil {
+		mergedBackend = normalizedBackend
+	}
+	mergedDType := current.DType
+	if req.DType != nil {
+		mergedDType = normalizedDType
+	}
+	if mergedBackend != "" || mergedDType != "" {
+		lm, _ := s.manager.Get(modelID)
+		if _, err := inference.ResolveEngineBackend(modelDir, lm, mergedBackend, mergedDType); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
 	s.modelSettingsMu.Lock()
 	settings := s.cfg.Inference.ModelSettings(storageID)
 	if req.NumCtx != nil {
@@ -200,6 +236,9 @@ func (s *Server) handleModelConfigUpdateForID(w http.ResponseWriter, r *http.Req
 	}
 	if req.KeepAlive != nil {
 		settings.KeepAlive = normalizedKeepAlive
+	}
+	if req.Backend != nil {
+		settings.Backend = normalizedBackend
 	}
 	s.cfg.Inference.SetModelSettings(storageID, settings)
 	s.modelSettingsMu.Unlock()
@@ -225,7 +264,16 @@ func (s *Server) modelConfigResponse(modelID, modelDir string) api.ModelConfigRe
 	if keepAliveSet {
 		savedKeepAlive = api.FormatKeepAlive(keepAliveSetting)
 	}
-	return api.ModelConfigResponse{
+	lm, _ := s.manager.Get(modelID)
+	backend := s.modelBackendSetting(modelID)
+	dtype := s.modelDTypeSetting(modelID)
+	effectiveBackend := inference.EffectiveBackend(modelDir, lm, backend, dtype)
+	runtimeKind := s.modelRuntimeKind(modelID)
+	defaultKeepAlive := defaultKeepAliveForRuntime(runtimeKind)
+	if !keepAliveSet {
+		keepAliveSetting = defaultKeepAlive
+	}
+	response := api.ModelConfigResponse{
 		Model:                modelID,
 		NumCtx:               setting,
 		ModelMaxNumCtx:       inference.ModelMaxPositionEmbeddings(modelDir),
@@ -234,12 +282,42 @@ func (s *Server) modelConfigResponse(modelID, modelDir string) api.ModelConfigRe
 		NumParallel:          parallelSetting,
 		GlobalNumParallel:    inference.ResolveNumParallel(s.cfg.Inference.LlamaNumParallel),
 		EffectiveNumParallel: inference.ResolveNumParallelWithModelSetting(0, parallelSetting, s.cfg.Inference.LlamaNumParallel),
-		DType:                s.modelDTypeSetting(modelID),
+		DType:                dtype,
 		KeepAlive:            savedKeepAlive,
-		GlobalKeepAlive:      api.FormatKeepAlive(s.defaultKeepAliveFor(modelID)),
-		EffectiveKeepAlive:   api.FormatKeepAlive(s.effectiveModelKeepAlive(modelID)),
-		Runtime:              s.modelRuntimeKind(modelID),
+		GlobalKeepAlive:      api.FormatKeepAlive(defaultKeepAlive),
+		EffectiveKeepAlive:   api.FormatKeepAlive(keepAliveSetting),
+		Runtime:              runtimeKind,
+		Backend:              backend,
+		EffectiveBackend:     effectiveBackend,
+		Backends:             s.inferenceRuntimeCapabilities(),
 	}
+	if effectiveBackend == inference.SGLangBackend {
+		resolvedParallel := inference.ResolveSGLangNumParallel(0, parallelSetting, s.cfg.Inference.LlamaNumParallel)
+		plan, planErr := inference.SGLangPlanForModel(modelDir, modelID, s.storageRoot, setting, resolvedParallel)
+		settings := &api.SGLangRuntimeSettings{
+			ContextLength:        plan.ContextLength,
+			MaxRunningRequests:   plan.MaxRunningRequests,
+			MaxTotalTokens:       plan.MaxTotalTokens,
+			TensorParallel:       plan.TensorParallel,
+			MemFractionStatic:    plan.MemFractionStatic,
+			DType:                plan.DType,
+			ToolCallParser:       plan.ToolCallParser,
+			ReasoningParser:      plan.ReasoningParser,
+			ToolCallingSupported: plan.ToolCalling,
+			ToolCallingReason:    plan.ToolCallingReason,
+			MaxJobs:              plan.MaxJobs,
+			Sources:              plan.Sources,
+		}
+		if planErr != nil {
+			settings.Reason = planErr.Error()
+		}
+		if plan.ContextLength > 0 {
+			response.EffectiveNumCtx = plan.ContextLength
+			response.EffectiveNumParallel = plan.MaxRunningRequests
+		}
+		response.SGLang = settings
+	}
+	return response
 }
 
 // modelRuntimeKind reports which runtime serves a model. A caller cannot work
@@ -255,6 +333,12 @@ func (s *Server) modelRuntimeKind(modelID string) string {
 	case s.modelUsesImageGenerationEngine(modelID):
 		return api.ModelRuntimeDiffusers
 	default:
+		if modelDir, err := s.manager.ModelPath(modelID); err == nil {
+			lm, _ := s.manager.Get(modelID)
+			if inference.EffectiveBackend(modelDir, lm, s.modelBackendSetting(modelID), s.modelDTypeSetting(modelID)) == inference.SGLangBackend {
+				return api.ModelRuntimeSGLang
+			}
+		}
 		return api.ModelRuntimeLlama
 	}
 }

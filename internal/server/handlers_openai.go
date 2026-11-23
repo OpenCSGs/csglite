@@ -89,6 +89,10 @@ func (s *Server) handleOpenAIChatCompletions(w http.ResponseWriter, r *http.Requ
 
 	stream := openAIStreamEnabled(req.Stream, s.cfg.OpenAIStreamDefault)
 	if openAIChatRequestHasToolFeatures(req) {
+		if reason, refused := toolCallingRefusal(eng); refused {
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", reason)
+			return
+		}
 		s.handleOpenAIChatCompletionsWithTools(w, r, req, eng, opts, stream, requestedNumCtx, requestedNumParallel, requestedNGPULayers, requestedCacheTypeK, requestedCacheTypeV, requestedDType)
 		return
 	}
@@ -335,7 +339,63 @@ func (w openAIStreamWriter) Write(p []byte) (int, error) {
 }
 
 func openAIChatRequestHasToolFeatures(req api.OpenAIChatRequest) bool {
-	return hasChatToolFeatures(req.Messages, req.Tools)
+	return len(req.Functions) > 0 || req.FunctionCall != nil || hasChatToolFeatures(req.Messages, req.Tools)
+}
+
+// openAINormalizedTools returns the request's tool declarations in the modern
+// tools shape, mapping the legacy functions/function_call fields when the
+// modern ones are absent. Legacy clients are common in agent tooling, and a
+// backend that only understands tools would otherwise see no tool definitions.
+func openAINormalizedTools(req api.OpenAIChatRequest) ([]api.Tool, interface{}) {
+	if len(req.Tools) > 0 {
+		choice := req.ToolChoice
+		if choice == nil {
+			choice = legacyFunctionCallChoice(req.FunctionCall)
+		}
+		return req.Tools, choice
+	}
+	if len(req.Functions) == 0 {
+		return nil, nil
+	}
+	tools := make([]api.Tool, 0, len(req.Functions))
+	for _, function := range req.Functions {
+		tools = append(tools, api.Tool{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        function.Name,
+				Description: function.Description,
+				Parameters:  function.Parameters,
+			},
+		})
+	}
+	choice := req.ToolChoice
+	if choice == nil {
+		choice = legacyFunctionCallChoice(req.FunctionCall)
+	}
+	return tools, choice
+}
+
+func openAIRequestTools(req api.OpenAIChatRequest) []api.Tool {
+	tools, _ := openAINormalizedTools(req)
+	return tools
+}
+
+func legacyFunctionCallChoice(value interface{}) interface{} {
+	switch v := value.(type) {
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "auto", "none":
+			return strings.ToLower(strings.TrimSpace(v))
+		}
+	case map[string]interface{}:
+		if name, _ := v["name"].(string); strings.TrimSpace(name) != "" {
+			return map[string]interface{}{
+				"type":     "function",
+				"function": map[string]interface{}{"name": strings.TrimSpace(name)},
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleOpenAIChatCompletionsWithTools(
@@ -409,7 +469,7 @@ func (s *Server) handleOpenAIChatCompletionsWithTools(
 		return
 	}
 
-	openAIResp = normalizeOpenAIToolResponse(openAIResp, req.Tools)
+	openAIResp = normalizeOpenAIToolResponse(openAIResp, openAIRequestTools(req))
 	if openAIResp.ID == "" {
 		openAIResp.ID = fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	}
@@ -511,11 +571,12 @@ func openAIChatRequestToProxyBody(req api.OpenAIChatRequest, opts inference.Opti
 	if len(opts.Stop) > 0 {
 		body["stop"] = opts.Stop
 	}
-	if len(req.Tools) > 0 {
-		body["tools"] = req.Tools
+	tools, toolChoice := openAINormalizedTools(req)
+	if len(tools) > 0 {
+		body["tools"] = tools
 	}
-	if req.ToolChoice != nil {
-		body["tool_choice"] = req.ToolChoice
+	if toolChoice != nil {
+		body["tool_choice"] = toolChoice
 	}
 	if req.ParallelToolCalls != nil {
 		body["parallel_tool_calls"] = *req.ParallelToolCalls

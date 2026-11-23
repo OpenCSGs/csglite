@@ -34,7 +34,10 @@ type deploymentTestHost struct {
 	block       chan struct{}
 	fail        atomic.Bool
 	healthErr   error // guarded by runtimeMu
+	engines     []EngineStatus
 }
+
+func (h *deploymentTestHost) Engines() []EngineStatus { return h.engines }
 
 func (h *deploymentTestHost) DeploymentHealth(Deployment) error {
 	h.runtimeMu.Lock()

@@ -315,3 +315,80 @@ func TestDeploymentLongContextCreateEditAndWorkerReceipt(t *testing.T) {
 		})
 	}
 }
+
+func TestDeploymentBackendIsEditableAndReachesRuntime(t *testing.T) {
+	m, h := deploymentTestNode(t)
+	h.engines = []EngineStatus{{Name: "sglang", Known: true, Available: true, DeploymentArgs: true}, {Name: "llama", Known: true, Available: true}}
+	d, err := m.createDeployment(testDeployment(m).DeploymentSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitPublic(t, func() bool { current, _ := m.deployments.get(true, d.ID); return current.Status.Phase == "ready" })
+	if _, err := m.changeDeployment(d.ID, "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	waitPublic(t, func() bool { current, _ := m.deployments.get(true, d.ID); return current.Status.Phase == "stopped" })
+	stopped, _ := m.deployments.get(true, d.ID)
+	backend := "sglang"
+	args := "--chunked-prefill-size 4096\n--kv-cache-dtype bf16"
+	changed, err := m.configureDeployment(d.ID, stopped.Generation, DeploymentConfigPatch{Backend: &backend, SGLangArgs: &args})
+	if err != nil {
+		t.Fatalf("backend is not editable alongside other stopped settings: %v", err)
+	}
+	if changed.Backend != "sglang" {
+		t.Fatalf("backend = %q, want sglang", changed.Backend)
+	}
+	if changed.Generation != stopped.Generation+1 {
+		t.Fatalf("generation = %d, want %d", changed.Generation, stopped.Generation+1)
+	}
+	if _, err := m.changeDeployment(d.ID, "running"); err != nil {
+		t.Fatal(err)
+	}
+	waitPublic(t, func() bool { current, _ := m.deployments.get(true, d.ID); return current.Status.Phase == "ready" })
+	h.runtimeMu.Lock()
+	actual := h.lastStarted
+	h.runtimeMu.Unlock()
+	if actual.Backend != "sglang" || actual.SGLangArgs != args {
+		t.Fatalf("runtime got backend %q, args %q", actual.Backend, actual.SGLangArgs)
+	}
+}
+
+func TestDeploymentRejectsSGLangForEmbedding(t *testing.T) {
+	m, _ := deploymentTestNode(t)
+	spec := testDeployment(m).DeploymentSpec
+	spec.Kind = "embedding"
+	spec.Backend = "sglang"
+	if _, err := m.createDeployment(spec); err == nil || !strings.Contains(err.Error(), "chat only") {
+		t.Fatalf("error = %v, want SGLang chat-only rejection", err)
+	}
+}
+
+func TestDeploymentEnginePlanSurvivesReadyAndClearsOnConfigure(t *testing.T) {
+	m, _, d := configTestNode(t)
+	plan := &EnginePlanStatus{Resolved: true, Source: "worker-start", ContextLength: 8192, ToolCallParser: "qwen25"}
+	seed := DeploymentStatus{Phase: "stopped", EngineBackend: "sglang", EnginePlan: plan}
+	for _, owned := range []bool{true, false} {
+		if err := m.deployments.update(owned, d.ID, func(record *Deployment, _ bool) error { record.Status = seed; return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.deploymentStatus(d.ID, d.Generation, DeploymentStatus{Phase: "ready"})
+	current, _ := m.deployments.get(false, d.ID)
+	if current.Status.EnginePlan == nil || current.Status.EngineBackend != "sglang" || current.Status.Phase != "ready" {
+		t.Fatalf("ready update erased the started plan: %+v", current.Status)
+	}
+	m.deploymentStatus(d.ID, d.Generation, DeploymentStatus{Phase: "stopped"})
+	current, _ = m.deployments.get(false, d.ID)
+	if current.Status.EnginePlan == nil {
+		t.Fatal("stop update erased the started plan")
+	}
+	current, _ = m.deployments.get(true, d.ID)
+	ctx := 16384
+	changed, err := m.configureDeployment(d.ID, current.Generation, DeploymentConfigPatch{NumCtx: &ctx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Status.EnginePlan != nil || changed.Status.EngineBackend != "" {
+		t.Fatalf("new generation inherited the old runtime plan: %+v", changed.Status)
+	}
+}

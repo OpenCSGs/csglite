@@ -133,6 +133,29 @@ TTS worker 支持：
 | `CSGHUB_LITE_PI_INSTALL_ROOT` | `~/.local/share/pi-coding-agent` | Pi 用户级安装目录。 |
 | `CSGHUB_LITE_TMPDIR` | `~/.csghub-lite/tmp/...` | 直接运行部分内置应用安装脚本时覆盖临时目录。由 CSGLite 启动脚本时会自动设置到存储根下。 |
 
+## 原生 SGLang 推理
+
+native SGLang 只在 Linux + CUDA/ROCm 上可用；macOS/Windows 继续使用 llama.cpp。
+显式选择 SGLang 或安装/配置了 SGLang 但探测失败时会明确报错，不会静默转换为 GGUF。
+
+| 变量 | 说明 | 默认值 |
+|---|---|---|
+| `CSGHUB_LITE_SGLANG_PYTHON` | 指定带 SGLang 的 Python 解释器；优先级最高 | 自动探测 `/opt/sglang/bin/python`、Lite 运行时目录、`PATH` |
+| `CSGHUB_LITE_SGLANG_DISABLE` | `1` 时禁用 native SGLang（legacy 固定模型容器会自动设置） | 未设置 |
+| `CSGHUB_LITE_SGLANG_REQUIRE` | `1` 时即使未找到解释器也视为“已配置 SGLang”；探测失败必须报错而不是回退转换 | 未设置 |
+| `CSGHUB_LITE_SGLANG_ROCM_ARCH` | 指定 SGLang ROCm 算子的编译目标，设置后校验所有可见 GPU 的架构 | ROCm 镜像自动设置为编译目标 |
+| `CSGHUB_LITE_SGLANG_READY_TIMEOUT` | 等待 `/health` 的启动超时，支持 `45m` 或秒数 | `30m` |
+| `CSGHUB_LITE_SGLANG_TP_SIZE` / `SGLANG_TP_SIZE` | 显式张量并行卡数；默认单卡。超过可见 GPU 数会报错 | `1` |
+| `CSGHUB_LITE_SGLANG_BASE_GPU_ID` / `SGLANG_BASE_GPU_ID` | 起始 GPU 偏移，参与显存估算 | `0` |
+| `CSGHUB_LITE_SGLANG_MEM_FRACTION` / `SGLANG_MEM_FRACTION` | 覆盖估算的 `--mem-fraction-static`（0.05–0.90） | 按权重、KV、可见显存估算 |
+| `CSGHUB_LITE_SGLANG_EXTRA_ARGS` / `SGLANG_EXTRA_ARGS` | 高级 SGLang 参数 JSON 数组，支持 `["--flag","value"]` 与 `["--flag=value"]`。模型/主机/端口/服务名/API key 等身份参数不能覆盖；重复管理参数会被拒绝 | 未设置 |
+| `MAX_JOBS` | 覆盖 SGLang/JIT 编译并发；未设置时按容器 cgroup CPU 与内存保守计算（4 CPU/8GiB 为 2） | 自动 |
+
+模型设置中的 `num_ctx`、`num_parallel`、`dtype` 与后端选择保存在
+`config.json` 的 `inference.models` 下。请求值优先于每模型设置；显式
+`f16`/`bf16`/`f32` 会传给 SGLang，GGUF 量化名会被拒绝。工具调用解析器根据模型
+家族、版本和 tokenizer chat template 选择；未知/未验证模型不会宣称支持函数调用。
+
 ## 企业版 License
 
 | 变量 | 说明 | 默认值 |

@@ -67,6 +67,9 @@ func (e *scriptedChatEngine) ModelName() string { return "scripted" }
 
 func TestMain(m *testing.M) {
 	_ = os.Setenv(config.DisableFileLoggingEnv, "1")
+	// A real Python probe can outlive the test that owns its cache directory.
+	// Tests that exercise SGLang detection opt in with a fake interpreter.
+	_ = os.Setenv("CSGHUB_LITE_SGLANG_DISABLE", "1")
 	if home, err := os.MkdirTemp("", "csghub-lite-server-test-home-*"); err == nil {
 		_ = os.Setenv("HOME", home)
 		_ = os.Setenv("USERPROFILE", home)
