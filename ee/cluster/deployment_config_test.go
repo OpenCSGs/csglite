@@ -170,12 +170,21 @@ func TestDeploymentConfigRequiresNodeSupportAndController(t *testing.T) {
 	if w.Code != 409 || !strings.Contains(w.Body.String(), "upgrade") {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
-	m.opts.Mode = "worker"
-	w = configRequest(m, d.ID, `{"generation":1,"config":{"num_ctx":8192}}`)
-	if w.Code != 403 {
-		t.Fatalf("worker allowed configuration: %d", w.Code)
+	worker, err := New(Options{
+		Dir: t.TempDir(), Host: &fakeHost{name: "worker", limit: 0}, Discoverer: NopDiscoverer{},
+		Mode: "worker", GatewayURL: "https://master.example",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	w = configRequest(m, uuid.NewString(), `{"desired":"running"}`)
+	if err := worker.deployments.update(false, d.ID, func(record *Deployment, _ bool) error { *record = d; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	w = configRequest(worker, d.ID, `{"generation":1,"config":{"num_ctx":8192}}`)
+	if w.Code != 403 || !strings.Contains(w.Body.String(), "master_required") {
+		t.Fatalf("worker configuration update returned %d: %s", w.Code, w.Body)
+	}
+	w = configRequest(worker, uuid.NewString(), `{"desired":"running"}`)
 	if w.Code != 403 {
 		t.Fatal("worker bypass")
 	}
