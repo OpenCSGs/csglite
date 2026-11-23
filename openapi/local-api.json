@@ -9375,7 +9375,7 @@
           "Cluster"
         ],
         "summary": "Join a public gateway using the existing cluster token handshake",
-        "description": "Only on the dedicated public listener. Node identity, timestamp, nonce and HMAC use the existing cluster join protocol over verified HTTPS. Workers receive membership and gateway identity but not the enrollment HMAC key.",
+        "description": "Only on the dedicated public listener. Node identity, timestamp, nonce and HMAC use the existing cluster join protocol over verified HTTPS or explicitly configured HTTP. Workers receive membership and gateway identity but not the enrollment HMAC key.",
         "parameters": [
           {
             "name": "cluster",
@@ -9463,7 +9463,7 @@
           "Cluster"
         ],
         "summary": "Open an outbound public worker tunnel",
-        "description": "Dedicated public listener only. Verified HTTPS upgrades to WebSocket plus yamux. The worker proves possession of its existing pinned ECDSA identity with a timestamped, audience-bound, single-use signed nonce. It opens a bounded JSON status control stream; gateway opens HTTP inference streams. This is not a browser or general-purpose proxy endpoint.",
+        "description": "Dedicated public listener only. The configured HTTP or HTTPS listener upgrades to WebSocket plus yamux. The worker proves possession of its existing pinned ECDSA identity with a timestamped, audience-bound, single-use signed nonce. It opens a bounded JSON status control stream; gateway opens HTTP inference streams. This is not a browser or general-purpose proxy endpoint.",
         "parameters": [
           {
             "name": "X-CSGLite-Node-UUID",
@@ -9550,7 +9550,7 @@
         "tags": [
           "Public management"
         ],
-        "description": "Available on the public gateway HTTPS listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Cookies are Secure, HttpOnly (session only), SameSite=Strict. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration. Management tokens generated with --ttl expire server-side. Session lifetime is at most 8 hours and never exceeds the token expiry; an expired token invalidates only sessions created by that token.",
+        "description": "Available on the public gateway listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Session cookies are HttpOnly and both cookies use SameSite=Strict. HTTPS mode uses Secure cookies. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration. Management tokens generated with --ttl expire server-side. Session lifetime is at most 8 hours and never exceeds the token expiry; an expired token invalidates only sessions created by that token.",
         "responses": {
           "200": {
             "description": "Success"
@@ -9656,7 +9656,7 @@
         "tags": [
           "Public management"
         ],
-        "description": "Available on the public gateway HTTPS listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Cookies are Secure, HttpOnly (session only), SameSite=Strict. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration.",
+        "description": "Available on the public gateway listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Session cookies are HttpOnly and both cookies use SameSite=Strict. HTTPS mode uses Secure cookies. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration.",
         "responses": {
           "200": {
             "description": "Success"
@@ -21017,7 +21017,7 @@
           },
           "gateway_url": {
             "type": "string",
-            "description": "Configured public HTTPS gateway origin for an outbound worker."
+            "description": "Configured public gateway origin for an outbound worker. HTTP requires explicit opt-in."
           },
           "public_listen_addr": {
             "type": "string",
@@ -21475,7 +21475,11 @@
           },
           "address": {
             "type": "string",
-            "description": "Optional member cluster endpoint (host or host:port) when multicast discovery cannot find one."
+            "description": "Optional LAN member endpoint. For a public join, provide the Master URL or host and port."
+          },
+          "enable_ssl": {
+            "type": "boolean",
+            "description": "Select the public Master transport. True uses HTTPS and false uses HTTP. Omit the field for the existing join behavior."
           }
         }
       },

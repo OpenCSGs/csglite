@@ -63,7 +63,13 @@ csghub-lite cluster create --name team
 
 若 TLS 在前置反向代理终止，可省略证书参数，把公网业务监听器绑定回环地址，
 默认 `127.0.0.1:11439`。代理需支持 WebSocket 和 SSE，不得缓冲流式响应。
-未配置 TLS 的公网业务监听器不能绑定主机对外接口。
+默认配置下，未配置 TLS 的公网业务监听器不能绑定主机对外接口。
+
+HTTP 网关需要在 Master 的 `cluster configure-public --role gateway` 命令中显式设置
+`--allow-http`，并省略证书参数。Worker 用 `cluster join --allow-http --gateway http://<master>:8080`
+加入。已入群的 Worker 可以用 `cluster configure-public --role worker --allow-http --gateway http://<master>:8080`
+切换同一个 Master 的连接地址。保存的 `cluster.allow_http` 用来区分显式 HTTP 网关与
+原来仅在回环地址提供 HTTP 的 TLS 反代后端。HTTP 模式的连接和凭证均以明文传输。
 
 ## 接入工作节点
 

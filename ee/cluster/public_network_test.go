@@ -4,6 +4,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/pem"
@@ -60,9 +61,14 @@ func assertWorkerGatewayOnline(t *testing.T, worker *Manager, gateway string, on
 }
 
 func TestPublicClusterReusesMembershipAndScheduler(t *testing.T) {
+	t.Run("HTTPS", func(t *testing.T) { testPublicClusterTransport(t, false) })
+	t.Run("HTTP", func(t *testing.T) { testPublicClusterTransport(t, true) })
+}
+
+func testPublicClusterTransport(t *testing.T, allowHTTP bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	gateway, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{name: "gateway", limit: 2}, Mode: "gateway", PublicListenAddr: "127.0.0.1:0", PublicInference: http.NotFoundHandler(), Logf: t.Logf})
+	gateway, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{name: "gateway", limit: 2}, Mode: "gateway", AllowHTTP: allowHTTP, PublicListenAddr: "127.0.0.1:0", PublicInference: http.NotFoundHandler(), Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,15 +83,21 @@ func TestPublicClusterReusesMembershipAndScheduler(t *testing.T) {
 	if info.Topology != "public" || info.GatewayUUID != gateway.identity.UUID {
 		t.Fatal("public cluster authority was not persisted")
 	}
-	server := httptest.NewTLSServer(gateway.publicRoutes(gateway.publicHub()))
-	defer server.Close()
-	caFile := filepath.Join(t.TempDir(), "gateway-ca.pem")
-	if err = os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
-		t.Fatal(err)
+	var server *httptest.Server
+	var caFile string
+	if allowHTTP {
+		server = httptest.NewServer(gateway.publicRoutes(gateway.publicHub()))
+	} else {
+		server = httptest.NewTLSServer(gateway.publicRoutes(gateway.publicHub()))
+		caFile = filepath.Join(t.TempDir(), "gateway-ca.pem")
+		if err = os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
+	defer server.Close()
 	dir := t.TempDir()
 	host := &fakeHost{name: "outbound-worker", limit: 2, models: []ModelStatus{{ID: "shared-model", Size: 1 << 20, Loaded: true, Slots: 2}, {ID: "private-model", Size: 1 << 20, Loaded: true, Slots: 1}}}
-	opts := Options{Dir: dir, Host: host, Mode: "worker", GatewayURL: server.URL, TLSCAFile: caFile, ListenAddr: "192.0.2.1:11438", Logf: t.Logf}
+	opts := Options{Dir: dir, Host: host, Mode: "worker", AllowHTTP: allowHTTP, GatewayURL: server.URL, TLSCAFile: caFile, ListenAddr: "192.0.2.1:11438", Logf: t.Logf}
 	worker, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +203,7 @@ func TestPublicClusterReusesMembershipAndScheduler(t *testing.T) {
 		t.Fatal("replayed node proof accepted")
 	}
 	// A third CE node is refused by the existing membership quota.
-	extra, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{limit: 2}, Mode: "worker", GatewayURL: server.URL, TLSCAFile: caFile, Logf: t.Logf})
+	extra, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{limit: 2}, Mode: "worker", AllowHTTP: allowHTTP, GatewayURL: server.URL, TLSCAFile: caFile, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,5 +571,79 @@ func TestPublicWorkerReconnectsAfterGatewayRestart(t *testing.T) {
 	assertWorkerGatewayOnline(t, worker, identity, true)
 	if restarted.identity.UUID != identity || len(restarted.store.Members()) != 1 || joins.Load() != 1 {
 		t.Fatal("gateway restart changed membership or re-enrolled the worker")
+	}
+}
+
+func TestPublicClusterHTTPJoinFromStandalone(t *testing.T) {
+	ctx := t.Context()
+	gateway, err := New(Options{
+		Dir: t.TempDir(), Host: &fakeHost{limit: 2}, Mode: "gateway", AllowHTTP: true,
+		PublicListenAddr: "127.0.0.1:0", PublicInference: http.NotFoundHandler(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(gateway.Stop)
+	if err = gateway.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	created, token, err := gateway.CreateCluster("HTTP join test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(gateway.publicRoutes(gateway.publicHub()))
+	defer server.Close()
+
+	var savedGateway string
+	worker, err := New(Options{
+		Dir: t.TempDir(), Host: &fakeHost{limit: 2}, ListenAddr: "127.0.0.1:0",
+		ConfigureWorkerRole: func(address string, allowHTTP bool, caFile string) (func() error, error) {
+			if !allowHTTP || caFile != "" {
+				t.Fatal("HTTP join selected the wrong transport")
+			}
+			savedGateway = address
+			return func() error { savedGateway = ""; return nil }, nil
+		},
+		ResetWorkerRole: func() error { savedGateway = ""; return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(worker.Stop)
+	if err = worker.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	request := func(token, address string) *httptest.ResponseRecorder {
+		body, err := json.Marshal(map[string]any{"token": token, "address": address, "enable_ssl": false})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		worker.Admin().HandleJoin(w, httptest.NewRequest(http.MethodPost, "/api/cluster/join", bytes.NewReader(body)))
+		return w
+	}
+
+	if response := request("invalid", server.URL); response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid join returned %d", response.Code)
+	}
+	if savedGateway != "" || worker.mode() != "" || worker.Active() {
+		t.Fatal("failed join changed standalone mode")
+	}
+	response := request(token, "https://"+strings.TrimPrefix(server.URL, "http://"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("HTTP join returned %d: %s", response.Code, response.Body)
+	}
+	if savedGateway != server.URL || worker.mode() != "worker" || worker.ListenPort() != 0 {
+		t.Fatal("HTTP join did not save and apply the worker role")
+	}
+	if worker.Store().Cluster().UUID != created.UUID {
+		t.Fatal("HTTP join saved the wrong cluster")
+	}
+	waitPublic(t, func() bool { _, ok := gateway.publicHub().Snapshot(worker.identity.UUID); return ok })
+	if err = worker.Leave(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if worker.mode() != "" || savedGateway != "" {
+		t.Fatal("leaving a UI-configured worker did not restore standalone mode")
 	}
 }

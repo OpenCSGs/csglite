@@ -24,6 +24,8 @@ import (
 
 // CreateCluster founds a cluster of one and returns the join token.
 func (m *Manager) CreateCluster(name string) (ClusterInfo, string, error) {
+	m.publicJoinMu.Lock()
+	defer m.publicJoinMu.Unlock()
 	if m.mode() == "worker" {
 		return ClusterInfo{}, "", errors.New("a public worker joins a gateway; it cannot create a cluster")
 	}
@@ -72,6 +74,8 @@ func (m *Manager) JoinToken(rotate bool) (string, error) {
 
 // Join contacts a member of the cluster named by token and joins.
 func (m *Manager) Join(ctx context.Context, token, address string) (ClusterInfo, error) {
+	m.publicJoinMu.Lock()
+	defer m.publicJoinMu.Unlock()
 	if m.mode() == "worker" {
 		return m.joinPublic(ctx, token, address)
 	}
