@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { LicenseFeaturesTooltip } from "../components/LicenseFeaturesTooltip";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -98,8 +99,7 @@ const modelScopeEndpointInput = signal("");
 const modelScopeTokenInput = signal("");
 const modelScopeTokenConfigured = signal(false);
 const cloudServiceTab = signal<ArtifactSource>("opencsg");
-const cloudServiceError = signal("");
-const cloudServiceMessage = signal("");
+const cloudServiceFeedback = signal({ error: "", message: "", warning: false });
 const savingCloudService = signal<ArtifactSource | "">("");
 const isRefreshingCloudModels = signal(false);
 const isResettingDefaults = signal(false);
@@ -502,9 +502,8 @@ async function saveStorageDir() {
   }
 }
 
-function setCloudServiceFeedback(error: string, message: string) {
-  cloudServiceError.value = error;
-  cloudServiceMessage.value = message;
+function setCloudServiceFeedback(error: string, message: string, warning = false) {
+  cloudServiceFeedback.value = { error, message, warning };
 }
 
 function selectCloudServiceTab(tab: ArtifactSource) {
@@ -557,16 +556,32 @@ function cloudServiceStatus(source: ArtifactSource): { text: string; ok: boolean
     : { text: t("settings.registryTokenNotConfigured"), ok: false };
 }
 
-async function saveOpenCSGService() {
+async function saveOpenCSGService(token: string, onTokenSaved: () => void) {
+  if (savingCloudService.value || savingCommunity.value) return;
   savingCloudService.value = "opencsg";
   setCloudServiceFeedback("", "");
   try {
-    const data = await saveSettings({
-      cloud_provider_name: cloudProviderNameInput.value,
-    });
-    applySettings(data);
-    notifyProvidersChanged();
-    setCloudServiceFeedback("", t("settings.providerSaveSuccess", cloudServiceLabel("opencsg")));
+    const providerName = cloudProviderNameInput.value.trim();
+    if (!token || providerName !== (communitySettings.value?.cloud_provider_name || "")) {
+      const data = await saveSettings({ cloud_provider_name: providerName });
+      applySettings(data);
+      notifyProvidersChanged();
+    }
+    if (!token) {
+      setCloudServiceFeedback("", t("settings.providerSaveSuccess", cloudServiceLabel("opencsg")));
+      return;
+    }
+    try {
+      const auth = await connectCloudWithAccessToken(token);
+      onTokenSaved();
+      if (auth.authenticated) {
+        setCloudServiceFeedback("", cloudUserLabel(auth) || t("settings.signedIn"));
+      } else {
+        setCloudServiceFeedback("", t("settings.accessTokenUnverified"), true);
+      }
+    } catch {
+      setCloudServiceFeedback(t("settings.accessTokenLoginFailed"), "");
+    }
   } catch (err: any) {
     setCloudServiceFeedback(err?.message || t("settings.serviceUrlsSaveFailed"), "");
   } finally {
@@ -692,6 +707,46 @@ function selectStorageDir(path: string) {
   closeStorageDirPicker();
 }
 
+function ServiceTokenField({
+  id,
+  token,
+  configured,
+  disabled,
+  unconfiguredStatus = t("settings.registryTokenNotConfigured"),
+  placeholder = t("settings.registryTokenPlaceholder"),
+  onTokenChange,
+}: {
+  id?: string;
+  token: string;
+  configured: boolean;
+  disabled: boolean;
+  unconfiguredStatus?: string;
+  placeholder?: string;
+  onTokenChange: (value: string) => void;
+}) {
+  return (
+    <label class="block">
+      <span class="flex items-center justify-between gap-2">
+        <span class="text-sm font-medium text-gray-700">{t("settings.registryToken")}</span>
+        <span class={`text-xs ${configured ? "text-emerald-600" : "text-gray-400"}`}>
+          {configured ? t("settings.registryTokenConfigured") : unconfiguredStatus}
+        </span>
+      </span>
+      <input
+        id={id}
+        type="password"
+        value={token}
+        disabled={disabled}
+        autocomplete="new-password"
+        spellcheck={false}
+        placeholder={configured ? t("settings.registryTokenKeep") : placeholder}
+        onInput={(event) => onTokenChange(event.currentTarget.value)}
+        class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+      />
+    </label>
+  );
+}
+
 function RegistryCredentialFields({
   endpoint,
   token,
@@ -721,23 +776,12 @@ function RegistryCredentialFields({
           class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
         />
       </label>
-      <label class="block">
-        <span class="flex items-center justify-between gap-2">
-          <span class="text-sm font-medium text-gray-700">{t("settings.registryToken")}</span>
-          <span class={`text-xs ${configured ? "text-emerald-600" : "text-gray-400"}`}>
-            {configured ? t("settings.registryTokenConfigured") : t("settings.registryTokenNotConfigured")}
-          </span>
-        </span>
-        <input
-          type="password"
-          value={token}
-          disabled={disabled}
-          autocomplete="new-password"
-          placeholder={configured ? t("settings.registryTokenKeep") : t("settings.registryTokenPlaceholder")}
-          onInput={(event) => onTokenChange((event.currentTarget as HTMLInputElement).value)}
-          class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-        />
-      </label>
+      <ServiceTokenField
+        token={token}
+        configured={configured}
+        disabled={disabled}
+        onTokenChange={onTokenChange}
+      />
       {configured && (
         <button
           type="button"
@@ -1143,59 +1187,72 @@ function LicenseSection() {
 function CloudServiceActions({
   saving,
   onSave,
+  disabled = false,
+  children,
 }: {
   saving: boolean;
-  onSave: () => void;
+  onSave?: () => void;
+  disabled?: boolean;
+  children?: ComponentChildren;
 }) {
+  const { error, message, warning } = cloudServiceFeedback.value;
   return (
-    <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
       <div class="text-sm">
-        {cloudServiceError.value && <span class="text-red-600">{cloudServiceError.value}</span>}
-        {cloudServiceMessage.value && <span class="text-green-600">{cloudServiceMessage.value}</span>}
+        {error && <span role="alert" class="text-red-600">{error}</span>}
+        {message && <span role="status" class={warning ? "text-amber-700" : "text-green-600"}>{message}</span>}
       </div>
-      <button
-        type="button"
-        onClick={onSave}
-        disabled={saving}
-        class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
-      >
-        {saving ? "..." : t("settings.save")}
-      </button>
+      <div class="flex flex-wrap gap-2">
+        {children}
+        <button
+          type={onSave ? "button" : "submit"}
+          onClick={onSave}
+          disabled={saving || disabled}
+          class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
+        >
+          {saving ? "..." : t("settings.save")}
+        </button>
+      </div>
     </div>
   );
 }
 
-function OpenCSGAccessTokenForm() {
+function OpenCSGServiceFields() {
   const [token, setToken] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
   const auth = cloudAuth.value;
   const accessTokenURL = auth?.access_token_url;
+  const saving = savingCloudService.value === "opencsg";
   const disabled = saving || savingCommunity.value;
 
   return (
-    <form class="space-y-2 border-t border-gray-100 pt-4" onSubmit={async (event) => {
+    <form class="space-y-5" onSubmit={(event) => {
       event.preventDefault();
-      const value = token.trim();
-      if (!value || disabled) return;
-      setSaving(true);
-      setError("");
-      setSaved(false);
-      try {
-        await connectCloudWithAccessToken(value);
-        setToken("");
-        setSaved(true);
-      } catch {
-        setError(t("settings.accessTokenLoginFailed"));
-      } finally {
-        setSaving(false);
-      }
+      void saveOpenCSGService(token.trim(), () => setToken(""));
     }}>
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <label for="opencsg-access-token" class="text-sm font-medium text-gray-700">{t("settings.accessToken")}</label>
+      <div class="space-y-4">
+        <label class="block">
+          <span class="text-sm font-medium text-gray-700">{t("settings.cloudProviderName")}</span>
+          <input
+            type="text"
+            value={cloudProviderNameInput.value}
+            disabled={disabled}
+            onInput={(event) => (cloudProviderNameInput.value = event.currentTarget.value)}
+            placeholder={defaultCloudProviderName.value}
+            class="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+          />
+          <span class="mt-1 block text-xs text-gray-400">{t("settings.cloudProviderNameHint", defaultCloudProviderName.value || "csghub")}</span>
+        </label>
+        <ServiceTokenField
+          id="opencsg-access-token"
+          token={token}
+          configured={!!auth?.has_token}
+          disabled={disabled}
+          unconfiguredStatus={t("settings.accessTokenNotConfigured")}
+          placeholder={t("settings.accessTokenPlaceholder")}
+          onTokenChange={setToken}
+        />
         {accessTokenURL && (
-          <a href={accessTokenURL} target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 hover:underline" onClick={async (event) => {
+          <a href={accessTokenURL} target="_blank" rel="noopener noreferrer" class="inline-block text-xs text-indigo-600 hover:underline" onClick={async (event) => {
             if (!desktopMode.value) return;
             event.preventDefault();
             try {
@@ -1203,37 +1260,20 @@ function OpenCSGAccessTokenForm() {
             } catch {
               // The error is surfaced next to the token field.
             }
-            setError(t("settings.accessTokenPageFailed"));
+            setCloudServiceFeedback(t("settings.accessTokenPageFailed"), "");
           }}>{t("settings.openAccessTokens")}</a>
         )}
       </div>
-      <div class="flex flex-wrap gap-2">
-        <input
-          id="opencsg-access-token"
-          type="password"
-          autocomplete="new-password"
-          spellcheck={false}
-          value={token}
-          disabled={disabled}
-          aria-describedby="opencsg-access-token-hint"
-          onInput={(event) => {
-            setToken(event.currentTarget.value);
-            setError("");
-            setSaved(false);
-          }}
-          class="min-w-0 grow basis-48 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-        />
-        <button type="submit" disabled={disabled || !token.trim()} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-60">
-          {t(saving ? "settings.accessTokenSigningIn" : "settings.accessTokenSignIn")}
+      <CloudServiceActions saving={saving} disabled={savingCommunity.value}>
+        <button
+          type="button"
+          onClick={() => void refreshCloudModels()}
+          disabled={isRefreshingCloudModels.value}
+          class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+        >
+          {isRefreshingCloudModels.value ? t("settings.cloudModelsRefreshing") : t("settings.cloudModelsRefresh")}
         </button>
-      </div>
-      <p id="opencsg-access-token-hint" class="text-xs text-gray-500">{t("settings.tokenInputHint")}</p>
-      {error && <p role="alert" class="text-sm text-red-600">{error}</p>}
-      {!error && saved && auth?.has_token && (
-        <p role="status" class={auth.authenticated ? "text-sm text-emerald-700" : "text-sm text-amber-700"}>
-          {auth.authenticated ? cloudUserLabel(auth) || t("settings.signedIn") : t("settings.accessTokenUnverified")}
-        </p>
-      )}
+      </CloudServiceActions>
     </form>
   );
 }
@@ -1524,50 +1564,7 @@ export function Settings() {
           </div>
           <div class="p-5">
             <p class="mb-5 text-sm leading-5 text-gray-500">{cloudServiceHint(cloudServiceTab.value)}</p>
-              {cloudServiceTab.value === "opencsg" && (
-                <div class="space-y-5">
-                  <div class="space-y-4">
-                    <label class="block">
-                      <span class="text-sm font-medium text-gray-700">{t("settings.cloudProviderName")}</span>
-                      <input
-                        type="text"
-                        value={cloudProviderNameInput.value}
-                        onInput={(event) => {
-                          cloudProviderNameInput.value = (event.currentTarget as HTMLInputElement).value;
-                        }}
-                        placeholder={defaultCloudProviderName.value}
-                        class="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                      />
-                      <span class="mt-1 block text-xs text-gray-400">{t("settings.cloudProviderNameHint", defaultCloudProviderName.value || "csghub")}</span>
-                    </label>
-                  </div>
-                  <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
-                    <div class="text-sm">
-                      {cloudServiceError.value && <span class="text-red-600">{cloudServiceError.value}</span>}
-                      {cloudServiceMessage.value && <span class="text-emerald-600">{cloudServiceMessage.value}</span>}
-                    </div>
-                    <div class="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void refreshCloudModels()}
-                        disabled={isRefreshingCloudModels.value}
-                        class="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
-                      >
-                        {isRefreshingCloudModels.value ? t("settings.cloudModelsRefreshing") : t("settings.cloudModelsRefresh")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void saveOpenCSGService()}
-                        disabled={savingCloudService.value === "opencsg"}
-                        class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
-                      >
-                        {savingCloudService.value === "opencsg" ? "..." : t("settings.save")}
-                      </button>
-                    </div>
-                  </div>
-                  <OpenCSGAccessTokenForm />
-                </div>
-              )}
+              {cloudServiceTab.value === "opencsg" && <OpenCSGServiceFields />}
               {cloudServiceTab.value === "huggingface" && (
                 <div class="space-y-5">
                   <RegistryCredentialFields
@@ -1579,12 +1576,10 @@ export function Settings() {
                     onTokenChange={(value) => (huggingFaceTokenInput.value = value)}
                     onClear={() => void clearRegistryToken("huggingface")}
                   />
-                  <div class="border-t border-gray-100 pt-4">
-                    <CloudServiceActions
-                      saving={savingCloudService.value === "huggingface"}
-                      onSave={() => void saveRegistryService("huggingface")}
-                    />
-                  </div>
+                  <CloudServiceActions
+                    saving={savingCloudService.value === "huggingface"}
+                    onSave={() => void saveRegistryService("huggingface")}
+                  />
                 </div>
               )}
               {cloudServiceTab.value === "modelscope" && (
@@ -1598,12 +1593,10 @@ export function Settings() {
                     onTokenChange={(value) => (modelScopeTokenInput.value = value)}
                     onClear={() => void clearRegistryToken("modelscope")}
                   />
-                  <div class="border-t border-gray-100 pt-4">
-                    <CloudServiceActions
-                      saving={savingCloudService.value === "modelscope"}
-                      onSave={() => void saveRegistryService("modelscope")}
-                    />
-                  </div>
+                  <CloudServiceActions
+                    saving={savingCloudService.value === "modelscope"}
+                    onSave={() => void saveRegistryService("modelscope")}
+                  />
                 </div>
               )}
           </div>
