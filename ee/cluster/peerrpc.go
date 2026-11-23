@@ -96,7 +96,7 @@ func (m *Manager) fetchStatusUnpinned(ctx context.Context, addr string) (*Status
 
 // fetchStatus polls a member, trying each known endpoint in turn.
 func (m *Manager) fetchStatus(ctx context.Context, mem Member) (*Status, string, error) {
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		return m.publicStatus(mem.UUID)
 	}
 	// Bound the whole attempt, not just each address: a member with several

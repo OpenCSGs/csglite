@@ -7,13 +7,14 @@ import type { ServiceTestProtocol } from "./serviceTestProtocols";
 export { serviceTestProtocols } from "./serviceTestProtocols";
 export type { ServiceTestProtocol } from "./serviceTestProtocols";
 
-export interface ServiceTestOptions { file?: File; question?: string; questionType?: DecisionQuestionType; choices?: string; voice?: string }
+export interface ServiceTestOptions { file?: File; question?: string; questionType?: DecisionQuestionType; choices?: string; voice?: string; nodeUUID?: string }
 
 async function dataURL(file: File): Promise<string> {
   return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(reader.error);reader.readAsDataURL(file)});
 }
 export async function testModelService(model: string, protocol: ServiceTestProtocol, input: string, signal: AbortSignal, options: ServiceTestOptions = {}) {
-  const endpoint = `/ai-gateway/v1/${protocol}`;
+  const prefix = options.nodeUUID ? `/ai-gateway/providers/${encodeURIComponent(`node:${options.nodeUUID}`)}` : "/ai-gateway";
+  const endpoint = `${prefix}/v1/${protocol}`;
   let body: BodyInit;
   let jsonBody: Record<string, unknown> | undefined;
   if(protocol==="audio/transcriptions" || protocol==="images/edits") {
@@ -57,7 +58,7 @@ export async function testModelService(model: string, protocol: ServiceTestProto
   return {data,blob:undefined,status:response.status,durationMS:durationMS()};
 }
 export function serviceTestText(data:any,protocol:ServiceTestProtocol):string {
-  if(protocol==="chat/completions") return data.choices?.[0]?.message?.content||JSON.stringify(data,null,2);
+  if(protocol==="chat/completions") { const message=data.choices?.[0]?.message; return message?.content||message?.reasoning_content||message?.reasoning||JSON.stringify(data,null,2); }
   if(protocol==="responses") return data.output_text||data.output?.flatMap((item:any)=>item.content||[]).map((item:any)=>item.text||"").join("\n")||JSON.stringify(data,null,2);
   if(protocol==="messages") return data.content?.map((item:any)=>item.text||"").join("\n")||JSON.stringify(data,null,2);
   if(protocol==="audio/transcriptions") return data.text||JSON.stringify(data,null,2);

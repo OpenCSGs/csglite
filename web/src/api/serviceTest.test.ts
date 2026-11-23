@@ -151,10 +151,21 @@ describe("per-model API testing", () => {
   });
   it("displays text for each API and summarizes embedding vectors without losing the raw response", () => {
     expect(serviceTestText({ choices: [{ message: { content: "chat" } }] }, "chat/completions")).toBe("chat");
+    expect(serviceTestText({ choices: [{ message: { content: "", reasoning_content: "thinking" } }] }, "chat/completions")).toBe("thinking");
     expect(serviceTestText({ output: [{ content: [{ type: "output_text", text: "response" }] }] }, "responses")).toBe("response");
     expect(serviceTestText({ content: [{ type: "text", text: "message" }] }, "messages")).toBe("message");
     const response = { data: [{ index: 0, embedding: Array.from({ length: 12 }, (_, i) => i) }] };
     expect(JSON.parse(serviceTestText(response, "embeddings"))[0]).toEqual({ index: 0, dimensions: 12, preview: [0, 1, 2, 3, 4, 5, 6, 7] });
     expect(response.data[0].embedding).toHaveLength(12);
   });
+});
+
+it("tests an unpublished instance through the fixed-node provider route", async () => {
+  environment();
+  const fetcher = vi.fn().mockResolvedValue(new Response('{"data":[]}'));
+  vi.stubGlobal("fetch", fetcher);
+  const nodeUUID = "613880ae-f467-4b59-8696-29692acf1113";
+  await testModelService("deployment/one", "embeddings", "hello", new AbortController().signal, { nodeUUID });
+  expect(fetcher.mock.calls[0][0]).toBe(`/ai-gateway/providers/node%3A${nodeUUID}/v1/embeddings`);
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ model: "deployment/one", input: "hello", encoding_format: "float" });
 });

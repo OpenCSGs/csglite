@@ -25,6 +25,12 @@ describe("deployment rows in the existing model library", () => {
     const row=deploymentLibraryRows([{...task,status:{...task.status,completed_bytes:100}}],[],"","all")[0];
     expect(row.task?.status).toBe("downloading");expect(row.task?.percent).toBeLessThan(100);
   });
+  it("carries the worker download speed only while downloading", () => {
+    const downloading=deploymentLibraryRows([{...task,status:{...task.status,speed_bytes_per_sec:2*1024*1024}}],[],"","all")[0];
+    const ready=deploymentLibraryRows([{...task,status:{...task.status,phase:"ready",size:100,speed_bytes_per_sec:2*1024*1024}}],[],"","all")[0];
+    expect(downloading.task?.speedBytesPerSec).toBe(2*1024*1024);
+    expect(ready.task?.speedBytesPerSec).toBe(0);
+  });
 });
 
 it("merges managed receipts into the actual library artifact without duplicating files", () => {

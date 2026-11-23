@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"net/http"
@@ -22,7 +23,11 @@ func (s *Server) publicClusterWebRoutes(storageRoot string) http.Handler {
 }
 
 func (s *Server) consoleWebRoutes(storageRoot string, allowPlainLocal bool) http.Handler {
-	auth := clusterpublic.NewAdminAuth(clusterpublic.AdminTokenPath(storageRoot))
+	path := clusterpublic.AdminTokenPath(storageRoot)
+	auth := clusterpublic.NewAdminAuth(path)
+	if !allowPlainLocal && s.cfg.Cluster.AllowHTTP {
+		auth = clusterpublic.NewPlainHTTPAdminAuth(path)
+	}
 	management := s.routes()
 	inference := s.publicClusterInferenceRoutes()
 	if allowPlainLocal {
@@ -120,6 +125,13 @@ func isConsoleInferencePath(path string) bool {
 
 func publicClusterWebHandler(auth *clusterpublic.AdminAuth, management, inference http.Handler, allowPlainLocal, requireLogin bool) http.Handler {
 	static := staticHandler()
+	var loginHTML []byte
+	if auth.AllowsPlainHTTP() {
+		if body, err := embeddedFS.ReadFile("static/login.html"); err == nil {
+			loginHTML = bytes.Replace(body, []byte("</head>"),
+				[]byte("<meta name=\"csglite-plain-http\" content=\"enabled\"></head>"), 1)
+		}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -161,6 +173,11 @@ func publicClusterWebHandler(auth *clusterpublic.AdminAuth, management, inferenc
 		case "GET /login", "GET /login.html":
 			if access != "" {
 				http.Redirect(w, r, "/", http.StatusSeeOther)
+				return
+			}
+			if len(loginHTML) > 0 {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = w.Write(loginHTML)
 				return
 			}
 			copy := r.Clone(r.Context())

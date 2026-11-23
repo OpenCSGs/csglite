@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/opencsgs/csglite/ee/cluster"
@@ -482,6 +483,20 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// pullProgressResponse renders a download callback as the SSE payload the
+// client polls for progress, including the current transfer speed.
+func pullProgressResponse(p csghub.SnapshotProgress, bytesPerSec float64) api.PullResponse {
+	return api.PullResponse{
+		Status:           fmt.Sprintf("downloading %s", p.FileName),
+		Digest:           p.FileName,
+		Total:            p.BytesTotal,
+		Completed:        p.BytesCompleted,
+		TotalBytes:       p.BytesTotalAll,
+		CompletedBytes:   p.BytesCompletedAll,
+		SpeedBytesPerSec: int64(bytesPerSec),
+	}
+}
+
 // POST /api/pull -- download a model
 func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	var req api.PullRequest
@@ -504,19 +519,14 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	safeSSE(api.PullResponse{Status: "pulling " + req.Model})
 	log.Printf("MODEL %s: pull started", req.Model)
 
-	lastProgressLog := time.Time{}
+	lastProgressLog := atomic.Int64{}
+	speed := csghub.NewSpeedMeter(3 * time.Second)
 	progress := func(p csghub.SnapshotProgress) {
-		safeSSE(api.PullResponse{
-			Status:         fmt.Sprintf("downloading %s", p.FileName),
-			Digest:         p.FileName,
-			Total:          p.BytesTotal,
-			Completed:      p.BytesCompleted,
-			TotalBytes:     p.BytesTotalAll,
-			CompletedBytes: p.BytesCompletedAll,
-		})
-		if time.Since(lastProgressLog) >= 5*time.Second || (p.BytesTotal > 0 && p.BytesCompleted >= p.BytesTotal) {
+		now := time.Now()
+		safeSSE(pullProgressResponse(p, speed.Update(p.BytesCompletedAll, now)))
+		if now.Sub(time.Unix(0, lastProgressLog.Load())) >= 5*time.Second || (p.BytesTotal > 0 && p.BytesCompleted >= p.BytesTotal) {
 			log.Printf("MODEL %s: pulling file=%s completed=%d total=%d", req.Model, p.FileName, p.BytesCompleted, p.BytesTotal)
-			lastProgressLog = time.Now()
+			lastProgressLog.Store(now.UnixNano())
 		}
 	}
 

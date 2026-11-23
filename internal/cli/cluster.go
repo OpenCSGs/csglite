@@ -326,7 +326,7 @@ func newClusterCreateCmd() *cobra.Command {
 
 func newClusterJoinCmd() *cobra.Command {
 	var address, gateway, server, caFile string
-	var tokenStdin bool
+	var tokenStdin, allowHTTP bool
 	cmd := &cobra.Command{
 		Use:     "join [token]",
 		Short:   "Join the cluster named by a join token",
@@ -353,15 +353,15 @@ func newClusterJoinCmd() *cobra.Command {
 			if token == "" {
 				return fmt.Errorf("a join token is required; use --token-stdin to read it safely")
 			}
-			target, err := clusterJoinGateway(gateway, server, address)
+			target, err := clusterJoinGateway(gateway, server, address, allowHTTP)
 			if err != nil {
 				return err
 			}
 			if target != "" {
 				return joinPublicWorker(cmd, token, target, caFile, cmd.Flags().Changed("ca-file"))
 			}
-			if cmd.Flags().Changed("gateway") || cmd.Flags().Changed("server") || cmd.Flags().Changed("ca-file") {
-				return fmt.Errorf("a public Master HTTPS address is required with --gateway, --server or --ca-file")
+			if cmd.Flags().Changed("gateway") || cmd.Flags().Changed("server") || cmd.Flags().Changed("ca-file") || allowHTTP {
+				return fmt.Errorf("a public Master address is required with --gateway, --server, --ca-file or --allow-http")
 			}
 			c, err := newClusterClient()
 			if err != nil {
@@ -378,7 +378,8 @@ func newClusterJoinCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&address, "address", "", "cluster endpoint (host or host:port) of a member when it cannot be discovered")
-	cmd.Flags().StringVar(&gateway, "gateway", "", "public Master HTTPS origin; automatically configure and start this worker")
+	cmd.Flags().StringVar(&gateway, "gateway", "", "public Master origin; automatically configure and start this worker")
+	cmd.Flags().BoolVar(&allowHTTP, "allow-http", false, "allow an explicit public Master HTTP origin")
 	cmd.Flags().StringVar(&server, "server", "", "alias for --gateway")
 	cmd.Flags().StringVar(&caFile, "ca-file", "", "trusted private CA file for a public Master")
 	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false, "read the join token from standard input")

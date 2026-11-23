@@ -17,6 +17,15 @@ export function formatDateTime(value?: string): string {
   }).format(date);
 }
 
+export function formatSpeed(bytesPerSecond?: number): string {
+  const value = Number(bytesPerSecond) || 0;
+  if (value < 1) return "";
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB/s`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB/s`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB/s`;
+  return `${Math.round(value)} B/s`;
+}
+
 export function formatChartDate(value: string): string {
   const date = new Date(`${value}T00:00:00`);
   if (Number.isNaN(date.getTime())) return value;

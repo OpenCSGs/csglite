@@ -10,8 +10,8 @@ import { DeploymentMessage } from "./DeploymentMessage";
 
 const inputClass = "w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500";
 
-export function DeploymentConfigDialog({ deployment, allowed, engines, onClose, onSaved }: {
-  deployment: ClusterDeployment; allowed: boolean;
+export function DeploymentConfigDialog({ deployment, allowed, supportsKeepAlive, engines, onClose, onSaved }: {
+  deployment: ClusterDeployment; allowed: boolean; supportsKeepAlive: boolean;
   engines?: ClusterEngineStatus[]; onClose: () => void; onSaved: () => Promise<unknown>;
 }) {
   const runtimeSupported = isLlamaDeployment(deployment.kind);
@@ -19,7 +19,7 @@ export function DeploymentConfigDialog({ deployment, allowed, engines, onClose, 
   const dialog = useRef<HTMLDialogElement>(null);
   const titleID = useId(), quantsID = useId();
   const [draft, setDraft] = useState<ClusterDeploymentConfig>(() => ({ quant: deployment.quant || "", sglang_args: deployment.sglang_args || "", backend: deployment.backend || "",
-    num_ctx: deployment.num_ctx, num_parallel: deployment.num_parallel, n_gpu_layers: deployment.n_gpu_layers }));
+    num_ctx: deployment.num_ctx, num_parallel: deployment.num_parallel, n_gpu_layers: deployment.n_gpu_layers, keep_alive: deployment.keep_alive }));
   const [quants, setQuants] = useState<string[]>([]);
   const [modelFormat, setModelFormat] = useState<"gguf" | "safetensors" | "unknown">("unknown");
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
@@ -51,6 +51,7 @@ export function DeploymentConfigDialog({ deployment, allowed, engines, onClose, 
     setBusy(true); setError("");
     try {
       await configureClusterDeployment(deployment.id, deployment.generation, { ...draft, backend: deployment.kind === "chat" ? draft.backend : "",
+        keep_alive: supportsKeepAlive ? (draft.keep_alive ?? "").trim() : undefined,
         quant: sglangSelected ? "" : draft.quant.trim(), sglang_args: sglangSelected ? draft.sglang_args : "" });
       await onSaved();
     } catch (e) { setError((e as Error).message); }
@@ -89,6 +90,10 @@ export function DeploymentConfigDialog({ deployment, allowed, engines, onClose, 
         <label class="space-y-1 text-sm">{t("deployments.parallel")}<input class={inputClass} type="number" min={1} max={16} step={1} required value={draft.num_parallel} onInput={e => patch({ num_parallel: Number(e.currentTarget.value) })} /></label>
         {!sglangSelected && <label class="space-y-1 text-sm">{t("deployments.gpuLayers")}<input class={inputClass} type="number" min={-1} max={999} step={1} required value={draft.n_gpu_layers} onInput={e => patch({ n_gpu_layers: Number(e.currentTarget.value) })} /></label>}
         {!sglangSelected && <p class="col-span-2 text-xs text-gray-500">{t("deployments.llamaParamsHint")}</p>}
+        {supportsKeepAlive && <label class="col-span-2 space-y-1 text-sm">{t("deployments.keepAlive")}
+          <input class={inputClass} placeholder="-1" value={draft.keep_alive ?? ""} onInput={e => patch({ keep_alive: e.currentTarget.value })} />
+          <span class="block text-xs text-gray-500">{t("deployments.keepAliveHint")}</span>
+        </label>}
         {sglangSelected && sglang?.deployment_args && <SGLangDeploymentArgs value={draft.sglang_args || ""} onInput={value => patch({ sglang_args: value })} />}
       </fieldset> : <p role="status" class="text-sm text-amber-700">{t("deployments.unsupportedKind")}</p>}
       {!allowed && <p role="status" class="text-sm text-amber-700">{t("deployments.configChanged")}</p>}

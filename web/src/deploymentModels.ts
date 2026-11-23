@@ -3,7 +3,7 @@ import type { ModelRuntimeKind } from "./utils/modelRuntime";
 export { contextWindowApplies as isLlamaDeployment } from "./utils/modelRuntime";
 import type { ArtifactSource, ClusterDeployment, ClusterView, LocalInferenceSupport, MarketplaceModel } from "./api/client";
 
-const deploymentPhases = new Set(["pending", "downloading", "loading", "ready", "stopping", "stopped", "failed", "blocked", "unreachable", "deleting", "deleted"]);
+const deploymentPhases = new Set(["pending", "downloading", "loading", "ready", "idle", "stopping", "stopped", "failed", "blocked", "unreachable", "deleting", "deleted"]);
 export function deploymentPhaseKey(phase: string): string {
   return `deployments.phase.${deploymentPhases.has(phase) ? phase : "pending"}`;
 }

@@ -409,7 +409,7 @@ csghub-lite cluster remove <node-uuid>
 运行中许可失效或配额下调时，超限状态不接新请求；已有推理允许完成，管理、
 查看和移除保持可用，恢复合规后重新调度。不得只按在线节点数放行超限集群。
 
-`quota.lite.max_devices` 是每份 License 的设备激活限制，当前为 10，和集群
+`quota.lite.max_devices` 是每份 License 的设备激活限制，当前为 5，和集群
 成员配额分别处理；集群成员移除不释放 License 的设备激活名额。“集群不限”
 不能被界面表述成“同一 License 可无限激活设备”。
 

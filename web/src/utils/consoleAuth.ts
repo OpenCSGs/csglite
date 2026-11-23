@@ -6,18 +6,18 @@ export type ConsoleAccessMode = "desktop" | "local" | "lan" | "token";
 export const consoleAccessMode = signal<ConsoleAccessMode | null>(null);
 
 export function publicCSRFToken(): string | undefined {
+  const url = new URL(window.location.href);
+  const prefix = url.protocol === "http:" ? "csglite_http_csrf=" : "__Host-csglite_csrf=";
   return document.cookie.split(";").map((entry) => entry.trim())
-    .find((entry) => entry.startsWith("__Host-csglite_csrf="))
-    ?.slice("__Host-csglite_csrf=".length);
+    .find((entry) => entry.startsWith(prefix))
+    ?.slice(prefix.length);
 }
 
 export function shouldUsePublicLogin(): boolean {
   const mode = consoleAccessMode.value;
   if (mode !== null) return mode === "token";
-  // Before metadata arrives, only a secure console session cookie can justify a
-  // redirect. Never turn a failed desktop bootstrap into a login page.
-  const url = new URL(window.location.href);
-  return url.protocol === "https:" && !!publicCSRFToken();
+  // A console CSRF cookie can justify a redirect before metadata arrives.
+  return !!publicCSRFToken();
 }
 
 export function publicSessionHeaders(url: string, method: string, headers?: HeadersInit): Headers {

@@ -8257,7 +8257,7 @@
           "Cluster"
         ],
         "summary": "Leave the cluster",
-        "description": "Announces departure and revokes membership, then waits up to 30 seconds for this node's managed deployments to unload. Pending downloads and loads are cancelled; in-flight managed inference is interrupted to release the runtime. Cached model files and independently loaded local models are retained. The node identity is kept for pairing again. If cleanup outlasts the wait or the caller disconnects, membership is still revoked and cleanup continues in the background.",
+        "description": "Announces departure and revokes membership, then waits up to 30 seconds for this node's managed deployments to unload. Pending downloads and loads are cancelled; in-flight managed inference is interrupted to release the runtime. Cached model files and independently loaded local models are retained. The node identity is kept for pairing again. A public worker, including one already unpaired, clears its Master configuration and returns to standalone (LAN) mode. If cleanup outlasts the wait or the caller disconnects, membership is still revoked and cleanup continues in the background.",
         "operationId": "leaveCluster",
         "responses": {
           "400": {
@@ -8882,7 +8882,7 @@
           "Cluster"
         ],
         "summary": "Remove a member",
-        "description": "Drops the member, tells it, and lets gossip carry a tombstone so it is not re-added by a stale peer. Use DELETE /api/cluster to remove this node itself. Public Slave workers cannot perform controller operations (403 master_required). Local node rename remains available.",
+        "description": "Removes a remote member whether it is online or offline. Public Masters disconnect any active tunnel, revoke the member identity and rotate the join token. LAN peers notify reachable nodes and distribute the tombstone by gossip. Use DELETE /api/cluster to remove this node itself. Public Slave workers receive 403 master_required.",
         "operationId": "removeClusterNode",
         "parameters": [
           {
@@ -9397,7 +9397,7 @@
           "Cluster"
         ],
         "summary": "Join a public gateway using the existing cluster token handshake",
-        "description": "Only on the dedicated public listener. Node identity, timestamp, nonce and HMAC use the existing cluster join protocol over verified HTTPS. Workers receive membership and gateway identity but not the enrollment HMAC key.",
+        "description": "Only on the dedicated public listener. Node identity, timestamp, nonce and HMAC use the existing cluster join protocol over verified HTTPS or explicitly configured HTTP. Workers receive membership and gateway identity but not the enrollment HMAC key.",
         "parameters": [
           {
             "name": "cluster",
@@ -9485,7 +9485,7 @@
           "Cluster"
         ],
         "summary": "Open an outbound public worker tunnel",
-        "description": "Dedicated public listener only. Verified HTTPS upgrades to WebSocket plus yamux. The worker proves possession of its existing pinned ECDSA identity with a timestamped, audience-bound, single-use signed nonce. It opens a bounded JSON status control stream; gateway opens HTTP inference streams. This is not a browser or general-purpose proxy endpoint.",
+        "description": "Dedicated public listener only. The configured HTTP or HTTPS listener upgrades to WebSocket plus yamux. The worker proves possession of its existing pinned ECDSA identity with a timestamped, audience-bound, single-use signed nonce. It opens a bounded JSON status control stream; gateway opens HTTP inference streams. This is not a browser or general-purpose proxy endpoint.",
         "parameters": [
           {
             "name": "X-CSGLite-Node-UUID",
@@ -9572,7 +9572,7 @@
         "tags": [
           "Public management"
         ],
-        "description": "Available on the public gateway HTTPS listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Cookies are Secure, HttpOnly (session only), SameSite=Strict. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration. Management tokens generated with --ttl expire server-side. Session lifetime is at most 8 hours and never exceeds the token expiry; an expired token invalidates only sessions created by that token.",
+        "description": "Available on the public gateway listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Session cookies are HttpOnly and both cookies use SameSite=Strict. HTTPS mode uses Secure cookies. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration. Management tokens generated with --ttl expire server-side. Session lifetime is at most 8 hours and never exceeds the token expiry; an expired token invalidates only sessions created by that token.",
         "responses": {
           "200": {
             "description": "Success"
@@ -9678,7 +9678,7 @@
         "tags": [
           "Public management"
         ],
-        "description": "Available on the public gateway HTTPS listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Cookies are Secure, HttpOnly (session only), SameSite=Strict. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration.",
+        "description": "Available on the public gateway listener. Administrative tokens are separate from node enrollment tokens and inference API keys. Session cookies are HttpOnly and both cookies use SameSite=Strict. HTTPS mode uses Secure cookies. Mutations require same-origin and X-CSGLite-CSRF from the CSRF cookie. Multiple CLI-generated management tokens may coexist. Generating another token preserves existing tokens and sessions. Revoking a token invalidates only sessions created by that token; logging out revokes only the current browser session. Legacy single-token credentials remain valid after migration.",
         "responses": {
           "200": {
             "description": "Success"
@@ -15570,6 +15570,10 @@
           "completed_bytes": {
             "type": "integer",
             "description": "Downloaded bytes across all files selected for this model download."
+          },
+          "speed_bytes_per_sec": {
+            "type": "integer",
+            "description": "Recent average download rate in bytes per second. Absent or 0 while no data is flowing."
           }
         }
       },
@@ -17001,7 +17005,7 @@
           },
           "max_user": {
             "type": "integer",
-            "description": "Historical field from the issuer; CSGLite no longer displays it. The device cap is quota.lite.max_devices (10) and is enforced by the server."
+            "description": "Historical field from the issuer; CSGLite no longer displays it. The device cap is quota.lite.max_devices (5) and is enforced by the server."
           },
           "start_time": {
             "type": "string",
@@ -20950,6 +20954,10 @@
           },
           "resource_limits": {
             "$ref": "#/components/schemas/InferenceResourceLimits"
+          },
+          "deployment_keep_alive": {
+            "type": "boolean",
+            "description": "The node supports unloading idle deployment runtimes using keep_alive."
           }
         }
       },
@@ -21121,7 +21129,7 @@
           },
           "gateway_url": {
             "type": "string",
-            "description": "Configured public HTTPS gateway origin for an outbound worker."
+            "description": "Configured public gateway origin for an outbound worker. HTTP requires explicit opt-in."
           },
           "public_listen_addr": {
             "type": "string",
@@ -21428,6 +21436,10 @@
           "total_bytes": {
             "type": "integer"
           },
+          "speed_bytes_per_sec": {
+            "type": "integer",
+            "description": "Recent average download rate in bytes per second. Absent or 0 while no data is flowing."
+          },
           "detail": {
             "type": "string"
           }
@@ -21575,7 +21587,11 @@
           },
           "address": {
             "type": "string",
-            "description": "Optional member cluster endpoint (host or host:port) when multicast discovery cannot find one."
+            "description": "Optional LAN member endpoint. For a public join, provide the Master URL or host and port."
+          },
+          "enable_ssl": {
+            "type": "boolean",
+            "description": "Select the public Master transport. True uses HTTPS and false uses HTTP. Omit the field for the existing join behavior."
           }
         }
       },
@@ -21778,6 +21794,10 @@
               "sglang"
             ],
             "description": "Inference backend for a chat deployment. Empty follows the format default. SGLang is text-generation only and requires native Safetensors weights; a worker without SGLang fails the deployment with the runtime reason."
+          },
+          "keep_alive": {
+            "type": "string",
+            "description": "Deployment idle duration, such as 30s, 5m or 1h. Omit, use an empty string, or set -1 to keep the runtime loaded. Finite durations require a target advertising deployment_keep_alive."
           }
         }
       },
@@ -21795,6 +21815,7 @@
               "downloading",
               "loading",
               "ready",
+              "idle",
               "stopping",
               "stopped",
               "failed",
@@ -21803,7 +21824,7 @@
               "deleting",
               "deleted"
             ],
-            "description": "ready means the runtime is loaded without a detected terminal backend fault. Startup failures, inference out-of-memory/compute failures and unexpected process exits set failed, even if the HTTP process is still alive. Failed deployments require an explicit retry and remain failed across restarts."
+            "description": "ready means the runtime is loaded without a detected terminal backend fault. Startup failures, inference out-of-memory/compute failures and unexpected process exits set failed, even if the HTTP process is still alive. Failed deployments require an explicit retry and remain failed across restarts. Idle means the keep-alive window elapsed and the runtime was unloaded. Cached files are retained and starting the deployment explicitly loads it again."
           },
           "error": {
             "type": "string",
@@ -21819,6 +21840,11 @@
           "total_bytes": {
             "type": "integer",
             "format": "int64"
+          },
+          "speed_bytes_per_sec": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Recent average download rate in bytes per second. Absent or 0 while no data is flowing."
           },
           "size": {
             "type": "integer",
@@ -22005,6 +22031,10 @@
               "sglang"
             ],
             "description": "Inference backend. Editable only while the deployment is stopped, like the other runtime settings."
+          },
+          "keep_alive": {
+            "type": "string",
+            "description": "Change the deployment idle duration. Omission retains the existing value; empty or -1 clears the timeout."
           }
         }
       },

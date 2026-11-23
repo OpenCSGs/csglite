@@ -436,13 +436,18 @@ func (st *Store) Leave() error {
 	if st.data.Cluster == nil {
 		return ErrNotClustered
 	}
+	previous, token := st.data, st.joinToken
 	st.data.Cluster = nil
 	st.data.Settings.ManagedBy = ""
 	st.data.JoinTokenHash = ""
 	st.data.Members = []Member{}
 	st.data.Tombstones = nil
 	st.joinToken = ""
-	return st.saveLocked()
+	if err := st.saveLocked(); err != nil {
+		st.data, st.joinToken = previous, token
+		return err
+	}
+	return nil
 }
 
 // Upsert adds or refreshes a member. A tombstoned UUID is ignored unless force

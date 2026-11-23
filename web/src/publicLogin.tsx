@@ -8,10 +8,12 @@ function PublicLogin() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   void locale.value;
-  const secureOrigin = window.location.protocol === "https:";
+  const loginAllowed = window.location.protocol === "https:" ||
+    (window.location.protocol === "http:" &&
+      document.head.querySelector('meta[name="csglite-plain-http"][content="enabled"]') !== null);
   async function login(event: Event) {
     event.preventDefault();
-    if (!secureOrigin) return;
+    if (!loginAllowed) return;
     setBusy(true); setError("");
     try {
       const response = await fetch("/auth/login", {
@@ -55,11 +57,11 @@ function PublicLogin() {
           <h2 class="text-2xl font-semibold tracking-tight">{t("publicLogin.title")}</h2>
           <p class="mt-3 text-sm leading-6 text-slate-500">{t("publicLogin.subtitle")}</p>
           <form onSubmit={login} class="mt-8">
-            {!secureOrigin && <p role="alert" class="mb-4 text-sm text-amber-700">{t("publicLogin.httpsRequired")}</p>}
+            {!loginAllowed && <p role="alert" class="mb-4 text-sm text-amber-700">{t("publicLogin.httpsRequired")}</p>}
             <label for="login-token" class="mb-2 block text-sm font-medium">{t("publicLogin.token")}</label>
-            <input id="login-token" name="token" type="password" disabled={!secureOrigin} required maxLength={256} autoComplete="off" autoCapitalize="off" spellcheck={false} value={token} onInput={(event) => setToken(event.currentTarget.value)} placeholder={t("publicLogin.placeholder")} class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50" aria-describedby={error ? "login-error" : undefined} />
+            <input id="login-token" name="token" type="password" disabled={!loginAllowed} required maxLength={256} autoComplete="off" autoCapitalize="off" spellcheck={false} value={token} onInput={(event) => setToken(event.currentTarget.value)} placeholder={t("publicLogin.placeholder")} class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50" aria-describedby={error ? "login-error" : undefined} />
             {error && <p id="login-error" role="alert" class="mt-3 text-sm text-red-600">{t(error)}</p>}
-            <button type="submit" disabled={busy || !token.trim() || !secureOrigin} class="mt-5 w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{t(busy ? "publicLogin.signingIn" : "publicLogin.signIn")}</button>
+            <button type="submit" disabled={busy || !token.trim() || !loginAllowed} class="mt-5 w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{t(busy ? "publicLogin.signingIn" : "publicLogin.signIn")}</button>
           </form>
           <div class="mt-8 border-t border-slate-100 pt-6">
             <p class="text-xs leading-5 text-slate-500">{t("publicLogin.cliHint")}</p>

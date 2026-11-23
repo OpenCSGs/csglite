@@ -3,6 +3,7 @@ import { getCluster, getClusterDeployments, isClusterDisabledError, isFeatureNot
 import type { ClusterDeployment } from "../api/client";
 import { localDeploymentAssignments, deploymentProgress, deploymentPhaseKey } from "../deploymentModels";
 import { locale, t } from "../i18n";
+import { formatSpeed } from "../utils/format";
 import { DeploymentMessage } from "./DeploymentMessage";
 
 // Read the node's durable deployment receipts, not browser-local pull history.
@@ -59,7 +60,7 @@ export function DeploymentTasksPanel({ tasks, error, title, description }: {
           {downloading && <div class="mt-3 space-y-2">
             <div class="flex items-center justify-between gap-3 text-xs text-gray-500">
               <span>{formatDeploymentBytes(progress.completed)} / {progress.total === null ? t("lib.managedUnknownSize") : formatDeploymentBytes(progress.total)}</span>
-              <span>{progress.percent === null ? t("downloads.downloading") : `${progress.percent}%`}</span>
+              <span class="flex items-baseline gap-2 tabular-nums"><span class="text-gray-400">{formatSpeed(task.status.speed_bytes_per_sec)}</span><span>{progress.percent === null ? t("downloads.downloading") : `${progress.percent}%`}</span></span>
             </div>
             <progress aria-label={t("cluster.workerDownloadProgress")} class="block h-1.5 w-full accent-indigo-600" {...(progress.percent === null ? {} : { value: progress.percent, max: 100 })} />
           </div>}

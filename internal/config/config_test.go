@@ -837,7 +837,7 @@ func TestPublicClusterConfigRoundTrip(t *testing.T) {
 	dir := setupTestDir(t)
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
-	want := ClusterConfig{Mode: "worker", GatewayURL: "https://gateway.example.com:8080", TLSCAFile: filepath.Join(dir, "gateway-ca.pem"), PublicListenAddr: "127.0.0.1:11439"}
+	want := ClusterConfig{Mode: "worker", GatewayURL: "http://gateway.example.com:8080", AllowHTTP: true, PublicListenAddr: "127.0.0.1:11439"}
 	cfg := &Config{ModelDir: filepath.Join(dir, "models"), Cluster: want}
 	if err := Save(cfg); err != nil {
 		t.Fatal(err)
@@ -861,7 +861,7 @@ func TestPublicClusterConfigRoundTrip(t *testing.T) {
 	if err = json.Unmarshal([]byte(`{"cluster":{"name":"existing LAN","secret":"existing-secret"}}`), &legacy); err != nil {
 		t.Fatal(err)
 	}
-	if legacy.Cluster.Mode != "" || legacy.Cluster.Name != "existing LAN" {
+	if legacy.Cluster.Mode != "" || legacy.Cluster.AllowHTTP || legacy.Cluster.Name != "existing LAN" {
 		t.Fatal("legacy cluster no longer defaults to LAN")
 	}
 }

@@ -1,6 +1,6 @@
 import { signal } from "@preact/signals";
 import { getLicense, isApiError } from "./api/client";
-import type { LicenseCloudStatus, LicenseDeviceUsage, LicenseState, LicenseStatus } from "./api/client";
+import type { LicenseCloudStatus, LicenseState, LicenseStatus } from "./api/client";
 import { t } from "./i18n";
 
 /**
@@ -94,7 +94,7 @@ export function formatLicenseDate(iso: string | undefined | null, locale: string
  * fixed constant and ignores any Extra override, so the UI displays the same
  * number instead of trusting the license payload.
  */
-export const CSGLITE_DEVICE_LIMIT = 10;
+export const CSGLITE_DEVICE_LIMIT = 5;
 
 /** The device cap to display, or null when no license is in effect. */
 export function deviceLimitOf(state: LicenseState | null): number | null {
@@ -191,27 +191,40 @@ export function licenseFeatureName(key: string): string {
   return featureNameKeys[key] ? t(featureNameKeys[key]) : key;
 }
 
-/** Device usage belongs to the installed signed license, independent of account login. */
-export function installedDeviceUsage(
+/**
+ * Seat usage read from the linked CSGHub account. The seats belong to the
+ * license, so the account's current license key must match the installed one;
+ * an offline platform, a missing login or another license yields null rather
+ * than stale or foreign numbers.
+ */
+export function accountDeviceUsage(
   state: LicenseState | null,
-  usage: LicenseDeviceUsage | null,
+  cloud: LicenseCloudStatus | null,
 ): { used: number; limit: number; remaining: number; overLimit: boolean } | null {
-  const used = usage?.used;
-  if (!usage?.available || usage.license_key !== state?.license?.key ||
-      typeof used !== "number" || !Number.isSafeInteger(used) || used < 0 ||
-      !Number.isSafeInteger(usage.limit) || usage.limit <= 0) return null;
+  if (!cloud?.logged_in || !cloud.online || !cloud.supported || !cloud.has_license) return null;
+  const key = state?.license?.key;
+  if (!key || cloud.license_key !== key) return null;
+  if (!Number.isSafeInteger(cloud.used) || cloud.used < 0) return null;
+  if (!Number.isSafeInteger(cloud.limit) || cloud.limit <= 0) return null;
   return {
-    used,
-    limit: usage.limit,
-    remaining: Math.max(0, usage.limit - used),
-    overLimit: used > usage.limit,
+    used: cloud.used,
+    limit: cloud.limit,
+    remaining: Math.max(0, cloud.limit - cloud.used),
+    overLimit: cloud.used > cloud.limit,
   };
 }
 
-export function deviceUsageHint(usage: LicenseDeviceUsage | null): string {
-  if (usage?.reason === "unsupported") return "settings.licenseDeviceUnsupported";
-  if (usage?.reason === "unreachable") return "settings.licenseDeviceOffline";
-  if (usage?.reason === "unmanaged_license") return "settings.licenseDeviceUnmanaged";
+/**
+ * Explains why seat usage is hidden. Counts come only from the linked account,
+ * so a missing login, an offline platform or another license hides them
+ * instead of showing stale or foreign numbers.
+ */
+export function accountDeviceHint(state: LicenseState | null, cloud: LicenseCloudStatus | null): string {
+  if (!cloud) return "settings.licenseDeviceUnavailable";
+  if (!cloud.logged_in) return "settings.licenseDeviceLogin";
+  if (!cloud.online) return "settings.licenseDeviceOffline";
+  if (!cloud.supported || cloud.reason === "server_error") return "settings.licenseDeviceUnavailable";
+  if (!cloud.has_license || cloud.license_key !== state?.license?.key) return "settings.licenseDeviceMismatch";
   return "settings.licenseDeviceUnavailable";
 }
 

@@ -293,6 +293,16 @@ func TestDeploymentLANToUnifiedGateway(t *testing.T) {
 	}
 	clusterWait(t, "ready deployment on worker", func() bool { return worker.cluster.DeploymentReady(d.ModelID()) })
 	clusterWait(t, "deployment inventory on master", func() bool { return master.cluster.RemoteHasModel(d.ModelID()) })
+	directPath := "/ai-gateway/providers/node%3A" + worker.cluster.Identity().UUID + "/v1/chat/completions"
+	directBody := `{"model":"` + d.ModelID() + `","messages":[{"role":"user","content":"hi"}]}`
+	rec = httptest.NewRecorder()
+	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, directPath, strings.NewReader(directBody)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "managed worker reply") {
+		t.Fatalf("unpublished worker inference %d %s", rec.Code, rec.Body)
+	}
+	if pools := config.GetProviderPools(); len(pools) != 0 {
+		t.Fatalf("direct inference created published services: %+v", pools)
+	}
 	rec = httptest.NewRecorder()
 	body = `{"name":"managed-service","model":"managed-service","policy":"fixed","category":"chat","members":[{"id":"managed","source":"node:` + worker.cluster.Identity().UUID + `","model":"` + d.ModelID() + `"}]}`
 	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/provider-pools", strings.NewReader(body)))
@@ -314,6 +324,11 @@ func TestDeploymentLANToUnifiedGateway(t *testing.T) {
 	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/ai-gateway/v1/chat/completions", strings.NewReader(`{"model":"managed-service","messages":[{"role":"user","content":"hi"}]}`)))
 	if rec.Code == http.StatusOK {
 		t.Fatal("gateway restarted a stopped deployment")
+	}
+	rec = httptest.NewRecorder()
+	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, directPath, strings.NewReader(directBody)))
+	if rec.Code == http.StatusOK {
+		t.Fatal("direct inference restarted a stopped deployment")
 	}
 }
 
@@ -791,5 +806,44 @@ func TestClusterEnginePlanDoesNotExposeEnvironmentOrArguments(t *testing.T) {
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("engine plan exposed %q: %s", secret, raw)
 		}
+	}
+}
+
+func TestDeploymentKeepAliveExpiresOnlyWhenIdle(t *testing.T) {
+	s, h, d := deploymentRuntimeFixture(t)
+	d.KeepAlive = "5m"
+	engine := &countedDeploymentEngine{}
+	old := loadEngineWithProgress
+	t.Cleanup(func() { loadEngineWithProgress = old })
+	loadEngineWithProgress = func(string, *model.LocalModel, inference.ConvertProgressFunc, bool, int, int, int, string, string, string) (inference.Engine, error) {
+		return engine, nil
+	}
+	if err := h.StartDeployment(context.Background(), d, func(cluster.DeploymentStatus) {}); err != nil {
+		t.Fatal(err)
+	}
+	key := engineCacheKey(d.ModelID(), engineModeChat)
+	me := s.engines[key]
+	expires := me.expiresAt()
+	if me.keepAlive != 5*time.Minute {
+		t.Fatalf("runtime keep-alive = %v", me.keepAlive)
+	}
+	s.evictExpired(expires.Add(time.Second))
+	release := s.beginEngineUse(d.ModelID(), engineModeChat, engine)
+	if expired, err := h.ExpireDeployment(d, expires.Add(time.Second)); expired || err != nil {
+		t.Fatalf("expired a busy deployment: %v, %v", expired, err)
+	}
+	release()
+	expires = me.expiresAt()
+	if expired, err := h.ExpireDeployment(d, expires.Add(-time.Second)); expired || err != nil {
+		t.Fatalf("expired before new deadline: %v, %v", expired, err)
+	}
+	if expired, err := h.ExpireDeployment(d, expires); !expired || err != nil {
+		t.Fatalf("expiry at idle deadline: %v, %v", expired, err)
+	}
+	if h.DeploymentRunning(d) || engine.closed.Load() != 1 {
+		t.Fatal("expired runtime was not released")
+	}
+	if _, err := s.manager.Get(deploymentArtifactID(d)); err != nil {
+		t.Fatalf("expiry removed cached artifacts: %v", err)
 	}
 }

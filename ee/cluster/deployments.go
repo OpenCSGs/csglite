@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/safefile"
+	"github.com/opencsgs/csglite/pkg/api"
 )
 
 const DeploymentModelPrefix = "deployment/"
@@ -40,15 +41,17 @@ type DeploymentSpec struct {
 	NumCtx      int    `json:"num_ctx"`
 	NumParallel int    `json:"num_parallel"`
 	NGPULayers  int    `json:"n_gpu_layers"`
+	KeepAlive   string `json:"keep_alive,omitempty"`
 }
 
 type DeploymentStatus struct {
-	Phase          string `json:"phase"`
-	Error          string `json:"error,omitempty"`
-	Detail         string `json:"detail,omitempty"`
-	CompletedBytes int64  `json:"completed_bytes,omitempty"`
-	TotalBytes     int64  `json:"total_bytes,omitempty"`
-	Size           int64  `json:"size,omitempty"`
+	Phase            string `json:"phase"`
+	Error            string `json:"error,omitempty"`
+	Detail           string `json:"detail,omitempty"`
+	CompletedBytes   int64  `json:"completed_bytes,omitempty"`
+	TotalBytes       int64  `json:"total_bytes,omitempty"`
+	SpeedBytesPerSec int64  `json:"speed_bytes_per_sec,omitempty"`
+	Size             int64  `json:"size,omitempty"`
 	// EngineBackend and EnginePlan are derived from the started runtime; they
 	// are read-only status, not a second configuration record.
 	EngineBackend string            `json:"engine_backend,omitempty"`
@@ -100,6 +103,11 @@ type DeploymentHealth interface {
 	DeploymentHealth(Deployment) error
 }
 
+// DeploymentIdleExpiry releases an idle runtime without deleting its artifacts.
+type DeploymentIdleExpiry interface {
+	ExpireDeployment(Deployment, time.Time) (bool, error)
+}
+
 type DeploymentCleaner interface {
 	DeleteDeployment(Deployment) (string, error)
 }
@@ -142,7 +150,7 @@ func openDeploymentStore(dir string) (*deploymentStore, error) {
 	// Runtime processes do not survive a Lite restart. Preserve failed/stopped
 	// receipts; reconcile previously running assignments on this same node.
 	for id, d := range s.data.Assignments {
-		if d.Status.Phase != "failed" && d.Status.Phase != "stopped" && d.Status.Phase != "deleted" {
+		if d.Status.Phase != "failed" && d.Status.Phase != "stopped" && d.Status.Phase != "idle" && d.Status.Phase != "deleted" {
 			d.Status = DeploymentStatus{Phase: "pending", UpdatedAt: time.Now().UTC()}
 			s.data.Assignments[id] = d
 		}
@@ -234,6 +242,17 @@ func supportsSGLangDeploymentArgs(st *Status) bool {
 	return false
 }
 
+func normalizeDeploymentKeepAlive(raw string) (string, error) {
+	keepAlive, set, err := api.ParseKeepAlive(raw)
+	if err != nil {
+		return "", fmt.Errorf("keep_alive %w", err)
+	}
+	if !set || keepAlive == api.KeepAliveForever {
+		return "", nil
+	}
+	return api.FormatKeepAlive(keepAlive), nil
+}
+
 func validateDeployment(d DeploymentSpec) error {
 	if strings.TrimSpace(d.Name) == "" || len(d.Name) > 100 {
 		return errors.New("deployment name is required (maximum 100 characters)")
@@ -296,7 +315,7 @@ func (m *Manager) deploymentController() string {
 		return ""
 	}
 	controller := m.store.Settings().ManagedBy
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		controller = c.GatewayUUID
 	}
 	if _, ok := m.store.Member(controller); !ok {
@@ -307,7 +326,7 @@ func (m *Manager) deploymentController() string {
 
 func (m *Manager) effectiveSettings() Settings {
 	s := m.store.Settings()
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		s.ManagedBy = m.deploymentController()
 	}
 	return s
@@ -315,12 +334,12 @@ func (m *Manager) effectiveSettings() Settings {
 
 func (m *Manager) deploymentAuthorized(controller string) bool {
 	if controller == m.identity.UUID {
-		return m.opts.Mode != "worker" && m.store.InCluster()
+		return m.mode() != "worker" && m.store.InCluster()
 	}
 	if controller == "" || m.deploymentController() != controller {
 		return false
 	}
-	return m.opts.Mode == "worker" || m.opts.Mode == ""
+	return m.mode() == "worker" || m.mode() == ""
 }
 
 func (m *Manager) deploymentAllowed(d Deployment) bool {
@@ -351,12 +370,20 @@ func (m *Manager) receiveDeployment(controller string, incoming Deployment) (Dep
 	if err := validateDeployment(incoming.DeploymentSpec); err != nil {
 		return Deployment{}, err
 	}
+	keepAlive, err := normalizeDeploymentKeepAlive(incoming.KeepAlive)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if _, supported := m.opts.Host.(DeploymentIdleExpiry); keepAlive != "" && !supported {
+		return Deployment{}, errors.New("target node does not support deployment keep_alive")
+	}
+	incoming.KeepAlive = keepAlive
 	if incoming.Desired != "running" && incoming.Desired != "stopped" && incoming.Desired != "deleted" {
 		return Deployment{}, errors.New("invalid desired state")
 	}
 	m.deploymentMu.Lock()
 	defer m.deploymentMu.Unlock()
-	err := m.deployments.update(false, incoming.ID, func(d *Deployment, exists bool) error {
+	err = m.deployments.update(false, incoming.ID, func(d *Deployment, exists bool) error {
 		if exists {
 			if d.ControllerUUID != controller || !sameDeploymentIdentity(d.DeploymentSpec, incoming.DeploymentSpec) {
 				return errors.New("deployment identity is immutable")
@@ -554,6 +581,10 @@ func (m *Manager) deploymentWorkerLoop(ctx context.Context) {
 				}
 				continue
 			}
+			if d.Desired == "running" && d.Status.Phase == "idle" {
+				mu.Unlock()
+				continue
+			}
 			if !allowed || d.Desired != "running" {
 				mu.Unlock()
 				phase := "stopped"
@@ -583,6 +614,17 @@ func (m *Manager) deploymentWorkerLoop(ctx context.Context) {
 			}
 			if host.DeploymentRunning(d) {
 				mu.Unlock()
+				if expiry, ok := host.(DeploymentIdleExpiry); ok && d.KeepAlive != "" {
+					expired, err := expiry.ExpireDeployment(d, time.Now())
+					if err != nil {
+						m.deploymentStatus(d.ID, d.Generation, DeploymentStatus{Phase: "failed", Error: err.Error()})
+						continue
+					}
+					if expired {
+						m.deploymentStatus(d.ID, d.Generation, DeploymentStatus{Phase: "idle"})
+						continue
+					}
+				}
 				if d.Status.Phase != "ready" {
 					m.deploymentStatus(d.ID, d.Generation, DeploymentStatus{Phase: "ready"})
 				}
@@ -682,13 +724,18 @@ func (m *Manager) createDeployment(spec DeploymentSpec) (Deployment, error) {
 }
 
 func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory uint64) (Deployment, error) {
-	if m.opts.Mode == "worker" || !m.store.InCluster() {
+	if m.mode() == "worker" || !m.store.InCluster() {
 		return Deployment{}, errors.New("create deployments on a cluster controller")
 	}
+	keepAlive, err := normalizeDeploymentKeepAlive(spec.KeepAlive)
+	if err != nil {
+		return Deployment{}, err
+	}
+	spec.KeepAlive = keepAlive
 	spec.Backend = normalizeDeploymentBackend(spec.Backend)
 	placementBackend := deploymentPlacementBackend(spec)
 	if spec.NodeUUID == "" || spec.NodeUUID == "auto" {
-		node, err := selectDeploymentTarget(m.memberViews(context.Background(), true), m.identity.UUID, spec.NGPULayers == 0, minimumMemory, placementBackend, spec.Backend == "")
+		node, err := selectDeploymentTarget(m.memberViews(context.Background(), true), m.identity.UUID, spec.NGPULayers == 0, minimumMemory, keepAlive != "", placementBackend, spec.Backend == "")
 		if err != nil {
 			return Deployment{}, err
 		}
@@ -738,6 +785,9 @@ func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory 
 	if st == nil || !st.DeploymentCapable || (spec.NodeUUID != m.identity.UUID && st.ManagedBy != m.identity.UUID) {
 		return Deployment{}, errors.New("target node must report this Master as its deployment controller; check membership and node version (LAN peers select a controller in settings)")
 	}
+	if keepAlive != "" && !st.DeploymentKeepAlive {
+		return Deployment{}, errors.New("upgrade the target node to support deployment keep_alive")
+	}
 	if minimumMemory > 0 {
 		free, known, _ := deploymentMemory(st, spec.NGPULayers == 0)
 		if !known || free < minimumMemory {
@@ -750,12 +800,12 @@ func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory 
 		}
 	}
 	d := Deployment{DeploymentSpec: spec, ID: uuid.NewString(), ControllerUUID: m.identity.UUID, Generation: 1, Desired: "running", CreatedAt: time.Now().UTC(), Status: DeploymentStatus{Phase: "pending", UpdatedAt: time.Now().UTC()}}
-	err := m.deployments.update(true, d.ID, func(record *Deployment, _ bool) error { *record = d; return nil })
+	err = m.deployments.update(true, d.ID, func(record *Deployment, _ bool) error { *record = d; return nil })
 	return d, err
 }
 
 func (m *Manager) changeDeployment(id, desired string) (Deployment, error) {
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		return Deployment{}, errors.New("manage deployments on the Master")
 	}
 	if desired != "running" && desired != "stopped" && desired != "deleted" {

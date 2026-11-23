@@ -32,7 +32,7 @@ func deploymentMemory(st *Status, cpuOnly bool) (free uint64, known, gpu bool) {
 	return free, known, gpu
 }
 
-func selectDeploymentTarget(nodes []NodeView, controller string, cpuOnly bool, minimumMemory uint64, backend string, legacyAutomatic ...bool) (string, error) {
+func selectDeploymentTarget(nodes []NodeView, controller string, cpuOnly bool, minimumMemory uint64, needsKeepAlive bool, backend string, legacyAutomatic ...bool) (string, error) {
 	type candidate struct {
 		uuid        string
 		free        uint64
@@ -45,7 +45,7 @@ func selectDeploymentTarget(nodes []NodeView, controller string, cpuOnly bool, m
 	for _, node := range nodes {
 		st := node.Status
 		if !node.Online || st == nil || !st.DeploymentCapable || !st.Licensed || !st.AcceptWork || st.State != NodeStateActive ||
-			(node.UUID != controller && st.ManagedBy != controller) {
+			(node.UUID != controller && st.ManagedBy != controller) || (needsKeepAlive && !st.DeploymentKeepAlive) {
 			continue
 		}
 		engineReady := engineReportedAndAvailable(st.Engines, backend)

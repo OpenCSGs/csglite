@@ -28,12 +28,13 @@ type ModelNode struct {
 
 // ModelSync is a download of this model that has not finished on a node.
 type ModelSync struct {
-	UUID           string `json:"uuid"`
-	Name           string `json:"name"`
-	Status         string `json:"status"`
-	CompletedBytes int64  `json:"completed_bytes,omitempty"`
-	TotalBytes     int64  `json:"total_bytes,omitempty"`
-	Detail         string `json:"detail,omitempty"`
+	UUID             string `json:"uuid"`
+	Name             string `json:"name"`
+	Status           string `json:"status"`
+	CompletedBytes   int64  `json:"completed_bytes,omitempty"`
+	TotalBytes       int64  `json:"total_bytes,omitempty"`
+	SpeedBytesPerSec int64  `json:"speed_bytes_per_sec,omitempty"`
+	Detail           string `json:"detail,omitempty"`
 }
 
 // ClusterModel is one model with the nodes holding it.
@@ -110,12 +111,12 @@ func (m *Manager) Models(ctx context.Context) []ClusterModel {
 			group.seen[uuid] = len(group.model.Nodes)
 			group.model.Nodes = append(group.model.Nodes, ModelNode{UUID: uuid, Name: name, Loaded: ms.Loaded, Online: online, Local: local})
 		}
-		if m.opts.Mode != "worker" {
+		if m.mode() != "worker" {
 			attachPulls(byKey, uuid, name, st)
 		}
 	}
 	local := m.cachedLocalStatus(ctx)
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		local = m.sharedModelStatus(local)
 	}
 	add(m.identity.UUID, m.identity.DisplayName(), true, true, local)
@@ -176,12 +177,13 @@ func attachPulls(byKey map[string]*modelGroup, uuid, name string, st *Status) {
 			continue
 		}
 		group.model.Syncs = append(group.model.Syncs, ModelSync{
-			UUID:           uuid,
-			Name:           name,
-			Status:         pull.Status,
-			CompletedBytes: pull.CompletedBytes,
-			TotalBytes:     pull.TotalBytes,
-			Detail:         pull.Detail,
+			UUID:             uuid,
+			Name:             name,
+			Status:           pull.Status,
+			CompletedBytes:   pull.CompletedBytes,
+			TotalBytes:       pull.TotalBytes,
+			SpeedBytesPerSec: pull.SpeedBytesPerSec,
+			Detail:           pull.Detail,
 		})
 	}
 }
@@ -429,7 +431,7 @@ func (p *PeerModel) ExtrasSize() int64 {
 // returns its bundle. Members are tried in scheduler order (idle, fast disk
 // first); nil is returned when no member has the model.
 func (m *Manager) FindPeerModel(ctx context.Context, modelID string) (*PeerModel, error) {
-	if m.opts.Mode != "" {
+	if m.mode() != "" {
 		return nil, nil
 	}
 	var lastErr error
@@ -527,7 +529,7 @@ func modelIDOfManifest(pm *PeerModel) string {
 // runs its normal handler; the response of a remote node is streamed back
 // as-is with the node headers set.
 func (m *Manager) RouteRaw(ctx context.Context, modelID, source, path string, body []byte, headers http.Header) (*http.Response, error) {
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		return nil, inference.NewHTTPStatusError(400, "use the public gateway address for cluster inference")
 	}
 	pinned := NodeUUIDFromSource(source)

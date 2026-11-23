@@ -155,9 +155,9 @@ var Catalog = []FeatureDefinition{ /* 以上全部 */ }
 当前受 License 控制的条目：
 
 - `quota.lite.max_cluster_nodes`：LAN 集群节点数，社区版 2，企业版默认不限。
-- `quota.lite.max_devices`：一个 License 可核销的设备数，所有档位都是 10。
+- `quota.lite.max_devices`：一个 License 可核销的设备数，所有档位都是 5。
   该上限由服务端按 `license_key` 强制并忽略 Extra 覆盖，本地界面与 CLI 直接
-  显示服务端的固定值 10。
+  显示服务端的固定值 5。
 - `quota.lite.max_edge_models`：边缘算力可贡献的模型数，社区版 1，企业版默认
   不限（0）。边缘算力功能本身（`feature.lite.edge_serving`）不再受 License
   控制，所有版本都能把本机已发布的模型通过出站隧道提供给 CSGHub AI gateway，
@@ -349,7 +349,7 @@ type State struct {
 
 ### 5.3 设备核销
 
-一个 License 最多核销 10 台设备，按 `license_key` 永久累计、不解绑。名额由
+一个 License 最多核销 5 台设备，按 `license_key` 永久累计、不解绑。名额由
 服务端强制，本地只负责两件事：在导入前询问是否还有名额，以及把本设备记进
 台账。
 
@@ -452,7 +452,7 @@ Content-Type: application/json
     "grace_until": null
   },
   "features": ["feature.lite.provider_pools", "feature.lite.observability"],
-  "limits": {"quota.lite.max_provider_pools": 0, "quota.lite.max_devices": 10},
+  "limits": {"quota.lite.max_provider_pools": 0, "quota.lite.max_devices": 5},
   "feature_catalog": [
     {"key": "feature.lite.observability", "type": "boolean", "nav_item": "observability"}
   ]
@@ -557,14 +557,14 @@ csghub-lite license features           # 列出 Catalog 及当前是否可用
 
 合计约 1.5 到 2 周，单人。阶段一至三可并行推进后端与前端；阶段五需要
 starhub-server 仓库的 MR 与发版配合。设备核销（导入时按 `license_key` 限制
-10 台）已包含在本期；运行期吊销不在本期范围。
+5 台）已包含在本期；运行期吊销不在本期范围。
 
 ## 12. 未决问题
 
 1. 初始 `Catalog` 划分需产品最终确认，尤其是图像生成和实时语音是否进入 EE。
 2. `ee/LICENSE` 法律文本需法务审阅；是否允许非商业生产使用需明确。
 3. 是否需要 `Edition = "Trial"`（例如 30 天全功能试用）以及试用 License 由谁签发。
-4. ~~席位 `MaxUser` 是否以及如何强制~~：已确定。设备数上限 10，按
+4. ~~席位 `MaxUser` 是否以及如何强制~~：已确定。设备数上限 5，按
    `license_key` 永久累计、不解绑；`MaxUser` 仅作为历史字段保留，不再展示。
 5. License 过期后可观测性等历史数据的只读策略需逐功能确认。
 6. 生产公钥的获取与轮换流程：由哪一方把 CSGHub 签发端公钥交付给 CSGLite 仓库，
@@ -625,13 +625,22 @@ CSGHub 已有完整的 License 体系，CSGLite 全部复用，两边只需要�
 
 ### 已安装 License 的设备用量查询
 
-设置页的总额度、已激活和剩余数量属于已安装的 License，与 CSGHub 账号连接无关。
-`GET /api/license/usage` 使用本机已有的签名 PEM 作为凭证，向授权平台发送
-`POST /api/v1/licenses/csglite/activations`，请求 `mode: "status"`。
-此模式只读取激活台账，不新增设备、不更新设备信息、不消耗额度，也不要求用户 access token。
-返回沿用 `used`、`limit`、`over_limit` 和 `recorded: false` 的响应格式。
+设置页的总额度、已激活和剩余数量属于已安装的 License。为避免显示过期、离线或不属于
+本机的数据，已激活和剩余只从已登录的 CSGHub 账号读取：`GET /api/license/cloud`
+背后的 `GET /api/v1/licenses/csglite/status` 返回该账号当前 License 的 `used` 和
+`limit`。
 
-平台必须先支持这个只读模式。旧平台拒绝该模式、网络断开或找不到 License 台账时，
-Lite 保留总额度，将已激活和剩余显示为 `—` 并给出原因，不使用 `claim` / `report`
-冒充查询，不将未知值当成零。查询结果只在内存缓存一分钟，不增加配置文件字段。
-云端 License 下载和导入仍属于账号功能，继续使用已有的登录与权限检查。
+只有同时满足以下条件才显示已激活和剩余，否则显示 `—` 并给出原因：
+
+- 账号已登录；
+- 授权平台可达（在线）；
+- 账号当前 License 的 key 与已安装 License 一致；
+- `used` / `limit` 合法。
+
+未登录时提示登录；离线时提示待同步；key 不一致或账号没有对应 License 时提示不匹配。
+离线时即使之前成功读取过用量也不显示缓存值，避免误导。总额度在没有账号数据时回退到
+`internal/license` 的本地常量 `CSGLiteMaxDevices`（当前为 5）。
+
+免账号的 `GET /api/license/usage`（`POST /api/v1/licenses/csglite/activations`，
+`mode: "status"`）仍保留为本地 API，但设置页不再使用它，也不使用 `claim` / `report`
+冒充查询。云端 License 下载和导入仍属于账号功能，继续使用已有的登录与权限检查。

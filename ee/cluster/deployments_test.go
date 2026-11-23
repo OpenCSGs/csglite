@@ -371,7 +371,8 @@ func TestDeploymentAcrossPublicTunnelJoinControlAndLeave(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &leaveDeploymentHost{deploymentTestHost: &deploymentTestHost{fakeHost: &fakeHost{name: "worker", limit: 2}, running: map[string]bool{}}}
-	worker, err := New(Options{Dir: t.TempDir(), Host: host, Mode: "worker", GatewayURL: server.URL, TLSCAFile: caFile, Logf: t.Logf})
+	worker, err := New(Options{Dir: t.TempDir(), Host: host, Mode: "worker", GatewayURL: server.URL, TLSCAFile: caFile,
+		ListenAddr: "127.0.0.1:0", Discoverer: NopDiscoverer{}, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +491,14 @@ func TestDeploymentAcrossPublicTunnelJoinControlAndLeave(t *testing.T) {
 		t.Fatal("leaving retained Master control")
 	}
 	waitDeployment(t, worker, d.ID, "blocked")
-
+	left := worker.View(ctx)
+	if left.Mode != "" || left.GatewayURL != "" || left.Cluster != nil || left.Active {
+		t.Fatalf("departed worker did not return to standalone mode: mode=%q, joined=%v, active=%v", left.Mode, left.Cluster != nil, left.Active)
+	}
+	info, _, err := worker.CreateCluster("standalone")
+	if err != nil || info.Topology != "" {
+		t.Fatalf("former worker could not create a LAN cluster: %v", err)
+	}
 }
 
 func (h *deploymentTestHost) DeleteDeployment(d Deployment) (string, error) {
@@ -602,5 +610,72 @@ func TestDeploymentDeleteAndFilteredHistoryPreserveTombstone(t *testing.T) {
 	}
 	if _, err := m.changeDeployment(d.ID, "running"); err == nil {
 		t.Fatal("deleted deployment restarted")
+	}
+}
+
+type idleDeploymentTestHost struct {
+	*deploymentTestHost
+	expire atomic.Bool
+}
+
+func (h *idleDeploymentTestHost) ExpireDeployment(d Deployment, _ time.Time) (bool, error) {
+	if !h.expire.Load() {
+		return false, nil
+	}
+	return true, h.StopDeployment(d)
+}
+
+func TestDeploymentIdleReceiptPersistsUntilExplicitStart(t *testing.T) {
+	h := &idleDeploymentTestHost{deploymentTestHost: &deploymentTestHost{
+		fakeHost: &fakeHost{name: "worker"}, running: map[string]bool{},
+	}}
+	m, err := New(Options{Dir: t.TempDir(), Host: h, Discoverer: NopDiscoverer{}, ListenAddr: "127.0.0.1:0", Logf: t.Logf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.Stop)
+	if _, _, err := m.CreateCluster("deployments"); err != nil {
+		t.Fatal(err)
+	}
+	spec := testDeployment(m).DeploymentSpec
+	spec.KeepAlive = " 300s "
+	d, err := m.createDeployment(spec)
+	if err != nil || d.KeepAlive != "5m0s" {
+		t.Fatalf("create keep-alive: %q, %v", d.KeepAlive, err)
+	}
+	if _, err := m.receiveDeployment(m.identity.UUID, d); err != nil {
+		t.Fatal(err)
+	}
+	waitDeployment(t, m, d.ID, "ready")
+	h.expire.Store(true)
+	m.wakeDeployments()
+	waitDeployment(t, m, d.ID, "idle")
+	if m.DeploymentReady(d.ModelID()) || len(m.deploymentModels()) != 0 {
+		t.Fatal("idle deployment remained routable")
+	}
+	store, err := openDeploymentStore(m.opts.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved, _ := store.get(false, d.ID); saved.Status.Phase != "idle" || saved.KeepAlive != d.KeepAlive {
+		t.Fatalf("idle receipt lost after reload: %+v", saved)
+	}
+	if receipt, err := m.receiveDeployment(m.identity.UUID, d); err != nil || receipt.Status.Phase != "idle" {
+		t.Fatalf("same generation should remain idle: %+v, %v", receipt.Status, err)
+	}
+	h.expire.Store(false)
+	restart, err := m.changeDeployment(d.ID, "running")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.receiveDeployment(m.identity.UUID, restart); err != nil {
+		t.Fatal(err)
+	}
+	waitDeployment(t, m, d.ID, "ready")
+	if h.starts.Load() != 2 {
+		t.Fatalf("deployment started %d times", h.starts.Load())
 	}
 }

@@ -73,24 +73,39 @@ type loginAttempt struct {
 }
 
 type AdminAuth struct {
-	path     string
-	mu       sync.Mutex
-	sessions map[string]adminSession
-	attempts map[string]loginAttempt
+	path        string
+	scheme      string
+	adminCookie string
+	csrfCookie  string
+	mu          sync.Mutex
+	sessions    map[string]adminSession
+	attempts    map[string]loginAttempt
 }
 
 func NewAdminAuth(path string) *AdminAuth {
-	return &AdminAuth{path: path, sessions: make(map[string]adminSession), attempts: make(map[string]loginAttempt)}
+	return &AdminAuth{
+		path: path, scheme: "https", adminCookie: AdminCookie, csrfCookie: CSRFCookie,
+		sessions: make(map[string]adminSession), attempts: make(map[string]loginAttempt),
+	}
 }
+
+// NewPlainHTTPAdminAuth is for an explicitly configured HTTP gateway listener.
+func NewPlainHTTPAdminAuth(path string) *AdminAuth {
+	auth := NewAdminAuth(path)
+	auth.scheme, auth.adminCookie, auth.csrfCookie = "http", "csglite_http_admin", "csglite_http_csrf"
+	return auth
+}
+
+func (a *AdminAuth) AllowsPlainHTTP() bool { return a.scheme == "http" }
 
 func equalSecret(a, b string) bool {
 	return a != "" && b != "" && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-// SameOrigin also works behind a TLS proxy: public origins are always HTTPS.
-func SameOrigin(r *http.Request) bool {
+// Check the configured browser scheme against Origin, including behind a proxy.
+func (a *AdminAuth) sameOrigin(r *http.Request) bool {
 	u, err := url.Parse(r.Header.Get("Origin"))
-	return err == nil && u.Scheme == "https" && strings.EqualFold(u.Host, r.Host) && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == ""
+	return err == nil && u.Scheme == a.scheme && strings.EqualFold(u.Host, r.Host) && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == ""
 }
 
 func adminJSON(w http.ResponseWriter, status int, value any) {
@@ -101,7 +116,7 @@ func adminJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func (a *AdminAuth) Login(w http.ResponseWriter, r *http.Request) {
-	if !SameOrigin(r) {
+	if !a.sameOrigin(r) {
 		adminJSON(w, 403, map[string]string{"error": "same origin required"})
 		return
 	}
@@ -172,14 +187,14 @@ func (a *AdminAuth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Logging in again replaces this browser's prior session.
-	if cookie, err := r.Cookie(AdminCookie); err == nil {
+	if cookie, err := r.Cookie(a.adminCookie); err == nil {
 		delete(a.sessions, tokenHash(cookie.Value))
 	}
 	a.sessions[tokenHash(secret)] = adminSession{credential.Hash, csrf, expires}
 	delete(a.attempts, ip)
 	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: AdminCookie, Value: secret, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Expires: expires})
-	http.SetCookie(w, &http.Cookie{Name: CSRFCookie, Value: csrf, Path: "/", Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Expires: expires})
+	http.SetCookie(w, &http.Cookie{Name: a.adminCookie, Value: secret, Path: "/", Secure: !a.AllowsPlainHTTP(), HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Expires: expires})
+	http.SetCookie(w, &http.Cookie{Name: a.csrfCookie, Value: csrf, Path: "/", Secure: !a.AllowsPlainHTTP(), SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Expires: expires})
 	adminJSON(w, 200, map[string]any{"authenticated": true, "expires_at": expires})
 }
 
@@ -193,7 +208,7 @@ func adminCookieMaxAge(remaining time.Duration) int {
 }
 
 func (a *AdminAuth) Authenticate(r *http.Request) bool {
-	cookie, err := r.Cookie(AdminCookie)
+	cookie, err := r.Cookie(a.adminCookie)
 	if err != nil {
 		return false
 	}
@@ -216,13 +231,13 @@ func (a *AdminAuth) Authenticate(r *http.Request) bool {
 	}
 	a.mu.Unlock()
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return SameOrigin(r) && equalSecret(r.Header.Get(CSRFHeader), session.CSRF)
+		return a.sameOrigin(r) && equalSecret(r.Header.Get(CSRFHeader), session.CSRF)
 	}
 	// WebSocket upgrades need Origin validation because they can mutate state.
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		return SameOrigin(r)
+		return a.sameOrigin(r)
 	}
-	return r.Header.Get("Origin") == "" || SameOrigin(r)
+	return r.Header.Get("Origin") == "" || a.sameOrigin(r)
 }
 
 func (a *AdminAuth) Logout(w http.ResponseWriter, r *http.Request) {
@@ -230,12 +245,12 @@ func (a *AdminAuth) Logout(w http.ResponseWriter, r *http.Request) {
 		adminJSON(w, 401, map[string]string{"error": "session and CSRF token required"})
 		return
 	}
-	cookie, _ := r.Cookie(AdminCookie)
+	cookie, _ := r.Cookie(a.adminCookie)
 	a.mu.Lock()
 	delete(a.sessions, tokenHash(cookie.Value))
 	a.mu.Unlock()
-	for _, name := range []string{AdminCookie, CSRFCookie} {
-		http.SetCookie(w, &http.Cookie{Name: name, Path: "/", Secure: true, HttpOnly: name == AdminCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	for _, name := range []string{a.adminCookie, a.csrfCookie} {
+		http.SetCookie(w, &http.Cookie{Name: name, Path: "/", Secure: !a.AllowsPlainHTTP(), HttpOnly: name == a.adminCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	}
 	adminJSON(w, 200, map[string]bool{"authenticated": false})
 }
@@ -245,7 +260,7 @@ func (a *AdminAuth) SessionExpiry(r *http.Request) (time.Time, bool) {
 	if !a.Authenticate(r) {
 		return time.Time{}, false
 	}
-	cookie, _ := r.Cookie(AdminCookie)
+	cookie, _ := r.Cookie(a.adminCookie)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	session, ok := a.sessions[tokenHash(cookie.Value)]

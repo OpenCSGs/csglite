@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ProviderPool, DecisionQuestionType } from "../api/client";
+import type { DecisionQuestionType } from "../api/client";
 import { serviceTestText, testModelService, serviceTestProtocols } from "../api/serviceTest";
 import type { ServiceTestProtocol } from "../api/serviceTest";
+import type { InferenceTestTarget } from "../api/serviceTestProtocols";
 import { canSendDecision } from "../utils/decision";
 import { t } from "../i18n";
 
@@ -17,7 +18,7 @@ const protocols: Record<ServiceTestProtocol, string> = {
   "audio/speech": "OpenAI · Audio Speech",
 };
 
-export function InferenceTestDialog({ service: initialService, services = [initialService], onClose }: { service: ProviderPool; services?: ProviderPool[]; onClose: () => void }) {
+export function InferenceTestDialog({ service: initialService, services = [initialService], onClose }: { service: InferenceTestTarget; services?: InferenceTestTarget[]; onClose: () => void }) {
   const [serviceID, setServiceID] = useState(initialService.id);
   const service = services.find(candidate => candidate.id === serviceID) || initialService;
   const dialog = useRef<HTMLDialogElement>(null);
@@ -54,7 +55,7 @@ export function InferenceTestDialog({ service: initialService, services = [initi
     activeRequest.current = request;
     setRunning(true); setError(""); setResult(null); setStopped(false);
     try {
-      const response = await testModelService(service.model, protocol, input.trim(), request.signal, {file,voice,question,questionType,choices});
+      const response = await testModelService(service.model, protocol, input.trim(), request.signal, {file,voice,question,questionType,choices,nodeUUID:service.nodeUUID});
       if (activeRequest.current === request) setResult(response);
     } catch (err) {
       if (activeRequest.current === request) {
@@ -71,7 +72,7 @@ export function InferenceTestDialog({ service: initialService, services = [initi
       <div class="min-w-0"><h2 id="inference-test-title" class="break-words text-base font-semibold text-gray-900">{t("services.test")} · {service.name}</h2>{service.name !== service.model && <p class="mt-1 break-all font-mono text-xs text-gray-400">{service.model}</p>}</div>
       <button onClick={onClose} aria-label={t("services.close")} class="shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 6 12 12M6 18 18 6" /></svg></button>
     </header>
-    <form class="flex min-h-0 flex-1 flex-col" onSubmit={event => { event.preventDefault(); void run(); }}>
+    <form class="flex min-h-0 flex-auto flex-col" onSubmit={event => { event.preventDefault(); void run(); }}>
       <div class="min-h-0 overflow-y-auto overscroll-contain p-5">
         <div class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3">
           {services.length > 1 && <label class="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-sm text-gray-600">{t("services.modelID")}
@@ -105,7 +106,7 @@ export function InferenceTestDialog({ service: initialService, services = [initi
           </div>
           <div class="flex min-w-0 flex-col gap-2">
             <div class="flex flex-wrap items-center justify-between gap-2 text-sm font-medium text-gray-700"><span>{t("services.testOutput")}</span>{result && <span class="text-xs font-normal text-emerald-600">HTTP {result.status} · {result.durationMS} ms</span>}</div>
-            <div aria-live="polite" class="max-h-[min(24rem,45dvh)] min-h-32 flex-1 overflow-auto rounded-xl bg-gray-50 p-3 text-sm leading-6">
+            <div aria-live="polite" class="scroll-visible max-h-[min(24rem,45dvh)] min-h-32 flex-1 overflow-auto rounded-xl bg-gray-50 p-3 text-sm leading-6">
               {error ? <p role="alert" class="whitespace-pre-wrap break-words text-red-600">{error}</p> : result ? audioURL ? <div class="space-y-3"><audio controls src={audioURL} class="w-full" /><a download="speech.wav" href={audioURL} class="text-xs text-indigo-600">{t("services.testDownloadAudio")}</a></div> : protocol.startsWith("images/")&&result.data?.data ? <div class="space-y-3">{result.data.data.map((item:any,index:number)=><img key={index} alt={t("services.testGeneratedImage")} src={item.b64_json?`data:image/png;base64,${item.b64_json}`:item.url} class="max-w-full rounded-lg" />)}</div> : <pre class="whitespace-pre-wrap break-words font-sans text-gray-800">{serviceTestText(result.data, protocol)}</pre> : <p class="text-gray-400">{t(running ? "services.testing" : stopped ? "services.testStopped" : "services.testEmpty")}</p>}
             </div>
             {result && !result.blob && <details class="min-w-0 text-xs text-gray-500"><summary class="cursor-pointer">{t("services.testRawResponse")}</summary><pre class="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-3">{JSON.stringify(result.data, null, 2)}</pre></details>}

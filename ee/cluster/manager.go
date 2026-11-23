@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	publictunnel "github.com/opencsgs/csglite/ee/cluster/public"
@@ -86,15 +87,20 @@ type Options struct {
 	// tunnels instead of peer listeners. Empty means the existing LAN mode.
 	Mode             string
 	PublicListenAddr string
+	AllowHTTP        bool
 	GatewayURL       string
 	TLSCertFile      string
 	TLSKeyFile       string
 	TLSCAFile        string
 	PublicInference  http.Handler
-	Dir              string
-	Host             Host
-	Discoverer       Discoverer
-	ListenAddr       string
+	// ResetWorkerRole persists standalone mode after a worker leaves.
+	ResetWorkerRole func() error
+	// ConfigureWorkerRole saves the selected transport and returns a rollback for failed joins.
+	ConfigureWorkerRole func(gateway string, allowHTTP bool, caFile string) (func() error, error)
+	Dir                 string
+	Host                Host
+	Discoverer          Discoverer
+	ListenAddr          string
 	// Seeds are static cluster endpoints (host:port) to probe when
 	// multicast is unavailable.
 	Seeds []string
@@ -125,11 +131,13 @@ type Manager struct {
 	publicConnection    *publicGatewayConnection
 	publicGateway       *publictunnel.Gateway
 	publicHTTP          *http.Server
-	publicClient        *http.Client
+	workerConnection    atomic.Pointer[publicWorkerConnection]
 	publicWake          chan struct{}
 	publicStatusUpdates chan chan error
 	publicProofMu       sync.Mutex
 	publicJoinMu        sync.Mutex
+	activationMu        sync.Mutex
+	detachedWorker      atomic.Bool
 	publicProofs        map[string]time.Time
 	opts                Options
 	logf                func(string, ...any)
@@ -240,7 +248,7 @@ func (m *Manager) Directory() *Directory { return m.dir }
 // without the other would leave a client trusting a certificate for a node
 // that is no longer a member.
 func (m *Manager) forgetNode(nodeUUID string) {
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		if g := m.publicHub(); g != nil {
 			g.Disconnect(nodeUUID)
 		}
@@ -279,8 +287,34 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
+// opts stays immutable after construction. An explicitly detached public
+// worker uses the normal LAN paths for the remainder of this process.
+func (m *Manager) mode() string {
+	if m.workerConnection.Load() != nil {
+		return "worker"
+	}
+	if m.opts.Mode == "gateway" {
+		return "gateway"
+	}
+	return ""
+}
+
+func (m *Manager) gatewayURL() string {
+	if worker := m.workerConnection.Load(); worker != nil {
+		return worker.gateway
+	}
+	return ""
+}
+
+func (m *Manager) startupJoinToken() string {
+	if m.detachedWorker.Load() || (m.mode() == "" && m.store.Settings().AutoFormPaused) {
+		return ""
+	}
+	return strings.TrimSpace(m.opts.JoinToken)
+}
+
 func (m *Manager) shouldActivateAtStart() bool {
-	return m.opts.Mode != "" || m.AutoFormEnabled() || strings.TrimSpace(m.opts.JoinToken) != "" || m.store.InCluster() || m.store.Settings().Enabled
+	return m.mode() != "" || m.AutoFormEnabled() || m.startupJoinToken() != "" || m.store.InCluster() || m.store.Settings().Enabled
 }
 
 // Active reports whether the listener and discovery are running.
@@ -294,7 +328,9 @@ func (m *Manager) Active() bool {
 // loops, and remembers the choice so the node comes up active next time.
 // It is idempotent.
 func (m *Manager) Activate() error {
-	if m.opts.Mode != "" {
+	m.activationMu.Lock()
+	defer m.activationMu.Unlock()
+	if m.mode() != "" {
 		return m.activatePublic()
 	}
 	m.mu.Lock()
@@ -337,7 +373,7 @@ func (m *Manager) Activate() error {
 	go m.pollLoop()
 	go m.gossipLoop()
 	go m.discoveredRefreshLoop()
-	if token := strings.TrimSpace(m.opts.JoinToken); token != "" && !m.store.InCluster() {
+	if token := m.startupJoinToken(); token != "" && !m.store.InCluster() {
 		go m.autoJoin(token)
 	}
 	if m.AutoFormEnabled() {

@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -157,4 +159,21 @@ func diffOperationSets(left, right map[string]struct{}) []string {
 	}
 	sort.Strings(diff)
 	return diff
+}
+
+func TestOpenAPIStaticCopyMatchesSource(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "openapi", "local-api.json"))
+	if err != nil {
+		t.Fatalf("read openapi/local-api.json: %v", err)
+	}
+	static, err := os.ReadFile(filepath.Join("static", "openapi", "local-api.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skip("internal/server/static is not populated; rebuild web to sync it")
+	}
+	if err != nil {
+		t.Fatalf("read static openapi copy: %v", err)
+	}
+	if !bytes.Equal(source, static) {
+		t.Fatal("internal/server/static/openapi/local-api.json is stale; copy openapi/local-api.json (or rebuild web) so the served API docs match the source spec")
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/opencsgs/csglite/internal/region"
+	"github.com/opencsgs/csglite/internal/safefile"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -282,6 +283,7 @@ type ClusterConfig struct {
 	// Mode is empty/lan, gateway or worker. Existing configs remain LAN.
 	Mode             string `json:"mode,omitempty"`
 	PublicListenAddr string `json:"public_listen_addr,omitempty"`
+	AllowHTTP        bool   `json:"allow_http,omitempty"`
 	GatewayURL       string `json:"gateway_url,omitempty"`
 	TLSCertFile      string `json:"tls_cert_file,omitempty"`
 	TLSKeyFile       string `json:"tls_key_file,omitempty"`
@@ -715,6 +717,57 @@ func Save(cfg *Config) error {
 	configMu.Lock()
 	defer configMu.Unlock()
 
+	cfg.CloudProviderName = NormalizeCloudProviderName(cfg.CloudProviderName)
+	if err := writeConfigLocked(cfg); err != nil {
+		return err
+	}
+	globalConfig = cfg
+	return nil
+}
+
+// SavePublicWorker configures the selected gateway and returns a rollback used
+// if admission fails before the membership has been saved.
+func SavePublicWorker(cfg *Config, gateway string, allowHTTP bool, caFile string) (func() error, error) {
+	configMu.Lock()
+	defer configMu.Unlock()
+	previous := cfg.Cluster
+	set := func(cluster ClusterConfig) error {
+		next := *cfg
+		next.Cluster = cluster
+		if err := writeConfigLocked(&next); err != nil {
+			return err
+		}
+		cfg.Cluster = cluster
+		return nil
+	}
+	if err := set(ClusterConfig{Mode: "worker", Name: previous.Name, GatewayURL: gateway, AllowHTTP: allowHTTP, TLSCAFile: caFile}); err != nil {
+		return nil, err
+	}
+	return func() error {
+		configMu.Lock()
+		defer configMu.Unlock()
+		return set(previous)
+	}, nil
+}
+
+// ClearPublicWorker removes the offboarded Master connection and preserves
+// the settings shared by standalone nodes, including the configured name.
+func ClearPublicWorker(cfg *Config) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+	if cfg.Cluster.Mode != "worker" {
+		return nil
+	}
+	next := *cfg
+	next.Cluster = ClusterConfig{Name: cfg.Cluster.Name}
+	if err := writeConfigLocked(&next); err != nil {
+		return err
+	}
+	cfg.Cluster = next.Cluster
+	return nil
+}
+
+func writeConfigLocked(cfg *Config) error {
 	cfgPath, err := ConfigPath()
 	if err != nil {
 		return err
@@ -724,18 +777,12 @@ func Save(cfg *Config) error {
 		return err
 	}
 
-	cfg.CloudProviderName = NormalizeCloudProviderName(cfg.CloudProviderName)
-
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	globalConfig = cfg
-	if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(cfgPath, 0o600)
+	return safefile.Write(cfgPath, data, 0o600)
 }
 
 func Reset() {

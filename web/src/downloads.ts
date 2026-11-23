@@ -13,6 +13,10 @@ import type { ArtifactSource } from "./api/client";
 export type DownloadKind = "model" | "dataset";
 export type DownloadStatus = "queued" | "downloading" | "paused" | "success" | "error";
 
+// The slice of a download task the marketplace cards render. Naming it once
+// keeps every card from silently dropping a field such as the transfer speed.
+export type DownloadSummary = Pick<DownloadTask, "status" | "percent" | "speedBytesPerSec" | "error">;
+
 export interface DownloadTask {
   key: string;
   kind: DownloadKind;
@@ -23,6 +27,7 @@ export interface DownloadTask {
   currentFile?: string;
   completedBytes: number;
   totalBytes: number;
+  speedBytesPerSec: number;
   error?: string;
   jobId?: string;
   quants?: string[];
@@ -71,6 +76,9 @@ function normalizeTask(raw: any): DownloadTask | null {
     currentFile: typeof raw.currentFile === "string" ? raw.currentFile : undefined,
     completedBytes: Math.max(0, Number(raw.completedBytes) || 0),
     totalBytes: Math.max(0, Number(raw.totalBytes) || 0),
+    // Restored tasks start without a rate: the first poll after reload
+    // repopulates it instead of showing whatever was last persisted.
+    speedBytesPerSec: 0,
     error: typeof raw.error === "string" ? raw.error : undefined,
     jobId: typeof raw.jobId === "string" ? raw.jobId : undefined,
     quants: Array.isArray(raw.quants)
@@ -161,12 +169,13 @@ function applyProgress(task: DownloadTask, p: PullProgress): DownloadTask {
     percent,
     completedBytes,
     totalBytes,
+    speedBytesPerSec: Math.max(0, Number(p.speed_bytes_per_sec) || 0),
     files,
     updatedAt: nowISO(),
   };
 }
 
-function applyJobToTask(task: DownloadTask, job: PullJob): DownloadTask {
+export function applyJobToTask(task: DownloadTask, job: PullJob): DownloadTask {
   const progress = job.progress || { status: job.status };
   if (job.status === "queued") {
     return {
@@ -174,6 +183,7 @@ function applyJobToTask(task: DownloadTask, job: PullJob): DownloadTask {
       jobId: job.id,
       status: "queued",
       statusText: progress.status || "queued",
+      speedBytesPerSec: 0,
       updatedAt: nowISO(),
     };
   }
@@ -185,6 +195,7 @@ function applyJobToTask(task: DownloadTask, job: PullJob): DownloadTask {
       status: "success",
       statusText: "success",
       percent: 100,
+      speedBytesPerSec: 0,
       error: undefined,
       updatedAt: completed,
       completedAt: completed,
@@ -197,6 +208,7 @@ function applyJobToTask(task: DownloadTask, job: PullJob): DownloadTask {
       status: "error",
       statusText: progress.status || "error",
       percent: Math.min(task.percent, 99),
+      speedBytesPerSec: 0,
       error: job.error || progress.status.replace(/^error:\s*/, "") || "download failed",
       updatedAt: nowISO(),
     };
@@ -207,6 +219,7 @@ function applyJobToTask(task: DownloadTask, job: PullJob): DownloadTask {
       jobId: job.id,
       status: "paused",
       statusText: "paused",
+      speedBytesPerSec: 0,
       error: undefined,
       updatedAt: nowISO(),
     };
@@ -268,6 +281,7 @@ async function pollJob(key: string) {
         jobId: undefined,
         status: "paused",
         statusText: "interrupted",
+        speedBytesPerSec: 0,
         updatedAt: nowISO(),
       });
     }
@@ -303,6 +317,7 @@ async function syncDownloadsFromServer() {
           jobId: undefined,
           status: "paused",
           statusText: "interrupted",
+          speedBytesPerSec: 0,
           updatedAt: nowISO(),
         };
         setTask(interrupted);
@@ -422,6 +437,7 @@ export function pauseDownload(kind: DownloadKind, name: string, options?: { arti
       ...current,
       status: "paused",
       statusText: "paused",
+      speedBytesPerSec: 0,
       updatedAt: nowISO(),
     });
   }
@@ -449,6 +465,7 @@ export function startDownload(kind: DownloadKind, name: string, onComplete?: () 
     currentFile: resumableBase?.currentFile,
     completedBytes: resumableBase?.completedBytes || 0,
     totalBytes: resumableBase?.totalBytes || 0,
+    speedBytesPerSec: 0,
     jobId: resumableBase?.jobId,
     quants,
     artifactSource: options?.artifactSource,

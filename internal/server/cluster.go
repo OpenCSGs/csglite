@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/ee/cluster"
+	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/internal/modelregistry"
@@ -83,18 +84,26 @@ func newClusterManager(s *Server, storageRoot string) *cluster.Manager {
 	m, err := cluster.New(cluster.Options{
 		Mode:             s.cfg.Cluster.Mode,
 		PublicListenAddr: s.cfg.Cluster.PublicListenAddr,
+		AllowHTTP:        s.cfg.Cluster.AllowHTTP,
 		GatewayURL:       s.cfg.Cluster.GatewayURL,
 		TLSCertFile:      s.cfg.Cluster.TLSCertFile,
 		TLSKeyFile:       s.cfg.Cluster.TLSKeyFile,
 		TLSCAFile:        s.cfg.Cluster.TLSCAFile,
 		PublicInference:  s.publicClusterWebRoutes(storageRoot),
-		Dir:              filepath.Join(storageRoot, clusterStorageDir),
-		Host:             &clusterHost{s: s},
-		Discoverer:       disc,
-		ListenAddr:       addr,
-		Seeds:            seeds,
-		JoinToken:        strings.TrimSpace(os.Getenv(EnvClusterJoinToken)),
-		AdvertiseHost:    strings.TrimSpace(os.Getenv(EnvClusterAdvertiseHost)),
+		ResetWorkerRole:  func() error { return config.ClearPublicWorker(s.cfg) },
+		ConfigureWorkerRole: func(gateway string, allowHTTP bool, caFile string) (func() error, error) {
+			if err := validatePublicManagementListener("worker", s.cfg.EffectiveListenAddr()); err != nil {
+				return nil, err
+			}
+			return config.SavePublicWorker(s.cfg, gateway, allowHTTP, caFile)
+		},
+		Dir:           filepath.Join(storageRoot, clusterStorageDir),
+		Host:          &clusterHost{s: s},
+		Discoverer:    disc,
+		ListenAddr:    addr,
+		Seeds:         seeds,
+		JoinToken:     strings.TrimSpace(os.Getenv(EnvClusterJoinToken)),
+		AdvertiseHost: strings.TrimSpace(os.Getenv(EnvClusterAdvertiseHost)),
 		// The shared secret comes from config.json (installer or
 		// `config set cluster_secret`), with CSGHUB_LITE_CLUSTER_SECRET
 		// applied on top by config.ApplyEnvironmentDefaults.
@@ -623,14 +632,20 @@ func (st *pullJobStore) activeModelPulls() ([]string, []cluster.PullStatus) {
 		}
 		job.mu.Lock()
 		if job.kind == "model" && (job.status == pullJobRunning || job.status == pullJobQueued) {
+			speed := job.progress.SpeedBytesPerSec
+			if job.speed != nil {
+				// A stalled job must not keep advertising its old rate to peers.
+				speed = int64(job.speed.Rate(time.Now()))
+			}
 			names = append(names, job.name)
 			pulls = append(pulls, cluster.PullStatus{
-				Model:          job.name,
-				Source:         job.source,
-				Status:         job.status,
-				CompletedBytes: job.progress.CompletedBytes,
-				TotalBytes:     job.progress.TotalBytes,
-				Detail:         job.progress.Status,
+				Model:            job.name,
+				Source:           job.source,
+				Status:           job.status,
+				CompletedBytes:   job.progress.CompletedBytes,
+				TotalBytes:       job.progress.TotalBytes,
+				SpeedBytesPerSec: speed,
+				Detail:           job.progress.Status,
 			})
 		}
 		job.mu.Unlock()

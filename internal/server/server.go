@@ -656,7 +656,7 @@ func (s *Server) evictExpired(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, me := range s.engines {
-		if me.keepAliveForever() {
+		if me.deploymentModel != nil || me.keepAliveForever() {
 			continue
 		}
 		if me.activeRequests > 0 {

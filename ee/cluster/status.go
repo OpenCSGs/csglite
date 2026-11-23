@@ -44,6 +44,7 @@ func (m *Manager) LocalStatus(ctx context.Context) Status {
 	st.NodeStateManagement = true
 	_, st.DeploymentCapable = m.opts.Host.(DeploymentHost)
 	st.DeploymentConfigurable = st.DeploymentCapable
+	_, st.DeploymentKeepAlive = m.opts.Host.(DeploymentIdleExpiry)
 	if reporter, ok := m.opts.Host.(EngineStatusReporter); ok {
 		st.Engines = reporter.Engines()
 	}
@@ -204,8 +205,8 @@ func (m *Manager) candidateStatus(nodeUUID string) *Status {
 func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
 	var out []Candidate
 	local := m.cachedLocalStatus(ctx)
-	unshared := m.opts.Mode == "worker" && local.HoldsModel(model) && !m.publicModelShared(model)
-	if m.opts.Mode == "worker" {
+	unshared := m.mode() == "worker" && local.HoldsModel(model) && !m.publicModelShared(model)
+	if m.mode() == "worker" {
 		local = m.sharedModelStatus(local)
 	}
 	localReserved := 0
