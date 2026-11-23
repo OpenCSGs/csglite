@@ -13,10 +13,10 @@ vi.hoisted(() => {
   });
 });
 
-it("groups shareable models by source and submits the selected routed ID", async () => {
+it("lists local deployments and model services, and submits the selected service ID", async () => {
   setLocale("en");
-  const clusterID = "edge:cluster:acme/chat";
-  const unavailableID = "edge:cluster:acme/offline";
+  const serviceID = "edge:gateway:service";
+  const unavailableID = "acme/offline";
   const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
     if (url === "/api/edge") {
       return Response.json({
@@ -24,9 +24,8 @@ it("groups shareable models by source and submits the selected routed ID", async
         reconnects: 0, applications_changed: 0,
         models: [
           { id: "acme/chat", name: "chat", ready: true },
-          { id: "edge:gateway:service", name: "chat", source: "gateway", ready: true },
-          { id: clusterID, name: "chat", source: "cluster", ready: true },
-          { id: unavailableID, name: "offline", source: "cluster", ready: false },
+          { id: serviceID, name: "chat", source: "gateway", ready: true },
+          { id: unavailableID, name: "offline", ready: false },
         ],
       });
     }
@@ -46,11 +45,11 @@ it("groups shareable models by source and submits the selected routed ID", async
     const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
     const selector = dialog.querySelector("select")!;
     const groups = [...selector.querySelectorAll("optgroup")];
-    expect(groups.map((group) => group.label)).toEqual(["Local", "AI Gateway", "Cluster"]);
-    expect(groups.map((group) => group.querySelector("option")?.value)).toEqual(["acme/chat", "edge:gateway:service", clusterID]);
+    expect(groups.map((group) => group.label)).toEqual(["Local deployment", "Model service"]);
+    expect(groups.map((group) => group.querySelector("option")?.value)).toEqual(["acme/chat", serviceID]);
     expect([...selector.options].find((option) => option.value === unavailableID)?.disabled).toBe(true);
     await act(() => {
-      selector.value = clusterID;
+      selector.value = serviceID;
       selector.dispatchEvent(new Event("change", { bubbles: true }));
       for (const price of dialog.querySelectorAll<HTMLInputElement>('input[inputmode="decimal"]')) {
         price.value = "1.00";
@@ -61,7 +60,7 @@ it("groups shareable models by source and submits the selected routed ID", async
     await vi.waitFor(() => {
       const submission = fetcher.mock.calls.find(([url, options]) => url === "/api/edge/applications" && options?.method === "POST");
       expect(JSON.parse(String(submission?.[1]?.body))).toMatchObject({
-        model_name: "chat", local_model_id: clusterID, prompt_price: 100, completion_price: 100,
+        model_name: "chat", local_model_id: serviceID, prompt_price: 100, completion_price: 100,
       });
     });
   } finally {

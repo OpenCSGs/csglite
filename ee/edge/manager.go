@@ -43,23 +43,23 @@ const (
 
 const (
 	ModelSourceGateway = "gateway"
-	ModelSourceCluster = "cluster"
+	routedModelPrefix  = "edge:"
+	modelServicePrefix = routedModelPrefix + ModelSourceGateway + ":"
 )
 
-// RoutedModelID keeps the route in the ID that the gateway binds and relays.
-// Older local applications keep their original storage IDs.
-func RoutedModelID(source, id string) string {
-	return "edge:" + source + ":" + id
+// ModelServiceID binds a shared model to a stable AI Gateway service ID.
+func ModelServiceID(serviceID string) string {
+	return modelServicePrefix + serviceID
 }
 
-// RoutedModelTarget extracts a non-local route from a shared model ID.
-func RoutedModelTarget(id string) (source, target string) {
-	for _, source := range []string{ModelSourceGateway, ModelSourceCluster} {
-		if target, ok := strings.CutPrefix(id, RoutedModelID(source, "")); ok {
-			return source, target
-		}
-	}
-	return "", ""
+// ModelServiceTarget extracts the AI Gateway service ID from a shared model ID.
+func ModelServiceTarget(id string) (string, bool) {
+	return strings.CutPrefix(id, modelServicePrefix)
+}
+
+// IsRoutedModelID identifies the reserved namespace for non-local model IDs.
+func IsRoutedModelID(id string) bool {
+	return strings.HasPrefix(id, routedModelPrefix)
 }
 
 // Model is a model this connector can offer to the gateway.

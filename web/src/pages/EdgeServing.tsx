@@ -1,5 +1,5 @@
 import { useEffect } from "preact/hooks";
-import { signal } from "@preact/signals";
+import { computed, signal } from "@preact/signals";
 import {
   getEdgeApplications,
   getEdgeEarnings,
@@ -44,7 +44,7 @@ import {
 import type { EdgeModelFilter } from "../edge";
 
 type EdgeTab = "overview" | "models" | "earnings";
-const edgeModelSources = ["local", "gateway", "cluster"] as const;
+const edgeModelSources = ["local", "gateway"] as const;
 
 // ---- page state ------------------------------------------------------------
 const activeTab = signal<EdgeTab>("overview");
@@ -67,6 +67,7 @@ const settlementError = signal("");
 
 const applyOpen = signal(false);
 const formModel = signal("");
+const selectedFormModel = computed(() => status.value?.models.find((model) => model.id === formModel.value));
 const formName = signal("");
 const formPromptPrice = signal("");
 const formCompletionPrice = signal("");
@@ -177,7 +178,8 @@ async function submit(e: Event) {
   submitError.value = "";
   const promptPrice = yuanToCents(formPromptPrice.value);
   const completionPrice = yuanToCents(formCompletionPrice.value);
-  if (!status.value?.models.some((model) => model.id === formModel.value && model.ready)) {
+  const selected = selectedFormModel.value;
+  if (!selected?.ready) {
     submitError.value = t("edge.form.errModel");
     return;
   }
@@ -193,7 +195,7 @@ async function submit(e: Event) {
   try {
     await submitEdgeApplication({
       model_name: formName.value.trim(),
-      local_model_id: formModel.value,
+      local_model_id: selected.id,
       description: formDescription.value.trim(),
       prompt_price: promptPrice,
       completion_price: completionPrice,
@@ -600,7 +602,7 @@ function ApplyDialog({ status: st }: { status: EdgeStatus }) {
                   value={formModel.value}
                   onChange={(e) => {
                     formModel.value = (e.target as HTMLSelectElement).value;
-                    const picked = models.find((m) => m.id === formModel.value);
+                    const picked = selectedFormModel.value;
                     if (!formName.value) formName.value = suggestEdgeModelName(picked?.name || formModel.value);
                   }}
                 >
@@ -683,7 +685,7 @@ function ApplyDialog({ status: st }: { status: EdgeStatus }) {
               <button
                 type="submit"
                 class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                disabled={submitting.value || !models.some((model) => model.id === formModel.value && model.ready)}
+                disabled={submitting.value || !selectedFormModel.value?.ready}
               >
                 {submitting.value ? t("edge.form.submitting") : t("edge.form.submit")}
               </button>

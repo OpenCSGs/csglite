@@ -415,9 +415,9 @@ type modelCatalogHost struct {
 
 func (h modelCatalogHost) Models(context.Context) []Model { return h.catalog }
 
-func TestManagerBindsRoutedModelIDsAcrossRestart(t *testing.T) {
+func TestManagerBindsModelServiceIDAcrossRestart(t *testing.T) {
 	var registers atomic.Int32
-	submitted := make(chan string, 3)
+	submitted := make(chan string, 2)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/edge/nodes", func(w http.ResponseWriter, r *http.Request) {
 		registers.Add(1)
@@ -436,12 +436,10 @@ func TestManagerBindsRoutedModelIDsAcrossRestart(t *testing.T) {
 	gateway := httptest.NewServer(mux)
 	defer gateway.Close()
 
-	clusterID := RoutedModelID(ModelSourceCluster, "acme/model")
-	gatewayID := RoutedModelID(ModelSourceGateway, "model-service")
+	gatewayID := ModelServiceID("model-service")
 	host := modelCatalogHost{
 		fakeHost: &fakeHost{gateway: gateway.URL, token: "user-token"},
 		catalog: []Model{
-			{ID: clusterID, Ready: true, Source: ModelSourceCluster},
 			{ID: gatewayID, Ready: true, Source: ModelSourceGateway},
 			{ID: "acme/model", Ready: true},
 		},
@@ -480,8 +478,10 @@ func TestManagerBindsRoutedModelIDsAcrossRestart(t *testing.T) {
 			t.Fatalf("heartbeat lost the application model ID: %+v", advertised)
 		}
 	}
-	if _, err := restarted.Submit(t.Context(), SubmitRequest{LocalModelID: RoutedModelID(ModelSourceCluster, "missing")}); !errors.Is(err, ErrModelUnavailable) {
-		t.Fatalf("unavailable model returned %v", err)
+	for _, unavailableID := range []string{ModelServiceID("missing"), "edge:cluster:acme/model"} {
+		if _, err := restarted.Submit(t.Context(), SubmitRequest{LocalModelID: unavailableID}); !errors.Is(err, ErrModelUnavailable) {
+			t.Fatalf("unavailable model returned %v", err)
+		}
 	}
 	if registers.Load() != 1 || len(submitted) != 0 {
 		t.Fatal("unavailable model reached the gateway")

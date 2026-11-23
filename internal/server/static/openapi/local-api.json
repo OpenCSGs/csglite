@@ -7729,7 +7729,7 @@
           "Edge"
         ],
         "summary": "Get edge serving status",
-        "description": "Connector state plus the local, published AI Gateway and cluster models that can be shared.",
+        "description": "Connector state plus local models and published AI Gateway model services that can be shared. A model service can use cluster members.",
         "operationId": "getEdgeStatus",
         "responses": {
           "200": {
@@ -7919,7 +7919,7 @@
             }
           },
           "409": {
-            "description": "The selected AI Gateway or cluster model is no longer available for sharing.",
+            "description": "The selected model service is no longer available for sharing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12680,8 +12680,7 @@
             "type": "string",
             "enum": [
               "local",
-              "gateway",
-              "cluster"
+              "gateway"
             ],
             "description": "Model source. An omitted source means local."
           },
@@ -12764,7 +12763,7 @@
           },
           "local_model_id": {
             "type": "string",
-            "description": "Use the exact model ID from GET /api/edge, including the source prefix for AI Gateway and cluster models. Existing local storage IDs are accepted."
+            "description": "Use the exact model ID from GET /api/edge. AI Gateway model services are identified by service ID. Existing local storage IDs are accepted."
           },
           "description": {
             "type": "string"

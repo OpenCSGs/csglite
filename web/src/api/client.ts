@@ -3629,7 +3629,7 @@ export interface EdgeModel {
   /** Inference ID shown to people. */
   name?: string;
   /** Older Lite servers omit the source for local models. */
-  source?: "local" | "gateway" | "cluster";
+  source?: "local" | "gateway";
   ready: boolean;
   state?: EdgeModelState;
   format?: string;

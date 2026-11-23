@@ -118,7 +118,7 @@ func TestEdgeServableModel(t *testing.T) {
 	}
 }
 
-func TestEdgeSharesGatewayAndClusterModels(t *testing.T) {
+func TestEdgeSharesModelServiceWithClusterBackend(t *testing.T) {
 	useIsolatedStorageHome(t)
 	config.ResetProviderPools()
 	t.Cleanup(config.ResetProviderPools)
@@ -151,23 +151,23 @@ func TestEdgeSharesGatewayAndClusterModels(t *testing.T) {
 	}
 
 	host := edgeHost{master}
-	clusterID := edge.RoutedModelID(edge.ModelSourceCluster, repo)
-	clusterWait(t, "shareable worker model", func() bool {
-		for _, item := range host.Models(t.Context()) {
-			if item.ID == clusterID {
-				return item.Ready && item.Source == edge.ModelSourceCluster
-			}
-		}
-		return false
+	workerSource := cluster.SourceNodePrefix + worker.cluster.Identity().UUID
+	clusterWait(t, "available worker model", func() bool {
+		return master.cluster.ModelSourceState(t.Context(), modelID, workerSource) == "configured"
 	})
+	for _, item := range host.Models(t.Context()) {
+		if item.Name == modelID {
+			t.Fatalf("unpublished cluster model appeared in the sharing catalog: %+v", item)
+		}
+	}
 	pool := config.ProviderPool{
 		ID: "edge-service", Name: "Edge service", Model: modelID, Enabled: true, Policy: "fixed", Category: "chat",
-		Members: []config.ProviderPoolMember{{ID: "worker", Source: cluster.SourceCluster, Model: modelID}},
+		Members: []config.ProviderPoolMember{{ID: "worker", Source: workerSource, Model: modelID}},
 	}
 	if err := config.SaveProviderPools([]config.ProviderPool{pool}); err != nil {
 		t.Fatal(err)
 	}
-	gatewayID := edge.RoutedModelID(edge.ModelSourceGateway, pool.ID)
+	gatewayID := edge.ModelServiceID(pool.ID)
 	catalog := map[string]edge.Model{}
 	for _, item := range host.Models(t.Context()) {
 		catalog[item.ID] = item
@@ -185,27 +185,33 @@ func TestEdgeSharesGatewayAndClusterModels(t *testing.T) {
 		})
 		return gatewayRequest(handler, http.MethodPost, "/v1/chat/completions", string(body), "")
 	}
-	for _, id := range []string{clusterID, gatewayID} {
-		for _, stream := range []bool{false, true} {
-			rec := send(id, "", stream)
-			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "from worker") ||
-				(stream && !strings.Contains(rec.Body.String(), "[DONE]")) ||
-				rec.Header().Get(cluster.NodeHeader) != worker.cluster.Identity().UUID {
-				t.Fatalf("%s stream=%t: %d %v %s", id, stream, rec.Code, rec.Header(), rec.Body)
-			}
-			if (rec.Header().Get(providerPoolMemberSourceHeader) == cluster.SourceCluster) != (id == gatewayID) {
-				t.Fatalf("%s did not preserve its route: %v", id, rec.Header())
-			}
+	for _, stream := range []bool{false, true} {
+		rec := send(gatewayID, "", stream)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "from worker") ||
+			(stream && !strings.Contains(rec.Body.String(), "[DONE]")) ||
+			rec.Header().Get(cluster.NodeHeader) != worker.cluster.Identity().UUID ||
+			rec.Header().Get(providerPoolMemberSourceHeader) != workerSource {
+			t.Fatalf("model service stream=%t: %d %v %s", stream, rec.Code, rec.Header(), rec.Body)
 		}
-		if rec := send(id, "local", false); rec.Code != http.StatusBadRequest {
-			t.Fatalf("%s accepted a conflicting caller source: %d %s", id, rec.Code, rec.Body)
-		}
+	}
+	if rec := send(gatewayID, "local", false); rec.Code != http.StatusBadRequest {
+		t.Fatalf("model service accepted a conflicting caller source: %d %s", rec.Code, rec.Body)
+	}
+	if rec := send("edge:cluster:"+repo, "", false); rec.Code != http.StatusNotFound {
+		t.Fatalf("direct cluster ID was accepted: %d %s", rec.Code, rec.Body)
 	}
 	if rec := send(repo, cluster.SourceCluster, false); rec.Code != http.StatusBadRequest {
 		t.Fatalf("legacy ID accepted a source override: %d %s", rec.Code, rec.Body)
 	}
-	if got, source, err := host.modelRoute(t.Context(), repo, "chat/completions"); err != nil || got != repo || source != "local" {
+	if got, source, err := host.modelRoute(repo, "chat/completions"); err != nil || got != repo || source != "local" {
 		t.Fatalf("legacy local route = %q, %q, %v", got, source, err)
+	}
+	pool.Model = "renamed-service"
+	if err := config.SaveProviderPools([]config.ProviderPool{pool}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := send(gatewayID, "", false); rec.Code != http.StatusOK || rec.Header().Get(providerPoolMemberSourceHeader) != workerSource {
+		t.Fatalf("renaming the service broke the application: %d %s", rec.Code, rec.Body)
 	}
 
 	master.cluster.Stop()
@@ -213,10 +219,8 @@ func TestEdgeSharesGatewayAndClusterModels(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		master.cluster.Directory().MarkFailure(worker.cluster.Identity().UUID, errors.New("offline"))
 	}
-	for _, id := range []string{clusterID, gatewayID} {
-		if rec := send(id, "", false); rec.Code != http.StatusServiceUnavailable {
-			t.Fatalf("%s remained available after worker went offline: %d %s", id, rec.Code, rec.Body)
-		}
+	if rec := send(gatewayID, "", false); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("service remained available after worker went offline: %d %s", rec.Code, rec.Body)
 	}
 }
 

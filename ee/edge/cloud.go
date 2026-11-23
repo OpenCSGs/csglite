@@ -212,7 +212,6 @@ type SubmitRequest struct {
 // Submit files an application to serve a model through this node. The
 // node is registered first when needed, since an application names it.
 func (m *Manager) Submit(ctx context.Context, req SubmitRequest) (json.RawMessage, error) {
-	source, _ := RoutedModelTarget(req.LocalModelID)
 	var selected Model
 	for _, mod := range m.host.Models(ctx) {
 		if mod.ID == req.LocalModelID {
@@ -220,7 +219,7 @@ func (m *Manager) Submit(ctx context.Context, req SubmitRequest) (json.RawMessag
 			break
 		}
 	}
-	if source != "" && !selected.Ready {
+	if IsRoutedModelID(req.LocalModelID) && !selected.Ready {
 		return nil, ErrModelUnavailable
 	}
 	gatewayURL, userToken := m.host.Cloud()

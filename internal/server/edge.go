@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/ee/edge"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
@@ -107,16 +106,17 @@ func (h edgeHost) withModelRoute(next http.HandlerFunc) http.HandlerFunc {
 			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
-		model, source, err := h.modelRoute(r.Context(), target.Model, strings.TrimPrefix(r.URL.Path, "/v1/"))
+		model, source, err := h.modelRoute(target.Model, strings.TrimPrefix(r.URL.Path, "/v1/"))
 		if err != nil {
 			writeOpenAIInferenceError(w, err)
 			return
 		}
-		if _, err := effectiveRequestSource(withProviderRouteSourceContext(r.Context(), source), target.Source); err != nil {
+		ctx := withProviderRouteSourceContext(r.Context(), source)
+		if _, err := effectiveRequestSource(ctx, target.Source); err != nil {
 			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
-		r = r.Clone(withProviderRouteSourceContext(r.Context(), source))
+		r = r.Clone(ctx)
 		if source != "local" {
 			body, contentType, err = inference.RewriteModelRequest(body, contentType, model, source)
 			if err != nil {
@@ -131,91 +131,43 @@ func (h edgeHost) withModelRoute(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (h edgeHost) modelRoute(ctx context.Context, id, protocol string) (model, source string, err error) {
-	kind, target := edge.RoutedModelTarget(id)
-	switch kind {
-	case edge.ModelSourceGateway:
-		pool, ok := providerPoolForRequest("", poolSource(target))
-		if target == "" || !ok {
-			return "", "", inference.NewHTTPStatusError(http.StatusNotFound, "edge model service not found or disabled")
+func (h edgeHost) modelRoute(id, protocol string) (model, source string, err error) {
+	serviceID, isService := edge.ModelServiceTarget(id)
+	if !isService {
+		if edge.IsRoutedModelID(id) {
+			return "", "", inference.NewHTTPStatusError(http.StatusNotFound, "shared model route is no longer supported")
 		}
-		if !h.s.providerPoolAvailable(pool) {
-			return "", "", providerPoolUnavailableError(pool)
-		}
-		protocols := h.s.providerPoolView(pool).InferenceProtocols
-		if !slices.Contains(protocols, "chat/completions") || !slices.Contains(protocols, protocol) {
-			return "", "", inference.NewHTTPStatusError(http.StatusBadRequest, "endpoint does not match shared model service capability")
-		}
-		return pool.Model, poolSource(pool.ID), nil
-	case edge.ModelSourceCluster:
-		for _, candidate := range h.clusterChatModels(ctx) {
-			if edgeClusterModelID(candidate) == id && h.s.cluster.ModelSourceState(ctx, candidate.ID, cluster.SourceCluster) == "configured" {
-				return candidate.ID, cluster.SourceCluster, nil
-			}
-		}
-		return "", "", inference.NewHTTPStatusErrorWithCause(http.StatusServiceUnavailable, &cluster.ErrNoNode{Model: target})
-	default:
 		return id, "local", nil
 	}
+	source = poolSource(serviceID)
+	pool, ok := providerPoolForRequest("", source)
+	if !ok {
+		return "", "", inference.NewHTTPStatusError(http.StatusNotFound, "edge model service not found or disabled")
+	}
+	details, available := h.s.providerPoolDetails(pool)
+	if !available {
+		return "", "", providerPoolUnavailableError(pool)
+	}
+	if !slices.Contains(details.InferenceProtocols, "chat/completions") || !slices.Contains(details.InferenceProtocols, protocol) {
+		return "", "", inference.NewHTTPStatusError(http.StatusBadRequest, "endpoint does not match shared model service capability")
+	}
+	return pool.Model, source, nil
 }
 
-// Models includes local, published AI Gateway and cluster chat models.
-func (h edgeHost) Models(ctx context.Context) []edge.Model {
+// Models lists local models and published AI Gateway chat services.
+func (h edgeHost) Models(context.Context) []edge.Model {
 	out := h.localModels()
 	for _, pool := range config.GetProviderPools() {
 		if !pool.Enabled {
 			continue
 		}
-		protocols := h.s.providerPoolView(pool).InferenceProtocols
-		if !slices.Contains(protocols, "chat/completions") {
+		details, _ := h.s.providerPoolDetails(pool)
+		if !slices.Contains(details.InferenceProtocols, "chat/completions") {
 			continue
 		}
 		out = append(out, edge.Model{
-			ID: edge.RoutedModelID(edge.ModelSourceGateway, pool.ID), Name: pool.Model,
+			ID: edge.ModelServiceID(pool.ID), Name: pool.Model,
 			Source: edge.ModelSourceGateway, Ready: true, State: edge.ModelLoaded,
-		})
-	}
-	return append(out, h.clusterModels(ctx)...)
-}
-
-func (h edgeHost) clusterChatModels(ctx context.Context) []cluster.ClusterModel {
-	m := h.s.cluster
-	if m == nil || !m.Store().InCluster() {
-		return nil
-	}
-	return slices.DeleteFunc(m.Models(ctx), func(item cluster.ClusterModel) bool {
-		category := item.Category
-		if category == "" {
-			category = categoryForPipelineTag(item.PipelineTag)
-		}
-		return len(item.Nodes) == 0 || !edgeServableModel(api.ModelInfo{Category: category, PipelineTag: item.PipelineTag, DecisionOnly: item.DecisionOnly})
-	})
-}
-
-func edgeClusterModelID(item cluster.ClusterModel) string {
-	// Keep a repository's sharing ID even when the cluster chooses a
-	// different inference alias for it. Deployments have their own IDs.
-	id := item.ID
-	if item.Repository != "" && !strings.HasPrefix(item.ID, cluster.DeploymentModelPrefix) {
-		id = item.Repository
-	}
-	return edge.RoutedModelID(edge.ModelSourceCluster, id)
-}
-
-func (h edgeHost) clusterModels(ctx context.Context) []edge.Model {
-	var out []edge.Model
-	for _, item := range h.clusterChatModels(ctx) {
-		ready := h.s.cluster.ModelSourceState(ctx, item.ID, cluster.SourceCluster) == "configured"
-		state := ""
-		if ready {
-			state = edge.ModelSleeping
-			if slices.ContainsFunc(item.Nodes, func(n cluster.ModelNode) bool { return n.Online && n.Loaded }) {
-				state = edge.ModelLoaded
-			}
-		}
-		out = append(out, edge.Model{
-			ID: edgeClusterModelID(item), Name: item.ID,
-			Source: edge.ModelSourceCluster, Ready: ready, State: state, Format: item.Format,
 		})
 	}
 	return out
