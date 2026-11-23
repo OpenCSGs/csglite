@@ -368,7 +368,8 @@ func TestDeploymentAcrossPublicTunnelJoinControlAndLeave(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &leaveDeploymentHost{deploymentTestHost: &deploymentTestHost{fakeHost: &fakeHost{name: "worker", limit: 2}, running: map[string]bool{}}}
-	worker, err := New(Options{Dir: t.TempDir(), Host: host, Mode: "worker", GatewayURL: server.URL, TLSCAFile: caFile, Logf: t.Logf})
+	worker, err := New(Options{Dir: t.TempDir(), Host: host, Mode: "worker", GatewayURL: server.URL, TLSCAFile: caFile,
+		ListenAddr: "127.0.0.1:0", Discoverer: NopDiscoverer{}, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +488,14 @@ func TestDeploymentAcrossPublicTunnelJoinControlAndLeave(t *testing.T) {
 		t.Fatal("leaving retained Master control")
 	}
 	waitDeployment(t, worker, d.ID, "blocked")
-
+	left := worker.View(ctx)
+	if left.Mode != "" || left.GatewayURL != "" || left.Cluster != nil || left.Active {
+		t.Fatalf("departed worker did not return to standalone mode: mode=%q, joined=%v, active=%v", left.Mode, left.Cluster != nil, left.Active)
+	}
+	info, _, err := worker.CreateCluster("standalone")
+	if err != nil || info.Topology != "" {
+		t.Fatalf("former worker could not create a LAN cluster: %v", err)
+	}
 }
 
 func (h *deploymentTestHost) DeleteDeployment(d Deployment) (string, error) {

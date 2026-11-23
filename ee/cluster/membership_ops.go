@@ -24,7 +24,7 @@ import (
 
 // CreateCluster founds a cluster of one and returns the join token.
 func (m *Manager) CreateCluster(name string) (ClusterInfo, string, error) {
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		return ClusterInfo{}, "", errors.New("a public worker joins a gateway; it cannot create a cluster")
 	}
 	if err := m.Activate(); err != nil {
@@ -32,7 +32,7 @@ func (m *Manager) CreateCluster(name string) (ClusterInfo, string, error) {
 	}
 	topology := ""
 	gateway := ""
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		topology = "public"
 		gateway = m.identity.UUID
 	}
@@ -40,7 +40,7 @@ func (m *Manager) CreateCluster(name string) (ClusterInfo, string, error) {
 	if err != nil {
 		return ClusterInfo{}, "", err
 	}
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		if _, err := m.store.UpdateSettings(func(s *Settings) { s.AcceptWork = false; s.RoutingMode = RoutingBalanced }); err != nil {
 			return ClusterInfo{}, "", err
 		}
@@ -53,7 +53,7 @@ func (m *Manager) CreateCluster(name string) (ClusterInfo, string, error) {
 
 // JoinToken returns the current token (minted this process) or rotates one.
 func (m *Manager) JoinToken(rotate bool) (string, error) {
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		return "", errors.New("join tokens are managed on the public gateway")
 	}
 	if !m.store.InCluster() {
@@ -72,10 +72,10 @@ func (m *Manager) JoinToken(rotate bool) (string, error) {
 
 // Join contacts a member of the cluster named by token and joins.
 func (m *Manager) Join(ctx context.Context, token, address string) (ClusterInfo, error) {
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		return m.joinPublic(ctx, token, address)
 	}
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		return ClusterInfo{}, errors.New("a public gateway creates its own cluster")
 	}
 	if m.store.InCluster() {
@@ -232,7 +232,7 @@ func (m *Manager) autoJoin(token string) {
 			return
 		case <-time.After(delay):
 		}
-		if m.store.InCluster() {
+		if m.store.InCluster() || m.startupJoinToken() == "" {
 			return
 		}
 		joinCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -258,7 +258,7 @@ func (m *Manager) autoJoin(token string) {
 // Invite brings an unpaired node seen on the LAN into this cluster using the
 // admission code shown on that node.
 func (m *Manager) Invite(ctx context.Context, nodeUUID, code, address string) (Member, error) {
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		return Member{}, errors.New("public workers cannot invite other nodes")
 	}
 	if !m.store.InCluster() {
@@ -349,7 +349,7 @@ func (m *Manager) Invite(ctx context.Context, nodeUUID, code, address string) (M
 // secret-provisioned node it also pauses automatic formation, otherwise the
 // node would rejoin within seconds; creating or joining a cluster resumes it.
 func (m *Manager) Leave(ctx context.Context) error {
-	if m.opts.Mode != "" {
+	if m.mode() != "" {
 		return m.leavePublic(ctx)
 	}
 	if !m.store.InCluster() {
@@ -377,7 +377,7 @@ func (m *Manager) Leave(ctx context.Context) error {
 	if err := m.leaveLocally(); err != nil {
 		return err
 	}
-	if !m.AutoFormEnabled() && strings.TrimSpace(m.opts.JoinToken) == "" {
+	if !m.AutoFormEnabled() && m.startupJoinToken() == "" {
 		// A machine that left on purpose is a single machine again: stop
 		// listening and broadcasting until the operator clusters it again.
 		m.deactivate()
@@ -420,7 +420,7 @@ func (m *Manager) leaveLocally() error {
 
 // RemoveMember drops a member, tells it, and lets gossip carry the tombstone.
 func (m *Manager) RemoveMember(ctx context.Context, nodeUUID string) error {
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		return errors.New("public workers cannot remove cluster members; use leave to disconnect this node")
 	}
 	mem, ok := m.store.Member(nodeUUID)
@@ -430,7 +430,7 @@ func (m *Manager) RemoveMember(ctx context.Context, nodeUUID string) error {
 	addrs := m.dir.Candidates(nodeUUID)
 	// Revoke outstanding public invitations as well as this node's identity.
 	// Other admitted nodes reconnect with their own certificate, not this token.
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		if _, err := m.store.RotateJoinToken(); err != nil {
 			return err
 		}
@@ -439,7 +439,7 @@ func (m *Manager) RemoveMember(ctx context.Context, nodeUUID string) error {
 		return err
 	}
 	m.forgetNode(nodeUUID)
-	if m.opts.Mode != "" {
+	if m.mode() != "" {
 		return nil
 	}
 	if len(addrs) > 0 {
@@ -466,7 +466,7 @@ func (m *Manager) Rename(name string) error {
 func (m *Manager) UpdateSettings(fn func(*Settings)) (Settings, error) {
 	_, err := m.store.UpdateSettings(func(s *Settings) {
 		fn(s)
-		if m.opts.Mode == "worker" {
+		if m.mode() == "worker" {
 			s.ManagedBy = "" // Derived from membership, never a second writable source.
 		}
 	})
@@ -484,7 +484,7 @@ func (m *Manager) UpdateSettings(fn func(*Settings)) (Settings, error) {
 
 // PullOnNode asks a member to download a model from its own model source.
 func (m *Manager) PullOnNode(ctx context.Context, nodeUUID string, body json.RawMessage) (json.RawMessage, error) {
-	if m.opts.Mode != "" {
+	if m.mode() != "" {
 		return nil, errors.New("public workers prepare their models locally; remote model downloads are not exposed")
 	}
 	mem, ok := m.store.Member(nodeUUID)

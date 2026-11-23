@@ -8235,7 +8235,7 @@
           "Cluster"
         ],
         "summary": "Leave the cluster",
-        "description": "Announces departure and revokes membership, then waits up to 30 seconds for this node's managed deployments to unload. Pending downloads and loads are cancelled; in-flight managed inference is interrupted to release the runtime. Cached model files and independently loaded local models are retained. The node identity is kept for pairing again. If cleanup outlasts the wait or the caller disconnects, membership is still revoked and cleanup continues in the background.",
+        "description": "Announces departure and revokes membership, then waits up to 30 seconds for this node's managed deployments to unload. Pending downloads and loads are cancelled; in-flight managed inference is interrupted to release the runtime. Cached model files and independently loaded local models are retained. The node identity is kept for pairing again. A public worker, including one already unpaired, clears its Master configuration and returns to standalone (LAN) mode. If cleanup outlasts the wait or the caller disconnects, membership is still revoked and cleanup continues in the background.",
         "operationId": "leaveCluster",
         "responses": {
           "400": {

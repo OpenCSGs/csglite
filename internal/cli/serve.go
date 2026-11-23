@@ -79,9 +79,10 @@ func newServeCmd(version string) *cobra.Command {
 				// signs it, and replaces both together on update.
 				alignContext, cancelAlign := context.WithCancel(context.Background())
 				aligned := make(chan struct{})
+				isGateway := cfg.Cluster.Mode == "gateway"
 				go func() {
 					defer close(aligned)
-					if cfg.Cluster.Mode == "gateway" {
+					if isGateway {
 						return
 					}
 					if err := upgrade.AlignLlamaRuntime(alignContext, cfg.TempDir()); err != nil {

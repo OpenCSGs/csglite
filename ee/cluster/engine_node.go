@@ -40,7 +40,7 @@ func (e *nodeEngine) PrefersNativeAnthropicMessages() bool { return true }
 // forward posts body to the member's forwarded-inference path and returns the
 // raw response; non-2xx answers become errors carrying the status.
 func (e *nodeEngine) forward(ctx context.Context, path string, body []byte, headers http.Header) (*http.Response, error) {
-	if e.m.opts.Mode == "gateway" {
+	if e.m.mode() == "gateway" {
 		return e.m.publicForward(ctx, e.mem.UUID, path, body, headers)
 	}
 	addrs := e.m.dir.Candidates(e.mem.UUID)

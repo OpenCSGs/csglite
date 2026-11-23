@@ -134,6 +134,7 @@ const settingsError = signal("");
 const settingsSaved = signal(false);
 const leaveOpen = signal(false);
 const leaving = signal(false);
+const leaveError = signal("");
 
 function errorMessage(err: unknown): string {
   return err instanceof Error && err.message ? err.message : t("cluster.unknownError");
@@ -203,7 +204,7 @@ async function loadDiscovered() {
 
 async function loadAdmissionCode() {
   if (featureDisabled.value || !view.value || (view.value.mode && view.value.mode !== "lan")) return;
-  if (view.value?.cluster) return;
+  if (view.value?.cluster || view.value?.active === false) return;
   try {
     admissionCode.value = await getClusterCode();
     admissionCodeError.value = "";
@@ -509,15 +510,22 @@ async function saveSettings() {
 
 async function confirmLeave() {
   leaving.value = true;
+  leaveError.value = "";
   try {
-    view.value = await leaveCluster();
+    const next = await leaveCluster();
+    viewRevision++;
+    view.value = next;
+    clusterMode.value = navigationMode(next);
+    viewError.value = "";
+    joinAddress.value = "";
+    joinToken.value = "";
     leaveOpen.value = false;
     tokenInfo.value = null;
     createdToken.value = "";
     activeTab.value = "overview";
     await Promise.all([loadAdmissionCode(), loadDiscovered()]);
   } catch (err) {
-    settingsError.value = errorMessage(err);
+    leaveError.value = errorMessage(err);
   } finally {
     leaving.value = false;
   }
@@ -594,10 +602,28 @@ export function Cluster() {
           {viewError.value && <p class="mt-1 font-mono text-xs">{viewError.value}</p>}
         </section>
       ) : !current.cluster ? (
-        <NotInCluster view={current} />
+        <NotInCluster key={current.mode ?? "lan"} view={current} />
       ) : (
         <InCluster view={current} />
       )}
+      {current && <ConfirmDialog
+        open={leaveOpen.value}
+        title={t(current.mode === "gateway" ? "cluster.masterLeaveTitle"
+          : !current.cluster ? "cluster.workerResetRole" : "cluster.leaveTitle")}
+        name={current.cluster?.name}
+        description={leaveError.value || t(current.mode === "gateway" ? "cluster.masterLeaveDesc"
+          : current.mode === "worker" ? "cluster.workerLeaveDesc" : "cluster.leaveDesc")}
+        confirmLabel={t(current.mode === "gateway" ? "cluster.masterLeaveTitle"
+          : !current.cluster ? "cluster.workerResetRole" : "cluster.leaveConfirm")}
+        busy={leaving.value}
+        onConfirm={() => void confirmLeave()}
+        onCancel={() => {
+          if (!leaving.value) {
+            leaveOpen.value = false;
+            leaveError.value = "";
+          }
+        }}
+      />}
     </div>
   );
 }
@@ -912,6 +938,12 @@ function NotInCluster({ view }: { view: ClusterView }) {
                 <h2 class="text-lg font-bold text-gray-900">{t(isLAN ? "cluster.setupJoinCardTitle" : "cluster.joinTitle")}</h2>
                 {!isLAN && <p class="mt-1 text-sm text-gray-500">{t("cluster.workerJoinDesc")}</p>}
               </div>
+              {view.mode === "worker" && (
+                <button type="button" onClick={() => (leaveOpen.value = true)}
+                  class="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                  {t("cluster.workerResetRole")}
+                </button>
+              )}
               {isLAN && (
                 <div class="inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1">
                   <button
@@ -1174,18 +1206,6 @@ function InCluster({ view }: { view: ClusterView }) {
       {activeTab.value === "settings" && <SettingsSection view={view} />}
 
       <InviteDialog />
-      <ConfirmDialog
-        open={leaveOpen.value}
-        title={t(view.mode === "gateway" ? "cluster.masterLeaveTitle" : "cluster.leaveTitle")}
-        name={view.cluster?.name}
-        description={t(view.mode === "worker" ? "cluster.workerLeaveDesc" : view.mode === "gateway" ? "cluster.masterLeaveDesc" : "cluster.leaveDesc")}
-        confirmLabel={t(view.mode === "gateway" ? "cluster.masterLeaveTitle" : "cluster.leaveConfirm")}
-        busy={leaving.value}
-        onConfirm={() => void confirmLeave()}
-        onCancel={() => {
-          if (!leaving.value) leaveOpen.value = false;
-        }}
-      />
     </div>
   );
 }

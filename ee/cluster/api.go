@@ -27,7 +27,7 @@ func (m *Manager) Admin() *adminAPI { return &adminAPI{m: m} }
 // requireController keeps public workers execution-only even when called
 // directly through the local API or CLI.
 func (a *adminAPI) requireController(w http.ResponseWriter) bool {
-	if a.m.opts.Mode != "worker" {
+	if a.m.mode() != "worker" {
 		return true
 	}
 	writeCodedError(w, http.StatusForbidden, "manage the cluster and deployments on the Master", "master_required")
@@ -372,7 +372,7 @@ func (a *adminAPI) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "state must be active, drain or maintenance")
 		return
 	}
-	if a.m.opts.Mode == "worker" {
+	if a.m.mode() == "worker" {
 		current := a.m.store.Settings()
 		if (req.RoutingMode != nil && *req.RoutingMode != current.RoutingMode) ||
 			(req.PreferLocal != nil && *req.PreferLocal != current.PreferLocal) ||
@@ -390,7 +390,7 @@ func (a *adminAPI) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if req.ManagedBy != nil && *req.ManagedBy != "" {
-		if _, ok := a.m.store.Member(*req.ManagedBy); !ok || a.m.opts.Mode == "gateway" {
+		if _, ok := a.m.store.Member(*req.ManagedBy); !ok || a.m.mode() == "gateway" {
 			writeError(w, 400, "managed_by must name an admitted deployment controller")
 			return
 		}
@@ -460,7 +460,7 @@ func (a *adminAPI) HandleModelSync(w http.ResponseWriter, r *http.Request) {
 	if !a.requireController(w) {
 		return
 	}
-	if a.m.opts.Mode != "" {
+	if a.m.mode() != "" {
 		writeError(w, 409, "public cluster models are prepared locally on each worker; model distribution is not enabled")
 		return
 	}
