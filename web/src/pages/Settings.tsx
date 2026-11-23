@@ -1,9 +1,9 @@
 import { signal } from "@preact/signals";
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { LicenseFeaturesTooltip } from "../components/LicenseFeaturesTooltip";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DocumentationLink } from "../components/DocumentationLink";
-import { cloudAuth, cloudUserLabel, communitySettings, invalidateCloudAuth, refreshCloudAuth } from "../cloudAccount";
+import { cloudAuth, cloudUserLabel, communitySettings, connectCloudWithAccessToken, invalidateCloudAuth, refreshCloudAuth, savingCommunity } from "../cloudAccount";
 import { DirectoryPickerDialog } from "../components/DirectoryPickerDialog";
 import { UpgradeDialog, type UpgradeProgress } from "../components/UpgradeDialog";
 import { t, locale, setLocale } from "../i18n";
@@ -23,6 +23,7 @@ import {
   getTags,
   installImageRuntime,
   getSettings,
+  openExternalURL,
   saveSettings,
   upgradeWithProgress,
 } from "../api/client";
@@ -1164,6 +1165,79 @@ function CloudServiceActions({
   );
 }
 
+function OpenCSGAccessTokenForm() {
+  const [token, setToken] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const auth = cloudAuth.value;
+  const accessTokenURL = auth?.access_token_url;
+  const disabled = saving || savingCommunity.value;
+
+  return (
+    <form class="space-y-2 border-t border-gray-100 pt-4" onSubmit={async (event) => {
+      event.preventDefault();
+      const value = token.trim();
+      if (!value || disabled) return;
+      setSaving(true);
+      setError("");
+      setSaved(false);
+      try {
+        await connectCloudWithAccessToken(value);
+        setToken("");
+        setSaved(true);
+      } catch {
+        setError(t("settings.accessTokenLoginFailed"));
+      } finally {
+        setSaving(false);
+      }
+    }}>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <label for="opencsg-access-token" class="text-sm font-medium text-gray-700">{t("settings.accessToken")}</label>
+        {accessTokenURL && (
+          <a href={accessTokenURL} target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 hover:underline" onClick={async (event) => {
+            if (!desktopMode.value) return;
+            event.preventDefault();
+            try {
+              if (await openExternalURL(accessTokenURL)) return;
+            } catch {
+              // The error is surfaced next to the token field.
+            }
+            setError(t("settings.accessTokenPageFailed"));
+          }}>{t("settings.openAccessTokens")}</a>
+        )}
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <input
+          id="opencsg-access-token"
+          type="password"
+          autocomplete="new-password"
+          spellcheck={false}
+          value={token}
+          disabled={disabled}
+          aria-describedby="opencsg-access-token-hint"
+          onInput={(event) => {
+            setToken(event.currentTarget.value);
+            setError("");
+            setSaved(false);
+          }}
+          class="min-w-0 grow basis-48 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+        />
+        <button type="submit" disabled={disabled || !token.trim()} class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-60">
+          {t(saving ? "settings.accessTokenSigningIn" : "settings.accessTokenSignIn")}
+        </button>
+      </div>
+      <p id="opencsg-access-token-hint" class="text-xs text-gray-500">{t("settings.tokenInputHint")}</p>
+      {error && <p role="alert" class="text-sm text-red-600">{error}</p>}
+      {!error && saved && auth?.has_token && (
+        <p role="status" class={auth.authenticated ? "text-sm text-emerald-700" : "text-sm text-amber-700"}>
+          {auth.authenticated ? cloudUserLabel(auth) || t("settings.signedIn") : t("settings.accessTokenUnverified")}
+        </p>
+      )}
+    </form>
+  );
+}
+
 export function Settings() {
   void locale.value;
 
@@ -1491,6 +1565,7 @@ export function Settings() {
                       </button>
                     </div>
                   </div>
+                  <OpenCSGAccessTokenForm />
                 </div>
               )}
               {cloudServiceTab.value === "huggingface" && (
