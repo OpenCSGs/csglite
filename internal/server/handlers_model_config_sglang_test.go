@@ -137,6 +137,7 @@ func TestModelConfigAdvertisesSGLangPlanWhenAvailable(t *testing.T) {
 	if err := os.WriteFile(python, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("CSGHUB_LITE_SGLANG_DISABLE", "0")
 	t.Setenv("CSGHUB_LITE_SGLANG_PYTHON", python)
 	inference.ResetSGLangRuntimeCache()
 	t.Cleanup(inference.ResetSGLangRuntimeCache)
