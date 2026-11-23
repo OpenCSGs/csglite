@@ -264,7 +264,7 @@ func (m *Manager) deploymentController() string {
 		return ""
 	}
 	controller := m.store.Settings().ManagedBy
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		controller = c.GatewayUUID
 	}
 	if _, ok := m.store.Member(controller); !ok {
@@ -275,7 +275,7 @@ func (m *Manager) deploymentController() string {
 
 func (m *Manager) effectiveSettings() Settings {
 	s := m.store.Settings()
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		s.ManagedBy = m.deploymentController()
 	}
 	return s
@@ -283,12 +283,12 @@ func (m *Manager) effectiveSettings() Settings {
 
 func (m *Manager) deploymentAuthorized(controller string) bool {
 	if controller == m.identity.UUID {
-		return m.opts.Mode != "worker" && m.store.InCluster()
+		return m.mode() != "worker" && m.store.InCluster()
 	}
 	if controller == "" || m.deploymentController() != controller {
 		return false
 	}
-	return m.opts.Mode == "worker" || m.opts.Mode == ""
+	return m.mode() == "worker" || m.mode() == ""
 }
 
 func (m *Manager) deploymentAllowed(d Deployment) bool {
@@ -664,7 +664,7 @@ func (m *Manager) createDeployment(spec DeploymentSpec) (Deployment, error) {
 }
 
 func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory uint64) (Deployment, error) {
-	if m.opts.Mode == "worker" || !m.store.InCluster() {
+	if m.mode() == "worker" || !m.store.InCluster() {
 		return Deployment{}, errors.New("create deployments on a cluster controller")
 	}
 	keepAlive, err := normalizeDeploymentKeepAlive(spec.KeepAlive)
@@ -713,7 +713,7 @@ func (m *Manager) createDeploymentWithMemory(spec DeploymentSpec, minimumMemory 
 }
 
 func (m *Manager) changeDeployment(id, desired string) (Deployment, error) {
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		return Deployment{}, errors.New("manage deployments on the Master")
 	}
 	if desired != "running" && desired != "stopped" && desired != "deleted" {

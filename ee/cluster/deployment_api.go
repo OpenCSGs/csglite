@@ -52,7 +52,7 @@ func (m *Manager) sendDeployment(ctx context.Context, d Deployment) (Deployment,
 		return Deployment{}, errors.New("upgrade the target node to support deployment keep_alive")
 	}
 	var result Deployment
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		g := m.publicHub()
 		if g == nil {
 			return Deployment{}, publictunnel.ErrOffline
@@ -106,7 +106,7 @@ func (m *Manager) deploymentControllerLoop(ctx context.Context) {
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
 	for {
-		if m.Active() && m.opts.Mode != "worker" && m.store.InCluster() {
+		if m.Active() && m.mode() != "worker" && m.store.InCluster() {
 			for _, d := range m.deployments.list(true) {
 				if d.Desired == "deleted" && d.Status.Phase == "deleted" {
 					continue

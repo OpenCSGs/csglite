@@ -79,7 +79,7 @@ func (m *Manager) modelActionHandler(controller string) http.Handler {
 }
 
 func (m *Manager) sendModelAction(ctx context.Context, node string, action ModelAction) error {
-	if m.opts.Mode == "worker" {
+	if m.mode() == "worker" {
 		return errors.New("manage models on the Master")
 	}
 	if err := validateModelAction(action); err != nil {
@@ -96,7 +96,7 @@ func (m *Manager) sendModelAction(ctx context.Context, node string, action Model
 	if st == nil || !st.ModelManagement || st.ManagedBy != m.identity.UUID {
 		return errors.New("target node must authorize this Master and support model management")
 	}
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		hub := m.publicHub()
 		if hub == nil {
 			return publictunnel.ErrOffline

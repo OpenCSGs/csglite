@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/opencsgs/csglite/ee/cluster"
+	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/internal/modelregistry"
@@ -88,6 +89,7 @@ func newClusterManager(s *Server, storageRoot string) *cluster.Manager {
 		TLSKeyFile:       s.cfg.Cluster.TLSKeyFile,
 		TLSCAFile:        s.cfg.Cluster.TLSCAFile,
 		PublicInference:  s.publicClusterWebRoutes(storageRoot),
+		ResetWorkerRole:  func() error { return config.ClearPublicWorker(s.cfg) },
 		Dir:              filepath.Join(storageRoot, clusterStorageDir),
 		Host:             &clusterHost{s: s},
 		Discoverer:       disc,

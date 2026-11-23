@@ -189,9 +189,7 @@ func (m *Manager) memberViews(ctx context.Context, withStatus bool) []NodeView {
 func (m *Manager) View(ctx context.Context) ClusterView {
 	members := m.memberViews(ctx, true)
 	v := ClusterView{
-		Mode:               m.opts.Mode,
-		GatewayURL:         m.opts.GatewayURL,
-		PublicListenAddr:   m.opts.PublicListenAddr,
+		Mode:               m.mode(),
 		Node:               m.selfView(),
 		Cluster:            m.store.Cluster(),
 		NodeLimit:          m.NodeLimit(),
@@ -203,6 +201,12 @@ func (m *Manager) View(ctx context.Context) ClusterView {
 		AutoForm:           m.AutoFormEnabled(),
 		AutoFormPaused:     m.AutoFormEnabled() && m.store.Settings().AutoFormPaused,
 		Active:             m.Active(),
+	}
+	switch v.Mode {
+	case "worker":
+		v.GatewayURL = m.opts.GatewayURL
+	case "gateway":
+		v.PublicListenAddr = m.opts.PublicListenAddr
 	}
 	var source *ModelSource
 	for _, mv := range members {

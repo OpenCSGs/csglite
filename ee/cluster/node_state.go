@@ -44,7 +44,7 @@ func (m *Manager) nodeStateHandler(controller string) http.Handler {
 		}
 		m.wakeGossip()
 		status := m.LocalStatus(r.Context())
-		if m.opts.Mode == "worker" {
+		if m.mode() == "worker" {
 			status = *m.sharedModelStatus(&status)
 			status.Net.Addrs = nil
 		}
@@ -63,7 +63,7 @@ func (m *Manager) setRemoteNodeState(ctx context.Context, node string, state Nod
 	}
 	request := nodeStateRequest{State: state}
 	var result nodeStateResult
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		hub := m.publicHub()
 		if hub == nil {
 			return Settings{}, publictunnel.ErrOffline

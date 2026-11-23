@@ -79,3 +79,36 @@ it("opens a confirmation from the Remove option on online and offline nodes", as
     vi.unstubAllGlobals();
   }
 });
+
+it("lets an unpaired Worker restore the standalone cluster page", async () => {
+  setLocale("zh");
+  const node = { uuid: "local", name: "Local node", local: true, online: true, health: "healthy" };
+  let mode = "worker";
+  const fetcher = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === "/api/cluster" && init?.method === "DELETE") mode = "lan";
+    if (path === "/api/cluster/discovered") return Response.json({ nodes: [] });
+    return Response.json({ mode, node, cluster: null, active: false, members: [node], node_limit: 0, settings: { state: "active" } });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const container = document.createElement("div");
+  document.body.append(container);
+  try {
+    await act(() => render(<LocationProvider><Cluster /></LocationProvider>, container));
+    const buttons = (parent: ParentNode) => Array.from(parent.querySelectorAll("button"));
+    const reset = () => buttons(container).find(button => button.textContent === "切换为独立节点");
+    await vi.waitFor(() => expect(reset()).toBeDefined());
+    await act(() => reset()!.click());
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+
+    const dialog = container.querySelector('[role="dialog"]')!;
+    await act(() => buttons(dialog).find(button => button.textContent === "切换为独立节点")!.click());
+    await vi.waitFor(() => {
+      expect(fetcher).toHaveBeenCalledWith("/api/cluster", expect.objectContaining({ method: "DELETE" }));
+      expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("创建新集群");
+    });
+  } finally {
+    await act(() => render(null, container));
+    container.remove();
+    vi.unstubAllGlobals();
+  }
+});

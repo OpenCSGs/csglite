@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/opencsgs/csglite/internal/region"
+	"github.com/opencsgs/csglite/internal/safefile"
 	"github.com/opencsgs/csglite/pkg/api"
 )
 
@@ -709,6 +710,32 @@ func Save(cfg *Config) error {
 	configMu.Lock()
 	defer configMu.Unlock()
 
+	cfg.CloudProviderName = NormalizeCloudProviderName(cfg.CloudProviderName)
+	if err := writeConfigLocked(cfg); err != nil {
+		return err
+	}
+	globalConfig = cfg
+	return nil
+}
+
+// ClearPublicWorker removes the offboarded Master connection and preserves
+// the settings shared by standalone nodes, including the configured name.
+func ClearPublicWorker(cfg *Config) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+	if cfg.Cluster.Mode != "worker" {
+		return nil
+	}
+	next := *cfg
+	next.Cluster = ClusterConfig{Name: cfg.Cluster.Name}
+	if err := writeConfigLocked(&next); err != nil {
+		return err
+	}
+	cfg.Cluster = next.Cluster
+	return nil
+}
+
+func writeConfigLocked(cfg *Config) error {
 	cfgPath, err := ConfigPath()
 	if err != nil {
 		return err
@@ -718,18 +745,12 @@ func Save(cfg *Config) error {
 		return err
 	}
 
-	cfg.CloudProviderName = NormalizeCloudProviderName(cfg.CloudProviderName)
-
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	globalConfig = cfg
-	if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(cfgPath, 0o600)
+	return safefile.Write(cfgPath, data, 0o600)
 }
 
 func Reset() {

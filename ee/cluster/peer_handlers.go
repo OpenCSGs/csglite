@@ -167,7 +167,7 @@ func (a *peerAPI) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusUnauthorized, "join token is not valid for this cluster", "bad_token")
 		return
 	}
-	if a.m.opts.Mode == "gateway" {
+	if a.m.mode() == "gateway" {
 		a.m.publicJoinMu.Lock()
 		defer a.m.publicJoinMu.Unlock()
 	}
@@ -180,11 +180,11 @@ func (a *peerAPI) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if a.m.opts.Mode == "gateway" && req.Node.NodeLimit > 0 && len(a.m.store.Members())+2 > req.Node.NodeLimit {
+		if a.m.mode() == "gateway" && req.Node.NodeLimit > 0 && len(a.m.store.Members())+2 > req.Node.NodeLimit {
 			writeJSON(w, 403, errorResponse{Error: "joining node license cannot cover the cluster size", Code: "feature_not_licensed", Limit: req.Node.NodeLimit, Current: len(a.m.store.Members()) + 1})
 			return
 		}
-		if a.m.opts.Mode == "gateway" {
+		if a.m.mode() == "gateway" {
 			for _, existing := range a.m.store.Members() {
 				st, _, err := a.m.publicStatus(existing.UUID)
 				if err != nil {
@@ -213,7 +213,7 @@ func (a *peerAPI) handlePeerJoin(w http.ResponseWriter, r *http.Request) {
 	a.m.wakeGossip()
 	a.m.logf("cluster: node %s (%s) joined via this node", shortUUID(mem.UUID), mem.Name)
 	reply := joinResponse{clusterView: a.m.view(), Responder: a.m.card()}
-	if a.m.opts.Mode == "gateway" {
+	if a.m.mode() == "gateway" {
 		reply.JoinTokenHash = ""
 	}
 	writeJSON(w, http.StatusOK, reply)

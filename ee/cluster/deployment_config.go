@@ -27,7 +27,7 @@ func sameDeploymentIdentity(a, b DeploymentSpec) bool {
 }
 
 func (m *Manager) configureDeployment(id string, generation uint64, patch DeploymentConfigPatch) (Deployment, error) {
-	if m.opts.Mode == "worker" || !m.store.InCluster() {
+	if m.mode() == "worker" || !m.store.InCluster() {
 		return Deployment{}, errors.New("configure deployments on the Master")
 	}
 	if generation == 0 || (patch.Quant == nil && patch.NumCtx == nil && patch.NumParallel == nil && patch.NGPULayers == nil && patch.KeepAlive == nil) {

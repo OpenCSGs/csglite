@@ -112,7 +112,7 @@ func (m *Manager) activatePublic() error {
 	runCtx, runCancel := context.WithCancel(m.ctx)
 	var ln net.Listener
 	var srv *http.Server
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		g, err := publictunnel.NewGateway(publictunnel.GatewayOptions{Authorize: m.authorizePublic, ValidateStatus: m.validatePublicStatus, StatusChanged: m.acceptPublicStatus})
 		if err != nil {
 			runCancel()
@@ -131,7 +131,7 @@ func (m *Manager) activatePublic() error {
 	}
 	m.runCtx, m.runCancel, m.active = runCtx, runCancel, true
 	m.mu.Unlock()
-	if m.opts.Mode == "gateway" {
+	if m.mode() == "gateway" {
 		go func() {
 			var err error
 			if m.opts.TLSCertFile != "" {
@@ -149,7 +149,7 @@ func (m *Manager) activatePublic() error {
 	} else {
 		go m.publicWorkerLoop(runCtx)
 	}
-	if token := strings.TrimSpace(m.opts.JoinToken); token != "" && !m.store.InCluster() {
+	if token := m.startupJoinToken(); token != "" && !m.store.InCluster() {
 		go m.autoJoin(token)
 	}
 	return nil
@@ -289,6 +289,11 @@ func (m *Manager) validatePublicStatus(node string, raw json.RawMessage) error {
 }
 
 func (m *Manager) joinPublic(ctx context.Context, token, address string) (ClusterInfo, error) {
+	m.publicJoinMu.Lock()
+	defer m.publicJoinMu.Unlock()
+	if m.mode() != "worker" {
+		return ClusterInfo{}, errors.New("configure a public worker before joining a Master")
+	}
 	if m.store.InCluster() {
 		return ClusterInfo{}, ErrAlreadyClustered
 	}
@@ -515,10 +520,15 @@ func (m *Manager) publicForward(ctx context.Context, node, path string, body []b
 }
 
 func (m *Manager) leavePublic(ctx context.Context) error {
-	if !m.store.InCluster() {
+	m.publicJoinMu.Lock()
+	defer m.publicJoinMu.Unlock()
+	mode := m.mode()
+	worker := mode == "worker"
+	joined := m.store.InCluster()
+	if mode == "" || (!joined && !worker) {
 		return ErrNotClustered
 	}
-	if m.opts.Mode == "worker" {
+	if worker && joined {
 		for _, mem := range m.store.Members() {
 			for _, addr := range mem.LastAddresses {
 				if addr != m.opts.GatewayURL {
@@ -538,12 +548,36 @@ func (m *Manager) leavePublic(ctx context.Context) error {
 			}
 		}
 	}
-	if err := m.store.Leave(); err != nil {
-		return err
+	if joined {
+		if err := m.store.Leave(); err != nil {
+			return err
+		}
 	}
-	_, err := m.store.UpdateSettings(func(s *Settings) { s.SharedModels = nil })
+	_, settingsErr := m.store.UpdateSettings(func(s *Settings) {
+		s.SharedModels = nil
+		if worker {
+			s.Enabled = false
+			// A provisioning token left in the environment belongs to
+			// the former Worker. Ignore it in LAN mode after restart.
+			s.AutoFormPaused = true
+		}
+	})
+	m.activationMu.Lock()
 	m.deactivate()
-	return errors.Join(err, m.waitDeploymentUnload(ctx))
+	var resetErr error
+	if worker && settingsErr == nil {
+		if m.opts.ResetWorkerRole != nil {
+			resetErr = m.opts.ResetWorkerRole()
+		}
+		if resetErr == nil {
+			m.detachedWorker.Store(true)
+			m.invalidateLocalStatus()
+		} else {
+			resetErr = fmt.Errorf("reset public worker configuration: %w", resetErr)
+		}
+	}
+	m.activationMu.Unlock()
+	return errors.Join(settingsErr, resetErr, m.waitDeploymentUnload(ctx))
 }
 
 // A public worker has no peer polling loop: its authenticated outbound tunnel
@@ -602,7 +636,7 @@ func (m *Manager) publicGatewayView(node *NodeView) {
 
 func (m *Manager) isPublicGateway(node string) bool {
 	c := m.store.Cluster()
-	return m.opts.Mode == "worker" && c != nil && c.Topology == "public" && node == c.GatewayUUID
+	return m.mode() == "worker" && c != nil && c.Topology == "public" && node == c.GatewayUUID
 }
 
 func (m *Manager) acceptPublicStatus(node string, raw json.RawMessage) {
@@ -613,7 +647,7 @@ func (m *Manager) acceptPublicStatus(node string, raw json.RawMessage) {
 }
 
 func (m *Manager) pushPublicStatus() {
-	if m.opts.Mode != "worker" {
+	if m.mode() != "worker" {
 		return
 	}
 	m.publicConnectionMu.Lock()
