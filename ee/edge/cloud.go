@@ -24,6 +24,8 @@ import (
 // A working inference gateway may not deploy the edge serving API at all.
 var ErrGatewayUnreachable = errors.New("the CSGHub AI gateway does not provide the edge serving API (HTTP 404)")
 
+var ErrModelUnavailable = errors.New("the selected model is unavailable for edge serving")
+
 // APIError is a gateway API failure, carrying the HTTP status so the local
 // API can pass it on.
 type APIError struct {
@@ -207,9 +209,20 @@ type SubmitRequest struct {
 	MaxConcurrency  int    `json:"max_concurrency"`
 }
 
-// Submit files an application to serve a local model of this node. The
+// Submit files an application to serve a model through this node. The
 // node is registered first when needed, since an application names it.
 func (m *Manager) Submit(ctx context.Context, req SubmitRequest) (json.RawMessage, error) {
+	source, _ := RoutedModelTarget(req.LocalModelID)
+	var selected Model
+	for _, mod := range m.host.Models(ctx) {
+		if mod.ID == req.LocalModelID {
+			selected = mod
+			break
+		}
+	}
+	if source != "" && !selected.Ready {
+		return nil, ErrModelUnavailable
+	}
 	gatewayURL, userToken := m.host.Cloud()
 	if _, err := m.ensureRegistered(ctx, gatewayURL, userToken); err != nil {
 		return nil, err
@@ -223,11 +236,9 @@ func (m *Manager) Submit(ctx context.Context, req SubmitRequest) (json.RawMessag
 		"completion_price": req.CompletionPrice,
 		"max_concurrency":  req.MaxConcurrency,
 	}
-	for _, mod := range m.host.Models(ctx) {
-		if mod.ID == req.LocalModelID {
-			body["quantization"] = mod.Format
-			body["context_length"] = mod.ContextLength
-		}
+	if selected.ID != "" {
+		body["quantization"] = selected.Format
+		body["context_length"] = selected.ContextLength
 	}
 	data, _, err := m.call(ctx, http.MethodPost, "/api/v1/edge/applications", nil, body)
 	return data, err

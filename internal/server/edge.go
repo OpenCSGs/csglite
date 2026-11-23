@@ -1,19 +1,25 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/ee/edge"
+	"github.com/opencsgs/csglite/internal/config"
+	"github.com/opencsgs/csglite/internal/inference"
 	"github.com/opencsgs/csglite/internal/license"
 	"github.com/opencsgs/csglite/pkg/api"
 )
@@ -67,23 +73,16 @@ func (s *Server) stopEdge() {
 
 type edgeHost struct{ s *Server }
 
-// InferenceHandler serves requests arriving from the gateway. Like cluster
-// forwarding, the route source is pinned to "local": a remote caller pays
-// for this machine's model and must never be routed onward to a cloud
-// provider or a cluster peer.
+// InferenceHandler serves requests arriving from the gateway. The gateway
+// sends the model ID stored on the approved application. That ID pins the
+// route, independent of any source field or headers from the caller.
 func (h edgeHost) InferenceHandler() http.Handler {
 	s := h.s
 	mux := http.NewServeMux()
-	local := func(handler http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			ctx := context.WithValue(r.Context(), providerRouteSourceContextKey{}, "local")
-			handler(w, r.WithContext(ctx))
-		}
-	}
-	mux.HandleFunc("POST /v1/chat/completions", local(s.handleOpenAIChatCompletions))
-	mux.HandleFunc("POST /v1/embeddings", local(s.handleOpenAIEmbeddings))
-	mux.HandleFunc("POST /v1/responses", local(s.handleOpenAIResponses))
-	mux.HandleFunc("POST /v1/messages", local(s.handleAnthropicMessages))
+	mux.HandleFunc("POST /v1/chat/completions", h.withModelRoute(s.handleOpenAIChatCompletions))
+	mux.HandleFunc("POST /v1/embeddings", h.withModelRoute(s.handleOpenAIEmbeddings))
+	mux.HandleFunc("POST /v1/responses", h.withModelRoute(s.handleOpenAIResponses))
+	mux.HandleFunc("POST /v1/messages", h.withModelRoute(s.handleAnthropicMessages))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not served to the gateway")
 	})
@@ -94,9 +93,135 @@ func (h edgeHost) InferenceHandler() http.Handler {
 	})
 }
 
-// Models reports downloaded language models; a model is ready when this
-// machine can run it locally.
-func (h edgeHost) Models(context.Context) []edge.Model {
+func (h edgeHost) withModelRoute(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// The tunnel guard bounds the body before the inference handler runs.
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "unable to read edge request")
+			return
+		}
+		contentType := r.Header.Get("Content-Type")
+		target, err := inference.ParseModelRequest(body, contentType)
+		if err != nil {
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+		model, source, err := h.modelRoute(r.Context(), target.Model, strings.TrimPrefix(r.URL.Path, "/v1/"))
+		if err != nil {
+			writeOpenAIInferenceError(w, err)
+			return
+		}
+		if _, err := effectiveRequestSource(withProviderRouteSourceContext(r.Context(), source), target.Source); err != nil {
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+		r = r.Clone(withProviderRouteSourceContext(r.Context(), source))
+		if source != "local" {
+			body, contentType, err = inference.RewriteModelRequest(body, contentType, model, source)
+			if err != nil {
+				writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid edge request body")
+				return
+			}
+			r.Header.Set("Content-Type", contentType)
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.ContentLength = int64(len(body))
+		next(w, r)
+	}
+}
+
+func (h edgeHost) modelRoute(ctx context.Context, id, protocol string) (model, source string, err error) {
+	kind, target := edge.RoutedModelTarget(id)
+	switch kind {
+	case edge.ModelSourceGateway:
+		pool, ok := providerPoolForRequest("", poolSource(target))
+		if target == "" || !ok {
+			return "", "", inference.NewHTTPStatusError(http.StatusNotFound, "edge model service not found or disabled")
+		}
+		if !h.s.providerPoolAvailable(pool) {
+			return "", "", providerPoolUnavailableError(pool)
+		}
+		protocols := h.s.providerPoolView(pool).InferenceProtocols
+		if !slices.Contains(protocols, "chat/completions") || !slices.Contains(protocols, protocol) {
+			return "", "", inference.NewHTTPStatusError(http.StatusBadRequest, "endpoint does not match shared model service capability")
+		}
+		return pool.Model, poolSource(pool.ID), nil
+	case edge.ModelSourceCluster:
+		for _, candidate := range h.clusterChatModels(ctx) {
+			if edgeClusterModelID(candidate) == id && h.s.cluster.ModelSourceState(ctx, candidate.ID, cluster.SourceCluster) == "configured" {
+				return candidate.ID, cluster.SourceCluster, nil
+			}
+		}
+		return "", "", inference.NewHTTPStatusErrorWithCause(http.StatusServiceUnavailable, &cluster.ErrNoNode{Model: target})
+	default:
+		return id, "local", nil
+	}
+}
+
+// Models includes local, published AI Gateway and cluster chat models.
+func (h edgeHost) Models(ctx context.Context) []edge.Model {
+	out := h.localModels()
+	for _, pool := range config.GetProviderPools() {
+		if !pool.Enabled {
+			continue
+		}
+		protocols := h.s.providerPoolView(pool).InferenceProtocols
+		if !slices.Contains(protocols, "chat/completions") {
+			continue
+		}
+		out = append(out, edge.Model{
+			ID: edge.RoutedModelID(edge.ModelSourceGateway, pool.ID), Name: pool.Model,
+			Source: edge.ModelSourceGateway, Ready: true, State: edge.ModelLoaded,
+		})
+	}
+	return append(out, h.clusterModels(ctx)...)
+}
+
+func (h edgeHost) clusterChatModels(ctx context.Context) []cluster.ClusterModel {
+	m := h.s.cluster
+	if m == nil || !m.Store().InCluster() {
+		return nil
+	}
+	return slices.DeleteFunc(m.Models(ctx), func(item cluster.ClusterModel) bool {
+		category := item.Category
+		if category == "" {
+			category = categoryForPipelineTag(item.PipelineTag)
+		}
+		return len(item.Nodes) == 0 || !edgeServableModel(api.ModelInfo{Category: category, PipelineTag: item.PipelineTag, DecisionOnly: item.DecisionOnly})
+	})
+}
+
+func edgeClusterModelID(item cluster.ClusterModel) string {
+	// Keep a repository's sharing ID even when the cluster chooses a
+	// different inference alias for it. Deployments have their own IDs.
+	id := item.ID
+	if item.Repository != "" && !strings.HasPrefix(item.ID, cluster.DeploymentModelPrefix) {
+		id = item.Repository
+	}
+	return edge.RoutedModelID(edge.ModelSourceCluster, id)
+}
+
+func (h edgeHost) clusterModels(ctx context.Context) []edge.Model {
+	var out []edge.Model
+	for _, item := range h.clusterChatModels(ctx) {
+		ready := h.s.cluster.ModelSourceState(ctx, item.ID, cluster.SourceCluster) == "configured"
+		state := ""
+		if ready {
+			state = edge.ModelSleeping
+			if slices.ContainsFunc(item.Nodes, func(n cluster.ModelNode) bool { return n.Online && n.Loaded }) {
+				state = edge.ModelLoaded
+			}
+		}
+		out = append(out, edge.Model{
+			ID: edgeClusterModelID(item), Name: item.ID,
+			Source: edge.ModelSourceCluster, Ready: ready, State: state, Format: item.Format,
+		})
+	}
+	return out
+}
+
+func (h edgeHost) localModels() []edge.Model {
 	infos, err := h.s.listLocalModelInfos()
 	if err != nil {
 		return nil
@@ -146,7 +271,7 @@ func (h edgeHost) engineStates() map[string]string {
 	return states
 }
 
-// edgeServableModel reports whether a local model answers chat requests:
+// edgeServableModel reports whether a model answers chat requests:
 // language models and the vision/video chat models (image-text-to-text),
 // which carry no language_model category of their own.
 func edgeServableModel(info api.ModelInfo) bool {
@@ -381,6 +506,14 @@ func (s *Server) handleEdgeStatements(w http.ResponseWriter, r *http.Request, m 
 // can show the gateway's message (for example a review conflict). The
 // gateway's own 404 page is reported as a missing edge API in the caller's language.
 func writeEdgeError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, edge.ErrModelUnavailable) {
+		message := err.Error()
+		if strings.HasPrefix(requestLocale(r), "zh") {
+			message = "所选模型当前不可用于算力共享。"
+		}
+		writeError(w, http.StatusConflict, message)
+		return
+	}
 	if errors.Is(err, edge.ErrGatewayUnreachable) {
 		writeError(w, http.StatusBadGateway, edgeUnreachableMessage(r))
 		return

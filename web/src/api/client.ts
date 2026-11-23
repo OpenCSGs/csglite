@@ -3624,10 +3624,12 @@ export type EdgeModelState = "loaded" | "loading" | "sleeping";
 export type EdgeRuntimeState = EdgeModelState | "unavailable" | "offline";
 
 export interface EdgeModel {
-  /** Storage ID ([source/]namespace/name): the stable key an application binds. */
+  /** Stable ID the gateway binds to an application. */
   id: string;
   /** Inference ID shown to people. */
   name?: string;
+  /** Older Lite servers omit the source for local models. */
+  source?: "local" | "gateway" | "cluster";
   ready: boolean;
   state?: EdgeModelState;
   format?: string;
@@ -3691,6 +3693,7 @@ export interface EdgeApplication {
 
 export interface EdgeSubmitRequest {
   model_name: string;
+  /** The selected EdgeModel.id, including its source for routed models. */
   local_model_id: string;
   description?: string;
   /** Cents per million prompt tokens. */

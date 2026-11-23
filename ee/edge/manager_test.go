@@ -408,6 +408,86 @@ func TestManagerSubmitPassesGatewayErrors(t *testing.T) {
 	}
 }
 
+type modelCatalogHost struct {
+	*fakeHost
+	catalog []Model
+}
+
+func (h modelCatalogHost) Models(context.Context) []Model { return h.catalog }
+
+func TestManagerBindsRoutedModelIDsAcrossRestart(t *testing.T) {
+	var registers atomic.Int32
+	submitted := make(chan string, 3)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/edge/nodes", func(w http.ResponseWriter, r *http.Request) {
+		registers.Add(1)
+		_, _ = io.WriteString(w, `{"data":{"token":"node-token"}}`)
+	})
+	mux.HandleFunc("POST /api/v1/edge/applications", func(w http.ResponseWriter, r *http.Request) {
+		var req SubmitRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		submitted <- req.LocalModelID
+		_, _ = io.WriteString(w, `{"data":{"id":1}}`)
+	})
+	gateway := httptest.NewServer(mux)
+	defer gateway.Close()
+
+	clusterID := RoutedModelID(ModelSourceCluster, "acme/model")
+	gatewayID := RoutedModelID(ModelSourceGateway, "model-service")
+	host := modelCatalogHost{
+		fakeHost: &fakeHost{gateway: gateway.URL, token: "user-token"},
+		catalog: []Model{
+			{ID: clusterID, Ready: true, Source: ModelSourceCluster},
+			{ID: gatewayID, Ready: true, Source: ModelSourceGateway},
+			{ID: "acme/model", Ready: true},
+		},
+	}
+	dir := t.TempDir()
+	manager, err := New(host, dir, "test-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, shared := range host.catalog {
+		if _, err := manager.Submit(t.Context(), SubmitRequest{ModelName: "test-model", LocalModelID: shared.ID}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case got := <-submitted:
+			if got != shared.ID {
+				t.Fatalf("gateway received model %q, want %q", got, shared.ID)
+			}
+		default:
+			t.Fatal("gateway did not receive the application")
+		}
+	}
+	restarted, err := New(host, dir, "test-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.nodeUUIDFor(gateway.URL) != manager.nodeUUIDFor(gateway.URL) {
+		t.Fatal("node identity changed after restart")
+	}
+	heartbeat := restarted.statusMessage(t.Context())
+	if len(heartbeat.Models) != len(host.catalog) {
+		t.Fatalf("heartbeat models = %+v", heartbeat.Models)
+	}
+	for i, advertised := range heartbeat.Models {
+		if advertised.ID != host.catalog[i].ID || !advertised.Ready {
+			t.Fatalf("heartbeat lost the application model ID: %+v", advertised)
+		}
+	}
+	if _, err := restarted.Submit(t.Context(), SubmitRequest{LocalModelID: RoutedModelID(ModelSourceCluster, "missing")}); !errors.Is(err, ErrModelUnavailable) {
+		t.Fatalf("unavailable model returned %v", err)
+	}
+	if registers.Load() != 1 || len(submitted) != 0 {
+		t.Fatal("unavailable model reached the gateway")
+	}
+}
+
 func TestManagerFollowsConfiguredGateway(t *testing.T) {
 	g1, g2 := newFakeGateway(t), newFakeGateway(t)
 	host := &fakeHost{gateway: g1.server.URL, token: "user-token"}

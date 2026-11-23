@@ -41,14 +41,36 @@ const (
 	ModelSleeping = "sleeping"
 )
 
-// Model is a local model as reported to the gateway.
+const (
+	ModelSourceGateway = "gateway"
+	ModelSourceCluster = "cluster"
+)
+
+// RoutedModelID keeps the route in the ID that the gateway binds and relays.
+// Older local applications keep their original storage IDs.
+func RoutedModelID(source, id string) string {
+	return "edge:" + source + ":" + id
+}
+
+// RoutedModelTarget extracts a non-local route from a shared model ID.
+func RoutedModelTarget(id string) (source, target string) {
+	for _, source := range []string{ModelSourceGateway, ModelSourceCluster} {
+		if target, ok := strings.CutPrefix(id, RoutedModelID(source, "")); ok {
+			return source, target
+		}
+	}
+	return "", ""
+}
+
+// Model is a model this connector can offer to the gateway.
 type Model struct {
-	// ID is the model's storage ID, the stable key an application binds.
+	// ID is the stable key an application binds.
 	ID string `json:"id"`
 	// Name is the inference ID shown to people; it may change when another
 	// model with the same short name is downloaded.
-	Name  string `json:"name,omitempty"`
-	Ready bool   `json:"ready"`
+	Name   string `json:"name,omitempty"`
+	Source string `json:"source,omitempty"`
+	Ready  bool   `json:"ready"`
 	// State is ModelLoaded, ModelLoading or ModelSleeping.
 	State         string `json:"state,omitempty"`
 	Format        string `json:"format,omitempty"`
@@ -61,7 +83,7 @@ type Model struct {
 type Host interface {
 	// InferenceHandler serves the requests that arrive through the tunnel.
 	InferenceHandler() http.Handler
-	// Models lists the local models; Ready ones can be served now.
+	// Models lists shareable models; Ready ones can be served now.
 	Models(ctx context.Context) []Model
 	// ActiveRequests counts requests in flight on this machine.
 	ActiveRequests() int
