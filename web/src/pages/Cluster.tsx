@@ -79,6 +79,7 @@ const createError = signal("");
 const createdToken = signal("");
 const joinToken = signal("");
 const joinAddress = signal("");
+const joinEnableSSL = signal(true);
 const joining = signal(false);
 const joinError = signal("");
 const admissionCode = signal<ClusterCodeResponse | null>(null);
@@ -286,13 +287,21 @@ async function handleJoin() {
     joinError.value = t("cluster.joinTokenRequired");
     return;
   }
+  const address = joinAddress.value.trim();
+  const isWorker = view.value?.mode === "worker";
+  if (!joinEnableSSL.value && !address && !isWorker) {
+    joinError.value = t("cluster.joinPublicAddressRequired");
+    return;
+  }
   joining.value = true;
   joinError.value = "";
   capError.value = null;
   try {
-    view.value = await joinCluster(token, joinAddress.value);
+    const publicAddress = isWorker || address.includes("://") || !joinEnableSSL.value;
+    view.value = await joinCluster(token, address, publicAddress ? joinEnableSSL.value : undefined);
     joinToken.value = "";
     joinAddress.value = "";
+    joinEnableSSL.value = true;
   } catch (err) {
     if (!captureCapError(err)) joinError.value = errorMessage(err);
   } finally {
@@ -883,14 +892,14 @@ function NotInCluster({ view }: { view: ClusterView }) {
                     <label class="mb-1.5 block text-sm font-medium text-gray-700">{t("cluster.createName")}</label>
                     <div class="flex flex-col gap-3 sm:flex-row">
                       <input
-                        class="min-w-0 flex-1 rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        value={createName.value}
-                        placeholder={t("cluster.createNamePlaceholder")}
-                        disabled={creating.value}
-                        onInput={(e) => (createName.value = (e.target as HTMLInputElement).value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") void handleCreate();
-                        }}
+                          class="min-w-0 flex-1 rounded-xl border border-gray-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          value={createName.value}
+                          placeholder={t("cluster.createNamePlaceholder")}
+                          disabled={creating.value}
+                          onInput={(e) => (createName.value = (e.target as HTMLInputElement).value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void handleCreate();
+                          }}
                       />
                       <button
                         type="button"
@@ -1049,20 +1058,33 @@ function NotInCluster({ view }: { view: ClusterView }) {
 
                 {!isLAN || showJoinAddress ? (
                   <div>
-                    <label class="mb-1.5 block text-sm font-medium text-gray-700">
+                    <label for="cluster-join-address" class="mb-1.5 block text-sm font-medium text-gray-700">
                       {t(view.mode === "worker" ? "cluster.masterAddress" : "cluster.joinAddress")}
                     </label>
-                    <input
-                      class="w-full rounded-xl border border-gray-200 px-3.5 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      value={joinAddress.value}
-                      placeholder={view.mode === "worker" ? view.gateway_url : t("cluster.joinAddressPlaceholder")}
-                      disabled={joining.value}
-                      spellcheck={false}
-                      onInput={(e) => (joinAddress.value = (e.target as HTMLInputElement).value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void handleJoin();
-                      }}
-                    />
+                    <div class="flex flex-wrap items-center gap-3">
+                      <input
+                        id="cluster-join-address"
+                        class="min-w-0 flex-1 rounded-xl border border-gray-200 px-3.5 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        value={joinAddress.value}
+                        placeholder={view.mode === "worker" ? view.gateway_url : t("cluster.joinAddressPlaceholder")}
+                        disabled={joining.value}
+                        spellcheck={false}
+                        onInput={(e) => (joinAddress.value = (e.target as HTMLInputElement).value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void handleJoin();
+                        }}
+                      />
+                      <label class="inline-flex shrink-0 items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="checkbox"
+                          class="h-4 w-4 accent-indigo-600"
+                          checked={joinEnableSSL.value}
+                          disabled={joining.value}
+                          onChange={(e) => (joinEnableSSL.value = e.currentTarget.checked)}
+                        />
+                        {t("cluster.joinEnableSSL")}
+                      </label>
+                    </div>
                     <p class="mt-1.5 text-xs text-gray-400">
                       {t(view.mode === "worker" ? "cluster.masterAddressHint" : "cluster.joinAddressHint")}
                     </p>

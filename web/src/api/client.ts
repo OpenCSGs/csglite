@@ -3502,10 +3502,10 @@ export function leaveCluster(): Promise<ClusterView> {
   return fetchJSONWithApiError<ClusterView>("/api/cluster", { method: "DELETE" });
 }
 
-export function joinCluster(token: string, address?: string): Promise<ClusterView> {
+export function joinCluster(token: string, address?: string, enableSSL?: boolean): Promise<ClusterView> {
   return fetchJSONWithApiError<ClusterView>("/api/cluster/join", {
     method: "POST",
-    body: JSON.stringify({ token: token.trim(), address: address?.trim() || undefined }),
+    body: JSON.stringify({ token: token.trim(), address: address?.trim() || undefined, enable_ssl: enableSSL }),
   });
 }
 

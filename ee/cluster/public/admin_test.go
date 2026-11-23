@@ -308,3 +308,51 @@ func TestAdminTokenTTLCompatibilityAndInvalidDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestPlainHTTPAdminSession(t *testing.T) {
+	path := AdminTokenPath(t.TempDir())
+	token, err := GenerateAdminToken(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const origin = "http://gateway.example"
+	auth := NewPlainHTTPAdminAuth(path)
+	login := httptest.NewRequest("POST", origin+"/auth/login", strings.NewReader(`{"token":"`+token+`"}`))
+	login.Header.Set("Origin", origin)
+	response := httptest.NewRecorder()
+	auth.Login(response, login)
+	if response.Code != http.StatusOK {
+		t.Fatalf("HTTP login status = %d", response.Code)
+	}
+	var csrf string
+	cookies := response.Result().Cookies()
+	for _, c := range cookies {
+		if c.Secure || c.SameSite != http.SameSiteStrictMode {
+			t.Fatalf("unexpected HTTP cookie attributes for %s", c.Name)
+		}
+		if c.Name == "csglite_http_csrf" {
+			csrf = c.Value
+		}
+	}
+	if len(cookies) != 2 || csrf == "" {
+		t.Fatal("HTTP session or CSRF cookie missing")
+	}
+	logout := httptest.NewRequest("POST", origin+"/auth/logout", nil)
+	for _, c := range cookies {
+		logout.AddCookie(c)
+	}
+	logout.Header.Set("Origin", "https://gateway.example")
+	logout.Header.Set(CSRFHeader, csrf)
+	if auth.Authenticate(logout) {
+		t.Fatal("accepted a different origin scheme")
+	}
+	logout.Header.Set("Origin", origin)
+	if !auth.Authenticate(logout) {
+		t.Fatal("HTTP session and CSRF validation failed")
+	}
+	response = httptest.NewRecorder()
+	auth.Logout(response, logout)
+	if response.Code != http.StatusOK || auth.Authenticate(logout) {
+		t.Fatal("HTTP session survived logout")
+	}
+}

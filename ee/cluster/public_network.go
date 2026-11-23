@@ -27,6 +27,13 @@ import (
 	publictunnel "github.com/opencsgs/csglite/ee/cluster/public"
 )
 
+type publicWorkerConnection struct {
+	gateway   string
+	allowHTTP bool
+	caFile    string
+	client    *http.Client
+}
+
 func (m *Manager) preparePublic() error {
 	if m.opts.Mode == "lan" {
 		m.opts.Mode = ""
@@ -57,9 +64,12 @@ func (m *Manager) preparePublic() error {
 		if err != nil {
 			return fmt.Errorf("public listener: %w", err)
 		}
+		if m.opts.AllowHTTP && (m.opts.TLSCertFile != "" || m.opts.TLSKeyFile != "") {
+			return errors.New("public HTTP mode cannot be combined with TLS certificate files")
+		}
 		if m.opts.TLSCertFile == "" && m.opts.TLSKeyFile == "" {
 			ip := net.ParseIP(host)
-			if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			if !m.opts.AllowHTTP && host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 				return errors.New("a non-loopback public listener requires TLS cert and key files")
 			}
 		} else if _, err := tls.LoadX509KeyPair(m.opts.TLSCertFile, m.opts.TLSKeyFile); err != nil {
@@ -67,29 +77,40 @@ func (m *Manager) preparePublic() error {
 		}
 	}
 	if m.opts.Mode == "worker" {
-		u, err := url.Parse(m.opts.GatewayURL)
-		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-			return errors.New("worker gateway_url must be an HTTPS origin")
+		worker, err := newPublicWorkerConnection(m.opts.GatewayURL, m.opts.AllowHTTP, m.opts.TLSCAFile)
+		if err != nil {
+			return fmt.Errorf("configure public worker: %w", err)
 		}
-		m.opts.GatewayURL = strings.TrimRight(m.opts.GatewayURL, "/")
+		m.workerConnection.Store(worker)
+	}
+	return nil
+}
+
+func newPublicWorkerConnection(address string, allowHTTP bool, caFile string) (*publicWorkerConnection, error) {
+	u, err := publictunnel.ParseGatewayOrigin(address, allowHTTP)
+	if err != nil {
+		return nil, err
+	}
+	if u.Scheme == "http" {
+		caFile = ""
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
-	if m.opts.TLSCAFile != "" {
-		pem, err := os.ReadFile(m.opts.TLSCAFile)
+	if caFile != "" {
+		pem, err := os.ReadFile(caFile)
 		if err != nil {
-			return fmt.Errorf("read public gateway CA: %w", err)
+			return nil, fmt.Errorf("read public gateway CA: %w", err)
 		}
 		pool, err := x509.SystemCertPool()
 		if err != nil || pool == nil {
 			pool = x509.NewCertPool()
 		}
 		if !pool.AppendCertsFromPEM(pem) {
-			return errors.New("public gateway CA file contains no certificates")
+			return nil, errors.New("public gateway CA file contains no certificates")
 		}
 		tlsConfig.RootCAs = pool
 	}
-	m.publicClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: tlsConfig}, Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return nil
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: tlsConfig}, Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return &publicWorkerConnection{gateway: u.String(), allowHTTP: u.Scheme == "http", caFile: caFile, client: client}, nil
 }
 
 func (m *Manager) publicHub() *publictunnel.Gateway {
@@ -288,23 +309,73 @@ func (m *Manager) validatePublicStatus(node string, raw json.RawMessage) error {
 	return nil
 }
 
-func (m *Manager) joinPublic(ctx context.Context, token, address string) (ClusterInfo, error) {
+// JoinPublicAddress applies an explicit transport selection to the public join.
+func (m *Manager) JoinPublicAddress(ctx context.Context, token, address string, enableSSL bool) (ClusterInfo, error) {
 	m.publicJoinMu.Lock()
 	defer m.publicJoinMu.Unlock()
-	if m.mode() != "worker" {
-		return ClusterInfo{}, errors.New("configure a public worker before joining a Master")
-	}
 	if m.store.InCluster() {
 		return ClusterInfo{}, ErrAlreadyClustered
 	}
-	if address != "" && strings.TrimRight(address, "/") != m.opts.GatewayURL {
-		return ClusterInfo{}, errors.New("join address must match the configured gateway_url")
+	if m.mode() == "gateway" || m.opts.AutoFormSecret != "" || m.opts.ConfigureWorkerRole == nil {
+		return ClusterInfo{}, errors.New("this instance cannot switch to a public worker")
 	}
-	id, secret, err := ParseJoinToken(token)
+	address = strings.TrimSpace(address)
+	if address == "" {
+		address = m.gatewayURL()
+	}
+	if !strings.Contains(address, "://") {
+		address = "https://" + address
+	}
+	u, err := publictunnel.ParseGatewayOrigin(address, true)
 	if err != nil {
 		return ClusterInfo{}, err
 	}
-	if err = m.Activate(); err != nil {
+	u.Scheme = "https"
+	if !enableSSL {
+		u.Scheme = "http"
+	}
+	var caFile string
+	if current := m.workerConnection.Load(); current != nil {
+		caFile = current.caFile
+	}
+	worker, err := newPublicWorkerConnection(u.String(), !enableSSL, caFile)
+	if err != nil {
+		return ClusterInfo{}, err
+	}
+	undo, err := m.opts.ConfigureWorkerRole(worker.gateway, worker.allowHTTP, worker.caFile)
+	if err != nil {
+		return ClusterInfo{}, err
+	}
+	info, err := m.admitPublic(ctx, token, worker)
+	if err != nil {
+		return ClusterInfo{}, errors.Join(err, undo())
+	}
+
+	m.activationMu.Lock()
+	defer m.activationMu.Unlock()
+	m.deactivate()
+	m.workerConnection.Store(worker)
+	m.detachedWorker.Store(false)
+	return info, m.activatePublic()
+}
+
+func (m *Manager) joinPublic(ctx context.Context, token, address string) (ClusterInfo, error) {
+	if m.store.InCluster() {
+		return ClusterInfo{}, ErrAlreadyClustered
+	}
+	worker := m.workerConnection.Load()
+	if worker == nil || (address != "" && strings.TrimRight(address, "/") != worker.gateway) {
+		return ClusterInfo{}, errors.New("join address must match the configured gateway_url")
+	}
+	if err := m.Activate(); err != nil {
+		return ClusterInfo{}, err
+	}
+	return m.admitPublic(ctx, token, worker)
+}
+
+func (m *Manager) admitPublic(ctx context.Context, token string, worker *publicWorkerConnection) (ClusterInfo, error) {
+	id, secret, err := ParseJoinToken(token)
+	if err != nil {
 		return ClusterInfo{}, err
 	}
 	nonce, err := randomNonce()
@@ -317,12 +388,12 @@ func (m *Manager) joinPublic(ctx context.Context, token, address string) (Cluste
 	req := joinRequest{Node: card, Nonce: nonce, TS: time.Now().Unix()}
 	req.MAC = HandshakeMAC(hashSecret(secret), m.identity.UUID, m.identity.Fingerprint(), nonce, req.TS)
 	data, _ := json.Marshal(req)
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, m.opts.GatewayURL+peerPathJoin+"?cluster="+url.QueryEscape(id), bytes.NewReader(data))
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, worker.gateway+peerPathJoin+"?cluster="+url.QueryEscape(id), bytes.NewReader(data))
 	if err != nil {
 		return ClusterInfo{}, err
 	}
 	r.Header.Set("Content-Type", "application/json")
-	resp, err := m.publicClient.Do(r)
+	resp, err := worker.client.Do(r)
 	if err != nil {
 		return ClusterInfo{}, fmt.Errorf("contact public gateway: %w", err)
 	}
@@ -348,7 +419,7 @@ func (m *Manager) joinPublic(ctx context.Context, token, address string) (Cluste
 			return ClusterInfo{}, err
 		}
 		if mem.UUID == reply.Responder.UUID {
-			mem.LastAddresses = []string{m.opts.GatewayURL}
+			mem.LastAddresses = []string{worker.gateway}
 		}
 		members = append(members, mem)
 	}
@@ -387,8 +458,12 @@ func (m *Manager) publicWorkerLoop(ctx context.Context) {
 			m.logf("cluster: cannot sign public connection: %v", err)
 			return
 		}
-		transport := m.publicClient.Transport.(*http.Transport)
-		worker, err := publictunnel.NewWorker(publictunnel.WorkerOptions{GatewayURL: m.opts.GatewayURL, NodeUUID: m.identity.UUID, Token: proof, ConnectionChanged: m.observePublicGateway(gateway), StatusUpdates: m.publicStatusUpdates, Status: m.publicWorkerStatus, AllowModel: m.publicModelAllowed, Handler: m.opts.Host.InferenceHandler(), DeploymentHandler: m.deploymentHandler(gateway), ModelActionHandler: m.modelActionHandler(gateway), NodeStateHandler: m.nodeStateHandler(gateway), Dialer: &websocket.Dialer{Proxy: http.ProxyFromEnvironment, TLSClientConfig: transport.TLSClientConfig.Clone(), HandshakeTimeout: 15 * time.Second}})
+		connection := m.workerConnection.Load()
+		if connection == nil {
+			return
+		}
+		transport := connection.client.Transport.(*http.Transport)
+		worker, err := publictunnel.NewWorker(publictunnel.WorkerOptions{GatewayURL: connection.gateway, AllowHTTP: connection.allowHTTP, NodeUUID: m.identity.UUID, Token: proof, ConnectionChanged: m.observePublicGateway(gateway), StatusUpdates: m.publicStatusUpdates, Status: m.publicWorkerStatus, AllowModel: m.publicModelAllowed, Handler: m.opts.Host.InferenceHandler(), DeploymentHandler: m.deploymentHandler(gateway), ModelActionHandler: m.modelActionHandler(gateway), NodeStateHandler: m.nodeStateHandler(gateway), Dialer: &websocket.Dialer{Proxy: http.ProxyFromEnvironment, TLSClientConfig: transport.TLSClientConfig.Clone(), HandshakeTimeout: 15 * time.Second}})
 		if err != nil {
 			m.logf("cluster: invalid public worker: %v", err)
 			return
@@ -528,20 +603,20 @@ func (m *Manager) leavePublic(ctx context.Context) error {
 	if mode == "" || (!joined && !worker) {
 		return ErrNotClustered
 	}
-	if worker && joined {
+	if connection := m.workerConnection.Load(); connection != nil && joined {
 		for _, mem := range m.store.Members() {
 			for _, addr := range mem.LastAddresses {
-				if addr != m.opts.GatewayURL {
+				if addr != connection.gateway {
 					continue
 				}
 				proof, err := m.publicProof(mem.UUID)
 				if err != nil {
 					return err
 				}
-				r, _ := http.NewRequestWithContext(ctx, http.MethodPost, m.opts.GatewayURL+"/cluster/v1/public-leave", nil)
+				r, _ := http.NewRequestWithContext(ctx, http.MethodPost, connection.gateway+"/cluster/v1/public-leave", nil)
 				r.Header.Set(publictunnel.HeaderNode, m.identity.UUID)
 				r.Header.Set(publictunnel.HeaderToken, proof)
-				resp, err := m.publicClient.Do(r)
+				resp, err := connection.client.Do(r)
 				if err == nil {
 					resp.Body.Close()
 				}
@@ -570,6 +645,7 @@ func (m *Manager) leavePublic(ctx context.Context) error {
 			resetErr = m.opts.ResetWorkerRole()
 		}
 		if resetErr == nil {
+			m.workerConnection.Store(nil)
 			m.detachedWorker.Store(true)
 			m.invalidateLocalStatus()
 		} else {
@@ -616,7 +692,7 @@ func (m *Manager) publicGatewayView(node *NodeView) {
 	}
 	node.StatusScope = "connectivity_only"
 	node.Online, node.Health = false, HealthDown
-	node.Addr = m.opts.GatewayURL
+	node.Addr = m.gatewayURL()
 	// The tunnel establishes connectivity only. It does not provide the
 	// gateway's GPU/model telemetry, so do not invent a Status payload.
 	m.publicConnectionMu.Lock()

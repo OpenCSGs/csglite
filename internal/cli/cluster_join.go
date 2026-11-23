@@ -12,25 +12,26 @@ import (
 	"strings"
 
 	"github.com/opencsgs/csglite/ee/cluster"
+	clusterpublic "github.com/opencsgs/csglite/ee/cluster/public"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/spf13/cobra"
 )
 
-func publicMasterOrigin(value string) (string, error) {
-	u, err := url.Parse(strings.TrimSpace(value))
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return "", errors.New("public Master address must be an HTTPS origin without credentials, path, query or fragment")
+func publicMasterOrigin(value string, allowHTTP bool) (string, error) {
+	u, err := clusterpublic.ParseGatewayOrigin(value, allowHTTP)
+	if err != nil {
+		return "", fmt.Errorf("public Master address: %w", err)
 	}
-	return strings.TrimRight(u.String(), "/"), nil
+	return u.String(), nil
 }
 
-func clusterJoinGateway(gateway, server, address string) (string, error) {
+func clusterJoinGateway(gateway, server, address string, allowHTTP bool) (string, error) {
 	var target string
 	for _, value := range []string{gateway, server} {
 		if strings.TrimSpace(value) == "" {
 			continue
 		}
-		origin, err := publicMasterOrigin(value)
+		origin, err := publicMasterOrigin(value, allowHTTP)
 		if err != nil {
 			return "", err
 		}
@@ -39,9 +40,10 @@ func clusterJoinGateway(gateway, server, address string) (string, error) {
 		}
 		target = origin
 	}
-	if target != "" || strings.HasPrefix(strings.ToLower(strings.TrimSpace(address)), "https://") {
+	address = strings.TrimSpace(address)
+	if target != "" || strings.Contains(address, "://") {
 		if strings.TrimSpace(address) != "" {
-			origin, err := publicMasterOrigin(address)
+			origin, err := publicMasterOrigin(address, allowHTTP)
 			if err != nil || (target != "" && origin != target) {
 				return "", errors.New("--address must match the public Master address")
 			}
@@ -57,7 +59,13 @@ func publicWorkerJoinConfig(current *config.Config, gateway, caFile string, caSe
 	}
 	next := *current
 	next.Cluster.Mode, next.Cluster.GatewayURL = "worker", gateway
-	if caSet {
+	next.Cluster.AllowHTTP = strings.HasPrefix(gateway, "http://")
+	if next.Cluster.AllowHTTP {
+		next.Cluster.TLSCAFile = ""
+		if caSet && caFile != "" {
+			return nil, errors.New("a Master CA cannot be used with HTTP")
+		}
+	} else if caSet {
 		next.Cluster.TLSCAFile = ""
 		if caFile != "" {
 			absolute, err := filepath.Abs(caFile)
@@ -87,7 +95,13 @@ func publicWorkerJoinConfig(current *config.Config, gateway, caFile string, caSe
 }
 
 func validatePublicJoinMembership(info *cluster.ClusterInfo, mode, configuredGateway, gateway, clusterID string) error {
-	if info != nil && (info.Topology != "public" || mode != "worker" || strings.TrimRight(configuredGateway, "/") != gateway || info.UUID != clusterID) {
+	if info == nil {
+		return nil
+	}
+	current, currentErr := url.Parse(configuredGateway)
+	next, nextErr := url.Parse(gateway)
+	if info.Topology != "public" || mode != "worker" || info.UUID != clusterID ||
+		currentErr != nil || nextErr != nil || !strings.EqualFold(current.Host, next.Host) {
 		return errors.New("this node already belongs to a cluster; leave it before changing Master or topology")
 	}
 	return nil

@@ -3,11 +3,11 @@ package cli
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"path/filepath"
 	"strings"
 
 	"github.com/opencsgs/csglite/ee/cluster"
+	clusterpublic "github.com/opencsgs/csglite/ee/cluster/public"
 	"github.com/opencsgs/csglite/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -16,16 +16,21 @@ import (
 // in the existing cluster store, with one writer for each setting.
 func newClusterPublicConfigureCmd() *cobra.Command {
 	var role, listen, gateway, cert, key, ca string
+	var allowHTTP bool
 	cmd := &cobra.Command{Use: "configure-public", Short: "Configure a public gateway or outbound worker (restart the server afterwards)", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if role != "gateway" && role != "worker" && role != "lan" {
 				return fmt.Errorf("--role must be gateway, worker or lan")
 			}
+			if allowHTTP && (role == "lan" || cert != "" || key != "") {
+				return fmt.Errorf("--allow-http requires gateway or worker mode without TLS certificate files")
+			}
 			if role == "worker" {
-				u, err := url.Parse(gateway)
-				if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-					return fmt.Errorf("--gateway must be an HTTPS origin")
+				u, err := clusterpublic.ParseGatewayOrigin(gateway, allowHTTP)
+				if err != nil {
+					return fmt.Errorf("--gateway: %w", err)
 				}
+				gateway = u.String()
 			}
 			cfg, err := config.Load()
 			if err != nil {
@@ -58,6 +63,7 @@ func newClusterPublicConfigureCmd() *cobra.Command {
 				cfg.ListenAddr = "127.0.0.1:11435"
 			}
 			cfg.Cluster.PublicListenAddr = listen
+			cfg.Cluster.AllowHTTP = allowHTTP
 			cfg.Cluster.GatewayURL = strings.TrimRight(gateway, "/")
 			cfg.Cluster.TLSCertFile = cert
 			cfg.Cluster.TLSKeyFile = key
@@ -70,7 +76,8 @@ func newClusterPublicConfigureCmd() *cobra.Command {
 		}}
 	cmd.Flags().StringVar(&role, "role", "", "gateway, worker or lan")
 	cmd.Flags().StringVar(&listen, "listen", "127.0.0.1:11439", "public listener; non-loopback requires --cert-file and --key-file")
-	cmd.Flags().StringVar(&gateway, "gateway", "", "worker's public HTTPS gateway URL")
+	cmd.Flags().StringVar(&gateway, "gateway", "", "worker's public gateway origin")
+	cmd.Flags().BoolVar(&allowHTTP, "allow-http", false, "explicitly enable unencrypted HTTP for this public cluster")
 	cmd.Flags().StringVar(&cert, "cert-file", "", "gateway TLS certificate file")
 	cmd.Flags().StringVar(&key, "key-file", "", "gateway TLS private key file")
 	cmd.Flags().StringVar(&ca, "ca-file", "", "trusted private CA file for the worker")

@@ -204,7 +204,7 @@ func (m *Manager) View(ctx context.Context) ClusterView {
 	}
 	switch v.Mode {
 	case "worker":
-		v.GatewayURL = m.opts.GatewayURL
+		v.GatewayURL = m.gatewayURL()
 	case "gateway":
 		v.PublicListenAddr = m.opts.PublicListenAddr
 	}

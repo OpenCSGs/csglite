@@ -87,6 +87,7 @@ type Options struct {
 	// tunnels instead of peer listeners. Empty means the existing LAN mode.
 	Mode             string
 	PublicListenAddr string
+	AllowHTTP        bool
 	GatewayURL       string
 	TLSCertFile      string
 	TLSKeyFile       string
@@ -94,10 +95,12 @@ type Options struct {
 	PublicInference  http.Handler
 	// ResetWorkerRole persists standalone mode after a worker leaves.
 	ResetWorkerRole func() error
-	Dir             string
-	Host            Host
-	Discoverer      Discoverer
-	ListenAddr      string
+	// ConfigureWorkerRole saves the selected transport and returns a rollback for failed joins.
+	ConfigureWorkerRole func(gateway string, allowHTTP bool, caFile string) (func() error, error)
+	Dir                 string
+	Host                Host
+	Discoverer          Discoverer
+	ListenAddr          string
 	// Seeds are static cluster endpoints (host:port) to probe when
 	// multicast is unavailable.
 	Seeds []string
@@ -128,7 +131,7 @@ type Manager struct {
 	publicConnection    *publicGatewayConnection
 	publicGateway       *publictunnel.Gateway
 	publicHTTP          *http.Server
-	publicClient        *http.Client
+	workerConnection    atomic.Pointer[publicWorkerConnection]
 	publicWake          chan struct{}
 	publicStatusUpdates chan chan error
 	publicProofMu       sync.Mutex
@@ -287,10 +290,20 @@ func (m *Manager) Start(ctx context.Context) error {
 // opts stays immutable after construction. An explicitly detached public
 // worker uses the normal LAN paths for the remainder of this process.
 func (m *Manager) mode() string {
-	if m.detachedWorker.Load() {
-		return ""
+	if m.workerConnection.Load() != nil {
+		return "worker"
 	}
-	return m.opts.Mode
+	if m.opts.Mode == "gateway" {
+		return "gateway"
+	}
+	return ""
+}
+
+func (m *Manager) gatewayURL() string {
+	if worker := m.workerConnection.Load(); worker != nil {
+		return worker.gateway
+	}
+	return ""
 }
 
 func (m *Manager) startupJoinToken() string {

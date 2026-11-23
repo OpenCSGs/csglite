@@ -84,19 +84,26 @@ func newClusterManager(s *Server, storageRoot string) *cluster.Manager {
 	m, err := cluster.New(cluster.Options{
 		Mode:             s.cfg.Cluster.Mode,
 		PublicListenAddr: s.cfg.Cluster.PublicListenAddr,
+		AllowHTTP:        s.cfg.Cluster.AllowHTTP,
 		GatewayURL:       s.cfg.Cluster.GatewayURL,
 		TLSCertFile:      s.cfg.Cluster.TLSCertFile,
 		TLSKeyFile:       s.cfg.Cluster.TLSKeyFile,
 		TLSCAFile:        s.cfg.Cluster.TLSCAFile,
 		PublicInference:  s.publicClusterWebRoutes(storageRoot),
 		ResetWorkerRole:  func() error { return config.ClearPublicWorker(s.cfg) },
-		Dir:              filepath.Join(storageRoot, clusterStorageDir),
-		Host:             &clusterHost{s: s},
-		Discoverer:       disc,
-		ListenAddr:       addr,
-		Seeds:            seeds,
-		JoinToken:        strings.TrimSpace(os.Getenv(EnvClusterJoinToken)),
-		AdvertiseHost:    strings.TrimSpace(os.Getenv(EnvClusterAdvertiseHost)),
+		ConfigureWorkerRole: func(gateway string, allowHTTP bool, caFile string) (func() error, error) {
+			if err := validatePublicManagementListener("worker", s.cfg.EffectiveListenAddr()); err != nil {
+				return nil, err
+			}
+			return config.SavePublicWorker(s.cfg, gateway, allowHTTP, caFile)
+		},
+		Dir:           filepath.Join(storageRoot, clusterStorageDir),
+		Host:          &clusterHost{s: s},
+		Discoverer:    disc,
+		ListenAddr:    addr,
+		Seeds:         seeds,
+		JoinToken:     strings.TrimSpace(os.Getenv(EnvClusterJoinToken)),
+		AdvertiseHost: strings.TrimSpace(os.Getenv(EnvClusterAdvertiseHost)),
 		// The shared secret comes from config.json (installer or
 		// `config set cluster_secret`), with CSGHUB_LITE_CLUSTER_SECRET
 		// applied on top by config.ApplyEnvironmentDefaults.

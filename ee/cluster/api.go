@@ -84,8 +84,9 @@ func (a *adminAPI) HandleLeave(w http.ResponseWriter, r *http.Request) {
 // HandleJoin is POST /api/cluster/join.
 func (a *adminAPI) HandleJoin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Token   string `json:"token"`
-		Address string `json:"address"`
+		Token     string `json:"token"`
+		Address   string `json:"address"`
+		EnableSSL *bool  `json:"enable_ssl,omitempty"`
 	}
 	if err := decodeJSON(r, &req); err != nil || strings.TrimSpace(req.Token) == "" {
 		writeError(w, http.StatusBadRequest, "token is required")
@@ -93,7 +94,13 @@ func (a *adminAPI) HandleJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	if _, err := a.m.Join(ctx, req.Token, req.Address); err != nil {
+	var err error
+	if req.EnableSSL != nil {
+		_, err = a.m.JoinPublicAddress(ctx, req.Token, req.Address, *req.EnableSSL)
+	} else {
+		_, err = a.m.Join(ctx, req.Token, req.Address)
+	}
+	if err != nil {
 		writeOpError(w, err)
 		return
 	}

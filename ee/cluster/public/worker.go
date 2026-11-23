@@ -21,6 +21,7 @@ import (
 
 type WorkerOptions struct {
 	GatewayURL string
+	AllowHTTP  bool
 	NodeUUID   string
 	Token      string
 	Status     func(context.Context) (json.RawMessage, error)
@@ -47,13 +48,27 @@ type Worker struct {
 	endpoint string
 }
 
+// ParseGatewayOrigin validates an outbound Master origin for join and tunnels.
+func ParseGatewayOrigin(address string, allowHTTP bool) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(address))
+	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery ||
+		u.Fragment != "" || u.RawPath != "" || (u.Path != "" && u.Path != "/") {
+		return nil, errors.New("public gateway must be an origin without credentials, path, query or fragment")
+	}
+	if u.Scheme != "https" && !(allowHTTP && u.Scheme == "http") {
+		return nil, errors.New("public gateway must be an HTTPS origin unless HTTP is explicitly enabled")
+	}
+	u.Path = ""
+	return u, nil
+}
+
 func NewWorker(opts WorkerOptions) (*Worker, error) {
 	if opts.NodeUUID == "" || len(opts.NodeUUID) > 128 || opts.Token == "" || opts.Status == nil || opts.AllowModel == nil || opts.Handler == nil {
 		return nil, errors.New("public worker requires identity, credential, status, sharing policy and a local handler")
 	}
-	u, err := url.Parse(opts.GatewayURL)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return nil, errors.New("public gateway must be an HTTPS origin without credentials, path, query or fragment")
+	u, err := ParseGatewayOrigin(opts.GatewayURL, opts.AllowHTTP)
+	if err != nil {
+		return nil, err
 	}
 	if opts.Dialer != nil && opts.Dialer.TLSClientConfig != nil && opts.Dialer.TLSClientConfig.InsecureSkipVerify {
 		return nil, errors.New("public gateway TLS verification cannot be disabled")
@@ -65,7 +80,11 @@ func NewWorker(opts WorkerOptions) (*Worker, error) {
 		}
 		opts.Dialer = &copyDialer
 	}
-	u.Scheme = "wss"
+	if u.Scheme == "http" {
+		u.Scheme = "ws"
+	} else {
+		u.Scheme = "wss"
+	}
 	u.Path = ConnectPath
 	return &Worker{opts: opts, endpoint: u.String()}, nil
 }
