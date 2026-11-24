@@ -235,7 +235,7 @@ async function refreshModels() {
     }).catch(err => { if (sameCluster()) publicationError.value = errorMessage(err); });
     try {
       const [list, tasks, recs] = await Promise.all([
-        getClusterModels(), getClusterDeployments(),
+        getClusterModels(), getClusterDeployments(true),
         (!current.mode || current.mode === "lan") ? getClusterRecommendations().catch(() => []) : Promise.resolve([]),
       ]);
       if (!sameCluster()) return;

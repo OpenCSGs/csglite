@@ -199,14 +199,18 @@ func (s *deploymentStore) update(owned bool, id string, edit func(*Deployment, b
 	if exists && next == old {
 		return nil
 	}
-	live := 0
-	for _, record := range m {
-		if record.Status.Phase != "deleted" {
-			live++
+	if !exists {
+		live := 0
+		for _, record := range m {
+			// The controller can retire a deployment while its worker is
+			// offline. Workers still count it until their cleanup completes.
+			if record.Status.Phase != "deleted" && (!owned || record.Desired != "deleted") {
+				live++
+			}
 		}
-	}
-	if !exists && live >= maxDeployments {
-		return errors.New("deployment limit reached (64)")
+		if live >= maxDeployments {
+			return errors.New("deployment limit reached (64)")
+		}
 	}
 	m[id] = next
 	b, err := json.MarshalIndent(s.data, "", "  ")
@@ -712,11 +716,20 @@ func (m *Manager) deploymentModels() []ModelStatus {
 
 // DeploymentReady is checked for every inference request, not only at discovery.
 func (m *Manager) DeploymentReady(model string) bool {
-	if m.deployments == nil || !strings.HasPrefix(model, DeploymentModelPrefix) {
+	if m.deployments == nil || !strings.HasPrefix(model, DeploymentModelPrefix) || m.ownedDeploymentRemoved(model) {
 		return false
 	}
 	d, ok := m.deployments.get(false, strings.TrimPrefix(model, DeploymentModelPrefix))
 	return ok && d.Desired == "running" && d.Status.Phase == "ready" && m.deploymentAllowed(d) && m.deploymentRuntimeError(d) == nil
+}
+
+func (m *Manager) ownedDeploymentRemoved(model string) bool {
+	id, ok := strings.CutPrefix(model, DeploymentModelPrefix)
+	if !ok || m.deployments == nil {
+		return false
+	}
+	d, ok := m.deployments.get(true, id)
+	return ok && d.Desired == "deleted"
 }
 
 func (m *Manager) createDeployment(spec DeploymentSpec) (Deployment, error) {

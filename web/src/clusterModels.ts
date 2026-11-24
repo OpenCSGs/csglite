@@ -31,7 +31,7 @@ export function modelInstanceRows(nodes: ClusterNodeView[], distribution: Cluste
   for (const deployment of deployments) {
     const id = `deployment/${deployment.id}`;
     const existing = rows.find(row => row.node.uuid === deployment.node_uuid && row.model.id === id);
-    if (deployment.status.phase === "deleted") {
+    if (deployment.status.phase === "deleted" || (deployment.desired === "deleted" && deployment.status.phase !== "failed")) {
       if (existing) rows.splice(rows.indexOf(existing), 1);
       continue;
     }
@@ -118,6 +118,8 @@ export function modelActionAvailability(row: ModelInstanceRow, view: ClusterView
   const transitioning = !!d && ((d.desired === "deleted" && phase !== "failed")
     || (d.desired === "stopped" && phase !== "stopped" && phase !== "failed") || phase === "stopping" || phase === "deleting");
   const available = owned && row.node.online && !stale && !transitioning;
+  const removeDeployment = owned && !!d && !stale && phase !== "deleted"
+    && (d.desired !== "deleted" || phase === "failed") && (!row.node.online || !transitioning);
   const ordinaryReady = !!row.node.status?.model_management && !!row.model.repo && !!row.model.source
     && !row.model.loading && row.model.active === 0 && !row.sync;
   const referenced = rows.some(other => other.node.uuid === row.node.uuid && other.deployment
@@ -131,7 +133,7 @@ export function modelActionAvailability(row: ModelInstanceRow, view: ClusterView
     start: available && !!d && d.desired !== "deleted" && (phase === "stopped" || phase === "idle" || phase === "failed")
       && row.node.status?.state === "active" && !!row.node.status.accept_work && row.node.status.licensed !== false,
     unload: available && (d ? d.desired === "running" && phase !== "stopped" && phase !== "deleted" : ordinaryReady && row.model.loaded),
-    delete: available && (d ? phase !== "deleted" : ordinaryReady && !referenced),
+    delete: d ? removeDeployment : available && ordinaryReady && !referenced,
     sync: view.mode !== "worker" && (!view.mode || view.mode === "lan") && row.node.online && !stale
       && !isManagedModelInstance(row) && !row.model.loading && !row.sync && !!row.model.repo,
     reason: stale ? "cluster.modelStatusStale" : !owned ? (isManagedModelInstance(row) && !d ? "cluster.modelReceiptPending" : "cluster.modelReadOnly")
@@ -158,7 +160,6 @@ export function modelRowState(row: ModelInstanceRow): string {
   if (!row.node.online) return "cluster.healthOffline";
   if (row.deployment) {
     const d = row.deployment;
-    if (d.desired === "deleted" && d.status.phase !== "failed") return "deployments.phase.deleting";
     if (d.desired === "stopped" && ["ready", "pending"].includes(d.status.phase)) return "deployments.phase.stopping";
     if (d.status.phase !== "ready") return deploymentPhaseKey(d.status.phase);
   }

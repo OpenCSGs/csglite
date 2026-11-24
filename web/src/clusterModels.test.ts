@@ -132,7 +132,24 @@ describe("publication status and lifecycle actions", () => {
     n.status!.state = "active";
     expect(modelActionAvailability(row, view, true)).toMatchObject({ start: false, unload: false, delete: false });
     n.online = false;
-    expect(modelActionAvailability(row, view)).toMatchObject({ start: false, unload: false, delete: false });
+    expect(modelActionAvailability(row, view)).toMatchObject({ start: false, unload: false, delete: true });
+    d.status.phase = "stopping";
+    expect(modelActionAvailability(row, view).delete).toBe(true);
+    expect(modelActionAvailability(row, view, true).delete).toBe(false);
+    expect(modelActionAvailability(modelInstanceRows([n], [])[0], view).delete).toBe(false);
+  });
+  it("removes the owned deployment row from the list while worker cleanup is queued", () => {
+    const d = task("unreachable");
+    const removed = modelInstanceRows([], [], [d])[0];
+    expect(modelActionAvailability(removed, view)).toMatchObject({ start: false, unload: false, delete: true });
+    expect(modelActionAvailability(removed, { ...view, mode: "worker" }).delete).toBe(false);
+
+    d.desired = "deleted";
+    expect(modelInstanceRows([], [], [d])).toEqual([]);
+    const reconnecting = node("worker", true, [model("deployment/one"), model("qwen")]);
+    expect(modelInstanceRows([reconnecting], [], [d]).map(row => row.model.id)).toEqual(["qwen"]);
+    d.status.phase = "failed";
+    expect(modelInstanceRows([reconnecting], [], [d]).find(row => row.deployment)?.deployment).toBe(d);
   });
   it("blocks foreign controllers and unmanaged busy files, protects shared artifacts, and permits failed deletion retry", () => {
     const n = worker();
@@ -162,14 +179,14 @@ it("keeps node maintenance separate from actual runtime state", () => {
  expect(modelNodeState(row)).toBe("cluster.nodeDraining");
 });
 
-it("retains stopped deployments and removes acknowledged deleted instances", () => {
+it("retains stopped deployments and hides queued and confirmed removals", () => {
  const n=node("worker",true,[]);
  const d={id:"one",node_uuid:"worker",controller_uuid:"master",desired:"stopped",repository:"org/model",status:{phase:"stopped"}} as import("./api/client").ClusterDeployment;
  const rows=modelInstanceRows([n],[],[d]);
  expect(rows).toHaveLength(1); expect(modelRowState(rows[0])).toBe("deployments.phase.stopped");
  expect(rows[0].synthetic).toBe(true);
  d.desired="deleted";d.status.phase="pending";
- expect(modelRowState(modelInstanceRows([n],[],[d])[0])).toBe("deployments.phase.deleting");
+ expect(modelInstanceRows([n],[],[d])).toHaveLength(0);
  d.status.phase="deleted";
  expect(modelInstanceRows([n],[],[d])).toHaveLength(0);
 });
