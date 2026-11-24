@@ -1,5 +1,5 @@
 import { useEffect } from "preact/hooks";
-import { signal } from "@preact/signals";
+import { computed, signal } from "@preact/signals";
 import {
   getEdgeApplications,
   getEdgeEarnings,
@@ -10,7 +10,7 @@ import {
   submitEdgeApplication,
   withdrawEdgeApplication,
 } from "../api/client";
-import type { EdgeApplication, EdgeBalanceResponse, EdgeEarnings, EdgeStatement, EdgeStatus } from "../api/client";
+import type { EdgeApplication, EdgeBalanceResponse, EdgeEarnings, EdgeModel, EdgeStatement, EdgeStatus } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { MonthPicker } from "../components/MonthPicker";
 import { t, locale } from "../i18n";
@@ -44,6 +44,7 @@ import {
 import type { EdgeModelFilter } from "../edge";
 
 type EdgeTab = "overview" | "models" | "earnings";
+const edgeModelSources = ["local", "gateway"] as const;
 
 // ---- page state ------------------------------------------------------------
 const activeTab = signal<EdgeTab>("overview");
@@ -66,6 +67,7 @@ const settlementError = signal("");
 
 const applyOpen = signal(false);
 const formModel = signal("");
+const selectedFormModel = computed(() => status.value?.models.find((model) => model.id === formModel.value));
 const formName = signal("");
 const formPromptPrice = signal("");
 const formCompletionPrice = signal("");
@@ -160,12 +162,24 @@ function openApply() {
   applyOpen.value = true;
 }
 
+function edgeModelLabel(model: EdgeModel): string {
+  if (model.source && model.source !== "local") return model.name || model.id;
+  return model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id;
+}
+
+function applicationModelLabel(id: string): string {
+  const model = status.value?.models.find((item) => item.id === id);
+  if (!model?.source || model.source === "local") return id;
+  return `${t(`edge.source.${model.source}`)} · ${edgeModelLabel(model)}`;
+}
+
 async function submit(e: Event) {
   e.preventDefault();
   submitError.value = "";
   const promptPrice = yuanToCents(formPromptPrice.value);
   const completionPrice = yuanToCents(formCompletionPrice.value);
-  if (!formModel.value) {
+  const selected = selectedFormModel.value;
+  if (!selected?.ready) {
     submitError.value = t("edge.form.errModel");
     return;
   }
@@ -181,7 +195,7 @@ async function submit(e: Event) {
   try {
     await submitEdgeApplication({
       model_name: formName.value.trim(),
-      local_model_id: formModel.value,
+      local_model_id: selected.id,
       description: formDescription.value.trim(),
       prompt_price: promptPrice,
       completion_price: completionPrice,
@@ -352,6 +366,7 @@ function OverviewTab({ status: st }: { status: EdgeStatus }) {
   const approved = apps.filter((a) => a.status === "approved").length;
   const pending = apps.filter((a) => a.status === "pending").length;
   const e = earnings.value;
+  const localModels = st.models.filter((model) => !model.source || model.source === "local");
   return (
     <div class="space-y-6">
       <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -370,13 +385,15 @@ function OverviewTab({ status: st }: { status: EdgeStatus }) {
           </dd>
           <dt class="text-gray-400">{t("edge.gateway")}</dt>
           <dd class="break-all font-mono text-xs text-gray-800">{st.gateway_url}</dd>
-          <dt class="text-gray-400">{t("edge.overview.localModels")}</dt>
+          <dt class="text-gray-400">{t("edge.overview.shareableModels")}</dt>
           <dd class="text-gray-800">
-            {t("edge.overview.localModelsValue", st.models.filter((m) => m.ready).length, st.models.length)}
-            <span class="text-gray-400">
-              {" · "}
-              {t("edge.overview.loadedSleeping", st.models.filter((m) => m.ready && m.state === "loaded").length, st.models.filter((m) => m.ready && m.state === "sleeping").length)}
-            </span>
+            {t("edge.overview.shareableModelsValue", st.models.filter((m) => m.ready).length, st.models.length)}
+            {localModels.length > 0 && (
+              <span class="text-gray-400">
+                {" · "}
+                {t("edge.overview.loadedSleeping", localModels.filter((m) => m.ready && m.state === "loaded").length, localModels.filter((m) => m.ready && m.state === "sleeping").length)}
+              </span>
+            )}
           </dd>
           <dt class="text-gray-400">{t("edge.overview.reconnects")}</dt>
           <dd class="text-gray-800">{st.reconnects}</dd>
@@ -481,7 +498,9 @@ function ModelsTab() {
                         <span class="font-mono font-medium text-gray-900">{app.public_model_id}</span>
                         <span class="text-[11px] text-gray-400" title={t("edge.apps.idHint")}>#{app.id}</span>
                       </div>
-                      <div class="mt-0.5 text-xs text-gray-400">{app.local_model_id}</div>
+                      <div class="mt-0.5 text-xs text-gray-400">
+                        {applicationModelLabel(app.local_model_id)}
+                      </div>
                       {app.review_msg && <div class="mt-1 text-xs text-red-600">{t("edge.apps.reviewNote", app.review_msg)}</div>}
                     </td>
                     <td class="px-3 py-3 align-top whitespace-nowrap">
@@ -536,7 +555,8 @@ function ModelsTab() {
 function ServingCell({ app }: { app: EdgeApplication }) {
   const state = servingState(app);
   if (state === "none") return <span class="text-gray-300">—</span>;
-  const modelState = state === "serving" && (app.model_state === "loaded" || app.model_state === "loading" || app.model_state === "sleeping") ? app.model_state : undefined;
+  const source = status.value?.models.find((model) => model.id === app.local_model_id)?.source;
+  const modelState = state === "serving" && source !== "gateway" && (app.model_state === "loaded" || app.model_state === "loading" || app.model_state === "sleeping") ? app.model_state : undefined;
   return (
     <>
       <div class="flex items-center gap-1 text-gray-600">
@@ -582,17 +602,25 @@ function ApplyDialog({ status: st }: { status: EdgeStatus }) {
                   value={formModel.value}
                   onChange={(e) => {
                     formModel.value = (e.target as HTMLSelectElement).value;
-                    const picked = models.find((m) => m.id === formModel.value);
+                    const picked = selectedFormModel.value;
                     if (!formName.value) formName.value = suggestEdgeModelName(picked?.name || formModel.value);
                   }}
                 >
                   <option value="">{t("edge.form.pickModel")}</option>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id} disabled={!m.ready}>
-                      {m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id}
-                      {m.ready ? "" : ` (${t("edge.form.notRunnable")})`}
-                    </option>
-                  ))}
+                  {edgeModelSources.map((source) => {
+                    const group = models.filter((model) => (model.source ?? "local") === source);
+                    if (group.length === 0) return null;
+                    return (
+                      <optgroup key={source} label={t(`edge.source.${source}`)}>
+                        {group.map((model) => (
+                          <option key={model.id} value={model.id} disabled={!model.ready}>
+                            {edgeModelLabel(model)}
+                            {model.ready ? "" : ` (${t("edge.form.notRunnable")})`}
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
                 </select>
               </label>
               <label class="block text-sm sm:col-span-2">
@@ -657,7 +685,7 @@ function ApplyDialog({ status: st }: { status: EdgeStatus }) {
               <button
                 type="submit"
                 class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                disabled={submitting.value || models.length === 0}
+                disabled={submitting.value || !selectedFormModel.value?.ready}
               >
                 {submitting.value ? t("edge.form.submitting") : t("edge.form.submit")}
               </button>

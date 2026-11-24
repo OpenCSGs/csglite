@@ -112,7 +112,7 @@ func (s *Server) poolMemberInfo(member config.ProviderPoolMember) (api.ModelInfo
 	}
 	return api.ModelInfo{}, false
 }
-func (s *Server) fillPoolProtocols(pool config.ProviderPool, out *api.ProviderPool) {
+func (s *Server) fillPoolProtocols(pool config.ProviderPool, out *api.ProviderPool) bool {
 	var common []string
 	category := ""
 	typed, only, vision := true, true, true
@@ -121,7 +121,7 @@ func (s *Server) fillPoolProtocols(pool config.ProviderPool, out *api.ProviderPo
 		if pool.Policy == config.ProviderPoolPolicyFixed && i > 0 {
 			break
 		}
-		if s.providerPoolSourceState(member) != "configured" {
+		if out.SourceStates[member.ID] != "configured" {
 			continue
 		}
 		info, _ := s.poolMemberInfo(member)
@@ -155,6 +155,7 @@ func (s *Server) fillPoolProtocols(pool config.ProviderPool, out *api.ProviderPo
 	out.TypedDecisions = typed
 	out.DecisionOnly = only
 	out.Vision = vision
+	return count > 0
 }
 
 func poolPipelineTag(pool api.ProviderPool) string {

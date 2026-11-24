@@ -111,12 +111,12 @@ func (s *Server) withGatewayProtocol(next http.HandlerFunc, allowDirect bool) ht
 			writeOpenAIError(w, 400, "invalid_request_error", "gateway requests must use the published model service; omit source and configure routing in the model service members")
 			return
 		}
-		if !s.providerPoolAvailable(*selected) {
+		caps, available := s.providerPoolDetails(*selected)
+		if !available {
 			writeOpenAIInferenceError(w, providerPoolUnavailableError(*selected))
 			return
 		}
 		protocol := strings.TrimPrefix(providerRouteLegacyPath(r.URL.Path), "/v1/")
-		caps := s.providerPoolView(*selected)
 		checkProtocol := protocol
 		if protocol == "messages/count_tokens" {
 			checkProtocol = "messages"

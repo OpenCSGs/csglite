@@ -2,14 +2,21 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/opencsgs/csglite/ee/cluster"
 	"github.com/opencsgs/csglite/ee/edge"
+	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/license"
+	"github.com/opencsgs/csglite/internal/model"
 	"github.com/opencsgs/csglite/internal/observability"
 	"github.com/opencsgs/csglite/pkg/api"
 )
@@ -109,6 +116,189 @@ func TestEdgeServableModel(t *testing.T) {
 		if got := edgeServableModel(c.info); got != c.want {
 			t.Errorf("edgeServableModel(%+v) = %v, want %v", c.info, got, c.want)
 		}
+	}
+}
+
+func TestEdgeOffersLocalModelThroughItsPublishedService(t *testing.T) {
+	s := newTestServer(t)
+	const localID = "acme/chat"
+	const otherID = "other/chat"
+	for i, namespace := range []string{"acme", "other"} {
+		mustSaveLocalModel(t, s.cfg.ModelDir, &model.LocalModel{
+			Namespace: namespace, Name: "chat", Format: model.FormatGGUF, PipelineTag: "text-generation",
+			Size: 1 << 20, Files: []string{"model.gguf"}, DownloadedAt: time.Unix(int64(i+1), 0),
+		})
+	}
+	alias := s.localInferenceModelID(localID)
+	if alias != "chat" {
+		t.Fatalf("expected a short inference alias, got %q", alias)
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/edge/applications" {
+			t.Errorf("unexpected request to the gateway: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[],"total":0}`))
+	}))
+	defer gateway.Close()
+	s.cfg.AIGatewayURL, s.cfg.Token = gateway.URL, "test-token"
+	host := edgeHost{s}
+	manager, err := edge.New(host, t.TempDir(), "test-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := config.ProviderPool{
+		ID: "chat-service", Name: "Chat service", Model: "published-chat", Enabled: true, Policy: "fixed",
+		Members: []config.ProviderPoolMember{{ID: "local", Source: "local", Model: alias}},
+	}
+	serviceID := edge.ModelServiceID(pool.ID)
+	catalog := func() map[string]edge.Model {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		s.handleEdgeStatus(rec, httptest.NewRequest(http.MethodGet, "/api/edge", nil), manager)
+		var status edgeStatusResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+			t.Fatal(err)
+		}
+		choices := make(map[string]edge.Model, len(status.Models))
+		for _, choice := range status.Models {
+			choices[choice.ID] = choice
+		}
+		return choices
+	}
+	if err := config.SaveProviderPools([]config.ProviderPool{pool}); err != nil {
+		t.Fatal(err)
+	}
+	choices := catalog()
+	if len(choices) != 2 || choices[otherID].ID != otherID || !choices[serviceID].Ready {
+		t.Fatalf("expected the published service and the separate same-name model, got %+v", choices)
+	}
+	advertised := host.Models(t.Context())
+	if !slices.ContainsFunc(advertised, func(m edge.Model) bool { return m.ID == localID && m.Ready && m.CoveredByService }) {
+		t.Fatalf("the existing local binding must remain advertised: %+v", advertised)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/edge/applications", strings.NewReader(`{"model_name":"chat","local_model_id":"chat"}`))
+	req.Header.Set("Accept-Language", "zh-CN")
+	s.handleEdgeSubmit(rec, req, manager)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "请选择对应的模型服务") {
+		t.Fatalf("duplicate local submission returned %d: %s", rec.Code, rec.Body)
+	}
+
+	pool.Members[0].Disabled = true
+	if err := config.SaveProviderPools([]config.ProviderPool{pool}); err != nil {
+		t.Fatal(err)
+	}
+	choices = catalog()
+	if len(choices) != 2 || choices[localID].ID != localID || choices[otherID].ID != otherID {
+		t.Fatalf("an unavailable service replaced a local choice: %+v", choices)
+	}
+}
+
+func TestEdgeSharesModelServiceWithClusterBackend(t *testing.T) {
+	useIsolatedStorageHome(t)
+	config.ResetProviderPools()
+	t.Cleanup(config.ResetProviderPools)
+
+	bus := cluster.NewMemoryBus()
+	master := newClusterTestServer(t, bus)
+	worker := newClusterTestServer(t, bus)
+	const repo = "acme/chat-model"
+	mustSaveLocalModel(t, worker.cfg.ModelDir, &model.LocalModel{
+		Namespace: "acme", Name: "chat-model", Format: model.FormatGGUF, PipelineTag: "text-generation",
+		Size: 1 << 20, Files: []string{"model.gguf"}, DownloadedAt: time.Now(),
+	})
+	modelID := worker.localInferenceModelID(repo)
+	worker.mu.Lock()
+	worker.engines[engineCacheKey(repo, engineModeChat)] = &managedEngine{
+		engine: &fakeChatCompletionEngine{resp: api.OpenAIChatResponse{
+			ID: "completion", Model: modelID,
+			Choices: []api.OpenAIChoice{{Message: &api.Message{Role: "assistant", Content: "from worker"}}},
+		}},
+		numParallel: 2, nGPULayers: -1, lastUsed: time.Now(), keepAlive: -1,
+	}
+	worker.mu.Unlock()
+	_, token, err := master.cluster.CreateCluster("edge test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterWait(t, "cluster discovery", func() bool { return len(worker.cluster.DiscoveredNodes()) == 1 })
+	if _, err := worker.cluster.Join(t.Context(), token, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	host := edgeHost{master}
+	workerSource := cluster.SourceNodePrefix + worker.cluster.Identity().UUID
+	clusterWait(t, "available worker model", func() bool {
+		return master.cluster.ModelSourceState(t.Context(), modelID, workerSource) == "configured"
+	})
+	for _, item := range host.Models(t.Context()) {
+		if item.Name == modelID {
+			t.Fatalf("unpublished cluster model appeared in the sharing catalog: %+v", item)
+		}
+	}
+	pool := config.ProviderPool{
+		ID: "edge-service", Name: "Edge service", Model: modelID, Enabled: true, Policy: "fixed", Category: "chat",
+		Members: []config.ProviderPoolMember{{ID: "worker", Source: workerSource, Model: modelID}},
+	}
+	if err := config.SaveProviderPools([]config.ProviderPool{pool}); err != nil {
+		t.Fatal(err)
+	}
+	gatewayID := edge.ModelServiceID(pool.ID)
+	catalog := map[string]edge.Model{}
+	for _, item := range host.Models(t.Context()) {
+		catalog[item.ID] = item
+	}
+	if got := catalog[gatewayID]; !got.Ready || got.Source != edge.ModelSourceGateway || got.Name != modelID {
+		t.Fatalf("AI Gateway model was not listed: %+v", catalog)
+	}
+
+	handler := host.InferenceHandler()
+	send := func(id, source string, stream bool) *httptest.ResponseRecorder {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{
+			"model": id, "source": source, "stream": stream,
+			"messages": []map[string]string{{"role": "user", "content": "hello"}},
+		})
+		return gatewayRequest(handler, http.MethodPost, "/v1/chat/completions", string(body), "")
+	}
+	for _, stream := range []bool{false, true} {
+		rec := send(gatewayID, "", stream)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "from worker") ||
+			(stream && !strings.Contains(rec.Body.String(), "[DONE]")) ||
+			rec.Header().Get(cluster.NodeHeader) != worker.cluster.Identity().UUID ||
+			rec.Header().Get(providerPoolMemberSourceHeader) != workerSource {
+			t.Fatalf("model service stream=%t: %d %v %s", stream, rec.Code, rec.Header(), rec.Body)
+		}
+	}
+	if rec := send(gatewayID, "local", false); rec.Code != http.StatusBadRequest {
+		t.Fatalf("model service accepted a conflicting caller source: %d %s", rec.Code, rec.Body)
+	}
+	if rec := send("edge:cluster:"+repo, "", false); rec.Code != http.StatusNotFound {
+		t.Fatalf("direct cluster ID was accepted: %d %s", rec.Code, rec.Body)
+	}
+	if rec := send(repo, cluster.SourceCluster, false); rec.Code != http.StatusBadRequest {
+		t.Fatalf("legacy ID accepted a source override: %d %s", rec.Code, rec.Body)
+	}
+	if got, source, err := host.modelRoute(repo, "chat/completions"); err != nil || got != repo || source != "local" {
+		t.Fatalf("legacy local route = %q, %q, %v", got, source, err)
+	}
+	pool.Model = "renamed-service"
+	if err := config.SaveProviderPools([]config.ProviderPool{pool}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := send(gatewayID, "", false); rec.Code != http.StatusOK || rec.Header().Get(providerPoolMemberSourceHeader) != workerSource {
+		t.Fatalf("renaming the service broke the application: %d %s", rec.Code, rec.Body)
+	}
+
+	master.cluster.Stop()
+	worker.cluster.Stop()
+	for i := 0; i < 6; i++ {
+		master.cluster.Directory().MarkFailure(worker.cluster.Identity().UUID, errors.New("offline"))
+	}
+	if rec := send(gatewayID, "", false); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("service remained available after worker went offline: %d %s", rec.Code, rec.Body)
 	}
 }
 

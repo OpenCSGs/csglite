@@ -41,27 +41,52 @@ const (
 	ModelSleeping = "sleeping"
 )
 
-// Model is a local model as reported to the gateway.
+const (
+	ModelSourceGateway = "gateway"
+	routedModelPrefix  = "edge:"
+	modelServicePrefix = routedModelPrefix + ModelSourceGateway + ":"
+)
+
+// ModelServiceID binds a shared model to a stable AI Gateway service ID.
+func ModelServiceID(serviceID string) string {
+	return modelServicePrefix + serviceID
+}
+
+// ModelServiceTarget extracts the AI Gateway service ID from a shared model ID.
+func ModelServiceTarget(id string) (string, bool) {
+	return strings.CutPrefix(id, modelServicePrefix)
+}
+
+// IsRoutedModelID identifies the reserved namespace for non-local model IDs.
+func IsRoutedModelID(id string) bool {
+	return strings.HasPrefix(id, routedModelPrefix)
+}
+
+// Model is a model this connector can offer to the gateway.
 type Model struct {
-	// ID is the model's storage ID, the stable key an application binds.
+	// ID is the stable key an application binds.
 	ID string `json:"id"`
 	// Name is the inference ID shown to people; it may change when another
 	// model with the same short name is downloaded.
-	Name  string `json:"name,omitempty"`
-	Ready bool   `json:"ready"`
+	Name   string `json:"name,omitempty"`
+	Source string `json:"source,omitempty"`
+	Ready  bool   `json:"ready"`
 	// State is ModelLoaded, ModelLoading or ModelSleeping.
 	State         string `json:"state,omitempty"`
 	Format        string `json:"format,omitempty"`
 	ContextLength int64  `json:"context_length,omitempty"`
 	// ActiveRequests counts the requests this model is serving right now.
 	ActiveRequests int `json:"active_requests,omitempty"`
+	// CoveredByService hides a duplicate local choice from new applications
+	// while keeping its ID advertised for existing applications.
+	CoveredByService bool `json:"-"`
 }
 
 // Host is what the edge connector needs from the CSGLite server.
 type Host interface {
 	// InferenceHandler serves the requests that arrive through the tunnel.
 	InferenceHandler() http.Handler
-	// Models lists the local models; Ready ones can be served now.
+	// Models lists shareable models; Ready ones can be served now.
 	Models(ctx context.Context) []Model
 	// ActiveRequests counts requests in flight on this machine.
 	ActiveRequests() int

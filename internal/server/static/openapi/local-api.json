@@ -7751,7 +7751,7 @@
           "Edge"
         ],
         "summary": "Get edge serving status",
-        "description": "Connector state plus the local language models that can be offered to the gateway.",
+        "description": "Connector state plus local models and published AI Gateway model services that can be shared. A local model already covered by a shareable model service is offered through that service.",
         "operationId": "getEdgeStatus",
         "responses": {
           "200": {
@@ -7906,7 +7906,7 @@
         "tags": [
           "Edge"
         ],
-        "summary": "Apply to serve a local model",
+        "summary": "Apply to share a model",
         "description": "Files an application for this node; nothing is served before the platform approves it. Gateway validation errors are passed through with their status.",
         "operationId": "submitEdgeApplication",
         "requestBody": {
@@ -7932,6 +7932,16 @@
           },
           "403": {
             "description": "This edition's model contribution limit is reached (see `model_limit` on GET /api/edge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The selected model service is no longer available, or the selected local model must be shared through a model service.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12682,11 +12692,23 @@
         "type": "object",
         "properties": {
           "id": {
+            "type": "string",
+            "description": "Stable model ID to use as local_model_id when applying to share this model."
+          },
+          "name": {
             "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "local",
+              "gateway"
+            ],
+            "description": "Model source. An omitted source means local."
           },
           "ready": {
             "type": "boolean",
-            "description": "Whether this machine can run the model now."
+            "description": "Whether the selected source can serve the model now."
           },
           "format": {
             "type": "string"
@@ -12762,7 +12784,8 @@
             "description": "Public name under the owner's namespace; the gateway model ID becomes <owner>/<model_name>."
           },
           "local_model_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Use the exact model ID from GET /api/edge. AI Gateway model services are identified by service ID. Existing local storage IDs are accepted."
           },
           "description": {
             "type": "string"

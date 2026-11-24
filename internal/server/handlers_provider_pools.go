@@ -266,13 +266,18 @@ func providerPoolMembersFromAPI(members []api.ProviderPoolMember) []config.Provi
 
 // Source availability includes current cluster telemetry, without an inference probe.
 func (s *Server) providerPoolView(pool config.ProviderPool) api.ProviderPool {
+	out, _ := s.providerPoolDetails(pool)
+	return out
+}
+
+func (s *Server) providerPoolDetails(pool config.ProviderPool) (api.ProviderPool, bool) {
 	out := providerPoolAPI(pool)
 	out.SourceStates = make(map[string]string, len(pool.Members))
 	for _, member := range pool.Members {
 		out.SourceStates[member.ID] = s.providerPoolSourceState(member)
 	}
-	s.fillPoolProtocols(pool, &out)
-	return out
+	available := s.fillPoolProtocols(pool, &out)
+	return out, pool.Enabled && available
 }
 
 func (s *Server) providerPoolSourceState(member config.ProviderPoolMember) string {
