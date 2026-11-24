@@ -47,6 +47,13 @@ const (
 	// probe instead of one per request; a hub upgrade is picked up without a
 	// restart after the TTL.
 	marketplaceLocalFilterEndpointTTL = 20 * time.Minute
+	// marketplaceLocalFilterTimeoutFirstCooldown parks the endpoint after the
+	// first query_timeout. The hub reports a timeout only after its own budget
+	// expires, so every page would otherwise pay that wait before the scan
+	// fallback runs. A timeout after the cooldown expires means the environment
+	// is still too slow, so later timeouts park it for the longer cooldown.
+	marketplaceLocalFilterTimeoutFirstCooldown = 15 * time.Minute
+	marketplaceLocalFilterTimeoutCooldown      = 30 * time.Minute
 )
 
 type marketplaceArchStatus int
@@ -277,6 +284,14 @@ type marketplaceLocalInferenceFilter struct {
 	// "hub has no local_filter endpoint" memo with the Server.
 	endpointUnavailable     func() bool
 	markEndpointUnavailable func()
+
+	// timeoutCooldown, markTimeout and clearTimeout share the per-process
+	// "hub reported query_timeout" memo with the Server. While the cooldown is
+	// active the scan fallback runs without paying for another timed-out round
+	// trip.
+	timeoutCooldown func() bool
+	markTimeout     func()
+	clearTimeout    func()
 }
 
 func newMarketplaceLocalInferenceFilter(registry modelregistry.Registry) *marketplaceLocalInferenceFilter {
@@ -1423,11 +1438,6 @@ const (
 	marketplaceLocalModelFilterDiskMultiplier   = 2
 )
 
-// errMarketplaceLocalModelFilterUnavailable reports a hub response that timed out
-// server side. Falling back to the scan would be slower and could still return
-// nothing, so the caller surfaces a retryable error instead.
-var errMarketplaceLocalModelFilterUnavailable = errors.New("local model filter results are temporarily unavailable; retry later")
-
 // marketplaceLocalModelFilterCapabilities mirrors the client's local inference
 // rules. Every table is read from the package that implements the rule, so the
 // declared vocabulary cannot drift from the runtime.
@@ -1499,7 +1509,8 @@ func marketplaceUnsupportedRuntimeTagNames() []string {
 // listLocalModelFilter asks the hub to classify the catalog. It returns
 // fallback=true when the caller should use the scan filter instead: the hub does
 // not have the endpoint (404), rejects the request (400), the token (401, after
-// one anonymous retry) or fails (5xx / network / timeout). A rate limit (429) is
+// one anonymous retry), fails (5xx / network / timeout), or answers
+// query_timeout. A rate limit (429) is
 // surfaced as an error because the scan fallback would multiply the upstream
 // load.
 func (f *marketplaceLocalInferenceFilter) listLocalModelFilter(ctx context.Context, req csghub.LocalModelFilterRequest) (marketplaceLocalInferenceResult, bool, error) {
@@ -1509,6 +1520,11 @@ func (f *marketplaceLocalInferenceFilter) listLocalModelFilter(ctx context.Conte
 	}
 	if f.endpointUnavailable != nil && f.endpointUnavailable() {
 		// The hub is known to lack the endpoint; skip the doomed round trip.
+		return marketplaceLocalInferenceResult{}, true, nil
+	}
+	if f.timeoutCooldown != nil && f.timeoutCooldown() {
+		// The hub recently answered query_timeout; the scan is the only way to
+		// render this page until the cooldown expires.
 		return marketplaceLocalInferenceResult{}, true, nil
 	}
 	f.resetScanState()
@@ -1534,7 +1550,17 @@ func (f *marketplaceLocalInferenceFilter) listLocalModelFilter(ctx context.Conte
 		return marketplaceLocalInferenceResult{}, false, err
 	}
 	if resp.QueryTimeout {
-		return marketplaceLocalInferenceResult{}, false, errMarketplaceLocalModelFilterUnavailable
+		// A timed-out hub answer means its database cannot serve this query
+		// right now. The scan still produces a page, so park the endpoint
+		// instead of surfacing a retryable error the user cannot act on.
+		log.Printf("MARKETPLACE LOCAL INFERENCE: hub local-model-filter timed out; falling back to scan")
+		if f.markTimeout != nil {
+			f.markTimeout()
+		}
+		return marketplaceLocalInferenceResult{}, true, nil
+	}
+	if f.clearTimeout != nil {
+		f.clearTimeout()
 	}
 
 	result := marketplaceLocalInferenceResult{
@@ -1722,4 +1748,43 @@ func (s *Server) markLocalFilterEndpointUnavailable() {
 	s.localFilterEndpointMu.Lock()
 	s.localFilterEndpointUnavailableAt = time.Now()
 	s.localFilterEndpointMu.Unlock()
+}
+
+// localFilterTimeoutCooldown reports whether a recent query_timeout still parks
+// the hub endpoint. Expiring the cooldown clears it so the next page probes the
+// endpoint again.
+func (s *Server) localFilterTimeoutCooldown() bool {
+	s.localFilterEndpointMu.Lock()
+	defer s.localFilterEndpointMu.Unlock()
+	if s.localFilterTimeoutUntil.IsZero() {
+		return false
+	}
+	if time.Now().Before(s.localFilterTimeoutUntil) {
+		return true
+	}
+	s.localFilterTimeoutUntil = time.Time{}
+	return false
+}
+
+// markLocalFilterTimeout starts the cooldown after the hub reports
+// query_timeout. The first timeout parks the endpoint for the short cooldown; a
+// timeout after that cooldown expired escalates to the long one.
+func (s *Server) markLocalFilterTimeout() {
+	s.localFilterEndpointMu.Lock()
+	defer s.localFilterEndpointMu.Unlock()
+	cooldown := marketplaceLocalFilterTimeoutFirstCooldown
+	if s.localFilterTimeoutEscalated {
+		cooldown = marketplaceLocalFilterTimeoutCooldown
+	}
+	s.localFilterTimeoutEscalated = true
+	s.localFilterTimeoutUntil = time.Now().Add(cooldown)
+}
+
+// clearLocalFilterTimeout resets the cooldown after the hub answered a request,
+// so a later timeout starts at the short cooldown again.
+func (s *Server) clearLocalFilterTimeout() {
+	s.localFilterEndpointMu.Lock()
+	defer s.localFilterEndpointMu.Unlock()
+	s.localFilterTimeoutUntil = time.Time{}
+	s.localFilterTimeoutEscalated = false
 }

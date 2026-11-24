@@ -159,14 +159,78 @@ func TestMarketplaceLocalModelFilterSkipsCandidatesWhenPageIsFull(t *testing.T) 
 	}
 }
 
+func TestServerLocalFilterTimeoutCooldown(t *testing.T) {
+	s := &Server{}
+	if s.localFilterTimeoutCooldown() {
+		t.Fatal("cooldown active before any timeout")
+	}
+	s.markLocalFilterTimeout()
+	if !s.localFilterTimeoutCooldown() {
+		t.Fatal("cooldown not active after the first timeout")
+	}
+	if d := time.Until(s.localFilterTimeoutUntil); d < marketplaceLocalFilterTimeoutFirstCooldown-time.Minute || d > marketplaceLocalFilterTimeoutFirstCooldown {
+		t.Fatalf("first cooldown = %v, want ~%v", d, marketplaceLocalFilterTimeoutFirstCooldown)
+	}
+
+	// A timeout after the cooldown expired means the environment is still slow.
+	s.localFilterTimeoutUntil = time.Now().Add(-time.Second)
+	if s.localFilterTimeoutCooldown() {
+		t.Fatal("cooldown still active after it expired")
+	}
+	s.markLocalFilterTimeout()
+	if d := time.Until(s.localFilterTimeoutUntil); d < marketplaceLocalFilterTimeoutCooldown-time.Minute || d > marketplaceLocalFilterTimeoutCooldown {
+		t.Fatalf("escalated cooldown = %v, want ~%v", d, marketplaceLocalFilterTimeoutCooldown)
+	}
+
+	// A successful answer resets the escalation.
+	s.clearLocalFilterTimeout()
+	if s.localFilterTimeoutCooldown() {
+		t.Fatal("cooldown active after a successful answer")
+	}
+	s.markLocalFilterTimeout()
+	if d := time.Until(s.localFilterTimeoutUntil); d < marketplaceLocalFilterTimeoutFirstCooldown-time.Minute || d > marketplaceLocalFilterTimeoutFirstCooldown {
+		t.Fatalf("cooldown after reset = %v, want ~%v", d, marketplaceLocalFilterTimeoutFirstCooldown)
+	}
+}
+
 func TestMarketplaceLocalModelFilterTimeoutSemantics(t *testing.T) {
 	clock := time.Unix(1700000000, 0)
-	t.Run("query timeout surfaces a retryable error", func(t *testing.T) {
+	t.Run("query timeout falls back to the scan", func(t *testing.T) {
 		reg := newFakeLocalModelFilterRegistry()
 		reg.response = &csghub.LocalModelFilterResponse{QueryTimeout: true}
 		filter := newTestLocalInferenceFilter(reg, &clock)
-		if _, fallback, err := filter.listLocalModelFilter(context.Background(), csghub.LocalModelFilterRequest{Per: 16}); fallback || !errors.Is(err, errMarketplaceLocalModelFilterUnavailable) {
-			t.Fatalf("fallback=%v err=%v, want the unavailable error", fallback, err)
+		marked := 0
+		filter.markTimeout = func() { marked++ }
+		if _, fallback, err := filter.listLocalModelFilter(context.Background(), csghub.LocalModelFilterRequest{Per: 16}); !fallback || err != nil {
+			t.Fatalf("fallback=%v err=%v, want the scan fallback", fallback, err)
+		}
+		if marked != 1 {
+			t.Fatalf("markTimeout calls = %d, want 1", marked)
+		}
+	})
+	t.Run("active cooldown skips the hub", func(t *testing.T) {
+		reg := newFakeLocalModelFilterRegistry()
+		reg.response = &csghub.LocalModelFilterResponse{TotalConfirmed: 1}
+		filter := newTestLocalInferenceFilter(reg, &clock)
+		filter.timeoutCooldown = func() bool { return true }
+		if _, fallback, err := filter.listLocalModelFilter(context.Background(), csghub.LocalModelFilterRequest{Per: 16}); !fallback || err != nil {
+			t.Fatalf("fallback=%v err=%v, want the scan fallback", fallback, err)
+		}
+		if reg.calls != 0 {
+			t.Fatalf("hub calls = %d, want 0 while the cooldown is active", reg.calls)
+		}
+	})
+	t.Run("successful answer clears the cooldown", func(t *testing.T) {
+		reg := newFakeLocalModelFilterRegistry()
+		reg.response = &csghub.LocalModelFilterResponse{TotalConfirmed: 1}
+		filter := newTestLocalInferenceFilter(reg, &clock)
+		cleared := 0
+		filter.clearTimeout = func() { cleared++ }
+		if _, fallback, err := filter.listLocalModelFilter(context.Background(), csghub.LocalModelFilterRequest{Per: 16}); err != nil || fallback {
+			t.Fatalf("listLocalModelFilter = (%v, %v), want endpoint result", fallback, err)
+		}
+		if cleared != 1 {
+			t.Fatalf("clearTimeout calls = %d, want 1", cleared)
 		}
 	})
 	t.Run("candidate timeout keeps the page", func(t *testing.T) {

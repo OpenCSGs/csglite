@@ -120,6 +120,9 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 		filter := newMarketplaceLocalInferenceFilter(registry)
 		filter.endpointUnavailable = s.localFilterEndpointUnavailable
 		filter.markEndpointUnavailable = s.markLocalFilterEndpointUnavailable
+		filter.timeoutCooldown = s.localFilterTimeoutCooldown
+		filter.markTimeout = s.markLocalFilterTimeout
+		filter.clearTimeout = s.clearLocalFilterTimeout
 		limits := localLimits
 		filter.limits = limits
 		// The exact key carries a hardware fingerprint. After the limits cache
@@ -141,10 +144,6 @@ func (s *Server) handleMarketplaceModels(w http.ResponseWriter, r *http.Request)
 			request := buildMarketplaceLocalModelFilterRequest(q, limits, s.clusterFormatsOnly(), page, per, excludePaths)
 			result, fallback, err := filter.listLocalModelFilter(r.Context(), request)
 			if err != nil {
-				if errors.Is(err, errMarketplaceLocalModelFilterUnavailable) {
-					writeError(w, http.StatusServiceUnavailable, err.Error())
-					return
-				}
 				if body, ok := staleBody(); ok {
 					writeCachedMarketplaceResponse(w, body, "stale")
 					return

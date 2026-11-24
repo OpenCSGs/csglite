@@ -220,9 +220,13 @@ type Server struct {
 
 	// localFilterEndpointMu guards the per-process memo that the hub has no
 	// local-model-filter endpoint. Without it every page of a legacy hub pays a
-	// failing round trip before falling back to the scan.
+	// failing round trip before falling back to the scan. It also guards the
+	// query_timeout cooldown, which keeps a slow hub from costing every page
+	// its full timeout budget.
 	localFilterEndpointMu            sync.Mutex
 	localFilterEndpointUnavailableAt time.Time
+	localFilterTimeoutUntil          time.Time
+	localFilterTimeoutEscalated      bool
 
 	mu           sync.RWMutex
 	engines      map[string]*managedEngine
