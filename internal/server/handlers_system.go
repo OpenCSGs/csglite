@@ -287,6 +287,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		s.applyRuntimeSettingsUpdate(serverURLUpdated, aiGatewayURLUpdated, cloudTokenUpdated)
 		if registrySettingsUpdated {
 			clearMarketplaceCache()
+			clearMarketplaceLocalInferenceCache()
 		}
 	}
 	if dirsUpdated {
@@ -357,10 +358,11 @@ func currentSettingsResponse(cfg *config.Config, version string) api.SettingsRes
 		ModelScopeTokenSet:       strings.TrimSpace(cfg.ModelScopeToken) != "",
 		MarketplaceModelSource:   config.NormalizeMarketplaceModelSource(cfg.MarketplaceModelSource),
 		MarketplaceDatasetSource: config.NormalizeMarketplaceDatasetSource(cfg.MarketplaceDatasetSource),
-		Autostart:                autostartEnabled,
-		DesktopMode:              cfg.DesktopMode,
-		LocalAPIURL:              localAPIURL,
-		WebSearch:                webSearchConfigToSettings(cfg.WebSearch),
+
+		Autostart:   autostartEnabled,
+		DesktopMode: cfg.DesktopMode,
+		LocalAPIURL: localAPIURL,
+		WebSearch:   webSearchConfigToSettings(cfg.WebSearch),
 		Observability: api.ObservabilitySettings{
 			RetentionDays: config.ObservabilityRetentionDays(cfg.Observability),
 		},

@@ -1,6 +1,9 @@
 package convert
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // IsSupportedHFArchitecture reports whether csghub-lite can convert the HuggingFace
 // architecture to GGUF via the bundled llama.cpp converter.
@@ -24,6 +27,31 @@ func SupportedHFArchitecture(hfArch string) (string, bool) {
 	}
 	ggufArch, ok := decisionCheckpointRootArchitectures[arch]
 	return ggufArch, ok
+}
+
+// SupportedHFArchitectures lists every HuggingFace architecture the bundled
+// converter can turn into GGUF. The marketplace local-model-filter API declares it
+// as a client capability, so the server classifies text models exactly like the
+// local convert path does.
+func SupportedHFArchitectures() []string {
+	tables := []map[string]string{
+		archMapping,
+		pythonConverterArchitectureMapping,
+		decisionCheckpointRootArchitectures,
+	}
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(archMapping))
+	for _, table := range tables {
+		for arch := range table {
+			if _, ok := seen[arch]; ok {
+				continue
+			}
+			seen[arch] = struct{}{}
+			out = append(out, arch)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // pythonConverterArchitectureMapping mirrors @ModelBase.register entries from

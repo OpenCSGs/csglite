@@ -105,7 +105,7 @@ func FromMarketplaceModel(format, architecture, className, modelName, libraryNam
 	}
 
 	switch normalizePipelineTag(pipelineTag) {
-	case "text-to-image", "image-to-image":
+	case "text-to-image", "image-to-image", "stable-diffusion":
 		return diffusersSupportForImageTask(architecture, className)
 	case "automatic-speech-recognition":
 		return asrSupport(architecture)
@@ -331,9 +331,12 @@ func unsupportedPipelineTag(pipelineTag string) bool {
 	}
 }
 
+// isImageTask reports whether a pipeline tag routes to the image runtime. The
+// legacy "stable-diffusion" tag predates "text-to-image" but means the same
+// thing, so it must not fall through to llamaSupport().
 func isImageTask(pipelineTag string) bool {
 	switch normalizePipelineTag(pipelineTag) {
-	case "text-to-image", "image-to-image":
+	case "text-to-image", "image-to-image", "stable-diffusion":
 		return true
 	default:
 		return false
@@ -344,48 +347,98 @@ func normalizePipelineTag(pipelineTag string) string {
 	return strings.ToLower(strings.TrimSpace(pipelineTag))
 }
 
+// The marketplace local-model-filter API asks the client to declare these tables so
+// the server classifies image classes the same way. Keep the predicates below
+// reading the same slices.
+var (
+	unsupportedDiffusersClassSubstrings = []string{
+		"videodiffusion",
+		"texttovideo",
+		"imagetovideo",
+		"image2video",
+		"video2video",
+		"videopipeline",
+	}
+	textToImageDiffusersClassSubstrings = []string{
+		"texttoimage",
+		"pipelinefortext2image",
+		"qwenimage",
+		"flux",
+		"stablediffusion",
+		"stablecascade",
+		"wuerstchen",
+		"kandinsky",
+		"pixart",
+		"auraflow",
+		"sana",
+		"lumina",
+		"kolors",
+		"cogview",
+		"hunyuan",
+		"dit",
+		"glmpipeline",
+		"glmimage",
+		"zimage",
+		"ovisimage",
+		"prxpipeline",
+		"latentconsistency",
+		"deepfloyd",
+	}
+	imageToImageDiffusersClassSubstrings = []string{
+		"image2image",
+		"img2img",
+		"inpaint",
+		"depth2img",
+		"kontext",
+		"edit",
+	}
+	// diffusersClassFallbackSubstring is the last rule of
+	// diffusersPipelineTagFromClassName: any other class that mentions a
+	// pipeline is treated as text-to-image.
+	diffusersClassFallbackSubstring = "pipeline"
+)
+
+// ImagePipelineSubstrings returns the class-name substrings that identify a
+// supported image pipeline. The server matches them against the lowercased
+// class name, exactly like diffusersPipelineTagFromClassName.
+func ImagePipelineSubstrings() []string {
+	out := make([]string, 0, len(textToImageDiffusersClassSubstrings)+len(imageToImageDiffusersClassSubstrings))
+	out = append(out, textToImageDiffusersClassSubstrings...)
+	out = append(out, imageToImageDiffusersClassSubstrings...)
+	return out
+}
+
+// ImageClassFallbackSubstrings returns the substrings that make an otherwise
+// unknown class an image pipeline.
+func ImageClassFallbackSubstrings() []string {
+	return []string{diffusersClassFallbackSubstring}
+}
+
+// ImageUnsupportedClassSubstrings returns the class-name substrings of video
+// pipelines, which no local runtime serves.
+func ImageUnsupportedClassSubstrings() []string {
+	return append([]string(nil), unsupportedDiffusersClassSubstrings...)
+}
+
+func containsAnySubstring(value string, substrings []string) bool {
+	for _, substring := range substrings {
+		if strings.Contains(value, substring) {
+			return true
+		}
+	}
+	return false
+}
+
 func isUnsupportedDiffusersClass(className string) bool {
-	return strings.Contains(className, "videodiffusion") ||
-		strings.Contains(className, "texttovideo") ||
-		strings.Contains(className, "imagetovideo") ||
-		strings.Contains(className, "image2video") ||
-		strings.Contains(className, "video2video") ||
-		strings.Contains(className, "videopipeline")
+	return containsAnySubstring(className, unsupportedDiffusersClassSubstrings)
 }
 
 func isTextToImageDiffusersClass(className string) bool {
-	return strings.Contains(className, "texttoimage") ||
-		strings.Contains(className, "pipelinefortext2image") ||
-		strings.Contains(className, "qwenimage") ||
-		strings.Contains(className, "flux") ||
-		strings.Contains(className, "stablediffusion") ||
-		strings.Contains(className, "stablecascade") ||
-		strings.Contains(className, "wuerstchen") ||
-		strings.Contains(className, "kandinsky") ||
-		strings.Contains(className, "pixart") ||
-		strings.Contains(className, "auraflow") ||
-		strings.Contains(className, "sana") ||
-		strings.Contains(className, "lumina") ||
-		strings.Contains(className, "kolors") ||
-		strings.Contains(className, "cogview") ||
-		strings.Contains(className, "hunyuan") ||
-		strings.Contains(className, "dit") ||
-		strings.Contains(className, "glmpipeline") ||
-		strings.Contains(className, "glmimage") ||
-		strings.Contains(className, "zimage") ||
-		strings.Contains(className, "ovisimage") ||
-		strings.Contains(className, "prxpipeline") ||
-		strings.Contains(className, "latentconsistency") ||
-		strings.Contains(className, "deepfloyd")
+	return containsAnySubstring(className, textToImageDiffusersClassSubstrings)
 }
 
 func isImageToImageDiffusersClass(className string) bool {
-	return strings.Contains(className, "image2image") ||
-		strings.Contains(className, "img2img") ||
-		strings.Contains(className, "inpaint") ||
-		strings.Contains(className, "depth2img") ||
-		strings.Contains(className, "kontext") ||
-		strings.Contains(className, "edit")
+	return containsAnySubstring(className, imageToImageDiffusersClassSubstrings)
 }
 
 func readArchitectureFromDir(modelDir string) string {

@@ -8,9 +8,12 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/opencsgs/csglite/internal/config"
 	"github.com/opencsgs/csglite/internal/csghub"
 	"github.com/opencsgs/csglite/internal/dataset"
 	"github.com/opencsgs/csglite/internal/model"
@@ -166,6 +169,38 @@ func TestHandleMarketplaceDatasetsDispatchesProviderFilters(t *testing.T) {
 	}
 	if len(response.Data) != 1 || response.Data[0].ArtifactSource != "huggingface" {
 		t.Fatalf("datasets = %#v", response.Data)
+	}
+}
+
+func TestHandleMarketplaceDatasetsCachesResponse(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/datasets" {
+			t.Fatalf("path = %q, want /api/datasets", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{{
+			"id": "acme/demo", "tags": []string{"license:apache-2.0"},
+		}})
+	}))
+	defer apiServer.Close()
+	t.Setenv("HF_ENDPOINT", apiServer.URL)
+	clearMarketplaceCache()
+
+	s := newTestServer(t)
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/marketplace/datasets?artifact_source=huggingface&search=cache-check", nil)
+		w := httptest.NewRecorder()
+		s.handleMarketplaceDatasets(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d status = %d, want 200 body=%s", i, w.Code, w.Body.String())
+		}
+		want := "miss"
+		if i > 0 {
+			want = "fresh"
+		}
+		if got := w.Header().Get("X-CSGHUB-Lite-Cache"); got != want {
+			t.Fatalf("request %d cache header = %q, want %q", i, got, want)
+		}
 	}
 }
 
@@ -428,14 +463,26 @@ func TestHandleMarketplaceModelsServesCachedListOnUpstreamRateLimit(t *testing.T
 		t.Fatalf("first status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
 	}
 
+	// Age the entry past the fresh TTL so the second request actually reaches the
+	// upstream and falls back to the stale copy when it is rate limited.
+	cacheKey := marketplaceCacheKey("models", "page=9")
+	marketplaceListCache.Lock()
+	entry := marketplaceListCache.entries[cacheKey]
+	entry.updatedAt = time.Now().Add(-marketplaceListCacheTTL - time.Minute)
+	marketplaceListCache.entries[cacheKey] = entry
+	marketplaceListCache.Unlock()
+
 	req = httptest.NewRequest(http.MethodGet, "/api/marketplace/models?page=9", nil)
 	w = httptest.NewRecorder()
 	s.handleMarketplaceModels(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("second status = %d, want cached %d body=%s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if got := w.Header().Get("X-CSGHUB-Lite-Cache"); got != "fresh" {
-		t.Fatalf("cache header = %q, want fresh", got)
+	if got := w.Header().Get("X-CSGHUB-Lite-Cache"); got != "stale" {
+		t.Fatalf("cache header = %q, want stale", got)
+	}
+	if requests != 2 {
+		t.Fatalf("upstream requests = %d, want 2 (the stale fallback must still call the upstream)", requests)
 	}
 
 	var resp struct {
@@ -819,6 +866,8 @@ func TestHandleMarketplaceModelDetailReturnsLocalModelStatus(t *testing.T) {
 					},
 				},
 			})
+		case "/api/v1/models/openai/openai_whisper-large-v3/tree":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoFile]{Msg: "OK"})
 		default:
 			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
 		}
@@ -858,6 +907,306 @@ func TestHandleMarketplaceModelDetailReturnsLocalModelStatus(t *testing.T) {
 	}
 	if resp.LocalModel.PublicID != "openai_whisper-large-v3" {
 		t.Fatalf("local_model.public_id = %q, want openai_whisper-large-v3", resp.LocalModel.PublicID)
+	}
+}
+
+func TestHandleMarketplaceModelDetailRejectsQuantizedWeights(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/models/Qwen/Qwen2.5-72B-Instruct-AWQ":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[csghub.Model]{
+				Msg: "OK",
+				Data: csghub.Model{
+					ID:   1,
+					Name: "Qwen2.5-72B-Instruct-AWQ",
+					Path: "Qwen/Qwen2.5-72B-Instruct-AWQ",
+					Tags: []csghub.Tag{
+						{Name: "safetensors", Category: "framework", ShowName: "SafeTensors"},
+						{Name: "text-generation", Category: "task", ShowName: "Text Generation"},
+					},
+					Metadata: csghub.ModelMetadata{Architecture: "Qwen2ForCausalLM"},
+				},
+			})
+		case "/api/v1/models/Qwen/Qwen2.5-72B-Instruct-AWQ/tree":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoFile]{Msg: "OK"})
+		default:
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/Qwen/Qwen2.5-72B-Instruct-AWQ", nil)
+	req.SetPathValue("namespace", "Qwen")
+	req.SetPathValue("name", "Qwen2.5-72B-Instruct-AWQ")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.LocalInference.Supported {
+		t.Fatalf("local_inference = %#v, want unsupported for AWQ weights", resp.LocalInference)
+	}
+}
+
+func TestHandleMarketplaceModelDetailUsesRoutedTaskTag(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/models/acme/sd-xl":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[csghub.Model]{
+				Msg: "OK",
+				Data: csghub.Model{
+					ID:   1,
+					Name: "sd-xl",
+					Path: "acme/sd-xl",
+					Tags: []csghub.Tag{
+						{Name: "safetensors", Category: "framework", ShowName: "SafeTensors"},
+						{Name: "text-classification", Category: "task", ShowName: "Text Classification"},
+						{Name: "text-to-image", Category: "task", ShowName: "Text to Image"},
+					},
+				},
+			})
+		case "/api/v1/models/acme/sd-xl/tree":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoFile]{Msg: "OK"})
+		default:
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/acme/sd-xl", nil)
+	req.SetPathValue("namespace", "acme")
+	req.SetPathValue("name", "sd-xl")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.LocalInference.Supported || resp.LocalInference.Runtime != "diffusers" || resp.LocalInference.Mode != "image" {
+		t.Fatalf("local_inference = %#v, want diffusers image (routed task must not use the first task tag)", resp.LocalInference)
+	}
+}
+
+func TestHandleMarketplaceModelDetailPrefersGGUFOverFirstFrameworkTag(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/models/acme/mixed-weights":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[csghub.Model]{
+				Msg: "OK",
+				Data: csghub.Model{
+					ID:   1,
+					Name: "mixed-weights",
+					Path: "acme/mixed-weights",
+					Tags: []csghub.Tag{
+						{Name: "safetensors", Category: "framework", ShowName: "SafeTensors"},
+						{Name: "gguf", Category: "framework", ShowName: "GGUF"},
+						{Name: "image-text-to-text", Category: "task", ShowName: "Image-Text-to-Text"},
+					},
+				},
+			})
+		case "/api/v1/models/acme/mixed-weights/tree":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoFile]{Msg: "OK"})
+		default:
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/acme/mixed-weights", nil)
+	req.SetPathValue("namespace", "acme")
+	req.SetPathValue("name", "mixed-weights")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.LocalInference.Supported || resp.LocalInference.Runtime != "llama" || resp.LocalInference.Mode != "direct" {
+		t.Fatalf("local_inference = %#v, want llama direct (gguf tag must win over the first framework tag)", resp.LocalInference)
+	}
+}
+
+func TestHandleMarketplaceModelDetailMixedTagsForModelScope(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/openapi/v1/models/acme/mixed-weights":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"data": map[string]interface{}{
+					"id":   "acme/mixed-weights",
+					"tags": []string{"library:safetensors", "library:gguf", "task:image-text-to-text"},
+				},
+			})
+		case "/api/v1/models/acme/mixed-weights/repo/files":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"Success": true,
+				"Data":    map[string]interface{}{"Files": []interface{}{}},
+			})
+		default:
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	t.Setenv(config.EnvModelScopeEndpoint, apiServer.URL)
+
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/acme/mixed-weights?artifact_source=modelscope", nil)
+	req.SetPathValue("namespace", "acme")
+	req.SetPathValue("name", "mixed-weights")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.LocalInference.Supported || resp.LocalInference.Runtime != "llama" || resp.LocalInference.Mode != "direct" {
+		t.Fatalf("local_inference = %#v, want llama direct (library:gguf must win over library:safetensors)", resp.LocalInference)
+	}
+}
+
+func TestHandleMarketplaceModelDetailMixedTagsForHuggingFace(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/models/acme/mixed-weights/revision/main":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":           "acme/mixed-weights",
+				"modelId":      "acme/mixed-weights",
+				"tags":         []string{"safetensors", "gguf"},
+				"pipeline_tag": "image-text-to-text",
+			})
+		case "/api/models/acme/mixed-weights/tree/main":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]interface{}{})
+		case "/acme/mixed-weights/resolve/main/README.md":
+			http.NotFound(w, r)
+		default:
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	t.Setenv(config.EnvHuggingFaceEndpoint, apiServer.URL)
+
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/acme/mixed-weights?artifact_source=huggingface", nil)
+	req.SetPathValue("namespace", "acme")
+	req.SetPathValue("name", "mixed-weights")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.LocalInference.Supported || resp.LocalInference.Runtime != "llama" || resp.LocalInference.Mode != "direct" {
+		t.Fatalf("local_inference = %#v, want llama direct (the bare gguf tag must win over safetensors)", resp.LocalInference)
+	}
+}
+
+func TestHandleMarketplaceModelDetailFallsBackToFileInferredFormat(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/models/acme/onnx-weights":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[csghub.Model]{
+				Msg: "OK",
+				Data: csghub.Model{
+					ID:   1,
+					Name: "onnx-weights",
+					Path: "acme/onnx-weights",
+					Tags: []csghub.Tag{
+						{Name: "onnx", Category: "framework", ShowName: "ONNX"},
+					},
+				},
+			})
+		case "/api/v1/models/acme/onnx-weights/tree":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoFile]{
+				Msg: "OK",
+				Data: []csghub.RepoFile{
+					{Path: "config.json", Name: "config.json"},
+					{Path: "model.safetensors", Name: "model.safetensors", LFS: true},
+				},
+			})
+		case "/api/v1/models/acme/onnx-weights/raw/config.json":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[string]{
+				Msg:  "OK",
+				Data: `{"architectures":["LlamaForCausalLM"],"model_type":"llama"}`,
+			})
+		default:
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/acme/onnx-weights", nil)
+	req.SetPathValue("namespace", "acme")
+	req.SetPathValue("name", "onnx-weights")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// Tags carry no usable framework, so the verdict falls back to the format
+	// inferred from the repository files.
+	if !resp.LocalInference.Supported || resp.LocalInference.Runtime != "llama" || resp.LocalInference.Mode != "convert" {
+		t.Fatalf("local_inference = %#v, want llama convert from the file-inferred format", resp.LocalInference)
 	}
 }
 
@@ -986,4 +1335,429 @@ func hasMarketplaceTag(tags []csghub.Tag, name, category string) bool {
 		}
 	}
 	return false
+}
+
+func TestHandleMarketplaceModelDetailRejectsOversizedConvertModel(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/models/Qwen/Qwen3.8-2.4T-A95B":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[csghub.Model]{
+				Msg: "OK",
+				Data: csghub.Model{
+					ID:           244357,
+					Name:         "Qwen3.8-2.4T-A95B",
+					Path:         "Qwen/Qwen3.8-2.4T-A95B",
+					RepositoryID: 328040,
+					Tags: []csghub.Tag{
+						{Name: "safetensors", Category: "framework"},
+						{Name: "text-generation", Category: "task"},
+					},
+					Metadata: csghub.ModelMetadata{Architecture: "Qwen3_5MoeForCausalLM"},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/extra":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoExtraItem]{
+				Msg:  "OK",
+				Data: []csghub.RepoExtraItem{{RepoID: 328040, Size: 4_892_388_876_361}},
+			})
+		default:
+			t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+	s.localInferenceLimits = func() marketplaceLocalInferenceLimits {
+		return marketplaceLocalInferenceLimits{maxDownloadBytes: 200 << 30, maxMemoryBytes: 64 << 30}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/Qwen/Qwen3.8-2.4T-A95B", nil)
+	req.SetPathValue("namespace", "Qwen")
+	req.SetPathValue("name", "Qwen3.8-2.4T-A95B")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Details == nil || resp.Details.RepoSize != 4_892_388_876_361 {
+		t.Fatalf("details = %#v, want the enriched 4.4 TiB repo size", resp.Details)
+	}
+	if resp.LocalInference.Supported || resp.LocalInference.Mode != "none" {
+		t.Fatalf("local_inference = %#v, want unsupported for an oversized convert-only repo", resp.LocalInference)
+	}
+	if resp.LocalInference.Architecture != "Qwen3_5MoeForCausalLM" {
+		t.Fatalf("architecture = %q, want the probed architecture kept for display", resp.LocalInference.Architecture)
+	}
+}
+
+func TestHandleMarketplaceModelDetailUsesTreeSizeWhenExtrasIsEmpty(t *testing.T) {
+	const (
+		gib   = int64(1) << 30
+		total = 300 * gib
+	)
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/models/acme/big":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[csghub.Model]{
+				Msg: "OK",
+				Data: csghub.Model{
+					ID:           1,
+					Name:         "big",
+					Path:         "acme/big",
+					RepositoryID: 7,
+					Tags: []csghub.Tag{
+						{Name: "safetensors", Category: "framework"},
+						{Name: "text-generation", Category: "task"},
+					},
+					Metadata: csghub.ModelMetadata{Architecture: "LlamaForCausalLM"},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/extra":
+			// The extras endpoint reports nothing for this mirror, so the detail
+			// page must fall back to the file tree like the list does.
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoExtraItem]{Msg: "OK"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/models/acme/big/tree":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoFile]{
+				Msg: "OK",
+				Data: []csghub.RepoFile{
+					{Path: "model-00001.safetensors", Name: "model-00001.safetensors", Type: "file", Size: total / 2},
+					{Path: "model-00002.safetensors", Name: "model-00002.safetensors", Type: "file", Size: total / 2},
+				},
+			})
+		default:
+			t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+	s.localInferenceLimits = func() marketplaceLocalInferenceLimits {
+		return marketplaceLocalInferenceLimits{maxDownloadBytes: 100 * gib, maxMemoryBytes: 64 * gib}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/acme/big", nil)
+	req.SetPathValue("namespace", "acme")
+	req.SetPathValue("name", "big")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Details == nil || resp.Details.RepoSize != total {
+		t.Fatalf("details = %#v, want the tree size %d", resp.Details, total)
+	}
+	if resp.LocalInference.Supported || resp.LocalInference.Mode != "none" {
+		t.Fatalf("local_inference = %#v, want unsupported for a repository that does not fit", resp.LocalInference)
+	}
+}
+
+func TestHandleMarketplaceModelDetailMapsUpstreamRateLimit(t *testing.T) {
+	var calls int32
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		if r.URL.Path != "/api/models/acme/demo/revision/main" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"quota exceeded","retryAfter":22}`))
+	}))
+	defer apiServer.Close()
+	t.Setenv("HF_ENDPOINT", apiServer.URL)
+
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/acme/demo?artifact_source=huggingface", nil)
+	req.SetPathValue("namespace", "acme")
+	req.SetPathValue("name", "demo")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusTooManyRequests, w.Body.String())
+	}
+	if got := w.Header().Get("Retry-After"); got != "22" {
+		t.Fatalf("Retry-After = %q, want 22", got)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "retry in about 22s") {
+		t.Fatalf("body = %q, want the retry hint", body)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("upstream requests = %d, want 1 (a 22s quota window must not block)", got)
+	}
+}
+
+func TestHandleMarketplaceModelsRejectsLocalInferenceForProviderSources(t *testing.T) {
+	var calls int32
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		if r.URL.Path != "/api/models" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{{
+			"id":      "acme/demo",
+			"modelId": "acme/demo",
+			"tags":    []string{"gguf"},
+		}})
+	}))
+	defer apiServer.Close()
+	t.Setenv("HF_ENDPOINT", apiServer.URL)
+
+	s := newTestServer(t)
+	// local_inference is only supported for OpenCSG. Provider sources reject it
+	// instead of falling back to the scan, which would hammer the upstream.
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?artifact_source=huggingface&local_inference=true&per=100", nil)
+	w := httptest.NewRecorder()
+	s.handleMarketplaceModels(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 body=%s", w.Code, w.Body.String())
+	}
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Fatalf("upstream requests = %d, want 0", got)
+	}
+}
+
+func TestHandleMarketplaceModelsUsesLocalModelFilterEndpoint(t *testing.T) {
+	clearMarketplaceCache()
+	var listCalls int32
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/models/local_filter" {
+			var request csghub.LocalModelFilterRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if request.Page != 1 || request.Per != 16 {
+				t.Fatalf("page/per = %d/%d, want 1/16", request.Page, request.Per)
+			}
+			if len(request.Capabilities.Convert.Architectures) == 0 {
+				t.Fatal("capabilities.convert.architectures is empty")
+			}
+			if len(request.ExcludePaths) != 1 || request.ExcludePaths[0] != "acme/seen" {
+				t.Fatalf("exclude paths = %v, want [acme/seen]", request.ExcludePaths)
+			}
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[csghub.LocalModelFilterResponse]{
+				Msg: "OK",
+				Data: csghub.LocalModelFilterResponse{
+					Data: []csghub.Model{{
+						Name: "demo",
+						Path: "acme/demo",
+						Tags: []csghub.Tag{
+							{Name: "gguf", Category: "framework"},
+							{Name: "text-generation", Category: "task"},
+						},
+					}},
+					TotalConfirmed:      1,
+					TotalExact:          true,
+					HasMore:             true,
+					CandidatesQueried:   true,
+					LocalCheckExhausted: true,
+				},
+			})
+			return
+		}
+		atomic.AddInt32(&listCalls, 1)
+		t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?local_inference=true&exclude_paths=acme/seen", nil)
+	w := httptest.NewRecorder()
+	s.handleMarketplaceModels(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	if got := atomic.LoadInt32(&listCalls); got != 0 {
+		t.Fatalf("scan list calls = %d, want 0", got)
+	}
+	var response struct {
+		Data         []csghub.Model `json:"data"`
+		Total        int            `json:"total"`
+		HasMore      bool           `json:"has_more"`
+		TotalExact   bool           `json:"total_exact"`
+		ExcludePaths []string       `json:"exclude_paths"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0].Path != "acme/demo" {
+		t.Fatalf("models = %#v", response.Data)
+	}
+	if !response.HasMore || !response.TotalExact {
+		t.Fatalf("has_more=%v total_exact=%v, want the endpoint values", response.HasMore, response.TotalExact)
+	}
+	if len(response.ExcludePaths) != 1 || response.ExcludePaths[0] != "acme/seen" {
+		t.Fatalf("exclude paths = %v, want the cursor echoed", response.ExcludePaths)
+	}
+}
+
+func TestHandleMarketplaceModelsFallsBackWhenLocalModelFilterMissing(t *testing.T) {
+	clearMarketplaceCache()
+	var listCalls int32
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/models/local_filter" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/models" {
+			atomic.AddInt32(&listCalls, 1)
+			_ = json.NewEncoder(w).Encode(csghub.ListResponse[csghub.Model]{
+				Data: []csghub.Model{{
+					Name: "demo",
+					Path: "acme/demo",
+					Tags: []csghub.Tag{
+						{Name: "gguf", Category: "framework"},
+						{Name: "text-generation", Category: "task"},
+					},
+				}},
+				Total: 1,
+			})
+			return
+		}
+		t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?local_inference=true", nil)
+	w := httptest.NewRecorder()
+	s.handleMarketplaceModels(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	if got := atomic.LoadInt32(&listCalls); got == 0 {
+		t.Fatal("scan list was not called after the endpoint 404")
+	}
+	var response struct {
+		Data []csghub.Model `json:"data"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0].Path != "acme/demo" {
+		t.Fatalf("models = %#v", response.Data)
+	}
+}
+
+func TestHandleMarketplaceModelsSkipsProbeAfterEndpointMissing(t *testing.T) {
+	clearMarketplaceCache()
+	var probeCalls int32
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/models/local_filter" {
+			atomic.AddInt32(&probeCalls, 1)
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/models" {
+			_ = json.NewEncoder(w).Encode(csghub.ListResponse[csghub.Model]{
+				Data: []csghub.Model{{
+					Name: "demo",
+					Path: "acme/demo",
+					Tags: []csghub.Tag{
+						{Name: "gguf", Category: "framework"},
+						{Name: "text-generation", Category: "task"},
+					},
+				}},
+				Total: 1,
+			})
+			return
+		}
+		t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	request := func(page int) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/marketplace/models?local_inference=true&page=%d", page), nil)
+		w := httptest.NewRecorder()
+		s.handleMarketplaceModels(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("page %d status = %d, want 200 body=%s", page, w.Code, w.Body.String())
+		}
+	}
+
+	request(1)
+	if got := atomic.LoadInt32(&probeCalls); got != 1 {
+		t.Fatalf("probe calls after first page = %d, want 1", got)
+	}
+	request(2)
+	if got := atomic.LoadInt32(&probeCalls); got != 1 {
+		t.Fatalf("probe calls after cached miss = %d, want 1", got)
+	}
+
+	s.localFilterEndpointMu.Lock()
+	s.localFilterEndpointUnavailableAt = time.Now().Add(-marketplaceLocalFilterEndpointTTL - time.Minute)
+	s.localFilterEndpointMu.Unlock()
+	request(3)
+	if got := atomic.LoadInt32(&probeCalls); got != 2 {
+		t.Fatalf("probe calls after TTL = %d, want 2", got)
+	}
+}
+
+func TestHandleMarketplaceModelsDoesNotFallBackOnRateLimit(t *testing.T) {
+	clearMarketplaceCache()
+	var listCalls int32
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/models/local_filter" {
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+		atomic.AddInt32(&listCalls, 1)
+		t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models?local_inference=true", nil)
+	w := httptest.NewRecorder()
+	s.handleMarketplaceModels(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429 body=%s", w.Code, w.Body.String())
+	}
+	if got := atomic.LoadInt32(&listCalls); got != 0 {
+		t.Fatalf("scan list calls = %d, want 0", got)
+	}
+}
+
+func TestMarketplaceListCacheStaysBounded(t *testing.T) {
+	clearMarketplaceCache()
+	t.Cleanup(clearMarketplaceCache)
+	for i := 0; i < marketplaceListCacheMaxEntries+50; i++ {
+		setMarketplaceCache("models?test="+strconv.Itoa(i), []byte("{}"))
+	}
+	marketplaceListCache.Lock()
+	size := len(marketplaceListCache.entries)
+	marketplaceListCache.Unlock()
+	if size > marketplaceListCacheMaxEntries {
+		t.Fatalf("cache entries = %d, want at most %d", size, marketplaceListCacheMaxEntries)
+	}
 }

@@ -105,6 +105,16 @@ const modelParamsMin = signal(modelParamsMinLimit);
 const modelParamsMax = signal(modelParamsMaxLimit);
 const viewMode = signal<ViewMode>("grid");
 const page = signal(1);
+const localInferenceOnly = signal(false);
+// excludePaths carries the candidate cursor between pages. The server only
+// returns the candidates it has not seen yet, so dropping it would re-evaluate
+// the same models on every page.
+const excludePaths = signal<string[]>([]);
+// localInferenceError distinguishes the retryable failures the backend
+// surfaces from an empty result set.
+const localInferenceError = signal<"" | "unavailable" | "rateLimited">("");
+const partialResults = signal(false);
+const pageLimitExceeded = signal(false);
 const perPage = 16;
 
 const models = signal<MarketplaceModel[]>([]);
@@ -147,8 +157,11 @@ function loadLocalDatasets() {
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / perPage)));
 
-async function loadData() {
-  if (!artifactSourceReady.value) return;
+async function loadData(): Promise<boolean> {
+  partialResults.value = false;
+  pageLimitExceeded.value = false;
+  localInferenceError.value = "";
+  if (!artifactSourceReady.value) return true;
   const requestID = ++loadDataRequestID;
   loading.value = true;
   try {
@@ -166,23 +179,40 @@ async function loadData() {
         page: page.value,
         per: perPage,
         artifactSource: artifactSource.value,
+        localInference: localInferenceOnly.value || undefined,
+        excludePaths: localInferenceOnly.value ? excludePaths.value : undefined,
       });
-      if (requestID !== loadDataRequestID) return;
+      if (requestID !== loadDataRequestID) return true;
+      if (localInferenceOnly.value && res.exclude_paths) {
+        // Only update when the field is present: the scan fallback has no
+        // candidate cursor, and resetting here would re-evaluate candidates the
+        // previous hub-served page already consumed.
+        excludePaths.value = res.exclude_paths;
+      }
       models.value = res.data || [];
       total.value = res.total;
       hasMore.value = res.has_more ?? false;
       totalExact.value = res.total_exact ?? true;
+      partialResults.value = res.partial ?? false;
+      pageLimitExceeded.value = res.page_limit_exceeded ?? false;
       const repoIDs = models.value
         .map((model) => model.repository_id || 0)
         .filter((id) => id > 0);
-      if (repoIDs.length > 0) {
+      // OpenCSG returns the repository size on the list payload, so only the
+      // sources that leave it empty need the extras round trip.
+      const needsSizes = models.value.some(
+        (model) => (model.repository_id || 0) > 0 && !((model.repo_size || 0) > 0),
+      );
+      if (repoIDs.length > 0 && needsSizes) {
         void getMarketplaceModelExtras(repoIDs).then((extras) => {
           if (requestID !== loadDataRequestID) return;
           const sizes = new Map(extras.map((extra) => [extra.repo_id, extra.size]));
-          models.value = models.value.map((model) => ({
-            ...model,
-            repo_size: sizes.get(model.repository_id || 0) ?? model.repo_size,
-          }));
+          models.value = models.value.map((model) => {
+            const size = sizes.get(model.repository_id || 0);
+            // The extras endpoint reports 0 for some large mirrors; keep the
+            // size the list payload already provided instead of clearing it.
+            return { ...model, repo_size: size && size > 0 ? size : model.repo_size };
+          });
         }).catch(() => {});
       }
     } else {
@@ -196,14 +226,21 @@ async function loadData() {
         per: perPage,
         artifactSource: datasetArtifactSource.value,
       });
-      if (requestID !== loadDataRequestID) return;
+      if (requestID !== loadDataRequestID) return true;
       datasets.value = res.data || [];
       total.value = res.total;
       hasMore.value = res.has_more ?? false;
       totalExact.value = res.total_exact ?? true;
     }
-  } catch {
-    /* ignore */
+    return true;
+  } catch (error) {
+    if (requestID === loadDataRequestID && localInferenceOnly.value) {
+      const status = (error as { status?: number } | null)?.status;
+      localInferenceError.value = status === 429 ? "rateLimited" : "unavailable";
+    }
+    // A superseded request is owned by a newer call; only report failure for
+    // the request that still represents the current page.
+    return requestID !== loadDataRequestID;
   } finally {
     if (requestID === loadDataRequestID) {
       loading.value = false;
@@ -243,8 +280,11 @@ export function Marketplace() {
 
   useEffect(() => {
     page.value = 1;
+    // Any filter change invalidates the candidate cursor: candidates consumed
+    // under the previous filters must be eligible again.
+    excludePaths.value = [];
     loadData();
-  }, [artifactSourceReady.value, activeTab.value, artifactSource.value, datasetArtifactSource.value, sortBy.value, frameworkFilter.value, taskFilter.value, datasetTaskFilter.value, datasetLanguageFilter.value, datasetLicenseFilter.value, modelParamsMin.value, modelParamsMax.value]);
+  }, [artifactSourceReady.value, activeTab.value, artifactSource.value, datasetArtifactSource.value, sortBy.value, frameworkFilter.value, taskFilter.value, localInferenceOnly.value, datasetTaskFilter.value, datasetLanguageFilter.value, datasetLicenseFilter.value, modelParamsMin.value, modelParamsMax.value]);
 
   useEffect(() => {
     setSelectedModelPath("");
@@ -274,6 +314,7 @@ export function Marketplace() {
   const handleSearch = (e: Event) => {
     e.preventDefault();
     page.value = 1;
+    excludePaths.value = [];
     loadData();
   };
 
@@ -286,6 +327,7 @@ export function Marketplace() {
     if (activeTab.value === "models" && source !== "opencsg") {
       modelParamsMin.value = modelParamsMinLimit;
       modelParamsMax.value = modelParamsMaxLimit;
+      localInferenceOnly.value = false;
     }
     const patch = activeTab.value === "models"
       ? { marketplace_model_source: source }
@@ -340,15 +382,28 @@ export function Marketplace() {
       loadLocalDatasets();
     }, { artifactSource: source, revision });
   };
+  const localInferenceSupported = artifactSource.value === "opencsg";
   const hasModelFilters = frameworkFilter.value !== ""
     || taskFilter.value !== ""
+    || localInferenceOnly.value
     || (artifactSource.value === "opencsg" &&
       (modelParamsMin.value !== modelParamsMinLimit || modelParamsMax.value !== modelParamsMaxLimit));
   const clearModelFilters = () => {
     frameworkFilter.value = "";
     taskFilter.value = "";
+    localInferenceOnly.value = false;
     modelParamsMin.value = modelParamsMinLimit;
     modelParamsMax.value = modelParamsMaxLimit;
+  };
+  const modelsEmptyMessage = () => {
+    // A failed load already renders its own banner; an empty-state message next
+    // to it would claim there are no runnable models.
+    if (localInferenceError.value) return "";
+    if (pageLimitExceeded.value) return t("mp.localInferencePageLimit");
+    if (partialResults.value) return t("mp.localInferencePartialEmpty");
+    if (localInferenceOnly.value && hasMore.value) return t("mp.localInferenceSearching");
+    if (page.value > 1) return localInferenceOnly.value ? t("mp.localInferenceNoMore") : t("mp.noModels");
+    return localInferenceOnly.value ? t("mp.noLocalInferenceModels") : t("mp.noModels");
   };
   const selectedDataset = datasets.value.find((dataset) => dataset.path === selectedDatasetPath);
 
@@ -458,6 +513,21 @@ export function Marketplace() {
                   )}
                 </div>
                 <div class="space-y-5">
+                  <label
+                    class={`flex items-center gap-2 text-xs font-medium select-none ${
+                      localInferenceSupported ? "text-gray-600 cursor-pointer" : "text-gray-400 cursor-not-allowed"
+                    }`}
+                    title={localInferenceSupported ? undefined : t("mp.localInferenceOnlyOpenCSG")}
+                  >
+                    <input
+                      type="checkbox"
+                      class="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed"
+                      checked={localInferenceOnly.value}
+                      disabled={!localInferenceSupported}
+                      onChange={(e) => (localInferenceOnly.value = (e.target as HTMLInputElement).checked)}
+                    />
+                    {t("mp.localInferenceOnly")}
+                  </label>
                   <FilterPillGroup
                     label={t("mp.modelType")}
                     value={frameworkFilter.value}
@@ -519,6 +589,21 @@ export function Marketplace() {
       </div>
 
       {/* Content */}
+      {activeTab.value === "models" && localInferenceError.value && (
+        <div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+          {localInferenceError.value === "rateLimited" ? t("mp.localInferenceRateLimited") : t("mp.localInferenceUnavailable")}
+        </div>
+      )}
+      {activeTab.value === "models" && partialResults.value && models.value.length > 0 && (
+        <div class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          {t("mp.localInferencePartial")}
+        </div>
+      )}
+      {activeTab.value === "models" && pageLimitExceeded.value && models.value.length > 0 && (
+        <div class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          {t("mp.localInferencePageLimit")}
+        </div>
+      )}
       {loading.value ? (
         <div class="text-center py-16 text-gray-400">{t("mp.loading")}</div>
       ) : activeTab.value === "models" ? (
@@ -534,7 +619,7 @@ export function Marketplace() {
                 onOpenDetail={setSelectedModelPath}
               />
             ))}
-            {models.value.length === 0 && <p class="col-span-2 text-center py-16 text-gray-400">{t("mp.noModels")}</p>}
+            {models.value.length === 0 && <p class="col-span-2 text-center py-16 text-gray-400">{modelsEmptyMessage()}</p>}
           </div>
         ) : (
           <div class={isProviderMarketplaceSource(artifactSource.value) ? "space-y-3" : "space-y-0 divide-y divide-gray-100"}>
@@ -548,7 +633,7 @@ export function Marketplace() {
                 onOpenDetail={setSelectedModelPath}
               />
             ))}
-            {models.value.length === 0 && <p class="text-center py-16 text-gray-400">{t("mp.noModels")}</p>}
+            {models.value.length === 0 && <p class="text-center py-16 text-gray-400">{modelsEmptyMessage()}</p>}
           </div>
         )
       ) : viewMode.value === "grid" ? (
@@ -582,21 +667,43 @@ export function Marketplace() {
       )}
 
       {/* Pagination */}
-      {(totalExact.value ? totalPages.value > 1 : page.value > 1 || hasMore.value) && (
+      {(localInferenceOnly.value
+        ? page.value > 1 || hasMore.value
+        : (totalExact.value ? totalPages.value > 1 : page.value > 1 || hasMore.value)) && (
         <div class="flex items-center justify-center gap-2 mt-8">
           <button
             disabled={page.value <= 1}
-            onClick={() => { page.value--; loadData(); }}
+            onClick={async () => {
+              const previous = page.value;
+              page.value--;
+              // The candidate cursor only moves forward. Reusing it while
+              // going back would skip candidates the earlier page already
+              // consumed, so start the earlier page with a fresh cursor.
+              excludePaths.value = [];
+              if (!(await loadData())) {
+                // Keep the displayed page in sync with the last successful
+                // load so a retry requests the same page again.
+                page.value = previous;
+              }
+            }}
             class="px-3 py-1.5 text-sm border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-gray-50"
           >
             {t("mp.prev")}
           </button>
           <span class="text-sm text-gray-500">
-            {totalExact.value ? t("mp.page", page.value, totalPages.value) : t("mp.pageCurrent", page.value)}
+            {localInferenceOnly.value || !totalExact.value ? t("mp.pageCurrent", page.value) : t("mp.page", page.value, totalPages.value)}
           </span>
           <button
-            disabled={totalExact.value ? page.value >= totalPages.value : !hasMore.value}
-            onClick={() => { page.value++; loadData(); }}
+            disabled={localInferenceOnly.value ? !hasMore.value : (totalExact.value ? page.value >= totalPages.value : !hasMore.value)}
+            onClick={async () => {
+              const previous = page.value;
+              page.value++;
+              if (!(await loadData())) {
+                // A failed request must not advance the page: retrying should
+                // request the same page instead of skipping its rows.
+                page.value = previous;
+              }
+            }}
             class="px-3 py-1.5 text-sm border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-gray-50"
           >
             {t("mp.next")}
