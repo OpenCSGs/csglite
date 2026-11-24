@@ -111,8 +111,17 @@ func (m *Manager) deploymentControllerLoop(ctx context.Context) {
 	for {
 		if m.Active() && m.mode() != "worker" && m.store.InCluster() {
 			for _, d := range m.deployments.list(true) {
-				if d.Desired == "deleted" && d.Status.Phase == "deleted" {
-					continue
+				if d.Desired == "deleted" {
+					if d.Status.Phase == "deleted" {
+						continue
+					}
+					// Keep the deletion intent for a worker that rejoins, without
+					// attempting delivery or rewriting its status while it is removed.
+					if d.NodeUUID != m.identity.UUID {
+						if _, member := m.store.Member(d.NodeUUID); !member {
+							continue
+						}
+					}
 				}
 				if ctx.Err() != nil {
 					return

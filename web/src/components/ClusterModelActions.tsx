@@ -33,6 +33,8 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
     : publication.services.length ? "cluster.modelAlreadyPublished" : "cluster.publishUnavailable";
   const d = row.deployment;
   const stopLabel = d && d.status.phase !== "ready" ? "cluster.modelStop" : "cluster.modelUnload";
+  const deleteLabel = d ? "cluster.modelRemove" : "cluster.modelDelete";
+  const deleteHint = d ? "cluster.modelRemoveHint" : "cluster.modelDeleteHint";
   useLayoutEffect(() => {
     if (!position) return;
     menu.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true });
@@ -92,7 +94,7 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
       {onSync && <button type="button" role="menuitem" class={itemClass} disabled={!actions.sync || syncBusy || unavailable} title={!actions.sync ? t(actions.reason) : undefined} onClick={() => act(onSync)}>{t(syncBusy ? "cluster.syncing" : "cluster.syncAll")}</button>}
       <button type="button" role="menuitem" class={itemClass} disabled={!testTargets.length} title={!testTargets.length ? t(stale ? "cluster.modelStatusStale" : "cluster.modelTestUnavailable") : undefined} onClick={() => act(() => setTesting(testTargets))}>{t("services.test")}</button>
       <div class="my-1 border-t border-gray-100" />
-      <button type="button" role="menuitem" class={`${itemClass} text-rose-600`} disabled={!actions.delete} title={!actions.delete ? t(actions.reason) : undefined} onClick={() => act(() => setConfirm("delete"))}>{t("cluster.modelDelete")}</button>
+      <button type="button" role="menuitem" class={`${itemClass} text-rose-600`} disabled={!actions.delete} title={!actions.delete ? t(actions.reason) : undefined} onClick={() => act(() => setConfirm("delete"))}>{t(deleteLabel)}</button>
     </div>, document.body)}
     {testing && <InferenceTestDialog service={testing[0]} services={testing} onClose={() => setTesting(null)} />}
     {editing && <DeploymentConfigDialog deployment={editing} supportsKeepAlive={!!row.node.status?.deployment_keep_alive} allowed={actions.edit && d?.generation === editing.generation}
@@ -100,9 +102,9 @@ export function ClusterModelActions({ row, rows, view, publication, stale, busy:
       onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); setNotice(t("deployments.configSaved")); await onChanged(); }} />}
     {error && <DeploymentMessage message={error} alert class="mt-2 text-xs text-red-600" />}
     {notice && <p role="status" class="mt-2 text-xs text-gray-500">{notice}</p>}
-    <ConfirmDialog open={confirm !== null} title={t(confirm === "delete" ? "cluster.modelDelete" : stopLabel)}
-      name={`${row.model.id} · ${row.node.name || t("deployments.unknownNode")}`} description={t(confirm === "delete" ? "cluster.modelDeleteHint" : "cluster.modelUnloadHint")}
-      confirmLabel={t(confirm === "delete" ? "cluster.modelDelete" : stopLabel)} busy={busy} busyLabel={t("cluster.modelApplying")}
+    <ConfirmDialog open={confirm !== null} title={t(confirm === "delete" ? deleteLabel : stopLabel)}
+      name={`${row.model.id} · ${row.node.name || t("deployments.unknownNode")}`} description={t(confirm === "delete" ? deleteHint : "cluster.modelUnloadHint")}
+      confirmLabel={t(confirm === "delete" ? deleteLabel : stopLabel)} busy={busy} busyLabel={t("cluster.modelApplying")}
       confirmDisabled={!!confirm && !actions[confirm]}
       onCancel={() => setConfirm(null)} onConfirm={() => { if (confirm) void change(confirm); }} />
   </div>;

@@ -203,6 +203,9 @@ func (m *Manager) candidateStatus(nodeUUID string) *Status {
 
 // candidates builds the scheduler input from the directory and local status.
 func (m *Manager) candidates(ctx context.Context, model string) []Candidate {
+	if m.ownedDeploymentRemoved(model) {
+		return nil
+	}
 	var out []Candidate
 	local := m.cachedLocalStatus(ctx)
 	unshared := m.mode() == "worker" && local.HoldsModel(model) && !m.publicModelShared(model)

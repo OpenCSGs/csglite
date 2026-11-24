@@ -3936,8 +3936,8 @@ export interface ClusterDeployment extends ClusterDeploymentSpec {
 export interface ClusterDeploymentCreateRequest extends ClusterDeploymentSpec {
   minimum_memory_bytes?: number;
 }
-export function getClusterDeployments(): Promise<{ deployments: ClusterDeployment[]; assignments: ClusterDeployment[] }> {
-  return fetchJSONWithApiError("/api/cluster/deployments?include_deleted=false", { cache: "no-store" });
+export function getClusterDeployments(includeDeleted = false): Promise<{ deployments: ClusterDeployment[]; assignments: ClusterDeployment[] }> {
+  return fetchJSONWithApiError(`/api/cluster/deployments?include_deleted=${includeDeleted}`, { cache: "no-store" });
 }
 export function createClusterDeployment(spec: ClusterDeploymentCreateRequest): Promise<ClusterDeployment> {
   return fetchJSONWithApiError("/api/cluster/deployments", { method: "POST", body: JSON.stringify(spec) });

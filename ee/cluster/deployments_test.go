@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -610,6 +611,100 @@ func TestDeploymentDeleteAndFilteredHistoryPreserveTombstone(t *testing.T) {
 	}
 	if _, err := m.changeDeployment(d.ID, "running"); err == nil {
 		t.Fatal("deleted deployment restarted")
+	}
+}
+
+func TestDeploymentDeleteAcceptsUnavailableTargets(t *testing.T) {
+	for _, removed := range []bool{false, true} {
+		label := "offline"
+		if removed {
+			label = "removed"
+		}
+		t.Run(label, func(t *testing.T) {
+			m, err := New(Options{Dir: t.TempDir(), Host: &fakeHost{licensed: true}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := m.store.Create("test"); err != nil {
+				t.Fatal(err)
+			}
+			d := testDeployment(m)
+			d.NodeUUID = uuid.NewString()
+			member := Member{UUID: d.NodeUUID, Name: "worker", CertFingerprint: "test"}
+			if _, err := m.store.Upsert(member, true); err != nil {
+				t.Fatal(err)
+			}
+			if removed {
+				if _, err := m.store.Remove(d.NodeUUID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := m.deployments.update(true, d.ID, func(record *Deployment, _ bool) error {
+				*record = d
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodDelete, "/api/cluster/deployments/"+d.ID, nil)
+			r.SetPathValue("id", d.ID)
+			m.Admin().HandleDeploymentDelete(w, r)
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+			}
+			reopened, err := openDeploymentStore(m.opts.Dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved, ok := reopened.get(true, d.ID)
+			if !ok || saved.Desired != "deleted" || saved.Generation != d.Generation+1 || saved.Status.Phase != "pending" {
+				t.Fatalf("missing queued cleanup: %+v", saved)
+			}
+
+			// A recovered worker's old heartbeat cannot bring the deployment back into routing.
+			if _, err := m.store.Upsert(member, true); err != nil {
+				t.Fatal(err)
+			}
+			m.dir.MarkSuccess(d.NodeUUID, "worker:11438", &Status{
+				Licensed: true, State: NodeStateActive, AcceptWork: true,
+				Models: []ModelStatus{{ID: d.ModelID(), Loaded: true}},
+			})
+			if got := m.ModelSourceState(t.Context(), d.ModelID(), SourceNodePrefix+d.NodeUUID); got != "missing" {
+				t.Fatalf("removed deployment reappeared as %s", got)
+			}
+		})
+	}
+}
+
+func TestPendingDeploymentDeletionReleasesControllerSlot(t *testing.T) {
+	store, err := openDeploymentStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, owned := range []bool{true, false} {
+		for i := range maxDeployments {
+			id := strconv.Itoa(i)
+			if err := store.update(owned, id, func(d *Deployment, _ bool) error {
+				d.ID, d.Desired, d.Status.Phase = id, "running", "ready"
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := store.update(owned, "0", func(d *Deployment, _ bool) error {
+			d.Desired, d.Status.Phase = "deleted", "pending"
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		err := store.update(owned, "new", func(d *Deployment, _ bool) error {
+			d.ID, d.Desired, d.Status.Phase = "new", "running", "pending"
+			return nil
+		})
+		if (err == nil) != owned {
+			t.Fatalf("adding a deployment with queued cleanup (owned=%v): %v", owned, err)
+		}
 	}
 }
 
