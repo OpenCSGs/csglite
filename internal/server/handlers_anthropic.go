@@ -979,16 +979,34 @@ func anthropicContentBlockEntriesToOpenAI(role string, blocks []interface{}, mes
 	reasoningParts := make([]string, 0)
 	assistantToolCalls := make([]map[string]interface{}, 0)
 	assistantToolIndex := 0
+	// imageParts holds the content parts of a message that carries images;
+	// it stays nil for text-only messages, which keep string content.
+	var imageParts []interface{}
+	var toolImages []interface{}
+	textsInParts := 0
 
+	addPendingText := func() {
+		for _, text := range textParts[textsInParts:] {
+			imageParts = append(imageParts, map[string]interface{}{"type": "text", "text": text})
+		}
+		textsInParts = len(textParts)
+	}
 	flushText := func() {
-		if len(textParts) == 0 {
+		var content interface{}
+		switch {
+		case imageParts != nil:
+			addPendingText()
+			content = imageParts
+		case len(textParts) > 0:
+			content = strings.Join(textParts, "\n")
+		default:
 			return
 		}
 		entries = append(entries, map[string]interface{}{
 			"role":    role,
-			"content": strings.Join(textParts, "\n"),
+			"content": content,
 		})
-		textParts = nil
+		textParts, imageParts, textsInParts = nil, nil, 0
 	}
 
 	for _, raw := range blocks {
@@ -1010,6 +1028,11 @@ func anthropicContentBlockEntriesToOpenAI(role string, blocks []interface{}, mes
 					} else {
 						textParts = append(textParts, thinking)
 					}
+				}
+			case "image":
+				if part := anthropicImagePart(block); part != nil && role != "assistant" {
+					addPendingText()
+					imageParts = append(imageParts, part)
 				}
 			case "tool_use":
 				if role != "assistant" {
@@ -1050,6 +1073,17 @@ func anthropicContentBlockEntriesToOpenAI(role string, blocks []interface{}, mes
 					toolMsg["name"] = name
 				}
 				entries = append(entries, toolMsg)
+				// Tool messages are text-only in the OpenAI format, so images
+				// returned by a tool follow in a user message.
+				if nested, ok := block["content"].([]interface{}); ok {
+					for _, item := range nested {
+						if image, ok := item.(map[string]interface{}); ok && stringValue(image["type"]) == "image" {
+							if part := anthropicImagePart(image); part != nil {
+								toolImages = append(toolImages, part)
+							}
+						}
+					}
+				}
 			default:
 				if text := anthropicContentText(block); text != "" {
 					textParts = append(textParts, text)
@@ -1082,8 +1116,35 @@ func anthropicContentBlockEntriesToOpenAI(role string, blocks []interface{}, mes
 		return entries, nil
 	}
 
+	// Added after the loop so that consecutive tool messages stay adjacent.
+	if len(toolImages) > 0 {
+		imageParts = append(toolImages, imageParts...)
+	}
 	flushText()
 	return entries, nil
+}
+
+// anthropicImagePart converts an Anthropic image block with a base64 or url
+// source to an OpenAI image_url content part. It returns nil for other sources.
+func anthropicImagePart(block map[string]interface{}) map[string]interface{} {
+	source, _ := block["source"].(map[string]interface{})
+	var url string
+	switch stringValue(source["type"]) {
+	case "base64":
+		mediaType, data := stringValue(source["media_type"]), stringValue(source["data"])
+		if mediaType != "" && data != "" {
+			url = "data:" + mediaType + ";base64," + data
+		}
+	case "url":
+		url = stringValue(source["url"])
+	}
+	if url == "" {
+		return nil
+	}
+	return map[string]interface{}{
+		"type":      "image_url",
+		"image_url": map[string]interface{}{"url": url},
+	}
 }
 
 func anthropicToolsToOpenAI(tools []api.AnthropicTool) []api.Tool {
