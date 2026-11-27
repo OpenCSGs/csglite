@@ -291,14 +291,33 @@ func estimateEmbeddingInputTokens(input interface{}) int {
 	case string:
 		return estimateAnthropicTokens(v)
 	case []interface{}:
+		if isEmbeddingTokenIDs(v) {
+			return len(v)
+		}
 		total := 0
 		for _, item := range v {
-			if s, ok := item.(string); ok {
-				total += estimateAnthropicTokens(s)
+			switch item := item.(type) {
+			case string:
+				total += estimateAnthropicTokens(item)
+			case []interface{}:
+				if isEmbeddingTokenIDs(item) {
+					total += len(item)
+				}
 			}
 		}
 		return total
 	default:
 		return int(math.Max(1, float64(estimateAnthropicTokens(fmt.Sprint(input)))))
 	}
+}
+
+func isEmbeddingTokenIDs(input []interface{}) bool {
+	// JSON numbers decoded into interface{} are float64.
+	for _, item := range input {
+		id, ok := item.(float64)
+		if !ok || id < 0 || id != math.Trunc(id) {
+			return false
+		}
+	}
+	return true
 }
