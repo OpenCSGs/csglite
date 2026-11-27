@@ -400,7 +400,10 @@ func (s *Server) handleMarketplaceModelDetail(w http.ResponseWriter, r *http.Req
 	// Quantized weights cannot be converted even though the upstream framework
 	// tag reports safetensors or pytorch. Keep this verdict in sync with the
 	// list filter, which rejects the same repositories.
-	if support.Supported && !strings.EqualFold(inferenceFormat, "gguf") &&
+	// The native MLX image runtime loads its own quantized checkpoints, so the
+	// quantized-name rule must not hide a model it can serve.
+	if support.Supported && support.Runtime != "mlx-image" &&
+		!strings.EqualFold(inferenceFormat, "gguf") &&
 		marketplaceLooksLikeQuantizedWeights(marketplaceModelFullName(*details)) {
 		support = api.LocalInferenceSupport{Mode: "none", Architecture: support.Architecture}
 	}

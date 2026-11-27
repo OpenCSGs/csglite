@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -956,6 +957,68 @@ func TestHandleMarketplaceModelDetailRejectsQuantizedWeights(t *testing.T) {
 	}
 	if resp.LocalInference.Supported {
 		t.Fatalf("local_inference = %#v, want unsupported for AWQ weights", resp.LocalInference)
+	}
+}
+
+func TestHandleMarketplaceModelDetailKeepsNativeMLXImageSupport(t *testing.T) {
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/models/mlx-community/Qwen-Image-2.1-mflux-q4":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[csghub.Model]{
+				Msg: "OK",
+				Data: csghub.Model{
+					ID:   1,
+					Name: "Qwen-Image-2.1-mflux-q4",
+					Path: "mlx-community/Qwen-Image-2.1-mflux-q4",
+					Tags: []csghub.Tag{
+						{Name: "image-to-image", Category: "task"},
+						{Name: "mflux", Category: "task"},
+						{Name: "mlx", Category: "task"},
+						{Name: "qwen-image", Category: "task"},
+						{Name: "text-to-image", Category: "task"},
+					},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/models/mlx-community/Qwen-Image-2.1-mflux-q4/tree":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoFile]{Msg: "OK"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/extra":
+			_ = json.NewEncoder(w).Encode(csghub.APIResponse[[]csghub.RepoExtraItem]{Msg: "OK"})
+		default:
+			t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer apiServer.Close()
+
+	s := newTestServer(t)
+	s.cfg.ServerURL = apiServer.URL
+	s.localInferenceLimits = func() marketplaceLocalInferenceLimits {
+		return marketplaceLocalInferenceLimits{maxDownloadBytes: 200 << 30, maxMemoryBytes: 64 << 30}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/marketplace/models/mlx-community/Qwen-Image-2.1-mflux-q4", nil)
+	req.SetPathValue("namespace", "mlx-community")
+	req.SetPathValue("name", "Qwen-Image-2.1-mflux-q4")
+	w := httptest.NewRecorder()
+
+	s.handleMarketplaceModelDetail(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp marketplaceModelDetailResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		if !resp.LocalInference.Supported || resp.LocalInference.Runtime != "mlx-image" || resp.LocalInference.Mode != "image" {
+			t.Fatalf("local_inference = %#v, want mlx-image", resp.LocalInference)
+		}
+		return
+	}
+	if resp.LocalInference.Supported {
+		t.Fatalf("local_inference = %#v, want unsupported outside darwin/arm64", resp.LocalInference)
 	}
 }
 
