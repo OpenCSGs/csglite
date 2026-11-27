@@ -107,21 +107,30 @@ def _safetensors_header(path: Path) -> Dict[str, Any]:
 
 def uses_direct_qwen21_loader(model_dir: str) -> bool:
     """Reports whether model_dir needs load_mlx_native_qwen21 rather than
-    mflux's own loader. Both layouts it covers keep the text encoder under a
-    language_model prefix, which mflux's text-to-image loader silently fails to
-    match (leaving an unloaded, unquantized ~32 GB encoder):
+    mflux's own loader. The direct loader is required whenever the text encoder
+    is quantized or nested under a language_model prefix: mflux's text-to-image
+    loader skips text-encoder quantization and fails to match that prefix
+    (leaving an unloaded, unquantized ~32 GB encoder).
 
     - pre-converted MLX checkpoints such as mlx-community/Qwen-Image-2.1-MLX-4bit
       (diffusers folder layout, mlx-lm style keys, quantization in config.json);
     - mflux bundles saved through the edit variant, such as
-      OsaurusAI/Qwen-Image-2.1-Turbo-mflux-4bit (text encoder plus vision tower).
+      OsaurusAI/Qwen-Image-2.1-Turbo-mflux-4bit (text encoder plus vision tower);
+    - mflux text-to-image bundles whose quantized text encoder already uses the
+      mflux module layout, such as mlx-community/Qwen-Image-2.1-mflux-q4.
     """
     root = Path(model_dir)
     for name in MLX_NATIVE_COMPONENTS:
         if not any((root / name).glob("*.safetensors")):
             return False
     for shard in sorted((root / "text_encoder").glob("*.safetensors")):
-        if any(key.startswith("language_model.") for key in _safetensors_header(shard)):
+        header = _safetensors_header(shard)
+        if any(key.startswith("language_model.") for key in header):
+            return True
+        # Packed weights carry per-layer scales. Stock mflux treats the packed
+        # uint32 weight as a float tensor, shrinking the embedding output from
+        # the hidden size (4096) to hidden/8 (512) and failing the first add.
+        if any(key.endswith(".scales") for key in header):
             return True
     return False
 

@@ -515,6 +515,49 @@ func TestMarketplaceLocalInferenceFilterExcludesQuantizedWeights(t *testing.T) {
 	}
 }
 
+func TestMarketplaceDecideLocalInferenceKeepsNativeMLXImageModel(t *testing.T) {
+	mlxImageTags := func() []csghub.Tag {
+		return []csghub.Tag{
+			localInferenceTag("image-to-image", "task"),
+			localInferenceTag("mflux", "task"),
+			localInferenceTag("mlx", "task"),
+			localInferenceTag("qwen-image", "task"),
+			localInferenceTag("text-to-image", "task"),
+		}
+	}
+	tests := []struct {
+		name        string
+		model       csghub.Model
+		wantExclude bool
+	}{
+		{
+			name:  "native mlx qwen image stays",
+			model: localInferenceModel("mlx-community/Qwen-Image-2.1-mflux-q4", mlxImageTags()...),
+		},
+		{
+			name: "mlx text model stays excluded",
+			model: localInferenceModel("mlx-community/GLM-5.2-mxfp4",
+				localInferenceTag("safetensors", "framework"),
+				localInferenceTag("text-generation", "task")),
+			wantExclude: true,
+		},
+		{
+			name: "other mlx image stays excluded",
+			model: localInferenceModel("mlx-community/FLUX.1-schnell-4bit",
+				localInferenceTag("safetensors", "framework"),
+				localInferenceTag("text-to-image", "task")),
+			wantExclude: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := marketplaceDecideLocalInference(tt.model).exclude; got != tt.wantExclude {
+				t.Fatalf("exclude = %v, want %v", got, tt.wantExclude)
+			}
+		})
+	}
+}
+
 func TestMarketplaceLocalInferenceFilterProbesTTSArchitecture(t *testing.T) {
 	for _, format := range []string{"safetensors", "gguf"} {
 		t.Run(format, func(t *testing.T) {

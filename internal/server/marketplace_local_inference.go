@@ -685,7 +685,10 @@ func marketplaceDecideLocalInference(m csghub.Model) marketplaceLocalInferenceDe
 	}
 	// GGUF repositories are exempt: a quantized repository name there describes
 	// the quantization of the GGUF files, which llama.cpp can load directly.
-	if d.format != string(model.FormatGGUF) && marketplaceLooksLikeQuantizedWeights(marketplaceModelFullName(m)) {
+	// Native MLX Qwen-Image-2.1 checkpoints are exempt for the same reason: the
+	// mlx-image runtime loads their quantized weights as-is.
+	if d.format != string(model.FormatGGUF) && !marketplaceNativeMLXImageModel(m, d.task) &&
+		marketplaceLooksLikeQuantizedWeights(marketplaceModelFullName(m)) {
 		d.exclude = true
 		return d
 	}
@@ -1386,6 +1389,21 @@ func marketplaceLooksLikeQuantizedWeights(repo string) bool {
 		}
 	}
 	return false
+}
+
+// marketplaceNativeMLXImageModel reports whether the repository is an MLX
+// Qwen-Image-2.1 checkpoint, which the mlx-image runtime loads without
+// conversion. Other MLX image checkpoints and MLX text models have no runtime
+// here, so they keep the quantized-name verdict.
+func marketplaceNativeMLXImageModel(m csghub.Model, task string) bool {
+	switch strings.ToLower(strings.TrimSpace(task)) {
+	case "text-to-image", "image-to-image":
+	default:
+		return false
+	}
+	return model.ImageBackendForMetadata(
+		m.Path, m.Metadata.ClassName, marketplaceLibraryName(&m), task,
+	) == model.ImageBackendMLXQwen21
 }
 
 // marketplaceRepoHasToken reports whether token appears as one whole segment of
