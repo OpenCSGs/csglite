@@ -343,6 +343,7 @@ func (e *openAIEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenC
 	scanner := bufio.NewScanner(body)
 	var full strings.Builder
 	reasoningOpen := false
+	sawData, finished := false, false
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -353,12 +354,15 @@ func (e *openAIEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenC
 		if data == "" {
 			continue
 		}
+		sawData = true
 		if data == "[DONE]" {
-			if reasoningOpen {
-				full.WriteString("</think>")
-				onToken("</think>")
-			}
+			finished = true
 			break
+		}
+
+		// Providers report failures after the 200 response as an error event.
+		if msg := openAIStreamErrorMessage(data); msg != "" {
+			return full.String(), fmt.Errorf("provider stream error: %s", msg)
 		}
 
 		var chatResp api.OpenAIChatResponse
@@ -367,6 +371,12 @@ func (e *openAIEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenC
 		}
 		recordOpenAICacheUsage(collector, chatResp.Usage)
 		reportOpenAIGenerationUsage(onUsage, chatResp.Usage)
+		// Some providers end the stream after finish_reason without sending [DONE].
+		if len(chatResp.Choices) > 0 {
+			if reason := chatResp.Choices[0].FinishReason; reason != nil && *reason != "" {
+				finished = true
+			}
+		}
 		if len(chatResp.Choices) == 0 || chatResp.Choices[0].Delta == nil {
 			continue
 		}
@@ -393,7 +403,42 @@ func (e *openAIEngine) handleStreamWithCacheUsage(body io.Reader, onToken TokenC
 		}
 	}
 
-	return full.String(), scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return full.String(), err
+	}
+	// A stream that started but never finished was cut off.
+	if sawData && !finished {
+		return full.String(), io.ErrUnexpectedEOF
+	}
+	if reasoningOpen {
+		full.WriteString("</think>")
+		onToken("</think>")
+	}
+	return full.String(), nil
+}
+
+// openAIStreamErrorMessage returns the message carried by an in-stream error
+// payload, or "" when data is a regular chunk.
+func openAIStreamErrorMessage(data string) string {
+	var payload struct {
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return ""
+	}
+	switch v := payload.Error.(type) {
+	case string:
+		return v
+	case map[string]any:
+		if msg, ok := v["message"].(string); ok && msg != "" {
+			return msg
+		}
+		if len(v) > 0 {
+			raw, _ := json.Marshal(v)
+			return string(raw)
+		}
+	}
+	return ""
 }
 
 func (e *openAIEngine) handleJSONResponse(body io.Reader) (string, error) {
