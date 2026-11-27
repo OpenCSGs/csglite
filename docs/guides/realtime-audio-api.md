@@ -516,9 +516,9 @@ CustomVoice。
 
 ### transformers 版本策略
 
-**只声明 `>=` 下界，不写 `==` 定版**，与 Diffusers 运行时既有的 `transformers>=4.48.0,<5.0` 同形。
-多个后端共用一个 venv，定版会让「最后装的那个」决定所有后端的版本，装一个就把另一个的 transformers
-拽走，来回震荡。
+**声明 `>=` 下界，不写 `==` 定版**。多个后端共用一个 venv，定版会让「最后装的那个」决定所有后端的版本，装一个就把另一个的 transformers
+拽走，来回震荡。与 Diffusers 运行时不同——那边因 Qwen-Image-2.1 需要 diffusers 0.41+、进而只有
+transformers 5.x 满足其 huggingface_hub 依赖，故不设上界——TTS 这边保留有实测依据的上界（见下）。
 
 TTS 运行时声明 `transformers>=4.57.3,<5.0`。上界是实测出来的而非猜的：`qwen-tts` 在 5.x 上 import 即失败
 （`TypeError: check_model_inputs() missing 1 required positional argument: 'func'`），而 Kokoro 与

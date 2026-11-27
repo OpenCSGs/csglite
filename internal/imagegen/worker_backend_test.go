@@ -103,3 +103,70 @@ func TestResolveImageBackendRejectsGGUFImage(t *testing.T) {
 		t.Fatalf("ResolveImageBackend() error = %v, want GGUF image model refusal", err)
 	}
 }
+
+func TestDiffusersUpgradeHint(t *testing.T) {
+	for _, output := range []string{
+		"AttributeError: module diffusers has no attribute QwenImage21Pipeline",
+		"AttributeError: module 'diffusers' has no attribute 'QwenImage21Pipeline'. Did you mean: 'QwenImagePipeline'?",
+		// The worker log attached to issue #350, verbatim: the real error is
+		// the unquoted form and carries a "Did you mean" suggestion that must
+		// not be captured instead of the missing class.
+		"Traceback (most recent call last):\n" +
+			"  File \"/root/.csghub-lite/ai-runtime/diffusers_worker.py\", line 558, in <module>\n" +
+			"    main()\n" +
+			"  File \"/root/.csghub-lite/ai-runtime/diffusers_worker.py\", line 551, in main\n" +
+			"    worker.load()\n" +
+			"  File \"/root/.csghub-lite/ai-runtime/diffusers_worker.py\", line 336, in load\n" +
+			"    self.pipeline = DiffusionPipeline.from_pretrained(self.model_dir, **kwargs)\n" +
+			"  File \"/root/.csghub-lite/ai-runtime/venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py\", line 114, in _inner_fn\n" +
+			"    return fn(*args, **kwargs)\n" +
+			"  File \"/root/.csghub-lite/ai-runtime/venv/lib/python3.11/site-packages/diffusers/pipelines/pipeline_utils.py\", line 926, in from_pretrained\n" +
+			"    pipeline_class = _get_pipeline_class(\n" +
+			"  File \"/root/.csghub-lite/ai-runtime/venv/lib/python3.11/site-packages/diffusers/pipelines/pipeline_loading_utils.py\", line 541, in _get_pipeline_class\n" +
+			"    pipeline_cls = getattr(diffusers_module, class_name)\n" +
+			"  File \"/root/.csghub-lite/ai-runtime/venv/lib/python3.11/site-packages/diffusers/utils/import_utils.py\", line 1045, in __getattr__\n" +
+			"    raise AttributeError(f\"module {self.__name__} has no attribute {name}\")\n" +
+			"AttributeError: module diffusers has no attribute QwenImage21Pipeline. Did you mean: 'QwenImagePipeline'?",
+	} {
+		hint := diffusersUpgradeHint(output)
+		if !strings.Contains(hint, "csghub-lite runtime upgrade --pipeline QwenImage21Pipeline") {
+			t.Fatalf("diffusersUpgradeHint(%q) = %q, want the upgrade command with the pipeline class", output, hint)
+		}
+	}
+	for _, output := range []string{
+		"",
+		"ImportError: No module named 'diffusers'",
+		"AttributeError: module 'transformers' has no attribute 'QwenImagePipeline'",
+		"AttributeError: module 'diffusers' has no attribute 'QwenImagePipelineHelper'",
+		"Traceback (most recent call last):\n" +
+			"  File \"/venv/lib/python3.11/site-packages/diffusers/pipelines/qwenimage/pipeline_qwen_image.py\", line 12, in __call__\n" +
+			"AttributeError: 'QwenImagePipeline' object has no attribute 'enable_vae_tiling'",
+		"Traceback (most recent call last):\n" +
+			"  File \"/venv/lib/python3.11/site-packages/diffusers/pipelines/qwenimage/pipeline_qwen_image.py\", line 12, in load\n" +
+			"AttributeError: module 'diffusers' has no attribute 'some_helper'",
+	} {
+		if hint := diffusersUpgradeHint(output); hint != "" {
+			t.Fatalf("diffusersUpgradeHint(%q) = %q, want no hint", output, hint)
+		}
+	}
+}
+
+func TestWorkerStartErrorAddsDiffusersUpgradeHint(t *testing.T) {
+	logBuf := logutil.NewTailWriter(64 * 1024)
+	_, _ = logBuf.Write([]byte("Traceback (most recent call last):\n" +
+		"  File \"diffusers_worker.py\", line 336, in load\n" +
+		"AttributeError: module 'diffusers' has no attribute 'QwenImage21Pipeline'. Did you mean: 'QwenImagePipeline'?\n"))
+	engine := &DiffusersEngine{logBuf: logBuf}
+	msg := engine.workerStartError("Diffusers worker exited before becoming ready: exit status 1")
+	if !strings.Contains(msg, "runtime upgrade --pipeline QwenImage21Pipeline") {
+		t.Fatalf("workerStartError() missing the upgrade hint:\n%s", msg)
+	}
+
+	plain := logutil.NewTailWriter(64 * 1024)
+	_, _ = plain.Write([]byte("ImportError: No module named 'diffusers'\n"))
+	engine = &DiffusersEngine{logBuf: plain}
+	msg = engine.workerStartError("Diffusers worker exited before becoming ready: exit status 1")
+	if strings.Contains(msg, "csghub-lite runtime upgrade") {
+		t.Fatalf("workerStartError() added the upgrade hint to an unrelated error:\n%s", msg)
+	}
+}

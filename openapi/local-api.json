@@ -18402,7 +18402,8 @@
             ]
           },
           "torch_index_url": {
-            "type": "string"
+            "type": "string",
+            "description": "PyTorch download index URL with any embedded credentials redacted. Empty when the official index is used."
           },
           "missing_packages": {
             "type": "array",
@@ -18414,7 +18415,8 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Command that reproduces the runtime installation, with credentials embedded in package index URLs redacted."
           },
           "error": {
             "type": "string"
@@ -18425,7 +18427,7 @@
           },
           "diffusers_latest_version": {
             "type": "string",
-            "description": "Latest diffusers version available from the configured package index. Present only when the runtime is ready and the version lookup succeeded."
+            "description": "Latest diffusers version available from the configured package index, or from official PyPI when the configured index cannot be reached. Present only when the runtime is ready and the version lookup succeeded."
           }
         }
       },
