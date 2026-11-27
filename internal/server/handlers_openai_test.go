@@ -1524,6 +1524,57 @@ func TestHandleOpenAIChatCompletionsProxyStreamRecordsUpstreamUsage(t *testing.T
 	}
 }
 
+func TestHandleOpenAIChatCompletionsProxyNonStreamUsageCounters(t *testing.T) {
+	for name, usage := range map[string]api.OpenAIUsage{
+		"all counters":              {PromptTokens: 20, CompletionTokens: 100, TotalTokens: 120},
+		"completion tokens omitted": {PromptTokens: 20, TotalTokens: 120},
+	} {
+		t.Run(name, func(t *testing.T) {
+			useIsolatedStorageHome(t)
+			cfg := &config.Config{ModelDir: t.TempDir()}
+			if err := model.SaveManifest(cfg.ModelDir, &model.LocalModel{
+				Namespace:    "test",
+				Name:         "model",
+				Format:       model.FormatGGUF,
+				Size:         1,
+				Files:        []string{"model.gguf"},
+				DownloadedAt: time.Now(),
+			}); err != nil {
+				t.Fatalf("save model manifest: %v", err)
+			}
+			s := newTestServerWithConfig(t, cfg)
+			s.engines["test/model"] = &managedEngine{engine: &fakeChatCompletionEngine{
+				resp: api.OpenAIChatResponse{
+					Choices: []api.OpenAIChoice{{Message: &api.Message{Role: "assistant", Content: "Okay"}}},
+					Usage:   usage,
+				},
+			}, numCtx: 16384, numParallel: 4}
+
+			body := `{"model":"test/model","messages":[{"role":"user","content":"hi"}],"stream":false}`
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+			w := httptest.NewRecorder()
+
+			s.handleOpenAIChatCompletions(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+			}
+			state, err := s.apiUsage.List(config.APIUsageListOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(state.Records) != 1 {
+				t.Fatalf("usage records = %#v", state.Records)
+			}
+			record := state.Records[0]
+			if record.InputTokens != 20 || record.OutputTokens != 100 || record.EstimatedRequests != 0 {
+				t.Fatalf("usage = input %d output %d estimated %d, want 20/100/0",
+					record.InputTokens, record.OutputTokens, record.EstimatedRequests)
+			}
+		})
+	}
+}
+
 func TestHandleOpenAIChatCompletionsProxyStreamFallsBackWithoutUpstreamUsage(t *testing.T) {
 	useIsolatedStorageHome(t)
 	cfg := &config.Config{ModelDir: t.TempDir()}

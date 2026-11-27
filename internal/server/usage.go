@@ -422,7 +422,12 @@ func countMessageTokens(messages []api.Message) int {
 
 func openAIUsageTokens(resp api.OpenAIChatResponse) (int, int) {
 	if resp.Usage.TotalTokens > 0 || resp.Usage.PromptTokens > 0 || resp.Usage.CompletionTokens > 0 {
-		return resp.Usage.PromptTokens, resp.Usage.CompletionTokens
+		input, output := resp.Usage.PromptTokens, resp.Usage.CompletionTokens
+		// Some upstreams omit completion_tokens; derive it from the total.
+		if output == 0 && input > 0 && resp.Usage.TotalTokens > input {
+			output = resp.Usage.TotalTokens - input
+		}
+		return input, output
 	}
 	return 0, estimateOpenAIOutputTokens(resp)
 }
