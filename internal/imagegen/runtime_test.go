@@ -1,9 +1,14 @@
 package imagegen
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -232,17 +237,35 @@ func TestRuntimeManagersUseSeparateRoots(t *testing.T) {
 	}
 }
 
-func TestRuntimeManagersShareUVCache(t *testing.T) {
+func TestInstallSubprocessEnvKeepsTempUnderStorageRoot(t *testing.T) {
 	root := t.TempDir()
 	imageRuntime := NewRuntimeManagerAt(filepath.Join(root, runtimeDirName))
 	asrRuntime := NewRuntimeManagerAt(filepath.Join(root, asrRuntimeDirName))
 
-	want := "UV_CACHE_DIR=" + filepath.Join(root, uvCacheDirName)
-	if got := imageRuntime.uvInstallEnv(); len(got) != 1 || got[0] != want {
-		t.Fatalf("image runtime uv env = %#v, want %#v", got, []string{want})
-	}
-	if got := asrRuntime.uvInstallEnv(); len(got) != 1 || got[0] != want {
-		t.Fatalf("ASR runtime uv env = %#v, want %#v", got, []string{want})
+	for _, m := range []*RuntimeManager{imageRuntime, asrRuntime} {
+		env := m.installSubprocessEnv()
+		want := map[string]string{
+			"UV_CACHE_DIR": filepath.Join(root, uvCacheDirName),
+			"TMPDIR":       filepath.Join(root, tmpDirName),
+			"TMP":          filepath.Join(root, tmpDirName),
+			"TEMP":         filepath.Join(root, tmpDirName),
+		}
+		if len(env) != len(want) {
+			t.Fatalf("install subprocess env = %#v, want %d entries", env, len(want))
+		}
+		for _, entry := range env {
+			key, value, _ := strings.Cut(entry, "=")
+			if want[key] != value {
+				t.Fatalf("install subprocess env %s = %q, want %q", key, value, want[key])
+			}
+			delete(want, key)
+		}
+		if len(want) != 0 {
+			t.Fatalf("install subprocess env missing entries: %v", want)
+		}
+		if _, err := os.Stat(filepath.Join(root, tmpDirName)); err != nil {
+			t.Fatalf("temp dir not created under the storage root: %v", err)
+		}
 	}
 }
 
@@ -721,6 +744,52 @@ printf '%s\n%s\n' "$0" "3.13.1"
 	}
 }
 
+// The venv-creating subprocess must run with the temp directory under the
+// storage root, so venv creation scratch files never land in the system temp
+// directory.
+func TestEnsureVenvForInstallPassesTempDirToVenv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake pythons")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	hostPython := filepath.Join(dir, "python3.11")
+	writeFakePythonAt(t, hostPython, probeScriptOutput("3.11.9"))
+
+	m := NewRuntimeManagerAt(filepath.Join(dir, "asr-runtime"))
+	if err := os.MkdirAll(filepath.Dir(m.PythonPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakePythonAt(t, m.PythonPath(), "exit 1\n")
+
+	marker := filepath.Join(t.TempDir(), "tmpdir")
+	t.Setenv("TEST_TMPDIR_MARKER", marker)
+	venvDir := m.VenvDir()
+	t.Setenv("TEST_VENV_TARGET", venvDir)
+	writeFakePythonAt(t, hostPython, `case "$*" in
+  *-m\ venv*)
+    /bin/rm -rf "$TEST_VENV_TARGET"
+    /bin/mkdir -p "$TEST_VENV_TARGET"
+    printf '%s' "$TMPDIR" > "$TEST_TMPDIR_MARKER"
+    exit 0
+    ;;
+esac
+printf '%s\n%s\n' "$0" "3.11.9"
+`)
+
+	progress := func(string, int, int) {}
+	if err := m.ensureVenvForInstall(context.Background(), progress, 1, 1, false); err != nil {
+		t.Fatalf("ensureVenvForInstall error = %v", err)
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal("venv creation did not receive TMPDIR")
+	}
+	if want := filepath.Join(filepath.Dir(m.RootDir()), tmpDirName); string(got) != want {
+		t.Fatalf("venv creation TMPDIR = %q, want %q", string(got), want)
+	}
+}
+
 func TestBaseASRDependenciesExcludeQwenASR(t *testing.T) {
 	for _, pkg := range requiredASRPythonPackages {
 		if pkg == "qwen_asr" {
@@ -1064,5 +1133,387 @@ func TestCleanCommandOutputHTMLMixed(t *testing.T) {
 	}
 	if strings.Contains(got, "blocked") {
 		t.Fatalf("cleanCommandOutput = %q, want HTML body text removed", got)
+	}
+}
+
+func TestRedactIndexURL(t *testing.T) {
+	for url, want := range map[string]string{
+		"https://mirrors.aliyun.com/pypi/simple":             "https://mirrors.aliyun.com/pypi/simple",
+		"https://user:token@mirror.example.com/pypi/simple":  "https://***@mirror.example.com/pypi/simple",
+		"https://user:p@ss@mirror.example.com/pypi/simple":   "https://***@mirror.example.com/pypi/simple",
+		"https://user@mirror.example.com/pypi/simple":        "https://***@mirror.example.com/pypi/simple",
+		"https://mirror.example.com/simple?next=/path@other": "https://mirror.example.com/simple",
+		"https://mirror.example.com/simple?token=secret":     "https://mirror.example.com/simple",
+		"https://user:token@mirror.example.com":              "https://***@mirror.example.com",
+		"not-a-url":                                          "not-a-url",
+	} {
+		if got := redactIndexURL(url); got != want {
+			t.Fatalf("redactIndexURL(%q) = %q, want %q", url, got, want)
+		}
+	}
+}
+
+func TestRedactSecrets(t *testing.T) {
+	for in, want := range map[string]string{
+		"Looking in indexes: https://user:token@mirror.example.com/simple": "Looking in indexes: https://***@mirror.example.com/simple",
+		"Fetching https://user:p@ss@mirror.example.com/simple":             "Fetching https://***@mirror.example.com/simple",
+		"Fetching https://mirror.example.com/simple?token=secret":          "Fetching https://mirror.example.com/simple",
+		"https://mirror.example.com/simple?password=hunter2&other=x":       "https://mirror.example.com/simple",
+		"https://mirror.example.com/simple?api_key=abc":                    "https://mirror.example.com/simple",
+		"https://mirror.example.com/simple?X-Amz-Signature=abc123":         "https://mirror.example.com/simple",
+		"authentication failed for token=secret":                           "authentication failed for token=***",
+		"plain output without secrets":                                     "plain output without secrets",
+	} {
+		if got := redactSecrets(in); got != want {
+			t.Fatalf("redactSecrets(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRedactingWriterFlushesLinesAndRemainder(t *testing.T) {
+	var buf bytes.Buffer
+	w := &redactingWriter{w: &buf}
+
+	if _, err := w.Write([]byte("fetching https://user:token@mirror.example.com/simple")); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("partial line flushed early: %q", buf.String())
+	}
+	if _, err := w.Write([]byte(" ok\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "fetching https://***@mirror.example.com/simple ok\n" {
+		t.Fatalf("redactingWriter line = %q, want redacted line", got)
+	}
+
+	buf.Reset()
+	if _, err := w.Write([]byte("progress 50%\r")); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "progress 50%\r" {
+		t.Fatalf("redactingWriter carriage return = %q, want the line flushed at \\r", got)
+	}
+
+	buf.Reset()
+	if _, err := w.Write([]byte("partial https://mirror.example.com/simple?X-Amz-Signature=abc123")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "partial https://mirror.example.com/simple" {
+		t.Fatalf("redactingWriter remainder = %q, want the query dropped", got)
+	}
+}
+
+func TestRunCommandEnvRedactsCredentials(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake python")
+	}
+	secret := "https://user:token@mirror.example.com/simple?token=secret&X-Amz-Signature=abc123"
+	python := fakePython(t, 1, secret)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = w
+	runErr := runCommandEnv(context.Background(), nil, python)
+	os.Stderr = origStderr
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, readErr := io.ReadAll(r)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+
+	if runErr == nil {
+		t.Fatal("runCommandEnv should fail with exit code 1")
+	}
+	for name, text := range map[string]string{
+		"stderr passthrough": string(out),
+		"error detail":       runErr.Error(),
+	} {
+		for _, leak := range []string{"user:token", "token=secret", "X-Amz-Signature", "abc123"} {
+			if strings.Contains(text, leak) {
+				t.Fatalf("%s leaked credentials (%s): %q", name, leak, text)
+			}
+		}
+	}
+	if !strings.Contains(string(out), "***@mirror.example.com") {
+		t.Fatalf("stderr passthrough missing redacted URL: %q", string(out))
+	}
+}
+
+// os/exec copies stdout and stderr from separate goroutines once both streams
+// are captured, so a command writing both streams exercises the shared capture
+// buffer concurrently. The test only proves its point under -race, which is
+// how CI runs the suite.
+func TestRunCommandEnvCapturesConcurrentStreams(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake python")
+	}
+	dir := t.TempDir()
+	python := filepath.Join(dir, "python")
+	writeFakePythonAt(t, python, `for i in 1 2 3 4 5 6 7 8; do
+  echo "stdout line $i"
+  echo "stderr line $i" >&2
+done
+exit 0
+`)
+
+	if err := runCommandEnv(context.Background(), nil, python); err != nil {
+		t.Fatalf("runCommandEnv error = %v", err)
+	}
+}
+
+// A credential-bearing URL split across two stdout writes with stderr output
+// interleaved between the halves must not reassemble unredacted in the
+// captured error detail: redaction has to complete within a stream before its
+// bytes reach the shared capture. Pipe scheduling is not deterministic, so the
+// fake python repeats the pattern to make at least one interleaving land
+// between the two halves.
+func TestRunCommandEnvRedactsInterleavedStreams(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake python")
+	}
+	dir := t.TempDir()
+	python := filepath.Join(dir, "python")
+	writeFakePythonAt(t, python, `i=1
+while [ "$i" -le 40 ]; do
+  printf 'resolving https://user:sek'
+  printf 'stderr noise %s\n' "$i" >&2
+  printf 'ret@mirror.example.com/simple\n'
+  i=$((i+1))
+done
+exit 1
+`)
+
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStdout, origStderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = stdoutW, stderrW
+	runErr := runCommandEnv(context.Background(), nil, python)
+	os.Stdout, os.Stderr = origStdout, origStderr
+	if err := stdoutW.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := stderrW.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stdoutOut, err := io.ReadAll(stdoutR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderrOut, err := io.ReadAll(stderrR)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runErr == nil {
+		t.Fatal("runCommandEnv should fail with exit code 1")
+	}
+	for name, text := range map[string]string{
+		"error detail":       runErr.Error(),
+		"stdout passthrough": string(stdoutOut),
+		"stderr passthrough": string(stderrOut),
+	} {
+		if strings.Contains(text, "user:sek") || strings.Contains(text, "sekret") {
+			t.Fatalf("%s leaked credentials: %q", name, text)
+		}
+	}
+	if !strings.Contains(runErr.Error(), "***@mirror.example.com") {
+		t.Fatalf("error detail missing the redacted URL: %v", runErr)
+	}
+}
+
+// The probe error output must be redacted before it is truncated: a
+// truncation boundary falling inside a credential-bearing URL would leave a
+// password fragment the redactor can no longer recognize.
+func TestDiffusersHasPipelineRedactsBeforeTruncating(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake python")
+	}
+	dir := t.TempDir()
+	m := NewRuntimeManagerAt(dir)
+	venvPython := filepath.Join(dir, "venv", "bin", "python")
+
+	// 100 filler bytes, then the URL, then 2015 filler bytes: the output is
+	// 2166 bytes, so the 2048-byte tail starts inside the password.
+	writeFakePythonAt(t, venvPython, "echo '"+
+		strings.Repeat("a", 100)+
+		"https://user:sup3rsekret@mirror.example.com/simple"+
+		strings.Repeat("b", 2015)+"'\nexit 1\n")
+
+	has, err := m.DiffusersHasPipeline(context.Background(), "QwenImage21Pipeline")
+	if has || err == nil {
+		t.Fatalf("failing probe = (%v, %v), want (false, error)", has, err)
+	}
+	if strings.Contains(err.Error(), "sup3rsekret") || strings.Contains(err.Error(), "ekret@") {
+		t.Fatalf("truncated probe error leaked credentials: %v", err)
+	}
+	if !strings.Contains(err.Error(), "mirror.example.com") {
+		t.Fatalf("truncated probe error missing the output tail: %v", err)
+	}
+}
+
+func TestLatestVersionWithFallback(t *testing.T) {
+	pkg := "diffusers"
+	mirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `<a href="https://mirror.test/diffusers-0.42.0-py3-none-any.whl">diffusers-0.42.0</a>`)
+	}))
+	defer mirror.Close()
+	official := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"info":{"version":"0.43.0"}}`)
+	}))
+	defer official.Close()
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer broken.Close()
+
+	// A reachable mirror wins without consulting the official index.
+	if got := latestVersionWithFallback(pkg, mirror.URL, official.URL); got != "0.42.0" {
+		t.Fatalf("mirror lookup = %q, want 0.42.0", got)
+	}
+	// No mirror configured: the official index answers.
+	if got := latestVersionWithFallback(pkg, "", official.URL); got != "0.43.0" {
+		t.Fatalf("no-mirror lookup = %q, want 0.43.0", got)
+	}
+	// A failing mirror falls back to the official index.
+	if got := latestVersionWithFallback(pkg, broken.URL, official.URL); got != "0.43.0" {
+		t.Fatalf("fallback lookup = %q, want 0.43.0", got)
+	}
+	// Both failing leaves no version to report.
+	if got := latestVersionWithFallback(pkg, broken.URL, broken.URL); got != "" {
+		t.Fatalf("double failure = %q, want empty", got)
+	}
+}
+
+func TestDiffusersHasPipeline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake python")
+	}
+	dir := t.TempDir()
+	m := NewRuntimeManagerAt(dir)
+	venvPython := filepath.Join(dir, "venv", "bin", "python")
+
+	if has, err := m.DiffusersHasPipeline(context.Background(), ""); !has || err != nil {
+		t.Fatalf("empty pipeline class = (%v, %v), want (true, nil)", has, err)
+	}
+	if has, err := m.DiffusersHasPipeline(context.Background(), "QwenImage21Pipeline"); has || err == nil {
+		t.Fatalf("missing venv python = (%v, %v), want (false, error)", has, err)
+	}
+	if has, err := m.DiffusersHasPipeline(context.Background(), "not a class!"); has || err == nil {
+		t.Fatalf("invalid class name = (%v, %v), want (false, error)", has, err)
+	}
+
+	// A failing import is not a missing class: the error must carry the
+	// redacted Python output so the caller surfaces the real cause.
+	writeFakePythonAt(t, venvPython, `echo "Looking in indexes: https://user:sekret@mirror.example.com/simple" >&2
+echo "ModuleNotFoundError: No module named 'torch'" >&2
+exit 1
+`)
+	has, err := m.DiffusersHasPipeline(context.Background(), "QwenImage21Pipeline")
+	if has || err == nil {
+		t.Fatalf("failing import = (%v, %v), want (false, error)", has, err)
+	}
+	if !strings.Contains(err.Error(), "No module named 'torch'") {
+		t.Fatalf("failing import error missing the Python output: %v", err)
+	}
+	if strings.Contains(err.Error(), "user:sekret") {
+		t.Fatalf("failing import error leaked credentials: %v", err)
+	}
+	if !strings.Contains(err.Error(), "***@mirror.example.com") {
+		t.Fatalf("failing import error missing the redacted URL: %v", err)
+	}
+
+	// An AttributeError for a different attribute, with the target class
+	// name echoed in the traceback (its own source line or a "Did you mean"
+	// suggestion), is a probe failure, not a missing class: text matching
+	// on the traceback cannot tell the two apart.
+	writeFakePythonAt(t, venvPython, `echo "  import diffusers; getattr(diffusers, 'QwenImage21Pipeline')" >&2
+echo "AttributeError: module 'diffusers' has no attribute 'QwenImage2Pipeline'. Did you mean: 'QwenImage21Pipeline'?" >&2
+exit 1
+`)
+	has, err = m.DiffusersHasPipeline(context.Background(), "QwenImage21Pipeline")
+	if has || err == nil {
+		t.Fatalf("unrelated AttributeError = (%v, %v), want (false, error)", has, err)
+	}
+	if !strings.Contains(err.Error(), "Did you mean") {
+		t.Fatalf("unrelated AttributeError error missing the Python output: %v", err)
+	}
+
+	// An attribute that is not a DiffusionPipeline subclass (for example
+	// __version__) must not pass as a pipeline class.
+	writeFakePythonAt(t, venvPython, "exit 4\n")
+	has, err = m.DiffusersHasPipeline(context.Background(), "QwenImage21Pipeline")
+	if has || err == nil {
+		t.Fatalf("non-pipeline attribute = (%v, %v), want (false, error)", has, err)
+	}
+	if !strings.Contains(err.Error(), "not a DiffusionPipeline class") {
+		t.Fatalf("non-pipeline attribute error = %v", err)
+	}
+
+	writeFakePythonAt(t, venvPython, "exit 3\n")
+	if has, err := m.DiffusersHasPipeline(context.Background(), "QwenImage21Pipeline"); has || err != nil {
+		t.Fatalf("missing attribute = (%v, %v), want (false, nil)", has, err)
+	}
+
+	writeFakePythonAt(t, venvPython, "exit 0\n")
+	if has, err := m.DiffusersHasPipeline(context.Background(), "QwenImage21Pipeline"); !has || err != nil {
+		t.Fatalf("passing import check = (%v, %v), want (true, nil)", has, err)
+	}
+}
+
+// TestDiffusersHasPipelineWithRealPython runs the probe script under a real
+// Python interpreter against a stub diffusers module, so the exit-code
+// contract the fake-python cases above only assume (0 subclass, 3 missing,
+// 4 not a DiffusionPipeline subclass) is actually exercised.
+func TestDiffusersHasPipelineWithRealPython(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh fake python")
+	}
+	real, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not available")
+	}
+	dir := t.TempDir()
+	m := NewRuntimeManagerAt(dir)
+	venvPython := filepath.Join(dir, "venv", "bin", "python")
+
+	stub := filepath.Join(dir, "stub", "diffusers")
+	if err := os.MkdirAll(stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := "class DiffusionPipeline:\n    pass\n\n\nclass QwenImage21Pipeline(DiffusionPipeline):\n    pass\n\n\n__version__ = \"9.9.9\"\n"
+	if err := os.WriteFile(filepath.Join(stub, "__init__.py"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeFakePythonAt(t, venvPython, fmt.Sprintf("export PYTHONPATH=%q\nexec %q \"$@\"\n", filepath.Join(dir, "stub"), real))
+
+	if has, err := m.DiffusersHasPipeline(context.Background(), "QwenImage21Pipeline"); !has || err != nil {
+		t.Fatalf("pipeline subclass = (%v, %v), want (true, nil)", has, err)
+	}
+	if has, err := m.DiffusersHasPipeline(context.Background(), "NoSuchPipelineExists"); has || err != nil {
+		t.Fatalf("missing class = (%v, %v), want (false, nil)", has, err)
+	}
+	// __version__ exists on the module but is not a class: plain module
+	// attributes must not pass as a pipeline class.
+	has, err := m.DiffusersHasPipeline(context.Background(), "__version__")
+	if has || err == nil {
+		t.Fatalf("plain attribute = (%v, %v), want (false, error)", has, err)
+	}
+	if !strings.Contains(err.Error(), "not a DiffusionPipeline class") {
+		t.Fatalf("plain attribute error = %v", err)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -274,10 +275,29 @@ func lastLines(text string, n int) string {
 func (e *DiffusersEngine) workerStartError(msg string) string {
 	if e.logBuf != nil {
 		if tail := strings.TrimSpace(e.logBuf.String()); tail != "" {
-			msg += "\n\nDiffusers worker output:\n" + tail
+			msg += "\n\nDiffusers worker output:\n" + tail + diffusersUpgradeHint(tail)
 		}
 	}
 	return msg
+}
+
+// diffusersPipelineAttrError matches the exception line Python raises when the
+// installed Diffusers predates the pipeline class a model needs, for example
+// "module 'diffusers' has no attribute 'QwenImage21Pipeline'" from
+// Qwen-Image-2.1 on Diffusers older than 0.41.0. The match stays on one line,
+// requires the missing attribute to be a full Pipeline class name (the
+// trailing boundary rejects names such as QwenImagePipelineHelper), and
+// captures the class name so the hint can verify it after an upgrade.
+var diffusersPipelineAttrError = regexp.MustCompile(`(?i)module '?diffusers'? has no attribute '?([A-Za-z0-9_]*Pipeline)([^A-Za-z0-9_]|$)`)
+
+// diffusersUpgradeHint returns the command that fixes a worker failure caused
+// by an installed Diffusers that predates the pipeline class a model needs.
+func diffusersUpgradeHint(output string) string {
+	m := diffusersPipelineAttrError.FindStringSubmatch(output)
+	if m == nil {
+		return ""
+	}
+	return fmt.Sprintf("\n\nThe installed Diffusers is too old for this model. Run 'csghub-lite runtime upgrade --pipeline %s' to upgrade and verify it.", m[1])
 }
 
 func writeWorkerScript(runtimeDir string) error {

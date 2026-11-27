@@ -26,6 +26,7 @@ CSGLite 是一个轻量级的本地大语言模型运行工具，基于 [CSGHub]
 - [search](cli/search.md) — 搜索 CSGHub 模型
 - [login](cli/login.md) — 设置访问令牌
 - [config](cli/config.md) — 配置管理
+- [runtime](cli/runtime.md) — 查看/升级本地 Python 运行时（image/ASR/TTS）
 - [license](cli/license.md) — 企业版 License 查看、校验、安装与删除
 - [cluster](cli/cluster.md) — 局域网算力集群：创建 / 加入、邀请、成员、模型分布、调度解释
 

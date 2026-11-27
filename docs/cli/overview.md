@@ -30,6 +30,12 @@ CSGLite 提供以下命令：
 | [`stop model [MODEL]`](stop.md) | 停止/卸载服务器上运行中的模型 |
 | [`restart`](restart.md) | 重启后台 API 服务 |
 
+## 运行时管理
+
+| 命令 | 说明 |
+|------|------|
+| [`runtime status / upgrade`](runtime.md) | 查看或升级本地 Python 运行时（image/Diffusers、ASR、TTS） |
+
 ## 配置与认证
 
 | 命令 | 说明 |

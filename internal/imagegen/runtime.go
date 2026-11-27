@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/opencsgs/csglite/internal/config"
@@ -27,6 +28,7 @@ const (
 	asrRuntimeDirName     = "asr-runtime"
 	ttsRuntimeDirName     = "tts-runtime"
 	uvCacheDirName        = "uv-cache"
+	tmpDirName            = "tmp"
 	legacyRuntimeDirName  = "image-runtime"
 	venvDirName           = "venv"
 	manifestFileName      = "runtime.json"
@@ -90,13 +92,14 @@ var requiredTTSPythonPackages = []string{
 
 var ttsPythonPackages = []string{
 	"fastapi",
-	// A floor with an upper bound, never an exact pin -- the same shape the
-	// Diffusers runtime already uses. Several backends share this venv, so a pin
-	// lets whichever was installed last dictate the version for all of them and
-	// the environment thrashes between installs. The bound is measured, not
-	// guessed: qwen-tts fails on transformers 5.x with "check_model_inputs()
-	// missing 1 required positional argument", while Kokoro and the
-	// transformers-native backends work across the whole range.
+	// A floor with an upper bound, never an exact pin. Several backends share
+	// this venv, so a pin lets whichever was installed last dictate the version
+	// for all of them and the environment thrashes between installs. Unlike
+	// the Diffusers runtime, which carries no transformers upper bound because
+	// Qwen-Image-2.1 needs diffusers 0.41+ and therefore transformers 5.x, this
+	// bound is measured, not guessed: qwen-tts fails on transformers 5.x with
+	// "check_model_inputs() missing 1 required positional argument", while
+	// Kokoro and the transformers-native backends work across the whole range.
 	"transformers>=4.57.3,<5.0",
 	"safetensors",
 	"soundfile",
@@ -348,7 +351,7 @@ func (m *RuntimeManager) ensureVenvForInstall(ctx context.Context, progress Prog
 		}
 	}
 	progress("create Python venv", step, total)
-	if err := runCommand(ctx, hostPython, "-m", "venv", m.VenvDir()); err != nil {
+	if err := runCommandEnv(ctx, m.installSubprocessEnv(), hostPython, "-m", "venv", m.VenvDir()); err != nil {
 		return fmt.Errorf("creating Python venv: %w", err)
 	}
 	return nil
@@ -358,7 +361,7 @@ func (m *RuntimeManager) recreateVenv(ctx context.Context, hostPython string) er
 	if err := os.RemoveAll(m.VenvDir()); err != nil {
 		return fmt.Errorf("removing outdated runtime venv: %w", err)
 	}
-	if err := runCommand(ctx, hostPython, "-m", "venv", m.VenvDir()); err != nil {
+	if err := runCommandEnv(ctx, m.installSubprocessEnv(), hostPython, "-m", "venv", m.VenvDir()); err != nil {
 		return fmt.Errorf("creating Python venv: %w", err)
 	}
 	return nil
@@ -395,9 +398,9 @@ func (m *RuntimeManager) Status(ctx context.Context) RuntimeStatus {
 		Platform:      runtime.GOOS,
 		Arch:          runtime.GOARCH,
 		Hardware:      hardware,
-		TorchIndexURL: torchSourceURL(torchInstallIndexes(hardware)),
+		TorchIndexURL: redactIndexURL(torchSourceURL(torchInstallIndexes(hardware))),
 	}
-	status.InstallCommand = m.InstallCommand(status.Hardware)
+	status.InstallCommand = redactStatusCommand(m.InstallCommand(status.Hardware))
 
 	if _, err := os.Stat(status.Python); err != nil {
 		status.Error = "Diffusers runtime is not installed"
@@ -420,9 +423,11 @@ func (m *RuntimeManager) Status(ctx context.Context) RuntimeStatus {
 
 // StatusWithVersions returns Status enriched with the installed diffusers
 // package version and the latest version available from the configured package
-// index. The version lookup uses a short timeout so an unreachable index never
-// blocks the caller; the installed-version probe is a fast local Python call.
-// Both fields are left empty when the runtime is not ready.
+// index, falling back to the official PyPI API when no mirror is configured or
+// the mirror lookup fails (the fallback result then no longer describes the
+// configured index). The version lookup uses a short timeout so an unreachable
+// index never blocks the caller; the installed-version probe is a fast local
+// Python call. Both fields are left empty when the runtime is not ready.
 func (m *RuntimeManager) StatusWithVersions(ctx context.Context) RuntimeStatus {
 	status := m.Status(ctx)
 	if !status.Ready {
@@ -432,6 +437,72 @@ func (m *RuntimeManager) StatusWithVersions(ctx context.Context) RuntimeStatus {
 	indexes := ResolvePackageIndexes(status.Hardware)
 	status.DiffusersLatestVersion = latestPyPIPackageVersion("diffusers", indexes.PyPIIndexURL)
 	return status
+}
+
+// pythonClassNameRe matches a Python class name, so the pipeline probe
+// rejects values that could never name a Diffusers pipeline class before any
+// Python process starts.
+var pythonClassNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// DiffusersHasPipeline reports whether the installed Diffusers exposes the
+// named pipeline class, for example QwenImage21Pipeline for Qwen-Image-2.1.
+// An empty class name counts as present: there is nothing to verify. A false
+// result with a nil error means the class is genuinely absent; a non-nil
+// error means the probe itself failed (a broken import, not a missing class)
+// and carries the redacted Python output so callers can surface the real
+// cause instead of blaming the package index.
+func (m *RuntimeManager) DiffusersHasPipeline(ctx context.Context, pipelineClass string) (bool, error) {
+	pipelineClass = strings.TrimSpace(pipelineClass)
+	if pipelineClass == "" {
+		return true, nil
+	}
+	if !pythonClassNameRe.MatchString(pipelineClass) {
+		return false, fmt.Errorf("%q is not a Python class name", pipelineClass)
+	}
+	python := m.PythonPath()
+	if _, err := os.Stat(python); err != nil {
+		return false, fmt.Errorf("checking the %s pipeline class: %w", pipelineClass, err)
+	}
+	// Exit code 3 marks the AttributeError from this getattr and nothing
+	// else: an AttributeError raised anywhere else (a broken import, a
+	// "Did you mean" suggestion naming the class, the traceback echoing the
+	// probe's own source line) must stay a probe failure, which text
+	// matching on the traceback cannot guarantee. Exit code 4 marks an
+	// attribute that is not a DiffusionPipeline subclass, so plain module
+	// attributes such as __version__ cannot pass as a pipeline class.
+	script := fmt.Sprintf(`import diffusers
+from diffusers import DiffusionPipeline
+try:
+    obj = getattr(diffusers, %q)
+except AttributeError:
+    raise SystemExit(3)
+if not (isinstance(obj, type) and issubclass(obj, DiffusionPipeline)):
+    raise SystemExit(4)
+`, pipelineClass)
+	code, tail, err := runPythonScript(ctx, python, script)
+	switch {
+	case err != nil:
+		return false, fmt.Errorf("checking the %s pipeline class: %v", pipelineClass, err)
+	case code == 0:
+		return true, nil
+	case code == 3:
+		return false, nil
+	case code == 4:
+		return false, fmt.Errorf("Diffusers exposes %s, but it is not a DiffusionPipeline class", pipelineClass)
+	}
+	return false, fmt.Errorf("checking the %s pipeline class: %s", pipelineClass, tail)
+}
+
+// DiffusersVersion returns the installed diffusers package version, or empty
+// when the runtime venv or the package is missing. Unlike StatusWithVersions
+// it never queries the network, so callers that only need the installed
+// version do not pay for a latest-version lookup.
+func (m *RuntimeManager) DiffusersVersion(ctx context.Context) string {
+	python := m.PythonPath()
+	if _, err := os.Stat(python); err != nil {
+		return ""
+	}
+	return installedPackageVersion(ctx, python, "diffusers")
 }
 
 func (m *RuntimeManager) EnsureReady(ctx context.Context) error {
@@ -451,9 +522,9 @@ func (m *RuntimeManager) ASRStatus(ctx context.Context) RuntimeStatus {
 		Platform:      runtime.GOOS,
 		Arch:          runtime.GOARCH,
 		Hardware:      hardware,
-		TorchIndexURL: torchSourceURL(torchInstallIndexes(hardware)),
+		TorchIndexURL: redactIndexURL(torchSourceURL(torchInstallIndexes(hardware))),
 	}
-	status.InstallCommand = m.ASRInstallCommand(status.Hardware)
+	status.InstallCommand = redactStatusCommand(m.ASRInstallCommand(status.Hardware))
 
 	if _, err := os.Stat(status.Python); err != nil {
 		status.Error = "ASR runtime is not installed"
@@ -505,8 +576,8 @@ func (m *RuntimeManager) pythonRuntimeStatus(ctx context.Context, label string, 
 		Platform:       runtime.GOOS,
 		Arch:           runtime.GOARCH,
 		Hardware:       hardware,
-		TorchIndexURL:  torchSourceURL(torchInstallIndexes(hardware)),
-		InstallCommand: installCommand,
+		TorchIndexURL:  redactIndexURL(torchSourceURL(torchInstallIndexes(hardware))),
+		InstallCommand: redactStatusCommand(installCommand),
 	}
 	all := append(append([]string{}, torchPkgs...), requiredPkgs...)
 
@@ -661,7 +732,7 @@ func (m *RuntimeManager) EnsureImageOverlay(ctx context.Context, backend string)
 		return "", err
 	}
 	mfluxVersion, versionErr := installedPackageVersionWithPath(ctx, python, dir, "mflux")
-	if len(missing) == 0 && versionErr == nil && compareVersions(mfluxVersion, mfluxQwen21Version) == 0 {
+	if len(missing) == 0 && versionErr == nil && CompareVersions(mfluxVersion, mfluxQwen21Version) == 0 {
 		return dir, writeOverlayProjectRoot(dir)
 	}
 	// A prior unpinned install can leave another MFLUX release in the overlay.
@@ -674,8 +745,8 @@ func (m *RuntimeManager) EnsureImageOverlay(ctx context.Context, backend string)
 		return "", err
 	}
 	// MFLUX needs transformers 5.x and several dependencies which must stay
-	// private to this backend; unlike the TTS overlay, it cannot reuse the
-	// shared Diffusers venv's transformers<5 constraint.
+	// private to this backend; installing them into the shared Diffusers venv
+	// would let one model's requirements move every other model's packages.
 	if err := m.uvPipInstallTargetWithDeps(ctx, python, dir, indexes, packages); err != nil {
 		return "", fmt.Errorf("installing %s overlay packages: %w", backend, err)
 	}
@@ -843,28 +914,30 @@ func (m *RuntimeManager) InstallWithProgressOptions(ctx context.Context, progres
 		return m.Status(ctx), err
 	}
 	if torchIndexes.TorchIndexURL != "" {
-		progress("install PyTorch from "+torchIndexes.TorchIndexURL, 5, 6)
+		progress("install PyTorch from "+redactIndexURL(torchIndexes.TorchIndexURL), 5, 6)
 	} else if torchIndexes.TorchFindLinksURL != "" && torchIndexes.PyPIIndexURL != "" {
 		progress("install PyTorch from "+string(torchIndexes.Mirror)+" mirror", 5, 6)
 	} else if torchIndexes.TorchFindLinksURL != "" {
-		progress("install PyTorch from "+torchIndexes.TorchFindLinksURL, 5, 6)
+		progress("install PyTorch from "+redactIndexURL(torchIndexes.TorchFindLinksURL), 5, 6)
 	} else if torchIndexes.PyPIIndexURL != "" {
-		progress("install PyTorch from "+torchIndexes.PyPIIndexURL, 5, 6)
+		progress("install PyTorch from "+redactIndexURL(torchIndexes.PyPIIndexURL), 5, 6)
 	} else {
 		progress("install PyTorch", 5, 6)
 	}
 	if err := m.uvPipInstall(ctx, python, torchIndexes, torchPackages, false, true); err != nil {
 		return m.Status(ctx), fmt.Errorf("installing PyTorch: %w", err)
 	}
-	diffusersDeps := []string{"diffusers>=0.34.0", "transformers>=4.48.0,<5.0", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow"}
-	if upgradePackages {
-		diffusersDeps = stripVersionSpecs(diffusersDeps)
-	}
+	// transformers carries no upper bound here on purpose: every Diffusers
+	// that runs Qwen-Image-2.1 (0.41.0+) requires huggingface-hub>=1.32, while
+	// all transformers 4.x cap hub below 1.0, so a transformers<5.0 bound would
+	// pin Diffusers to 0.39 and keep QwenImage21Pipeline out of reach. The
+	// text-to-speech runtime keeps its own measured <5.0 bound.
+	diffusersDeps := []string{"diffusers>=0.34.0", "transformers>=4.48.0", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow"}
 	if indexes.PyPIIndexURL != "" {
 		if upgradePackages {
-			progress("upgrade Diffusers dependencies from "+indexes.PyPIIndexURL, 6, 6)
+			progress("upgrade Diffusers dependencies from "+redactIndexURL(indexes.PyPIIndexURL), 6, 6)
 		} else {
-			progress("install Diffusers dependencies from "+indexes.PyPIIndexURL, 6, 6)
+			progress("install Diffusers dependencies from "+redactIndexURL(indexes.PyPIIndexURL), 6, 6)
 		}
 	} else {
 		if upgradePackages {
@@ -922,13 +995,13 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 			return m.ASRStatus(ctx), err
 		}
 		if torchIndexes.TorchIndexURL != "" {
-			progress("install PyTorch from "+torchIndexes.TorchIndexURL, 4, 5)
+			progress("install PyTorch from "+redactIndexURL(torchIndexes.TorchIndexURL), 4, 5)
 		} else if torchIndexes.TorchFindLinksURL != "" && torchIndexes.PyPIIndexURL != "" {
 			progress("install PyTorch from "+string(torchIndexes.Mirror)+" mirror", 4, 5)
 		} else if torchIndexes.TorchFindLinksURL != "" {
-			progress("install PyTorch from "+torchIndexes.TorchFindLinksURL, 4, 5)
+			progress("install PyTorch from "+redactIndexURL(torchIndexes.TorchFindLinksURL), 4, 5)
 		} else if torchIndexes.PyPIIndexURL != "" {
-			progress("install PyTorch from "+torchIndexes.PyPIIndexURL, 4, 5)
+			progress("install PyTorch from "+redactIndexURL(torchIndexes.PyPIIndexURL), 4, 5)
 		} else {
 			progress("install PyTorch", 4, 5)
 		}
@@ -953,9 +1026,9 @@ func (m *RuntimeManager) InstallASRWithProgressOptions(ctx context.Context, prog
 	}
 	if indexes.PyPIIndexURL != "" {
 		if upgradePackages {
-			progress("upgrade ASR dependencies from "+indexes.PyPIIndexURL, 5, 5)
+			progress("upgrade ASR dependencies from "+redactIndexURL(indexes.PyPIIndexURL), 5, 5)
 		} else {
-			progress("install ASR dependencies from "+indexes.PyPIIndexURL, 5, 5)
+			progress("install ASR dependencies from "+redactIndexURL(indexes.PyPIIndexURL), 5, 5)
 		}
 	} else {
 		if upgradePackages {
@@ -1099,7 +1172,7 @@ func (m *RuntimeManager) InstallCommand(hw HardwareKind) []string {
 	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath)
 	cmd = append(cmd, torchPackageSpecs(hw, torchIndexes)...)
 	cmd = append(cmd, torchInstallIndexArgs(torchIndexes)...)
-	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath, "diffusers>=0.34.0", "transformers>=4.48.0,<5.0", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow")
+	cmd = append(cmd, "&&", uvPath, "pip", "install", "--python", pythonPath, "diffusers>=0.34.0", "transformers>=4.48.0", "accelerate", "safetensors", "sentencepiece", "protobuf", "pillow")
 	if indexes.PyPIIndexURL != "" {
 		cmd = append(cmd, "--index-url", indexes.PyPIIndexURL)
 	}
@@ -1634,39 +1707,131 @@ func installedPackageVersionWithPath(ctx context.Context, python, overlayDir, pk
 	return strings.TrimSpace(string(out)), nil
 }
 
-// stripVersionSpecs removes version constraints from package specs so that
-// --upgrade picks up the latest version. uv pip install --upgrade treats a
-// spec like "diffusers>=0.34.0" as "ensure the installed version satisfies
-// >=0.34.0" rather than "upgrade to the latest version", so an installed
-// 0.39.0 that already satisfies the constraint is left untouched.
-func stripVersionSpecs(packages []string) []string {
-	out := make([]string, len(packages))
-	for i, spec := range packages {
-		name := spec
-		for _, sep := range []string{">=", "<=", "==", "!=", "~=", ">", "<"} {
-			if idx := strings.Index(spec, sep); idx >= 0 {
-				name = strings.TrimSpace(spec[:idx])
-				break
-			}
-		}
-		out[i] = name
+// redactIndexURL hides credentials embedded in a package index URL. Private
+// mirrors are sometimes configured as https://user:token@host/... through
+// CSGHUB_LITE_PYPI_INDEX_URL or CSGHUB_LITE_TORCH_INDEX_URL, and progress
+// messages must not print them to terminals, logs, or SSE streams. The query
+// string is dropped entirely: indexes sometimes carry tokens there, and a
+// progress message never needs it. The last @ in the authority separates the
+// credentials, so a password containing an unescaped @ is hidden whole.
+func redactIndexURL(url string) string {
+	if q := strings.IndexAny(url, "?#"); q >= 0 {
+		url = url[:q]
 	}
-	return out
+	scheme := strings.Index(url, "://")
+	if scheme < 0 {
+		return url
+	}
+	rest := url[scheme+3:]
+	authority := rest
+	if slash := strings.Index(rest, "/"); slash >= 0 {
+		authority = rest[:slash]
+	}
+	at := strings.LastIndex(authority, "@")
+	if at < 0 {
+		return url
+	}
+	return url[:scheme+3] + "***" + rest[at:]
+}
+
+// redactStatusCommand redacts credentials embedded in package index URLs from
+// a rendered install command before it lands in a RuntimeStatus, which the
+// server serves over HTTP. The command is unchanged for public mirrors, where
+// the index URL carries no credentials.
+func redactStatusCommand(cmd []string) []string {
+	redacted := make([]string, len(cmd))
+	for i, arg := range cmd {
+		redacted[i] = redactIndexURL(arg)
+	}
+	return redacted
+}
+
+// urlUserinfoRe matches credentials embedded in a URL authority, as in
+// https://user:token@mirror.example.com/simple. The repeated group is greedy
+// up to the last @ of the authority, so a password containing an unescaped @
+// (https://user:p@ss@mirror.example.com) is redacted whole instead of
+// leaving a tail behind.
+var urlUserinfoRe = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)([^/@\s"']+@)+`)
+
+// urlQueryRe matches a URL's query string, as in
+// https://mirror.example.com/simple?X-Amz-Signature=abc123. Private indexes
+// authenticate through query parameters whose names cannot be enumerated
+// (token=..., X-Amz-Signature=..., X-Amz-Credential=...), so the whole query
+// is dropped, matching what redactIndexURL does for progress messages.
+var urlQueryRe = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^\s"'<>?]+)\?[^\s"'<>]+`)
+
+// credentialParamRe matches credential-looking parameters outside a URL, as
+// in "authentication failed for token=secret". URLs are handled above by
+// dropping the whole query.
+var credentialParamRe = regexp.MustCompile(`(?i)(token|password|passwd|secret|api[_-]?key|access[_-]?key|auth)=[^&\s"']+`)
+
+// redactSecrets removes credential-bearing URLs and query parameters from a
+// line of pip/uv output, which echoes the configured index URLs when
+// resolution fails.
+func redactSecrets(line string) string {
+	line = urlUserinfoRe.ReplaceAllString(line, "$1***@")
+	line = urlQueryRe.ReplaceAllString(line, "$1")
+	return credentialParamRe.ReplaceAllString(line, "$1=***")
+}
+
+// redactingWriter forwards pip/uv output with credentials redacted. Lines are
+// flushed at \n and \r boundaries, the latter because progress bars redraw
+// with carriage returns; a URL split across writes stays buffered until its
+// line completes.
+type redactingWriter struct {
+	w   io.Writer
+	buf []byte
+}
+
+func (r *redactingWriter) Write(p []byte) (int, error) {
+	r.buf = append(r.buf, p...)
+	for {
+		i := bytes.IndexAny(r.buf, "\n\r")
+		if i < 0 {
+			break
+		}
+		line := r.buf[:i+1]
+		r.buf = r.buf[i+1:]
+		if _, err := r.w.Write([]byte(redactSecrets(string(line)))); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
+}
+
+// Flush writes a trailing partial line, redacted, so buffered output cannot
+// outlive the command.
+func (r *redactingWriter) Flush() error {
+	if len(r.buf) == 0 {
+		return nil
+	}
+	_, err := r.w.Write([]byte(redactSecrets(string(r.buf))))
+	r.buf = nil
+	return err
 }
 
 // latestPyPIPackageVersion queries for the latest released version of a package.
 // When a mirror index URL is configured (e.g. Aliyun), it parses the mirror's
 // simple index page so the "latest version" reflects what the installer can
 // actually install from that mirror. Falls back to the official PyPI JSON API
-// when no mirror is configured or the mirror lookup fails.
+// when no mirror is configured or the mirror lookup fails; the fallback means
+// the result no longer describes the configured index.
 func latestPyPIPackageVersion(pkg, pypiIndexURL string) string {
-	if pypiIndexURL != "" {
-		simpleURL := strings.TrimSuffix(pypiIndexURL, "/") + "/" + pkg + "/"
+	return latestVersionWithFallback(pkg, pypiIndexURL, fmt.Sprintf("https://pypi.org/pypi/%s/json", pkg))
+}
+
+// latestVersionWithFallback resolves the latest version of pkg from the
+// configured mirror index, falling back to the official index URL when the
+// mirror lookup fails. Both URLs are parameters so tests can point them at
+// local servers.
+func latestVersionWithFallback(pkg, mirrorIndexURL, fallbackURL string) string {
+	if mirrorIndexURL != "" {
+		simpleURL := strings.TrimSuffix(mirrorIndexURL, "/") + "/" + pkg + "/"
 		if v := latestVersionFromSimplePage(simpleURL); v != "" {
 			return v
 		}
 	}
-	return fetchPyPIVersion(fmt.Sprintf("https://pypi.org/pypi/%s/json", pkg))
+	return fetchPyPIVersion(fallbackURL)
 }
 
 func fetchPyPIVersion(url string) string {
@@ -1714,15 +1879,17 @@ func latestVersionFromSimplePage(url string) string {
 	var best string
 	for _, m := range matches {
 		v := m[1]
-		if compareVersions(v, best) > 0 {
+		if CompareVersions(v, best) > 0 {
 			best = v
 		}
 	}
 	return best
 }
 
-// compareVersions returns 1 if a > b, -1 if a < b, 0 if equal.
-func compareVersions(a, b string) int {
+// CompareVersions returns 1 if a > b, -1 if a < b, 0 if equal. It compares
+// dot-separated numeric version strings such as Python package versions and is
+// exported so CLI reporting can reuse it instead of growing another copy.
+func CompareVersions(a, b string) int {
 	if b == "" {
 		return 1
 	}
@@ -1797,17 +1964,38 @@ func WithPythonPath(env []string, dir string) []string {
 	return append(out, "PYTHONPATH="+value)
 }
 
-func verifyPythonScript(ctx context.Context, python, script string) error {
+// runPythonScript runs python -c script and reports the process exit code
+// together with the tail of its output, so callers can treat a deliberate
+// exit code as a result and everything else as a failure. The output is
+// redacted before it is truncated: a truncation boundary falling inside a
+// credential-bearing URL would leave a fragment the redactor can no longer
+// recognize.
+func runPythonScript(ctx context.Context, python, script string) (int, string, error) {
 	cmd := exec.CommandContext(ctx, python, "-c", script)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		tail := strings.TrimSpace(string(out))
-		if len(tail) > 2048 {
-			tail = tail[len(tail)-2048:]
-		}
-		return fmt.Errorf("python import check failed: %s", tail)
+	tail := redactSecrets(strings.TrimSpace(string(out)))
+	if len(tail) > 2048 {
+		tail = tail[len(tail)-2048:]
 	}
-	return nil
+	if err == nil {
+		return 0, tail, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), tail, nil
+	}
+	return -1, tail, err
+}
+
+func verifyPythonScript(ctx context.Context, python, script string) error {
+	code, tail, err := runPythonScript(ctx, python, script)
+	if err == nil && code == 0 {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("python import check failed: %v: %s", err, tail)
+	}
+	return fmt.Errorf("python import check failed: %s", tail)
 }
 
 func (m *RuntimeManager) uninstallBrokenWindowsTorchaudio(ctx context.Context, python string) error {
@@ -1824,11 +2012,11 @@ func (m *RuntimeManager) uninstallBrokenWindowsTorchaudio(ctx context.Context, p
 	log.Printf("EMBEDDING RUNTIME: torchaudio is installed but fails to import; removing it (see issue #54)")
 	// Use the venv's own pip so removal works offline; fall back to ensurepip
 	// once if the venv somehow lacks pip.
-	if err := runCommand(ctx, python, "-m", "pip", "uninstall", "-y", "torchaudio"); err != nil {
-		if bootErr := runCommand(ctx, python, "-m", "ensurepip", "--upgrade"); bootErr != nil {
+	if err := runCommandEnv(ctx, m.installSubprocessEnv(), python, "-m", "pip", "uninstall", "-y", "torchaudio"); err != nil {
+		if bootErr := runCommandEnv(ctx, m.installSubprocessEnv(), python, "-m", "ensurepip", "--upgrade"); bootErr != nil {
 			return fmt.Errorf("removing broken torchaudio from embedding runtime: %w", err)
 		}
-		if err := runCommand(ctx, python, "-m", "pip", "uninstall", "-y", "torchaudio"); err != nil {
+		if err := runCommandEnv(ctx, m.installSubprocessEnv(), python, "-m", "pip", "uninstall", "-y", "torchaudio"); err != nil {
 			return fmt.Errorf("removing broken torchaudio from embedding runtime: %w", err)
 		}
 	}
@@ -1837,14 +2025,14 @@ func (m *RuntimeManager) uninstallBrokenWindowsTorchaudio(ctx context.Context, p
 }
 
 func (m *RuntimeManager) ensurePipAndUV(ctx context.Context, python string, indexes PackageIndexes) error {
-	if err := runCommand(ctx, python, "-m", "ensurepip", "--upgrade"); err != nil {
+	if err := runCommandEnv(ctx, m.installSubprocessEnv(), python, "-m", "ensurepip", "--upgrade"); err != nil {
 		return fmt.Errorf("bootstrapping pip: %w", err)
 	}
 	pipArgs := []string{"-m", "pip", "install", "--upgrade", "pip"}
 	if indexes.PyPIIndexURL != "" {
 		pipArgs = append(pipArgs, "-i", indexes.PyPIIndexURL)
 	}
-	if err := runCommand(ctx, python, pipArgs...); err != nil {
+	if err := runCommandEnv(ctx, m.installSubprocessEnv(), python, pipArgs...); err != nil {
 		return fmt.Errorf("upgrading pip: %w", err)
 	}
 	if _, err := os.Stat(m.uvPath()); err == nil {
@@ -1856,7 +2044,7 @@ func (m *RuntimeManager) ensurePipAndUV(ctx context.Context, python string, inde
 	if indexes.PyPIIndexURL != "" {
 		uvArgs = append(uvArgs, "-i", indexes.PyPIIndexURL)
 	}
-	if err := runCommand(ctx, python, uvArgs...); err != nil {
+	if err := runCommandEnv(ctx, m.installSubprocessEnv(), python, uvArgs...); err != nil {
 		return fmt.Errorf("installing uv: %w", err)
 	}
 	return nil
@@ -1876,7 +2064,7 @@ func (m *RuntimeManager) uvPipInstall(ctx context.Context, python string, indexe
 	} else if indexes.PyPIIndexURL != "" {
 		args = append(args, "--index-url", indexes.PyPIIndexURL)
 	}
-	return runCommandEnv(ctx, m.uvInstallEnv(), m.uvPath(), args...)
+	return runCommandEnv(ctx, m.installSubprocessEnv(), m.uvPath(), args...)
 }
 
 // uvPipInstallTarget installs into a plain directory instead of the venv, so a
@@ -1895,7 +2083,7 @@ func (m *RuntimeManager) uvPipInstallTarget(ctx context.Context, python, targetD
 	if indexes.PyPIIndexURL != "" {
 		args = append(args, "--index-url", indexes.PyPIIndexURL)
 	}
-	return runCommandEnv(ctx, m.uvInstallEnv(), m.uvPath(), args...)
+	return runCommandEnv(ctx, m.installSubprocessEnv(), m.uvPath(), args...)
 }
 
 func (m *RuntimeManager) uvPipInstallTargetWithDeps(ctx context.Context, python, targetDir string, indexes PackageIndexes, packages []string) error {
@@ -1910,7 +2098,7 @@ func (m *RuntimeManager) uvPipInstallTargetWithDeps(ctx context.Context, python,
 	if indexes.PyPIIndexURL != "" {
 		args = append(args, "--index-url", indexes.PyPIIndexURL)
 	}
-	return runCommandEnv(ctx, m.uvInstallEnv(), m.uvPath(), args...)
+	return runCommandEnv(ctx, m.installSubprocessEnv(), m.uvPath(), args...)
 }
 
 func torchInstallIndexArgs(indexes PackageIndexes) []string {
@@ -1926,14 +2114,47 @@ func torchInstallIndexArgs(indexes PackageIndexes) []string {
 	return args
 }
 
-func (m *RuntimeManager) uvInstallEnv() []string {
-	cacheDir := filepath.Join(filepath.Dir(m.rootDir), uvCacheDirName)
+// installSubprocessEnv returns the environment every install subprocess runs
+// with: the shared uv cache plus a temp directory under the storage root, so
+// pip and uv build and unpack scratch files never spill into the system temp
+// directory. TMPDIR covers Unix and TMP/TEMP Windows; all three are set so
+// the same environment works on every platform.
+func (m *RuntimeManager) installSubprocessEnv() []string {
+	storageRoot := filepath.Dir(m.rootDir)
+	cacheDir := filepath.Join(storageRoot, uvCacheDirName)
 	_ = os.MkdirAll(cacheDir, 0o755)
-	return []string{"UV_CACHE_DIR=" + cacheDir}
+	tmpDir := filepath.Join(storageRoot, tmpDirName)
+	_ = os.MkdirAll(tmpDir, 0o755)
+	return []string{
+		"UV_CACHE_DIR=" + cacheDir,
+		"TMPDIR=" + tmpDir,
+		"TMP=" + tmpDir,
+		"TEMP=" + tmpDir,
+	}
 }
 
 func runCommand(ctx context.Context, name string, args ...string) error {
 	return runCommandEnv(ctx, nil, name, args...)
+}
+
+// syncBuffer serializes writes from the concurrent stdout and stderr copy
+// goroutines os/exec starts when both streams are captured; a plain
+// bytes.Buffer would race and could lose or corrupt captured diagnostics.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func runCommandEnv(ctx context.Context, extraEnv []string, name string, args ...string) error {
@@ -1941,18 +2162,35 @@ func runCommandEnv(ctx context.Context, extraEnv []string, name string, args ...
 	if len(extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), extraEnv...)
 	}
-	var output bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
-	if err := cmd.Run(); err != nil {
+	// pip and uv echo the configured index URLs, which may carry credentials,
+	// so each stream is redacted line by line before its bytes reach both the
+	// terminal and the shared capture. Redaction must complete within a
+	// stream: a credential-bearing URL can arrive split across writes, and
+	// redacting only the combined capture would miss it once the other
+	// stream's output lands between the halves. os/exec copies the two
+	// streams from separate goroutines, so the shared capture must also be
+	// synchronized or concurrent writes race and can corrupt diagnostics.
+	output := &syncBuffer{}
+	stdout := &redactingWriter{w: io.MultiWriter(os.Stdout, output)}
+	stderr := &redactingWriter{w: io.MultiWriter(os.Stderr, output)}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	runErr := cmd.Run()
+	if err := stdout.Flush(); err != nil && runErr == nil {
+		runErr = err
+	}
+	if err := stderr.Flush(); err != nil && runErr == nil {
+		runErr = err
+	}
+	if runErr != nil {
 		msg := cleanCommandOutput(output.String())
 		if len(msg) > 4096 {
 			msg = msg[len(msg)-4096:]
 		}
 		if msg != "" {
-			return fmt.Errorf("%w: %s", err, msg)
+			return fmt.Errorf("%w: %s", runErr, msg)
 		}
-		return err
+		return runErr
 	}
 	return nil
 }
@@ -1964,7 +2202,7 @@ func runCommandEnv(ctx context.Context, extraEnv []string, name string, args ...
 // request to the package index fails; without filtering that markup becomes the
 // user-facing error. The full output still reaches os.Stdout/os.Stderr (logs).
 func cleanCommandOutput(raw string) string {
-	raw = strings.TrimSpace(raw)
+	raw = redactSecrets(strings.TrimSpace(raw))
 	if raw == "" {
 		return ""
 	}
@@ -2039,5 +2277,7 @@ func writeManifest(path string, manifest RuntimeManifest) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	// 0o600: the manifest records the configured package index URLs, which
+	// can embed private mirror credentials.
+	return os.WriteFile(path, data, 0o600)
 }
