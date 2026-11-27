@@ -104,7 +104,10 @@ func NewDiffusersEngine(ctx context.Context, modelName, modelDir string, runtime
 		return nil, err
 	}
 	workerPath := filepath.Join(runtimeManager.RootDir(), "diffusers_worker.py")
-	cmd := exec.CommandContext(ctx, runtimeManager.PythonPath(), workerPath,
+	// The engine stays cached across requests, so the worker must outlive the
+	// request that loaded it. waitReady(ctx) still aborts a load whose caller
+	// went away, and Close()/the idle evictor stop the process.
+	cmd := exec.Command(runtimeManager.PythonPath(), workerPath,
 		"--model-dir", modelDir, "--model-name", modelName,
 		"--backend", backend, "--port", strconv.Itoa(port))
 	cmd.Env = WithPythonPath(os.Environ(), overlayDir)
