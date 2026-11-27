@@ -979,3 +979,58 @@ func TestHandleAnthropicMessagesProxyStreamRecordsOnMidStreamError(t *testing.T)
 		t.Fatalf("output tokens = 0, want >0 (should estimate from partial stream content)")
 	}
 }
+
+func TestAnthropicMessagesToOpenAI_PreservesImageBlocks(t *testing.T) {
+	base64Image := map[string]interface{}{
+		"type":   "image",
+		"source": map[string]interface{}{"type": "base64", "media_type": "image/png", "data": "aGk="},
+	}
+	req := api.AnthropicMessageRequest{
+		Model: "test/model",
+		Messages: []api.AnthropicMessage{
+			{
+				Role: "user",
+				Content: []interface{}{
+					base64Image,
+					map[string]interface{}{"type": "text", "text": "what is this?"},
+					map[string]interface{}{
+						"type":   "image",
+						"source": map[string]interface{}{"type": "url", "url": "https://example.com/a.png"},
+					},
+				},
+			},
+			{
+				Role: "assistant",
+				Content: []interface{}{
+					map[string]interface{}{"type": "tool_use", "id": "toolu_1", "name": "screenshot"},
+					map[string]interface{}{"type": "tool_use", "id": "toolu_2", "name": "pwd"},
+				},
+			},
+			{
+				Role: "user",
+				Content: []interface{}{
+					map[string]interface{}{"type": "tool_result", "tool_use_id": "toolu_1", "content": []interface{}{base64Image}},
+					map[string]interface{}{"type": "tool_result", "tool_use_id": "toolu_2", "content": "/tmp"},
+				},
+			},
+		},
+	}
+
+	got, err := anthropicMessagesToOpenAI(req)
+	if err != nil {
+		t.Fatalf("anthropicMessagesToOpenAI returned error: %v", err)
+	}
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	const dataPart = `{"image_url":{"url":"data:image/png;base64,aGk="},"type":"image_url"}`
+	want := `[{"content":[` + dataPart + `,{"text":"what is this?","type":"text"},{"image_url":{"url":"https://example.com/a.png"},"type":"image_url"}],"role":"user"},` +
+		`{"content":null,"role":"assistant","tool_calls":[{"function":{"arguments":"{}","name":"screenshot"},"id":"toolu_1","type":"function"},{"function":{"arguments":"{}","name":"pwd"},"id":"toolu_2","type":"function"}]},` +
+		`{"content":"","name":"screenshot","role":"tool","tool_call_id":"toolu_1"},` +
+		`{"content":"/tmp","name":"pwd","role":"tool","tool_call_id":"toolu_2"},` +
+		`{"content":[` + dataPart + `],"role":"user"}]`
+	if string(data) != want {
+		t.Fatalf("messages =\n%s\nwant\n%s", data, want)
+	}
+}
