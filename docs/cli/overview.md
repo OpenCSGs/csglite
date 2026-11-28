@@ -10,6 +10,7 @@ CSGLite 提供以下命令：
 | [`chat <model>`](chat.md) | 与已下载的本地模型交互对话 |
 | [`generate MODEL [TEXT]`](model-operations.md) | 单次文本推理，支持标准输入和 JSON 输出 |
 | [`embed MODEL [TEXT...]`](model-operations.md) | 为一条或多条文本生成向量 |
+| [`audio transcribe / speak / realtime`](audio.md) | 转录录音、生成语音文件及收发实时音频事件 |
 | `image MODEL --prompt TEXT` | 生成图像，`--input` 可传入待编辑图像 |
 | [`serve`](serve.md) | 前台启动 REST API 服务 |
 
@@ -19,6 +20,7 @@ CSGLite 提供以下命令：
 |------|------|
 | [`pull <model>`](pull.md) | 从 CSGHub 下载模型 |
 | [`list` / `ls`](list.md) | 列出已下载的本地模型 |
+| [`import MODEL PATH`、`download start / status / cancel`](pull.md) | 从本地文件导入模型、按任务 ID 管理后台下载 |
 | [`load MODEL`](model-operations.md) | 等待本地模型加载就绪 |
 | [`model-config MODEL`](model-operations.md) | 读取或更新模型的持久运行设置 |
 | [`show <model>`](show.md) | 查看模型详细信息 |
@@ -50,6 +52,7 @@ CSGLite 提供以下命令：
 | [`config`](config.md) | 查看或修改配置 |
 | [`license`](license.md) | 查看、校验、安装或删除企业版 License |
 | [`cluster`](cluster.md) | LAN 和公网集群的成员、模型分布及部署管理 |
+| [`gateway`](gateway.md) | 发布或停用模型服务，查询 API 用量 |
 | [`edge`](edge.md) | 向 CSGHub 贡献算力、管理申请、查询收益 |
 
 ## 其他

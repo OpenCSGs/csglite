@@ -93,6 +93,18 @@ Web 界面「算力集群」页看到。
 样的顺序。成员模型源不一致时 `sync` 会拒绝，避免同一个模型 ID 指向不同文件；
 指定了量化或版本的拉取不走复制。
 
+## 操作指定节点上的模型
+
+在控制节点运行 `cluster status --json`，找到目标成员的 `uuid` 和 `status.models` 中的 `id`、`repo`、`source`。将它们分别传给下面的 `NODE_UUID`、`MODEL_ID`、`org/model` 和 `--source`。
+
+```sh
+csghub-lite cluster models pull NODE_UUID org/model --source huggingface --revision main
+csghub-lite cluster models unload NODE_UUID MODEL_ID org/model --source huggingface
+csghub-lite cluster models delete NODE_UUID MODEL_ID org/model --source huggingface
+```
+
+拉取操作在目标节点创建后台任务，可在该节点用返回的任务 ID 执行 `download status JOB_ID`。卸载会释放推理资源，删除会移除目标节点上的模型文件。受部署管理的模型通过下方部署命令管理。
+
 ## 管理部署
 
 在控制节点上创建部署。默认由集群选择节点，也可用 `--node UUID` 固定目标。可选参数包括模型仓库来源、版本、量化、推理后端和上下文长度。
