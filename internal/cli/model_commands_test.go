@@ -51,6 +51,16 @@ func TestModelCLIRequests(t *testing.T) {
 		{"start deployment", []string{"cluster", "deployments", "start", id}, "", "PUT", "/api/cluster/deployments/" + id, `{"desired":"running"}`, ""},
 		{"stop deployment", []string{"cluster", "deployments", "stop", id}, "", "PUT", "/api/cluster/deployments/" + id, `{"desired":"stopped"}`, ""},
 		{"delete deployment", []string{"cluster", "deployments", "delete", id}, "", "DELETE", "/api/cluster/deployments/" + id, "", ""},
+		{"queue download", []string{"download", "start", "org/repo", "--source", "huggingface", "--quant", "Q4,Q8", "--revision", "v1"}, "", "POST", "/api/pull/jobs", `{"model":"org/repo","artifact_source":"huggingface","revision":"v1","quants":["Q4","Q8"]}`, ""},
+		{"download status", []string{"download", "status", "job1"}, "", "GET", "/api/pull/jobs/job1", "", ""},
+		{"cancel download", []string{"download", "cancel", "job1"}, "", "DELETE", "/api/pull/jobs/job1", "", ""},
+		{"node pull", []string{"cluster", "models", "pull", id, "org/repo", "--source", "modelscope"}, "", "POST", "/api/cluster/nodes/" + id + "/models/pull", `{"model":"org/repo","artifact_source":"modelscope"}`, ""},
+		{"node unload", []string{"cluster", "models", "unload", id, "alias", "org/repo", "--source", "huggingface"}, "", "POST", "/api/cluster/nodes/" + id + "/models/action", `{"model":"alias","repository":"org/repo","artifact_source":"huggingface","action":"unload"}`, ""},
+		{"node delete", []string{"cluster", "models", "delete", id, "alias", "org/repo", "--source", "modelscope"}, "", "POST", "/api/cluster/nodes/" + id + "/models/action", `{"model":"alias","repository":"org/repo","artifact_source":"modelscope","action":"delete"}`, ""},
+		{"service list", []string{"gateway", "services"}, "", "GET", "/api/provider-pools", "", ""},
+		{"service unpublish", []string{"gateway", "unpublish", "service1"}, "", "PUT", "/api/provider-pools/service1", `{"enabled":false}`, ""},
+		{"service enable", []string{"gateway", "enable", "service1"}, "", "PUT", "/api/provider-pools/service1", `{"enabled":true}`, ""},
+		{"usage filters", []string{"gateway", "usage", "--period", "month", "--provider", "my cloud", "--service", "org/model"}, "", "GET", "/api/api-usage?period=month&pool=org%2Fmodel&provider=my+cloud", "", ""},
 	}
 	setupCLIConfigHome(t)
 	for _, tc := range tests {

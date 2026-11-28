@@ -353,6 +353,11 @@ Managed apps auto-configure to use CSGLite's OpenAI-compatible API endpoint with
 | `csghub-lite chat <model>` | Chat with a locally downloaded model |
 | `csghub-lite generate MODEL [TEXT]` | Generate one text reply from an argument or stdin |
 | `csghub-lite embed MODEL [TEXT...]` | Return embeddings as OpenAI JSON |
+| `csghub-lite audio transcribe / speak / realtime` | Transcribe files, write synthesized speech or exchange realtime audio events |
+| `csghub-lite download start / status / cancel` | Manage background downloads by job ID |
+| `csghub-lite import MODEL PATH` | Import weights, an archive or a model directory |
+| `csghub-lite cluster models pull / unload / delete` | Manage a specific node's model artifacts |
+| `csghub-lite gateway` | Publish or disable a model service and inspect API usage |
 | `csghub-lite logs [MODEL] [-n 50] [-f]` | Read matching server log lines, including while the server is stopped |
 | `csghub-lite load MODEL` | Preload a downloaded model |
 | `csghub-lite model-config MODEL` | Read or update the model's saved runtime settings |

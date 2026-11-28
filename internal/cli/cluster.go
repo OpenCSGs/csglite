@@ -641,6 +641,7 @@ func newClusterModelsCmd() *cobra.Command {
 			return w.Flush()
 		},
 	}
+	cmd.AddCommand(newDownloadStartCmd(true), newNodeModelAction("unload"), newNodeModelAction("delete"))
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the raw JSON list")
 	return cmd
 }

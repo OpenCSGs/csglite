@@ -37,3 +37,20 @@ Pulling model Qwen/Qwen3-0.6B-GGUF from https://hub.opencsg.com...
 
 Successfully pulled model Qwen/Qwen3-0.6B-GGUF (gguf, 609.8 MB)
 ```
+
+## 后台下载与导入
+
+先用 `csghub-lite start` 启动服务。后台下载支持 `opencsg`（默认）、`huggingface`、`modelscope`。从创建响应复制 `id`，用它查询进度或取消下载。
+
+```sh
+csghub-lite download start org/model --source huggingface --revision main --quant Q4_K_M
+csghub-lite download status JOB_ID
+csghub-lite download cancel JOB_ID
+```
+
+本地已有模型文件时可以直接导入。目录会保留子目录结构、跳过 `.git` 目录，遇到符号链接会报错。支持单个权重文件和 ZIP、TAR、TAR.GZ、TGZ 归档。需要替换同名模型时显式传入 `--overwrite`。
+
+```sh
+csghub-lite import local/my-model ./my-model/
+csghub-lite import local/my-model ./my-model.tar.gz --overwrite
+```
