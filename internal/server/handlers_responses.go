@@ -820,7 +820,7 @@ func responsesContentText(content interface{}) string {
 func buildResponsesToolResponse(id, modelID string, created int64, resp api.OpenAIChatResponse, inputTokens int, status string) map[string]interface{} {
 	output, outputText := responsesOutputFromOpenAIChatResponse(resp)
 	usage := responsesUsageFromOpenAI(resp, inputTokens, outputText)
-	return map[string]interface{}{
+	response := map[string]interface{}{
 		"id":                  id,
 		"object":              "response",
 		"created_at":          created,
@@ -831,6 +831,23 @@ func buildResponsesToolResponse(id, modelID string, created int64, resp api.Open
 		"parallel_tool_calls": responsesParallelToolCalls(output),
 		"usage":               usage,
 	}
+	markResponsesIncomplete(response, resp)
+	return response
+}
+
+// markResponsesIncomplete reports a reply the backend cut off (token limit or
+// content filter) as incomplete instead of completed.
+func markResponsesIncomplete(response map[string]interface{}, resp api.OpenAIChatResponse) bool {
+	if len(resp.Choices) == 0 || !isCutOffFinishReason(resp.Choices[0].FinishReason) {
+		return false
+	}
+	reason := *resp.Choices[0].FinishReason
+	if reason == "length" {
+		reason = "max_output_tokens"
+	}
+	response["status"] = "incomplete"
+	response["incomplete_details"] = map[string]interface{}{"reason": reason}
+	return true
 }
 
 func responsesOutputFromOpenAIChatResponse(resp api.OpenAIChatResponse) ([]interface{}, string) {
@@ -1078,20 +1095,25 @@ func writeResponsesToolStream(w http.ResponseWriter, id, modelID string, created
 		}
 	}
 
-	writeResponsesSSE(w, "response.completed", map[string]interface{}{
-		"type":            "response.completed",
+	response := map[string]interface{}{
+		"id":                  id,
+		"object":              "response",
+		"created_at":          created,
+		"status":              "completed",
+		"model":               modelID,
+		"output":              output,
+		"output_text":         outputText,
+		"parallel_tool_calls": responsesParallelToolCalls(output),
+		"usage":               usage,
+	}
+	event := "response.completed"
+	if markResponsesIncomplete(response, resp) {
+		event = "response.incomplete"
+	}
+	writeResponsesSSE(w, event, map[string]interface{}{
+		"type":            event,
 		"sequence_number": nextSequence(),
-		"response": map[string]interface{}{
-			"id":                  id,
-			"object":              "response",
-			"created_at":          created,
-			"status":              "completed",
-			"model":               modelID,
-			"output":              output,
-			"output_text":         outputText,
-			"parallel_tool_calls": responsesParallelToolCalls(output),
-			"usage":               usage,
-		},
+		"response":        response,
 	})
 }
 
