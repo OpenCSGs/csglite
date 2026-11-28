@@ -515,11 +515,17 @@ func normalizeOpenAIToolResponse(resp api.OpenAIChatResponse, tools []api.Tool) 
 		}}
 		msg.FunctionCall = nil
 	}
-	if len(msg.ToolCalls) > 0 {
+	if len(msg.ToolCalls) > 0 && !isCutOffFinishReason(choice.FinishReason) {
 		finishReason := "tool_calls"
 		choice.FinishReason = &finishReason
 	}
 	return resp
+}
+
+// isCutOffFinishReason reports whether the backend stopped before the reply was
+// complete, in which case any tool call arguments may be partial.
+func isCutOffFinishReason(reason *string) bool {
+	return reason != nil && (*reason == "length" || *reason == "content_filter")
 }
 
 func synthesizeToolCallsFromContent(content interface{}, tools []api.Tool) ([]api.ToolCall, bool) {
