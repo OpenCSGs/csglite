@@ -93,6 +93,20 @@ Web 界面「算力集群」页看到。
 样的顺序。成员模型源不一致时 `sync` 会拒绝，避免同一个模型 ID 指向不同文件；
 指定了量化或版本的拉取不走复制。
 
+## 管理部署
+
+在控制节点上创建部署。默认由集群选择节点，也可用 `--node UUID` 固定目标。可选参数包括模型仓库来源、版本、量化、推理后端和上下文长度。
+
+```sh
+csghub-lite cluster deployments create lab-chat Qwen/Qwen3-0.6B-GGUF --node auto
+csghub-lite cluster deployments list
+csghub-lite cluster deployments stop DEPLOYMENT_ID
+csghub-lite cluster deployments start DEPLOYMENT_ID
+csghub-lite cluster deployments delete DEPLOYMENT_ID
+```
+
+将 `DEPLOYMENT_ID` 换成创建响应里的 `id`。修改操作返回服务端已接受的目标状态。用 `list` 查看控制端的 `deployments` 和本节点的 `assignments`，通过 `status.phase` 跟踪下载、加载或停止的进度。完成删除的记录会从列表隐藏。
+
 ## 运维状态
 
 | 状态 | 含义 |

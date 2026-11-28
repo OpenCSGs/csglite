@@ -69,6 +69,7 @@ func newClusterCmd() *cobra.Command {
 		newClusterInviteCmd(),
 		newClusterRemoveCmd(),
 		newClusterModelsCmd(),
+		newClusterDeploymentsCmd(),
 		newClusterSyncCmd(),
 		newClusterExplainCmd(),
 		newClusterToggleCmd("enable", "/api/cluster/enable", "Switch cluster networking on (listener and discovery) without joining yet"),

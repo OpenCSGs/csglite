@@ -351,6 +351,13 @@ Managed apps auto-configure to use CSGLite's OpenAI-compatible API endpoint with
 |---|---|
 | `csghub-lite run <model>` | Pull, start server, and chat (all automatic) |
 | `csghub-lite chat <model>` | Chat with a locally downloaded model |
+| `csghub-lite generate MODEL [TEXT]` | Generate one text reply from an argument or stdin |
+| `csghub-lite embed MODEL [TEXT...]` | Return embeddings as OpenAI JSON |
+| `csghub-lite logs [MODEL] [-n 50] [-f]` | Read matching server log lines, including while the server is stopped |
+| `csghub-lite load MODEL` | Preload a downloaded model |
+| `csghub-lite model-config MODEL` | Read or update the model's saved runtime settings |
+| `csghub-lite edge` | Manage CSGHub compute contributions, applications and earnings |
+| `csghub-lite cluster deployments` | List, create, start, stop or delete cluster deployments |
 | `csghub-lite ps` | List currently running models and their keep-alive |
 | `csghub-lite start` | Start the API server in the background |
 | `csghub-lite stop` | Stop the background API server |
