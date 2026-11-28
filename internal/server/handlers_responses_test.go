@@ -1,6 +1,7 @@
 package server
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/opencsgs/csglite/pkg/api"
@@ -224,5 +225,56 @@ func TestResponsesOutputFromOpenAIChatResponseIncludesReasoningItem(t *testing.T
 	summary, ok := reasoning["summary"].([]map[string]interface{})
 	if !ok || len(summary) != 1 || summary[0]["text"] != "hidden reasoning" {
 		t.Fatalf("summary = %#v, want hidden reasoning summary", reasoning["summary"])
+	}
+}
+
+func TestResponsesInputPreservesInputImageParts(t *testing.T) {
+	const dataURL = "data:image/png;base64,iVBORw0KGgo="
+	input := []interface{}{
+		map[string]interface{}{
+			"type": "message",
+			"role": "user",
+			"content": []interface{}{
+				map[string]interface{}{"type": "input_text", "text": "what is in these images?"},
+				map[string]interface{}{"type": "input_image", "image_url": dataURL, "detail": "low"},
+				map[string]interface{}{"type": "input_image", "image_url": "https://example.com/cat.png"},
+			},
+		},
+		map[string]interface{}{
+			"role": "user",
+			"content": []interface{}{
+				map[string]interface{}{"type": "input_text", "text": "text only"},
+			},
+		},
+	}
+	want := []interface{}{
+		map[string]interface{}{"type": "text", "text": "what is in these images?"},
+		map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": dataURL, "detail": "low"}},
+		map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": "https://example.com/cat.png"}},
+	}
+
+	openAIMessages, err := responsesInputToOpenAIMessages(input)
+	if err != nil {
+		t.Fatalf("responsesInputToOpenAIMessages() error = %v", err)
+	}
+	if len(openAIMessages) != 2 {
+		t.Fatalf("len(openAIMessages) = %d, want 2", len(openAIMessages))
+	}
+	if !reflect.DeepEqual(openAIMessages[0].Content, want) {
+		t.Fatalf("openai content = %#v, want %#v", openAIMessages[0].Content, want)
+	}
+	if openAIMessages[1].Content != "text only" {
+		t.Fatalf("text-only openai content = %#v, want plain string", openAIMessages[1].Content)
+	}
+
+	messages := responsesInputToMessages(input)
+	if len(messages) != 2 {
+		t.Fatalf("len(messages) = %d, want 2", len(messages))
+	}
+	if !reflect.DeepEqual(messages[0].Content, want) {
+		t.Fatalf("inference content = %#v, want %#v", messages[0].Content, want)
+	}
+	if messages[1].Content != "text only" {
+		t.Fatalf("text-only inference content = %#v, want plain string", messages[1].Content)
 	}
 }
