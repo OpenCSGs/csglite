@@ -536,7 +536,7 @@ func responsesInputItemToOpenAIMessage(item interface{}, index int) (*api.Messag
 			}
 			return &api.Message{
 				Role:    role,
-				Content: responsesContentText(value["content"]),
+				Content: responsesMessageContent(role, value["content"]),
 			}, api.ToolCall{}, kind, nil
 		case "reasoning":
 			return &api.Message{
@@ -553,7 +553,7 @@ func responsesInputItemToOpenAIMessage(item interface{}, index int) (*api.Messag
 		if role != "" {
 			return &api.Message{
 				Role:    role,
-				Content: responsesContentText(value["content"]),
+				Content: responsesMessageContent(role, value["content"]),
 			}, api.ToolCall{}, "message", nil
 		}
 		text := responsesContentText(value)
@@ -748,12 +748,12 @@ func responsesInputToMessages(input interface{}) []inference.Message {
 		case role != "":
 			return []inference.Message{{
 				Role:    role,
-				Content: responsesContentText(value["content"]),
+				Content: responsesMessageContent(role, value["content"]),
 			}}
 		case kind == "message":
 			return []inference.Message{{
 				Role:    "user",
-				Content: responsesContentText(value["content"]),
+				Content: responsesMessageContent("user", value["content"]),
 			}}
 		case kind == "reasoning":
 			return []inference.Message{{
@@ -775,6 +775,54 @@ func responsesInputToMessages(input interface{}) []inference.Message {
 		}
 	default:
 		return []inference.Message{{Role: "user", Content: responsesContentText(value)}}
+	}
+}
+
+// responsesMessageContent returns the content of a Responses message. User
+// content with input_image parts becomes OpenAI content parts, so the images
+// reach the model in order with the text. Anything else stays a plain string.
+func responsesMessageContent(role string, content interface{}) interface{} {
+	items, ok := content.([]interface{})
+	if !ok || (role != "" && role != "user") {
+		return responsesContentText(content)
+	}
+	parts := make([]interface{}, 0, len(items))
+	hasImage := false
+	for _, item := range items {
+		if image := responsesImagePart(item); image != nil {
+			parts = append(parts, image)
+			hasImage = true
+			continue
+		}
+		if text := responsesContentText(item); text != "" {
+			parts = append(parts, map[string]interface{}{"type": "text", "text": text})
+		}
+	}
+	if !hasImage {
+		return responsesContentText(content)
+	}
+	return parts
+}
+
+// responsesImagePart converts a Responses input_image part that carries an
+// image URL (http(s) or data URL) to an OpenAI image_url content part. It
+// returns nil for other parts, including images referenced by file_id.
+func responsesImagePart(item interface{}) map[string]interface{} {
+	part, ok := item.(map[string]interface{})
+	if !ok || stringValue(part["type"]) != "input_image" {
+		return nil
+	}
+	url := stringValue(part["image_url"])
+	if url == "" {
+		return nil
+	}
+	imageURL := map[string]interface{}{"url": url}
+	if detail := stringValue(part["detail"]); detail != "" {
+		imageURL["detail"] = detail
+	}
+	return map[string]interface{}{
+		"type":      "image_url",
+		"image_url": imageURL,
 	}
 }
 
